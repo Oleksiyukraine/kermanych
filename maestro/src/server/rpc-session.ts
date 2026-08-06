@@ -22,7 +22,8 @@ export class RpcSession {
   private reassembler = new ChunkReassembler();
   private eventCbs: ((e: RpcEvent) => void)[] = [];
   private exitCbs: ((code: number | null) => void)[] = [];
-  private pending = new Map<string, (r: RpcResponseFrame) => void>();
+  private pending = new Map<string, { resolve: (r: RpcResponseFrame) => void; reject: (e: Error) => void }>();
+  private stderr = "";
   private seq = 0;
   constructor(private opts: { cwd: string; model?: string; ompPath?: string }) {}
 
@@ -36,14 +37,41 @@ export class RpcSession {
     if (this.opts.model) argv.push("--model", this.opts.model);
     if (this.opts.ompPath) argv[0] = this.opts.ompPath;
     this.proc = Bun.spawn(argv, { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-    this.proc.exited.then((code) => this.exitCbs.forEach((cb) => cb(code)));
+    this.drainStderr();
+    let ready_ = false;
+    this.proc.exited.then((code) => {
+      const e = new Error(this.exitMessage(code));
+      for (const p of this.pending.values()) p.reject(e);
+      this.pending.clear();
+      this.exitCbs.forEach((cb) => cb(code));
+    });
     const { promise: ready, resolve } = Promise.withResolvers<void>();
     const onReady = (e: RpcEvent) => {
       if (e.type === "ready") { this.write({ id: "negotiate", type: "negotiate_protocol", protocolVersion: 2 }); resolve(); }
     };
     this.eventCbs.push(onReady);
     this.readLoop();
-    await ready;
+    const exitedBeforeReady = this.proc.exited.then((code) => { if (!ready_) throw new Error(this.exitMessage(code)); });
+    await Promise.race([ready.then(() => { ready_ = true; }), exitedBeforeReady]);
+  }
+
+  private exitMessage(code: number | null): string {
+    const tail = this.stderr.trim();
+    return `omp child exited (code ${code}) before completing request${tail ? `: ${tail}` : ""}`;
+  }
+
+  private async drainStderr() {
+    const stream = this.proc?.stderr;
+    if (!stream) return;
+    const reader = stream.getReader();
+    const dec = new TextDecoder();
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        this.stderr = (this.stderr + dec.decode(value, { stream: true })).slice(-8192);
+      }
+    } catch {}
   }
 
   private async readLoop() {
@@ -59,7 +87,7 @@ export class RpcSession {
         try { obj = this.reassembler.push(frame); } catch { continue; }
         if (obj === null) continue;
         if (isResponseFrame(obj) && obj.id && this.pending.has(obj.id)) {
-          this.pending.get(obj.id)!(obj); this.pending.delete(obj.id);
+          this.pending.get(obj.id)!.resolve(obj); this.pending.delete(obj.id);
         }
         this.eventCbs.forEach((cb) => cb(obj as RpcEvent));
       }
@@ -68,8 +96,8 @@ export class RpcSession {
 
   private command(type: string, extra: Record<string, unknown> = {}): Promise<RpcResponseFrame> {
     const id = `req_${++this.seq}`;
-    const { promise, resolve } = Promise.withResolvers<RpcResponseFrame>();
-    this.pending.set(id, resolve);
+    const { promise, resolve, reject } = Promise.withResolvers<RpcResponseFrame>();
+    this.pending.set(id, { resolve, reject });
     this.write({ id, type, ...extra });
     return promise;
   }
