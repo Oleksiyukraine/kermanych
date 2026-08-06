@@ -22,7 +22,7 @@ Bun.serve({
     try {
       if (p === "/api/groups" && req.method === "GET") return json(registry.listGroups());
       if (p === "/api/groups" && req.method === "POST") { const b = await req.json(); return json(await supervisor.addGroup(b.name, b.projectDir)); }
-      let m = p.match(/^\/api\/groups\/(.+)$/); if (m && req.method === "DELETE") { supervisor.removeGroup(m[1]); return json({ ok: true }); }
+      let m = p.match(/^\/api\/groups\/(.+)$/); if (m && req.method === "DELETE") { await supervisor.removeGroup(m[1]); return json({ ok: true }); }
       if (p === "/api/sessions" && req.method === "GET") return json(registry.listSessions(url.searchParams.get("groupId") ?? undefined));
       if (p === "/api/sessions" && req.method === "POST") { const b = await req.json(); return json(await supervisor.createSession(b.groupId, b.name, b.task, b.model)); }
       m = p.match(/^\/api\/sessions\/([^/]+)\/message$/); if (m && req.method === "POST") { const b = await req.json(); supervisor.sendMessage(m[1], b.text, b.mode); return json({ ok: true }); }

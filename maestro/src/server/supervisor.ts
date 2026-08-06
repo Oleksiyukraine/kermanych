@@ -23,7 +23,10 @@ export class Supervisor {
     if (!(await wt.isGitRepo(projectDir))) throw new Error("project dir is not a git repo");
     const g = this.registry.createGroup({ name, projectDir }); this.emit({ type: "group_update", group: g }); return g;
   }
-  removeGroup(id: string) { this.registry.removeGroup(id); this.emit({ type: "group_removed", groupId: id }); }
+  async removeGroup(id: string): Promise<void> {
+    for (const s of this.registry.listSessions(id)) await this.deleteSession(s.id);
+    this.registry.removeGroup(id); this.emit({ type: "group_removed", groupId: id });
+  }
 
   async createSession(groupId: string, name: string, task: string, model?: string): Promise<Session> {
     const group = this.registry.listGroups().find((g) => g.id === groupId);

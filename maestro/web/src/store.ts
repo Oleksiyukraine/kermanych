@@ -24,7 +24,10 @@ export const useStore = create<State>((set, get) => ({
       if (e.type === "group_update")
         set((s) => ({ groups: [...s.groups.filter((g) => g.id !== e.group.id), e.group] }));
       if (e.type === "group_removed")
-        set((s) => ({ groups: s.groups.filter((g) => g.id !== e.groupId) }));
+        set((s) => ({
+          groups: s.groups.filter((g) => g.id !== e.groupId),
+          sessions: s.sessions.filter((x) => x.groupId !== e.groupId),
+        }));
       if (e.type === "session_update")
         set((s) => ({ sessions: [...s.sessions.filter((x) => x.id !== e.session.id), e.session] }));
       if (e.type === "session_removed")
