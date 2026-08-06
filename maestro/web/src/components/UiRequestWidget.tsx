@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { api } from "../api";
 import type { RpcExtensionUIRequest } from "../../../src/server/types";
 
@@ -64,17 +65,17 @@ function InputAnswer({ onSubmit, placeholder }: { onSubmit: (v: string) => void;
 }
 
 function EditorAnswer({ onSubmit, placeholder }: { onSubmit: (v: string) => void; placeholder?: string }) {
-  let value = "";
+  const ref = useRef<HTMLTextAreaElement>(null);
   return (
     <div className="flex flex-col gap-2">
       <textarea
+        ref={ref}
         autoFocus
         placeholder={placeholder}
-        onChange={(e) => (value = e.target.value)}
         className="w-full h-32 bg-neutral-800 px-2 py-1 rounded text-sm font-mono"
       />
       <button
-        onClick={() => onSubmit(value)}
+        onClick={() => onSubmit(ref.current?.value ?? "")}
         className="self-end bg-blue-700 px-3 py-1 rounded text-sm"
       >
         Submit

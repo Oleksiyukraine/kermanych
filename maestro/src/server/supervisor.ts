@@ -52,8 +52,19 @@ export class Supervisor {
       if (live.live.status !== "stopped" && live.live.status !== "done") { live.live.status = "error"; this.registry.updateSession(session.id, { status: "error" }); this.pushUpdate(session.id); }
     });
     rpc.onEvent((e) => this.onRpcEvent(session.id, e));
-    await rpc.start();
-    rpc.prompt(task);
+    try {
+      await rpc.start();
+      rpc.prompt(task);
+    } catch (err) {
+      this.stopPoll(live);
+      await rpc.stop().catch(() => {});
+      await wt.removeWorktree(group.projectDir, wtDir).catch(() => {});
+      await wt.removeBranch(group.projectDir, branch).catch(() => {});
+      this.map.delete(session.id);
+      this.registry.removeSession(session.id);
+      this.emit({ type: "session_removed", sessionId: session.id });
+      throw err;
+    }
     this.pushUpdate(session.id);
     return this.merge(saved);
   }
