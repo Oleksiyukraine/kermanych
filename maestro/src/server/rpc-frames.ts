@@ -28,10 +28,9 @@ export class ChunkReassembler {
     if (frame.chunkId !== this.id) throw new Error("interleaved chunk sequence");
     this.parts[frame.index] = frame.data;
     if (frame.index < this.count - 1) return null;
-    const b64 = this.parts.join("");
-    const json = Buffer.from(b64, "base64").toString("utf8");
-    if (json.length !== this.byteLength) throw new Error("chunk byteLength mismatch");
+    const buf = Buffer.concat(this.parts.map((p) => Buffer.from(p, "base64")));
+    if (buf.length !== this.byteLength) throw new Error("chunk byteLength mismatch");
     this.id = null; this.parts = []; this.count = 0;
-    return JSON.parse(json);
+    return JSON.parse(buf.toString("utf8"));
   }
 }

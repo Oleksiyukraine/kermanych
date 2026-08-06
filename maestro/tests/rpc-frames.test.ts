@@ -13,14 +13,24 @@ test("ChunkReassembler passes through non-chunk frames", () => {
   expect(r.push({ type: "agent_start" })).toEqual({ type: "agent_start" });
 });
 
-test("ChunkReassembler reassembles a chunk sequence", () => {
+test("ChunkReassembler reassembles independently-base64'd byte segments", () => {
   const r = new ChunkReassembler();
-  const obj = { type: "response", command: "get_messages", data: { big: "x" } };
-  const json = JSON.stringify(obj);
-  const b64 = Buffer.from(json, "utf8").toString("base64");
-  const half = Math.ceil(b64.length / 2);
-  expect(r.push({ type: "rpc_chunk", chunkId: "c1", index: 0, count: 2, byteLength: json.length, data: b64.slice(0, half) })).toBeNull();
-  expect(r.push({ type: "rpc_chunk", chunkId: "c1", index: 1, count: 2, byteLength: json.length, data: b64.slice(half) })).toEqual(obj);
+  const obj = { type: "response", command: "get_messages", data: { big: "x".repeat(20) } };
+  const bytes = Buffer.from(JSON.stringify(obj), "utf8");
+  const seg = Math.ceil(bytes.length / 2);
+  const c0 = bytes.subarray(0, seg).toString("base64");
+  const c1 = bytes.subarray(seg).toString("base64");
+  expect(r.push({ type: "rpc_chunk", chunkId: "c1", index: 0, count: 2, byteLength: bytes.length, data: c0 })).toBeNull();
+  expect(r.push({ type: "rpc_chunk", chunkId: "c1", index: 1, count: 2, byteLength: bytes.length, data: c1 })).toEqual(obj);
+});
+
+test("ChunkReassembler handles multi-byte UTF-8 across a byte-split boundary", () => {
+  const r = new ChunkReassembler();
+  const obj = { type: "notice", message: "café ☕ 日本語 " + "y".repeat(8) };
+  const bytes = Buffer.from(JSON.stringify(obj), "utf8");
+  const seg = Math.ceil(bytes.length / 2);
+  expect(r.push({ type: "rpc_chunk", chunkId: "c9", index: 0, count: 2, byteLength: bytes.length, data: bytes.subarray(0, seg).toString("base64") })).toBeNull();
+  expect(r.push({ type: "rpc_chunk", chunkId: "c9", index: 1, count: 2, byteLength: bytes.length, data: bytes.subarray(seg).toString("base64") })).toEqual(obj);
 });
 
 test("ChunkReassembler rejects interleaved sequences", () => {
