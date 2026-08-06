@@ -100,7 +100,7 @@ export class Supervisor {
   async stopSession(id: string) { const l = this.map.get(id); if (!l) return; l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.registry.updateSession(id, { status: "stopped" }); this.pushUpdate(id); }
   async deleteSession(id: string) {
     const s = this.registry.listSessions().find((x) => x.id === id); const l = this.map.get(id);
-    if (l) { this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); }
+    if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); }
     if (s) { const g = this.registry.listGroups().find((x) => x.id === s.groupId); if (g) { if (s.worktreePath) await wt.removeWorktree(g.projectDir, s.worktreePath); await wt.removeBranch(g.projectDir, s.branch); } }
     this.registry.removeSession(id); this.emit({ type: "session_removed", sessionId: id });
   }
