@@ -244,14 +244,24 @@ test("ChunkReassembler passes through non-chunk frames", () => {
   expect(r.push({ type: "agent_start" })).toEqual({ type: "agent_start" });
 });
 
-test("ChunkReassembler reassembles a chunk sequence", () => {
+test("ChunkReassembler reassembles independently-base64'd byte segments", () => {
   const r = new ChunkReassembler();
-  const obj = { type: "response", command: "get_messages", data: { big: "x" } };
-  const json = JSON.stringify(obj);
-  const b64 = Buffer.from(json, "utf8").toString("base64");
-  const half = Math.ceil(b64.length / 2);
-  expect(r.push({ type: "rpc_chunk", chunkId: "c1", index: 0, count: 2, byteLength: json.length, data: b64.slice(0, half) })).toBeNull();
-  expect(r.push({ type: "rpc_chunk", chunkId: "c1", index: 1, count: 2, byteLength: json.length, data: b64.slice(half) })).toEqual(obj);
+  const obj = { type: "response", command: "get_messages", data: { big: "x".repeat(20) } };
+  const bytes = Buffer.from(JSON.stringify(obj), "utf8");
+  const seg = Math.ceil(bytes.length / 2);
+  const c0 = bytes.subarray(0, seg).toString("base64");
+  const c1 = bytes.subarray(seg).toString("base64");
+  expect(r.push({ type: "rpc_chunk", chunkId: "c1", index: 0, count: 2, byteLength: bytes.length, data: c0 })).toBeNull();
+  expect(r.push({ type: "rpc_chunk", chunkId: "c1", index: 1, count: 2, byteLength: bytes.length, data: c1 })).toEqual(obj);
+});
+
+test("ChunkReassembler handles multi-byte UTF-8 across a byte-split boundary", () => {
+  const r = new ChunkReassembler();
+  const obj = { type: "notice", message: "café ☕ 日本語 " + "y".repeat(8) };
+  const bytes = Buffer.from(JSON.stringify(obj), "utf8");
+  const seg = Math.ceil(bytes.length / 2);
+  expect(r.push({ type: "rpc_chunk", chunkId: "c9", index: 0, count: 2, byteLength: bytes.length, data: bytes.subarray(0, seg).toString("base64") })).toBeNull();
+  expect(r.push({ type: "rpc_chunk", chunkId: "c9", index: 1, count: 2, byteLength: bytes.length, data: bytes.subarray(seg).toString("base64") })).toEqual(obj);
 });
 
 test("ChunkReassembler rejects interleaved sequences", () => {
@@ -299,11 +309,10 @@ export class ChunkReassembler {
     if (frame.chunkId !== this.id) throw new Error("interleaved chunk sequence");
     this.parts[frame.index] = frame.data;
     if (frame.index < this.count - 1) return null;
-    const b64 = this.parts.join("");
-    const json = Buffer.from(b64, "base64").toString("utf8");
-    if (json.length !== this.byteLength) throw new Error("chunk byteLength mismatch");
+    const buf = Buffer.concat(this.parts.map((p) => Buffer.from(p, "base64")));
+    if (buf.length !== this.byteLength) throw new Error("chunk byteLength mismatch");
     this.id = null; this.parts = []; this.count = 0;
-    return JSON.parse(json);
+    return JSON.parse(buf.toString("utf8"));
   }
 }
 ```
@@ -311,7 +320,7 @@ export class ChunkReassembler {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd maestro && bun test tests/rpc-frames.test.ts`
-Expected: PASS (4 tests).
+Expected: PASS (5 tests).
 
 - [ ] **Step 6: Commit**
 
@@ -476,6 +485,10 @@ test("ui request -> waiting_input and remembers prior", () => {
   s = reduceStatus(s, { type: "extension_ui_request", id: "u1", method: "confirm" } as any);
   expect(s.status).toBe("waiting_input"); expect(s.prior).toBe("thinking");
 });
+test("non-interactive ui request (setWidget) does not change status", () => {
+  let s = reduceStatus(INITIAL_STATUS, { type: "agent_start" } as any);
+  expect(reduceStatus(s, { type: "extension_ui_request", id: "w1", method: "setWidget", widgetKey: "x" } as any).status).toBe("thinking");
+});
 test("terminal agent_end -> done, non-terminal ignored", () => {
   let s = reduceStatus(INITIAL_STATUS, { type: "agent_start" } as any);
   expect(reduceStatus(s, { type: "agent_end", isTerminal: false } as any).status).toBe("thinking");
@@ -494,6 +507,7 @@ Run: `cd maestro && bun test tests/status.test.ts` — Expected: FAIL.
 import type { RpcEvent, SessionStatus } from "./types";
 export type StatusState = { status: SessionStatus; currentTool?: string; prior?: SessionStatus };
 export const INITIAL_STATUS: StatusState = { status: "queued" };
+const INTERACTIVE_UI_METHODS = new Set(["select", "confirm", "input", "editor"]);
 
 export function reduceStatus(s: StatusState, e: RpcEvent): StatusState {
   switch (e.type) {
@@ -505,7 +519,9 @@ export function reduceStatus(s: StatusState, e: RpcEvent): StatusState {
     case "tool_execution_end":
       return { status: "thinking" };
     case "extension_ui_request":
-      return { status: "waiting_input", prior: s.status === "waiting_input" ? s.prior : s.status };
+      return INTERACTIVE_UI_METHODS.has((e as any).method)
+        ? { status: "waiting_input", prior: s.status === "waiting_input" ? s.prior : s.status }
+        : s;
     case "agent_end":
       return (e as any).isTerminal === false ? s : { status: "done" };
     default:
@@ -516,7 +532,7 @@ export function reduceStatus(s: StatusState, e: RpcEvent): StatusState {
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `cd maestro && bun test tests/status.test.ts` — Expected: PASS (4 tests).
+Run: `cd maestro && bun test tests/status.test.ts` — Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -801,7 +817,7 @@ export class Supervisor {
     if (e.type === "message_end") { if (l.textBuf.trim()) this.appendEntry(id, { kind: "assistant_text", text: l.textBuf }); l.textBuf = ""; }
     if (e.type === "tool_execution_start") this.appendEntry(id, { kind: "tool_call", tool: (e as any).toolName ?? "?", summary: (e as any).args?.command ?? (e as any).args?.path });
     if (e.type === "tool_execution_end") this.appendEntry(id, { kind: "tool_result", tool: (e as any).toolName ?? "?", ok: !(e as any).isError });
-    if (e.type === "extension_ui_request") l.live.pendingUiRequest = e as any;
+    if (e.type === "extension_ui_request" && l.state.status === "waiting_input") l.live.pendingUiRequest = e as any;
     l.live.status = l.state.status; l.live.currentTool = l.state.currentTool;
     if (l.state.status !== "waiting_input") l.live.pendingUiRequest = undefined;
     if (e.type === "agent_end" && (e as any).isTerminal !== false) { this.registry.updateSession(id, { status: "done" }); this.refreshState(id); this.stopPoll(l); }
