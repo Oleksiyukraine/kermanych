@@ -34,12 +34,20 @@ export class Supervisor {
     const branch = branchName(slug);
     const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch });
     const wtDir = worktreeDir(session.id);
-    await wt.addWorktree(group.projectDir, wtDir, branch);
+    try {
+      await wt.addWorktree(group.projectDir, wtDir, branch);
+    } catch (err) {
+      this.registry.removeSession(session.id); this.emit({ type: "session_removed", sessionId: session.id });
+      throw err;
+    }
     const saved = this.registry.updateSession(session.id, { worktreePath: wtDir });
     const rpc = new RpcSession({ cwd: wtDir, model });
     const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status: "queued" }, textBuf: "" };
     this.map.set(session.id, live);
-    rpc.onExit((code) => { if (code && code !== 0 && live.live.status !== "stopped") { live.live.status = "error"; this.registry.updateSession(session.id, { status: "error" }); this.pushUpdate(session.id); } });
+    rpc.onExit(() => {
+      this.stopPoll(live);
+      if (live.live.status !== "stopped" && live.live.status !== "done") { live.live.status = "error"; this.registry.updateSession(session.id, { status: "error" }); this.pushUpdate(session.id); }
+    });
     rpc.onEvent((e) => this.onRpcEvent(session.id, e));
     await rpc.start();
     rpc.prompt(task);
@@ -93,7 +101,7 @@ export class Supervisor {
   async deleteSession(id: string) {
     const s = this.registry.listSessions().find((x) => x.id === id); const l = this.map.get(id);
     if (l) { this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); }
-    if (s) { const g = this.registry.listGroups().find((x) => x.id === s.groupId); if (g && s.worktreePath) await wt.removeWorktree(g.projectDir, s.worktreePath); }
+    if (s) { const g = this.registry.listGroups().find((x) => x.id === s.groupId); if (g) { if (s.worktreePath) await wt.removeWorktree(g.projectDir, s.worktreePath); await wt.removeBranch(g.projectDir, s.branch); } }
     this.registry.removeSession(id); this.emit({ type: "session_removed", sessionId: id });
   }
   getTranscript(id: string): TranscriptEntry[] { return this.map.get(id)?.transcript ?? []; }

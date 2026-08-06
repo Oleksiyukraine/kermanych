@@ -30,3 +30,6 @@ export async function addWorktree(repoDir: string, wtDir: string, branch: string
 export async function removeWorktree(repoDir: string, wtDir: string): Promise<void> {
   await git(repoDir, ["worktree", "remove", "--force", wtDir]);
 }
+export async function removeBranch(repoDir: string, branch: string): Promise<void> {
+  await git(repoDir, ["branch", "-D", branch]);
+}
