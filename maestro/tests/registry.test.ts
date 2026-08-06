@@ -1,0 +1,15 @@
+// tests/registry.test.ts
+import { expect, test } from "bun:test";
+import { Registry } from "../src/server/registry";
+test("group + session round trip", () => {
+  const r = new Registry(":memory:");
+  const g = r.createGroup({ name: "app", projectDir: "/tmp/app" });
+  expect(r.listGroups()).toHaveLength(1);
+  const s = r.createSession({ groupId: g.id, name: "task", task: "do it", worktreePath: "/wt", branch: "maestro/task" });
+  expect(s.status).toBe("queued");
+  const u = r.updateSession(s.id, { status: "done", contextPercent: 12 });
+  expect(u.status).toBe("done");
+  expect(r.listSessions(g.id)).toHaveLength(1);
+  r.removeSession(s.id);
+  expect(r.listSessions(g.id)).toHaveLength(0);
+});
