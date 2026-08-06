@@ -32,7 +32,7 @@ export class Supervisor {
     const group = this.registry.listGroups().find((g) => g.id === groupId);
     if (!group) throw new Error("group not found");
     // Dynamic membership set built from existing branches; `uniqueSlug` consumes a Set.
-    const existing = new Set(this.registry.listSessions(groupId).map((s) => s.branch.replace("maestro/", "")));
+    const existing = new Set(this.registry.listSessions(groupId).map((s) => s.branch.replace("kermanych/", "")));
     const slug = uniqueSlug(slugify(name), existing);
     const branch = branchName(slug);
     const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch });

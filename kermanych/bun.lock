@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "maestro",
+      "name": "kermanych",
       "dependencies": {
         "react": "^18",
         "react-dom": "^18",

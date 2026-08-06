@@ -3,8 +3,8 @@ import { homedir } from "os"; import { join } from "path"; import { mkdirSync } 
 import type { ServerWebSocket } from "bun";
 import { Registry } from "./registry"; import { Supervisor } from "./supervisor";
 
-mkdirSync(join(homedir(), ".maestro"), { recursive: true });
-const registry = new Registry(join(homedir(), ".maestro", "maestro.sqlite"));
+mkdirSync(join(homedir(), ".kermanych"), { recursive: true });
+const registry = new Registry(join(homedir(), ".kermanych", "kermanych.sqlite"));
 const supervisor = new Supervisor(registry);
 const sockets = new Set<ServerWebSocket<unknown>>();
 supervisor.onServerEvent((e) => { const msg = JSON.stringify(e); for (const ws of sockets) ws.send(msg); });
@@ -39,4 +39,4 @@ Bun.serve({
     message() {},
   },
 });
-console.log("Maestro server on http://localhost:4317");
+console.log("Kermanych server on http://localhost:4317");

@@ -1,8 +1,8 @@
-# Maestro — omp Session Orchestrator (MVP Design)
+# Kermanych — omp Session Orchestrator (MVP Design)
 
 - **Status:** Draft for review
 - **Date:** 2026-08-06
-- **Working name:** Maestro (provisional; rename freely)
+- **Working name:** Kermanych (provisional; rename freely)
 
 ## 1. Purpose
 
@@ -12,7 +12,7 @@ workflow with project-grouped, task-oriented sessions whose live execution
 stage is visible at a glance.
 
 This is an **orchestration shell around an existing agent**, not a new agent.
-All intelligence stays in `omp`; Maestro launches it, observes it, and lets the
+All intelligence stays in `omp`; Kermanych launches it, observes it, and lets the
 user steer it.
 
 ## 2. Goals (MVP)
@@ -43,7 +43,7 @@ auth management (`omp` owns its own credentials).
 
 ## 4. Key finding: the omp integration surface
 
-`omp` (v17.2.9) exposes a first-class external interface, so Maestro never
+`omp` (v17.2.9) exposes a first-class external interface, so Kermanych never
 parses a terminal.
 
 - **`omp --mode rpc`** — newline-delimited JSON over stdio. Commands in
@@ -57,7 +57,7 @@ parses a terminal.
 - **Sessions already grouped on disk** under
   `~/.omp/agent/sessions/<scope>-<project>-<sha256(cwd)>/<ts>_<id>.jsonl`, with
   listing helpers that report lifecycle status.
-- **Worktrees are a native concept** (`omp worktree`, `~/.omp/wt`). Maestro
+- **Worktrees are a native concept** (`omp worktree`, `~/.omp/wt`). Kermanych
   manages its own worktrees via plain `git worktree` for full control.
 - **Client libraries exist:** a TypeScript `RpcClient` in the omp package and a
   Python `omp-rpc` package. Fallback: speak the documented JSONL protocol
@@ -91,9 +91,9 @@ flowchart LR
   approval/input requests to the UI. Handles child crash/exit.
 - **Worktree manager** — `git -C <projectDir> worktree add <wtPath> -b <branch>`
   on create; `worktree remove` on delete. Worktrees live under
-  `~/.maestro/worktrees/<sessionId>`; branches named `maestro/<session-slug>`.
+  `~/.kermanych/worktrees/<sessionId>`; branches named `kermanych/<session-slug>`.
 - **Registry** — `bun:sqlite` store of groups and session metadata (pointers to
-  omp's session file + worktree path). omp owns transcript persistence; Maestro
+  omp's session file + worktree path). omp owns transcript persistence; Kermanych
   stores only pointers and its own status.
 - **Web API** — REST for CRUD (groups, sessions) + a WebSocket channel that
   streams state deltas and transcript appends, and carries prompt/steer/answer
@@ -140,11 +140,11 @@ type Session = {
 
 ## 7. Session lifecycle
 
-1. **Create group** — user picks a project directory; Maestro verifies it is a
+1. **Create group** — user picks a project directory; Kermanych verifies it is a
    git repo and records the group.
-2. **Create session** — user types a task and (optionally) a model. Maestro:
-   - derives a branch name `maestro/<slug>`;
-   - `git worktree add ~/.maestro/worktrees/<id> -b <branch>` from the group repo;
+2. **Create session** — user types a task and (optionally) a model. Kermanych:
+   - derives a branch name `kermanych/<slug>`;
+   - `git worktree add ~/.kermanych/worktrees/<id> -b <branch>` from the group repo;
    - spawns `omp --mode rpc --cwd <worktreePath> [--model <m>]`;
    - waits for the `ready` frame, negotiates protocol v2;
    - sends `{ type: "prompt", message: <task> }`.
@@ -231,7 +231,7 @@ Targeted unit tests only for pure logic (event→status mapping, worktree naming
   flow must be validated against a real approval prompt (milestone 4).
 - **Non-git project dirs** — MVP requires git (worktree isolation was the chosen
   model). A "no-isolation, run in dir" fallback is deferred.
-- **Model/auth** — Maestro relies on omp's existing auth; if no model is
+- **Model/auth** — Kermanych relies on omp's existing auth; if no model is
   authenticated, session creation should fail clearly.
 
 ## 14. Milestones (implementation order)

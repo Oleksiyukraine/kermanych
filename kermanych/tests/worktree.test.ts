@@ -4,8 +4,8 @@ import { slugify, branchName, uniqueSlug } from "../src/server/worktree";
 test("slugify lowercases and dashes", () => {
   expect(slugify("Fix Login Bug!")).toBe("fix-login-bug");
 });
-test("branchName prefixes maestro/", () => {
-  expect(branchName("fix-login")).toBe("maestro/fix-login");
+test("branchName prefixes kermanych/", () => {
+  expect(branchName("fix-login")).toBe("kermanych/fix-login");
 });
 test("uniqueSlug suffixes on collision", () => {
   expect(uniqueSlug("fix", new Set(["fix", "fix-2"]))).toBe("fix-3");

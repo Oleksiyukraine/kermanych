@@ -18,7 +18,7 @@ export function Sidebar() {
   const [dir, setDir] = useState("");
   return (
     <aside className="w-64 bg-neutral-900 border-r border-neutral-800 p-3 space-y-2 overflow-auto">
-      <h1 className="text-lg font-semibold">Maestro</h1>
+      <h1 className="text-lg font-semibold">Kermanych</h1>
       {groups.map((g) => {
         const gs = sessions.filter((s) => s.groupId === g.id);
         return (

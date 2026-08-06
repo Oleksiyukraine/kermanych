@@ -1,10 +1,10 @@
-# Maestro MVP Implementation Plan
+# Kermanych MVP Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A local web app that launches, groups, and visually supervises multiple `omp` coding-agent sessions, one git worktree + one `omp --mode rpc` process per session.
 
-**Architecture:** A Bun/TypeScript backend spawns one `omp --mode rpc` child per session, normalizes its JSONL event stream into a `SessionStatus`, and pushes deltas to a React browser UI over WebSocket. Groups map to git repos; sessions map to worktrees. omp owns all agent intelligence and transcript persistence; Maestro is the orchestration shell.
+**Architecture:** A Bun/TypeScript backend spawns one `omp --mode rpc` child per session, normalizes its JSONL event stream into a `SessionStatus`, and pushes deltas to a React browser UI over WebSocket. Groups map to git repos; sessions map to worktrees. omp owns all agent intelligence and transcript persistence; Kermanych is the orchestration shell.
 
 **Tech Stack:** Bun (runtime, `Bun.spawn`, `Bun.serve`, `bun:sqlite`), TypeScript (strict), React + Vite + Tailwind, Zustand (UI store). External binary: `omp` (RPC protocol per `omp://rpc.md`).
 
@@ -14,7 +14,7 @@
 - `omp` ≥ 17.2.9 on PATH; each session runs `omp --mode rpc --cwd <worktree> [--model <m>]`.
 - RPC wire protocol per `omp://rpc.md`: read a `ready` frame first, then send `{ id, type: "negotiate_protocol", protocolVersion: 2 }`; correlate responses by `id`; reassemble `rpc_chunk` frames.
 - Command acceptance ≠ completion. A turn is done only on `agent_end` with `isTerminal !== false`.
-- Worktrees live under `~/.maestro/worktrees/<sessionId>`; branches named `maestro/<slug>`. Registry DB at `~/.maestro/maestro.sqlite`.
+- Worktrees live under `~/.kermanych/worktrees/<sessionId>`; branches named `kermanych/<slug>`. Registry DB at `~/.kermanych/kermanych.sqlite`.
 - Testing: TDD (failing test first) for **pure logic only** — `reduceStatus`, worktree naming, frame/line decoding, registry queries. Integration (RpcSession, supervisor, server, UI) is verified by **smoke test**, never by mock-heavy unit tests. Do not test plumbing.
 - One commit per task. Conventional-commit messages.
 
@@ -23,7 +23,7 @@
 ## File Structure
 
 ```
-maestro/
+kermanych/
   package.json              # Bun scripts + deps
   tsconfig.json             # strict TS
   src/
@@ -64,7 +64,7 @@ maestro/
 ### Task 1: Scaffold + RPC spike (grounding)
 
 **Files:**
-- Create: `maestro/package.json`, `maestro/tsconfig.json`, `maestro/src/server/spike.ts`
+- Create: `kermanych/package.json`, `kermanych/tsconfig.json`, `kermanych/src/server/spike.ts`
 
 **Interfaces:**
 - Consumes: nothing.
@@ -74,7 +74,7 @@ maestro/
 
 ```json
 {
-  "name": "maestro",
+  "name": "kermanych",
   "private": true,
   "type": "module",
   "scripts": {
@@ -139,14 +139,14 @@ while (true) {
 
 - [ ] **Step 4: Run the spike**
 
-Run: `cd maestro && bun run spike`
-Expected: a `ready` frame, then `agent_start` / `message_update` / `tool_execution_start` / `agent_end`, then a `get_state` response containing `isStreaming`, `contextUsage`, `todoPhases`. Record the exact `extension_ui_request` shape if one appears. If startup fails for missing auth/model, resolve omp auth first — Maestro requires an authenticated omp.
+Run: `cd kermanych && bun run spike`
+Expected: a `ready` frame, then `agent_start` / `message_update` / `tool_execution_start` / `agent_end`, then a `get_state` response containing `isStreaming`, `contextUsage`, `todoPhases`. Record the exact `extension_ui_request` shape if one appears. If startup fails for missing auth/model, resolve omp auth first — Kermanych requires an authenticated omp.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add maestro/package.json maestro/tsconfig.json maestro/src/server/spike.ts
-git commit -m "chore: scaffold maestro + omp rpc spike"
+git add kermanych/package.json kermanych/tsconfig.json kermanych/src/server/spike.ts
+git commit -m "chore: scaffold kermanych + omp rpc spike"
 ```
 
 ---
@@ -154,7 +154,7 @@ git commit -m "chore: scaffold maestro + omp rpc spike"
 ### Task 2: RPC frame decoding (pure)
 
 **Files:**
-- Create: `maestro/src/server/types.ts`, `maestro/src/server/rpc-frames.ts`, `maestro/tests/rpc-frames.test.ts`
+- Create: `kermanych/src/server/types.ts`, `kermanych/src/server/rpc-frames.ts`, `kermanych/tests/rpc-frames.test.ts`
 
 **Interfaces:**
 - Produces:
@@ -273,7 +273,7 @@ test("ChunkReassembler rejects interleaved sequences", () => {
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `cd maestro && bun test tests/rpc-frames.test.ts`
+Run: `cd kermanych && bun test tests/rpc-frames.test.ts`
 Expected: FAIL (module not found / not implemented).
 
 - [ ] **Step 4: Implement**
@@ -319,13 +319,13 @@ export class ChunkReassembler {
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd maestro && bun test tests/rpc-frames.test.ts`
+Run: `cd kermanych && bun test tests/rpc-frames.test.ts`
 Expected: PASS (5 tests).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add maestro/src/server/types.ts maestro/src/server/rpc-frames.ts maestro/tests/rpc-frames.test.ts
+git add kermanych/src/server/types.ts kermanych/src/server/rpc-frames.ts kermanych/tests/rpc-frames.test.ts
 git commit -m "feat: rpc wire types + frame decoding"
 ```
 
@@ -334,7 +334,7 @@ git commit -m "feat: rpc wire types + frame decoding"
 ### Task 3: RpcSession wrapper
 
 **Files:**
-- Create: `maestro/src/server/rpc-session.ts`
+- Create: `kermanych/src/server/rpc-session.ts`
 
 **Interfaces:**
 - Consumes: `LineSplitter`, `ChunkReassembler`, `RpcEvent`, `RpcExtensionUIResponse` (Task 2).
@@ -437,13 +437,13 @@ export class RpcSession {
 - [ ] **Step 2: Smoke-verify against the spike target**
 
 Temporarily add to `spike.ts` an alternate path (or a scratch script) that constructs `new RpcSession({ cwd: process.cwd() })`, `start()`s, `prompt("say hi and stop")`, logs events, and after `agent_end` calls `getState()` then `stop()`.
-Run: `cd maestro && bun run spike`
+Run: `cd kermanych && bun run spike`
 Expected: same event stream as Task 1, plus a resolved `getState()` object with `contextUsage.percent`. Remove the scratch code after verifying.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add maestro/src/server/rpc-session.ts
+git add kermanych/src/server/rpc-session.ts
 git commit -m "feat: RpcSession wrapper over omp --mode rpc"
 ```
 
@@ -452,7 +452,7 @@ git commit -m "feat: RpcSession wrapper over omp --mode rpc"
 ### Task 4: Event → status reducer (pure, TDD)
 
 **Files:**
-- Create: `maestro/src/server/status.ts`, `maestro/tests/status.test.ts`
+- Create: `kermanych/src/server/status.ts`, `kermanych/tests/status.test.ts`
 
 **Interfaces:**
 - Consumes: `RpcEvent`, `SessionStatus` (Task 2).
@@ -498,7 +498,7 @@ test("terminal agent_end -> done, non-terminal ignored", () => {
 
 - [ ] **Step 2: Run to verify fail**
 
-Run: `cd maestro && bun test tests/status.test.ts` — Expected: FAIL.
+Run: `cd kermanych && bun test tests/status.test.ts` — Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
@@ -532,12 +532,12 @@ export function reduceStatus(s: StatusState, e: RpcEvent): StatusState {
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `cd maestro && bun test tests/status.test.ts` — Expected: PASS (5 tests).
+Run: `cd kermanych && bun test tests/status.test.ts` — Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add maestro/src/server/status.ts maestro/tests/status.test.ts
+git add kermanych/src/server/status.ts kermanych/tests/status.test.ts
 git commit -m "feat: event->status reducer"
 ```
 
@@ -546,15 +546,15 @@ git commit -m "feat: event->status reducer"
 ### Task 5: Worktree manager (naming pure/TDD + git exec)
 
 **Files:**
-- Create: `maestro/src/server/worktree.ts`, `maestro/tests/worktree.test.ts`
+- Create: `kermanych/src/server/worktree.ts`, `kermanych/tests/worktree.test.ts`
 
 **Interfaces:**
 - Produces:
   ```ts
   export function slugify(name: string): string;
-  export function branchName(slug: string): string;              // `maestro/${slug}`
+  export function branchName(slug: string): string;              // `kermanych/${slug}`
   export function uniqueSlug(base: string, existing: Set<string>): string;
-  export function worktreeDir(sessionId: string): string;        // ~/.maestro/worktrees/<id>
+  export function worktreeDir(sessionId: string): string;        // ~/.kermanych/worktrees/<id>
   export async function addWorktree(repoDir: string, wtDir: string, branch: string): Promise<void>;
   export async function removeWorktree(repoDir: string, wtDir: string): Promise<void>;
   export async function isGitRepo(dir: string): Promise<boolean>;
@@ -569,8 +569,8 @@ import { slugify, branchName, uniqueSlug } from "../src/server/worktree";
 test("slugify lowercases and dashes", () => {
   expect(slugify("Fix Login Bug!")).toBe("fix-login-bug");
 });
-test("branchName prefixes maestro/", () => {
-  expect(branchName("fix-login")).toBe("maestro/fix-login");
+test("branchName prefixes kermanych/", () => {
+  expect(branchName("fix-login")).toBe("kermanych/fix-login");
 });
 test("uniqueSlug suffixes on collision", () => {
   expect(uniqueSlug("fix", new Set(["fix", "fix-2"]))).toBe("fix-3");
@@ -578,7 +578,7 @@ test("uniqueSlug suffixes on collision", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify fail** — `cd maestro && bun test tests/worktree.test.ts` → FAIL.
+- [ ] **Step 2: Run to verify fail** — `cd kermanych && bun test tests/worktree.test.ts` → FAIL.
 
 - [ ] **Step 3: Implement**
 
@@ -590,13 +590,13 @@ import { join } from "path";
 export function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "session";
 }
-export function branchName(slug: string): string { return `maestro/${slug}`; }
+export function branchName(slug: string): string { return `kermanych/${slug}`; }
 export function uniqueSlug(base: string, existing: Set<string>): string {
   if (!existing.has(base)) return base;
   let n = 2; while (existing.has(`${base}-${n}`)) n++; return `${base}-${n}`;
 }
 export function worktreeDir(sessionId: string): string {
-  return join(homedir(), ".maestro", "worktrees", sessionId);
+  return join(homedir(), ".kermanych", "worktrees", sessionId);
 }
 async function git(cwd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
   const p = Bun.spawn(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe" });
@@ -617,12 +617,12 @@ export async function removeWorktree(repoDir: string, wtDir: string): Promise<vo
 }
 ```
 
-- [ ] **Step 4: Run to verify pass** — `cd maestro && bun test tests/worktree.test.ts` → PASS (3 tests).
+- [ ] **Step 4: Run to verify pass** — `cd kermanych && bun test tests/worktree.test.ts` → PASS (3 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add maestro/src/server/worktree.ts maestro/tests/worktree.test.ts
+git add kermanych/src/server/worktree.ts kermanych/tests/worktree.test.ts
 git commit -m "feat: worktree naming + git worktree ops"
 ```
 
@@ -631,7 +631,7 @@ git commit -m "feat: worktree naming + git worktree ops"
 ### Task 6: Registry (bun:sqlite)
 
 **Files:**
-- Create: `maestro/src/server/registry.ts`, `maestro/tests/registry.test.ts`
+- Create: `kermanych/src/server/registry.ts`, `kermanych/tests/registry.test.ts`
 
 **Interfaces:**
 - Consumes: `Group`, `Session`, `SessionStatus` (Task 2).
@@ -660,7 +660,7 @@ test("group + session round trip", () => {
   const r = new Registry(":memory:");
   const g = r.createGroup({ name: "app", projectDir: "/tmp/app" });
   expect(r.listGroups()).toHaveLength(1);
-  const s = r.createSession({ groupId: g.id, name: "task", task: "do it", worktreePath: "/wt", branch: "maestro/task" });
+  const s = r.createSession({ groupId: g.id, name: "task", task: "do it", worktreePath: "/wt", branch: "kermanych/task" });
   expect(s.status).toBe("queued");
   const u = r.updateSession(s.id, { status: "done", contextPercent: 12 });
   expect(u.status).toBe("done");
@@ -670,7 +670,7 @@ test("group + session round trip", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify fail** — `cd maestro && bun test tests/registry.test.ts` → FAIL.
+- [ ] **Step 2: Run to verify fail** — `cd kermanych && bun test tests/registry.test.ts` → FAIL.
 
 - [ ] **Step 3: Implement**
 
@@ -720,12 +720,12 @@ export class Registry {
 }
 ```
 
-- [ ] **Step 4: Run to verify pass** — `cd maestro && bun test tests/registry.test.ts` → PASS.
+- [ ] **Step 4: Run to verify pass** — `cd kermanych && bun test tests/registry.test.ts` → PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add maestro/src/server/registry.ts maestro/tests/registry.test.ts
+git add kermanych/src/server/registry.ts kermanych/tests/registry.test.ts
 git commit -m "feat: sqlite registry for groups + sessions"
 ```
 
@@ -734,7 +734,7 @@ git commit -m "feat: sqlite registry for groups + sessions"
 ### Task 7: Supervisor
 
 **Files:**
-- Create: `maestro/src/server/supervisor.ts`
+- Create: `kermanych/src/server/supervisor.ts`
 
 **Interfaces:**
 - Consumes: `RpcSession` (3), `reduceStatus`/`INITIAL_STATUS` (4), worktree ops (5), `Registry` (6), types (2).
@@ -789,7 +789,7 @@ export class Supervisor {
   async createSession(groupId: string, name: string, task: string, model?: string): Promise<Session> {
     const group = this.registry.listGroups().find((g) => g.id === groupId);
     if (!group) throw new Error("group not found");
-    const existing = new Set(this.registry.listSessions(groupId).map((s) => s.branch.replace("maestro/", "")));
+    const existing = new Set(this.registry.listSessions(groupId).map((s) => s.branch.replace("kermanych/", "")));
     const slug = uniqueSlug(slugify(name), existing);
     const branch = branchName(slug);
     const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch });
@@ -853,7 +853,7 @@ export class Supervisor {
 - [ ] **Step 2: Commit**
 
 ```bash
-git add maestro/src/server/supervisor.ts
+git add kermanych/src/server/supervisor.ts
 git commit -m "feat: session supervisor (rpc + status + worktree + registry)"
 ```
 
@@ -862,7 +862,7 @@ git commit -m "feat: session supervisor (rpc + status + worktree + registry)"
 ### Task 8: HTTP + WebSocket server
 
 **Files:**
-- Create: `maestro/src/server/server.ts`
+- Create: `kermanych/src/server/server.ts`
 
 **Interfaces:**
 - Consumes: `Supervisor` (7), `Registry` (6), types (2).
@@ -880,8 +880,8 @@ git commit -m "feat: session supervisor (rpc + status + worktree + registry)"
 import { homedir } from "os"; import { join } from "path"; import { mkdirSync } from "fs";
 import { Registry } from "./registry"; import { Supervisor } from "./supervisor";
 
-mkdirSync(join(homedir(), ".maestro"), { recursive: true });
-const registry = new Registry(join(homedir(), ".maestro", "maestro.sqlite"));
+mkdirSync(join(homedir(), ".kermanych"), { recursive: true });
+const registry = new Registry(join(homedir(), ".kermanych", "kermanych.sqlite"));
 const supervisor = new Supervisor(registry);
 const sockets = new Set<any>();
 supervisor.onServerEvent((e) => { const msg = JSON.stringify(e); for (const ws of sockets) ws.send(msg); });
@@ -916,12 +916,12 @@ Bun.serve({
     message() {},
   },
 });
-console.log("Maestro server on http://localhost:4317");
+console.log("Kermanych server on http://localhost:4317");
 ```
 
 - [ ] **Step 2: Smoke test the API**
 
-Run backend: `cd maestro && bun run server`
+Run backend: `cd kermanych && bun run server`
 In another shell verify against a real git repo (replace `/path/to/repo`):
 ```bash
 curl -s localhost:4317/api/groups
@@ -932,7 +932,7 @@ Expected: empty array, then a created group JSON. Non-git dir → `{"error":"pro
 - [ ] **Step 3: Commit**
 
 ```bash
-git add maestro/src/server/server.ts
+git add kermanych/src/server/server.ts
 git commit -m "feat: REST + websocket server"
 ```
 
@@ -941,7 +941,7 @@ git commit -m "feat: REST + websocket server"
 ### Task 9: Frontend scaffold + store
 
 **Files:**
-- Create: `maestro/web/index.html`, `maestro/web/vite.config.ts`, `maestro/web/src/main.tsx`, `maestro/web/src/api.ts`, `maestro/web/src/store.ts`, `maestro/web/src/App.tsx`
+- Create: `kermanych/web/index.html`, `kermanych/web/vite.config.ts`, `kermanych/web/src/main.tsx`, `kermanych/web/src/api.ts`, `kermanych/web/src/store.ts`, `kermanych/web/src/App.tsx`
 
 **Interfaces:**
 - Consumes: server REST + WS (Task 8), types (Task 2, re-declared or imported from `../../src/server/types`).
@@ -951,7 +951,7 @@ git commit -m "feat: REST + websocket server"
 
 ```html
 <!-- web/index.html -->
-<!doctype html><html><head><meta charset="utf-8"><title>Maestro</title><script src="https://cdn.tailwindcss.com"></script></head>
+<!doctype html><html><head><meta charset="utf-8"><title>Kermanych</title><script src="https://cdn.tailwindcss.com"></script></head>
 <body class="bg-neutral-950 text-neutral-100"><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>
 ```
 
@@ -1028,7 +1028,7 @@ export function App() {
 - [ ] **Step 4: Commit**
 
 ```bash
-git add maestro/web
+git add kermanych/web
 git commit -m "feat: frontend scaffold + store"
 ```
 
@@ -1037,7 +1037,7 @@ git commit -m "feat: frontend scaffold + store"
 ### Task 10: Sidebar + SessionBoard + SessionCard + NewSessionForm
 
 **Files:**
-- Create: `maestro/web/src/components/Sidebar.tsx`, `SessionBoard.tsx`, `SessionCard.tsx`, `NewSessionForm.tsx`
+- Create: `kermanych/web/src/components/Sidebar.tsx`, `SessionBoard.tsx`, `SessionCard.tsx`, `NewSessionForm.tsx`
 
 **Interfaces:**
 - Consumes: `useStore`, `api` (Task 9), `Session`/`Group` types.
@@ -1054,7 +1054,7 @@ export function Sidebar() {
   const [name, setName] = useState(""); const [dir, setDir] = useState("");
   return (
     <aside className="w-64 bg-neutral-900 border-r border-neutral-800 p-3 space-y-2 overflow-auto">
-      <h1 className="text-lg font-semibold">Maestro</h1>
+      <h1 className="text-lg font-semibold">Kermanych</h1>
       {groups.map((g) => {
         const gs = sessions.filter((s) => s.groupId === g.id);
         return (<button key={g.id} onClick={() => selectGroup(g.id)} className={`w-full text-left px-2 py-1 rounded ${selectedGroupId === g.id ? "bg-neutral-800" : ""}`}>
@@ -1125,7 +1125,7 @@ Run backend (`bun run server`) and frontend (`bun run web` → open `http://loca
 - [ ] **Step 5: Commit**
 
 ```bash
-git add maestro/web/src/components
+git add kermanych/web/src/components
 git commit -m "feat: sidebar + session board + cards"
 ```
 
@@ -1134,7 +1134,7 @@ git commit -m "feat: sidebar + session board + cards"
 ### Task 11: SessionDetail + UiRequestWidget
 
 **Files:**
-- Create: `maestro/web/src/components/SessionDetail.tsx`, `UiRequestWidget.tsx`
+- Create: `kermanych/web/src/components/SessionDetail.tsx`, `UiRequestWidget.tsx`
 
 **Interfaces:**
 - Consumes: `useStore`, `api`, `TranscriptEntry`, `RpcExtensionUIRequest`.
@@ -1198,7 +1198,7 @@ function InputAnswer({ onSubmit, placeholder }: { onSubmit: (v: string) => void;
 - [ ] **Step 3: Commit**
 
 ```bash
-git add maestro/web/src/components/SessionDetail.tsx maestro/web/src/components/UiRequestWidget.tsx
+git add kermanych/web/src/components/SessionDetail.tsx kermanych/web/src/components/UiRequestWidget.tsx
 git commit -m "feat: session detail + approval widget"
 ```
 
@@ -1210,7 +1210,7 @@ git commit -m "feat: session detail + approval widget"
 
 - [ ] **Step 1: Full unit suite**
 
-Run: `cd maestro && bun test`
+Run: `cd kermanych && bun test`
 Expected: PASS (rpc-frames, status, worktree, registry).
 
 - [ ] **Step 2: End-to-end smoke**
@@ -1218,7 +1218,7 @@ Expected: PASS (rpc-frames, status, worktree, registry).
 1. `bun run server` and `bun run web`; open `http://localhost:5317`.
 2. Add a group on a real git repo.
 3. Launch two sessions with different tasks (e.g. "add a comment to README top" and "list src files then stop").
-4. Confirm: two cards, independent live status; two directories exist under `~/.maestro/worktrees/`; two branches `maestro/*` exist (`git -C <repo> worktree list`).
+4. Confirm: two cards, independent live status; two directories exist under `~/.kermanych/worktrees/`; two branches `kermanych/*` exist (`git -C <repo> worktree list`).
 5. Open a session that triggers an approval; confirm the purple `waiting_input` widget appears and answering unblocks it.
 6. Delete one session; confirm its worktree is removed (`git -C <repo> worktree list`).
 
@@ -1226,7 +1226,7 @@ Expected: PASS (rpc-frames, status, worktree, registry).
 
 ```bash
 git add -A
-git commit -m "test: end-to-end maestro MVP verification"
+git commit -m "test: end-to-end kermanych MVP verification"
 ```
 
 ---
