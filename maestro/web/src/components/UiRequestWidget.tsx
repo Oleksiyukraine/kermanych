@@ -43,6 +43,9 @@ export function UiRequestWidget({ sessionId, req }: { sessionId: string; req: Rp
       {req.method === "input" && (
         <InputAnswer onSubmit={(v) => answer({ value: v })} placeholder={req.placeholder} />
       )}
+      {req.method === "editor" && (
+        <EditorAnswer onSubmit={(v) => answer({ value: v })} placeholder={req.placeholder} />
+      )}
     </div>
   );
 }
@@ -57,5 +60,25 @@ function InputAnswer({ onSubmit, placeholder }: { onSubmit: (v: string) => void;
       }}
       className="w-full bg-neutral-800 px-2 py-1 rounded text-sm"
     />
+  );
+}
+
+function EditorAnswer({ onSubmit, placeholder }: { onSubmit: (v: string) => void; placeholder?: string }) {
+  let value = "";
+  return (
+    <div className="flex flex-col gap-2">
+      <textarea
+        autoFocus
+        placeholder={placeholder}
+        onChange={(e) => (value = e.target.value)}
+        className="w-full h-32 bg-neutral-800 px-2 py-1 rounded text-sm font-mono"
+      />
+      <button
+        onClick={() => onSubmit(value)}
+        className="self-end bg-blue-700 px-3 py-1 rounded text-sm"
+      >
+        Submit
+      </button>
+    </div>
   );
 }

@@ -25,7 +25,7 @@ export function SessionCard({ session }: { session: Session }) {
       )}
       {session.contextPercent != null && (
         <div className="text-xs text-neutral-500 mt-1">
-          ctx {(session.contextPercent * 100).toFixed(0)}%
+          ctx {session.contextPercent.toFixed(0)}%
         </div>
       )}
     </button>
