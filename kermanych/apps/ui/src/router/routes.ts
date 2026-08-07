@@ -6,6 +6,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('layouts/MainLayout.vue'),
     children: [{ path: '', component: () => import('pages/IndexPage.vue') }],
   },
+  {
+    path: '/kit',
+    component: () => import('layouts/MainLayout.vue'),
+    children: [{ path: '', component: () => import('pages/KitGalleryPage.vue') }],
+  },
 
   // Always leave this as the last one.
   {
