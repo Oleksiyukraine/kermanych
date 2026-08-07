@@ -195,7 +195,7 @@ git commit -m "feat(tokens): design tokens + fonts"
 
 **Interfaces:** Produces `@kermanych/core` exporting: all shared types (`Group`, `Session`, `SessionStatus`, `TodoPhase`, `TodoTask`, `TranscriptEntry`, `RpcExtensionUIRequest`, `RpcExtensionUIResponse`, `RpcEvent`, `ServerEvent`); `LineSplitter`, `ChunkReassembler` (from rpc-frames); `INITIAL_STATUS`, `reduceStatus`, `StatusState`, `INTERACTIVE_UI_METHODS` (from status); `slugify`, `branchName`, `uniqueSlug`, `worktreeDir` (from worktree-names). Consumed by `apps/api` (and types by `apps/ui`).
 
-**Port source (proven, copy then adapt imports to ESM/NodeNext):**
+**Port source (proven; copy verbatim — core builds to CommonJS, so relative imports need no file extension):**
 - `types.ts` ← `kermanych/src/server/types.ts` (verbatim).
 - `rpc-frames.ts` ← `kermanych/src/server/rpc-frames.ts` (verbatim; `Buffer` is a Node global).
 - `status.ts` ← `kermanych/src/server/status.ts` (verbatim).
@@ -206,17 +206,18 @@ git commit -m "feat(tokens): design tokens + fonts"
 
 ```json
 {
-  "name": "@kermanych/core", "version": "0.0.0", "private": true, "type": "module",
-  "main": "src/index.ts", "exports": { ".": "./src/index.ts" },
+  "name": "@kermanych/core", "version": "0.0.0", "private": true,
+  "main": "dist/index.js", "types": "dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "scripts": { "test": "vitest run", "build": "tsc -p tsconfig.json" },
-  "devDependencies": { "vitest": "^2", "typescript": "^5.6" }
+  "devDependencies": { "vitest": "^2", "typescript": "^5.6", "@types/node": "^22" }
 }
 ```
 
 - [ ] **Step 2: tsconfig.json + vitest.config.ts**
 
 ```json
-{ "extends": "../../tsconfig.base.json", "compilerOptions": { "outDir": "dist", "rootDir": "src" }, "include": ["src"] }
+{ "extends": "../../tsconfig.base.json", "compilerOptions": { "module": "CommonJS", "moduleResolution": "Node", "outDir": "dist", "rootDir": "src", "declaration": true }, "include": ["src"] }
 ```
 ```ts
 import { defineConfig } from "vitest/config";
@@ -229,8 +230,8 @@ export default defineConfig({ test: { include: ["test/**/*.spec.ts"] } });
 
 - [ ] **Step 5: Run + commit**
 
-Run: `cd kermanych && pnpm --filter @kermanych/core test`
-Expected: all ported tests PASS (rpc-frames 5, status 5, worktree-names 3).
+Run: `cd kermanych && pnpm --filter @kermanych/core test` then `pnpm --filter @kermanych/core build`
+Expected: tests PASS (rpc-frames 5, status 5, worktree-names 3); `build` emits `dist/` (CommonJS) so `apps/api` can `require()` it. core must be built before api build/typecheck (`pnpm -r build` orders this topologically).
 
 ```bash
 git add kermanych/packages/core
