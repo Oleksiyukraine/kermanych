@@ -22,14 +22,14 @@ export class RpcSession {
   private splitter = new LineSplitter();
   private reassembler = new ChunkReassembler();
   private eventCbs: ((e: RpcEvent) => void)[] = [];
-  private exitCbs: ((code: number | null) => void)[] = [];
+  private exitCbs: ((code: number | null, reason: string) => void)[] = [];
   private pending = new Map<string, { resolve: (r: RpcResponseFrame) => void; reject: (e: Error) => void }>();
   private stderr = "";
   private seq = 0;
   constructor(private opts: { cwd: string; model?: string; ompPath?: string }) {}
 
   onEvent(cb: (e: RpcEvent) => void) { this.eventCbs.push(cb); }
-  onExit(cb: (code: number | null) => void) { this.exitCbs.push(cb); }
+  onExit(cb: (code: number | null, reason: string) => void) { this.exitCbs.push(cb); }
 
   private write(o: unknown) { this.proc!.stdin.write(JSON.stringify(o) + "\n"); }
 
@@ -67,7 +67,7 @@ export class RpcSession {
     if (!ready_) rejectBeforeReady(e);
     for (const p of this.pending.values()) p.reject(e);
     this.pending.clear();
-    this.exitCbs.forEach((cb) => cb(code));
+    this.exitCbs.forEach((cb) => cb(code, e.message));
   }
 
   private exitMessage(code: number | null): string {

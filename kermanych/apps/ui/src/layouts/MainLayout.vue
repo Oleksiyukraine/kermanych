@@ -110,12 +110,14 @@ const counts = computed(() => {
   let running = 0;
   let waiting = 0;
   let done = 0;
+  let error = 0;
   for (const s of sessionsOf(store.selectedGroupId)) {
     if (RUNNING.includes(s.status)) running++;
     else if (s.status === 'waiting_input') waiting++;
     else if (s.status === 'done') done++;
+    else if (s.status === 'error') error++;
   }
-  return { running, waiting, done };
+  return { running, waiting, done, error };
 });
 
 const selectedGroup = computed(() =>

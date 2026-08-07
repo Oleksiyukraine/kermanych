@@ -10,7 +10,7 @@ export type Session = {
   id: string; groupId: string; name: string; task: string;
   worktreePath: string; branch: string;
   ompSessionId?: string; ompSessionFile?: string;
-  status: SessionStatus; currentTool?: string;
+  status: SessionStatus; currentTool?: string; error?: string;
   todoPhases?: TodoPhase[]; contextPercent?: number;
   pendingUiRequest?: RpcExtensionUIRequest; createdAt: string;
 };

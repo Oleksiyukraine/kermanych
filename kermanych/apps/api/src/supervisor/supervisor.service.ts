@@ -88,10 +88,11 @@ export class SupervisorService {
     const rpc = new RpcSession({ cwd: wtDir, model });
     const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status: "queued" }, textBuf: "" };
     this.map.set(session.id, live);
-    rpc.onExit(() => {
+    rpc.onExit((_code, reason) => {
       this.stopPoll(live);
       if (live.live.status !== "stopped" && live.live.status !== "done") {
         live.live.status = "error";
+        live.live.error = reason;
         this.registry.updateSession(session.id, { status: "error" });
         this.pushUpdate(session.id);
       }

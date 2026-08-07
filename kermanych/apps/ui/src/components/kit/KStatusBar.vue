@@ -13,6 +13,10 @@
         <span class="k-statusbar__glyph" aria-hidden="true">✓</span>
         <span class="mono">{{ counts.done }}</span> завершено
       </span>
+      <span v-if="counts.error" class="k-statusbar__agg k-statusbar__agg--error">
+        <span class="k-statusbar__glyph" aria-hidden="true">✕</span>
+        <span class="mono">{{ counts.error }}</span> помилки
+      </span>
     </div>
 
     <div class="k-statusbar__right">
@@ -30,7 +34,7 @@ import { computed } from 'vue';
 // aggregate — only the running count is accented — right carries telemetry.
 // Every number is mono.
 const props = defineProps<{
-  counts: { running: number; waiting: number; done: number };
+  counts: { running: number; waiting: number; done: number; error?: number };
   model?: string;
   tokens?: number;
   cost?: number;
@@ -82,6 +86,10 @@ const costLabel = computed(() => `$${(props.cost ?? 0).toFixed(2)}`);
 
 // only the running aggregate carries the accent.
 .k-statusbar__agg--running .k-statusbar__glyph {
+  color: var(--k-accent);
+}
+
+.k-statusbar__agg--error .k-statusbar__glyph {
   color: var(--k-accent);
 }
 

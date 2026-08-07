@@ -86,6 +86,12 @@
           <KBtn variant="ghost" @click="answerCancel">Скасувати</KBtn>
         </div>
       </div>
+
+      <!-- error banner — the omp child exited before finishing; surface the reason -->
+      <div v-if="session.status === 'error'" class="k-panel__error" role="alert">
+        <div class="k-panel__error-head mono">ПОМИЛКА</div>
+        <div class="k-panel__error-msg">{{ session.error || 'Сесію завершено з помилкою.' }}</div>
+      </div>
     </div>
 
     <!-- floor 3 — input row -->
@@ -285,6 +291,30 @@ function answerCancel() {
   flex: 1 1 auto;
   overflow-y: auto;
   padding: 14px 14px 16px;
+}
+
+// error — the omp child exited before finishing; full accent border reads as failure.
+.k-panel__error {
+  margin-top: 14px;
+  padding: 12px 14px 14px;
+  background: var(--k-surface);
+  border: 1px solid var(--k-accent);
+  border-left: 2px solid var(--k-accent);
+}
+.k-panel__error-head {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--k-accent);
+  margin-bottom: 8px;
+}
+.k-panel__error-msg {
+  font-family: var(--k-font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--k-text);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 // decision — accent left strip, the only accent block in the log.
