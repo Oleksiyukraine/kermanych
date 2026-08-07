@@ -1,0 +1,124 @@
+// apps/ui/src/stores/orchestrator.ts
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
+import type { Socket } from 'socket.io-client';
+import type {
+  Group,
+  Session,
+  TranscriptEntry,
+  ServerEvent,
+  RpcExtensionUIResponse,
+} from '@kermanych/core';
+import { connectSocket } from '../lib/socket';
+import { api, type MessageMode } from '../lib/api';
+
+export const useOrchestrator = defineStore('orchestrator', () => {
+  const groups = ref<Group[]>([]);
+  const sessions = ref<Session[]>([]);
+  const transcripts = ref<Record<string, TranscriptEntry[]>>({});
+  const selectedGroupId = ref<string | undefined>(undefined);
+  const selectedSessionId = ref<string | undefined>(undefined);
+
+  let socket: Socket | undefined;
+
+  // Reduce a ServerEvent into state — mirrors the legacy MVP store exactly.
+  function reduce(e: ServerEvent): void {
+    if (e.type === 'snapshot') {
+      groups.value = e.groups;
+      sessions.value = e.sessions;
+    } else if (e.type === 'group_update') {
+      groups.value = [
+        ...groups.value.filter((g) => g.id !== e.group.id),
+        e.group,
+      ];
+    } else if (e.type === 'group_removed') {
+      groups.value = groups.value.filter((g) => g.id !== e.groupId);
+      sessions.value = sessions.value.filter((x) => x.groupId !== e.groupId);
+    } else if (e.type === 'session_update') {
+      sessions.value = [
+        ...sessions.value.filter((x) => x.id !== e.session.id),
+        e.session,
+      ];
+    } else if (e.type === 'session_removed') {
+      sessions.value = sessions.value.filter((x) => x.id !== e.sessionId);
+    } else if (e.type === 'transcript_append') {
+      transcripts.value = {
+        ...transcripts.value,
+        [e.sessionId]: [...(transcripts.value[e.sessionId] ?? []), e.entry],
+      };
+    }
+  }
+
+  function connect(): void {
+    if (socket) return;
+    socket = connectSocket(reduce);
+  }
+
+  function selectGroup(id: string): void {
+    selectedGroupId.value = id;
+    selectedSessionId.value = undefined;
+  }
+
+  function selectSession(id?: string): void {
+    selectedSessionId.value = id;
+  }
+
+  // Actions delegating to the REST api.
+  function createGroup(name: string, projectDir: string) {
+    return api.createGroup(name, projectDir);
+  }
+
+  function deleteGroup(id: string) {
+    return api.deleteGroup(id);
+  }
+
+  function createSession(
+    groupId: string,
+    name: string,
+    task: string,
+    model?: string,
+  ) {
+    return api.createSession(groupId, name, task, model);
+  }
+
+  function sendMessage(id: string, text: string, mode: MessageMode) {
+    return api.sendMessage(id, text, mode);
+  }
+
+  function answerUi(id: string, res: RpcExtensionUIResponse) {
+    return api.answerUi(id, res);
+  }
+
+  function stopSession(id: string) {
+    return api.stopSession(id);
+  }
+
+  function deleteSession(id: string) {
+    return api.deleteSession(id);
+  }
+
+  async function loadTranscript(id: string) {
+    const entries = await api.loadTranscript(id);
+    transcripts.value = { ...transcripts.value, [id]: entries };
+    return entries;
+  }
+
+  return {
+    groups,
+    sessions,
+    transcripts,
+    selectedGroupId,
+    selectedSessionId,
+    connect,
+    selectGroup,
+    selectSession,
+    createGroup,
+    deleteGroup,
+    createSession,
+    sendMessage,
+    answerUi,
+    stopSession,
+    deleteSession,
+    loadTranscript,
+  };
+});
