@@ -1,0 +1,31 @@
+<template>
+  <main class="not-found">
+    <div class="code mono">404</div>
+    <p>Nothing here.</p>
+    <router-link to="/">Go home</router-link>
+  </main>
+</template>
+
+<script setup lang="ts">
+// Placeholder 404 page.
+</script>
+
+<style scoped lang="scss">
+.not-found {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+
+  .code {
+    font-size: 20vh;
+    color: var(--k-accent);
+  }
+
+  a {
+    color: var(--k-accent);
+  }
+}
+</style>

@@ -1,0 +1,21 @@
+// Kermanych base theme.
+// Tokens (CSS custom properties + fonts) are loaded by src/boot/tokens.ts.
+
+// Dark canvas base.
+body,
+#q-app {
+  background: var(--k-canvas);
+  color: var(--k-text);
+  font-family: var(--k-font-ui);
+}
+
+// Modernist rule: radius 0 everywhere (macOS window buttons are the only
+// documented exception, handled where those controls live).
+* {
+  border-radius: 0;
+}
+
+// Machine text helper.
+.mono {
+  font-family: var(--k-font-mono);
+}

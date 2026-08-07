@@ -1,0 +1,15 @@
+// Quasar Sass variables — aligned to the Kermanych design tokens.
+// These feed Quasar's own theming; the app's visual look is driven by the
+// custom K* components + CSS variables in @kermanych/tokens, not Quasar Material.
+
+$primary   : #ff563c; // accent
+$secondary : #8f8b88; // muted
+$accent    : #ff563c;
+
+$dark      : #1b1a19; // bg
+$dark-page : #12110f; // canvas
+
+$positive  : #3fb950; // diff-green
+$negative  : #ff563c;
+$info      : #8f8b88;
+$warning   : #ff563c;
