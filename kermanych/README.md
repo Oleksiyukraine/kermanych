@@ -1,7 +1,7 @@
 # Kermanych
 
 Kermanych is a local, project-grouped orchestrator for running multiple
-[`omp`](https://omp) coding sessions in parallel. It is a NestJS API plus a
+`omp` coding sessions in parallel. It is a NestJS API plus a
 Quasar (Vue 3) UI. Each session gets its own git worktree and its own
 `omp --mode rpc` child process, so several agents can work in isolation at the
 same time and you drive them all from one board.
