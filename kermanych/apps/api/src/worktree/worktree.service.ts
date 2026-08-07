@@ -5,10 +5,11 @@ import { spawn } from "node:child_process";
 function git(cwd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
   const { promise, resolve } = Promise.withResolvers<{ ok: boolean; out: string }>();
   const p = spawn("git", ["-C", cwd, ...args]);
-  let out = "";
-  p.stdout.on("data", (b) => (out += b));
-  p.stderr.on("data", (b) => (out += b));
-  p.on("close", (code) => resolve({ ok: code === 0, out }));
+  const chunks: Buffer[] = [];
+  p.stdout.on("data", (b: Buffer) => chunks.push(b));
+  p.stderr.on("data", (b: Buffer) => chunks.push(b));
+  p.on("error", (e) => resolve({ ok: false, out: String(e) }));
+  p.on("close", (code) => resolve({ ok: code === 0, out: Buffer.concat(chunks).toString("utf8") }));
   return promise;
 }
 
