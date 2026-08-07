@@ -17,7 +17,9 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
-  return (await r.json()) as T;
+  // NestJS message/answer endpoints return an empty body; tolerate no-JSON.
+  const text = await r.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export const api = {
