@@ -93,6 +93,7 @@
           label="Модель (необовʼязково)"
           placeholder="opus-5"
         />
+        <p v-if="launcherError" class="ws__error" role="alert">{{ launcherError }}</p>
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="launcherOpen = false">Скасувати</KBtn>
@@ -204,6 +205,7 @@ const draftName = ref('');
 const draftTask = ref('');
 const draftModel = ref('');
 const taskInput = ref<HTMLTextAreaElement | null>(null);
+const launcherError = ref<string | null>(null);
 
 const canLaunch = computed(
   () =>
@@ -216,6 +218,7 @@ function openLauncher(): void {
   draftName.value = '';
   draftTask.value = '';
   draftModel.value = '';
+  launcherError.value = null;
   launcherOpen.value = true;
   void nextTick(() => taskInput.value?.focus());
 }
@@ -224,14 +227,20 @@ async function submitLauncher(): Promise<void> {
   const groupId = store.selectedGroupId;
   if (!groupId || !canLaunch.value) return;
   const model = draftModel.value.trim() || undefined;
-  const session = await store.createSession(
-    groupId,
-    draftName.value.trim(),
-    draftTask.value.trim(),
-    model,
-  );
-  launcherOpen.value = false;
-  if (session?.id) store.selectSession(session.id);
+  launcherError.value = null;
+  try {
+    const session = await store.createSession(
+      groupId,
+      draftName.value.trim(),
+      draftTask.value.trim(),
+      model,
+    );
+    launcherOpen.value = false;
+    if (session?.id) store.selectSession(session.id);
+  } catch (e) {
+    // Keep the launcher open so the task/name are not lost; show the reason.
+    launcherError.value = e instanceof Error ? e.message : String(e);
+  }
 }
 
 // Open the launcher when the header signal fires (requires a selected group).
@@ -532,5 +541,12 @@ function onAnswer(res: RpcExtensionUIResponse): void {
     border-color: var(--k-accent);
     box-shadow: inset 0 0 0 1px var(--k-accent);
   }
+}
+
+.ws__error {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--k-accent);
 }
 </style>

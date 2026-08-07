@@ -11,15 +11,45 @@ const BASE = 'http://localhost:4317/api';
 
 export type MessageMode = 'prompt' | 'follow_up' | 'steer';
 
+// Turn a non-2xx Response into an Error carrying the server's message. Nest
+// error bodies look like { statusCode, message, error }; message may be a
+// string or an array of validation strings. Fall back to statusText.
+async function toError(r: Response): Promise<Error> {
+  const text = await r.text();
+  let message = r.statusText || `HTTP ${r.status}`;
+  if (text) {
+    try {
+      const body = JSON.parse(text) as {
+        message?: string | string[];
+        error?: string;
+      };
+      const m = Array.isArray(body.message)
+        ? body.message.join(', ')
+        : body.message;
+      message = m || body.error || message;
+    } catch {
+      message = text;
+    }
+  }
+  return new Error(message);
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(BASE + path, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
+  if (!r.ok) throw await toError(r);
   // NestJS message/answer endpoints return an empty body; tolerate no-JSON.
   const text = await r.text();
   return (text ? JSON.parse(text) : undefined) as T;
+}
+
+async function get<T>(path: string): Promise<T> {
+  const r = await fetch(BASE + path);
+  if (!r.ok) throw await toError(r);
+  return (await r.json()) as T;
 }
 
 export const api = {
@@ -50,7 +80,5 @@ export const api = {
     fetch(`${BASE}/sessions/${id}`, { method: 'DELETE' }),
 
   loadTranscript: (id: string): Promise<TranscriptEntry[]> =>
-    fetch(`${BASE}/sessions/${id}/transcript`).then(
-      (r) => r.json() as Promise<TranscriptEntry[]>,
-    ),
+    get<TranscriptEntry[]>(`/sessions/${id}/transcript`),
 };

@@ -62,16 +62,17 @@ const props = defineProps<{ entry: TranscriptEntry }>();
 
 type Line = { text: string; diff: boolean; sign: 'add' | 'del' };
 
-function classify(raw: string): Line {
+function classify(raw: string, allowDiff: boolean): Line {
+  if (!allowDiff) return { text: raw, diff: false, sign: 'add' };
   const trimmed = raw.replace(/^\s+/, '');
   const add = /^\+(?!\+)/.test(trimmed);
   const del = /^-(?!-)/.test(trimmed);
   return { text: raw, diff: add || del, sign: del ? 'del' : 'add' };
 }
 
-function toLines(src: string | undefined): Line[] {
+function toLines(src: string | undefined, allowDiff: boolean): Line[] {
   if (!src) return [];
-  return src.split('\n').map(classify);
+  return src.split('\n').map((line) => classify(line, allowDiff));
 }
 
 // First line of a tool summary sits inline with the tool name; any remaining
@@ -83,12 +84,14 @@ const head = computed(() => {
   return '';
 });
 
+// Diff striping (green strip + accent tint) is reserved for real diff/tool
+// output; assistant prose bullets like "- item" must never render as a diff.
 const body = computed<Line[]>(() => {
   if (props.entry.kind === 'assistant_text') {
-    return toLines(props.entry.text);
+    return toLines(props.entry.text, false);
   }
   if (props.entry.kind === 'tool_call' || props.entry.kind === 'tool_result') {
-    return toLines(props.entry.summary).slice(1);
+    return toLines(props.entry.summary, true).slice(1);
   }
   return [];
 });

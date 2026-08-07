@@ -62,6 +62,7 @@
           label="Директорія проєкту"
           placeholder="/path/to/project"
         />
+        <p v-if="groupError" class="shell__error" role="alert">{{ groupError }}</p>
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="addOpen = false">Скасувати</KBtn>
@@ -142,6 +143,7 @@ function newAgent(): void {
 const addOpen = ref(false);
 const groupName = ref('');
 const groupDir = ref('');
+const groupError = ref<string | null>(null);
 const canCreate = computed(
   () => groupName.value.trim() !== '' && groupDir.value.trim() !== '',
 );
@@ -149,13 +151,20 @@ const canCreate = computed(
 function openAddGroup(): void {
   groupName.value = '';
   groupDir.value = '';
+  groupError.value = null;
   addOpen.value = true;
 }
 
 async function submitGroup(): Promise<void> {
   if (!canCreate.value) return;
-  await store.createGroup(groupName.value.trim(), groupDir.value.trim());
-  addOpen.value = false;
+  groupError.value = null;
+  try {
+    await store.createGroup(groupName.value.trim(), groupDir.value.trim());
+    addOpen.value = false;
+  } catch (e) {
+    // Keep the modal open so the user can correct the input; surface why.
+    groupError.value = e instanceof Error ? e.message : String(e);
+  }
 }
 </script>
 
@@ -239,5 +248,12 @@ async function submitGroup(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.shell__error {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--k-accent);
 }
 </style>
