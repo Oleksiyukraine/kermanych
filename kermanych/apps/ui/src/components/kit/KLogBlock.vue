@@ -1,0 +1,202 @@
+<template>
+  <div class="k-log" :class="`k-log--${entry.kind}`">
+    <!-- tool_call — muted mono, diamond prefix -->
+    <template v-if="entry.kind === 'tool_call'">
+      <div class="k-log__row k-log__row--tool">
+        <span class="k-log__glyph" aria-hidden="true">◆</span>
+        <span class="k-log__tool">{{ entry.tool }}</span>
+        <span v-if="head" class="k-log__summary">{{ head }}</span>
+      </div>
+      <div
+        v-for="(line, i) in body"
+        :key="i"
+        class="k-log__body"
+        :class="{ 'k-log__diff': line.diff, [`k-log__diff--${line.sign}`]: line.diff }"
+      >{{ line.text }}</div>
+    </template>
+
+    <!-- tool_result — pass/fail glyph + tool -->
+    <template v-else-if="entry.kind === 'tool_result'">
+      <div class="k-log__row k-log__row--result">
+        <span class="k-log__glyph" aria-hidden="true">{{ entry.ok ? '✓' : '✗' }}</span>
+        <span class="k-log__tool">{{ entry.tool }}</span>
+        <span v-if="head" class="k-log__summary">{{ head }}</span>
+      </div>
+      <div
+        v-for="(line, i) in body"
+        :key="i"
+        class="k-log__body"
+        :class="{ 'k-log__diff': line.diff, [`k-log__diff--${line.sign}`]: line.diff }"
+      >{{ line.text }}</div>
+    </template>
+
+    <!-- assistant_text — primary text, UI font -->
+    <template v-else-if="entry.kind === 'assistant_text'">
+      <div
+        v-for="(line, i) in body"
+        :key="i"
+        class="k-log__text"
+        :class="{ 'k-log__diff': line.diff, [`k-log__diff--${line.sign}`]: line.diff }"
+      >{{ line.text }}</div>
+    </template>
+
+    <!-- assistant_thinking — muted italic -->
+    <div v-else-if="entry.kind === 'assistant_thinking'" class="k-log__thinking">
+      {{ entry.text }}
+    </div>
+
+    <!-- notice — muted -->
+    <div v-else class="k-log__notice">{{ entry.text }}</div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+import type { TranscriptEntry } from '@kermanych/core';
+
+// A single transcript block (design-system section 06). Every kind is flush-left;
+// all machine text is mono, only assistant prose uses the UI font. diff lines
+// (leading + / -) get a 2px green strip and a 7% accent tint — the sole use of
+// green, per the design rules.
+const props = defineProps<{ entry: TranscriptEntry }>();
+
+type Line = { text: string; diff: boolean; sign: 'add' | 'del' };
+
+function classify(raw: string): Line {
+  const trimmed = raw.replace(/^\s+/, '');
+  const add = /^\+(?!\+)/.test(trimmed);
+  const del = /^-(?!-)/.test(trimmed);
+  return { text: raw, diff: add || del, sign: del ? 'del' : 'add' };
+}
+
+function toLines(src: string | undefined): Line[] {
+  if (!src) return [];
+  return src.split('\n').map(classify);
+}
+
+// First line of a tool summary sits inline with the tool name; any remaining
+// lines (typically a diff hunk) render below as body lines.
+const head = computed(() => {
+  if (props.entry.kind === 'tool_call' || props.entry.kind === 'tool_result') {
+    return (props.entry.summary ?? '').split('\n')[0] ?? '';
+  }
+  return '';
+});
+
+const body = computed<Line[]>(() => {
+  if (props.entry.kind === 'assistant_text') {
+    return toLines(props.entry.text);
+  }
+  if (props.entry.kind === 'tool_call' || props.entry.kind === 'tool_result') {
+    return toLines(props.entry.summary).slice(1);
+  }
+  return [];
+});
+</script>
+
+<style scoped lang="scss">
+.k-log {
+  font-family: var(--k-font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.k-log + .k-log {
+  margin-top: 10px;
+}
+
+.k-log__row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.k-log__glyph {
+  flex: none;
+  font-size: 11px;
+}
+
+// tool_call — everything muted, diamond marker.
+.k-log__row--tool {
+  color: var(--k-muted);
+}
+
+// tool_result — glyph + tool stay muted, the summary reads at text weight.
+.k-log__row--result {
+  color: var(--k-muted);
+
+  .k-log__summary {
+    color: var(--k-text);
+  }
+}
+
+.k-log__tool {
+  color: var(--k-text);
+}
+
+.k-log__row--tool .k-log__tool {
+  color: var(--k-muted);
+}
+
+.k-log__summary {
+  color: var(--k-muted);
+}
+
+.k-log__body {
+  margin-top: 3px;
+  padding-left: 20px;
+  color: var(--k-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+// assistant prose — UI font, primary text.
+.k-log__text {
+  font-family: var(--k-font-ui);
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--k-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.k-log__text + .k-log__text {
+  margin-top: 4px;
+}
+
+.k-log__thinking {
+  font-family: var(--k-font-ui);
+  font-size: 14px;
+  line-height: 1.65;
+  font-style: italic;
+  color: var(--k-muted);
+  white-space: pre-wrap;
+}
+
+.k-log__notice {
+  font-size: 12.5px;
+  color: var(--k-muted);
+  white-space: pre-wrap;
+}
+
+// diff — the one place green appears: 2px strip + 7% accent tint.
+.k-log__diff {
+  font-family: var(--k-font-mono);
+  font-size: 12.5px;
+  padding: 3px 12px;
+  margin-left: 0;
+  border-left: 2px solid var(--k-diff);
+  background: color-mix(in srgb, var(--k-accent) 7%, transparent);
+  color: var(--k-diff);
+}
+
+.k-log__body.k-log__diff {
+  padding-left: 12px;
+}
+
+.k-log__diff--del {
+  opacity: 0.85;
+}
+</style>
