@@ -1,5 +1,6 @@
 // apps/api/src/rpc/rpc-session.ts
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { LineSplitter, ChunkReassembler } from "@kermanych/core";
 import type { RpcEvent, RpcExtensionUIResponse, TodoPhase } from "@kermanych/core";
 
@@ -37,25 +38,36 @@ export class RpcSession {
     if (this.opts.model) argv.push("--model", this.opts.model);
     if (this.opts.ompPath) argv[0] = this.opts.ompPath;
     this.proc = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
-    this.proc.stderr.on("data", (b: Buffer) => { this.stderr = (this.stderr + b.toString("utf8")).slice(-8192); });
+    // Persistent decoders buffer partial multibyte (UTF-8) sequences split across chunk boundaries.
+    const outDec = new StringDecoder("utf8");
+    const errDec = new StringDecoder("utf8");
+    this.proc.stderr.on("data", (b: Buffer) => { this.stderr = (this.stderr + errDec.write(b)).slice(-8192); });
+    // Swallow post-exit stdin writes (EPIPE / write-after-end) so they never crash the process.
+    this.proc.stdin.on("error", () => {});
     let ready_ = false;
     const { promise: ready, resolve } = Promise.withResolvers<void>();
-    const { promise: exitedBeforeReady, reject: rejectBeforeReady } = Promise.withResolvers<never>();
-    this.proc.on("exit", (code) => {
-      const e = new Error(this.exitMessage(code));
-      if (!ready_) rejectBeforeReady(e);
-      for (const p of this.pending.values()) p.reject(e);
-      this.pending.clear();
-      this.exitCbs.forEach((cb) => cb(code));
-    });
+    const { promise: settleBeforeReady, reject: rejectBeforeReady } = Promise.withResolvers<never>();
+    // exit: normal child termination. error: spawn failure (async, no 'exit' follows) or stream error.
+    this.proc.on("exit", (code) => this.failAll(new Error(this.exitMessage(code)), code, ready_, rejectBeforeReady));
+    this.proc.on("error", (err) => this.failAll(err, null, ready_, rejectBeforeReady));
     const onReady = (e: RpcEvent) => {
       if (e.type === "ready") { this.write({ id: "negotiate", type: "negotiate_protocol", protocolVersion: 2 }); resolve(); }
     };
     this.eventCbs.push(onReady);
     this.proc.stdout.on("data", (b: Buffer) => {
-      for (const line of this.splitter.push(b.toString("utf8"))) this.handleLine(line);
+      for (const line of this.splitter.push(outDec.write(b))) this.handleLine(line);
     });
-    await Promise.race([ready.then(() => { ready_ = true; }), exitedBeforeReady]);
+    await Promise.race([ready.then(() => { ready_ = true; }), settleBeforeReady]);
+  }
+
+  // Shared failure path for both 'exit' and 'error': reject start() if not yet ready, reject+clear all
+  // outstanding command promises, then notify exit callbacks. Callers pass the live `ready_` at fire time;
+  // rejectBeforeReady is a no-op once start() has already settled, so a post-ready failure only fans out.
+  private failAll(e: Error, code: number | null, ready_: boolean, rejectBeforeReady: (e: Error) => void) {
+    if (!ready_) rejectBeforeReady(e);
+    for (const p of this.pending.values()) p.reject(e);
+    this.pending.clear();
+    this.exitCbs.forEach((cb) => cb(code));
   }
 
   private exitMessage(code: number | null): string {
@@ -98,6 +110,10 @@ export class RpcSession {
     try { this.proc?.stdin.end(); } catch {}
     const proc = this.proc;
     if (!proc) return;
-    await new Promise<void>((r) => proc.on("close", () => r()));
+    // Child already terminated (crashed, or stop() called twice) → 'close' has fired; don't await it.
+    if (proc.exitCode !== null || proc.signalCode !== null) return;
+    const { promise, resolve } = Promise.withResolvers<void>();
+    proc.once("close", () => resolve());
+    await promise;
   }
 }
