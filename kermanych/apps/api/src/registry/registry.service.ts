@@ -1,5 +1,5 @@
 // apps/api/src/registry/registry.service.ts
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
@@ -11,7 +11,7 @@ import type { Group, Session, SessionStatus } from "@kermanych/core";
 export class RegistryService {
   private db: Database.Database;
 
-  constructor(path: string = join(homedir(), ".kermanych", "kermanych.sqlite")) {
+  constructor(@Optional() path: string = join(homedir(), ".kermanych", "kermanych.sqlite")) {
     if (path !== ":memory:") mkdirSync(join(homedir(), ".kermanych"), { recursive: true });
     this.db = new Database(path);
     this.db.exec(
