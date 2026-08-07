@@ -1,11 +1,29 @@
 {
-  "name": "@kermanych/api", "version": "0.0.0", "private": true,
-  "scripts": { "build": "nest build", "start": "node dist/main.js", "start:dev": "nest start --watch" },
-  "dependencies": {
-    "@nestjs/common": "^10", "@nestjs/core": "^10", "@nestjs/platform-express": "^10",
-    "@nestjs/platform-socket.io": "^10", "@nestjs/websockets": "^10",
-    "better-sqlite3": "^11", "reflect-metadata": "^0.2", "rxjs": "^7",
-    "socket.io": "^4", "@kermanych/core": "workspace:*"
+  "name": "@kermanych/api",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "nest build",
+    "start": "node dist/main.js",
+    "start:dev": "nest start --watch"
   },
-  "devDependencies": { "@nestjs/cli": "^10", "@types/better-sqlite3": "^7", "@types/node": "^22", "typescript": "^5.6" }
+  "dependencies": {
+    "@kermanych/core": "workspace:*",
+    "@nestjs/common": "^10",
+    "@nestjs/core": "^10",
+    "@nestjs/platform-express": "^10",
+    "@nestjs/platform-socket.io": "^10",
+    "@nestjs/websockets": "^10",
+    "better-sqlite3": "^11",
+    "reflect-metadata": "^0.2",
+    "rxjs": "^7",
+    "socket.io": "^4"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10",
+    "@types/better-sqlite3": "^7",
+    "@types/node": "^22",
+    "tsx": "^4.23.10",
+    "typescript": "^5.6"
+  }
 }
