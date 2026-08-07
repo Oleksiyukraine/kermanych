@@ -1,0 +1,7 @@
+:root {
+  --k-canvas:#12110f; --k-bg:#1b1a19; --k-surface:#232120; --k-surface2:#2b2927;
+  --k-line:#3a3735; --k-line-strong:#4a4644; --k-text:#f3f2f2; --k-muted:#8f8b88;
+  --k-accent:#ff563c; --k-diff:#3fb950;
+  --k-font-ui:'Archivo',-apple-system,BlinkMacSystemFont,sans-serif;
+  --k-font-mono:'JetBrains Mono',ui-monospace,monospace;
+}
