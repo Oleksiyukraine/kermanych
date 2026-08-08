@@ -8,7 +8,7 @@ import {
 import { Server, Socket } from "socket.io";
 import { SupervisorService } from "../supervisor/supervisor.service";
 
-@WebSocketGateway({ cors: { origin: "*" } })
+@WebSocketGateway({ cors: { origin: "*" }, maxHttpBufferSize: 64 * 1024 * 1024 })
 export class EventsGateway implements OnGatewayConnection, OnModuleInit {
   @WebSocketServer() server!: Server;
 
