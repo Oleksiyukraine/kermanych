@@ -59,6 +59,7 @@ export type ServerEvent =
   | { type: "snapshot"; groups: Group[]; sessions: Session[] }
   | { type: "session_update"; session: Session }
   | { type: "transcript_append"; sessionId: string; entry: TranscriptEntry }
+  | { type: "transcript_reset"; sessionId: string; entries: TranscriptEntry[] }
   | { type: "group_update"; group: Group }
   | { type: "session_removed"; sessionId: string }
   | { type: "group_removed"; groupId: string };

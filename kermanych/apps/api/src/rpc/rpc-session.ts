@@ -113,6 +113,25 @@ export class RpcSession {
     return (r.data ?? {}) as RpcStateData;
   }
 
+  async switchSession(sessionPath: string): Promise<void> {
+    const r = await this.command("switch_session", { sessionPath });
+    if (!r.success) throw new Error(r.error ?? "switch_session failed");
+  }
+
+  // Drain the paged message history (used to rehydrate a resumed session's transcript).
+  async getAllMessages(): Promise<unknown[]> {
+    const out: unknown[] = [];
+    let cursor: string | undefined;
+    do {
+      const r = await this.command("get_messages_page", cursor ? { cursor } : {});
+      if (!r.success) break;
+      const d = (r.data ?? {}) as { messages?: unknown[]; nextCursor?: string };
+      if (d.messages) out.push(...d.messages);
+      cursor = d.nextCursor;
+    } while (cursor);
+    return out;
+  }
+
   async stop(): Promise<void> {
     try { this.proc?.stdin.end(); } catch {}
     const proc = this.proc;

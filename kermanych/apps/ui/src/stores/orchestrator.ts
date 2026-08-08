@@ -47,6 +47,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         ...transcripts.value,
         [e.sessionId]: [...(transcripts.value[e.sessionId] ?? []), e.entry],
       };
+    } else if (e.type === 'transcript_reset') {
+      transcripts.value = { ...transcripts.value, [e.sessionId]: e.entries };
     }
   }
 

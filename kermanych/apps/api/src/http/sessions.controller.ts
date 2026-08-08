@@ -26,9 +26,9 @@ export class SessionsController {
   }
 
   @Post(":id/message")
-  message(@Param("id") id: string, @Body() b: { text: string; mode: "prompt" | "follow_up" | "steer"; images?: ImageInput[] }) {
+  async message(@Param("id") id: string, @Body() b: { text: string; mode: "prompt" | "follow_up" | "steer"; images?: ImageInput[] }) {
     try {
-      return this.sup.sendMessage(id, b.text, b.mode, b.images);
+      return await this.sup.sendMessage(id, b.text, b.mode, b.images);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }

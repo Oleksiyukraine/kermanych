@@ -30,9 +30,22 @@ type Live = {
   poll?: NodeJS.Timeout;
 };
 
+// Shape of omp's converted history messages (get_messages_page) we map from.
+type OmpPart = {
+  type: string;
+  text?: string;
+  name?: string;
+  arguments?: { command?: string; path?: string };
+  intent?: string;
+  data?: string;
+  mimeType?: string;
+};
+type OmpMessage = { role?: string; content?: OmpPart[]; toolName?: string; isError?: boolean };
+
 @Injectable()
 export class SupervisorService {
   private map = new Map<string, Live>();
+  private resuming = new Map<string, Promise<Live>>();
   private events = new Subject<ServerEvent>();
   events$: Observable<ServerEvent> = this.events.asObservable();
 
@@ -87,18 +100,7 @@ export class SupervisorService {
     }
     const saved = this.registry.updateSession(session.id, { worktreePath: wtDir });
     const rpc = new RpcSession({ cwd: wtDir, model });
-    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status: "queued" }, textBuf: "" };
-    this.map.set(session.id, live);
-    rpc.onExit((_code, reason) => {
-      this.stopPoll(live);
-      if (live.live.status !== "stopped" && live.live.status !== "done") {
-        live.live.status = "error";
-        live.live.error = reason;
-        this.registry.updateSession(session.id, { status: "error" });
-        this.pushUpdate(session.id);
-      }
-    });
-    rpc.onEvent((e) => this.onRpcEvent(session.id, e));
+    const live = this.wireLive(session.id, rpc, "queued");
     try {
       await rpc.start();
       this.appendEntry(session.id, this.userEntry(task, images));
@@ -185,9 +187,8 @@ export class SupervisorService {
     } catch {}
   }
 
-  sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
-    const l = this.map.get(id);
-    if (!l) return;
+  async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
+    const l = this.map.get(id) ?? (await this.resumeSession(id));
     if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images));
     if (mode === "steer") l.rpc.steer(text, images);
     else if (mode === "follow_up") l.rpc.followUp(text, images);
@@ -225,6 +226,94 @@ export class SupervisorService {
     this.events.next({ type: "session_removed", sessionId: id });
   }
   getTranscript(id: string): TranscriptEntry[] {
-    return this.map.get(id)?.transcript ?? [];
+    const l = this.map.get(id);
+    if (l) return l.transcript;
+    // Dormant: in the registry but no live process (e.g. after an api restart).
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (s) return [{ kind: "notice", text: "Сесія неактивна. Надішли повідомлення, щоб відновити її та підтягнути історію." }];
+    return [];
+  }
+
+  // Shared live-session wiring (fresh create + resume): build the Live, register it,
+  // and route exit + events. onExit marks error unless the session ended cleanly.
+  private wireLive(sessionId: string, rpc: RpcSession, status: Session["status"]): Live {
+    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status }, textBuf: "" };
+    this.map.set(sessionId, live);
+    rpc.onExit((_code, reason) => {
+      this.stopPoll(live);
+      if (live.live.status !== "stopped" && live.live.status !== "done") {
+        live.live.status = "error";
+        live.live.error = reason;
+        this.registry.updateSession(sessionId, { status: "error" });
+        this.pushUpdate(sessionId);
+      }
+    });
+    rpc.onEvent((e) => this.onRpcEvent(sessionId, e));
+    return live;
+  }
+
+  // Bring a session's omp process back after an api restart or crash: respawn in its
+  // worktree, reload the saved omp session, rehydrate the transcript. Deduped so
+  // concurrent sends resume once.
+  private resumeSession(id: string): Promise<Live> {
+    const inflight = this.resuming.get(id);
+    if (inflight) return inflight;
+    const p = this.doResume(id).finally(() => this.resuming.delete(id));
+    this.resuming.set(id, p);
+    return p;
+  }
+
+  private async doResume(id: string): Promise<Live> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    if (!s.worktreePath) throw new Error("session has no worktree to resume");
+    const rpc = new RpcSession({ cwd: s.worktreePath });
+    const live = this.wireLive(id, rpc, s.status);
+    try {
+      await rpc.start();
+      if (s.ompSessionFile) {
+        await rpc.switchSession(s.ompSessionFile);
+        live.transcript = this.messagesToTranscript(await rpc.getAllMessages());
+      }
+    } catch (err) {
+      this.stopPoll(live);
+      await rpc.stop().catch(() => {});
+      this.map.delete(id);
+      this.registry.updateSession(id, { status: "error" });
+      this.pushUpdate(id);
+      throw err;
+    }
+    live.live.status = "done";
+    this.registry.updateSession(id, { status: "done" });
+    this.events.next({ type: "transcript_reset", sessionId: id, entries: live.transcript });
+    this.pushUpdate(id);
+    return live;
+  }
+
+  // Map omp's converted message history into transcript entries, mirroring the live
+  // event reduction (user text/images, assistant text, tool calls + results).
+  // Thinking parts are omitted, matching the live log.
+  private messagesToTranscript(messages: unknown[]): TranscriptEntry[] {
+    const out: TranscriptEntry[] = [];
+    for (const raw of messages) {
+      const m = raw as OmpMessage;
+      const parts = m.content ?? [];
+      if (m.role === "user") {
+        const text = parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("");
+        const images = parts
+          .filter((p) => p.type === "image" && p.data)
+          .map((p) => `data:${p.mimeType ?? "image/png"};base64,${p.data}`);
+        if (text.trim() || images.length) out.push({ kind: "user_text", text, images: images.length ? images : undefined });
+      } else if (m.role === "assistant") {
+        for (const p of parts) {
+          if (p.type === "text" && p.text?.trim()) out.push({ kind: "assistant_text", text: p.text });
+          else if (p.type === "toolCall") out.push({ kind: "tool_call", tool: p.name ?? "?", summary: p.arguments?.command ?? p.arguments?.path ?? p.intent });
+        }
+      } else if (m.role === "toolResult") {
+        const summary = parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("\n");
+        out.push({ kind: "tool_result", tool: m.toolName ?? "?", ok: !m.isError, summary });
+      }
+    }
+    return out;
   }
 }
