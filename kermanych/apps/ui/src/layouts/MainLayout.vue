@@ -57,11 +57,16 @@
     <KModal v-model="addOpen" title="Новий проєкт">
       <div class="shell__form">
         <KField v-model="groupName" label="Назва" placeholder="my-project" />
-        <KField
-          v-model="groupDir"
-          label="Директорія проєкту"
-          placeholder="/path/to/project"
-        />
+        <div class="shell__dir">
+          <KField
+            v-model="groupDir"
+            label="Директорія проєкту"
+            placeholder="/path/to/project"
+          />
+          <KBtn variant="secondary" class="shell__browse" @click="pickerOpen = true">
+            Обрати теку…
+          </KBtn>
+        </div>
         <p v-if="groupError" class="shell__error" role="alert">{{ groupError }}</p>
       </div>
       <template #controls>
@@ -71,6 +76,9 @@
         </KBtn>
       </template>
     </KModal>
+
+    <!-- DIRECTORY PICKER — server-side browser; fills the project dir field -->
+    <KDirPicker v-model="pickerOpen" :start="groupDir" @select="groupDir = $event" />
   </q-layout>
 </template>
 
@@ -85,6 +93,7 @@ import KStatusBar from 'components/kit/KStatusBar.vue';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
+import KDirPicker from 'components/kit/KDirPicker.vue';
 
 // The Kermanych app shell (design-system section 07): project rail, brand
 // header, page container, and the fleet status bar. Live groups/sessions come
@@ -146,6 +155,7 @@ const addOpen = ref(false);
 const groupName = ref('');
 const groupDir = ref('');
 const groupError = ref<string | null>(null);
+const pickerOpen = ref(false);
 const canCreate = computed(
   () => groupName.value.trim() !== '' && groupDir.value.trim() !== '',
 );
@@ -257,5 +267,15 @@ async function submitGroup(): Promise<void> {
   font-size: 12.5px;
   line-height: 1.5;
   color: var(--k-accent);
+}
+
+.shell__dir {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shell__browse {
+  align-self: flex-start;
 }
 </style>

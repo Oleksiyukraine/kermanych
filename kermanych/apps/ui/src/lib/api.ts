@@ -1,6 +1,7 @@
 // apps/ui/src/lib/api.ts
 // Typed REST helpers against the Kermanych API (NestJS, global prefix "api").
 import type {
+  DirListing,
   Group,
   Session,
   TranscriptEntry,
@@ -81,4 +82,7 @@ export const api = {
 
   loadTranscript: (id: string): Promise<TranscriptEntry[]> =>
     get<TranscriptEntry[]>(`/sessions/${id}/transcript`),
+
+  listDirs: (path?: string): Promise<DirListing> =>
+    get<DirListing>(`/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`),
 };

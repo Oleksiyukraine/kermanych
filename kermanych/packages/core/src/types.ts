@@ -6,6 +6,9 @@ export type TodoPhase = { id: string; name: string; tasks: TodoTask[] };
 
 export type Group = { id: string; name: string; projectDir: string; createdAt: string };
 
+export type DirEntry = { name: string; isRepo: boolean };
+export type DirListing = { path: string; parent: string | null; entries: DirEntry[] };
+
 export type Session = {
   id: string; groupId: string; name: string; task: string;
   worktreePath: string; branch: string;
