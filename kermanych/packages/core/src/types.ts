@@ -18,7 +18,10 @@ export type Session = {
   pendingUiRequest?: RpcExtensionUIRequest; createdAt: string;
 };
 
+export type ImageInput = { data: string; mimeType: string };
+
 export type TranscriptEntry =
+  | { kind: "user_text"; text: string; images?: string[] }
   | { kind: "assistant_text"; text: string }
   | { kind: "assistant_thinking"; text: string }
   | { kind: "tool_call"; tool: string; summary?: string }

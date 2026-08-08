@@ -40,6 +40,20 @@
       >{{ line.text }}</div>
     </template>
 
+    <!-- user_text — the operator's own message: prompt text + any attached images -->
+    <template v-else-if="entry.kind === 'user_text'">
+      <div v-if="entry.text" class="k-log__user">{{ entry.text }}</div>
+      <div v-if="entry.images?.length" class="k-log__user-images">
+        <img
+          v-for="(src, i) in entry.images"
+          :key="i"
+          :src="src"
+          class="k-log__user-img"
+          alt="вкладення"
+        />
+      </div>
+    </template>
+
     <!-- assistant_thinking — muted italic -->
     <div v-else-if="entry.kind === 'assistant_thinking'" class="k-log__thinking">
       {{ entry.text }}
@@ -201,5 +215,32 @@ const body = computed<Line[]>(() => {
 
 .k-log__diff--del {
   opacity: 0.85;
+}
+
+// user_text — the operator's own message: UI font, neutral left strip + surface.
+.k-log__user {
+  font-family: var(--k-font-ui);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--k-text);
+  padding: 6px 10px;
+  background: var(--k-surface);
+  border-left: 2px solid var(--k-line-strong);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.k-log__user-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.k-log__user-img {
+  display: block;
+  max-width: 220px;
+  max-height: 220px;
+  border: 1px solid var(--k-line-strong);
 }
 </style>

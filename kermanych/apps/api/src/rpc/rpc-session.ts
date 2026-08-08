@@ -2,7 +2,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { LineSplitter, ChunkReassembler } from "@kermanych/core";
-import type { RpcEvent, RpcExtensionUIResponse, TodoPhase } from "@kermanych/core";
+import type { RpcEvent, RpcExtensionUIResponse, TodoPhase, ImageInput } from "@kermanych/core";
 
 export interface RpcStateData {
   isStreaming: boolean; contextUsage?: { percent: number };
@@ -15,6 +15,13 @@ interface RpcResponseFrame {
 
 function isResponseFrame(o: unknown): o is RpcResponseFrame {
   return typeof o === "object" && o !== null && "type" in o && o.type === "response";
+}
+
+// omp RPC ImageContent: { type:"image", data:<base64>, mimeType }. Spread only when present.
+function imagesFrame(images?: ImageInput[]): { images?: { type: "image"; data: string; mimeType: string }[] } {
+  return images?.length
+    ? { images: images.map((i) => ({ type: "image" as const, data: i.data, mimeType: i.mimeType })) }
+    : {};
 }
 
 export class RpcSession {
@@ -95,9 +102,9 @@ export class RpcSession {
     return promise;
   }
 
-  prompt(message: string) { this.write({ id: `req_${++this.seq}`, type: "prompt", message }); }
-  followUp(message: string) { this.write({ id: `req_${++this.seq}`, type: "follow_up", message }); }
-  steer(message: string) { this.write({ id: `req_${++this.seq}`, type: "steer", message }); }
+  prompt(message: string, images?: ImageInput[]) { this.write({ id: `req_${++this.seq}`, type: "prompt", message, ...imagesFrame(images) }); }
+  followUp(message: string, images?: ImageInput[]) { this.write({ id: `req_${++this.seq}`, type: "follow_up", message, ...imagesFrame(images) }); }
+  steer(message: string, images?: ImageInput[]) { this.write({ id: `req_${++this.seq}`, type: "steer", message, ...imagesFrame(images) }); }
   answerUi(res: RpcExtensionUIResponse) { this.write(res); }
 
   async getState(): Promise<RpcStateData> {

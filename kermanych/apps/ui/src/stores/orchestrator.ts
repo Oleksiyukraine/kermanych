@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type { Socket } from 'socket.io-client';
 import type {
+  ImageInput,
   Group,
   Session,
   TranscriptEntry,
@@ -77,12 +78,13 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     name: string,
     task: string,
     model?: string,
+    images?: ImageInput[],
   ) {
-    return api.createSession(groupId, name, task, model);
+    return api.createSession(groupId, name, task, model, images);
   }
 
-  function sendMessage(id: string, text: string, mode: MessageMode) {
-    return api.sendMessage(id, text, mode);
+  function sendMessage(id: string, text: string, mode: MessageMode, images?: ImageInput[]) {
+    return api.sendMessage(id, text, mode, images);
   }
 
   function answerUi(id: string, res: RpcExtensionUIResponse) {

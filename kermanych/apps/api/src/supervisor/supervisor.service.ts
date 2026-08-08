@@ -13,6 +13,7 @@ import {
   worktreeDir,
   type StatusState,
   type Group,
+  type ImageInput,
   type RpcEvent,
   type RpcExtensionUIResponse,
   type ServerEvent,
@@ -68,7 +69,7 @@ export class SupervisorService {
     this.events.next({ type: "group_removed", groupId: id });
   }
 
-  async createSession(groupId: string, name: string, task: string, model?: string): Promise<Session> {
+  async createSession(groupId: string, name: string, task: string, model?: string, images?: ImageInput[]): Promise<Session> {
     const group = this.registry.listGroups().find((g) => g.id === groupId);
     if (!group) throw new Error("group not found");
     // Dynamic membership set built from existing branches; `uniqueSlug` consumes a Set.
@@ -100,7 +101,8 @@ export class SupervisorService {
     rpc.onEvent((e) => this.onRpcEvent(session.id, e));
     try {
       await rpc.start();
-      rpc.prompt(task);
+      this.appendEntry(session.id, this.userEntry(task, images));
+      rpc.prompt(task, images);
     } catch (err) {
       this.stopPoll(live);
       await rpc.stop().catch(() => {});
@@ -119,6 +121,12 @@ export class SupervisorService {
     const l = this.map.get(id)!;
     l.transcript.push(entry);
     this.events.next({ type: "transcript_append", sessionId: id, entry });
+  }
+
+  // Echo the user's own message (initial task or follow-up) into the transcript so
+  // the log reads as a full conversation. Images ride along as data URLs for render.
+  private userEntry(text: string, images?: ImageInput[]): TranscriptEntry {
+    return { kind: "user_text", text, images: images?.map((i) => `data:${i.mimeType};base64,${i.data}`) };
   }
 
   private onRpcEvent(id: string, e: RpcEvent) {
@@ -177,12 +185,13 @@ export class SupervisorService {
     } catch {}
   }
 
-  sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer") {
+  sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
     const l = this.map.get(id);
     if (!l) return;
-    if (mode === "steer") l.rpc.steer(text);
-    else if (mode === "follow_up") l.rpc.followUp(text);
-    else l.rpc.prompt(text);
+    if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images));
+    if (mode === "steer") l.rpc.steer(text, images);
+    else if (mode === "follow_up") l.rpc.followUp(text, images);
+    else l.rpc.prompt(text, images);
   }
   answerUi(id: string, res: RpcExtensionUIResponse) {
     this.map.get(id)?.rpc.answerUi(res);

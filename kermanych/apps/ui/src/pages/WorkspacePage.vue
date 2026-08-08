@@ -86,8 +86,26 @@
             class="ws__textarea mono"
             rows="5"
             placeholder="Опиши завдання для агента…"
+            @paste="onLaunchPaste"
+            @drop.prevent="onLaunchDrop"
+            @dragover.prevent
           />
         </label>
+        <div class="ws__attach-row">
+          <button type="button" class="ws__attach-btn" @click="launchFileInput?.click()">
+            📎 Додати зображення
+          </button>
+          <input
+            ref="launchFileInput"
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            multiple
+            class="ws__file"
+            @change="onLaunchFilePick"
+          />
+        </div>
+        <KAttachStrip v-if="launchImages.length" :images="launchImages" @remove="removeLaunchImage" />
+        <p v-if="launchError" class="ws__error" role="alert">{{ launchError }}</p>
         <KField
           v-model="draftModel"
           label="Модель (необовʼязково)"
@@ -109,6 +127,7 @@
 import { computed, inject, nextTick, ref, watch } from 'vue';
 import type { Ref } from 'vue';
 import type {
+  ImageInput,
   Session,
   TranscriptEntry,
   RpcExtensionUIResponse,
@@ -122,6 +141,8 @@ import KTag from 'components/kit/KTag.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
+import KAttachStrip from 'components/kit/KAttachStrip.vue';
+import { useImageAttach } from '../composables/useImageAttach';
 
 // The Workspace screen (design-system section 07): the board of session cards
 // for the selected group + the full panel for the selected session, plus the
@@ -206,6 +227,22 @@ const draftTask = ref('');
 const draftModel = ref('');
 const taskInput = ref<HTMLTextAreaElement | null>(null);
 const launcherError = ref<string | null>(null);
+const {
+  images: launchImages,
+  error: launchError,
+  onPaste: onLaunchPaste,
+  onDrop: onLaunchDrop,
+  remove: removeLaunchImage,
+  clear: clearLaunchImages,
+  addFiles: addLaunchFiles,
+} = useImageAttach();
+const launchFileInput = ref<HTMLInputElement | null>(null);
+
+function onLaunchFilePick(e: Event): void {
+  const input = e.target as HTMLInputElement;
+  if (input.files) void addLaunchFiles(input.files);
+  input.value = '';
+}
 
 const canLaunch = computed(
   () =>
@@ -219,6 +256,7 @@ function openLauncher(): void {
   draftTask.value = '';
   draftModel.value = '';
   launcherError.value = null;
+  clearLaunchImages();
   launcherOpen.value = true;
   void nextTick(() => taskInput.value?.focus());
 }
@@ -234,8 +272,10 @@ async function submitLauncher(): Promise<void> {
       draftName.value.trim(),
       draftTask.value.trim(),
       model,
+      launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType })),
     );
     launcherOpen.value = false;
+    clearLaunchImages();
     if (session?.id) store.selectSession(session.id);
   } catch (e) {
     // Keep the launcher open so the task/name are not lost; show the reason.
@@ -249,12 +289,12 @@ watch(newAgentSignal, () => {
 });
 
 // ── Detail panel emits → store actions ───────────────────────────────────
-function onSend(text: string): void {
+function onSend(text: string, images: ImageInput[]): void {
   const s = selectedSession.value;
   if (!s) return;
   // Done → a fresh follow-up turn; otherwise steer the in-flight turn.
   const mode: MessageMode = s.status === 'done' ? 'follow_up' : 'steer';
-  void store.sendMessage(s.id, text, mode);
+  void store.sendMessage(s.id, text, mode, images);
 }
 
 function onStop(): void {
@@ -548,5 +588,28 @@ function onAnswer(res: RpcExtensionUIResponse): void {
   font-size: 12.5px;
   line-height: 1.5;
   color: var(--k-accent);
+}
+
+.ws__attach-row {
+  display: flex;
+}
+
+.ws__attach-btn {
+  padding: 6px 10px;
+  background: var(--k-surface2);
+  border: 1px solid var(--k-line-strong);
+  color: var(--k-text);
+  font-family: var(--k-font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.ws__attach-btn:hover {
+  border-color: var(--k-text);
+}
+
+.ws__file {
+  display: none;
 }
 </style>

@@ -94,30 +94,58 @@
       </div>
     </div>
 
-    <!-- floor 3 — input row -->
-    <form
-      class="k-panel__input"
-      :class="{ 'k-panel__input--focused': focused }"
-      @submit.prevent="submit"
-    >
-      <span class="k-panel__prompt" aria-hidden="true">❯</span>
-      <input
-        v-model="draft"
-        class="k-panel__field mono"
-        :placeholder="placeholder"
-        @focus="focused = true"
-        @blur="focused = false"
+    <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎) -->
+    <div class="k-panel__composer">
+      <KAttachStrip
+        v-if="attachImages.length"
+        class="k-panel__attach"
+        :images="attachImages"
+        @remove="removeImage"
       />
-    </form>
+      <p v-if="attachError" class="k-panel__attach-error mono">{{ attachError }}</p>
+      <form
+        class="k-panel__input"
+        :class="{ 'k-panel__input--focused': focused }"
+        @submit.prevent="submit"
+        @drop.prevent="onImageDrop"
+        @dragover.prevent
+      >
+        <button
+          type="button"
+          class="k-panel__attach-btn"
+          title="Додати зображення"
+          @click="fileInput?.click()"
+        >📎</button>
+        <span class="k-panel__prompt" aria-hidden="true">❯</span>
+        <input
+          v-model="draft"
+          class="k-panel__field mono"
+          :placeholder="placeholder"
+          @focus="focused = true"
+          @blur="focused = false"
+          @paste="onImagePaste"
+        />
+        <input
+          ref="fileInput"
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          multiple
+          class="k-panel__file"
+          @change="onFilePick"
+        />
+      </form>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import type { Group, Session, RpcExtensionUIResponse } from '@kermanych/core';
+import type { Group, Session, RpcExtensionUIResponse, ImageInput } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KTag from './KTag.vue';
 import KBtn from './KBtn.vue';
+import KAttachStrip from './KAttachStrip.vue';
+import { useImageAttach } from '../../composables/useImageAttach';
 
 // The application atom (design-system section 05): three floors — header, log,
 // input — stacked with no gaps (panels dock via 2px rules). The active panel
@@ -134,13 +162,30 @@ const props = withDefaults(
 const emit = defineEmits<{
   stop: [];
   delete: [];
-  send: [text: string];
+  send: [text: string, images: ImageInput[]];
   answer: [res: RpcExtensionUIResponse];
 }>();
 
 const draft = ref('');
 const focused = ref(false);
 const decisionText = ref('');
+
+const {
+  images: attachImages,
+  error: attachError,
+  onPaste: onImagePaste,
+  onDrop: onImageDrop,
+  remove: removeImage,
+  clear: clearImages,
+  addFiles: addImageFiles,
+} = useImageAttach();
+const fileInput = ref<HTMLInputElement | null>(null);
+
+function onFilePick(e: Event): void {
+  const input = e.target as HTMLInputElement;
+  if (input.files) void addImageFiles(input.files);
+  input.value = '';
+}
 
 const req = computed(() => props.session.pendingUiRequest);
 const groupName = computed(() => props.group?.name ?? props.session.name);
@@ -174,9 +219,10 @@ const statusLabel = computed(() => {
 
 function submit() {
   const text = draft.value.trim();
-  if (!text) return;
-  emit('send', text);
+  if (!text && !attachImages.value.length) return;
+  emit('send', text, attachImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType })));
   draft.value = '';
+  clearImages();
 }
 
 function answerConfirm(confirmed: boolean) {
@@ -433,8 +479,40 @@ function answerCancel() {
   gap: 10px;
   padding: 0 14px;
   height: 44px;
-  border-top: 2px solid var(--k-line-strong);
   flex: none;
+}
+
+.k-panel__composer {
+  border-top: 2px solid var(--k-line-strong);
+}
+
+.k-panel__attach {
+  padding: 10px 12px 0;
+}
+
+.k-panel__attach-error {
+  margin: 6px 12px 0;
+  font-size: 11px;
+  color: var(--k-accent);
+}
+
+.k-panel__attach-btn {
+  flex: none;
+  padding: 0 2px;
+  background: transparent;
+  border: none;
+  color: var(--k-muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--k-text);
+  }
+}
+
+.k-panel__file {
+  display: none;
 }
 
 .k-panel__prompt {

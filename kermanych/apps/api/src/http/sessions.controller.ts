@@ -1,6 +1,6 @@
 // apps/api/src/http/sessions.controller.ts
 import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query } from "@nestjs/common";
-import type { RpcExtensionUIResponse } from "@kermanych/core";
+import type { ImageInput, RpcExtensionUIResponse } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { RegistryService } from "../registry/registry.service";
 
@@ -17,18 +17,18 @@ export class SessionsController {
   }
 
   @Post()
-  async create(@Body() b: { groupId: string; name: string; task: string; model?: string }) {
+  async create(@Body() b: { groupId: string; name: string; task: string; model?: string; images?: ImageInput[] }) {
     try {
-      return await this.sup.createSession(b.groupId, b.name, b.task, b.model);
+      return await this.sup.createSession(b.groupId, b.name, b.task, b.model, b.images);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
   }
 
   @Post(":id/message")
-  message(@Param("id") id: string, @Body() b: { text: string; mode: "prompt" | "follow_up" | "steer" }) {
+  message(@Param("id") id: string, @Body() b: { text: string; mode: "prompt" | "follow_up" | "steer"; images?: ImageInput[] }) {
     try {
-      return this.sup.sendMessage(id, b.text, b.mode);
+      return this.sup.sendMessage(id, b.text, b.mode, b.images);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
