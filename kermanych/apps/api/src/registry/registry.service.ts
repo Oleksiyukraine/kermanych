@@ -3,7 +3,7 @@ import { Injectable, Optional } from "@nestjs/common";
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import type { Group, Session, SessionStatus } from "@kermanych/core";
 
@@ -11,9 +11,13 @@ import type { Group, Session, SessionStatus } from "@kermanych/core";
 export class RegistryService {
   private db: Database.Database;
 
-  constructor(@Optional() path: string = join(homedir(), ".kermanych", "kermanych.sqlite")) {
-    if (path !== ":memory:") mkdirSync(join(homedir(), ".kermanych"), { recursive: true });
+  constructor(@Optional() path: string = process.env.KERMANYCH_DB ?? join(homedir(), ".kermanych", "kermanych.sqlite")) {
+    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path);
+    // WAL + busy timeout so a preview instance that shares this file (Kermanych previewing
+    // itself) can't crash the main api on concurrent access.
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("busy_timeout = 5000");
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS groups (id TEXT PRIMARY KEY, name TEXT, project_dir TEXT, created_at TEXT)`,
     );

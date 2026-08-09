@@ -6,9 +6,8 @@ import { PreviewService } from "../src/preview/preview.service";
 import type { RegistryService } from "../src/registry/registry.service";
 
 // A one-liner http server that binds $PORT and echoes `body` — stands in for a real
-// dev server so we exercise port allocation, spawn, readiness and teardown.
 const httpEcho = (body: string): string =>
-  `node -e "require('http').createServer((_,r)=>r.end(${body})).listen(process.env.PORT)"`;
+  `node -e "const p=process.env.PORT;require('http').createServer((_,r)=>r.end(${body})).listen(p,()=>console.log('http://localhost:'+p))"`;
 
 // Minimal registry seam: one session with a temp worktree, one group with the given
 // commands. Cast is a test double for the DI boundary, never read through inline.

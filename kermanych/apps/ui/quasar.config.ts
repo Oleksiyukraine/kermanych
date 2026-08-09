@@ -25,7 +25,7 @@ export default defineConfig(() => {
 
     devServer: {
       open: false,
-      port: 5317,
+      port: Number(process.env.PORT) || 5317,
     },
 
     framework: {

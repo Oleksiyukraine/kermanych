@@ -353,7 +353,7 @@ function onAnswer(res: RpcExtensionUIResponse): void {
 // ── Live preview (per-session worktree app on a free port) ─────────────────
 const LOADING_HTML =
   '<p style="font:14px system-ui;padding:24px;color:#888">Піднімаю превʼю гілки… (перший раз довше — встановлення залежностей).</p>';
-const DEFAULT_WEB_CMD = 'cd kermanych && pnpm --filter @kermanych/ui dev -- --port $PORT';
+const DEFAULT_WEB_CMD = 'cd kermanych && pnpm --filter @kermanych/ui dev';
 // Fresh worktrees carry no build output (dist is gitignored), so build the shared
 // core and the api before starting it — otherwise `node dist/main.js` is MODULE_NOT_FOUND.
 const DEFAULT_API_CMD =

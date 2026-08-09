@@ -2,14 +2,17 @@
 import { Injectable, type OnModuleDestroy } from "@nestjs/common";
 import { spawn, type ChildProcess } from "node:child_process";
 import { connect, createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { RegistryService } from "../registry/registry.service";
 
 type Preview = { procs: ChildProcess[]; url: string };
 
 // Per-session live preview: run the branch's app from its worktree on free ports so
 // you can see the work-in-progress without touching the main dev servers. Full-stack
-// aware — an optional api command runs first, then the web command is wired to it via
-// VITE_API_BASE, and the web port is opened.
+// aware — an optional api command runs first on an injected PORT, then the web command
+// is wired to it via VITE_API_BASE. The web port is read from the dev server's banner
+// (it may honor the injected PORT or auto-bump), so it works whatever the worktree does.
 @Injectable()
 export class PreviewService implements OnModuleDestroy {
   private previews = new Map<string, Preview>();
@@ -36,19 +39,22 @@ export class PreviewService implements OnModuleDestroy {
       let apiPort: number | undefined;
       if (group.apiCommand) {
         apiPort = await freePort();
-        const api = this.spawnCmd(group.apiCommand, s.worktreePath, { PORT: String(apiPort) });
+        const api = this.spawnCmd(group.apiCommand, s.worktreePath, {
+          PORT: String(apiPort),
+          // Isolated DB so a Kermanych-on-Kermanych preview never shares the main registry.
+          KERMANYCH_DB: join(tmpdir(), "kermanych-preview", `${sessionId}.sqlite`),
+        });
         procs.push(api);
-        await waitPort(apiPort, 180_000, api); // includes a possible first-run `pnpm install`
+        await waitPort(apiPort, 180_000, api); // includes a possible first-run build/install
       }
-      const webPort = await freePort();
-      const webEnv: Record<string, string> = { PORT: String(webPort) };
+      const webEnv: Record<string, string> = { PORT: String(await freePort()) };
       if (apiPort !== undefined) {
         webEnv.API_PORT = String(apiPort);
         webEnv.VITE_API_BASE = `http://localhost:${apiPort}/api`;
       }
       const web = this.spawnCmd(group.previewCommand, s.worktreePath, webEnv);
       procs.push(web);
-      await waitPort(webPort, 120_000, web);
+      const webPort = await discoverPort(web, 120_000);
       const url = `http://localhost:${webPort}`;
       this.previews.set(sessionId, { procs, url });
       return { url };
@@ -93,35 +99,35 @@ function freePort(): Promise<number> {
   return promise;
 }
 
-// Resolve once the port accepts a connection; reject if the child exits first or the
-// deadline passes, carrying the child's stderr tail so failures are diagnosable.
+function tail(stderr: string, out: string): string {
+  const t = (stderr.trim() || out.trim()).slice(-400);
+  return t ? `: ${t}` : "";
+}
+
+// Poll a known port until it accepts a connection (used for a PORT-respecting api).
 function waitPort(port: number, timeoutMs: number, child: ChildProcess): Promise<void> {
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
   let stderr = "";
   child.stderr?.on("data", (b: Buffer) => {
     stderr = (stderr + b.toString()).slice(-4000);
   });
   const deadline = Date.now() + timeoutMs;
-  const { promise, resolve, reject } = Promise.withResolvers<void>();
   let done = false;
-  const finish = (err?: Error) => {
+  const fail = (msg: string) => {
     if (done) return;
     done = true;
-    if (err) reject(err);
-    else resolve();
+    reject(new Error(msg));
   };
-  child.once("exit", (code) =>
-    finish(new Error(`preview process exited (code ${code}) before ready${stderr.trim() ? `: ${stderr.trim().slice(-400)}` : ""}`)),
-  );
+  child.once("exit", (code) => fail(`preview process exited (code ${code}) before ready${tail(stderr, "")}`));
   const tryConnect = () => {
     if (done) return;
-    if (Date.now() > deadline) {
-      finish(new Error(`preview not listening on ${port} within ${Math.round(timeoutMs / 1000)}s${stderr.trim() ? `: ${stderr.trim().slice(-400)}` : ""}`));
-      return;
-    }
+    if (Date.now() > deadline) return fail(`preview not listening on ${port} within ${Math.round(timeoutMs / 1000)}s${tail(stderr, "")}`);
     const sock = connect(port, "127.0.0.1");
     sock.once("connect", () => {
       sock.destroy();
-      finish();
+      if (done) return;
+      done = true;
+      resolve();
     });
     sock.once("error", () => {
       sock.destroy();
@@ -129,6 +135,53 @@ function waitPort(port: number, timeoutMs: number, child: ChildProcess): Promise
     });
   };
   tryConnect();
+  return promise;
+}
+
+// Read the port a dev server actually bound from its startup banner (it may honor the
+// injected PORT or auto-bump to a free one), confirm it accepts, then resolve it.
+function discoverPort(child: ChildProcess, timeoutMs: number): Promise<number> {
+  const { promise, resolve, reject } = Promise.withResolvers<number>();
+  let out = "";
+  let stderr = "";
+  let done = false;
+  let guard: NodeJS.Timeout;
+  const deadline = Date.now() + timeoutMs;
+  const fail = (msg: string) => {
+    if (done) return;
+    done = true;
+    clearTimeout(guard);
+    reject(new Error(msg));
+  };
+  const succeed = (port: number) => {
+    if (done) return;
+    done = true;
+    clearTimeout(guard);
+    resolve(port);
+  };
+  const confirm = (port: number) => {
+    if (done) return;
+    if (Date.now() > deadline) return fail(`preview not ready within ${Math.round(timeoutMs / 1000)}s${tail(stderr, out)}`);
+    const sock = connect(port, "127.0.0.1");
+    sock.once("connect", () => {
+      sock.destroy();
+      succeed(port);
+    });
+    sock.once("error", () => {
+      sock.destroy();
+      setTimeout(() => confirm(port), 400);
+    });
+  };
+  child.stderr?.on("data", (b: Buffer) => {
+    stderr = (stderr + b.toString()).slice(-4000);
+  });
+  child.stdout?.on("data", (b: Buffer) => {
+    out = (out + b.toString()).slice(-8000);
+    const m = out.match(/https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)/);
+    if (m) confirm(Number(m[1]));
+  });
+  child.once("exit", (code) => fail(`preview process exited (code ${code}) before ready${tail(stderr, out)}`));
+  guard = setTimeout(() => fail(`preview printed no url within ${Math.round(timeoutMs / 1000)}s${tail(stderr, out)}`), timeoutMs);
   return promise;
 }
 
