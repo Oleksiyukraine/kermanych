@@ -16,6 +16,13 @@
           title="Зупинити"
           @click="emit('stop')"
         >■</button>
+        <button
+          v-if="session.status !== 'merged'"
+          class="k-panel__icon"
+          type="button"
+          title="Завершити (merge гілки в проєкт)"
+          @click="emit('finish')"
+        >✓</button>
         <span class="k-panel__icon k-panel__icon--chrome" aria-hidden="true">⊞</span>
         <button
           class="k-panel__icon"
@@ -164,6 +171,7 @@ const emit = defineEmits<{
   delete: [];
   send: [text: string, images: ImageInput[]];
   answer: [res: RpcExtensionUIResponse];
+  finish: [];
 }>();
 
 const draft = ref('');
@@ -244,6 +252,8 @@ const statusLabel = computed(() => {
       return 'у черзі';
     case 'stopped':
       return 'зупинено';
+    case 'merged':
+      return 'влито';
     default:
       return props.session.status;
   }

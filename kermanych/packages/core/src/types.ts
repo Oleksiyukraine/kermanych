@@ -1,5 +1,5 @@
 export type SessionStatus =
-  | "queued" | "thinking" | "tool" | "waiting_input" | "done" | "error" | "stopped";
+  | "queued" | "thinking" | "tool" | "waiting_input" | "done" | "error" | "stopped" | "merged";
 
 export type TodoTask = { id: string; content: string; status: "pending" | "in_progress" | "completed" | string };
 export type TodoPhase = { id: string; name: string; tasks: TodoTask[] };

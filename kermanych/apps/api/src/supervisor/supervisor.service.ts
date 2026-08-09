@@ -230,6 +230,51 @@ export class SupervisorService {
     this.registry.removeSession(id);
     this.events.next({ type: "session_removed", sessionId: id });
   }
+
+  // Preview of what "finish" will do: the target branch, how many commits land,
+  // and whether the worktree has uncommitted work that would be auto-committed.
+  async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean }> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s?.worktreePath) throw new Error("session has no worktree");
+    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
+    if (!g) throw new Error("group not found");
+    const target = await this.worktree.currentBranch(g.projectDir);
+    const ahead = target ? await this.worktree.aheadCount(g.projectDir, target, s.branch) : 0;
+    const dirty = await this.worktree.hasUncommitted(s.worktreePath);
+    return { branch: s.branch, target, ahead, dirty };
+  }
+
+  // Merge the session's branch into the project's current branch, then retire the
+  // worktree + branch and mark the session merged. Auto-commits dirty worktree work
+  // first. On merge conflict the worktree is left intact and the error is surfaced.
+  async finishSession(id: string): Promise<{ merged: true; into: string }> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s?.worktreePath) throw new Error("session has no worktree");
+    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
+    if (!g) throw new Error("group not found");
+    const target = await this.worktree.currentBranch(g.projectDir);
+    if (!target) throw new Error("project repo has a detached HEAD - checkout a branch first");
+    if (target === s.branch) throw new Error("project repo is on the session branch itself");
+
+    // Free the worktree: stop the live omp process (preview is stopped by the controller).
+    const l = this.map.get(id);
+    if (l) {
+      l.live.status = "stopped";
+      this.stopPoll(l);
+      await l.rpc.stop();
+      this.map.delete(id);
+    }
+    if (await this.worktree.hasUncommitted(s.worktreePath)) {
+      await this.worktree.commitAll(s.worktreePath, `session work: ${s.name}`);
+    }
+    await this.worktree.mergeBranch(g.projectDir, s.branch, `merge session: ${s.name}`);
+    await this.worktree.removeWorktree(g.projectDir, s.worktreePath);
+    await this.worktree.removeBranch(g.projectDir, s.branch);
+    // Retire it: worktree is gone, so clear the path (resume/preview become no-ops).
+    this.registry.updateSession(id, { status: "merged", worktreePath: "" });
+    this.pushUpdate(id);
+    return { merged: true, into: target };
+  }
   getTranscript(id: string): TranscriptEntry[] {
     const l = this.map.get(id);
     if (l) return l.transcript;

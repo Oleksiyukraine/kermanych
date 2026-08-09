@@ -75,6 +75,25 @@ export class SessionsController {
     return { ok: true };
   }
 
+  @Get(":id/finish")
+  async finishInfo(@Param("id") id: string) {
+    try {
+      return await this.sup.finishInfo(id);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  @Post(":id/finish")
+  async finish(@Param("id") id: string) {
+    try {
+      this.preview.stop(id);
+      return await this.sup.finishSession(id);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Delete(":id")
   async remove(@Param("id") id: string) {
     try {

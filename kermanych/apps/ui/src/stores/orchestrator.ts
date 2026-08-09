@@ -130,6 +130,21 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.updateGroup(id, patch);
   }
 
+  function finishInfo(id: string) {
+    return api.finishInfo(id);
+  }
+
+  async function finishSession(id: string) {
+    const res = await api.finish(id);
+    // preview is stopped server-side on finish; drop its local url too.
+    if (previews.value[id]) {
+      const next = { ...previews.value };
+      delete next[id];
+      previews.value = next;
+    }
+    return res;
+  }
+
   return {
     groups,
     sessions,
@@ -151,5 +166,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     startPreview,
     stopPreview,
     updateGroup,
+    finishInfo,
+    finishSession,
   };
 });

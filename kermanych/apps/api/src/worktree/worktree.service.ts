@@ -31,4 +31,34 @@ export class WorktreeService {
   async removeBranch(repoDir: string, branch: string): Promise<void> {
     await git(repoDir, ["branch", "-D", branch]);
   }
+
+  async currentBranch(repoDir: string): Promise<string> {
+    return (await git(repoDir, ["symbolic-ref", "--short", "HEAD"])).out.trim();
+  }
+
+  async hasUncommitted(dir: string): Promise<boolean> {
+    return (await git(dir, ["status", "--porcelain"])).out.trim().length > 0;
+  }
+
+  async commitAll(dir: string, message: string): Promise<void> {
+    await git(dir, ["add", "-A"]);
+    const r = await git(dir, ["commit", "-m", message]);
+    if (!r.ok) throw new Error(`git commit failed: ${r.out}`);
+  }
+
+  // How many session commits will land (commits on branch not yet in base).
+  async aheadCount(repoDir: string, base: string, branch: string): Promise<number> {
+    const n = Number((await git(repoDir, ["rev-list", "--count", `${base}..${branch}`])).out.trim());
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  // Merge branch into the repo's current HEAD (no-ff). On failure abort so the
+  // working tree is left clean, and surface git's message for the UI.
+  async mergeBranch(repoDir: string, branch: string, message: string): Promise<void> {
+    const r = await git(repoDir, ["merge", "--no-ff", branch, "-m", message]);
+    if (!r.ok) {
+      await git(repoDir, ["merge", "--abort"]);
+      throw new Error(r.out.trim() || "merge failed");
+    }
+  }
 }

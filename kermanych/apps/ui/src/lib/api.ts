@@ -106,4 +106,10 @@ export const api = {
 
   stopPreview: (id: string): Promise<void> =>
     fetch(`${BASE}/sessions/${id}/preview`, { method: 'DELETE' }).then(() => undefined),
+
+  finishInfo: (id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean }> =>
+    get(`/sessions/${id}/finish`),
+
+  finish: (id: string): Promise<{ merged: boolean; into: string }> =>
+    post(`/sessions/${id}/finish`, {}),
 };

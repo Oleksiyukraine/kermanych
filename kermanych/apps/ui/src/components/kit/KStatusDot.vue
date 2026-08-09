@@ -21,6 +21,7 @@ const kind = computed<Kind>(() => {
       return 'waiting';
     case 'done':
     case 'error':
+    case 'merged':
       return 'done';
     case 'queued':
     case 'stopped':

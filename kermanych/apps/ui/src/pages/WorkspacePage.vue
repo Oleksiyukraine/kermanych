@@ -43,6 +43,13 @@
                   :title="store.previews[s.id] ? 'Зупинити превʼю' : 'Превʼю гілки в браузері'"
                   @click.stop="togglePreview(s)"
                 >{{ store.previews[s.id] ? '◼' : '▶' }}</button>
+                <button
+                  v-if="s.status !== 'merged'"
+                  type="button"
+                  class="ws__card-icon"
+                  title="Завершити (merge гілки в проєкт)"
+                  @click.stop="openFinish(s)"
+                >✓</button>
               </div>
             </div>
             <div class="ws__card-meta">
@@ -76,6 +83,7 @@
           @delete="onDelete"
           @send="onSend"
           @answer="onAnswer"
+          @finish="onFinish"
         >
           <template v-if="entries.length">
             <KLogBlock v-for="(entry, i) in entries" :key="i" :entry="entry" />
@@ -153,6 +161,26 @@
         <KBtn variant="primary" :disabled="!draftWebCmd.trim()" @click="submitPreviewConfig">
           Запустити превʼю
         </KBtn>
+      </template>
+    </KModal>
+
+    <!-- FINISH — merge the session branch into the project branch, retire the worktree -->
+    <KModal v-model="finishOpen" title="Завершити сесію">
+      <div class="ws__form">
+        <p v-if="finishData">
+          Влити <code class="mono">{{ finishData.branch }}</code> →
+          <code class="mono">{{ finishData.target }}</code>
+        </p>
+        <p v-if="finishData" class="ws__hint mono">
+          {{ finishData.ahead }} комітів{{ finishData.dirty ? ' + незакоммічені зміни (авто-коміт)' : '' }};
+          worktree буде прибрано, сесія лишиться як «влито».
+        </p>
+        <p v-else class="ws__hint mono">Готую…</p>
+        <p v-if="finishError" class="ws__error" role="alert">{{ finishError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="finishOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" :disabled="finishBusy || !finishData" @click="submitFinish">Влити</KBtn>
       </template>
     </KModal>
   </main>
@@ -239,6 +267,8 @@ function statusWord(s: Session): string {
       return 'у черзі';
     case 'stopped':
       return 'зупинено';
+    case 'merged':
+      return 'влито';
     default:
       return s.status;
   }
@@ -348,6 +378,47 @@ async function onDelete(): Promise<void> {
 function onAnswer(res: RpcExtensionUIResponse): void {
   const s = selectedSession.value;
   if (s) void store.answerUi(s.id, res);
+}
+
+// ── Finish (merge session branch → project branch, retire worktree) ────────
+const finishOpen = ref(false);
+const finishFor = ref<Session | null>(null);
+const finishData = ref<{ branch: string; target: string; ahead: number; dirty: boolean } | null>(null);
+const finishError = ref<string | null>(null);
+const finishBusy = ref(false);
+
+async function openFinish(s: Session): Promise<void> {
+  finishFor.value = s;
+  finishData.value = null;
+  finishError.value = null;
+  finishBusy.value = false;
+  finishOpen.value = true;
+  try {
+    finishData.value = await store.finishInfo(s.id);
+  } catch (e) {
+    finishError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+function onFinish(): void {
+  const s = selectedSession.value;
+  if (s) void openFinish(s);
+}
+
+async function submitFinish(): Promise<void> {
+  const s = finishFor.value;
+  if (!s) return;
+  finishBusy.value = true;
+  finishError.value = null;
+  try {
+    await store.finishSession(s.id);
+    finishOpen.value = false;
+  } catch (e) {
+    // Merge conflict or a dirty main tree — keep the modal open, show git's message.
+    finishError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    finishBusy.value = false;
+  }
 }
 
 // ── Live preview (per-session worktree app on a free port) ─────────────────
