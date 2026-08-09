@@ -4,7 +4,7 @@ export type SessionStatus =
 export type TodoTask = { id: string; content: string; status: "pending" | "in_progress" | "completed" | string };
 export type TodoPhase = { id: string; name: string; tasks: TodoTask[] };
 
-export type Group = { id: string; name: string; projectDir: string; createdAt: string };
+export type Group = { id: string; name: string; projectDir: string; previewCommand?: string; apiCommand?: string; createdAt: string };
 
 export type DirEntry = { name: string; isRepo: boolean };
 export type DirListing = { path: string; parent: string | null; entries: DirEntry[] };

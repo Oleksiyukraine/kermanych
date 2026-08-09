@@ -10,6 +10,7 @@ async function bootstrap() {
   app.useBodyParser("urlencoded", { extended: true, limit: "64mb" });
   app.enableCors({ origin: "*" });
   app.setGlobalPrefix("api", { exclude: [] });
+  app.enableShutdownHooks();
   const port = Number(process.env.PORT) || 4317;
   await app.listen(port);
   console.log(`Kermanych API on http://localhost:${port}`);

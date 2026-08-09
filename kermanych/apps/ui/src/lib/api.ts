@@ -9,7 +9,7 @@ import type {
   RpcExtensionUIResponse,
 } from '@kermanych/core';
 
-const BASE = 'http://localhost:4317/api';
+const BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:4317/api';
 
 export type MessageMode = 'prompt' | 'follow_up' | 'steer';
 
@@ -87,4 +87,23 @@ export const api = {
 
   listDirs: (path?: string): Promise<DirListing> =>
     get<DirListing>(`/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+
+  updateGroup: async (
+    id: string,
+    patch: { previewCommand?: string; apiCommand?: string },
+  ): Promise<Group> => {
+    const r = await fetch(`${BASE}/groups/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!r.ok) throw await toError(r);
+    return (await r.json()) as Group;
+  },
+
+  startPreview: (id: string): Promise<{ url?: string; needsCommand?: boolean }> =>
+    post(`/sessions/${id}/preview`, {}),
+
+  stopPreview: (id: string): Promise<void> =>
+    fetch(`${BASE}/sessions/${id}/preview`, { method: 'DELETE' }).then(() => undefined),
 };

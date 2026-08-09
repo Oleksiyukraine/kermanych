@@ -20,12 +20,20 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, group_id TEXT, name TEXT, task TEXT, worktree_path TEXT, branch TEXT, omp_session_id TEXT, omp_session_file TEXT, status TEXT, created_at TEXT)`,
     );
+    // Additive migration: preview commands arrived after the initial schema.
+    for (const col of ["preview_command", "api_command"]) {
+      try {
+        this.db.exec(`ALTER TABLE groups ADD COLUMN ${col} TEXT`);
+      } catch {
+        /* column already exists */
+      }
+    }
   }
 
   listGroups(): Group[] {
     return this.db
       .prepare(
-        `SELECT id, name, project_dir as projectDir, created_at as createdAt FROM groups ORDER BY created_at`,
+        `SELECT id, name, project_dir as projectDir, preview_command as previewCommand, api_command as apiCommand, created_at as createdAt FROM groups ORDER BY created_at`,
       )
       .all() as Group[];
   }
@@ -36,6 +44,16 @@ export class RegistryService {
       .prepare(`INSERT INTO groups (id, name, project_dir, created_at) VALUES (?,?,?,?)`)
       .run(row.id, row.name, row.projectDir, row.createdAt);
     return row;
+  }
+
+  updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string }): Group {
+    const cur = this.listGroups().find((g) => g.id === id);
+    if (!cur) throw new Error("group not found");
+    const next = { ...cur, ...patch };
+    this.db
+      .prepare(`UPDATE groups SET preview_command=?, api_command=? WHERE id=?`)
+      .run(next.previewCommand ?? null, next.apiCommand ?? null, id);
+    return next;
   }
 
   removeGroup(id: string): void {

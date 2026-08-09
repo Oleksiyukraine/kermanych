@@ -18,28 +18,39 @@
         </header>
 
         <div v-if="groupSessions.length" class="ws__grid">
-          <button
+          <div
             v-for="s in groupSessions"
             :key="s.id"
-            type="button"
             class="ws__card"
             :class="{
               'ws__card--active': s.id === store.selectedSessionId,
               'ws__card--running': isRunning(s),
             }"
+            role="button"
+            tabindex="0"
             @click="store.selectSession(s.id)"
+            @keydown.enter="store.selectSession(s.id)"
           >
             <div class="ws__card-top">
               <KStatusDot :status="s.status" />
               <span class="ws__card-name">{{ s.name }}</span>
               <span class="ws__card-status mono">{{ statusWord(s) }}</span>
+              <div class="ws__card-actions">
+                <button
+                  type="button"
+                  class="ws__card-icon"
+                  :class="{ 'ws__card-icon--on': store.previews[s.id] }"
+                  :title="store.previews[s.id] ? 'Зупинити превʼю' : 'Превʼю гілки в браузері'"
+                  @click.stop="togglePreview(s)"
+                >{{ store.previews[s.id] ? '◼' : '▶' }}</button>
+              </div>
             </div>
             <div class="ws__card-meta">
               <KTag>⑂ {{ s.branch }}</KTag>
               <KTag v-if="ctxOf(s)">{{ ctxOf(s) }}</KTag>
             </div>
             <div class="ws__card-activity mono">{{ activityOf(s) || '—' }}</div>
-          </button>
+          </div>
         </div>
         <div v-else class="ws__empty mono">
           Ще немає агентів. Запусти першого через «+ Новий агент».
@@ -117,6 +128,30 @@
         <KBtn variant="ghost" @click="launcherOpen = false">Скасувати</KBtn>
         <KBtn variant="primary" :disabled="!canLaunch" @click="submitLauncher">
           Запустити
+        </KBtn>
+      </template>
+    </KModal>
+
+    <!-- PREVIEW CONFIG — how to run this project's app for a live branch preview -->
+    <KModal v-model="previewCfgOpen" title="Налаштувати превʼю">
+      <div class="ws__form">
+        <label class="ws__field">
+          <span class="ws__field-label">Команда web (з $PORT)</span>
+          <textarea v-model="draftWebCmd" class="ws__textarea mono" rows="2" />
+        </label>
+        <label class="ws__field">
+          <span class="ws__field-label">Команда api (опційно; отримує PORT)</span>
+          <textarea v-model="draftApiCmd" class="ws__textarea mono" rows="2" />
+        </label>
+        <p class="ws__hint mono">
+          Запускається в worktree. web відкриється на автопорті; якщо задано api —
+          підніметься першим, а web вкажеться на нього через VITE_API_BASE.
+        </p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="previewCfgOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" :disabled="!draftWebCmd.trim()" @click="submitPreviewConfig">
+          Запустити превʼю
         </KBtn>
       </template>
     </KModal>
@@ -314,6 +349,74 @@ function onAnswer(res: RpcExtensionUIResponse): void {
   const s = selectedSession.value;
   if (s) void store.answerUi(s.id, res);
 }
+
+// ── Live preview (per-session worktree app on a free port) ─────────────────
+const LOADING_HTML =
+  '<p style="font:14px system-ui;padding:24px;color:#888">Піднімаю превʼю гілки… (перший раз довше — встановлення залежностей).</p>';
+const previewCfgOpen = ref(false);
+const previewCfgSession = ref<Session | null>(null);
+const draftWebCmd = ref('');
+const draftApiCmd = ref('');
+
+async function launchInto(win: Window | null, s: Session): Promise<void> {
+  try {
+    const res = await store.startPreview(s.id);
+    if (res.needsCommand) {
+      win?.close();
+      openPreviewConfig(s);
+      return;
+    }
+    if (res.url && win) win.location.href = res.url;
+    else win?.close();
+  } catch (e) {
+    win?.close();
+    window.alert(`Превʼю не запустилось: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function togglePreview(s: Session): Promise<void> {
+  if (store.previews[s.id]) {
+    await store.stopPreview(s.id);
+    return;
+  }
+  const g = store.groups.find((x) => x.id === s.groupId);
+  if (!g?.previewCommand) {
+    openPreviewConfig(s);
+    return;
+  }
+  const win = window.open('', '_blank');
+  win?.document.write(LOADING_HTML);
+  await launchInto(win, s);
+}
+
+function openPreviewConfig(s: Session): void {
+  previewCfgSession.value = s;
+  const g = store.groups.find((x) => x.id === s.groupId);
+  draftWebCmd.value = g?.previewCommand ?? 'cd kermanych && pnpm --filter @kermanych/ui dev -- --port $PORT';
+  draftApiCmd.value = g?.apiCommand ?? 'cd kermanych && pnpm install && pnpm --filter @kermanych/api start';
+  previewCfgOpen.value = true;
+}
+
+async function submitPreviewConfig(): Promise<void> {
+  const s = previewCfgSession.value;
+  if (!s) return;
+  const win = window.open('', '_blank');
+  win?.document.write(LOADING_HTML);
+  previewCfgOpen.value = false;
+  try {
+    const patch: { previewCommand: string; apiCommand?: string } = {
+      previewCommand: draftWebCmd.value.trim(),
+    };
+    const apiCmd = draftApiCmd.value.trim();
+    if (apiCmd) patch.apiCommand = apiCmd;
+    await store.updateGroup(s.groupId, patch);
+  } catch (e) {
+    win?.close();
+    window.alert(`Не вдалось зберегти: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
+  await launchInto(win, s);
+}
 </script>
 
 <style scoped lang="scss">
@@ -455,6 +558,44 @@ function onAnswer(res: RpcExtensionUIResponse): void {
   font-size: 11px;
   color: var(--k-muted);
   white-space: nowrap;
+}
+
+.ws__card-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.ws__card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--k-line);
+  background: transparent;
+  color: var(--k-muted);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.ws__card-icon:hover {
+  border-color: var(--k-text);
+  color: var(--k-text);
+}
+
+.ws__card-icon--on {
+  border-color: var(--k-accent);
+  color: var(--k-accent);
+}
+
+.ws__hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--k-muted);
 }
 
 .ws__card-meta {

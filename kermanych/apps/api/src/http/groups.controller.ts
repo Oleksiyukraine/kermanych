@@ -1,5 +1,5 @@
 // apps/api/src/http/groups.controller.ts
-import { BadRequestException, Body, Controller, Delete, Get, Param, Post } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { RegistryService } from "../registry/registry.service";
 
@@ -19,6 +19,15 @@ export class GroupsController {
   async create(@Body() b: { name: string; projectDir: string }) {
     try {
       return await this.sup.addGroup(b.name, b.projectDir);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  @Patch(":id")
+  async update(@Param("id") id: string, @Body() b: { previewCommand?: string; apiCommand?: string }) {
+    try {
+      return await this.sup.updateGroup(id, b);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }

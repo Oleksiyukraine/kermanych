@@ -3,12 +3,14 @@ import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query 
 import type { ImageInput, RpcExtensionUIResponse } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { RegistryService } from "../registry/registry.service";
+import { PreviewService } from "../preview/preview.service";
 
 @Controller("sessions")
 export class SessionsController {
   constructor(
     private sup: SupervisorService,
     private reg: RegistryService,
+    private preview: PreviewService,
   ) {}
 
   @Get()
@@ -58,9 +60,25 @@ export class SessionsController {
     return this.sup.getTranscript(id);
   }
 
+  @Post(":id/preview")
+  async startPreview(@Param("id") id: string) {
+    try {
+      return await this.preview.start(id);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  @Delete(":id/preview")
+  stopPreview(@Param("id") id: string) {
+    this.preview.stop(id);
+    return { ok: true };
+  }
+
   @Delete(":id")
   async remove(@Param("id") id: string) {
     try {
+      this.preview.stop(id);
       await this.sup.deleteSession(id);
     } catch (err) {
       throw new BadRequestException((err as Error).message);

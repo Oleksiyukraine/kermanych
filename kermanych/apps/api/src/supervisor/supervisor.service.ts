@@ -81,6 +81,11 @@ export class SupervisorService {
     this.registry.removeGroup(id);
     this.events.next({ type: "group_removed", groupId: id });
   }
+  async updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string }): Promise<Group> {
+    const g = this.registry.updateGroup(id, patch);
+    this.events.next({ type: "group_update", group: g });
+    return g;
+  }
 
   async createSession(groupId: string, name: string, task: string, model?: string, images?: ImageInput[]): Promise<Session> {
     const group = this.registry.listGroups().find((g) => g.id === groupId);

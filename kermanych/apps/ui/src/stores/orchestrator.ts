@@ -19,6 +19,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   const transcripts = ref<Record<string, TranscriptEntry[]>>({});
   const selectedGroupId = ref<string | undefined>(undefined);
   const selectedSessionId = ref<string | undefined>(undefined);
+  const previews = ref<Record<string, string>>({});
 
   let socket: Socket | undefined;
 
@@ -42,6 +43,11 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       ];
     } else if (e.type === 'session_removed') {
       sessions.value = sessions.value.filter((x) => x.id !== e.sessionId);
+      if (previews.value[e.sessionId]) {
+        const next = { ...previews.value };
+        delete next[e.sessionId];
+        previews.value = next;
+      }
     } else if (e.type === 'transcript_append') {
       transcripts.value = {
         ...transcripts.value,
@@ -107,6 +113,23 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return entries;
   }
 
+  async function startPreview(id: string) {
+    const res = await api.startPreview(id);
+    if (res.url) previews.value = { ...previews.value, [id]: res.url };
+    return res;
+  }
+
+  async function stopPreview(id: string) {
+    await api.stopPreview(id);
+    const next = { ...previews.value };
+    delete next[id];
+    previews.value = next;
+  }
+
+  function updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string }) {
+    return api.updateGroup(id, patch);
+  }
+
   return {
     groups,
     sessions,
@@ -124,5 +147,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     stopSession,
     deleteSession,
     loadTranscript,
+    previews,
+    startPreview,
+    stopPreview,
+    updateGroup,
   };
 });
