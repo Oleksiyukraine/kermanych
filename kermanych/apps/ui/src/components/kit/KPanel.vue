@@ -27,7 +27,7 @@
     </header>
 
     <!-- floor 2 — scrollable log -->
-    <div class="k-panel__log">
+    <div ref="logEl" class="k-panel__log" @scroll="onLogScroll">
       <slot />
 
       <!-- decision block — the ONE accent block-strip in the log -->
@@ -139,7 +139,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Group, Session, RpcExtensionUIResponse, ImageInput } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KTag from './KTag.vue';
@@ -186,6 +186,38 @@ function onFilePick(e: Event): void {
   if (input.files) void addImageFiles(input.files);
   input.value = '';
 }
+
+// Auto-scroll: keep the log pinned to the newest entry while the user is at the
+// bottom; if they scroll up to read history, stop following until they return.
+const logEl = ref<HTMLElement | null>(null);
+let stick = true;
+let logObserver: MutationObserver | undefined;
+function scrollToBottom(): void {
+  const el = logEl.value;
+  if (el) el.scrollTop = el.scrollHeight;
+}
+function onLogScroll(): void {
+  const el = logEl.value;
+  if (el) stick = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+}
+onMounted(() => {
+  const el = logEl.value;
+  if (!el) return;
+  scrollToBottom();
+  logObserver = new MutationObserver(() => {
+    if (stick) requestAnimationFrame(scrollToBottom);
+  });
+  logObserver.observe(el, { childList: true, subtree: true });
+});
+onBeforeUnmount(() => logObserver?.disconnect());
+// Session switch → jump to the newest entry of the newly selected session.
+watch(
+  () => props.session.id,
+  () => {
+    stick = true;
+    void nextTick(scrollToBottom);
+  },
+);
 
 const req = computed(() => props.session.pendingUiRequest);
 const groupName = computed(() => props.group?.name ?? props.session.name);
