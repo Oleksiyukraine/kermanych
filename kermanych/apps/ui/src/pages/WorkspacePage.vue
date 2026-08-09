@@ -353,6 +353,11 @@ function onAnswer(res: RpcExtensionUIResponse): void {
 // ── Live preview (per-session worktree app on a free port) ─────────────────
 const LOADING_HTML =
   '<p style="font:14px system-ui;padding:24px;color:#888">Піднімаю превʼю гілки… (перший раз довше — встановлення залежностей).</p>';
+const DEFAULT_WEB_CMD = 'cd kermanych && pnpm --filter @kermanych/ui dev -- --port $PORT';
+// Fresh worktrees carry no build output (dist is gitignored), so build the shared
+// core and the api before starting it — otherwise `node dist/main.js` is MODULE_NOT_FOUND.
+const DEFAULT_API_CMD =
+  'cd kermanych && pnpm install && pnpm --filter @kermanych/core build && pnpm --filter @kermanych/api build && pnpm --filter @kermanych/api start';
 const previewCfgOpen = ref(false);
 const previewCfgSession = ref<Session | null>(null);
 const draftWebCmd = ref('');
@@ -371,6 +376,7 @@ async function launchInto(win: Window | null, s: Session): Promise<void> {
   } catch (e) {
     win?.close();
     window.alert(`Превʼю не запустилось: ${e instanceof Error ? e.message : String(e)}`);
+    openPreviewConfig(s, true); // reopen prefilled with working defaults so the user can fix it
   }
 }
 
@@ -389,11 +395,11 @@ async function togglePreview(s: Session): Promise<void> {
   await launchInto(win, s);
 }
 
-function openPreviewConfig(s: Session): void {
+function openPreviewConfig(s: Session, forceDefaults = false): void {
   previewCfgSession.value = s;
   const g = store.groups.find((x) => x.id === s.groupId);
-  draftWebCmd.value = g?.previewCommand ?? 'cd kermanych && pnpm --filter @kermanych/ui dev -- --port $PORT';
-  draftApiCmd.value = g?.apiCommand ?? 'cd kermanych && pnpm install && pnpm --filter @kermanych/api start';
+  draftWebCmd.value = (forceDefaults ? '' : g?.previewCommand ?? '') || DEFAULT_WEB_CMD;
+  draftApiCmd.value = (forceDefaults ? '' : g?.apiCommand ?? '') || DEFAULT_API_CMD;
   previewCfgOpen.value = true;
 }
 
