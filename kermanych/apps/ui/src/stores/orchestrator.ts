@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type { Socket } from 'socket.io-client';
 import type {
+  BranchPrefix,
   ImageInput,
   Group,
   Session,
@@ -90,8 +91,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     task: string,
     model?: string,
     images?: ImageInput[],
+    worktree = true,
+    prefix: BranchPrefix = 'feature',
   ) {
-    return api.createSession(groupId, name, task, model, images);
+    return api.createSession(groupId, name, task, model, images, worktree, prefix);
   }
 
   function sendMessage(id: string, text: string, mode: MessageMode, images?: ImageInput[]) {

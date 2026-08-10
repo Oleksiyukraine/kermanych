@@ -1,6 +1,7 @@
 // apps/ui/src/lib/api.ts
 // Typed REST helpers against the Kermanych API (NestJS, global prefix "api").
 import type {
+  BranchPrefix,
   DirListing,
   ImageInput,
   Group,
@@ -67,8 +68,10 @@ export const api = {
     task: string,
     model?: string,
     images?: ImageInput[],
+    worktree = true,
+    prefix: BranchPrefix = 'feature',
   ): Promise<Session> =>
-    post<Session>('/sessions', { groupId, name, task, model, images }),
+    post<Session>('/sessions', { groupId, name, task, model, images, worktree, prefix }),
 
   sendMessage: (id: string, text: string, mode: MessageMode, images?: ImageInput[]): Promise<unknown> =>
     post(`/sessions/${id}/message`, { text, mode, images }),
