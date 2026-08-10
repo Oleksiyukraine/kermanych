@@ -38,9 +38,6 @@
         <span class="shell__ver mono">v0.1</span>
       </div>
       <div class="shell__context mono">{{ contextLabel }}</div>
-      <div class="shell__actions">
-        <KBtn variant="primary" @click="newAgent">+ Новий агент</KBtn>
-      </div>
     </q-header>
 
     <!-- PAGE -->
@@ -83,9 +80,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, provide, ref } from 'vue';
-import { useRouter } from 'vue-router';
-import type { Ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import type { SessionStatus } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import KRailItem from 'components/kit/KRailItem.vue';
@@ -99,7 +94,6 @@ import KDirPicker from 'components/kit/KDirPicker.vue';
 // header, page container, and the fleet status bar. Live groups/sessions come
 // from the Pinia store; the socket is opened once on mount.
 const store = useOrchestrator();
-const router = useRouter();
 
 onMounted(() => store.connect());
 
@@ -138,17 +132,6 @@ const contextLabel = computed(() =>
     ? `${selectedGroup.value.name} · ${selectedGroup.value.projectDir}`
     : 'Проєкт не вибрано',
 );
-
-// New-agent launcher trigger: the workspace (E3) injects this signal and opens
-// its session launcher whenever it increments. Header navigates to the
-// workspace first so the launcher is on screen.
-const newAgentSignal = ref(0);
-provide<Ref<number>>('kermanych.newAgentSignal', newAgentSignal);
-
-function newAgent(): void {
-  if (router.currentRoute.value.path !== '/') void router.push('/');
-  newAgentSignal.value++;
-}
 
 // Add-group modal state, wired to the store's createGroup action.
 const addOpen = ref(false);
@@ -244,12 +227,6 @@ async function submitGroup(): Promise<void> {
   white-space: nowrap;
   font-size: 12px;
   color: var(--k-muted);
-}
-
-.shell__actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .shell__footer {
