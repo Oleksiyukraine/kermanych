@@ -49,6 +49,9 @@
           <template #cell-activity="{ row }">
             <span class="ws__cell-activity mono">{{ activityOf(row) || '—' }}</span>
           </template>
+          <template #cell-lastActivity="{ row }">
+            <span class="ws__cell-activity mono">{{ relativeTime(row.lastActivityAt, now) }}</span>
+          </template>
           <template #cell-actions="{ row }">
             <div class="ws__cell-actions">
               <template v-if="!showArchived">
@@ -251,11 +254,15 @@ import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KToggle from 'components/kit/KToggle.vue';
 import { useImageAttach } from '../composables/useImageAttach';
+import { useNow } from '../composables/useNow';
+import { relativeTime } from '../lib/time';
 
 // The Workspace screen (design-system section 07): the board of session cards
 // for the selected group + the full panel for the selected session, plus the
 // new-agent launcher. All mutations go through the Pinia store.
 const store = useOrchestrator();
+
+const now = useNow();
 
 // Board filter: "Активні" hides archived sessions; "Заархівовані" shows only them.
 const VIEW_ACTIVE = 'Активні';
@@ -288,6 +295,7 @@ const agentColumns: KTableColumn[] = [
   { key: 'branch', label: 'Гілка', width: '170px' },
   { key: 'ctx', label: 'Контекст', align: 'right', width: '96px', mono: true },
   { key: 'activity', label: 'Активність' },
+  { key: 'lastActivity', label: 'Остання активність', width: '120px' },
   { key: 'actions', label: '', align: 'right', width: '84px' },
 ];
 
