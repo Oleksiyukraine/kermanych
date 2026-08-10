@@ -237,7 +237,6 @@ import {
   type Session,
   type TranscriptEntry,
   type RpcExtensionUIResponse,
-  ACTIVE_STATUSES,
 } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import type { MessageMode } from '../lib/api';
@@ -436,6 +435,10 @@ function onAnswer(res: RpcExtensionUIResponse): void {
   const s = selectedSession.value;
   if (s) void store.answerUi(s.id, res);
 }
+
+// Active = agent mid-work or awaiting input; archiving these is refused (the API also
+// enforces it via core's ACTIVE_STATUSES). The UI keeps its own set, like MainLayout's RUNNING.
+const ACTIVE_STATUSES: readonly Session['status'][] = ['queued', 'thinking', 'tool', 'waiting_input'];
 
 // ── Archive / unarchive ────────────────────────────────────────────────────
 // Active agents can't be archived: pre-check and toast (the API also enforces).
