@@ -73,6 +73,20 @@ export class WorktreeService {
     await git(dir, ["merge", ref]);
   }
 
+  // Create a branch and switch to it in `dir` (in-place mode: no separate worktree).
+  async createBranchHere(dir: string, branch: string): Promise<void> {
+    const r = await git(dir, ["checkout", "-b", branch]);
+    if (!r.ok) throw new Error(`git checkout -b failed: ${r.out}`);
+  }
+
+  // Switch `dir` to `ref`. `force` (-f) discards local changes — used when retiring
+  // an in-place session, where the working-tree changes belong to that session.
+  async checkout(dir: string, ref: string, opts?: { force?: boolean }): Promise<void> {
+    const args = opts?.force ? ["checkout", "-f", ref] : ["checkout", ref];
+    const r = await git(dir, args);
+    if (!r.ok) throw new Error(`git checkout failed: ${r.out}`);
+  }
+
   // Paths with unresolved merge conflicts in a worktree.
   async unmergedFiles(dir: string): Promise<string[]> {
     const out = (await git(dir, ["diff", "--name-only", "--diff-filter=U"])).out.trim();
