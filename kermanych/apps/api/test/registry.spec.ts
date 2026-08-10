@@ -26,3 +26,20 @@ test("session archived flag defaults false and round-trips", () => {
   r.updateSession(s.id, { archived: false });
   expect(r.listSessions(g.id)[0].archived).toBe(false);
 });
+
+test("session worktree flag defaults true and round-trips with baseBranch", () => {
+  const r = new RegistryService(":memory:");
+  const g = r.createGroup({ name: "app", projectDir: "/tmp/app" });
+
+  const wtSession = r.createSession({ groupId: g.id, name: "wt", task: "t", worktreePath: "/wt", branch: "feature/wt" });
+  expect(wtSession.worktree).toBe(true);
+  expect(r.listSessions(g.id).find((s) => s.id === wtSession.id)!.worktree).toBe(true);
+
+  const inPlace = r.createSession({
+    groupId: g.id, name: "ip", task: "t", worktreePath: "", branch: "fix/ip",
+    worktree: false, baseBranch: "main",
+  });
+  const read = r.listSessions(g.id).find((s) => s.id === inPlace.id)!;
+  expect(read.worktree).toBe(false);
+  expect(read.baseBranch).toBe("main");
+});

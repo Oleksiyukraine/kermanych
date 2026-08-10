@@ -165,6 +165,22 @@
         </div>
         <KAttachStrip v-if="launchImages.length" :images="launchImages" @remove="removeLaunchImage" />
         <p v-if="launchError" class="ws__error" role="alert">{{ launchError }}</p>
+        <label class="ws__field">
+          <span class="ws__field-label">Префікс гілки</span>
+          <KToggle
+            :options="prefixOptions"
+            :modelValue="draftPrefix"
+            @update:modelValue="(v) => (draftPrefix = v as BranchPrefix)"
+          />
+        </label>
+        <div class="ws__field">
+          <KCheckbox v-model="draftWorktree" label="Ізолювати у worktree" />
+          <p v-if="!draftWorktree" class="ws__hint mono">
+            In-place: агент працюватиме в теці проєкту на гілці
+            <code class="mono">{{ branchPreview }}</code>. Дерево має бути чистим;
+            одночасно лише один in-place-агент.
+          </p>
+        </div>
         <KField
           v-model="draftModel"
           label="Модель (необовʼязково)"
@@ -266,6 +282,8 @@ import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KToggle from 'components/kit/KToggle.vue';
+import KCheckbox from 'components/kit/KCheckbox.vue';
+import type { BranchPrefix } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useResizableWidth } from '../composables/useResizableWidth';
 
@@ -420,6 +438,14 @@ const launcherOpen = ref(false);
 const draftName = ref('');
 const draftTask = ref('');
 const draftModel = ref('');
+const prefixOptions: BranchPrefix[] = ['feature', 'fix', 'refactoring', 'chore'];
+const draftPrefix = ref<BranchPrefix>('feature');
+const draftWorktree = ref(true);
+const branchPreview = computed(() => {
+  const slug =
+    draftName.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'session';
+  return `${draftPrefix.value}/${slug}`;
+});
 const taskInput = ref<HTMLTextAreaElement | null>(null);
 const launcherError = ref<string | null>(null);
 const {
@@ -450,6 +476,8 @@ function openLauncher(): void {
   draftName.value = '';
   draftTask.value = '';
   draftModel.value = '';
+  draftPrefix.value = 'feature';
+  draftWorktree.value = true;
   launcherError.value = null;
   clearLaunchImages();
   launcherOpen.value = true;
@@ -468,6 +496,8 @@ async function submitLauncher(): Promise<void> {
       draftTask.value.trim(),
       model,
       launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType })),
+      draftWorktree.value,
+      draftPrefix.value,
     );
     launcherOpen.value = false;
     clearLaunchImages();

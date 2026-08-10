@@ -14,6 +14,7 @@ import {
   branchName,
   uniqueSlug,
   worktreeDir,
+  type BranchPrefix,
   type StatusState,
   type Group,
   type ImageInput,
@@ -79,24 +80,55 @@ export class SupervisorService {
     return g;
   }
 
-  async createSession(groupId: string, name: string, task: string, model?: string, images?: ImageInput[]): Promise<Session> {
+  async createSession(
+    groupId: string,
+    name: string,
+    task: string,
+    model?: string,
+    images?: ImageInput[],
+    worktree = true,
+    prefix: BranchPrefix = "feature",
+  ): Promise<Session> {
     const group = this.registry.listGroups().find((g) => g.id === groupId);
     if (!group) throw new Error("group not found");
-    // Dynamic membership set built from existing branches; `uniqueSlug` consumes a Set.
-    const existing = new Set(this.registry.listSessions(groupId).map((s) => s.branch.replace("kermanych/", "")));
-    const slug = uniqueSlug(slugify(name), existing);
-    const branch = branchName(slug);
-    const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch });
-    const wtDir = worktreeDir(session.id);
+
+    // In-place guards run first — they must not leave a row, branch, or omp process behind.
+    let baseBranch: string | undefined;
+    if (!worktree) {
+      if (await this.worktree.hasUncommitted(group.projectDir))
+        throw new Error("project working tree must be clean to create an in-place (non-worktree) agent");
+      const activeInPlace = this.registry
+        .listSessions(groupId)
+        .some((s) => !s.worktree && s.status !== "merged");
+      if (activeInPlace)
+        throw new Error("an in-place agent is already active in this project — finish or delete it first");
+      baseBranch = await this.worktree.currentBranch(group.projectDir);
+      if (!baseBranch) throw new Error("project has a detached HEAD — checkout a branch first");
+    }
+
+    // Branch name: <prefix>/<slug>, de-duplicated against ALL existing session branches.
+    const existing = new Set(this.registry.listSessions(groupId).map((s) => s.branch));
+    const branch = uniqueSlug(branchName(slugify(name), prefix), existing);
+
+    const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch, worktree, baseBranch });
+    let wtDir = "";
     try {
-      await this.worktree.addWorktree(group.projectDir, wtDir, branch);
+      if (worktree) {
+        wtDir = worktreeDir(session.id);
+        await this.worktree.addWorktree(group.projectDir, wtDir, branch);
+      } else {
+        await this.worktree.createBranchHere(group.projectDir, branch);
+      }
     } catch (err) {
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
       throw err;
     }
-    const saved = this.registry.updateSession(session.id, { worktreePath: wtDir });
-    const rpc = new RpcSession({ cwd: wtDir, model });
+    const saved = worktree
+      ? this.registry.updateSession(session.id, { worktreePath: wtDir })
+      : session;
+
+    const rpc = new RpcSession({ cwd: worktree ? wtDir : group.projectDir, model });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await rpc.start();
@@ -105,7 +137,11 @@ export class SupervisorService {
     } catch (err) {
       this.stopPoll(live);
       await rpc.stop().catch(() => {});
-      await this.worktree.removeWorktree(group.projectDir, wtDir).catch(() => {});
+      if (worktree) {
+        await this.worktree.removeWorktree(group.projectDir, wtDir).catch(() => {});
+      } else if (baseBranch) {
+        await this.worktree.checkout(group.projectDir, baseBranch, { force: true }).catch(() => {});
+      }
       await this.worktree.removeBranch(group.projectDir, branch).catch(() => {});
       this.map.delete(session.id);
       this.registry.removeSession(session.id);
@@ -200,8 +236,11 @@ export class SupervisorService {
   // mergeable. Progress streams on the session's normal event feed.
   async resolveConflict(id: string): Promise<{ ok: true }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
-    if (!s?.worktreePath) throw new Error("session has no worktree");
-    const files = await this.worktree.unmergedFiles(s.worktreePath);
+    if (!s) throw new Error("session not found");
+    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
+    if (!g) throw new Error("group not found");
+    const dir = s.worktreePath || g.projectDir;
+    const files = await this.worktree.unmergedFiles(dir);
     if (!files.length) throw new Error("no merge conflict to resolve");
     const prompt =
       `A git merge is in progress in this worktree with conflicts in:\n` +
@@ -237,7 +276,14 @@ export class SupervisorService {
     if (s) {
       const g = this.registry.listGroups().find((x) => x.id === s.groupId);
       if (g) {
-        if (s.worktreePath) await this.worktree.removeWorktree(g.projectDir, s.worktreePath);
+        if (s.worktree) {
+          if (s.worktreePath) await this.worktree.removeWorktree(g.projectDir, s.worktreePath);
+        } else if (s.baseBranch && (await this.worktree.currentBranch(g.projectDir)) === s.branch) {
+          // Restore the project to its base branch (delete discards the session's in-progress work).
+          await this.worktree
+            .checkout(g.projectDir, s.baseBranch)
+            .catch(() => this.worktree.checkout(g.projectDir, s.baseBranch!, { force: true }));
+        }
         await this.worktree.removeBranch(g.projectDir, s.branch);
       }
     }
@@ -261,13 +307,14 @@ export class SupervisorService {
   // and whether the worktree has uncommitted work that would be auto-committed.
   async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[] }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
-    if (!s?.worktreePath) throw new Error("session has no worktree");
+    if (!s) throw new Error("session not found");
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
     if (!g) throw new Error("group not found");
-    const target = await this.worktree.currentBranch(g.projectDir);
+    const dir = s.worktreePath || g.projectDir;
+    const target = s.worktree ? await this.worktree.currentBranch(g.projectDir) : (s.baseBranch ?? "");
     const ahead = target ? await this.worktree.aheadCount(g.projectDir, target, s.branch) : 0;
-    const dirty = await this.worktree.hasUncommitted(s.worktreePath);
-    const conflicts = await this.worktree.unmergedFiles(s.worktreePath);
+    const dirty = await this.worktree.hasUncommitted(dir);
+    const conflicts = await this.worktree.unmergedFiles(dir);
     return { branch: s.branch, target, ahead, dirty, conflicts };
   }
 
@@ -277,50 +324,77 @@ export class SupervisorService {
   // editor) and marks the session `conflict`; re-running after a resolve merges cleanly.
   async finishSession(id: string): Promise<{ merged: true; into: string } | { conflict: true; files: string[] }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
-    if (!s?.worktreePath) throw new Error("session has no worktree");
+    if (!s) throw new Error("session not found");
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
     if (!g) throw new Error("group not found");
-    const target = await this.worktree.currentBranch(g.projectDir);
-    if (!target) throw new Error("project repo has a detached HEAD - checkout a branch first");
-    if (target === s.branch) throw new Error("project repo is on the session branch itself");
 
-    // A prior conflict left the worktree mid-merge — it must be resolved before retrying.
-    if ((await this.worktree.unmergedFiles(s.worktreePath)).length)
-      throw new Error("worktree has unresolved conflicts - resolve them in the editor first");
-    if (await this.worktree.hasUncommitted(s.worktreePath))
-      await this.worktree.commitAll(s.worktreePath, `session work: ${s.name}`);
+    if (s.worktree) {
+      if (!s.worktreePath) throw new Error("session has no worktree");
+      const target = await this.worktree.currentBranch(g.projectDir);
+      if (!target) throw new Error("project repo has a detached HEAD - checkout a branch first");
+      if (target === s.branch) throw new Error("project repo is on the session branch itself");
+      // A prior conflict left the worktree mid-merge — it must be resolved before retrying.
+      if ((await this.worktree.unmergedFiles(s.worktreePath)).length)
+        throw new Error("worktree has unresolved conflicts - resolve them in the editor first");
+      if (await this.worktree.hasUncommitted(s.worktreePath))
+        await this.worktree.commitAll(s.worktreePath, `session work: ${s.name}`);
+      const res = await this.worktree.mergeBranch(g.projectDir, s.branch, `merge session: ${s.name}`);
+      if (!res.ok) {
+        if (!res.conflict) throw new Error(res.message); // e.g. dirty project tree
+        // Pull the target into the worktree so the conflict can be resolved there.
+        await this.worktree.mergeInto(s.worktreePath, target);
+        this.registry.updateSession(id, { status: "conflict" });
+        this.pushUpdate(id);
+        return { conflict: true, files: await this.worktree.unmergedFiles(s.worktreePath) };
+      }
+      const l = this.map.get(id);
+      if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); }
+      await this.worktree.removeWorktree(g.projectDir, s.worktreePath);
+      await this.worktree.removeBranch(g.projectDir, s.branch);
+      this.registry.updateSession(id, { status: "merged", worktreePath: "" });
+      this.pushUpdate(id);
+      return { merged: true, into: target };
+    }
 
+    // In-place: projectDir is checked out on the session branch. Merge it into base.
+    const base = s.baseBranch;
+    if (!base) throw new Error("in-place session has no base branch");
+    const cur = await this.worktree.currentBranch(g.projectDir);
+    if (cur !== s.branch)
+      throw new Error(`project is not on ${s.branch} (on ${cur || "detached HEAD"}) - switch to it first`);
+    if ((await this.worktree.unmergedFiles(g.projectDir)).length)
+      throw new Error("project has unresolved conflicts - resolve them first");
+    if (await this.worktree.hasUncommitted(g.projectDir))
+      await this.worktree.commitAll(g.projectDir, `session work: ${s.name}`);
+
+    await this.worktree.checkout(g.projectDir, base);
     const res = await this.worktree.mergeBranch(g.projectDir, s.branch, `merge session: ${s.name}`);
     if (!res.ok) {
-      if (!res.conflict) throw new Error(res.message); // e.g. dirty project tree
-      // Pull the target into the worktree so the conflict can be resolved there.
-      await this.worktree.mergeInto(s.worktreePath, target);
+      // Restore onto the session branch; on a content conflict leave markers there to resolve.
+      await this.worktree.checkout(g.projectDir, s.branch);
+      if (!res.conflict) throw new Error(res.message);
+      await this.worktree.mergeInto(g.projectDir, base);
       this.registry.updateSession(id, { status: "conflict" });
       this.pushUpdate(id);
-      return { conflict: true, files: await this.worktree.unmergedFiles(s.worktreePath) };
+      return { conflict: true, files: await this.worktree.unmergedFiles(g.projectDir) };
     }
-
-    // Success — retire: stop omp (preview is stopped by the controller), drop worktree + branch.
     const l = this.map.get(id);
-    if (l) {
-      l.live.status = "stopped";
-      this.stopPoll(l);
-      await l.rpc.stop();
-      this.map.delete(id);
-    }
-    await this.worktree.removeWorktree(g.projectDir, s.worktreePath);
-    await this.worktree.removeBranch(g.projectDir, s.branch);
-    this.registry.updateSession(id, { status: "merged", worktreePath: "" });
+    if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); }
+    await this.worktree.removeBranch(g.projectDir, s.branch); // projectDir left on base
+    this.registry.updateSession(id, { status: "merged" });
     this.pushUpdate(id);
-    return { merged: true, into: target };
+    return { merged: true, into: base };
   }
 
   // Open the session's worktree in the user's editor ($KERMANYCH_EDITOR or `code`).
   openInEditor(id: string): { ok: true } {
     const s = this.registry.listSessions().find((x) => x.id === id);
-    if (!s?.worktreePath) throw new Error("session has no worktree");
+    if (!s) throw new Error("session not found");
+    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
+    if (!g) throw new Error("group not found");
+    const dir = s.worktreePath || g.projectDir;
     const editor = process.env.KERMANYCH_EDITOR || "code";
-    const child = spawn(editor, [s.worktreePath], { detached: true, stdio: "ignore" });
+    const child = spawn(editor, [dir], { detached: true, stdio: "ignore" });
     child.on("error", () => {}); // editor binary missing — swallow, don't crash the api
     child.unref();
     return { ok: true };
@@ -366,8 +440,12 @@ export class SupervisorService {
   private async doResume(id: string): Promise<Live> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
-    if (!s.worktreePath) throw new Error("session has no worktree to resume");
-    const rpc = new RpcSession({ cwd: s.worktreePath });
+    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
+    if (!g) throw new Error("group not found");
+    const dir = s.worktreePath || g.projectDir;
+    if (!s.worktree && (await this.worktree.currentBranch(g.projectDir)) !== s.branch)
+      throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
+    const rpc = new RpcSession({ cwd: dir });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await rpc.start();
