@@ -236,8 +236,11 @@ export class SupervisorService {
   // mergeable. Progress streams on the session's normal event feed.
   async resolveConflict(id: string): Promise<{ ok: true }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
-    if (!s?.worktreePath) throw new Error("session has no worktree");
-    const files = await this.worktree.unmergedFiles(s.worktreePath);
+    if (!s) throw new Error("session not found");
+    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
+    if (!g) throw new Error("group not found");
+    const dir = s.worktreePath || g.projectDir;
+    const files = await this.worktree.unmergedFiles(dir);
     if (!files.length) throw new Error("no merge conflict to resolve");
     const prompt =
       `A git merge is in progress in this worktree with conflicts in:\n` +
@@ -386,9 +389,12 @@ export class SupervisorService {
   // Open the session's worktree in the user's editor ($KERMANYCH_EDITOR or `code`).
   openInEditor(id: string): { ok: true } {
     const s = this.registry.listSessions().find((x) => x.id === id);
-    if (!s?.worktreePath) throw new Error("session has no worktree");
+    if (!s) throw new Error("session not found");
+    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
+    if (!g) throw new Error("group not found");
+    const dir = s.worktreePath || g.projectDir;
     const editor = process.env.KERMANYCH_EDITOR || "code";
-    const child = spawn(editor, [s.worktreePath], { detached: true, stdio: "ignore" });
+    const child = spawn(editor, [dir], { detached: true, stdio: "ignore" });
     child.on("error", () => {}); // editor binary missing — swallow, don't crash the api
     child.unref();
     return { ok: true };
@@ -434,8 +440,12 @@ export class SupervisorService {
   private async doResume(id: string): Promise<Live> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
-    if (!s.worktreePath) throw new Error("session has no worktree to resume");
-    const rpc = new RpcSession({ cwd: s.worktreePath });
+    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
+    if (!g) throw new Error("group not found");
+    const dir = s.worktreePath || g.projectDir;
+    if (!s.worktree && (await this.worktree.currentBranch(g.projectDir)) !== s.branch)
+      throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
+    const rpc = new RpcSession({ cwd: dir });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await rpc.start();

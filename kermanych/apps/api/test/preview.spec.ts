@@ -4,6 +4,9 @@ import { connect } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 import { PreviewService } from "../src/preview/preview.service";
 import type { RegistryService } from "../src/registry/registry.service";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // A one-liner http server that binds $PORT and echoes `body` — stands in for a real
 const httpEcho = (body: string): string =>
@@ -62,3 +65,18 @@ test("returns needsCommand when the group has no preview command", async () => {
   svc = new PreviewService(fakeReg(undefined));
   expect(await svc.start("s1")).toEqual({ needsCommand: true });
 });
+
+test("in-place preview falls back to the group project dir when worktreePath is empty", async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), "kmq-prev-"));
+  const stub = {
+    listSessions: () => [{ id: "s1", groupId: "g1", worktreePath: "", worktree: false }],
+    listGroups: () => [{ id: "g1", projectDir, previewCommand: httpEcho("'ok'") }],
+  } as unknown as RegistryService;
+  svc = new PreviewService(stub);
+  const res = await svc.start("s1");
+  if (!("url" in res)) throw new Error("expected a preview url");
+  const port = Number(new URL(res.url).port);
+  expect(await canConnect(port)).toBe(true);
+  svc.stop("s1");
+  rmSync(projectDir, { recursive: true, force: true });
+}, 30_000);
