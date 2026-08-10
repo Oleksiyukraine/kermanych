@@ -51,9 +51,18 @@
       </div>
     </template>
 
-    <!-- assistant_thinking — muted italic -->
-    <div v-else-if="entry.kind === 'assistant_thinking'" class="k-log__thinking">
-      {{ entry.text }}
+    <!-- assistant_thinking — collapsed reasoning; expand to read the full chain -->
+    <div v-else-if="entry.kind === 'assistant_thinking'" class="k-log__reason">
+      <button
+        type="button"
+        class="k-log__reason-toggle"
+        :aria-expanded="open"
+        @click="open = !open"
+      >
+        <span class="k-log__reason-caret" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
+        Думаю
+      </button>
+      <div v-if="open" class="k-log__reason-body k-log__markdown" v-html="renderedThinking" />
     </div>
 
     <!-- notice — muted -->
@@ -62,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { TranscriptEntry } from '@kermanych/core';
 import { renderMarkdown } from '../../lib/markdown';
 
@@ -109,6 +118,12 @@ const body = computed<Line[]>(() => {
 // controlled tag set (html:false), safe for v-html.
 const renderedText = computed(() =>
   props.entry.kind === 'assistant_text' ? renderMarkdown(props.entry.text) : '',
+);
+
+// Reasoning is collapsed by default; expand to read the full chain.
+const open = ref(false);
+const renderedThinking = computed(() =>
+  props.entry.kind === 'assistant_thinking' ? renderMarkdown(props.entry.text) : '',
 );
 </script>
 
@@ -227,13 +242,30 @@ const renderedText = computed(() =>
 .k-log__markdown th { background: var(--k-surface2); font-weight: 700; }
 .k-log__markdown img { max-width: 100%; }
 
-.k-log__thinking {
+// assistant reasoning — a muted, collapsed disclosure ("Думаю"); expanded body
+// reuses the Markdown prose styles, dimmed.
+.k-log__reason { font-family: var(--k-font-ui); }
+.k-log__reason-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  border: none;
   font-family: var(--k-font-ui);
-  font-size: 14px;
-  line-height: 1.65;
+  font-size: 13px;
   font-style: italic;
   color: var(--k-muted);
-  white-space: pre-wrap;
+  cursor: pointer;
+}
+.k-log__reason-toggle:hover { color: var(--k-text); }
+.k-log__reason-toggle:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
+.k-log__reason-caret { font-size: 10px; font-style: normal; }
+.k-log__reason-body {
+  margin-top: 6px;
+  padding-left: 14px;
+  border-left: 1px solid var(--k-line);
+  color: var(--k-muted);
 }
 
 .k-log__notice {
