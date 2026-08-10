@@ -250,6 +250,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import {
   type ImageInput,
   type Session,
+  type SessionStatus,
   type TranscriptEntry,
   type RpcExtensionUIResponse,
 } from '@kermanych/core';
@@ -279,10 +280,30 @@ const VIEW_ARCHIVED = 'Заархівовані';
 const viewOptions = [VIEW_ACTIVE, VIEW_ARCHIVED];
 const viewMode = ref<string>(VIEW_ACTIVE);
 const showArchived = computed(() => viewMode.value === VIEW_ARCHIVED);
+// Row order for the agents table. Sessions are bucketed into status tiers and
+// sorted by creation time within each tier. Ranking by tier — not by the live
+// status — is what stops rows from jumping while agents run: every "process
+// alive" status (queued/thinking/tool/waiting_input) shares rank 0, so an agent
+// flipping between `thinking` and `tool` mid-run never reorders the table. Only
+// real lifecycle moves (a run ending, a branch merging) shift a row's tier.
+const STATUS_RANK: Record<SessionStatus, number> = {
+  queued: 0,
+  thinking: 0,
+  tool: 0,
+  waiting_input: 0,
+  error: 1,
+  conflict: 1,
+  done: 2,
+  stopped: 2,
+  merged: 3,
+};
 const groupSessions = computed(() =>
-  store.sessions.filter(
-    (s) => s.groupId === store.selectedGroupId && !!s.archived === showArchived.value,
-  ),
+  store.sessions
+    .filter((s) => s.groupId === store.selectedGroupId && !!s.archived === showArchived.value)
+    .sort((a, b) => {
+      const byStatus = STATUS_RANK[a.status] - STATUS_RANK[b.status];
+      return byStatus !== 0 ? byStatus : a.createdAt.localeCompare(b.createdAt);
+    }),
 );
 const selectedGroup = computed(() =>
   store.groups.find((g) => g.id === store.selectedGroupId),
