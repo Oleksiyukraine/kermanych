@@ -174,7 +174,7 @@
     <!-- FINISH — merge the session branch into the project branch, retire the worktree -->
     <KModal v-model="finishOpen" title="Завершити сесію" persistent>
       <div class="ws__form">
-        <template v-if="finishFiles.length">
+        <div v-show="finishFiles.length">
           <p class="ws__error" role="alert">
             Конфлікт при злитті — розвʼяжи його у worktree, потім «Влити» ще раз.
           </p>
@@ -185,8 +185,8 @@
           <p class="ws__hint mono">
             Відкрий у редакторі, прибери маркери конфлікту, закоміть — тоді «Влити».
           </p>
-        </template>
-        <template v-else>
+        </div>
+        <div v-show="!finishFiles.length">
           <p v-if="finishData">
             Влити <code class="mono">{{ finishData.branch }}</code> →
             <code class="mono">{{ finishData.target }}</code>
@@ -196,7 +196,7 @@
             worktree буде прибрано, сесія лишиться як «влито».
           </p>
           <p v-else class="ws__hint mono">Готую…</p>
-        </template>
+        </div>
         <p v-if="finishError" class="ws__error" role="alert">{{ finishError }}</p>
       </div>
       <template #controls>
