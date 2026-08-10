@@ -76,6 +76,9 @@
 
     <!-- DIRECTORY PICKER — server-side browser; fills the project dir field -->
     <KDirPicker v-model="pickerOpen" :start="groupDir" @select="groupDir = $event" />
+
+    <!-- TOAST STACK — transient notifications (errors etc.) -->
+    <KToast :toasts="store.toasts" @dismiss="store.dismissToast" />
   </q-layout>
 </template>
 
@@ -89,6 +92,7 @@ import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
+import KToast from 'components/kit/KToast.vue';
 
 // The Kermanych app shell (design-system section 07): project rail, brand
 // header, page container, and the fleet status bar. Live groups/sessions come
@@ -102,7 +106,7 @@ onMounted(() => store.connect());
 const RUNNING: readonly SessionStatus[] = ['queued', 'thinking', 'tool'];
 
 function sessionsOf(groupId: string | undefined) {
-  return store.sessions.filter((s) => s.groupId === groupId);
+  return store.sessions.filter((s) => s.groupId === groupId && !s.archived);
 }
 
 function runningCount(groupId: string): number {

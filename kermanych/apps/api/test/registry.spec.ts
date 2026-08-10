@@ -14,3 +14,15 @@ test("group + session round trip", () => {
   r.removeSession(s.id);
   expect(r.listSessions(g.id)).toHaveLength(0);
 });
+
+test("session archived flag defaults false and round-trips", () => {
+  const r = new RegistryService(":memory:");
+  const g = r.createGroup({ name: "app", projectDir: "/tmp/app" });
+  const s = r.createSession({ groupId: g.id, name: "task", task: "do it", worktreePath: "/wt", branch: "kermanych/task" });
+  expect(r.listSessions(g.id)[0].archived).toBe(false);
+  const u = r.updateSession(s.id, { archived: true });
+  expect(u.archived).toBe(true);
+  expect(r.listSessions(g.id)[0].archived).toBe(true);
+  r.updateSession(s.id, { archived: false });
+  expect(r.listSessions(g.id)[0].archived).toBe(false);
+});

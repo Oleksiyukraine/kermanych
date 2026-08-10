@@ -117,6 +117,12 @@ export const api = {
   ): Promise<{ merged: boolean; into: string } | { conflict: boolean; files: string[] }> =>
     post(`/sessions/${id}/finish`, {}),
 
+  archiveSession: (id: string): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>(`/sessions/${id}/archive`, {}),
+
+  unarchiveSession: (id: string): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>(`/sessions/${id}/unarchive`, {}),
+
   openEditor: (id: string): Promise<{ ok: boolean }> =>
     post(`/sessions/${id}/editor`, {}),
 
