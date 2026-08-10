@@ -99,6 +99,9 @@
         <div class="k-panel__error-head mono">ПОМИЛКА</div>
         <div class="k-panel__error-msg">{{ session.error || 'Сесію завершено з помилкою.' }}</div>
       </div>
+
+      <!-- live reasoning placeholder — a tidy "Думаю…" while the agent thinks -->
+      <div v-if="session.status === 'thinking'" class="k-panel__thinking" aria-live="polite">Думаю…</div>
     </div>
 
     <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎) -->
@@ -379,6 +382,21 @@ function answerCancel() {
   flex: 1 1 auto;
   overflow-y: auto;
   padding: 14px 14px 16px;
+}
+
+// live reasoning placeholder — muted, gently pulsing; replaced by the collapsed
+// reasoning block + answer at message_end.
+.k-panel__thinking {
+  margin-top: 14px;
+  font-family: var(--k-font-ui);
+  font-size: 13px;
+  font-style: italic;
+  color: var(--k-muted);
+  animation: k-panel-think-pulse 1.4s ease-in-out infinite;
+}
+@keyframes k-panel-think-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
 }
 
 // error — the omp child exited before finishing; full accent border reads as failure.
