@@ -1,5 +1,5 @@
 <template>
-  <section class="k-panel" :class="{ 'k-panel--active': isActive }">
+  <section ref="rootEl" class="k-panel" :class="{ 'k-panel--active': isActive }">
     <!-- floor 1 — header (34px) -->
     <header class="k-panel__header">
       <div class="k-panel__id">
@@ -23,6 +23,12 @@
           title="Завершити (merge гілки в проєкт)"
           @click="emit('finish')"
         >✓</button>
+        <button
+          class="k-panel__icon"
+          type="button"
+          title="Відкрити в редакторі"
+          @click="emit('editor')"
+        >⧉</button>
         <span class="k-panel__icon k-panel__icon--chrome" aria-hidden="true">⊞</span>
         <button
           class="k-panel__icon"
@@ -32,6 +38,13 @@
         >✕</button>
       </div>
     </header>
+
+    <!-- my-message navigation — jump between the operator's own messages -->
+    <div v-if="userMsgCount > 1" class="k-panel__nav" role="group" aria-label="Навігація по моїх повідомленнях">
+      <button type="button" class="k-panel__nav-btn" title="Попереднє моє повідомлення (Alt+↑)" @click="jumpUser(-1)">▲</button>
+      <span class="k-panel__nav-count mono">{{ userNavLabel }}</span>
+      <button type="button" class="k-panel__nav-btn" title="Наступне моє повідомлення (Alt+↓)" @click="jumpUser(1)">▼</button>
+    </div>
 
     <!-- floor 2 — scrollable log -->
     <div ref="logEl" class="k-panel__log" @scroll="onLogScroll">
@@ -99,6 +112,9 @@
         <div class="k-panel__error-head mono">ПОМИЛКА</div>
         <div class="k-panel__error-msg">{{ session.error || 'Сесію завершено з помилкою.' }}</div>
       </div>
+
+      <!-- live reasoning placeholder — a tidy "Думаю…" while the agent thinks -->
+      <div v-if="session.status === 'thinking'" class="k-panel__thinking" aria-live="polite">Думаю…</div>
     </div>
 
     <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎) -->
@@ -172,6 +188,7 @@ const emit = defineEmits<{
   send: [text: string, images: ImageInput[]];
   answer: [res: RpcExtensionUIResponse];
   finish: [];
+  editor: [];
 }>();
 
 const draft = ref('');
@@ -208,22 +225,85 @@ function onLogScroll(): void {
   const el = logEl.value;
   if (el) stick = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
 }
+
+// My-message navigation: step between the operator's own (.k-log--user_text)
+// blocks. Count is kept in sync with the log via the existing MutationObserver.
+const rootEl = ref<HTMLElement | null>(null);
+const userMsgCount = ref(0);
+const userIndex = ref(-1); // last message we jumped to; -1 = derive from scroll
+
+function userEls(): HTMLElement[] {
+  const el = logEl.value;
+  return el ? Array.from(el.querySelectorAll<HTMLElement>('.k-log--user_text')) : [];
+}
+function refreshUserCount(): void {
+  userMsgCount.value = userEls().length;
+}
+const userNavLabel = computed(() =>
+  userIndex.value >= 0 ? `${userIndex.value + 1}/${userMsgCount.value}` : `–/${userMsgCount.value}`,
+);
+// Index of the last user message whose top is at/above the log viewport top.
+function currentUserIdx(els: HTMLElement[]): number {
+  const log = logEl.value;
+  if (!log) return 0;
+  const logTop = log.getBoundingClientRect().top;
+  let idx = 0;
+  for (let i = 0; i < els.length; i++) {
+    const el = els[i];
+    if (el && el.getBoundingClientRect().top - logTop <= 4) idx = i;
+    else break;
+  }
+  return idx;
+}
+function jumpUser(dir: 1 | -1): void {
+  const els = userEls();
+  if (!els.length) return;
+  const base = userIndex.value >= 0 && userIndex.value < els.length ? userIndex.value : currentUserIdx(els);
+  const idx = Math.min(els.length - 1, Math.max(0, base + dir));
+  userIndex.value = idx;
+  const target = els[idx];
+  if (!target) return;
+  stick = false; // stop auto-follow while the operator browses history
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  target.classList.remove('k-log--flash');
+  void target.offsetWidth; // reflow so the animation restarts on re-jump
+  target.classList.add('k-log--flash');
+}
+function onNavKeydown(e: KeyboardEvent): void {
+  if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+  if (!rootEl.value?.contains(e.target as Node)) return; // only when this panel is focused
+  if (userMsgCount.value <= 1) return;
+  const t = e.target as HTMLElement | null;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  e.preventDefault();
+  jumpUser(e.key === 'ArrowUp' ? -1 : 1);
+}
 onMounted(() => {
   const el = logEl.value;
   if (!el) return;
   scrollToBottom();
+  refreshUserCount();
   logObserver = new MutationObserver(() => {
+    refreshUserCount();
     if (stick) requestAnimationFrame(scrollToBottom);
   });
   logObserver.observe(el, { childList: true, subtree: true });
+  window.addEventListener('keydown', onNavKeydown);
 });
-onBeforeUnmount(() => logObserver?.disconnect());
+onBeforeUnmount(() => {
+  logObserver?.disconnect();
+  window.removeEventListener('keydown', onNavKeydown);
+});
 // Session switch → jump to the newest entry of the newly selected session.
 watch(
   () => props.session.id,
   () => {
     stick = true;
-    void nextTick(scrollToBottom);
+    userIndex.value = -1;
+    void nextTick(() => {
+      scrollToBottom();
+      refreshUserCount();
+    });
   },
 );
 
@@ -254,6 +334,8 @@ const statusLabel = computed(() => {
       return 'зупинено';
     case 'merged':
       return 'влито';
+    case 'conflict':
+      return 'конфлікт';
     default:
       return props.session.status;
   }
@@ -291,6 +373,43 @@ function answerCancel() {
   background: var(--k-surface);
   border: 1px solid var(--k-line-strong);
   min-height: 320px;
+  position: relative;
+}
+
+// my-message nav — floating stepper pinned to the log's top-right, over the log
+// (outside the scroll container so it stays put while the log scrolls).
+.k-panel__nav {
+  position: absolute;
+  top: 42px; // header (34px) + 8px
+  right: 14px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 3px;
+  background: color-mix(in srgb, var(--k-surface2) 88%, transparent);
+  border: 1px solid var(--k-line-strong);
+}
+.k-panel__nav-btn {
+  width: 22px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--k-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+.k-panel__nav-btn:hover { color: var(--k-text); }
+.k-panel__nav-btn:focus-visible { outline: 1px solid var(--k-accent); outline-offset: -1px; }
+.k-panel__nav-count {
+  font-size: 10px;
+  color: var(--k-muted);
+  user-select: none;
 }
 
 // active — surface2 fill + 2px accent strip on the top edge.
@@ -379,6 +498,21 @@ function answerCancel() {
   flex: 1 1 auto;
   overflow-y: auto;
   padding: 14px 14px 16px;
+}
+
+// live reasoning placeholder — muted, gently pulsing; replaced by the collapsed
+// reasoning block + answer at message_end.
+.k-panel__thinking {
+  margin-top: 14px;
+  font-family: var(--k-font-ui);
+  font-size: 13px;
+  font-style: italic;
+  color: var(--k-muted);
+  animation: k-panel-think-pulse 1.4s ease-in-out infinite;
+}
+@keyframes k-panel-think-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
 }
 
 // error — the omp child exited before finishing; full accent border reads as failure.

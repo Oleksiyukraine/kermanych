@@ -107,10 +107,14 @@ export const api = {
   stopPreview: (id: string): Promise<void> =>
     fetch(`${BASE}/sessions/${id}/preview`, { method: 'DELETE' }).then(() => undefined),
 
-  finishInfo: (id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean }> =>
+  finishInfo: (
+    id: string,
+  ): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[] }> =>
     get(`/sessions/${id}/finish`),
 
-  finish: (id: string): Promise<{ merged: boolean; into: string }> =>
+  finish: (
+    id: string,
+  ): Promise<{ merged: boolean; into: string } | { conflict: boolean; files: string[] }> =>
     post(`/sessions/${id}/finish`, {}),
 
   archiveSession: (id: string): Promise<{ ok: boolean }> =>
@@ -118,4 +122,7 @@ export const api = {
 
   unarchiveSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/unarchive`, {}),
+
+  openEditor: (id: string): Promise<{ ok: boolean }> =>
+    post(`/sessions/${id}/editor`, {}),
 };

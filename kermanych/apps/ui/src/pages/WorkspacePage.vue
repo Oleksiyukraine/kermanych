@@ -20,63 +20,69 @@
           </div>
         </header>
 
-        <div v-if="groupSessions.length" class="ws__grid">
-          <div
-            v-for="s in groupSessions"
-            :key="s.id"
-            class="ws__card"
-            :class="{
-              'ws__card--active': s.id === store.selectedSessionId,
-              'ws__card--running': isRunning(s),
-            }"
-            role="button"
-            tabindex="0"
-            @click="store.selectSession(s.id)"
-            @keydown.enter="store.selectSession(s.id)"
-          >
-            <div class="ws__card-top">
-              <KStatusDot :status="s.status" />
-              <span class="ws__card-name">{{ s.name }}</span>
-              <span class="ws__card-status mono">{{ statusWord(s) }}</span>
-              <div class="ws__card-actions">
-                <template v-if="!showArchived">
-                  <button
-                    type="button"
-                    class="ws__card-icon"
-                    :class="{ 'ws__card-icon--on': store.previews[s.id] }"
-                    :title="store.previews[s.id] ? 'Зупинити превʼю' : 'Превʼю гілки в браузері'"
-                    @click.stop="togglePreview(s)"
-                  >{{ store.previews[s.id] ? '◼' : '▶' }}</button>
-                  <button
-                    v-if="s.status !== 'merged'"
-                    type="button"
-                    class="ws__card-icon"
-                    title="Завершити (merge гілки в проєкт)"
-                    @click.stop="openFinish(s)"
-                  >✓</button>
-                  <button
-                    type="button"
-                    class="ws__card-icon"
-                    title="Заархівувати"
-                    @click.stop="onArchive(s)"
-                  >⤓</button>
-                </template>
+        <KTable
+          v-if="groupSessions.length"
+          class="ws__table"
+          :columns="agentColumns"
+          :rows="groupSessions"
+          :row-key="(s) => s.id"
+          :selected-key="store.selectedSessionId"
+          :row-class="(s) => (isRunning(s) ? 'ws__row--running' : undefined)"
+          clickable
+          @row-click="store.selectSession($event.id)"
+        >
+          <template #cell-status="{ row }">
+            <span class="ws__cell-status">
+              <KStatusDot :status="row.status" />
+              <span class="ws__cell-status-word mono">{{ statusWord(row) }}</span>
+            </span>
+          </template>
+          <template #cell-name="{ row }">
+            <span class="ws__cell-name">{{ row.name }}</span>
+          </template>
+          <template #cell-branch="{ row }">
+            <KTag>⑂ {{ row.branch }}</KTag>
+          </template>
+          <template #cell-ctx="{ row }">
+            {{ ctxOf(row) ?? '—' }}
+          </template>
+          <template #cell-activity="{ row }">
+            <span class="ws__cell-activity mono">{{ activityOf(row) || '—' }}</span>
+          </template>
+          <template #cell-actions="{ row }">
+            <div class="ws__cell-actions">
+              <template v-if="!showArchived">
                 <button
-                  v-else
                   type="button"
                   class="ws__card-icon"
-                  title="Розархівувати"
-                  @click.stop="onUnarchive(s)"
-                >⤒</button>
-              </div>
+                  :class="{ 'ws__card-icon--on': store.previews[row.id] }"
+                  :title="store.previews[row.id] ? 'Зупинити превʼю' : 'Превʼю гілки в браузері'"
+                  @click.stop="togglePreview(row)"
+                >{{ store.previews[row.id] ? '◼' : '▶' }}</button>
+                <button
+                  v-if="row.status !== 'merged'"
+                  type="button"
+                  class="ws__card-icon"
+                  title="Завершити (merge гілки в проєкт)"
+                  @click.stop="openFinish(row)"
+                >✓</button>
+                <button
+                  type="button"
+                  class="ws__card-icon"
+                  title="Заархівувати"
+                  @click.stop="onArchive(row)"
+                >⤓</button>
+              </template>
+              <button
+                v-else
+                type="button"
+                class="ws__card-icon"
+                title="Розархівувати"
+                @click.stop="onUnarchive(row)"
+              >⤒</button>
             </div>
-            <div class="ws__card-meta">
-              <KTag>⑂ {{ s.branch }}</KTag>
-              <KTag v-if="ctxOf(s)">{{ ctxOf(s) }}</KTag>
-            </div>
-            <div class="ws__card-activity mono">{{ activityOf(s) || '—' }}</div>
-          </div>
-        </div>
+          </template>
+        </KTable>
         <div v-else class="ws__empty mono">
           {{ showArchived ? 'Немає заархівованих агентів.' : 'Ще немає агентів. Запусти першого через «+ Новий агент».' }}
         </div>
@@ -102,6 +108,7 @@
           @send="onSend"
           @answer="onAnswer"
           @finish="onFinish"
+          @editor="onEditor"
         >
           <template v-if="entries.length">
             <KLogBlock v-for="(entry, i) in entries" :key="i" :entry="entry" />
@@ -183,22 +190,41 @@
     </KModal>
 
     <!-- FINISH — merge the session branch into the project branch, retire the worktree -->
-    <KModal v-model="finishOpen" title="Завершити сесію">
+    <KModal v-model="finishOpen" title="Завершити сесію" persistent>
       <div class="ws__form">
-        <p v-if="finishData">
-          Влити <code class="mono">{{ finishData.branch }}</code> →
-          <code class="mono">{{ finishData.target }}</code>
-        </p>
-        <p v-if="finishData" class="ws__hint mono">
-          {{ finishData.ahead }} комітів{{ finishData.dirty ? ' + незакоммічені зміни (авто-коміт)' : '' }};
-          worktree буде прибрано, сесія лишиться як «влито».
-        </p>
-        <p v-else class="ws__hint mono">Готую…</p>
+        <div v-show="finishFiles.length">
+          <p class="ws__error" role="alert">
+            Конфлікт при злитті — розвʼяжи його у worktree, потім «Влити» ще раз.
+          </p>
+          <p class="ws__hint mono">Файли з конфліктом:</p>
+          <ul class="ws__conflict mono">
+            <li v-for="f in finishFiles" :key="f">{{ f }}</li>
+          </ul>
+          <p class="ws__hint mono">
+            Відкрий у редакторі, прибери маркери конфлікту, закоміть — тоді «Влити».
+          </p>
+        </div>
+        <div v-show="!finishFiles.length">
+          <p v-if="finishData">
+            Влити <code class="mono">{{ finishData.branch }}</code> →
+            <code class="mono">{{ finishData.target }}</code>
+          </p>
+          <p v-if="finishData" class="ws__hint mono">
+            {{ finishData.ahead }} комітів{{ finishData.dirty ? ' + незакоммічені зміни (авто-коміт)' : '' }};
+            worktree буде прибрано, сесія лишиться як «влито».
+          </p>
+          <p v-else class="ws__hint mono">Готую…</p>
+        </div>
         <p v-if="finishError" class="ws__error" role="alert">{{ finishError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="finishOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" :disabled="finishBusy || !finishData" @click="submitFinish">Влити</KBtn>
+        <KBtn variant="ghost" @click="finishOpen = false">Закрити</KBtn>
+        <KBtn v-show="finishFiles.length" variant="secondary" @click="openEditorForFinish">Відкрити в редакторі</KBtn>
+        <KBtn
+          variant="primary"
+          :disabled="finishBusy || (!finishData && !finishFiles.length)"
+          @click="submitFinish"
+        >{{ finishFiles.length ? 'Спробувати ще' : 'Влити' }}</KBtn>
       </template>
     </KModal>
   </main>
@@ -219,6 +245,7 @@ import KPanel from 'components/kit/KPanel.vue';
 import KLogBlock from 'components/kit/KLogBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KTag from 'components/kit/KTag.vue';
+import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
@@ -253,6 +280,17 @@ const entries = computed<TranscriptEntry[]>(() =>
     ? store.transcripts[store.selectedSessionId] ?? []
     : [],
 );
+
+// Columns for the agents table. `status`, `ctx`, `activity`, and `actions` are
+// rendered by scoped slots; `name`/`branch` also carry custom cells.
+const agentColumns: KTableColumn[] = [
+  { key: 'status', label: 'Статус', width: '132px' },
+  { key: 'name', label: 'Агент' },
+  { key: 'branch', label: 'Гілка', width: '170px' },
+  { key: 'ctx', label: 'Контекст', align: 'right', width: '96px', mono: true },
+  { key: 'activity', label: 'Активність' },
+  { key: 'actions', label: '', align: 'right', width: '84px' },
+];
 
 function isRunning(s: Session): boolean {
   return s.status === 'thinking' || s.status === 'tool';
@@ -291,6 +329,8 @@ function statusWord(s: Session): string {
       return 'зупинено';
     case 'merged':
       return 'влито';
+    case 'conflict':
+      return 'конфлікт';
     default:
       return s.status;
   }
@@ -423,13 +463,18 @@ async function onUnarchive(s: Session): Promise<void> {
 // ── Finish (merge session branch → project branch, retire worktree) ────────
 const finishOpen = ref(false);
 const finishFor = ref<Session | null>(null);
-const finishData = ref<{ branch: string; target: string; ahead: number; dirty: boolean } | null>(null);
+const finishData = ref<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[] } | null>(null);
+const finishConflict = ref<string[] | null>(null);
 const finishError = ref<string | null>(null);
 const finishBusy = ref(false);
+
+// Files to resolve: from a just-attempted merge, else the worktree's current state.
+const finishFiles = computed(() => finishConflict.value ?? finishData.value?.conflicts ?? []);
 
 async function openFinish(s: Session): Promise<void> {
   finishFor.value = s;
   finishData.value = null;
+  finishConflict.value = null;
   finishError.value = null;
   finishBusy.value = false;
   finishOpen.value = true;
@@ -445,16 +490,35 @@ function onFinish(): void {
   if (s) void openFinish(s);
 }
 
+function onEditor(): void {
+  const s = selectedSession.value;
+  if (s) void store.openEditor(s.id).catch(() => {});
+}
+
+async function openEditorForFinish(): Promise<void> {
+  const s = finishFor.value;
+  if (!s) return;
+  try {
+    await store.openEditor(s.id);
+  } catch (e) {
+    finishError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
 async function submitFinish(): Promise<void> {
   const s = finishFor.value;
   if (!s) return;
   finishBusy.value = true;
   finishError.value = null;
   try {
-    await store.finishSession(s.id);
-    finishOpen.value = false;
+    const res = await store.finishSession(s.id);
+    if ('conflict' in res && res.conflict) {
+      finishConflict.value = res.files;
+    } else {
+      finishConflict.value = null;
+      finishOpen.value = false;
+    }
   } catch (e) {
-    // Merge conflict or a dirty main tree — keep the modal open, show git's message.
     finishError.value = e instanceof Error ? e.message : String(e);
   } finally {
     finishBusy.value = false;
@@ -612,80 +676,46 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-text);
 }
 
-.ws__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 1px;
-  background: var(--k-line);
-  border: 1px solid var(--k-line);
-}
-
-// ── Session card ──────────────────────────────────────────────────────────
-.ws__card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px 14px 16px;
-  background: var(--k-surface);
-  border: none;
-  border-radius: 0;
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.12s, box-shadow 0.12s;
-
-  &:hover {
-    background: var(--k-surface2);
-  }
-
-  &:focus-visible {
-    outline: 1px solid var(--k-accent);
-    outline-offset: -1px;
-  }
-}
-
-// running — accent strip on the top edge, matching the active panel.
-.ws__card--running {
-  box-shadow: inset 0 2px 0 0 var(--k-accent);
-}
-
-// selected — surface2 fill + a 1px accent frame.
-.ws__card--active {
-  background: var(--k-surface2);
-  box-shadow: inset 0 0 0 1px var(--k-accent);
-}
-
-.ws__card--active.ws__card--running {
-  box-shadow: inset 0 0 0 1px var(--k-accent), inset 0 2px 0 0 var(--k-accent);
-}
-
-.ws__card-top {
-  display: flex;
+// ── Agents table ──────────────────────────────────────────────────────────
+.ws__cell-status {
+  display: inline-flex;
   align-items: center;
-  gap: 9px;
-  min-width: 0;
+  gap: 8px;
 }
 
-.ws__card-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.ws__cell-status-word {
+  font-size: 11px;
+  color: var(--k-muted);
   white-space: nowrap;
+}
+
+.ws__cell-name {
   font-family: var(--k-font-ui);
   font-size: 14px;
   font-weight: 700;
   color: var(--k-text);
 }
 
-.ws__card-status {
-  font-size: 11px;
-  color: var(--k-muted);
+.ws__cell-activity {
+  display: inline-block;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
+  color: var(--k-muted);
+  vertical-align: middle;
 }
 
-.ws__card-actions {
-  display: flex;
+.ws__cell-actions {
+  display: inline-flex;
   gap: 4px;
+  justify-content: flex-end;
+}
+
+// running — accent strip on the row's leading edge (mirrors the card).
+.ws__table :deep(tr.ws__row--running td:first-child) {
+  box-shadow: inset 2px 0 0 0 var(--k-accent);
 }
 
 .ws__card-icon {
@@ -719,20 +749,6 @@ async function submitPreviewConfig(): Promise<void> {
   font-size: 11px;
   line-height: 1.5;
   color: var(--k-muted);
-}
-
-.ws__card-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.ws__card-activity {
-  font-size: 11px;
-  color: var(--k-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .ws__empty {

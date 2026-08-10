@@ -144,6 +144,41 @@
         </template>
       </KModal>
     </section>
+
+    <!-- 09 — data table -->
+    <section class="kit__section">
+      <div class="kit__label">09 · Таблиця агентів</div>
+      <KTable
+        class="kit__table"
+        :columns="agentColumns"
+        :rows="tableSessions"
+        :row-key="(s) => s.id"
+        :selected-key="tableSelected"
+        :row-class="(s) => (s.status === 'thinking' || s.status === 'tool' ? 'kit__row--running' : undefined)"
+        clickable
+        @row-click="tableSelected = $event.id"
+      >
+        <template #cell-status="{ row }">
+          <span class="kit__cell-status">
+            <KStatusDot :status="row.status" />
+            <span class="mono">{{ row.status }}</span>
+          </span>
+        </template>
+        <template #cell-name="{ row }">
+          <strong>{{ row.name }}</strong>
+        </template>
+        <template #cell-branch="{ row }">
+          <KTag>⑂ {{ row.branch }}</KTag>
+        </template>
+        <template #cell-ctx="{ row }">
+          {{ row.contextPercent != null ? row.contextPercent + '%' : '—' }}
+        </template>
+        <template #cell-activity="{ row }">
+          <span class="mono">{{ row.currentTool ?? '—' }}</span>
+        </template>
+      </KTable>
+      <div class="kit__caption mono">вибрано: {{ tableSelected }}</div>
+    </section>
   </main>
 </template>
 
@@ -162,6 +197,7 @@ import KPanel from 'components/kit/KPanel.vue';
 import KLogBlock from 'components/kit/KLogBlock.vue';
 import KRailItem from 'components/kit/KRailItem.vue';
 import KStatusBar from 'components/kit/KStatusBar.vue';
+import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 
 const statusSamples: { status: SessionStatus; name: string }[] = [
   { status: 'thinking', name: 'працює' },
@@ -195,6 +231,20 @@ const waitingSession = mkSession({
     options: ["Об'єднати в session.ts", 'Лишити як є, додати тест'],
   },
 });
+const agentColumns: KTableColumn[] = [
+  { key: 'status', label: 'Статус', width: '132px' },
+  { key: 'name', label: 'Агент' },
+  { key: 'branch', label: 'Гілка', width: '150px' },
+  { key: 'ctx', label: 'Контекст', align: 'right', width: '96px', mono: true },
+  { key: 'activity', label: 'Активність' },
+];
+const tableSessions: Session[] = [
+  mkSession({ id: 't1', name: 'api-gateway', status: 'thinking', branch: 'main', currentTool: 'Edit', contextPercent: 42 }),
+  mkSession({ id: 't2', name: 'schema-migrate', status: 'waiting_input', branch: 'feat/schema', currentTool: 'Read', contextPercent: 68 }),
+  mkSession({ id: 't3', name: 'billing-fix', status: 'done', branch: 'fix/billing', contextPercent: 90 }),
+  mkSession({ id: 't4', name: 'web-client', status: 'queued', branch: 'feat/ui', contextPercent: 12 }),
+];
+const tableSelected = ref('t1');
 const panelLog: TranscriptEntry[] = [
   { kind: 'tool_call', tool: 'Edit', summary: 'src/auth/token.service.ts\n+ this.rotateShared(token);' },
   { kind: 'tool_call', tool: 'Bash', summary: 'npm run test:e2e -- auth' },
@@ -211,7 +261,7 @@ const logSamples: TranscriptEntry[] = [
   { kind: 'tool_result', tool: 'Vitest', ok: true, summary: '12 passed, 0 failed (8.4s)' },
   { kind: 'tool_result', tool: 'Bash', ok: false, summary: 'exit 1 — 2 failing specs' },
   { kind: 'assistant_thinking', text: 'Сесія зберігається у двох місцях — треба звести.' },
-  { kind: 'assistant_text', text: 'Знайшов два місця, де зберігається сесія.' },
+  { kind: 'assistant_text', text: '## Знайшов два місця\n\nСесія зберігається у **двох** місцях — треба звести:\n\n- `session.ts` — запис у файл\n- `store.ts` — дубль у памʼяті\n\n```ts\nconst s = load();\n```' },
   { kind: 'notice', text: 'Гілку перемкнено на feat/schema.' },
 ];
 const railGroups: { group: Group; active: boolean; count: number }[] = [
@@ -341,5 +391,16 @@ function onDelete() { lastAction.value = 'delete'; }
   max-width: 640px;
   border: 1px solid var(--k-line-strong);
   border-top: none;
+}
+
+.kit__cell-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+// running — accent strip on the row's leading edge (via KTable rowClass).
+.kit__table :deep(tr.kit__row--running td:first-child) {
+  box-shadow: inset 2px 0 0 0 var(--k-accent);
 }
 </style>

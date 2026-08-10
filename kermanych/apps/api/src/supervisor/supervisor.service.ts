@@ -1,9 +1,11 @@
 // apps/api/src/supervisor/supervisor.service.ts
 import { Injectable } from "@nestjs/common";
+import { spawn } from "node:child_process";
 import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { RpcSession } from "../rpc/rpc-session";
+import { messagesToTranscript } from "./messages-to-transcript";
 import {
   INITIAL_STATUS,
   reduceStatus,
@@ -28,20 +30,9 @@ type Live = {
   transcript: TranscriptEntry[];
   live: Partial<Session>;
   textBuf: string;
+  thinkBuf: string;
   poll?: NodeJS.Timeout;
 };
-
-// Shape of omp's converted history messages (get_messages_page) we map from.
-type OmpPart = {
-  type: string;
-  text?: string;
-  name?: string;
-  arguments?: { command?: string; path?: string };
-  intent?: string;
-  data?: string;
-  mimeType?: string;
-};
-type OmpMessage = { role?: string; content?: OmpPart[]; toolName?: string; isError?: boolean };
 
 @Injectable()
 export class SupervisorService {
@@ -146,10 +137,13 @@ export class SupervisorService {
     if (e.type === "message_update") {
       const ame = (e as Extract<RpcEvent, { type: "message_update" }>).assistantMessageEvent;
       if (ame?.type === "text_delta") l.textBuf += ame.delta ?? "";
+      else if (ame?.type === "thinking_delta") l.thinkBuf += ame.delta ?? "";
     }
     if (e.type === "message_end") {
+      if (l.thinkBuf.trim()) this.appendEntry(id, { kind: "assistant_thinking", text: l.thinkBuf });
       if (l.textBuf.trim()) this.appendEntry(id, { kind: "assistant_text", text: l.textBuf });
       l.textBuf = "";
+      l.thinkBuf = "";
     }
     if (e.type === "tool_execution_start") {
       const ev = e as Extract<RpcEvent, { type: "tool_execution_start" }>;
@@ -246,7 +240,7 @@ export class SupervisorService {
 
   // Preview of what "finish" will do: the target branch, how many commits land,
   // and whether the worktree has uncommitted work that would be auto-committed.
-  async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean }> {
+  async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[] }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s?.worktreePath) throw new Error("session has no worktree");
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
@@ -254,13 +248,15 @@ export class SupervisorService {
     const target = await this.worktree.currentBranch(g.projectDir);
     const ahead = target ? await this.worktree.aheadCount(g.projectDir, target, s.branch) : 0;
     const dirty = await this.worktree.hasUncommitted(s.worktreePath);
-    return { branch: s.branch, target, ahead, dirty };
+    const conflicts = await this.worktree.unmergedFiles(s.worktreePath);
+    return { branch: s.branch, target, ahead, dirty, conflicts };
   }
 
   // Merge the session's branch into the project's current branch, then retire the
-  // worktree + branch and mark the session merged. Auto-commits dirty worktree work
-  // first. On merge conflict the worktree is left intact and the error is surfaced.
-  async finishSession(id: string): Promise<{ merged: true; into: string }> {
+  // worktree + branch and keep the session as `merged` history. On a content conflict
+  // it instead pulls the target into the worktree (leaving markers to resolve in an
+  // editor) and marks the session `conflict`; re-running after a resolve merges cleanly.
+  async finishSession(id: string): Promise<{ merged: true; into: string } | { conflict: true; files: string[] }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s?.worktreePath) throw new Error("session has no worktree");
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
@@ -269,7 +265,23 @@ export class SupervisorService {
     if (!target) throw new Error("project repo has a detached HEAD - checkout a branch first");
     if (target === s.branch) throw new Error("project repo is on the session branch itself");
 
-    // Free the worktree: stop the live omp process (preview is stopped by the controller).
+    // A prior conflict left the worktree mid-merge — it must be resolved before retrying.
+    if ((await this.worktree.unmergedFiles(s.worktreePath)).length)
+      throw new Error("worktree has unresolved conflicts - resolve them in the editor first");
+    if (await this.worktree.hasUncommitted(s.worktreePath))
+      await this.worktree.commitAll(s.worktreePath, `session work: ${s.name}`);
+
+    const res = await this.worktree.mergeBranch(g.projectDir, s.branch, `merge session: ${s.name}`);
+    if (!res.ok) {
+      if (!res.conflict) throw new Error(res.message); // e.g. dirty project tree
+      // Pull the target into the worktree so the conflict can be resolved there.
+      await this.worktree.mergeInto(s.worktreePath, target);
+      this.registry.updateSession(id, { status: "conflict" });
+      this.pushUpdate(id);
+      return { conflict: true, files: await this.worktree.unmergedFiles(s.worktreePath) };
+    }
+
+    // Success — retire: stop omp (preview is stopped by the controller), drop worktree + branch.
     const l = this.map.get(id);
     if (l) {
       l.live.status = "stopped";
@@ -277,16 +289,22 @@ export class SupervisorService {
       await l.rpc.stop();
       this.map.delete(id);
     }
-    if (await this.worktree.hasUncommitted(s.worktreePath)) {
-      await this.worktree.commitAll(s.worktreePath, `session work: ${s.name}`);
-    }
-    await this.worktree.mergeBranch(g.projectDir, s.branch, `merge session: ${s.name}`);
     await this.worktree.removeWorktree(g.projectDir, s.worktreePath);
     await this.worktree.removeBranch(g.projectDir, s.branch);
-    // Retire it: worktree is gone, so clear the path (resume/preview become no-ops).
     this.registry.updateSession(id, { status: "merged", worktreePath: "" });
     this.pushUpdate(id);
     return { merged: true, into: target };
+  }
+
+  // Open the session's worktree in the user's editor ($KERMANYCH_EDITOR or `code`).
+  openInEditor(id: string): { ok: true } {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s?.worktreePath) throw new Error("session has no worktree");
+    const editor = process.env.KERMANYCH_EDITOR || "code";
+    const child = spawn(editor, [s.worktreePath], { detached: true, stdio: "ignore" });
+    child.on("error", () => {}); // editor binary missing — swallow, don't crash the api
+    child.unref();
+    return { ok: true };
   }
   getTranscript(id: string): TranscriptEntry[] {
     const l = this.map.get(id);
@@ -300,7 +318,7 @@ export class SupervisorService {
   // Shared live-session wiring (fresh create + resume): build the Live, register it,
   // and route exit + events. onExit marks error unless the session ended cleanly.
   private wireLive(sessionId: string, rpc: RpcSession, status: Session["status"]): Live {
-    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status }, textBuf: "" };
+    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status }, textBuf: "", thinkBuf: "" };
     this.map.set(sessionId, live);
     rpc.onExit((_code, reason) => {
       this.stopPoll(live);
@@ -336,7 +354,7 @@ export class SupervisorService {
       await rpc.start();
       if (s.ompSessionFile) {
         await rpc.switchSession(s.ompSessionFile);
-        live.transcript = this.messagesToTranscript(await rpc.getAllMessages());
+        live.transcript = messagesToTranscript(await rpc.getAllMessages());
       }
     } catch (err) {
       this.stopPoll(live);
@@ -351,32 +369,5 @@ export class SupervisorService {
     this.events.next({ type: "transcript_reset", sessionId: id, entries: live.transcript });
     this.pushUpdate(id);
     return live;
-  }
-
-  // Map omp's converted message history into transcript entries, mirroring the live
-  // event reduction (user text/images, assistant text, tool calls + results).
-  // Thinking parts are omitted, matching the live log.
-  private messagesToTranscript(messages: unknown[]): TranscriptEntry[] {
-    const out: TranscriptEntry[] = [];
-    for (const raw of messages) {
-      const m = raw as OmpMessage;
-      const parts = m.content ?? [];
-      if (m.role === "user") {
-        const text = parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("");
-        const images = parts
-          .filter((p) => p.type === "image" && p.data)
-          .map((p) => `data:${p.mimeType ?? "image/png"};base64,${p.data}`);
-        if (text.trim() || images.length) out.push({ kind: "user_text", text, images: images.length ? images : undefined });
-      } else if (m.role === "assistant") {
-        for (const p of parts) {
-          if (p.type === "text" && p.text?.trim()) out.push({ kind: "assistant_text", text: p.text });
-          else if (p.type === "toolCall") out.push({ kind: "tool_call", tool: p.name ?? "?", summary: p.arguments?.command ?? p.arguments?.path ?? p.intent });
-        }
-      } else if (m.role === "toolResult") {
-        const summary = parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("\n");
-        out.push({ kind: "tool_result", tool: m.toolName ?? "?", ok: !m.isError, summary });
-      }
-    }
-    return out;
   }
 }
