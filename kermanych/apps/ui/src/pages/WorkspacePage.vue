@@ -172,7 +172,7 @@
     </KModal>
 
     <!-- FINISH — merge the session branch into the project branch, retire the worktree -->
-    <KModal v-model="finishOpen" title="Завершити сесію">
+    <KModal v-model="finishOpen" title="Завершити сесію" persistent>
       <div class="ws__form">
         <template v-if="finishFiles.length">
           <p class="ws__error" role="alert">

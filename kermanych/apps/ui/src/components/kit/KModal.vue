@@ -1,6 +1,7 @@
 <template>
   <q-dialog
     :model-value="modelValue"
+    :persistent="persistent"
     @update:model-value="(v: boolean) => emit('update:modelValue', v)"
   >
     <div class="k-modal">
@@ -26,7 +27,7 @@ import { QDialog } from 'quasar';
 // The only shadowed layer in the system. QDialog supplies the overlay/backdrop
 // mechanics; the panel itself is styled with tokens (1px border, 2px rule under
 // the title, 1px rule above the controls).
-defineProps<{ modelValue: boolean; title: string }>();
+defineProps<{ modelValue: boolean; title: string; persistent?: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
 </script>
 
