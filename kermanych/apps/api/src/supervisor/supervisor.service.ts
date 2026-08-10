@@ -198,7 +198,11 @@ export class SupervisorService {
 
   async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
     const l = this.map.get(id) ?? (await this.resumeSession(id));
-    this.registry.touchSession(id);
+    try {
+      this.registry.touchSession(id);
+    } catch {
+      /* never let a bookkeeping write break message delivery */
+    }
     if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images));
     if (mode === "steer") l.rpc.steer(text, images);
     else if (mode === "follow_up") l.rpc.followUp(text, images);
