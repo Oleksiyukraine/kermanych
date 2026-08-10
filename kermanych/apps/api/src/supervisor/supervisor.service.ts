@@ -14,6 +14,7 @@ import {
   branchName,
   uniqueSlug,
   worktreeDir,
+  type BranchPrefix,
   type StatusState,
   type Group,
   type ImageInput,
@@ -79,24 +80,55 @@ export class SupervisorService {
     return g;
   }
 
-  async createSession(groupId: string, name: string, task: string, model?: string, images?: ImageInput[]): Promise<Session> {
+  async createSession(
+    groupId: string,
+    name: string,
+    task: string,
+    model?: string,
+    images?: ImageInput[],
+    worktree = true,
+    prefix: BranchPrefix = "feature",
+  ): Promise<Session> {
     const group = this.registry.listGroups().find((g) => g.id === groupId);
     if (!group) throw new Error("group not found");
-    // Dynamic membership set built from existing branches; `uniqueSlug` consumes a Set.
-    const existing = new Set(this.registry.listSessions(groupId).map((s) => s.branch.replace("kermanych/", "")));
-    const slug = uniqueSlug(slugify(name), existing);
-    const branch = branchName(slug);
-    const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch });
-    const wtDir = worktreeDir(session.id);
+
+    // In-place guards run first — they must not leave a row, branch, or omp process behind.
+    let baseBranch: string | undefined;
+    if (!worktree) {
+      if (await this.worktree.hasUncommitted(group.projectDir))
+        throw new Error("project working tree must be clean to create an in-place (non-worktree) agent");
+      const activeInPlace = this.registry
+        .listSessions(groupId)
+        .some((s) => !s.worktree && s.status !== "merged");
+      if (activeInPlace)
+        throw new Error("an in-place agent is already active in this project — finish or delete it first");
+      baseBranch = await this.worktree.currentBranch(group.projectDir);
+      if (!baseBranch) throw new Error("project has a detached HEAD — checkout a branch first");
+    }
+
+    // Branch name: <prefix>/<slug>, de-duplicated against ALL existing session branches.
+    const existing = new Set(this.registry.listSessions(groupId).map((s) => s.branch));
+    const branch = uniqueSlug(branchName(slugify(name), prefix), existing);
+
+    const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch, worktree, baseBranch });
+    let wtDir = "";
     try {
-      await this.worktree.addWorktree(group.projectDir, wtDir, branch);
+      if (worktree) {
+        wtDir = worktreeDir(session.id);
+        await this.worktree.addWorktree(group.projectDir, wtDir, branch);
+      } else {
+        await this.worktree.createBranchHere(group.projectDir, branch);
+      }
     } catch (err) {
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
       throw err;
     }
-    const saved = this.registry.updateSession(session.id, { worktreePath: wtDir });
-    const rpc = new RpcSession({ cwd: wtDir, model });
+    const saved = worktree
+      ? this.registry.updateSession(session.id, { worktreePath: wtDir })
+      : session;
+
+    const rpc = new RpcSession({ cwd: worktree ? wtDir : group.projectDir, model });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await rpc.start();
@@ -105,7 +137,11 @@ export class SupervisorService {
     } catch (err) {
       this.stopPoll(live);
       await rpc.stop().catch(() => {});
-      await this.worktree.removeWorktree(group.projectDir, wtDir).catch(() => {});
+      if (worktree) {
+        await this.worktree.removeWorktree(group.projectDir, wtDir).catch(() => {});
+      } else if (baseBranch) {
+        await this.worktree.checkout(group.projectDir, baseBranch, { force: true }).catch(() => {});
+      }
       await this.worktree.removeBranch(group.projectDir, branch).catch(() => {});
       this.map.delete(session.id);
       this.registry.removeSession(session.id);

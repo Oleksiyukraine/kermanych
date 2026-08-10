@@ -32,8 +32,10 @@ export class WorktreeService {
     await git(repoDir, ["branch", "-D", branch]);
   }
 
+  // Empty string on a detached HEAD (symbolic-ref fails) so callers can treat it as "no branch".
   async currentBranch(repoDir: string): Promise<string> {
-    return (await git(repoDir, ["symbolic-ref", "--short", "HEAD"])).out.trim();
+    const r = await git(repoDir, ["symbolic-ref", "--short", "HEAD"]);
+    return r.ok ? r.out.trim() : "";
   }
 
   async hasUncommitted(dir: string): Promise<boolean> {
