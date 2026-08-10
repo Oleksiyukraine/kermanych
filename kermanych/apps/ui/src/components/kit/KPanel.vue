@@ -265,6 +265,9 @@ function jumpUser(dir: 1 | -1): void {
 function onNavKeydown(e: KeyboardEvent): void {
   if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
   if (!rootEl.value?.contains(e.target as Node)) return; // only when this panel is focused
+  if (userMsgCount.value <= 1) return;
+  const t = e.target as HTMLElement | null;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
   e.preventDefault();
   jumpUser(e.key === 'ArrowUp' ? -1 : 1);
 }

@@ -14,7 +14,3 @@ const md = new MarkdownIt({
 export function renderMarkdown(src: string): string {
   return md.render(src ?? '');
 }
-
-export function renderMarkdownInline(src: string): string {
-  return md.renderInline(src ?? '');
-}

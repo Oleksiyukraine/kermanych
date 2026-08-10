@@ -71,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type { TranscriptEntry } from '@kermanych/core';
 import { renderMarkdown } from '../../lib/markdown';
 
@@ -122,6 +122,7 @@ const renderedText = computed(() =>
 
 // Reasoning is collapsed by default; expand to read the full chain.
 const open = ref(false);
+watch(() => props.entry, () => { open.value = false; });
 const renderedThinking = computed(() =>
   props.entry.kind === 'assistant_thinking' ? renderMarkdown(props.entry.text) : '',
 );
@@ -184,63 +185,6 @@ const renderedThinking = computed(() =>
   white-space: pre-wrap;
   word-break: break-word;
 }
-
-// assistant prose — Markdown rendered, UI font, primary text. Code is mono on a
-// surface fill (no syntax colors); links use the single accent; green stays for diffs.
-.k-log__markdown {
-  font-family: var(--k-font-ui);
-  font-size: 14px;
-  line-height: 1.65;
-  color: var(--k-text);
-  word-break: break-word;
-}
-.k-log__markdown > :first-child { margin-top: 0; }
-.k-log__markdown > :last-child { margin-bottom: 0; }
-.k-log__markdown p { margin: 0 0 8px; }
-.k-log__markdown h1,
-.k-log__markdown h2,
-.k-log__markdown h3,
-.k-log__markdown h4,
-.k-log__markdown h5,
-.k-log__markdown h6 { margin: 14px 0 6px; font-weight: 700; line-height: 1.3; }
-.k-log__markdown h1 { font-size: 19px; }
-.k-log__markdown h2 { font-size: 17px; }
-.k-log__markdown h3 { font-size: 15px; }
-.k-log__markdown h4,
-.k-log__markdown h5,
-.k-log__markdown h6 { font-size: 14px; }
-.k-log__markdown ul,
-.k-log__markdown ol { margin: 0 0 8px; padding-left: 20px; }
-.k-log__markdown li { margin: 2px 0; }
-.k-log__markdown li > ul,
-.k-log__markdown li > ol { margin: 2px 0; }
-.k-log__markdown a { color: var(--k-accent); text-decoration: underline; }
-.k-log__markdown strong { font-weight: 700; }
-.k-log__markdown blockquote {
-  margin: 8px 0;
-  padding: 2px 12px;
-  color: var(--k-muted);
-  border-left: 2px solid var(--k-line-strong);
-}
-.k-log__markdown code {
-  font-family: var(--k-font-mono);
-  font-size: 12.5px;
-  background: var(--k-surface2);
-  padding: 1px 5px;
-}
-.k-log__markdown pre {
-  margin: 8px 0;
-  padding: 10px 12px;
-  background: var(--k-surface2);
-  overflow-x: auto;
-}
-.k-log__markdown pre code { background: none; padding: 0; line-height: 1.5; }
-.k-log__markdown hr { border: none; border-top: 1px solid var(--k-line); margin: 12px 0; }
-.k-log__markdown table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
-.k-log__markdown th,
-.k-log__markdown td { border: 1px solid var(--k-line-strong); padding: 4px 8px; text-align: left; }
-.k-log__markdown th { background: var(--k-surface2); font-weight: 700; }
-.k-log__markdown img { max-width: 100%; }
 
 // assistant reasoning — a muted, collapsed disclosure ("Думаю"); expanded body
 // reuses the Markdown prose styles, dimmed.
