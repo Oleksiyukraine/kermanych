@@ -200,7 +200,7 @@
         <p v-if="finishError" class="ws__error" role="alert">{{ finishError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="finishOpen = false">Закрити</KBtn>
+        <KBtn variant="ghost" @click="closeFinish">Закрити</KBtn>
         <KBtn v-show="finishFiles.length" variant="secondary" @click="openEditorForFinish">Відкрити в редакторі</KBtn>
         <KBtn
           variant="primary"
@@ -462,13 +462,9 @@ async function submitFinish(): Promise<void> {
   try {
     const res = await store.finishSession(s.id);
     if ('conflict' in res && res.conflict) {
-      // Conflict: reopen the modal fresh so it mounts straight into the conflict view.
-      // An in-place confirm->conflict body switch makes QDialog drop the dialog after
-      // the merge, so close it, let it leave the DOM, then reopen via finishInfo.
-      finishOpen.value = false;
-      await new Promise((r) => setTimeout(r, 320));
-      await openFinish(s);
+      finishConflict.value = res.files;
     } else {
+      finishConflict.value = null;
       finishOpen.value = false;
     }
   } catch (e) {
@@ -477,6 +473,22 @@ async function submitFinish(): Promise<void> {
     finishBusy.value = false;
   }
 }
+
+function closeFinish(): void {
+  finishConflict.value = null;
+  finishOpen.value = false;
+}
+
+// The post-merge session_update re-render can make QDialog dismiss itself; while a
+// conflict is unresolved, reassert the dialog so the resolve view isn't lost. Explicit
+// close (closeFinish) clears finishConflict first, so this never fights the user.
+watch(finishOpen, (open) => {
+  if (!open && finishConflict.value && finishConflict.value.length) {
+    void nextTick(() => {
+      finishOpen.value = true;
+    });
+  }
+});
 
 // ── Live preview (per-session worktree app on a free port) ─────────────────
 const LOADING_HTML =
