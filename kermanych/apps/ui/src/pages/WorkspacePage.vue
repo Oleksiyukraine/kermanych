@@ -6,7 +6,7 @@
       <p class="ws__blank-text">Виберіть проєкт у лівій панелі, щоб побачити його агентів.</p>
     </div>
 
-    <div v-else class="ws__content">
+    <div v-else class="ws__content" ref="contentEl" :class="{ 'ws__content--resizing': resizing }">
       <!-- BOARD — one card per session in the selected group -->
       <section class="ws__board">
         <header class="ws__board-head">
@@ -88,8 +88,23 @@
         </div>
       </section>
 
+      <!-- RESIZER — drag the seam to widen / narrow the chat section -->
+      <div
+        v-if="selectedSession"
+        class="ws__resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Змінити ширину секції з чатом"
+        :aria-valuenow="Math.round(detailWidth)"
+        :aria-valuemin="MIN_DETAIL"
+        tabindex="0"
+        title="Перетягніть, щоб змінити ширину секції з чатом"
+        @pointerdown="startResize"
+        @keydown="onResizeKeydown"
+      ></div>
+
       <!-- DETAIL — the full panel for the selected session -->
-      <aside v-if="selectedSession" class="ws__detail">
+      <aside v-if="selectedSession" class="ws__detail" :style="{ width: detailWidth + 'px' }">
         <div class="ws__detail-bar">
           <span class="ws__detail-label mono">{{ selectedSession.name }}</span>
           <button
@@ -251,6 +266,7 @@ import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KToggle from 'components/kit/KToggle.vue';
 import { useImageAttach } from '../composables/useImageAttach';
+import { useResizableWidth } from '../composables/useResizableWidth';
 
 // The Workspace screen (design-system section 07): the board of session cards
 // for the selected group + the full panel for the selected session, plus the
@@ -278,6 +294,38 @@ const entries = computed<TranscriptEntry[]>(() =>
   store.selectedSessionId
     ? store.transcripts[store.selectedSessionId] ?? []
     : [],
+);
+
+// ── Resizable chat section ────────────────────────────────────────────────
+// The detail column (KPanel = the chat) is drag-resizable via the seam on its
+// left edge. Width is clamped so the board keeps at least MIN_BOARD and the
+// chat at least MIN_DETAIL, then persisted across reloads.
+const MIN_DETAIL = 360;
+const MIN_BOARD = 360;
+const contentEl = ref<HTMLElement | null>(null);
+const {
+  width: detailWidth,
+  resizing,
+  startResize,
+  onKeydown: onResizeKeydown,
+  refresh: refreshDetailWidth,
+} = useResizableWidth({
+  storageKey: 'kermanych.ws.detail-width',
+  defaultWidth: 560,
+  min: MIN_DETAIL,
+  edge: 'left',
+  max: () =>
+    contentEl.value ? contentEl.value.clientWidth - MIN_BOARD : Number.POSITIVE_INFINITY,
+});
+
+// Re-clamp once the detail column mounts (the container is measurable by then),
+// so a persisted width from a wider viewport can't overflow a narrower one.
+watch(
+  () => !!selectedSession.value,
+  (open) => {
+    if (open) void nextTick(refreshDetailWidth);
+  },
+  { immediate: true },
 );
 
 // Columns for the agents table. `status`, `ctx`, `activity`, and `actions` are
@@ -645,6 +693,52 @@ async function submitPreviewConfig(): Promise<void> {
   min-height: 0;
 }
 
+// While dragging the seam, force the resize cursor everywhere and kill text
+// selection so a fast drag doesn't highlight the board or the log.
+.ws__content--resizing,
+.ws__content--resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+// The draggable seam between the board and the chat section. It stands in for
+// the detail column's old static left border: a faint line by default, accent
+// on hover / focus / active drag.
+.ws__resizer {
+  flex: none;
+  width: 7px;
+  position: relative;
+  z-index: 3;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.ws__resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--k-line-strong);
+  transition: background 0.12s;
+}
+
+.ws__resizer:hover::before,
+.ws__resizer:focus-visible::before,
+.ws__content--resizing .ws__resizer::before {
+  background: var(--k-accent);
+}
+
+.ws__resizer:focus-visible {
+  outline: none;
+}
+
 .ws__board {
   flex: 1;
   min-width: 0;
@@ -766,12 +860,10 @@ async function submitPreviewConfig(): Promise<void> {
 // ── Detail column ─────────────────────────────────────────────────────────
 .ws__detail {
   flex: none;
-  width: 560px;
-  max-width: 48vw;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-left: 2px solid var(--k-line-strong);
+  min-width: 0;
 }
 
 .ws__detail-bar {
