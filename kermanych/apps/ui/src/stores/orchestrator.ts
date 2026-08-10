@@ -149,6 +149,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.openEditor(id);
   }
 
+  function resolveConflict(id: string) {
+    return api.resolveConflict(id);
+  }
+
   return {
     groups,
     sessions,
@@ -173,5 +177,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     finishInfo,
     finishSession,
     openEditor,
+    resolveConflict,
   };
 });

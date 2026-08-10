@@ -103,6 +103,15 @@ export class SessionsController {
     }
   }
 
+  @Post(":id/resolve")
+  async resolve(@Param("id") id: string) {
+    try {
+      return await this.sup.resolveConflict(id);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Delete(":id")
   async remove(@Param("id") id: string) {
     try {

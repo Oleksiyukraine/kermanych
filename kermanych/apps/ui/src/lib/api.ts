@@ -119,4 +119,7 @@ export const api = {
 
   openEditor: (id: string): Promise<{ ok: boolean }> =>
     post(`/sessions/${id}/editor`, {}),
+
+  resolveConflict: (id: string): Promise<{ ok: boolean }> =>
+    post(`/sessions/${id}/resolve`, {}),
 };

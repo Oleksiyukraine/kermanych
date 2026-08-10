@@ -201,7 +201,7 @@
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="finishOpen = false">Закрити</KBtn>
-        <KBtn v-show="finishFiles.length" variant="secondary" @click="openEditorForFinish">Відкрити в редакторі</KBtn>
+        <KBtn v-show="finishFiles.length" variant="secondary" @click="resolveAuto">Вирішити автоматично</KBtn>
         <KBtn
           variant="primary"
           :disabled="finishBusy || (!finishData && !finishFiles.length)"
@@ -444,11 +444,14 @@ function onEditor(): void {
   if (s) void store.openEditor(s.id).catch(() => {});
 }
 
-async function openEditorForFinish(): Promise<void> {
+async function resolveAuto(): Promise<void> {
   const s = finishFor.value;
   if (!s) return;
   try {
-    await store.openEditor(s.id);
+    await store.resolveConflict(s.id);
+    finishConflict.value = null;
+    finishOpen.value = false; // agent resolves in the background — watch it on the card
+    store.selectSession(s.id);
   } catch (e) {
     finishError.value = e instanceof Error ? e.message : String(e);
   }

@@ -193,6 +193,25 @@ export class SupervisorService {
     else if (mode === "follow_up") l.rpc.followUp(text, images);
     else l.rpc.prompt(text, images);
   }
+
+  // AI conflict resolution: resume the session's agent in its mid-merge worktree and
+  // task it with resolving the conflicts + committing the merge, so the branch becomes
+  // mergeable. Progress streams on the session's normal event feed.
+  async resolveConflict(id: string): Promise<{ ok: true }> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s?.worktreePath) throw new Error("session has no worktree");
+    const files = await this.worktree.unmergedFiles(s.worktreePath);
+    if (!files.length) throw new Error("no merge conflict to resolve");
+    const prompt =
+      `A git merge is in progress in this worktree with conflicts in:\n` +
+      files.map((f) => `- ${f}`).join("\n") +
+      `\n\nResolve every conflict: edit each file, remove the conflict markers ` +
+      `(<<<<<<<, =======, >>>>>>>), and combine BOTH sides so nothing is lost — keep this ` +
+      `branch's changes AND the changes merged in from the base branch. When all conflicts ` +
+      `are resolved, run \`git add -A && git commit --no-edit\` to complete the merge. Do only this.`;
+    await this.sendMessage(id, prompt, "prompt");
+    return { ok: true };
+  }
   answerUi(id: string, res: RpcExtensionUIResponse) {
     this.map.get(id)?.rpc.answerUi(res);
   }
