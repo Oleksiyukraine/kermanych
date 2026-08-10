@@ -32,6 +32,12 @@ export class RegistryService {
         /* column already exists */
       }
     }
+    // Additive migration: archiving arrived after the initial schema.
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`);
+    } catch {
+      /* column already exists */
+    }
   }
 
   listGroups(): Group[] {
@@ -66,12 +72,14 @@ export class RegistryService {
   }
 
   listSessions(groupId?: string): Session[] {
-    const sql = `SELECT id, group_id as groupId, name, task, worktree_path as worktreePath, branch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, status, created_at as createdAt FROM sessions`;
-    return (
+    const sql = `SELECT id, group_id as groupId, name, task, worktree_path as worktreePath, branch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, status, archived, created_at as createdAt FROM sessions`;
+    const rows = (
       groupId
         ? this.db.prepare(sql + ` WHERE group_id = ? ORDER BY created_at`).all(groupId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as Session[];
+    ) as (Omit<Session, "archived"> & { archived: number })[];
+    // SQLite stores the flag as 0/1; hand callers a real boolean.
+    return rows.map((r) => ({ ...r, archived: r.archived !== 0 }));
   }
 
   createSession(
@@ -103,15 +111,12 @@ export class RegistryService {
   }
 
   updateSession(id: string, patch: Partial<Session>): Session {
-    const cur = this.db
-      .prepare(
-        `SELECT id, group_id as groupId, name, task, worktree_path as worktreePath, branch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, status, created_at as createdAt FROM sessions WHERE id = ?`,
-      )
-      .get(id) as Session;
+    const cur = this.listSessions().find((s) => s.id === id);
+    if (!cur) throw new Error("session not found");
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET name=?, task=?, worktree_path=?, branch=?, omp_session_id=?, omp_session_file=?, status=? WHERE id=?`,
+        `UPDATE sessions SET name=?, task=?, worktree_path=?, branch=?, omp_session_id=?, omp_session_file=?, status=?, archived=? WHERE id=?`,
       )
       .run(
         next.name,
@@ -121,6 +126,7 @@ export class RegistryService {
         next.ompSessionId ?? null,
         next.ompSessionFile ?? null,
         next.status,
+        next.archived ? 1 : 0,
         id,
       );
     return next;

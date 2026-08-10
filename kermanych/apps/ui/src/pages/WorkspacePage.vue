@@ -14,7 +14,10 @@
             <div class="ws__eyebrow mono">РОБОЧИЙ ПРОСТІР</div>
             <h1 class="ws__heading">{{ selectedGroup?.name ?? 'Проєкт' }}</h1>
           </div>
-          <KBtn variant="primary" @click="openLauncher">+ Новий агент</KBtn>
+          <div class="ws__board-controls">
+            <KToggle :options="viewOptions" v-model="viewMode" />
+            <KBtn variant="primary" @click="openLauncher">+ Новий агент</KBtn>
+          </div>
         </header>
 
         <div v-if="groupSessions.length" class="ws__grid">
@@ -36,20 +39,35 @@
               <span class="ws__card-name">{{ s.name }}</span>
               <span class="ws__card-status mono">{{ statusWord(s) }}</span>
               <div class="ws__card-actions">
+                <template v-if="!showArchived">
+                  <button
+                    type="button"
+                    class="ws__card-icon"
+                    :class="{ 'ws__card-icon--on': store.previews[s.id] }"
+                    :title="store.previews[s.id] ? 'Зупинити превʼю' : 'Превʼю гілки в браузері'"
+                    @click.stop="togglePreview(s)"
+                  >{{ store.previews[s.id] ? '◼' : '▶' }}</button>
+                  <button
+                    v-if="s.status !== 'merged'"
+                    type="button"
+                    class="ws__card-icon"
+                    title="Завершити (merge гілки в проєкт)"
+                    @click.stop="openFinish(s)"
+                  >✓</button>
+                  <button
+                    type="button"
+                    class="ws__card-icon"
+                    title="Заархівувати"
+                    @click.stop="onArchive(s)"
+                  >⤓</button>
+                </template>
                 <button
+                  v-else
                   type="button"
                   class="ws__card-icon"
-                  :class="{ 'ws__card-icon--on': store.previews[s.id] }"
-                  :title="store.previews[s.id] ? 'Зупинити превʼю' : 'Превʼю гілки в браузері'"
-                  @click.stop="togglePreview(s)"
-                >{{ store.previews[s.id] ? '◼' : '▶' }}</button>
-                <button
-                  v-if="s.status !== 'merged'"
-                  type="button"
-                  class="ws__card-icon"
-                  title="Завершити (merge гілки в проєкт)"
-                  @click.stop="openFinish(s)"
-                >✓</button>
+                  title="Розархівувати"
+                  @click.stop="onUnarchive(s)"
+                >⤒</button>
               </div>
             </div>
             <div class="ws__card-meta">
@@ -60,7 +78,7 @@
           </div>
         </div>
         <div v-else class="ws__empty mono">
-          Ще немає агентів. Запусти першого через «+ Новий агент».
+          {{ showArchived ? 'Немає заархівованих агентів.' : 'Ще немає агентів. Запусти першого через «+ Новий агент».' }}
         </div>
       </section>
 
@@ -188,11 +206,12 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import type {
-  ImageInput,
-  Session,
-  TranscriptEntry,
-  RpcExtensionUIResponse,
+import {
+  type ImageInput,
+  type Session,
+  type TranscriptEntry,
+  type RpcExtensionUIResponse,
+  ACTIVE_STATUSES,
 } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import type { MessageMode } from '../lib/api';
@@ -204,6 +223,7 @@ import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
+import KToggle from 'components/kit/KToggle.vue';
 import { useImageAttach } from '../composables/useImageAttach';
 
 // The Workspace screen (design-system section 07): the board of session cards
@@ -211,8 +231,16 @@ import { useImageAttach } from '../composables/useImageAttach';
 // new-agent launcher. All mutations go through the Pinia store.
 const store = useOrchestrator();
 
+// Board filter: "Активні" hides archived sessions; "Заархівовані" shows only them.
+const VIEW_ACTIVE = 'Активні';
+const VIEW_ARCHIVED = 'Заархівовані';
+const viewOptions = [VIEW_ACTIVE, VIEW_ARCHIVED];
+const viewMode = ref<string>(VIEW_ACTIVE);
+const showArchived = computed(() => viewMode.value === VIEW_ARCHIVED);
 const groupSessions = computed(() =>
-  store.sessions.filter((s) => s.groupId === store.selectedGroupId),
+  store.sessions.filter(
+    (s) => s.groupId === store.selectedGroupId && !!s.archived === showArchived.value,
+  ),
 );
 const selectedGroup = computed(() =>
   store.groups.find((g) => g.id === store.selectedGroupId),
@@ -367,6 +395,29 @@ async function onDelete(): Promise<void> {
 function onAnswer(res: RpcExtensionUIResponse): void {
   const s = selectedSession.value;
   if (s) void store.answerUi(s.id, res);
+}
+
+// ── Archive / unarchive ────────────────────────────────────────────────────
+// Active agents can't be archived: pre-check and toast (the API also enforces).
+async function onArchive(s: Session): Promise<void> {
+  if (ACTIVE_STATUSES.includes(s.status)) {
+    store.notify('Архівація активного агента неможлива', 'error');
+    return;
+  }
+  try {
+    await store.archiveSession(s.id);
+    if (store.selectedSessionId === s.id) store.selectSession(undefined);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+async function onUnarchive(s: Session): Promise<void> {
+  try {
+    await store.unarchiveSession(s.id);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
 }
 
 // ── Finish (merge session branch → project branch, retire worktree) ────────
@@ -537,6 +588,12 @@ async function submitPreviewConfig(): Promise<void> {
   justify-content: space-between;
   gap: 20px;
   margin-bottom: 20px;
+}
+
+.ws__board-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .ws__eyebrow {

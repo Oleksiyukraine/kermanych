@@ -13,6 +13,8 @@ import type {
 import { connectSocket } from '../lib/socket';
 import { api, type MessageMode } from '../lib/api';
 
+export type Toast = { id: string; message: string; kind: 'error' | 'info' };
+
 export const useOrchestrator = defineStore('orchestrator', () => {
   const groups = ref<Group[]>([]);
   const sessions = ref<Session[]>([]);
@@ -20,6 +22,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   const selectedGroupId = ref<string | undefined>(undefined);
   const selectedSessionId = ref<string | undefined>(undefined);
   const previews = ref<Record<string, string>>({});
+  const toasts = ref<Toast[]>([]);
 
   let socket: Socket | undefined;
 
@@ -107,6 +110,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.deleteSession(id);
   }
 
+  function archiveSession(id: string) {
+    return api.archiveSession(id);
+  }
+
+  function unarchiveSession(id: string) {
+    return api.unarchiveSession(id);
+  }
+
   async function loadTranscript(id: string) {
     const entries = await api.loadTranscript(id);
     transcripts.value = { ...transcripts.value, [id]: entries };
@@ -145,6 +156,18 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return res;
   }
 
+  // Minimal transient notifications. notify() pushes a toast that auto-dismisses;
+  // components read `toasts` and may dismiss one early.
+  function notify(message: string, kind: Toast['kind'] = 'info', ms = 4000) {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    toasts.value = [...toasts.value, { id, message, kind }];
+    setTimeout(() => dismissToast(id), ms);
+  }
+
+  function dismissToast(id: string) {
+    toasts.value = toasts.value.filter((t) => t.id !== id);
+  }
+
   return {
     groups,
     sessions,
@@ -168,5 +191,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     updateGroup,
     finishInfo,
     finishSession,
+    archiveSession,
+    unarchiveSession,
+    toasts,
+    notify,
+    dismissToast,
   };
 });

@@ -7,6 +7,7 @@ import { RpcSession } from "../rpc/rpc-session";
 import {
   INITIAL_STATUS,
   reduceStatus,
+  ACTIVE_STATUSES,
   slugify,
   branchName,
   uniqueSlug,
@@ -229,6 +230,18 @@ export class SupervisorService {
     }
     this.registry.removeSession(id);
     this.events.next({ type: "session_removed", sessionId: id });
+  }
+
+  // Archive/unarchive is a pure hide flag: it never touches the worktree or the omp
+  // process. Archiving an active agent is refused (the UI also pre-checks and toasts).
+  setArchived(id: string, archived: boolean): void {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    if (archived && ACTIVE_STATUSES.includes(this.merge(s).status)) {
+      throw new Error("cannot archive an active agent");
+    }
+    this.registry.updateSession(id, { archived });
+    this.pushUpdate(id);
   }
 
   // Preview of what "finish" will do: the target branch, how many commits land,

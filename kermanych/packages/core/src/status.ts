@@ -4,6 +4,11 @@ export type StatusState = { status: SessionStatus; currentTool?: string; prior?:
 export const INITIAL_STATUS: StatusState = { status: "queued" };
 export const INTERACTIVE_UI_METHODS: Record<string, true> = { select: true, confirm: true, input: true, editor: true };
 
+// Active = the omp process is mid-work or blocked on the user; archiving these is refused.
+// Broader than a "running" bucket: waiting_input counts as active here. Check with
+// ACTIVE_STATUSES.includes(status) — mirrors MainLayout's RUNNING convention.
+export const ACTIVE_STATUSES: readonly SessionStatus[] = ["queued", "thinking", "tool", "waiting_input"];
+
 export function reduceStatus(s: StatusState, e: RpcEvent): StatusState {
   switch (e.type) {
     case "agent_start":

@@ -112,4 +112,10 @@ export const api = {
 
   finish: (id: string): Promise<{ merged: boolean; into: string }> =>
     post(`/sessions/${id}/finish`, {}),
+
+  archiveSession: (id: string): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>(`/sessions/${id}/archive`, {}),
+
+  unarchiveSession: (id: string): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>(`/sessions/${id}/unarchive`, {}),
 };

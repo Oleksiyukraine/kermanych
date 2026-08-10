@@ -15,7 +15,7 @@ export type Session = {
   ompSessionId?: string; ompSessionFile?: string;
   status: SessionStatus; currentTool?: string; error?: string;
   todoPhases?: TodoPhase[]; contextPercent?: number;
-  pendingUiRequest?: RpcExtensionUIRequest; createdAt: string;
+  pendingUiRequest?: RpcExtensionUIRequest; archived?: boolean; createdAt: string;
 };
 
 export type ImageInput = { data: string; mimeType: string };

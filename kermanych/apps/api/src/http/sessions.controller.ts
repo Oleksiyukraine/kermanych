@@ -94,6 +94,26 @@ export class SessionsController {
     }
   }
 
+  @Post(":id/archive")
+  archive(@Param("id") id: string) {
+    try {
+      this.sup.setArchived(id, true);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+    return { ok: true };
+  }
+
+  @Post(":id/unarchive")
+  unarchive(@Param("id") id: string) {
+    try {
+      this.sup.setArchived(id, false);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+    return { ok: true };
+  }
+
   @Delete(":id")
   async remove(@Param("id") id: string) {
     try {
