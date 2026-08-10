@@ -38,6 +38,14 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: last-activity tracking arrived after the initial schema.
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN last_activity_at TEXT`);
+    } catch {
+      /* column already exists */
+    }
+    // Backfill pre-existing rows so the column is never null for old sessions.
+    this.db.exec(`UPDATE sessions SET last_activity_at = created_at WHERE last_activity_at IS NULL`);
   }
 
   listGroups(): Group[] {
@@ -72,7 +80,7 @@ export class RegistryService {
   }
 
   listSessions(groupId?: string): Session[] {
-    const sql = `SELECT id, group_id as groupId, name, task, worktree_path as worktreePath, branch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, status, archived, created_at as createdAt FROM sessions`;
+    const sql = `SELECT id, group_id as groupId, name, task, worktree_path as worktreePath, branch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, status, archived, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
     const rows = (
       groupId
         ? this.db.prepare(sql + ` WHERE group_id = ? ORDER BY created_at`).all(groupId)
@@ -83,17 +91,19 @@ export class RegistryService {
   }
 
   createSession(
-    s: Omit<Session, "id" | "createdAt" | "status"> & { status?: SessionStatus },
+    s: Omit<Session, "id" | "createdAt" | "status" | "lastActivityAt"> & { status?: SessionStatus },
   ): Session {
+    const createdAt = new Date().toISOString();
     const row: Session = {
       ...s,
       id: randomUUID(),
-      createdAt: new Date().toISOString(),
+      createdAt,
       status: s.status ?? "queued",
+      lastActivityAt: createdAt,
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, group_id, name, task, worktree_path, branch, omp_session_id, omp_session_file, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions (id, group_id, name, task, worktree_path, branch, omp_session_id, omp_session_file, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id,
@@ -106,6 +116,7 @@ export class RegistryService {
         row.ompSessionFile ?? null,
         row.status,
         row.createdAt,
+        row.lastActivityAt,
       );
     return row;
   }
@@ -130,6 +141,12 @@ export class RegistryService {
         id,
       );
     return next;
+  }
+
+  // Bump the session's activity clock. A targeted write (no read-modify-write)
+  // because it runs on the high-frequency agent-event path.
+  touchSession(id: string): void {
+    this.db.prepare(`UPDATE sessions SET last_activity_at = ? WHERE id = ?`).run(new Date().toISOString(), id);
   }
 
   removeSession(id: string): void {

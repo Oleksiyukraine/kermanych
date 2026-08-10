@@ -16,6 +16,7 @@ export type Session = {
   status: SessionStatus; currentTool?: string; error?: string;
   todoPhases?: TodoPhase[]; contextPercent?: number;
   pendingUiRequest?: RpcExtensionUIRequest; archived?: boolean; createdAt: string;
+  lastActivityAt: string;
 };
 
 export type ImageInput = { data: string; mimeType: string };
