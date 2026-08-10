@@ -172,7 +172,12 @@
     </KModal>
 
     <!-- FINISH — merge the session branch into the project branch, retire the worktree -->
-    <KModal v-model="finishOpen" title="Завершити сесію" persistent>
+    <KModal
+      :model-value="finishOpen"
+      @update:model-value="onFinishOpen"
+      title="Завершити сесію"
+      persistent
+    >
       <div class="ws__form">
         <div v-show="finishFiles.length">
           <p class="ws__error" role="alert">
@@ -473,6 +478,18 @@ async function submitFinish(): Promise<void> {
   } finally {
     finishBusy.value = false;
   }
+}
+
+function onFinishOpen(v: boolean): void {
+  // Only explicit buttons close the finish modal. Ignore QDialog's own dismissals
+  // (it can emit a close on the post-merge re-render) while a finish is in flight or
+  // a conflict is still unresolved.
+  if (v) {
+    finishOpen.value = true;
+    return;
+  }
+  if (finishBusy.value || finishFiles.value.length) return;
+  finishOpen.value = false;
 }
 
 // ── Live preview (per-session worktree app on a free port) ─────────────────
