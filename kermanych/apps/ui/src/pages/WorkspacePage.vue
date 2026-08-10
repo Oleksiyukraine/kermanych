@@ -74,7 +74,7 @@
       </aside>
     </div>
 
-    <!-- NEW-AGENT LAUNCHER — opened by the header signal or the inline button -->
+    <!-- NEW-AGENT LAUNCHER — opened by the inline button -->
     <KModal v-model="launcherOpen" title="Новий агент">
       <div class="ws__form">
         <KField v-model="draftName" label="Назва" placeholder="refactor-auth" />
@@ -106,8 +106,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, nextTick, ref, watch } from 'vue';
-import type { Ref } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import type {
   Session,
   TranscriptEntry,
@@ -127,11 +126,6 @@ import KModal from 'components/kit/KModal.vue';
 // for the selected group + the full panel for the selected session, plus the
 // new-agent launcher. All mutations go through the Pinia store.
 const store = useOrchestrator();
-
-// The header's "+ Новий агент" button (MainLayout) increments this signal; we
-// open the launcher whenever it changes. Falls back to a local ref if a parent
-// did not provide it (e.g. isolated tests).
-const newAgentSignal = inject<Ref<number>>('kermanych.newAgentSignal', ref(0));
 
 const groupSessions = computed(() =>
   store.sessions.filter((s) => s.groupId === store.selectedGroupId),
@@ -242,11 +236,6 @@ async function submitLauncher(): Promise<void> {
     launcherError.value = e instanceof Error ? e.message : String(e);
   }
 }
-
-// Open the launcher when the header signal fires (requires a selected group).
-watch(newAgentSignal, () => {
-  if (store.selectedGroupId) openLauncher();
-});
 
 // ── Detail panel emits → store actions ───────────────────────────────────
 function onSend(text: string): void {
