@@ -12,6 +12,7 @@ export type DirListing = { path: string; parent: string | null; entries: DirEntr
 export type Session = {
   id: string; groupId: string; name: string; task: string;
   worktreePath: string; branch: string;
+  worktree: boolean; baseBranch?: string;
   ompSessionId?: string; ompSessionFile?: string;
   status: SessionStatus; currentTool?: string; error?: string;
   todoPhases?: TodoPhase[]; contextPercent?: number;

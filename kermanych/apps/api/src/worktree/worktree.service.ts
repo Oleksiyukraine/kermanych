@@ -32,8 +32,10 @@ export class WorktreeService {
     await git(repoDir, ["branch", "-D", branch]);
   }
 
+  // Empty string on a detached HEAD (symbolic-ref fails) so callers can treat it as "no branch".
   async currentBranch(repoDir: string): Promise<string> {
-    return (await git(repoDir, ["symbolic-ref", "--short", "HEAD"])).out.trim();
+    const r = await git(repoDir, ["symbolic-ref", "--short", "HEAD"]);
+    return r.ok ? r.out.trim() : "";
   }
 
   async hasUncommitted(dir: string): Promise<boolean> {
@@ -71,6 +73,20 @@ export class WorktreeService {
   // so they can be resolved in an editor.
   async mergeInto(dir: string, ref: string): Promise<void> {
     await git(dir, ["merge", ref]);
+  }
+
+  // Create a branch and switch to it in `dir` (in-place mode: no separate worktree).
+  async createBranchHere(dir: string, branch: string): Promise<void> {
+    const r = await git(dir, ["checkout", "-b", branch]);
+    if (!r.ok) throw new Error(`git checkout -b failed: ${r.out}`);
+  }
+
+  // Switch `dir` to `ref`. `force` (-f) discards local changes — used when retiring
+  // an in-place session, where the working-tree changes belong to that session.
+  async checkout(dir: string, ref: string, opts?: { force?: boolean }): Promise<void> {
+    const args = opts?.force ? ["checkout", "-f", ref] : ["checkout", ref];
+    const r = await git(dir, args);
+    if (!r.ok) throw new Error(`git checkout failed: ${r.out}`);
   }
 
   // Paths with unresolved merge conflicts in a worktree.

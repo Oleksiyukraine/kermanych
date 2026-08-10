@@ -138,3 +138,88 @@ test("finishInfo reports target branch, ahead count, and dirty flag", async () =
     dirty: true,
   });
 });
+
+// In-place: the session branch lives in the project repo itself (no worktree).
+async function seedInPlace(mutate: () => void): Promise<{ id: string }> {
+  const g = reg.createGroup({ name: "g", projectDir: repo });
+  await wt.createBranchHere(repo, "feature/s1"); // repo now checked out on the session branch
+  mutate();
+  const s = reg.createSession({
+    groupId: g.id, name: "task one", task: "t",
+    worktreePath: "", branch: "feature/s1", worktree: false, baseBranch: "dev",
+  });
+  return { id: s.id };
+}
+
+test("in-place: finishSession merges into base, restores base, deletes the branch", async () => {
+  const { id } = await seedInPlace(() => {
+    writeFileSync(join(repo, "feature.txt"), "hi\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "feature");
+  });
+
+  const res = await sup.finishSession(id);
+
+  expect(res).toEqual({ merged: true, into: "dev" });
+  expect(git(repo, "branch", "--show-current").trim()).toBe("dev"); // restored to base
+  expect(existsSync(join(repo, "feature.txt"))).toBe(true); // work landed on dev
+  expect(git(repo, "branch", "--list", "feature/s1").trim()).toBe(""); // branch deleted
+  expect(reg.listSessions().find((x) => x.id === id)!.status).toBe("merged");
+});
+
+test("in-place: conflict leaves markers on the branch; resolve + re-finish merges", async () => {
+  const { id } = await seedInPlace(() => {
+    writeFileSync(join(repo, "file.txt"), "session\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "session edit");
+  });
+  // Diverge base on the same file.
+  git(repo, "checkout", "-q", "dev");
+  writeFileSync(join(repo, "file.txt"), "main\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", "main edit");
+  git(repo, "checkout", "-q", "feature/s1"); // in-place sits on the session branch
+
+  const first = await sup.finishSession(id);
+  expect("conflict" in first).toBe(true);
+  expect(git(repo, "branch", "--show-current").trim()).toBe("feature/s1"); // still on the branch
+  expect(await wt.unmergedFiles(repo)).toContain("file.txt");
+  expect(reg.listSessions().find((x) => x.id === id)!.status).toBe("conflict");
+
+  // Resolve on the branch + complete the merge (as the agent/user would).
+  writeFileSync(join(repo, "file.txt"), "resolved\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "--no-edit");
+
+  const second = await sup.finishSession(id);
+  expect(second).toMatchObject({ merged: true, into: "dev" });
+  expect(git(repo, "show", "dev:file.txt").trim()).toBe("resolved");
+  expect(git(repo, "branch", "--list", "feature/s1").trim()).toBe("");
+});
+
+test("in-place: finishInfo reports base as target, ahead, dirty", async () => {
+  const { id } = await seedInPlace(() => {
+    writeFileSync(join(repo, "a.txt"), "1\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "c1");
+    writeFileSync(join(repo, "b.txt"), "2\n"); // uncommitted
+  });
+
+  expect(await sup.finishInfo(id)).toMatchObject({
+    branch: "feature/s1", target: "dev", ahead: 1, dirty: true,
+  });
+});
+
+test("in-place: deleteSession restores base and removes the branch", async () => {
+  const { id } = await seedInPlace(() => {
+    writeFileSync(join(repo, "x.txt"), "1\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "x");
+  });
+
+  await sup.deleteSession(id);
+
+  expect(git(repo, "branch", "--show-current").trim()).toBe("dev");
+  expect(git(repo, "branch", "--list", "feature/s1").trim()).toBe("");
+  expect(reg.listSessions().find((x) => x.id === id)).toBeUndefined();
+});

@@ -6,7 +6,7 @@
       <p class="ws__blank-text">Виберіть проєкт у лівій панелі, щоб побачити його агентів.</p>
     </div>
 
-    <div v-else class="ws__content">
+    <div v-else class="ws__content" ref="contentEl" :class="{ 'ws__content--resizing': resizing }">
       <!-- BOARD — one card per session in the selected group -->
       <section class="ws__board">
         <header class="ws__board-head">
@@ -91,8 +91,23 @@
         </div>
       </section>
 
+      <!-- RESIZER — drag the seam to widen / narrow the chat section -->
+      <div
+        v-if="selectedSession"
+        class="ws__resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Змінити ширину секції з чатом"
+        :aria-valuenow="Math.round(detailWidth)"
+        :aria-valuemin="MIN_DETAIL"
+        tabindex="0"
+        title="Перетягніть, щоб змінити ширину секції з чатом"
+        @pointerdown="startResize"
+        @keydown="onResizeKeydown"
+      ></div>
+
       <!-- DETAIL — the full panel for the selected session -->
-      <aside v-if="selectedSession" class="ws__detail">
+      <aside v-if="selectedSession" class="ws__detail" :style="{ width: detailWidth + 'px' }">
         <div class="ws__detail-bar">
           <span class="ws__detail-label mono">{{ selectedSession.name }}</span>
           <button
@@ -153,6 +168,22 @@
         </div>
         <KAttachStrip v-if="launchImages.length" :images="launchImages" @remove="removeLaunchImage" />
         <p v-if="launchError" class="ws__error" role="alert">{{ launchError }}</p>
+        <label class="ws__field">
+          <span class="ws__field-label">Префікс гілки</span>
+          <KToggle
+            :options="prefixOptions"
+            :modelValue="draftPrefix"
+            @update:modelValue="(v) => (draftPrefix = v as BranchPrefix)"
+          />
+        </label>
+        <div class="ws__field">
+          <KCheckbox v-model="draftWorktree" label="Ізолювати у worktree" />
+          <p v-if="!draftWorktree" class="ws__hint mono">
+            In-place: агент працюватиме в теці проєкту на гілці
+            <code class="mono">{{ branchPreview }}</code>. Дерево має бути чистим;
+            одночасно лише один in-place-агент.
+          </p>
+        </div>
         <KField
           v-model="draftModel"
           label="Модель (необовʼязково)"
@@ -238,6 +269,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import {
   type ImageInput,
   type Session,
+  type SessionStatus,
   type TranscriptEntry,
   type RpcExtensionUIResponse,
 } from '@kermanych/core';
@@ -253,9 +285,12 @@ import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KToggle from 'components/kit/KToggle.vue';
+import KCheckbox from 'components/kit/KCheckbox.vue';
+import type { BranchPrefix } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useNow } from '../composables/useNow';
 import { relativeTime } from '../lib/time';
+import { useResizableWidth } from '../composables/useResizableWidth';
 
 // The Workspace screen (design-system section 07): the board of session cards
 // for the selected group + the full panel for the selected session, plus the
@@ -270,10 +305,30 @@ const VIEW_ARCHIVED = 'Заархівовані';
 const viewOptions = [VIEW_ACTIVE, VIEW_ARCHIVED];
 const viewMode = ref<string>(VIEW_ACTIVE);
 const showArchived = computed(() => viewMode.value === VIEW_ARCHIVED);
+// Row order for the agents table. Sessions are bucketed into status tiers and
+// sorted by creation time within each tier. Ranking by tier — not by the live
+// status — is what stops rows from jumping while agents run: every "process
+// alive" status (queued/thinking/tool/waiting_input) shares rank 0, so an agent
+// flipping between `thinking` and `tool` mid-run never reorders the table. Only
+// real lifecycle moves (a run ending, a branch merging) shift a row's tier.
+const STATUS_RANK: Record<SessionStatus, number> = {
+  queued: 0,
+  thinking: 0,
+  tool: 0,
+  waiting_input: 0,
+  error: 1,
+  conflict: 1,
+  done: 2,
+  stopped: 2,
+  merged: 3,
+};
 const groupSessions = computed(() =>
-  store.sessions.filter(
-    (s) => s.groupId === store.selectedGroupId && !!s.archived === showArchived.value,
-  ),
+  store.sessions
+    .filter((s) => s.groupId === store.selectedGroupId && !!s.archived === showArchived.value)
+    .sort((a, b) => {
+      const byStatus = STATUS_RANK[a.status] - STATUS_RANK[b.status];
+      return byStatus !== 0 ? byStatus : a.createdAt.localeCompare(b.createdAt);
+    }),
 );
 const selectedGroup = computed(() =>
   store.groups.find((g) => g.id === store.selectedGroupId),
@@ -285,6 +340,38 @@ const entries = computed<TranscriptEntry[]>(() =>
   store.selectedSessionId
     ? store.transcripts[store.selectedSessionId] ?? []
     : [],
+);
+
+// ── Resizable chat section ────────────────────────────────────────────────
+// The detail column (KPanel = the chat) is drag-resizable via the seam on its
+// left edge. Width is clamped so the board keeps at least MIN_BOARD and the
+// chat at least MIN_DETAIL, then persisted across reloads.
+const MIN_DETAIL = 360;
+const MIN_BOARD = 360;
+const contentEl = ref<HTMLElement | null>(null);
+const {
+  width: detailWidth,
+  resizing,
+  startResize,
+  onKeydown: onResizeKeydown,
+  refresh: refreshDetailWidth,
+} = useResizableWidth({
+  storageKey: 'kermanych.ws.detail-width',
+  defaultWidth: 560,
+  min: MIN_DETAIL,
+  edge: 'left',
+  max: () =>
+    contentEl.value ? contentEl.value.clientWidth - MIN_BOARD : Number.POSITIVE_INFINITY,
+});
+
+// Re-clamp once the detail column mounts (the container is measurable by then),
+// so a persisted width from a wider viewport can't overflow a narrower one.
+watch(
+  () => !!selectedSession.value,
+  (open) => {
+    if (open) void nextTick(refreshDetailWidth);
+  },
+  { immediate: true },
 );
 
 // Columns for the agents table. `status`, `ctx`, `activity`, and `actions` are
@@ -359,6 +446,14 @@ const launcherOpen = ref(false);
 const draftName = ref('');
 const draftTask = ref('');
 const draftModel = ref('');
+const prefixOptions: BranchPrefix[] = ['feature', 'fix', 'refactoring', 'chore'];
+const draftPrefix = ref<BranchPrefix>('feature');
+const draftWorktree = ref(true);
+const branchPreview = computed(() => {
+  const slug =
+    draftName.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'session';
+  return `${draftPrefix.value}/${slug}`;
+});
 const taskInput = ref<HTMLTextAreaElement | null>(null);
 const launcherError = ref<string | null>(null);
 const {
@@ -389,6 +484,8 @@ function openLauncher(): void {
   draftName.value = '';
   draftTask.value = '';
   draftModel.value = '';
+  draftPrefix.value = 'feature';
+  draftWorktree.value = true;
   launcherError.value = null;
   clearLaunchImages();
   launcherOpen.value = true;
@@ -407,6 +504,8 @@ async function submitLauncher(): Promise<void> {
       draftTask.value.trim(),
       model,
       launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType })),
+      draftWorktree.value,
+      draftPrefix.value,
     );
     launcherOpen.value = false;
     clearLaunchImages();
@@ -653,6 +752,52 @@ async function submitPreviewConfig(): Promise<void> {
   min-height: 0;
 }
 
+// While dragging the seam, force the resize cursor everywhere and kill text
+// selection so a fast drag doesn't highlight the board or the log.
+.ws__content--resizing,
+.ws__content--resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+// The draggable seam between the board and the chat section. It stands in for
+// the detail column's old static left border: a faint line by default, accent
+// on hover / focus / active drag.
+.ws__resizer {
+  flex: none;
+  width: 7px;
+  position: relative;
+  z-index: 3;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.ws__resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--k-line-strong);
+  transition: background 0.12s;
+}
+
+.ws__resizer:hover::before,
+.ws__resizer:focus-visible::before,
+.ws__content--resizing .ws__resizer::before {
+  background: var(--k-accent);
+}
+
+.ws__resizer:focus-visible {
+  outline: none;
+}
+
 .ws__board {
   flex: 1;
   min-width: 0;
@@ -774,12 +919,10 @@ async function submitPreviewConfig(): Promise<void> {
 // ── Detail column ─────────────────────────────────────────────────────────
 .ws__detail {
   flex: none;
-  width: 560px;
-  max-width: 48vw;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-left: 2px solid var(--k-line-strong);
+  min-width: 0;
 }
 
 .ws__detail-bar {

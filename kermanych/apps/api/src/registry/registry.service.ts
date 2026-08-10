@@ -46,6 +46,17 @@ export class RegistryService {
     }
     // Backfill pre-existing rows so the column is never null for old sessions.
     this.db.exec(`UPDATE sessions SET last_activity_at = created_at WHERE last_activity_at IS NULL`);
+    // Additive migration: worktree isolation toggle + in-place base branch.
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN worktree INTEGER NOT NULL DEFAULT 1`);
+    } catch {
+      /* column already exists */
+    }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN base_branch TEXT`);
+    } catch {
+      /* column already exists */
+    }
   }
 
   listGroups(): Group[] {
@@ -80,22 +91,26 @@ export class RegistryService {
   }
 
   listSessions(groupId?: string): Session[] {
-    const sql = `SELECT id, group_id as groupId, name, task, worktree_path as worktreePath, branch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, status, archived, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
+    const sql = `SELECT id, group_id as groupId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, status, archived, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
     const rows = (
       groupId
         ? this.db.prepare(sql + ` WHERE group_id = ? ORDER BY created_at`).all(groupId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as (Omit<Session, "archived"> & { archived: number })[];
+    ) as (Omit<Session, "archived" | "worktree"> & { archived: number; worktree: number })[];
     // SQLite stores the flag as 0/1; hand callers a real boolean.
-    return rows.map((r) => ({ ...r, archived: r.archived !== 0 }));
+    return rows.map((r) => ({ ...r, archived: r.archived !== 0, worktree: r.worktree !== 0 }));
   }
 
   createSession(
-    s: Omit<Session, "id" | "createdAt" | "status" | "lastActivityAt"> & { status?: SessionStatus },
+    s: Omit<Session, "id" | "createdAt" | "status" | "worktree" | "baseBranch" | "lastActivityAt"> & {
+      status?: SessionStatus; worktree?: boolean; baseBranch?: string;
+    },
   ): Session {
     const createdAt = new Date().toISOString();
     const row: Session = {
       ...s,
+      worktree: s.worktree ?? true,
+      baseBranch: s.baseBranch,
       id: randomUUID(),
       createdAt,
       status: s.status ?? "queued",
@@ -103,7 +118,7 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, group_id, name, task, worktree_path, branch, omp_session_id, omp_session_file, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions (id, group_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id,
@@ -112,6 +127,8 @@ export class RegistryService {
         row.task,
         row.worktreePath,
         row.branch,
+        row.worktree ? 1 : 0,
+        row.baseBranch ?? null,
         row.ompSessionId ?? null,
         row.ompSessionFile ?? null,
         row.status,
@@ -127,13 +144,15 @@ export class RegistryService {
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET name=?, task=?, worktree_path=?, branch=?, omp_session_id=?, omp_session_file=?, status=?, archived=? WHERE id=?`,
+        `UPDATE sessions SET name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, status=?, archived=? WHERE id=?`,
       )
       .run(
         next.name,
         next.task,
         next.worktreePath,
         next.branch,
+        next.worktree ? 1 : 0,
+        next.baseBranch ?? null,
         next.ompSessionId ?? null,
         next.ompSessionFile ?? null,
         next.status,

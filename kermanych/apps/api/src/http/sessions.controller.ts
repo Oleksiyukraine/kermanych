@@ -1,6 +1,6 @@
 // apps/api/src/http/sessions.controller.ts
 import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query } from "@nestjs/common";
-import type { ImageInput, RpcExtensionUIResponse } from "@kermanych/core";
+import type { BranchPrefix, ImageInput, RpcExtensionUIResponse } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
@@ -19,9 +19,12 @@ export class SessionsController {
   }
 
   @Post()
-  async create(@Body() b: { groupId: string; name: string; task: string; model?: string; images?: ImageInput[] }) {
+  async create(
+    @Body()
+    b: { groupId: string; name: string; task: string; model?: string; images?: ImageInput[]; worktree?: boolean; prefix?: BranchPrefix },
+  ) {
     try {
-      return await this.sup.createSession(b.groupId, b.name, b.task, b.model, b.images);
+      return await this.sup.createSession(b.groupId, b.name, b.task, b.model, b.images, b.worktree ?? true, b.prefix ?? "feature");
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
