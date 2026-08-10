@@ -4,6 +4,7 @@ import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { RpcSession } from "../rpc/rpc-session";
+import { messagesToTranscript } from "./messages-to-transcript";
 import {
   INITIAL_STATUS,
   reduceStatus,
@@ -27,20 +28,9 @@ type Live = {
   transcript: TranscriptEntry[];
   live: Partial<Session>;
   textBuf: string;
+  thinkBuf: string;
   poll?: NodeJS.Timeout;
 };
-
-// Shape of omp's converted history messages (get_messages_page) we map from.
-type OmpPart = {
-  type: string;
-  text?: string;
-  name?: string;
-  arguments?: { command?: string; path?: string };
-  intent?: string;
-  data?: string;
-  mimeType?: string;
-};
-type OmpMessage = { role?: string; content?: OmpPart[]; toolName?: string; isError?: boolean };
 
 @Injectable()
 export class SupervisorService {
@@ -145,10 +135,13 @@ export class SupervisorService {
     if (e.type === "message_update") {
       const ame = (e as Extract<RpcEvent, { type: "message_update" }>).assistantMessageEvent;
       if (ame?.type === "text_delta") l.textBuf += ame.delta ?? "";
+      else if (ame?.type === "thinking_delta") l.thinkBuf += ame.delta ?? "";
     }
     if (e.type === "message_end") {
+      if (l.thinkBuf.trim()) this.appendEntry(id, { kind: "assistant_thinking", text: l.thinkBuf });
       if (l.textBuf.trim()) this.appendEntry(id, { kind: "assistant_text", text: l.textBuf });
       l.textBuf = "";
+      l.thinkBuf = "";
     }
     if (e.type === "tool_execution_start") {
       const ev = e as Extract<RpcEvent, { type: "tool_execution_start" }>;
@@ -287,7 +280,7 @@ export class SupervisorService {
   // Shared live-session wiring (fresh create + resume): build the Live, register it,
   // and route exit + events. onExit marks error unless the session ended cleanly.
   private wireLive(sessionId: string, rpc: RpcSession, status: Session["status"]): Live {
-    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status }, textBuf: "" };
+    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status }, textBuf: "", thinkBuf: "" };
     this.map.set(sessionId, live);
     rpc.onExit((_code, reason) => {
       this.stopPoll(live);
@@ -323,7 +316,7 @@ export class SupervisorService {
       await rpc.start();
       if (s.ompSessionFile) {
         await rpc.switchSession(s.ompSessionFile);
-        live.transcript = this.messagesToTranscript(await rpc.getAllMessages());
+        live.transcript = messagesToTranscript(await rpc.getAllMessages());
       }
     } catch (err) {
       this.stopPoll(live);
@@ -338,32 +331,5 @@ export class SupervisorService {
     this.events.next({ type: "transcript_reset", sessionId: id, entries: live.transcript });
     this.pushUpdate(id);
     return live;
-  }
-
-  // Map omp's converted message history into transcript entries, mirroring the live
-  // event reduction (user text/images, assistant text, tool calls + results).
-  // Thinking parts are omitted, matching the live log.
-  private messagesToTranscript(messages: unknown[]): TranscriptEntry[] {
-    const out: TranscriptEntry[] = [];
-    for (const raw of messages) {
-      const m = raw as OmpMessage;
-      const parts = m.content ?? [];
-      if (m.role === "user") {
-        const text = parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("");
-        const images = parts
-          .filter((p) => p.type === "image" && p.data)
-          .map((p) => `data:${p.mimeType ?? "image/png"};base64,${p.data}`);
-        if (text.trim() || images.length) out.push({ kind: "user_text", text, images: images.length ? images : undefined });
-      } else if (m.role === "assistant") {
-        for (const p of parts) {
-          if (p.type === "text" && p.text?.trim()) out.push({ kind: "assistant_text", text: p.text });
-          else if (p.type === "toolCall") out.push({ kind: "tool_call", tool: p.name ?? "?", summary: p.arguments?.command ?? p.arguments?.path ?? p.intent });
-        }
-      } else if (m.role === "toolResult") {
-        const summary = parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("\n");
-        out.push({ kind: "tool_result", tool: m.toolName ?? "?", ok: !m.isError, summary });
-      }
-    }
-    return out;
   }
 }
