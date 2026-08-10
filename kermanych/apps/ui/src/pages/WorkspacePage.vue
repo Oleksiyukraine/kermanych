@@ -172,12 +172,7 @@
     </KModal>
 
     <!-- FINISH — merge the session branch into the project branch, retire the worktree -->
-    <KModal
-      :model-value="finishOpen"
-      @update:model-value="onFinishOpen"
-      title="Завершити сесію"
-      persistent
-    >
+    <KModal v-model="finishOpen" title="Завершити сесію" persistent>
       <div class="ws__form">
         <div v-show="finishFiles.length">
           <p class="ws__error" role="alert">
@@ -467,29 +462,20 @@ async function submitFinish(): Promise<void> {
   try {
     const res = await store.finishSession(s.id);
     if ('conflict' in res && res.conflict) {
-      // Conflict — target pulled into the worktree; keep the modal open to resolve.
-      finishConflict.value = res.files;
+      // Conflict: reopen the modal fresh so it mounts straight into the conflict view.
+      // An in-place confirm->conflict body switch makes QDialog drop the dialog after
+      // the merge, so close it, let it leave the DOM, then reopen via finishInfo.
+      finishOpen.value = false;
+      await new Promise((r) => setTimeout(r, 320));
+      await openFinish(s);
     } else {
       finishOpen.value = false;
     }
   } catch (e) {
-    // Dirty project tree or still-unresolved worktree conflict — surface git's message.
     finishError.value = e instanceof Error ? e.message : String(e);
   } finally {
     finishBusy.value = false;
   }
-}
-
-function onFinishOpen(v: boolean): void {
-  // Only explicit buttons close the finish modal. Ignore QDialog's own dismissals
-  // (it can emit a close on the post-merge re-render) while a finish is in flight or
-  // a conflict is still unresolved.
-  if (v) {
-    finishOpen.value = true;
-    return;
-  }
-  if (finishBusy.value || finishFiles.value.length) return;
-  finishOpen.value = false;
 }
 
 // ── Live preview (per-session worktree app on a free port) ─────────────────
