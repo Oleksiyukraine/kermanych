@@ -211,7 +211,7 @@ const logSamples: TranscriptEntry[] = [
   { kind: 'tool_result', tool: 'Vitest', ok: true, summary: '12 passed, 0 failed (8.4s)' },
   { kind: 'tool_result', tool: 'Bash', ok: false, summary: 'exit 1 — 2 failing specs' },
   { kind: 'assistant_thinking', text: 'Сесія зберігається у двох місцях — треба звести.' },
-  { kind: 'assistant_text', text: 'Знайшов два місця, де зберігається сесія.' },
+  { kind: 'assistant_text', text: '## Знайшов два місця\n\nСесія зберігається у **двох** місцях — треба звести:\n\n- `session.ts` — запис у файл\n- `store.ts` — дубль у памʼяті\n\n```ts\nconst s = load();\n```' },
   { kind: 'notice', text: 'Гілку перемкнено на feat/schema.' },
 ];
 const railGroups: { group: Group; active: boolean; count: number }[] = [

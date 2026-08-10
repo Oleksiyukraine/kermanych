@@ -30,15 +30,12 @@
       >{{ line.text }}</div>
     </template>
 
-    <!-- assistant_text — primary text, UI font -->
-    <template v-else-if="entry.kind === 'assistant_text'">
-      <div
-        v-for="(line, i) in body"
-        :key="i"
-        class="k-log__text"
-        :class="{ 'k-log__diff': line.diff, [`k-log__diff--${line.sign}`]: line.diff }"
-      >{{ line.text }}</div>
-    </template>
+    <!-- assistant_text — Markdown-rendered prose, UI font -->
+    <div
+      v-else-if="entry.kind === 'assistant_text'"
+      class="k-log__markdown"
+      v-html="renderedText"
+    />
 
     <!-- user_text — the operator's own message: prompt text + any attached images -->
     <template v-else-if="entry.kind === 'user_text'">
@@ -67,6 +64,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { TranscriptEntry } from '@kermanych/core';
+import { renderMarkdown } from '../../lib/markdown';
 
 // A single transcript block (design-system section 06). Every kind is flush-left;
 // all machine text is mono, only assistant prose uses the UI font. diff lines
@@ -99,16 +97,19 @@ const head = computed(() => {
 });
 
 // Diff striping (green strip + accent tint) is reserved for real diff/tool
-// output; assistant prose bullets like "- item" must never render as a diff.
+// output. Assistant prose is Markdown-rendered separately (see renderedText).
 const body = computed<Line[]>(() => {
-  if (props.entry.kind === 'assistant_text') {
-    return toLines(props.entry.text, false);
-  }
   if (props.entry.kind === 'tool_call' || props.entry.kind === 'tool_result') {
     return toLines(props.entry.summary, true).slice(1);
   }
   return [];
 });
+
+// assistant_text renders as Markdown (headings, lists, code, links). Output is a
+// controlled tag set (html:false), safe for v-html.
+const renderedText = computed(() =>
+  props.entry.kind === 'assistant_text' ? renderMarkdown(props.entry.text) : '',
+);
 </script>
 
 <style scoped lang="scss">
@@ -169,19 +170,62 @@ const body = computed<Line[]>(() => {
   word-break: break-word;
 }
 
-// assistant prose — UI font, primary text.
-.k-log__text {
+// assistant prose — Markdown rendered, UI font, primary text. Code is mono on a
+// surface fill (no syntax colors); links use the single accent; green stays for diffs.
+.k-log__markdown {
   font-family: var(--k-font-ui);
   font-size: 14px;
   line-height: 1.65;
   color: var(--k-text);
-  white-space: pre-wrap;
   word-break: break-word;
 }
-
-.k-log__text + .k-log__text {
-  margin-top: 4px;
+.k-log__markdown > :first-child { margin-top: 0; }
+.k-log__markdown > :last-child { margin-bottom: 0; }
+.k-log__markdown p { margin: 0 0 8px; }
+.k-log__markdown h1,
+.k-log__markdown h2,
+.k-log__markdown h3,
+.k-log__markdown h4,
+.k-log__markdown h5,
+.k-log__markdown h6 { margin: 14px 0 6px; font-weight: 700; line-height: 1.3; }
+.k-log__markdown h1 { font-size: 19px; }
+.k-log__markdown h2 { font-size: 17px; }
+.k-log__markdown h3 { font-size: 15px; }
+.k-log__markdown h4,
+.k-log__markdown h5,
+.k-log__markdown h6 { font-size: 14px; }
+.k-log__markdown ul,
+.k-log__markdown ol { margin: 0 0 8px; padding-left: 20px; }
+.k-log__markdown li { margin: 2px 0; }
+.k-log__markdown li > ul,
+.k-log__markdown li > ol { margin: 2px 0; }
+.k-log__markdown a { color: var(--k-accent); text-decoration: underline; }
+.k-log__markdown strong { font-weight: 700; }
+.k-log__markdown blockquote {
+  margin: 8px 0;
+  padding: 2px 12px;
+  color: var(--k-muted);
+  border-left: 2px solid var(--k-line-strong);
 }
+.k-log__markdown code {
+  font-family: var(--k-font-mono);
+  font-size: 12.5px;
+  background: var(--k-surface2);
+  padding: 1px 5px;
+}
+.k-log__markdown pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--k-surface2);
+  overflow-x: auto;
+}
+.k-log__markdown pre code { background: none; padding: 0; line-height: 1.5; }
+.k-log__markdown hr { border: none; border-top: 1px solid var(--k-line); margin: 12px 0; }
+.k-log__markdown table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+.k-log__markdown th,
+.k-log__markdown td { border: 1px solid var(--k-line-strong); padding: 4px 8px; text-align: left; }
+.k-log__markdown th { background: var(--k-surface2); font-weight: 700; }
+.k-log__markdown img { max-width: 100%; }
 
 .k-log__thinking {
   font-family: var(--k-font-ui);
