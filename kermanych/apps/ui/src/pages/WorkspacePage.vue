@@ -172,7 +172,7 @@
     </KModal>
 
     <!-- FINISH — merge the session branch into the project branch, retire the worktree -->
-    <KModal v-model="finishOpen" title="Завершити сесію" persistent>
+    <KModal v-model="finishOpen" :key="finishKey" title="Завершити сесію" persistent>
       <div class="ws__form">
         <div v-show="finishFiles.length">
           <p class="ws__error" role="alert">
@@ -416,6 +416,7 @@ const finishData = ref<{ branch: string; target: string; ahead: number; dirty: b
 const finishConflict = ref<string[] | null>(null);
 const finishError = ref<string | null>(null);
 const finishBusy = ref(false);
+const finishKey = ref(0);
 
 // Files to resolve: from a just-attempted merge, else the worktree's current state.
 const finishFiles = computed(() => finishConflict.value ?? finishData.value?.conflicts ?? []);
@@ -479,16 +480,20 @@ function closeFinish(): void {
   finishOpen.value = false;
 }
 
-// The post-merge session_update re-render can make QDialog dismiss itself; while a
-// conflict is unresolved, reassert the dialog so the resolve view isn't lost. Explicit
-// close (closeFinish) clears finishConflict first, so this never fights the user.
-watch(finishOpen, (open) => {
-  if (!open && finishConflict.value && finishConflict.value.length) {
-    void nextTick(() => {
-      finishOpen.value = true;
-    });
-  }
-});
+// QDialog can silently drop its panel on the post-merge re-render (model-value stays
+// true but the content unmounts). When a conflict appears, force a fresh KModal mount
+// via :key once the re-render settles, so the resolve view actually shows.
+watch(
+  () => finishConflict.value?.length ?? 0,
+  (n) => {
+    if (n > 0) {
+      window.setTimeout(() => {
+        finishOpen.value = true;
+        finishKey.value++;
+      }, 500);
+    }
+  },
+);
 
 // ── Live preview (per-session worktree app on a free port) ─────────────────
 const LOADING_HTML =
