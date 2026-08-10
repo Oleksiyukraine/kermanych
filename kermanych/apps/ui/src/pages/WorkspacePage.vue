@@ -201,7 +201,7 @@
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="finishOpen = false">Закрити</KBtn>
-        <KBtn v-if="finishFiles.length" variant="secondary" @click="openEditorForFinish">Відкрити в редакторі</KBtn>
+        <KBtn v-show="finishFiles.length" variant="secondary" @click="openEditorForFinish">Відкрити в редакторі</KBtn>
         <KBtn
           variant="primary"
           :disabled="finishBusy || (!finishData && !finishFiles.length)"
