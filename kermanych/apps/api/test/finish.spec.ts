@@ -77,23 +77,50 @@ test("auto-commits uncommitted worktree work before merging", async () => {
   expect(git(repo, "log", "--oneline").trim()).toMatch(/session work: task one/);
 });
 
-test("on merge conflict, aborts and leaves the worktree + branch intact (not merged)", async () => {
+test("on merge conflict: pulls target into the worktree to resolve, marks session conflict", async () => {
   const { id, wtDir } = await seed((d) => {
     writeFileSync(join(d, "file.txt"), "session\n");
     git(d, "add", "-A");
     git(d, "commit", "-q", "-m", "session edit");
   });
-  // `dev` diverges on the same file → merge cannot fast-forward and conflicts
+  // `dev` diverges on the same file → content conflict
   writeFileSync(join(repo, "file.txt"), "main\n");
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "main edit");
 
-  await expect(sup.finishSession(id)).rejects.toThrow();
+  const res = await sup.finishSession(id);
 
-  expect(existsSync(wtDir)).toBe(true); // worktree survives for manual resolution
-  expect(git(repo, "status", "--porcelain").trim()).toBe(""); // merge was aborted, tree clean
+  expect(res).toEqual({ conflict: true, files: ["file.txt"] });
+  expect(git(repo, "status", "--porcelain").trim()).toBe(""); // project tree left clean (aborted there)
   expect(git(repo, "branch", "--list", "kermanych/s1").trim()).not.toBe(""); // branch survives
-  expect(reg.listSessions().find((x) => x.id === id)!.status).not.toBe("merged");
+  expect(reg.listSessions().find((x) => x.id === id)!.status).toBe("conflict");
+  expect(await wt.unmergedFiles(wtDir)).toContain("file.txt"); // conflict now lives in the worktree
+});
+
+test("resolving the worktree conflict then re-finishing merges cleanly", async () => {
+  const { id, wtDir } = await seed((d) => {
+    writeFileSync(join(d, "file.txt"), "session\n");
+    git(d, "add", "-A");
+    git(d, "commit", "-q", "-m", "session edit");
+  });
+  writeFileSync(join(repo, "file.txt"), "main\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", "main edit");
+
+  const first = await sup.finishSession(id);
+  expect("conflict" in first).toBe(true);
+
+  // resolve in the worktree (as a user would in their editor) + commit the merge
+  writeFileSync(join(wtDir, "file.txt"), "resolved\n");
+  git(wtDir, "add", "-A");
+  git(wtDir, "commit", "--no-edit");
+
+  const second = await sup.finishSession(id);
+  expect(second).toMatchObject({ merged: true, into: "dev" });
+  expect(existsSync(wtDir)).toBe(false); // worktree retired
+  expect(git(repo, "branch", "--list", "kermanych/s1").trim()).toBe(""); // branch gone
+  expect(reg.listSessions().find((x) => x.id === id)!.status).toBe("merged");
+  expect(git(repo, "show", "dev:file.txt").trim()).toBe("resolved"); // resolution landed on dev
 });
 
 test("finishInfo reports target branch, ahead count, and dirty flag", async () => {

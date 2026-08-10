@@ -18,6 +18,7 @@ const kind = computed<Kind>(() => {
     case 'tool':
       return 'running';
     case 'waiting_input':
+    case 'conflict':
       return 'waiting';
     case 'done':
     case 'error':

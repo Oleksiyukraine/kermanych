@@ -52,13 +52,30 @@ export class WorktreeService {
     return Number.isFinite(n) ? n : 0;
   }
 
-  // Merge branch into the repo's current HEAD (no-ff). On failure abort so the
-  // working tree is left clean, and surface git's message for the UI.
-  async mergeBranch(repoDir: string, branch: string, message: string): Promise<void> {
+  // Merge branch into the repo's current HEAD (no-ff). On failure the merge is
+  // aborted so the project tree stays clean; the result says whether it was a
+  // content conflict (recoverable in the worktree) or a hard error (e.g. dirty tree).
+  async mergeBranch(
+    repoDir: string,
+    branch: string,
+    message: string,
+  ): Promise<{ ok: true } | { ok: false; conflict: boolean; message: string }> {
     const r = await git(repoDir, ["merge", "--no-ff", branch, "-m", message]);
-    if (!r.ok) {
-      await git(repoDir, ["merge", "--abort"]);
-      throw new Error(r.out.trim() || "merge failed");
-    }
+    if (r.ok) return { ok: true };
+    const conflict = /CONFLICT|Automatic merge failed/i.test(r.out);
+    await git(repoDir, ["merge", "--abort"]);
+    return { ok: false, conflict, message: r.out.trim() || "merge failed" };
+  }
+
+  // Merge a ref INTO a worktree's branch, leaving conflict markers in place (no abort)
+  // so they can be resolved in an editor.
+  async mergeInto(dir: string, ref: string): Promise<void> {
+    await git(dir, ["merge", ref]);
+  }
+
+  // Paths with unresolved merge conflicts in a worktree.
+  async unmergedFiles(dir: string): Promise<string[]> {
+    const out = (await git(dir, ["diff", "--name-only", "--diff-filter=U"])).out.trim();
+    return out ? out.split("\n") : [];
   }
 }

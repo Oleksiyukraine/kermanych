@@ -1,5 +1,6 @@
 // apps/api/src/supervisor/supervisor.service.ts
 import { Injectable } from "@nestjs/common";
+import { spawn } from "node:child_process";
 import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
@@ -226,7 +227,7 @@ export class SupervisorService {
 
   // Preview of what "finish" will do: the target branch, how many commits land,
   // and whether the worktree has uncommitted work that would be auto-committed.
-  async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean }> {
+  async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[] }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s?.worktreePath) throw new Error("session has no worktree");
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
@@ -234,13 +235,15 @@ export class SupervisorService {
     const target = await this.worktree.currentBranch(g.projectDir);
     const ahead = target ? await this.worktree.aheadCount(g.projectDir, target, s.branch) : 0;
     const dirty = await this.worktree.hasUncommitted(s.worktreePath);
-    return { branch: s.branch, target, ahead, dirty };
+    const conflicts = await this.worktree.unmergedFiles(s.worktreePath);
+    return { branch: s.branch, target, ahead, dirty, conflicts };
   }
 
   // Merge the session's branch into the project's current branch, then retire the
-  // worktree + branch and mark the session merged. Auto-commits dirty worktree work
-  // first. On merge conflict the worktree is left intact and the error is surfaced.
-  async finishSession(id: string): Promise<{ merged: true; into: string }> {
+  // worktree + branch and keep the session as `merged` history. On a content conflict
+  // it instead pulls the target into the worktree (leaving markers to resolve in an
+  // editor) and marks the session `conflict`; re-running after a resolve merges cleanly.
+  async finishSession(id: string): Promise<{ merged: true; into: string } | { conflict: true; files: string[] }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s?.worktreePath) throw new Error("session has no worktree");
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
@@ -249,7 +252,23 @@ export class SupervisorService {
     if (!target) throw new Error("project repo has a detached HEAD - checkout a branch first");
     if (target === s.branch) throw new Error("project repo is on the session branch itself");
 
-    // Free the worktree: stop the live omp process (preview is stopped by the controller).
+    // A prior conflict left the worktree mid-merge — it must be resolved before retrying.
+    if ((await this.worktree.unmergedFiles(s.worktreePath)).length)
+      throw new Error("worktree has unresolved conflicts - resolve them in the editor first");
+    if (await this.worktree.hasUncommitted(s.worktreePath))
+      await this.worktree.commitAll(s.worktreePath, `session work: ${s.name}`);
+
+    const res = await this.worktree.mergeBranch(g.projectDir, s.branch, `merge session: ${s.name}`);
+    if (!res.ok) {
+      if (!res.conflict) throw new Error(res.message); // e.g. dirty project tree
+      // Pull the target into the worktree so the conflict can be resolved there.
+      await this.worktree.mergeInto(s.worktreePath, target);
+      this.registry.updateSession(id, { status: "conflict" });
+      this.pushUpdate(id);
+      return { conflict: true, files: await this.worktree.unmergedFiles(s.worktreePath) };
+    }
+
+    // Success — retire: stop omp (preview is stopped by the controller), drop worktree + branch.
     const l = this.map.get(id);
     if (l) {
       l.live.status = "stopped";
@@ -257,16 +276,22 @@ export class SupervisorService {
       await l.rpc.stop();
       this.map.delete(id);
     }
-    if (await this.worktree.hasUncommitted(s.worktreePath)) {
-      await this.worktree.commitAll(s.worktreePath, `session work: ${s.name}`);
-    }
-    await this.worktree.mergeBranch(g.projectDir, s.branch, `merge session: ${s.name}`);
     await this.worktree.removeWorktree(g.projectDir, s.worktreePath);
     await this.worktree.removeBranch(g.projectDir, s.branch);
-    // Retire it: worktree is gone, so clear the path (resume/preview become no-ops).
     this.registry.updateSession(id, { status: "merged", worktreePath: "" });
     this.pushUpdate(id);
     return { merged: true, into: target };
+  }
+
+  // Open the session's worktree in the user's editor ($KERMANYCH_EDITOR or `code`).
+  openInEditor(id: string): { ok: true } {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s?.worktreePath) throw new Error("session has no worktree");
+    const editor = process.env.KERMANYCH_EDITOR || "code";
+    const child = spawn(editor, [s.worktreePath], { detached: true, stdio: "ignore" });
+    child.on("error", () => {}); // editor binary missing — swallow, don't crash the api
+    child.unref();
+    return { ok: true };
   }
   getTranscript(id: string): TranscriptEntry[] {
     const l = this.map.get(id);

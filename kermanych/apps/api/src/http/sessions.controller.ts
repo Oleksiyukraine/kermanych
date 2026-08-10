@@ -94,6 +94,15 @@ export class SessionsController {
     }
   }
 
+  @Post(":id/editor")
+  openEditor(@Param("id") id: string) {
+    try {
+      return this.sup.openInEditor(id);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Delete(":id")
   async remove(@Param("id") id: string) {
     try {

@@ -145,6 +145,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return res;
   }
 
+  function openEditor(id: string) {
+    return api.openEditor(id);
+  }
+
   return {
     groups,
     sessions,
@@ -168,5 +172,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     updateGroup,
     finishInfo,
     finishSession,
+    openEditor,
   };
 });

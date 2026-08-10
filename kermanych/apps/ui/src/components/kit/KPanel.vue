@@ -23,6 +23,12 @@
           title="Завершити (merge гілки в проєкт)"
           @click="emit('finish')"
         >✓</button>
+        <button
+          class="k-panel__icon"
+          type="button"
+          title="Відкрити в редакторі"
+          @click="emit('editor')"
+        >⧉</button>
         <span class="k-panel__icon k-panel__icon--chrome" aria-hidden="true">⊞</span>
         <button
           class="k-panel__icon"
@@ -182,6 +188,7 @@ const emit = defineEmits<{
   send: [text: string, images: ImageInput[]];
   answer: [res: RpcExtensionUIResponse];
   finish: [];
+  editor: [];
 }>();
 
 const draft = ref('');
@@ -327,6 +334,8 @@ const statusLabel = computed(() => {
       return 'зупинено';
     case 'merged':
       return 'влито';
+    case 'conflict':
+      return 'конфлікт';
     default:
       return props.session.status;
   }
