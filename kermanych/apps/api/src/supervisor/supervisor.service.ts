@@ -167,6 +167,15 @@ export class SupervisorService {
   private onRpcEvent(id: string, e: RpcEvent) {
     const l = this.map.get(id);
     if (!l) return;
+    // Any agent event counts as activity, except per-token streaming deltas
+    // (message_update) — bumping per token would mean a DB write per token.
+    if (e.type !== "message_update") {
+      try {
+        this.registry.touchSession(id);
+      } catch {
+        /* never let a bookkeeping write break the event stream */
+      }
+    }
     const before = l.state.status;
     l.state = reduceStatus(l.state, e);
     // RpcEvent carries an index-signature fallback member; Extract recovers the concrete typed member.
@@ -225,6 +234,11 @@ export class SupervisorService {
 
   async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
     const l = this.map.get(id) ?? (await this.resumeSession(id));
+    try {
+      this.registry.touchSession(id);
+    } catch {
+      /* never let a bookkeeping write break message delivery */
+    }
     if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images));
     if (mode === "steer") l.rpc.steer(text, images);
     else if (mode === "follow_up") l.rpc.followUp(text, images);

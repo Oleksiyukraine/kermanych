@@ -219,7 +219,7 @@ const group: Group = {
 function mkSession(over: Partial<Session>): Session {
   return {
     id: 's', groupId: 'g1', name: 'api-gateway', task: '',
-    worktreePath: '', worktree: true, branch: 'main', status: 'thinking', createdAt: now, ...over,
+    worktreePath: '', worktree: true, branch: 'main', status: 'thinking', createdAt: now, lastActivityAt: now, ...over,
   };
 }
 const runningSession = mkSession({ id: 's1', status: 'thinking', branch: 'main' });
