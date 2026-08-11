@@ -152,6 +152,60 @@ export class SupervisorService {
     return this.merge(saved);
   }
 
+  // Fork a discussion child off a parent's omp conversation (tip-level). The child
+  // runs in the parent's directory with no git and no editing tools, so the parent's
+  // context is never touched and both run in parallel.
+  async branchSession(parentId: string): Promise<Session> {
+    const s = this.registry.listSessions().find((x) => x.id === parentId);
+    if (!s) throw new Error("session not found");
+    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
+    if (!g) throw new Error("group not found");
+    if (s.kind === "discussion") throw new Error("cannot branch a discussion branch");
+
+    let parentFile = s.ompSessionFile;
+    if (!parentFile) {
+      await this.refreshState(parentId);
+      parentFile = this.registry.listSessions().find((x) => x.id === parentId)?.ompSessionFile;
+    }
+    if (!parentFile) throw new Error("agent has no omp session yet — send a first message before branching");
+
+    const live = this.map.get(parentId);
+    if (live && (live.state.status === "thinking" || live.state.status === "tool"))
+      throw new Error("wait for the agent to finish its turn before branching");
+
+    const cwd = s.worktreePath || g.projectDir;
+    const child = this.registry.createSession({
+      groupId: s.groupId,
+      name: `гілка: ${s.name}`,
+      task: "",
+      worktreePath: "",
+      branch: "",
+      worktree: false,
+      kind: "discussion",
+      parentSessionId: parentId,
+    });
+
+    const rpc = new RpcSession({ cwd, fork: parentFile, noTools: true });
+    const childLive = this.wireLive(child.id, rpc, "queued");
+    try {
+      await rpc.start();
+      childLive.transcript = messagesToTranscript(await rpc.getAllMessages());
+      this.events.next({ type: "transcript_reset", sessionId: child.id, entries: childLive.transcript });
+      await this.refreshState(child.id);
+      childLive.live.status = "done";
+      this.registry.updateSession(child.id, { status: "done" });
+    } catch (err) {
+      this.stopPoll(childLive);
+      await rpc.stop().catch(() => {});
+      this.map.delete(child.id);
+      this.registry.removeSession(child.id);
+      this.events.next({ type: "session_removed", sessionId: child.id });
+      throw err;
+    }
+    this.pushUpdate(child.id);
+    return this.merge(child);
+  }
+
   private appendEntry(id: string, entry: TranscriptEntry) {
     const l = this.map.get(id)!;
     l.transcript.push(entry);
