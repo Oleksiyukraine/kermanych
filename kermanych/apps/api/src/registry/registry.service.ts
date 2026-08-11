@@ -57,6 +57,16 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN parent_session_id TEXT`);
+    } catch {
+      /* column already exists */
+    }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'agent'`);
+    } catch {
+      /* column already exists */
+    }
   }
 
   listGroups(): Group[] {
@@ -91,7 +101,7 @@ export class RegistryService {
   }
 
   listSessions(groupId?: string): Session[] {
-    const sql = `SELECT id, group_id as groupId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, status, archived, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
+    const sql = `SELECT id, group_id as groupId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, status, archived, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
     const rows = (
       groupId
         ? this.db.prepare(sql + ` WHERE group_id = ? ORDER BY created_at`).all(groupId)
@@ -102,8 +112,9 @@ export class RegistryService {
   }
 
   createSession(
-    s: Omit<Session, "id" | "createdAt" | "status" | "worktree" | "baseBranch" | "lastActivityAt"> & {
+    s: Omit<Session, "id" | "createdAt" | "status" | "worktree" | "baseBranch" | "lastActivityAt" | "kind" | "parentSessionId"> & {
       status?: SessionStatus; worktree?: boolean; baseBranch?: string;
+      kind?: Session["kind"]; parentSessionId?: string;
     },
   ): Session {
     const createdAt = new Date().toISOString();
@@ -111,6 +122,8 @@ export class RegistryService {
       ...s,
       worktree: s.worktree ?? true,
       baseBranch: s.baseBranch,
+      kind: s.kind ?? "agent",
+      parentSessionId: s.parentSessionId,
       id: randomUUID(),
       createdAt,
       status: s.status ?? "queued",
@@ -118,7 +131,7 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, group_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions (id, group_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id,
@@ -131,6 +144,8 @@ export class RegistryService {
         row.baseBranch ?? null,
         row.ompSessionId ?? null,
         row.ompSessionFile ?? null,
+        row.parentSessionId ?? null,
+        row.kind,
         row.status,
         row.createdAt,
         row.lastActivityAt,
