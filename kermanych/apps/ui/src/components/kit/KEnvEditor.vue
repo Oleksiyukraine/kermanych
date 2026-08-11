@@ -50,7 +50,7 @@ function collect(): { set: Record<string, string>; remove: string[] } {
     if (key) set[key] = r.value;
   }
   const originalKeys = props.entries.map((e) => e.key);
-  const remove = originalKeys.filter((k) => !(k in set));
+  const remove = originalKeys.filter((k) => !Object.hasOwn(set, k));
   return { set, remove };
 }
 

@@ -1,7 +1,8 @@
 // apps/api/src/env/env-file.service.ts
 import { Injectable } from "@nestjs/common";
 import { existsSync } from "node:fs";
-import { readFile, writeFile, rename } from "node:fs/promises";
+import { readFile, writeFile, rename, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { resolve, sep } from "node:path";
 import type { EnvFileView } from "@kermanych/core";
 import { WorktreeService } from "../worktree/worktree.service";
@@ -34,9 +35,14 @@ export class EnvFileService {
     const target = this.target(projectDir, file);
     const current = existsSync(target) ? await readFile(target, "utf8") : "";
     const next = applyEnvEdits(current, edits);
-    const tmp = `${target}.kmq-${process.pid}.tmp`;
-    await writeFile(tmp, next, { mode: 0o600 });
-    await rename(tmp, target); // atomic on the same filesystem
+    const tmp = `${target}.kmq-${process.pid}-${randomUUID()}.tmp`;
+    try {
+      await writeFile(tmp, next, { mode: 0o600 });
+      await rename(tmp, target); // atomic on the same filesystem
+    } catch (err) {
+      await rm(tmp, { force: true });
+      throw err;
+    }
     return this.read(projectDir, file);
   }
 }

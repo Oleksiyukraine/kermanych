@@ -91,7 +91,7 @@
         />
         <KField
           v-model="carryFilesText"
-          label="Файли для сесії (по одному на рядок)"
+          label="Файли для сесії (через кому або з нового рядка)"
           placeholder=".env"
         />
         <p v-if="settingsError" class="shell__error" role="alert">{{ settingsError }}</p>
@@ -220,7 +220,7 @@ async function saveSettings(): Promise<void> {
   if (!g) return;
   settingsError.value = null;
   try {
-    const carryFiles = carryFilesText.value.split('\n').map((s) => s.trim()).filter(Boolean);
+    const carryFiles = carryFilesText.value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
     await store.updateGroup(g.id, { carryFiles: carryFiles.length ? carryFiles : ['.env'] });
     const edits = envEditor.value?.collect();
     if (edits && (Object.keys(edits.set).length || edits.remove.length)) {
