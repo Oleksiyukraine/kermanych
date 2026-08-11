@@ -28,16 +28,17 @@ test("copies existing files (incl. nested), skips missing", async () => {
 
 test("skips entries that escape projectDir; still copies confined files", async () => {
   writeFileSync(join(proj, ".env"), "A=1\n");
-  const outside = join(tmpdir(), "kmq-carry-outside-secret.txt");
+  // Absolute escaping path: src=resolve(base, outside) stays OUTSIDE proj,
+  // but dest=join(wt, outside) would land INSIDE wt without the guard.
+  const outsideDir = mkdtempSync(join(tmpdir(), "kmq-carry-out-"));
+  const outside = join(outsideDir, "secret.txt");
   writeFileSync(outside, "SECRET\n");
   try {
-    await copyCarryFiles(proj, wt, ["../kmq-carry-outside-secret.txt", ".env"]);
-    // escaping entry copied nowhere inside wt; wt holds only the confined .env
-    expect(readdirSync(wt)).toEqual([".env"]);
+    await copyCarryFiles(proj, wt, [outside, ".env"]);
+    // guard skipped the absolute escape; only the confined .env landed in wt
+    expect(readdirSync(wt).sort()).toEqual([".env"]);
     expect(readFileSync(join(wt, ".env"), "utf8")).toBe("A=1\n");
-    // outside file untouched (not overwritten/consumed by the copy)
-    expect(readFileSync(outside, "utf8")).toBe("SECRET\n");
   } finally {
-    rmSync(outside, { force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
   }
 });
