@@ -6,6 +6,7 @@ import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { RpcSession } from "../rpc/rpc-session";
 import { messagesToTranscript } from "./messages-to-transcript";
+import { copyCarryFiles } from "../env/carry-files";
 import {
   INITIAL_STATUS,
   reduceStatus,
@@ -63,9 +64,9 @@ export class SupervisorService {
     if (s) this.events.next({ type: "session_update", session: this.merge(s) });
   }
 
-  async addGroup(name: string, projectDir: string): Promise<Group> {
+  async addGroup(name: string, projectDir: string, carryFiles?: string[]): Promise<Group> {
     if (!(await this.worktree.isGitRepo(projectDir))) throw new Error("project dir is not a git repo");
-    const g = this.registry.createGroup({ name, projectDir });
+    const g = this.registry.createGroup({ name, projectDir, carryFiles });
     this.events.next({ type: "group_update", group: g });
     return g;
   }
@@ -74,7 +75,7 @@ export class SupervisorService {
     this.registry.removeGroup(id);
     this.events.next({ type: "group_removed", groupId: id });
   }
-  async updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string }): Promise<Group> {
+  async updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string; carryFiles?: string[] }): Promise<Group> {
     const g = this.registry.updateGroup(id, patch);
     this.events.next({ type: "group_update", group: g });
     return g;
@@ -116,10 +117,13 @@ export class SupervisorService {
       if (worktree) {
         wtDir = worktreeDir(session.id);
         await this.worktree.addWorktree(group.projectDir, wtDir, branch);
+        await copyCarryFiles(group.projectDir, wtDir, group.carryFiles ?? [".env"]);
       } else {
         await this.worktree.createBranchHere(group.projectDir, branch);
       }
     } catch (err) {
+      if (wtDir) await this.worktree.removeWorktree(group.projectDir, wtDir).catch(() => {});
+      await this.worktree.removeBranch(group.projectDir, branch).catch(() => {});
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
       throw err;
