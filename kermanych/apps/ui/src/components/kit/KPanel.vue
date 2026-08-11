@@ -24,7 +24,7 @@
           @click="emit('stop')"
         >■</button>
         <button
-          v-if="session.status !== 'merged'"
+          v-if="session.status !== 'merged' && session.kind === 'agent'"
           class="k-panel__icon"
           type="button"
           title="Завершити (merge гілки в проєкт)"
