@@ -14,6 +14,7 @@ import {
   branchName,
   uniqueSlug,
   worktreeDir,
+  toolCallSummary,
   type BranchPrefix,
   type StatusState,
   type Group,
@@ -39,6 +40,7 @@ type Live = {
 export class SupervisorService {
   private map = new Map<string, Live>();
   private resuming = new Map<string, Promise<Live>>();
+  private toolSeq = 0;
   private events = new Subject<ServerEvent>();
   events$: Observable<ServerEvent> = this.events.asObservable();
 
@@ -158,6 +160,20 @@ export class SupervisorService {
     this.events.next({ type: "transcript_append", sessionId: id, entry });
   }
 
+  // Flip a pending tool entry to its terminal status in place and notify clients.
+  // Match by exact toolCallId when omp provides one, else the oldest pending
+  // entry of the same tool name (FIFO — correct for interchangeable parallel calls).
+  private finishTool(id: string, tool: string, toolCallId: string | undefined, status: "ok" | "error") {
+    const l = this.map.get(id);
+    if (!l) return;
+    const entry =
+      (toolCallId ? l.transcript.find((x) => x.kind === "tool" && x.id === toolCallId) : undefined) ??
+      l.transcript.find((x) => x.kind === "tool" && x.status === "pending" && x.tool === tool);
+    if (!entry || entry.kind !== "tool") return;
+    entry.status = status;
+    this.events.next({ type: "transcript_update", sessionId: id, id: entry.id, status });
+  }
+
   // Echo the user's own message (initial task or follow-up) into the transcript so
   // the log reads as a full conversation. Images ride along as data URLs for render.
   private userEntry(text: string, images?: ImageInput[]): TranscriptEntry {
@@ -192,11 +208,12 @@ export class SupervisorService {
     }
     if (e.type === "tool_execution_start") {
       const ev = e as Extract<RpcEvent, { type: "tool_execution_start" }>;
-      this.appendEntry(id, { kind: "tool_call", tool: ev.toolName ?? "?", summary: ev.args?.command ?? ev.args?.path });
+      const entryId = ev.toolCallId ?? `t${++this.toolSeq}`;
+      this.appendEntry(id, { kind: "tool", id: entryId, tool: ev.toolName ?? "?", status: "pending", summary: toolCallSummary(ev.args) });
     }
     if (e.type === "tool_execution_end") {
       const ev = e as Extract<RpcEvent, { type: "tool_execution_end" }>;
-      this.appendEntry(id, { kind: "tool_result", tool: ev.toolName ?? "?", ok: !ev.isError });
+      this.finishTool(id, ev.toolName ?? "?", ev.toolCallId, ev.isError ? "error" : "ok");
     }
     if (e.type === "extension_ui_request" && l.state.status === "waiting_input")
       l.live.pendingUiRequest = e as Extract<RpcEvent, { type: "extension_ui_request" }>;
