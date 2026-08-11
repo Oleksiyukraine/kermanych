@@ -54,7 +54,7 @@ export function applyEnvEdits(
   for (const line of text ? text.split(/\r?\n/) : []) {
     const key = keyOf(line);
     if (key && remove.has(key)) continue;
-    if (key && key in set) {
+    if (key && Object.hasOwn(set, key)) {
       out.push(`${key}=${serializeValue(set[key])}`);
       seen.add(key);
       continue;

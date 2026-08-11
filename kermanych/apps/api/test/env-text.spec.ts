@@ -27,3 +27,10 @@ test("applyEnvEdits quotes values with whitespace or shell specials", () => {
 test("applyEnvEdits escapes embedded quote/backslash", () => {
   expect(applyEnvEdits("", { set: { P: 'a"b\\c' } })).toBe(`P="a\\"b\\\\c"\n`);
 });
+
+test("applyEnvEdits ignores prototype-member keys not owned by set", () => {
+  expect(applyEnvEdits("toString=x\n", {})).toBe("toString=x\n");
+  expect(
+    applyEnvEdits("toString=x\n", { set: { toString: "y" }, remove: [] }),
+  ).toBe("toString=y\n");
+});
