@@ -1,6 +1,7 @@
 // apps/api/src/supervisor/supervisor.service.ts
 import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";
+import { rm } from "node:fs/promises";
 import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
@@ -99,7 +100,7 @@ export class SupervisorService {
         throw new Error("project working tree must be clean to create an in-place (non-worktree) agent");
       const activeInPlace = this.registry
         .listSessions(groupId)
-        .some((s) => !s.worktree && s.status !== "merged");
+        .some((s) => !s.worktree && s.kind !== "discussion" && s.status !== "merged");
       if (activeInPlace)
         throw new Error("an in-place agent is already active in this project — finish or delete it first");
       baseBranch = await this.worktree.currentBranch(group.projectDir);
@@ -368,6 +369,10 @@ export class SupervisorService {
     this.pushUpdate(id);
   }
   async deleteSession(id: string) {
+    // Cascade: discussion branches hang off this session — discard them first.
+    for (const child of this.registry.listSessions().filter((x) => x.parentSessionId === id))
+      await this.deleteSession(child.id);
+
     const s = this.registry.listSessions().find((x) => x.id === id);
     const l = this.map.get(id);
     if (l) {
@@ -376,7 +381,10 @@ export class SupervisorService {
       await l.rpc.stop();
       this.map.delete(id);
     }
-    if (s) {
+    if (s && s.kind === "discussion") {
+      // No git: the child owns no branch/worktree; its cwd is the parent's.
+      if (s.ompSessionFile) await rm(s.ompSessionFile, { force: true }).catch(() => {});
+    } else if (s) {
       const g = this.registry.listGroups().find((x) => x.id === s.groupId);
       if (g) {
         if (s.worktree) {
@@ -430,6 +438,8 @@ export class SupervisorService {
     if (!s) throw new Error("session not found");
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
     if (!g) throw new Error("group not found");
+    if (s.kind === "discussion")
+      throw new Error("discussion branches can't be finished — merge or discard instead");
 
     if (s.worktree) {
       if (!s.worktreePath) throw new Error("session has no worktree");
@@ -546,7 +556,7 @@ export class SupervisorService {
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
     if (!g) throw new Error("group not found");
     const dir = s.worktreePath || g.projectDir;
-    if (!s.worktree && (await this.worktree.currentBranch(g.projectDir)) !== s.branch)
+    if (s.kind !== "discussion" && !s.worktree && (await this.worktree.currentBranch(g.projectDir)) !== s.branch)
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
     const rpc = new RpcSession({ cwd: dir });
     const live = this.wireLive(id, rpc, s.status);
