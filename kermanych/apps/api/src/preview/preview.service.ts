@@ -45,6 +45,8 @@ export class PreviewService implements OnModuleDestroy {
           PORT: String(apiPort),
           // Isolated DB so a Kermanych-on-Kermanych preview never shares the main registry.
           KERMANYCH_DB: join(tmpdir(), "kermanych-preview", `${sessionId}.sqlite`),
+          // ...and seed that DB with inert demo data so the previewed UI isn't empty (seed.ts).
+          KERMANYCH_SEED: "1",
         });
         procs.push(api);
         await waitPort(apiPort, 180_000, api); // includes a possible first-run build/install
