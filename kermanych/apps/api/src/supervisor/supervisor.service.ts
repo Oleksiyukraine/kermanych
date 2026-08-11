@@ -206,6 +206,41 @@ export class SupervisorService {
     return this.merge(child);
   }
 
+  // Merge a discussion branch back into its parent: inject a (reviewed) summary as a
+  // message into the parent's live conversation, then retire the child as merged history.
+  async mergeDiscussion(childId: string, summary?: string): Promise<{ merged: true }> {
+    const c = this.registry.listSessions().find((x) => x.id === childId);
+    if (!c) throw new Error("session not found");
+    if (c.kind !== "discussion" || !c.parentSessionId) throw new Error("not a discussion branch");
+    const parentId = c.parentSessionId;
+
+    const live = this.map.get(childId);
+    const last = [...(live?.transcript ?? [])]
+      .reverse()
+      .find((e) => e.kind === "assistant_text") as { kind: "assistant_text"; text: string } | undefined;
+    const text = (summary?.trim() || last?.text || "").trim();
+    if (!text) throw new Error("nothing to merge — the branch has no conclusion yet");
+    const wrapped = `[Висновок гілки «${c.name}»]: ${text}`;
+
+    const parentLive = this.map.get(parentId);
+    const mode: "prompt" | "follow_up" =
+      parentLive && (parentLive.state.status === "thinking" || parentLive.state.status === "tool")
+        ? "follow_up"
+        : "prompt";
+    // sendMessage resumes a dormant parent; if it throws, the child is left intact.
+    await this.sendMessage(parentId, wrapped, mode);
+
+    if (live) {
+      live.live.status = "stopped";
+      this.stopPoll(live);
+      await live.rpc.stop();
+      this.map.delete(childId);
+    }
+    this.registry.updateSession(childId, { status: "merged" });
+    this.pushUpdate(childId);
+    return { merged: true };
+  }
+
   private appendEntry(id: string, entry: TranscriptEntry) {
     const l = this.map.get(id)!;
     l.transcript.push(entry);
