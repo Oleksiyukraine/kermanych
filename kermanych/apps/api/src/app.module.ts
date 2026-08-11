@@ -7,9 +7,10 @@ import { WorktreeService } from "./worktree/worktree.service";
 import { SupervisorService } from "./supervisor/supervisor.service";
 import { EventsGateway } from "./ws/events.gateway";
 import { PreviewService } from "./preview/preview.service";
+import { EnvFileService } from "./env/env-file.service";
 
 @Module({
   controllers: [GroupsController, SessionsController, FsController],
-  providers: [RegistryService, WorktreeService, SupervisorService, PreviewService, EventsGateway],
+  providers: [RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway],
 })
 export class AppModule {}
