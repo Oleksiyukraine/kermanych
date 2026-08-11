@@ -33,7 +33,7 @@ export class RpcSession {
   private pending = new Map<string, { resolve: (r: RpcResponseFrame) => void; reject: (e: Error) => void }>();
   private stderr = "";
   private seq = 0;
-  constructor(private opts: { cwd: string; model?: string; ompPath?: string }) {}
+  constructor(private opts: { cwd: string; model?: string; ompPath?: string; fork?: string; noTools?: boolean }) {}
 
   onEvent(cb: (e: RpcEvent) => void) { this.eventCbs.push(cb); }
   onExit(cb: (code: number | null, reason: string) => void) { this.exitCbs.push(cb); }
@@ -43,6 +43,8 @@ export class RpcSession {
   async start(): Promise<void> {
     const argv = ["omp", "--mode", "rpc", "--cwd", this.opts.cwd];
     if (this.opts.model) argv.push("--model", this.opts.model);
+    if (this.opts.fork) argv.push("--fork", this.opts.fork);
+    if (this.opts.noTools) argv.push("--no-tools");
     if (this.opts.ompPath) argv[0] = this.opts.ompPath;
     this.proc = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
     // Persistent decoders buffer partial multibyte (UTF-8) sequences split across chunk boundaries.
