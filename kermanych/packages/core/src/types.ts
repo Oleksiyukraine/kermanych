@@ -22,12 +22,13 @@ export type Session = {
 
 export type ImageInput = { data: string; mimeType: string };
 
+export type ToolStatus = "pending" | "ok" | "error";
+
 export type TranscriptEntry =
   | { kind: "user_text"; text: string; images?: string[] }
   | { kind: "assistant_text"; text: string }
   | { kind: "assistant_thinking"; text: string }
-  | { kind: "tool_call"; tool: string; summary?: string }
-  | { kind: "tool_result"; tool: string; ok: boolean; summary?: string }
+  | { kind: "tool"; id: string; tool: string; status: ToolStatus; summary?: string }
   | { kind: "notice"; text: string };
 
 export type RpcExtensionUIRequest = {
@@ -49,7 +50,7 @@ export type RpcEvent =
   | { type: "message_update"; assistantMessageEvent?: { type: string; delta?: string } }
   | { type: "message_end"; message?: any }
   | { type: "tool_execution_start"; toolName?: string; toolCallId?: string; args?: any }
-  | { type: "tool_execution_end"; toolName?: string; isError?: boolean }
+  | { type: "tool_execution_end"; toolName?: string; toolCallId?: string; isError?: boolean }
   | { type: "agent_end"; isTerminal?: boolean }
   | { type: "notice"; message?: string }
   | RpcExtensionUIRequest
@@ -62,6 +63,7 @@ export type ServerEvent =
   | { type: "session_update"; session: Session }
   | { type: "transcript_append"; sessionId: string; entry: TranscriptEntry }
   | { type: "transcript_reset"; sessionId: string; entries: TranscriptEntry[] }
+  | { type: "transcript_update"; sessionId: string; id: string; status: "ok" | "error" }
   | { type: "group_update"; group: Group }
   | { type: "session_removed"; sessionId: string }
   | { type: "group_removed"; groupId: string };

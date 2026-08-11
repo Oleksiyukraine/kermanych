@@ -59,6 +59,16 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       };
     } else if (e.type === 'transcript_reset') {
       transcripts.value = { ...transcripts.value, [e.sessionId]: e.entries };
+    } else if (e.type === 'transcript_update') {
+      const list = transcripts.value[e.sessionId];
+      if (list) {
+        transcripts.value = {
+          ...transcripts.value,
+          [e.sessionId]: list.map((x) =>
+            x.kind === 'tool' && x.id === e.id ? { ...x, status: e.status } : x,
+          ),
+        };
+      }
     }
   }
 
