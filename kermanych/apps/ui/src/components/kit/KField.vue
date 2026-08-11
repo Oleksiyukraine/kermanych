@@ -3,6 +3,7 @@
     <span v-if="label" class="k-field__label">{{ label }}</span>
     <input
       class="k-field__input"
+      :type="type ?? 'text'"
       :value="modelValue"
       :placeholder="placeholder"
       :disabled="disabled"
@@ -18,6 +19,7 @@ defineProps<{
   modelValue?: string;
   placeholder?: string;
   disabled?: boolean;
+  type?: string;
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
