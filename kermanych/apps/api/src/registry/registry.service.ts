@@ -57,31 +57,39 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: per-project carry-files list arrived after the initial schema.
+    try {
+      this.db.exec(`ALTER TABLE groups ADD COLUMN carry_files TEXT NOT NULL DEFAULT '[".env"]'`);
+    } catch {
+      /* column already exists */
+    }
   }
 
   listGroups(): Group[] {
-    return this.db
+    const rows = this.db
       .prepare(
-        `SELECT id, name, project_dir as projectDir, preview_command as previewCommand, api_command as apiCommand, created_at as createdAt FROM groups ORDER BY created_at`,
+        `SELECT id, name, project_dir as projectDir, preview_command as previewCommand, api_command as apiCommand, carry_files as carryFiles, created_at as createdAt FROM groups ORDER BY created_at`,
       )
-      .all() as Group[];
+      .all() as (Omit<Group, "carryFiles"> & { carryFiles: string })[];
+    return rows.map((r) => ({ ...r, carryFiles: JSON.parse(r.carryFiles) as string[] }));
   }
 
   createGroup(g: Omit<Group, "id" | "createdAt">): Group {
-    const row: Group = { ...g, id: randomUUID(), createdAt: new Date().toISOString() };
+    const carryFiles = g.carryFiles ?? [".env"];
+    const row: Group = { ...g, carryFiles, id: randomUUID(), createdAt: new Date().toISOString() };
     this.db
-      .prepare(`INSERT INTO groups (id, name, project_dir, created_at) VALUES (?,?,?,?)`)
-      .run(row.id, row.name, row.projectDir, row.createdAt);
+      .prepare(`INSERT INTO groups (id, name, project_dir, carry_files, created_at) VALUES (?,?,?,?,?)`)
+      .run(row.id, row.name, row.projectDir, JSON.stringify(carryFiles), row.createdAt);
     return row;
   }
 
-  updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string }): Group {
+  updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string; carryFiles?: string[] }): Group {
     const cur = this.listGroups().find((g) => g.id === id);
     if (!cur) throw new Error("group not found");
     const next = { ...cur, ...patch };
     this.db
-      .prepare(`UPDATE groups SET preview_command=?, api_command=? WHERE id=?`)
-      .run(next.previewCommand ?? null, next.apiCommand ?? null, id);
+      .prepare(`UPDATE groups SET preview_command=?, api_command=?, carry_files=? WHERE id=?`)
+      .run(next.previewCommand ?? null, next.apiCommand ?? null, JSON.stringify(next.carryFiles ?? [".env"]), id);
     return next;
   }
 
