@@ -113,17 +113,20 @@ export class SupervisorService {
 
     const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch, worktree, baseBranch });
     let wtDir = "";
+    let branchCreated = false;
     try {
       if (worktree) {
         wtDir = worktreeDir(session.id);
         await this.worktree.addWorktree(group.projectDir, wtDir, branch);
+        branchCreated = true;
         await copyCarryFiles(group.projectDir, wtDir, group.carryFiles ?? [".env"]);
       } else {
         await this.worktree.createBranchHere(group.projectDir, branch);
+        branchCreated = true;
       }
     } catch (err) {
       if (wtDir) await this.worktree.removeWorktree(group.projectDir, wtDir).catch(() => {});
-      await this.worktree.removeBranch(group.projectDir, branch).catch(() => {});
+      if (branchCreated) await this.worktree.removeBranch(group.projectDir, branch).catch(() => {});
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
       throw err;
