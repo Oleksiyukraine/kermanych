@@ -144,4 +144,11 @@ export class RpcSession {
     proc.once("close", () => resolve());
     await promise;
   }
+
+  // Whether the omp child is still running. A dead child must be resumed (respawned),
+  // never written to: writes to its closed stdin raise EPIPE, which start() swallows,
+  // so the message would vanish silently and the agent would appear "hung".
+  isAlive(): boolean {
+    return !!this.proc && this.proc.exitCode === null && this.proc.signalCode === null;
+  }
 }

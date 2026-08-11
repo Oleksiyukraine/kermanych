@@ -576,12 +576,18 @@ async function submitLauncher(): Promise<void> {
 }
 
 // ── Detail panel emits → store actions ───────────────────────────────────
-function onSend(text: string, images: ImageInput[]): void {
+async function onSend(text: string, images: ImageInput[]): Promise<void> {
   const s = selectedSession.value;
   if (!s) return;
   // Done → a fresh follow-up turn; otherwise steer the in-flight turn.
   const mode: MessageMode = s.status === 'done' ? 'follow_up' : 'steer';
-  void store.sendMessage(s.id, text, mode, images);
+  try {
+    await store.sendMessage(s.id, text, mode, images);
+  } catch (e) {
+    // A failed send (e.g. the agent's omp child died and could not be respawned) must be
+    // visible, not swallowed — otherwise the chat looks silently stuck.
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
 }
 
 async function onBranch(): Promise<void> {

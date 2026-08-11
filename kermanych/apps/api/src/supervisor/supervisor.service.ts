@@ -323,7 +323,17 @@ export class SupervisorService {
   }
 
   async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
-    const l = this.map.get(id) ?? (await this.resumeSession(id));
+    // A dormant session (no Live) resumes; a *dead* Live — the omp child exited, e.g. a
+    // provider outage killed it after the turn ended — must ALSO resume, not be written to.
+    // A write to a dead child's stdin raises EPIPE, which RpcSession swallows, so the message
+    // would vanish with no error and the agent would look "hung". Drop the corpse and respawn.
+    let l = this.map.get(id);
+    if (l && !l.rpc.isAlive()) {
+      this.stopPoll(l);
+      this.map.delete(id);
+      l = undefined;
+    }
+    if (!l) l = await this.resumeSession(id);
     try {
       this.registry.touchSession(id);
     } catch {
