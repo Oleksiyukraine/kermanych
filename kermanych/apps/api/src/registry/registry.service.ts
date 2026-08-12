@@ -38,6 +38,14 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: last-activity tracking arrived after the initial schema.
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN last_activity_at TEXT`);
+    } catch {
+      /* column already exists */
+    }
+    // Backfill pre-existing rows so the column is never null for old sessions.
+    this.db.exec(`UPDATE sessions SET last_activity_at = created_at WHERE last_activity_at IS NULL`);
     // Additive migration: worktree isolation toggle + in-place base branch.
     try {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN worktree INTEGER NOT NULL DEFAULT 1`);
@@ -49,31 +57,49 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN parent_session_id TEXT`);
+    } catch {
+      /* column already exists */
+    }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'agent'`);
+    } catch {
+      /* column already exists */
+    }
+    // Additive migration: per-project carry-files list arrived after the initial schema.
+    try {
+      this.db.exec(`ALTER TABLE groups ADD COLUMN carry_files TEXT NOT NULL DEFAULT '[".env"]'`);
+    } catch {
+      /* column already exists */
+    }
   }
 
   listGroups(): Group[] {
-    return this.db
+    const rows = this.db
       .prepare(
-        `SELECT id, name, project_dir as projectDir, preview_command as previewCommand, api_command as apiCommand, created_at as createdAt FROM groups ORDER BY created_at`,
+        `SELECT id, name, project_dir as projectDir, preview_command as previewCommand, api_command as apiCommand, carry_files as carryFiles, created_at as createdAt FROM groups ORDER BY created_at`,
       )
-      .all() as Group[];
+      .all() as (Omit<Group, "carryFiles"> & { carryFiles: string })[];
+    return rows.map((r) => ({ ...r, carryFiles: JSON.parse(r.carryFiles) as string[] }));
   }
 
   createGroup(g: Omit<Group, "id" | "createdAt">): Group {
-    const row: Group = { ...g, id: randomUUID(), createdAt: new Date().toISOString() };
+    const carryFiles = g.carryFiles ?? [".env"];
+    const row: Group = { ...g, carryFiles, id: randomUUID(), createdAt: new Date().toISOString() };
     this.db
-      .prepare(`INSERT INTO groups (id, name, project_dir, created_at) VALUES (?,?,?,?)`)
-      .run(row.id, row.name, row.projectDir, row.createdAt);
+      .prepare(`INSERT INTO groups (id, name, project_dir, carry_files, created_at) VALUES (?,?,?,?,?)`)
+      .run(row.id, row.name, row.projectDir, JSON.stringify(carryFiles), row.createdAt);
     return row;
   }
 
-  updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string }): Group {
+  updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string; carryFiles?: string[] }): Group {
     const cur = this.listGroups().find((g) => g.id === id);
     if (!cur) throw new Error("group not found");
     const next = { ...cur, ...patch };
     this.db
-      .prepare(`UPDATE groups SET preview_command=?, api_command=? WHERE id=?`)
-      .run(next.previewCommand ?? null, next.apiCommand ?? null, id);
+      .prepare(`UPDATE groups SET preview_command=?, api_command=?, carry_files=? WHERE id=?`)
+      .run(next.previewCommand ?? null, next.apiCommand ?? null, JSON.stringify(next.carryFiles ?? [".env"]), id);
     return next;
   }
 
@@ -83,7 +109,7 @@ export class RegistryService {
   }
 
   listSessions(groupId?: string): Session[] {
-    const sql = `SELECT id, group_id as groupId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, status, archived, created_at as createdAt FROM sessions`;
+    const sql = `SELECT id, group_id as groupId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, status, archived, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
     const rows = (
       groupId
         ? this.db.prepare(sql + ` WHERE group_id = ? ORDER BY created_at`).all(groupId)
@@ -94,21 +120,26 @@ export class RegistryService {
   }
 
   createSession(
-    s: Omit<Session, "id" | "createdAt" | "status" | "worktree" | "baseBranch"> & {
+    s: Omit<Session, "id" | "createdAt" | "status" | "worktree" | "baseBranch" | "lastActivityAt" | "kind" | "parentSessionId"> & {
       status?: SessionStatus; worktree?: boolean; baseBranch?: string;
+      kind?: Session["kind"]; parentSessionId?: string;
     },
   ): Session {
+    const createdAt = new Date().toISOString();
     const row: Session = {
       ...s,
       worktree: s.worktree ?? true,
       baseBranch: s.baseBranch,
+      kind: s.kind ?? "agent",
+      parentSessionId: s.parentSessionId,
       id: randomUUID(),
-      createdAt: new Date().toISOString(),
+      createdAt,
       status: s.status ?? "queued",
+      lastActivityAt: createdAt,
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, group_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions (id, group_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id,
@@ -121,8 +152,11 @@ export class RegistryService {
         row.baseBranch ?? null,
         row.ompSessionId ?? null,
         row.ompSessionFile ?? null,
+        row.parentSessionId ?? null,
+        row.kind,
         row.status,
         row.createdAt,
+        row.lastActivityAt,
       );
     return row;
   }
@@ -149,6 +183,12 @@ export class RegistryService {
         id,
       );
     return next;
+  }
+
+  // Bump the session's activity clock. A targeted write (no read-modify-write)
+  // because it runs on the high-frequency agent-event path.
+  touchSession(id: string): void {
+    this.db.prepare(`UPDATE sessions SET last_activity_at = ? WHERE id = ?`).run(new Date().toISOString(), id);
   }
 
   removeSession(id: string): void {

@@ -1,24 +1,9 @@
 <template>
   <div class="k-log" :class="`k-log--${entry.kind}`">
-    <!-- tool_call — muted mono, diamond prefix -->
-    <template v-if="entry.kind === 'tool_call'">
-      <div class="k-log__row k-log__row--tool">
-        <span class="k-log__glyph" aria-hidden="true">◆</span>
-        <span class="k-log__tool">{{ entry.tool }}</span>
-        <span v-if="head" class="k-log__summary">{{ head }}</span>
-      </div>
-      <div
-        v-for="(line, i) in body"
-        :key="i"
-        class="k-log__body"
-        :class="{ 'k-log__diff': line.diff, [`k-log__diff--${line.sign}`]: line.diff }"
-      >{{ line.text }}</div>
-    </template>
-
-    <!-- tool_result — pass/fail glyph + tool -->
-    <template v-else-if="entry.kind === 'tool_result'">
-      <div class="k-log__row k-log__row--result">
-        <span class="k-log__glyph" aria-hidden="true">{{ entry.ok ? '✓' : '✗' }}</span>
+    <!-- tool — one row per invocation; glyph ◆ pending → ✓ ok / ✗ error, in place -->
+    <template v-if="entry.kind === 'tool'">
+      <div class="k-log__row" :class="entry.status === 'pending' ? 'k-log__row--tool' : 'k-log__row--result'">
+        <span class="k-log__glyph" aria-hidden="true">{{ glyph }}</span>
         <span class="k-log__tool">{{ entry.tool }}</span>
         <span v-if="head" class="k-log__summary">{{ head }}</span>
       </div>
@@ -99,16 +84,23 @@ function toLines(src: string | undefined, allowDiff: boolean): Line[] {
 // First line of a tool summary sits inline with the tool name; any remaining
 // lines (typically a diff hunk) render below as body lines.
 const head = computed(() => {
-  if (props.entry.kind === 'tool_call' || props.entry.kind === 'tool_result') {
+  if (props.entry.kind === 'tool') {
     return (props.entry.summary ?? '').split('\n')[0] ?? '';
   }
   return '';
 });
 
+// The status glyph mirrors the omp terminal: ◆ while the call is in flight, ✓ on
+// success, ✗ on failure — the single row updates in place as status changes.
+const glyph = computed(() => {
+  if (props.entry.kind !== 'tool') return '';
+  return props.entry.status === 'pending' ? '◆' : props.entry.status === 'ok' ? '✓' : '✗';
+});
+
 // Diff striping (green strip + accent tint) is reserved for real diff/tool
 // output. Assistant prose is Markdown-rendered separately (see renderedText).
 const body = computed<Line[]>(() => {
-  if (props.entry.kind === 'tool_call' || props.entry.kind === 'tool_result') {
+  if (props.entry.kind === 'tool') {
     return toLines(props.entry.summary, true).slice(1);
   }
   return [];
@@ -152,12 +144,23 @@ const renderedThinking = computed(() =>
   font-size: 11px;
 }
 
-// tool_call — everything muted, diamond marker.
+// pending call — everything muted, diamond marker.
 .k-log__row--tool {
   color: var(--k-muted);
 }
 
-// tool_result — glyph + tool stay muted, the summary reads at text weight.
+// in-flight call — the diamond pulses in accent so a long tool (e.g. a subagent
+// dispatch) reads as live work, not a dead row.
+.k-log__row--tool .k-log__glyph {
+  color: var(--k-accent);
+  animation: k-log-tool-pulse 1.4s ease-in-out infinite;
+}
+@keyframes k-log-tool-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+// finished call — glyph + tool stay muted, the summary reads at text weight.
 .k-log__row--result {
   color: var(--k-muted);
 

@@ -11,7 +11,6 @@
       <section class="ws__board">
         <header class="ws__board-head">
           <div class="ws__board-title">
-            <div class="ws__eyebrow mono">РОБОЧИЙ ПРОСТІР</div>
             <h1 class="ws__heading">{{ selectedGroup?.name ?? 'Проєкт' }}</h1>
           </div>
           <div class="ws__board-controls">
@@ -24,7 +23,7 @@
           v-if="groupSessions.length"
           class="ws__table"
           :columns="agentColumns"
-          :rows="groupSessions"
+          :rows="boardRows"
           :row-key="(s) => s.id"
           :selected-key="store.selectedSessionId"
           :row-class="(s) => (isRunning(s) ? 'ws__row--running' : undefined)"
@@ -38,10 +37,15 @@
             </span>
           </template>
           <template #cell-name="{ row }">
-            <span class="ws__cell-name">{{ row.name }}</span>
+            <span class="ws__cell-name" :class="{ 'ws__cell-name--child': row.kind === 'discussion' }">
+              <span v-if="row.kind === 'discussion'" class="ws__branch-connector" aria-hidden="true">└</span>
+              {{ row.name }}
+              <KTag v-if="row.kind === 'discussion'">discussion</KTag>
+            </span>
           </template>
           <template #cell-branch="{ row }">
-            <KTag>⑂ {{ row.branch }}</KTag>
+            <KTag v-if="row.branch">⑂ {{ row.branch }}</KTag>
+            <span v-else class="mono ws__cell-activity">—</span>
           </template>
           <template #cell-ctx="{ row }">
             {{ ctxOf(row) ?? '—' }}
@@ -49,9 +53,27 @@
           <template #cell-activity="{ row }">
             <span class="ws__cell-activity mono">{{ activityOf(row) || '—' }}</span>
           </template>
+          <template #cell-lastActivity="{ row }">
+            <span class="ws__cell-activity mono">{{ relativeTime(row.lastActivityAt, now) }}</span>
+          </template>
           <template #cell-actions="{ row }">
             <div class="ws__cell-actions">
-              <template v-if="!showArchived">
+              <template v-if="row.kind === 'discussion'">
+                <button
+                  v-if="row.status !== 'merged'"
+                  type="button"
+                  class="ws__card-icon"
+                  title="Влити висновок у батьківського агента"
+                  @click.stop="openMerge(row)"
+                >⤴</button>
+                <button
+                  type="button"
+                  class="ws__card-icon"
+                  title="Викинути гілку"
+                  @click.stop="onDiscardRow(row)"
+                >✕</button>
+              </template>
+              <template v-else-if="!showArchived">
                 <button
                   type="button"
                   class="ws__card-icon"
@@ -124,6 +146,8 @@
           @answer="onAnswer"
           @finish="onFinish"
           @editor="onEditor"
+          @branch="onBranch"
+          @restart="onRestart"
         >
           <template v-if="entries.length">
             <KLogBlock v-for="(entry, i) in entries" :key="i" :entry="entry" />
@@ -193,6 +217,30 @@
         <KBtn variant="primary" :disabled="!canLaunch" @click="submitLauncher">
           Запустити
         </KBtn>
+      </template>
+    </KModal>
+
+    <!-- MERGE — pour a discussion branch's conclusion into its parent -->
+    <KModal v-model="mergeOpen" title="Влити гілку в батьківського агента">
+      <div class="ws__form">
+        <label class="ws__field">
+          <span class="ws__field-label">Summary (піде як повідомлення в батьківського агента)</span>
+          <textarea
+            v-model="mergeSummary"
+            class="ws__textarea mono"
+            rows="6"
+            placeholder="Порожнє — візьму останню відповідь гілки"
+          />
+        </label>
+        <p class="ws__hint mono">
+          Батьківський агент отримає це й почне діяти. Гілка стане історією
+          (<code class="mono">merged</code>).
+        </p>
+        <p v-if="mergeError" class="ws__error" role="alert">{{ mergeError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="mergeOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" :disabled="mergeBusy" @click="submitMerge">⤴ Влити</KBtn>
       </template>
     </KModal>
 
@@ -285,12 +333,16 @@ import KToggle from 'components/kit/KToggle.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import type { BranchPrefix } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
+import { useNow } from '../composables/useNow';
+import { relativeTime } from '../lib/time';
 import { useResizableWidth } from '../composables/useResizableWidth';
 
 // The Workspace screen (design-system section 07): the board of session cards
 // for the selected group + the full panel for the selected session, plus the
 // new-agent launcher. All mutations go through the Pinia store.
 const store = useOrchestrator();
+
+const now = useNow();
 
 // Board filter: "Активні" hides archived sessions; "Заархівовані" shows only them.
 const VIEW_ACTIVE = 'Активні';
@@ -323,6 +375,20 @@ const groupSessions = computed(() =>
       return byStatus !== 0 ? byStatus : a.createdAt.localeCompare(b.createdAt);
     }),
 );
+
+// Board order: each discussion child immediately follows its parent (a one-level
+// tree). Orphans (parent filtered out by the archived/group view) still render.
+const boardRows = computed<Session[]>(() => {
+  const all = groupSessions.value;
+  const parents = all.filter((s) => !s.parentSessionId);
+  const out: Session[] = [];
+  for (const p of parents) {
+    out.push(p);
+    for (const c of all.filter((s) => s.parentSessionId === p.id)) out.push(c);
+  }
+  for (const s of all) if (!out.includes(s)) out.push(s);
+  return out;
+});
 const selectedGroup = computed(() =>
   store.groups.find((g) => g.id === store.selectedGroupId),
 );
@@ -375,6 +441,7 @@ const agentColumns: KTableColumn[] = [
   { key: 'branch', label: 'Гілка', width: '170px' },
   { key: 'ctx', label: 'Контекст', align: 'right', width: '96px', mono: true },
   { key: 'activity', label: 'Активність' },
+  { key: 'lastActivity', label: 'Остання активність', width: '120px' },
   { key: 'actions', label: '', align: 'right', width: '84px' },
 ];
 
@@ -402,7 +469,7 @@ function statusWord(s: Session): string {
     case 'thinking':
       return 'думає';
     case 'tool':
-      return 'інструмент';
+      return 'виконує';
     case 'waiting_input':
       return 'чекає';
     case 'done':
@@ -509,17 +576,44 @@ async function submitLauncher(): Promise<void> {
 }
 
 // ── Detail panel emits → store actions ───────────────────────────────────
-function onSend(text: string, images: ImageInput[]): void {
+async function onSend(text: string, images: ImageInput[]): Promise<void> {
   const s = selectedSession.value;
   if (!s) return;
   // Done → a fresh follow-up turn; otherwise steer the in-flight turn.
   const mode: MessageMode = s.status === 'done' ? 'follow_up' : 'steer';
-  void store.sendMessage(s.id, text, mode, images);
+  try {
+    await store.sendMessage(s.id, text, mode, images);
+  } catch (e) {
+    // A failed send (e.g. the agent's omp child died and could not be respawned) must be
+    // visible, not swallowed — otherwise the chat looks silently stuck.
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+async function onBranch(): Promise<void> {
+  const s = selectedSession.value;
+  if (!s) return;
+  try {
+    const child = await store.branchSession(s.id);
+    if (child?.id) store.selectSession(child.id);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
 }
 
 function onStop(): void {
   const s = selectedSession.value;
   if (s) void store.stopSession(s.id);
+}
+
+async function onRestart(): Promise<void> {
+  const s = selectedSession.value;
+  if (!s) return;
+  try {
+    await store.restartSession(s.id);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
 }
 
 async function onDelete(): Promise<void> {
@@ -595,6 +689,48 @@ function onFinish(): void {
 function onEditor(): void {
   const s = selectedSession.value;
   if (s) void store.openEditor(s.id).catch(() => {});
+}
+
+// ── Merge / discard a discussion branch ──────────────────────────────────
+const mergeOpen = ref(false);
+const mergeFor = ref<Session | null>(null);
+const mergeSummary = ref('');
+const mergeBusy = ref(false);
+const mergeError = ref<string | null>(null);
+
+function openMerge(s: Session): void {
+  mergeFor.value = s;
+  mergeError.value = null;
+  mergeBusy.value = false;
+  const t = store.transcripts[s.id] ?? [];
+  const last = [...t].reverse().find((e) => e.kind === 'assistant_text') as
+    | { kind: 'assistant_text'; text: string }
+    | undefined;
+  mergeSummary.value = last?.text ?? '';
+  mergeOpen.value = true;
+}
+
+async function submitMerge(): Promise<void> {
+  const s = mergeFor.value;
+  if (!s) return;
+  mergeBusy.value = true;
+  mergeError.value = null;
+  try {
+    await store.mergeBranch(s.id, mergeSummary.value.trim() || undefined);
+    mergeOpen.value = false;
+    if (s.parentSessionId) store.selectSession(s.parentSessionId);
+  } catch (e) {
+    mergeError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    mergeBusy.value = false;
+  }
+}
+
+function onDiscardRow(s: Session): void {
+  if (!window.confirm(`Викинути гілку «${s.name}»? Розмову буде втрачено.`)) return;
+  void store.deleteSession(s.id).then(() => {
+    if (store.selectedSessionId === s.id) store.selectSession(undefined);
+  });
 }
 
 async function resolveAuto(): Promise<void> {
@@ -811,12 +947,6 @@ async function submitPreviewConfig(): Promise<void> {
   gap: 12px;
 }
 
-.ws__eyebrow {
-  font-size: 11px;
-  letter-spacing: 0.2em;
-  color: var(--k-muted);
-}
-
 .ws__heading {
   margin: 4px 0 0;
   text-align: left;
@@ -839,6 +969,9 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-muted);
   white-space: nowrap;
 }
+
+.ws__cell-name--child { padding-left: 6px; color: var(--k-muted); }
+.ws__branch-connector { color: var(--k-accent); margin-right: 4px; }
 
 .ws__cell-name {
   font-family: var(--k-font-ui);

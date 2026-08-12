@@ -39,6 +39,24 @@ export class SessionsController {
     }
   }
 
+  @Post(":id/branch")
+  async branch(@Param("id") id: string) {
+    try {
+      return await this.sup.branchSession(id);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  @Post(":id/merge")
+  async merge(@Param("id") id: string, @Body() b: { summary?: string }) {
+    try {
+      return await this.sup.mergeDiscussion(id, b.summary);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Post(":id/answer")
   answer(@Param("id") id: string, @Body() b: { res: RpcExtensionUIResponse }) {
     try {
@@ -130,6 +148,15 @@ export class SessionsController {
   async resolve(@Param("id") id: string) {
     try {
       return await this.sup.resolveConflict(id);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  @Post(":id/restart")
+  async restart(@Param("id") id: string) {
+    try {
+      return await this.sup.restartSession(id);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }

@@ -94,4 +94,10 @@ export class WorktreeService {
     const out = (await git(dir, ["diff", "--name-only", "--diff-filter=U"])).out.trim();
     return out ? out.split("\n") : [];
   }
+
+  // True when `path` is git-ignored in `dir` (exit 0 from check-ignore). Works
+  // on non-existent paths too, so it can validate a file we are about to create.
+  async isIgnored(dir: string, path: string): Promise<boolean> {
+    return (await git(dir, ["check-ignore", "-q", "--", path])).ok;
+  }
 }

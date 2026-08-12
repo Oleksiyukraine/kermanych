@@ -90,6 +90,16 @@
         >
           <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" />
         </KPanel>
+        <KPanel
+          :session="stalledSession"
+          :group="group"
+          @send="onSend"
+          @restart="onRestart"
+          @stop="onStop"
+          @delete="onDelete"
+        >
+          <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" />
+        </KPanel>
       </div>
       <div class="kit__caption mono">остання дія: {{ lastAction || '—' }}</div>
     </section>
@@ -219,10 +229,11 @@ const group: Group = {
 function mkSession(over: Partial<Session>): Session {
   return {
     id: 's', groupId: 'g1', name: 'api-gateway', task: '',
-    worktreePath: '', worktree: true, branch: 'main', status: 'thinking', createdAt: now, ...over,
+    worktreePath: '', worktree: true, branch: 'main', kind: 'agent', status: 'thinking', createdAt: now, lastActivityAt: now, ...over,
   };
 }
 const runningSession = mkSession({ id: 's1', status: 'thinking', branch: 'main' });
+const stalledSession = mkSession({ id: 's3', status: 'thinking', branch: 'feat/wedged', lastEventAt: Date.now() - 90_000 });
 const waitingSession = mkSession({
   id: 's2', status: 'waiting_input', branch: 'feat/schema',
   pendingUiRequest: {
@@ -246,20 +257,19 @@ const tableSessions: Session[] = [
 ];
 const tableSelected = ref('t1');
 const panelLog: TranscriptEntry[] = [
-  { kind: 'tool_call', tool: 'Edit', summary: 'src/auth/token.service.ts\n+ this.rotateShared(token);' },
-  { kind: 'tool_call', tool: 'Bash', summary: 'npm run test:e2e -- auth' },
-  { kind: 'tool_result', tool: 'Bash', ok: true, summary: '12 passed, 0 failed (8.4s)' },
+  { kind: 'tool', id: '1', tool: 'Edit', status: 'ok', summary: 'src/auth/token.service.ts\n+ this.rotateShared(token);' },
+  { kind: 'tool', id: '2', tool: 'Bash', status: 'ok', summary: 'npm run test:e2e -- auth\n12 passed, 0 failed (8.4s)' },
   { kind: 'assistant_text', text: 'Готово. Ротація токенів зведена в один запит.' },
 ];
 const waitingLog: TranscriptEntry[] = [
-  { kind: 'tool_call', tool: 'Read', summary: 'src/session.ts' },
+  { kind: 'tool', id: '1', tool: 'Read', status: 'pending', summary: 'src/session.ts' },
   { kind: 'assistant_text', text: 'Знайшов два місця, де зберігається сесія.' },
 ];
 const logSamples: TranscriptEntry[] = [
-  { kind: 'tool_call', tool: 'Read', summary: 'src/routes/login.tsx' },
-  { kind: 'tool_call', tool: 'Edit', summary: 'db/schema/users.ts\n+ lastSeenAt: timestamp("last_seen_at"),' },
-  { kind: 'tool_result', tool: 'Vitest', ok: true, summary: '12 passed, 0 failed (8.4s)' },
-  { kind: 'tool_result', tool: 'Bash', ok: false, summary: 'exit 1 — 2 failing specs' },
+  { kind: 'tool', id: '1', tool: 'Read', status: 'ok', summary: 'src/routes/login.tsx' },
+  { kind: 'tool', id: '2', tool: 'Edit', status: 'ok', summary: 'db/schema/users.ts\n+ lastSeenAt: timestamp("last_seen_at"),' },
+  { kind: 'tool', id: '3', tool: 'Vitest', status: 'ok', summary: '12 passed, 0 failed (8.4s)' },
+  { kind: 'tool', id: '4', tool: 'Bash', status: 'error', summary: 'exit 1 — 2 failing specs' },
   { kind: 'assistant_thinking', text: 'Сесія зберігається у двох місцях — треба звести.' },
   { kind: 'assistant_text', text: '## Знайшов два місця\n\nСесія зберігається у **двох** місцях — треба звести:\n\n- `session.ts` — запис у файл\n- `store.ts` — дубль у памʼяті\n\n```ts\nconst s = load();\n```' },
   { kind: 'notice', text: 'Гілку перемкнено на feat/schema.' },
@@ -274,6 +284,7 @@ function onSend(text: string) { lastAction.value = `send: ${text}`; }
 function onAnswer(res: RpcExtensionUIResponse) { lastAction.value = `answer: ${JSON.stringify(res)}`; }
 function onStop() { lastAction.value = 'stop'; }
 function onDelete() { lastAction.value = 'delete'; }
+function onRestart() { lastAction.value = 'restart'; }
 </script>
 
 <style scoped lang="scss">

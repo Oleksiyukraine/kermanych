@@ -10,6 +10,13 @@
       <div class="k-panel__controls">
         <span class="k-panel__status mono">{{ statusLabel }}</span>
         <button
+          v-if="session.kind === 'agent'"
+          class="k-panel__icon"
+          type="button"
+          title="Обговорити окрему гілку (форк розмови)"
+          @click="emit('branch')"
+        >⑂</button>
+        <button
           v-if="running"
           class="k-panel__icon"
           type="button"
@@ -17,7 +24,7 @@
           @click="emit('stop')"
         >■</button>
         <button
-          v-if="session.status !== 'merged'"
+          v-if="session.status !== 'merged' && session.kind === 'agent'"
           class="k-panel__icon"
           type="button"
           title="Завершити (merge гілки в проєкт)"
@@ -113,8 +120,13 @@
         <div class="k-panel__error-msg">{{ session.error || 'Сесію завершено з помилкою.' }}</div>
       </div>
 
-      <!-- live reasoning placeholder — a tidy "Думаю…" while the agent thinks -->
-      <div v-if="session.status === 'thinking'" class="k-panel__thinking" aria-live="polite">Думаю…</div>
+      <!-- live activity — a pinned, pulsing heartbeat so a long turn (thinking or a
+           minutes-long tool call) never looks dead -->
+      <div v-if="stalled" class="k-panel__stall" role="alert">
+        <span class="k-panel__stall-msg">⚠ Немає активності {{ silentLabel }} — агент міг зависнути</span>
+        <button type="button" class="k-panel__stall-btn" @click="emit('restart')">⟳ Перезапустити</button>
+      </div>
+      <div v-else-if="liveActivity" class="k-panel__thinking" aria-live="polite">{{ liveActivity }}</div>
     </div>
 
     <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎) -->
@@ -140,14 +152,18 @@
           @click="fileInput?.click()"
         >📎</button>
         <span class="k-panel__prompt" aria-hidden="true">❯</span>
-        <input
+        <textarea
+          ref="fieldEl"
           v-model="draft"
           class="k-panel__field mono"
           :placeholder="placeholder"
+          rows="1"
           @focus="focused = true"
           @blur="focused = false"
           @paste="onImagePaste"
-        />
+          @input="autoGrow"
+          @keydown="onComposerKeydown"
+        ></textarea>
         <input
           ref="fileInput"
           type="file"
@@ -169,6 +185,7 @@ import KTag from './KTag.vue';
 import KBtn from './KBtn.vue';
 import KAttachStrip from './KAttachStrip.vue';
 import { useImageAttach } from '../../composables/useImageAttach';
+import { useNow } from '../../composables/useNow';
 
 // The application atom (design-system section 05): three floors — header, log,
 // input — stacked with no gaps (panels dock via 2px rules). The active panel
@@ -189,11 +206,31 @@ const emit = defineEmits<{
   answer: [res: RpcExtensionUIResponse];
   finish: [];
   editor: [];
+  branch: [];
+  restart: [];
 }>();
 
 const draft = ref('');
 const focused = ref(false);
 const decisionText = ref('');
+
+// Composer textarea: grows with content up to a cap, then scrolls, so
+// Shift+Enter newlines stay visible instead of being clipped by the input row.
+const fieldEl = ref<HTMLTextAreaElement | null>(null);
+const MAX_COMPOSER_HEIGHT = 160;
+function autoGrow(): void {
+  const el = fieldEl.value;
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_HEIGHT)}px`;
+}
+// Enter sends; Shift+Enter inserts a newline. Enter mid-IME-composition is
+// ignored so committing a candidate doesn't fire the message.
+function onComposerKeydown(e: KeyboardEvent): void {
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+  e.preventDefault();
+  submit();
+}
 
 const {
   images: attachImages,
@@ -321,7 +358,7 @@ const statusLabel = computed(() => {
     case 'thinking':
       return props.session.currentTool ?? 'працює';
     case 'tool':
-      return props.session.currentTool ?? 'інструмент';
+      return props.session.currentTool ?? 'виконує';
     case 'waiting_input':
       return 'чекає';
     case 'done':
@@ -341,12 +378,43 @@ const statusLabel = computed(() => {
   }
 });
 
+// A pinned "what's happening now" line under the log. `thinking` has no committed entry
+// yet, and a tool call can run for minutes (e.g. dispatching a subagent), so without it
+// the chat looks dead between messages. Mirrors the omp terminal's live status.
+const liveActivity = computed(() => {
+  switch (props.session.status) {
+    case 'queued':
+      return 'Запускаю…';
+    case 'thinking':
+      return 'Думаю…';
+    case 'tool':
+      return props.session.currentTool ? `Виконую: ${props.session.currentTool}…` : 'Виконую…';
+    default:
+      return '';
+  }
+});
+
+// Stall detection: a running turn that has emitted no omp event for a while is likely
+// wedged (e.g. a provider request hung with no internal timeout). lastEventAt is bumped on
+// every omp event but NOT on user sends, so it isolates real agent progress from nudges.
+const now = useNow(5000);
+const STALL_MS = 60_000;
+const silentMs = computed(() =>
+  running.value && props.session.lastEventAt ? Math.max(0, now.value - props.session.lastEventAt) : 0,
+);
+const stalled = computed(() => silentMs.value >= STALL_MS);
+const silentLabel = computed(() => {
+  const s = Math.round(silentMs.value / 1000);
+  return s >= 90 ? `${Math.round(s / 60)} хв` : `${s} с`;
+});
+
 function submit() {
   const text = draft.value.trim();
   if (!text && !attachImages.value.length) return;
   emit('send', text, attachImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType })));
   draft.value = '';
   clearImages();
+  void nextTick(autoGrow);
 }
 
 function answerConfirm(confirmed: boolean) {
@@ -515,6 +583,28 @@ function answerCancel() {
   50% { opacity: 1; }
 }
 
+// stall — a running turn went silent; warn + offer a one-click respawn (stop + resume).
+.k-panel__stall {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--k-font-ui);
+  font-size: 13px;
+}
+.k-panel__stall-msg { color: var(--k-accent); }
+.k-panel__stall-btn {
+  flex: none;
+  border: 1px solid var(--k-accent);
+  background: transparent;
+  color: var(--k-accent);
+  font-family: var(--k-font-mono);
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.k-panel__stall-btn:hover { background: var(--k-accent); color: #111; }
+
 // error — the omp child exited before finishing; full accent border reads as failure.
 .k-panel__error {
   margin-top: 14px;
@@ -654,7 +744,7 @@ function answerCancel() {
   align-items: center;
   gap: 10px;
   padding: 0 14px;
-  height: 44px;
+  min-height: 44px;
   flex: none;
 }
 
@@ -711,6 +801,10 @@ function answerCancel() {
   border: none;
   outline: none;
   padding: 0;
+  line-height: 1.5;
+  resize: none;
+  max-height: 160px;
+  overflow-y: auto;
 
   &::placeholder {
     color: var(--k-muted);

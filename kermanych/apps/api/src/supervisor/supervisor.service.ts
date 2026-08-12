@@ -1,11 +1,13 @@
 // apps/api/src/supervisor/supervisor.service.ts
 import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";
+import { rm } from "node:fs/promises";
 import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { RpcSession } from "../rpc/rpc-session";
 import { messagesToTranscript } from "./messages-to-transcript";
+import { copyCarryFiles } from "../env/carry-files";
 import {
   INITIAL_STATUS,
   reduceStatus,
@@ -14,6 +16,7 @@ import {
   branchName,
   uniqueSlug,
   worktreeDir,
+  toolCallSummary,
   type BranchPrefix,
   type StatusState,
   type Group,
@@ -39,6 +42,7 @@ type Live = {
 export class SupervisorService {
   private map = new Map<string, Live>();
   private resuming = new Map<string, Promise<Live>>();
+  private toolSeq = 0;
   private events = new Subject<ServerEvent>();
   events$: Observable<ServerEvent> = this.events.asObservable();
 
@@ -63,9 +67,9 @@ export class SupervisorService {
     if (s) this.events.next({ type: "session_update", session: this.merge(s) });
   }
 
-  async addGroup(name: string, projectDir: string): Promise<Group> {
+  async addGroup(name: string, projectDir: string, carryFiles?: string[]): Promise<Group> {
     if (!(await this.worktree.isGitRepo(projectDir))) throw new Error("project dir is not a git repo");
-    const g = this.registry.createGroup({ name, projectDir });
+    const g = this.registry.createGroup({ name, projectDir, carryFiles });
     this.events.next({ type: "group_update", group: g });
     return g;
   }
@@ -74,7 +78,7 @@ export class SupervisorService {
     this.registry.removeGroup(id);
     this.events.next({ type: "group_removed", groupId: id });
   }
-  async updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string }): Promise<Group> {
+  async updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string; carryFiles?: string[] }): Promise<Group> {
     const g = this.registry.updateGroup(id, patch);
     this.events.next({ type: "group_update", group: g });
     return g;
@@ -99,7 +103,7 @@ export class SupervisorService {
         throw new Error("project working tree must be clean to create an in-place (non-worktree) agent");
       const activeInPlace = this.registry
         .listSessions(groupId)
-        .some((s) => !s.worktree && s.status !== "merged");
+        .some((s) => !s.worktree && s.kind !== "discussion" && s.status !== "merged");
       if (activeInPlace)
         throw new Error("an in-place agent is already active in this project — finish or delete it first");
       baseBranch = await this.worktree.currentBranch(group.projectDir);
@@ -112,14 +116,20 @@ export class SupervisorService {
 
     const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch, worktree, baseBranch });
     let wtDir = "";
+    let branchCreated = false;
     try {
       if (worktree) {
         wtDir = worktreeDir(session.id);
         await this.worktree.addWorktree(group.projectDir, wtDir, branch);
+        branchCreated = true;
+        await copyCarryFiles(group.projectDir, wtDir, group.carryFiles ?? [".env"]);
       } else {
         await this.worktree.createBranchHere(group.projectDir, branch);
+        branchCreated = true;
       }
     } catch (err) {
+      if (wtDir) await this.worktree.removeWorktree(group.projectDir, wtDir).catch(() => {});
+      if (branchCreated) await this.worktree.removeBranch(group.projectDir, branch).catch(() => {});
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
       throw err;
@@ -152,10 +162,113 @@ export class SupervisorService {
     return this.merge(saved);
   }
 
+  // Fork a discussion child off a parent's omp conversation (tip-level). The child
+  // runs in the parent's directory with no git and no editing tools, so the parent's
+  // context is never touched and both run in parallel.
+  async branchSession(parentId: string): Promise<Session> {
+    const s = this.registry.listSessions().find((x) => x.id === parentId);
+    if (!s) throw new Error("session not found");
+    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
+    if (!g) throw new Error("group not found");
+    if (s.kind === "discussion") throw new Error("cannot branch a discussion branch");
+
+    let parentFile = s.ompSessionFile;
+    if (!parentFile) {
+      await this.refreshState(parentId);
+      parentFile = this.registry.listSessions().find((x) => x.id === parentId)?.ompSessionFile;
+    }
+    if (!parentFile) throw new Error("agent has no omp session yet — send a first message before branching");
+
+    const live = this.map.get(parentId);
+    if (live && (live.state.status === "thinking" || live.state.status === "tool"))
+      throw new Error("wait for the agent to finish its turn before branching");
+
+    const cwd = s.worktreePath || g.projectDir;
+    const child = this.registry.createSession({
+      groupId: s.groupId,
+      name: `гілка: ${s.name}`,
+      task: "",
+      worktreePath: "",
+      branch: "",
+      worktree: false,
+      kind: "discussion",
+      parentSessionId: parentId,
+    });
+
+    const rpc = new RpcSession({ cwd, fork: parentFile, noTools: true });
+    const childLive = this.wireLive(child.id, rpc, "queued");
+    try {
+      await rpc.start();
+      childLive.transcript = messagesToTranscript(await rpc.getAllMessages());
+      this.events.next({ type: "transcript_reset", sessionId: child.id, entries: childLive.transcript });
+      await this.refreshState(child.id);
+      childLive.live.status = "done";
+      this.registry.updateSession(child.id, { status: "done" });
+    } catch (err) {
+      this.stopPoll(childLive);
+      await rpc.stop().catch(() => {});
+      this.map.delete(child.id);
+      this.registry.removeSession(child.id);
+      this.events.next({ type: "session_removed", sessionId: child.id });
+      throw err;
+    }
+    this.pushUpdate(child.id);
+    return this.merge(child);
+  }
+
+  // Merge a discussion branch back into its parent: inject a (reviewed) summary as a
+  // message into the parent's live conversation, then retire the child as merged history.
+  async mergeDiscussion(childId: string, summary?: string): Promise<{ merged: true }> {
+    const c = this.registry.listSessions().find((x) => x.id === childId);
+    if (!c) throw new Error("session not found");
+    if (c.kind !== "discussion" || !c.parentSessionId) throw new Error("not a discussion branch");
+    const parentId = c.parentSessionId;
+
+    const live = this.map.get(childId);
+    const last = [...(live?.transcript ?? [])]
+      .reverse()
+      .find((e) => e.kind === "assistant_text") as { kind: "assistant_text"; text: string } | undefined;
+    const text = (summary?.trim() || last?.text || "").trim();
+    if (!text) throw new Error("nothing to merge — the branch has no conclusion yet");
+    const wrapped = `[Висновок гілки «${c.name}»]: ${text}`;
+
+    const parentLive = this.map.get(parentId);
+    const mode: "prompt" | "follow_up" =
+      parentLive && (parentLive.state.status === "thinking" || parentLive.state.status === "tool")
+        ? "follow_up"
+        : "prompt";
+    // sendMessage resumes a dormant parent; if it throws, the child is left intact.
+    await this.sendMessage(parentId, wrapped, mode);
+
+    if (live) {
+      live.live.status = "stopped";
+      this.stopPoll(live);
+      await live.rpc.stop();
+      this.map.delete(childId);
+    }
+    this.registry.updateSession(childId, { status: "merged" });
+    this.pushUpdate(childId);
+    return { merged: true };
+  }
+
   private appendEntry(id: string, entry: TranscriptEntry) {
     const l = this.map.get(id)!;
     l.transcript.push(entry);
     this.events.next({ type: "transcript_append", sessionId: id, entry });
+  }
+
+  // Flip a pending tool entry to its terminal status in place and notify clients.
+  // Match by exact toolCallId when omp provides one, else the oldest pending
+  // entry of the same tool name (FIFO — correct for interchangeable parallel calls).
+  private finishTool(id: string, tool: string, toolCallId: string | undefined, status: "ok" | "error") {
+    const l = this.map.get(id);
+    if (!l) return;
+    const entry =
+      (toolCallId ? l.transcript.find((x) => x.kind === "tool" && x.id === toolCallId) : undefined) ??
+      l.transcript.find((x) => x.kind === "tool" && x.status === "pending" && x.tool === tool);
+    if (!entry || entry.kind !== "tool") return;
+    entry.status = status;
+    this.events.next({ type: "transcript_update", sessionId: id, id: entry.id, status });
   }
 
   // Echo the user's own message (initial task or follow-up) into the transcript so
@@ -167,6 +280,18 @@ export class SupervisorService {
   private onRpcEvent(id: string, e: RpcEvent) {
     const l = this.map.get(id);
     if (!l) return;
+    // Progress heartbeat (in-memory, every event incl. streaming deltas) — distinct from
+    // last_activity_at, which user sends also bump. The UI uses this to spot a wedged turn.
+    l.live.lastEventAt = Date.now();
+    // Any agent event counts as activity, except per-token streaming deltas
+    // (message_update) — bumping per token would mean a DB write per token.
+    if (e.type !== "message_update") {
+      try {
+        this.registry.touchSession(id);
+      } catch {
+        /* never let a bookkeeping write break the event stream */
+      }
+    }
     const before = l.state.status;
     l.state = reduceStatus(l.state, e);
     // RpcEvent carries an index-signature fallback member; Extract recovers the concrete typed member.
@@ -183,11 +308,12 @@ export class SupervisorService {
     }
     if (e.type === "tool_execution_start") {
       const ev = e as Extract<RpcEvent, { type: "tool_execution_start" }>;
-      this.appendEntry(id, { kind: "tool_call", tool: ev.toolName ?? "?", summary: ev.args?.command ?? ev.args?.path });
+      const entryId = ev.toolCallId ?? `t${++this.toolSeq}`;
+      this.appendEntry(id, { kind: "tool", id: entryId, tool: ev.toolName ?? "?", status: "pending", summary: toolCallSummary(ev.args) });
     }
     if (e.type === "tool_execution_end") {
       const ev = e as Extract<RpcEvent, { type: "tool_execution_end" }>;
-      this.appendEntry(id, { kind: "tool_result", tool: ev.toolName ?? "?", ok: !ev.isError });
+      this.finishTool(id, ev.toolName ?? "?", ev.toolCallId, ev.isError ? "error" : "ok");
     }
     if (e.type === "extension_ui_request" && l.state.status === "waiting_input")
       l.live.pendingUiRequest = e as Extract<RpcEvent, { type: "extension_ui_request" }>;
@@ -224,7 +350,22 @@ export class SupervisorService {
   }
 
   async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
-    const l = this.map.get(id) ?? (await this.resumeSession(id));
+    // A dormant session (no Live) resumes; a *dead* Live — the omp child exited, e.g. a
+    // provider outage killed it after the turn ended — must ALSO resume, not be written to.
+    // A write to a dead child's stdin raises EPIPE, which RpcSession swallows, so the message
+    // would vanish with no error and the agent would look "hung". Drop the corpse and respawn.
+    let l = this.map.get(id);
+    if (l && !l.rpc.isAlive()) {
+      this.stopPoll(l);
+      this.map.delete(id);
+      l = undefined;
+    }
+    if (!l) l = await this.resumeSession(id);
+    try {
+      this.registry.touchSession(id);
+    } catch {
+      /* never let a bookkeeping write break message delivery */
+    }
     if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images));
     if (mode === "steer") l.rpc.steer(text, images);
     else if (mode === "follow_up") l.rpc.followUp(text, images);
@@ -264,7 +405,24 @@ export class SupervisorService {
     this.registry.updateSession(id, { status: "stopped" });
     this.pushUpdate(id);
   }
+
+  // Recover a wedged/stuck agent: kill the (possibly unresponsive) omp child and respawn it,
+  // rehydrating the conversation from its saved session file. No prompt — a continuation.
+  async restartSession(id: string): Promise<{ ok: true }> {
+    const l = this.map.get(id);
+    if (l) {
+      this.stopPoll(l);
+      await l.rpc.stop().catch(() => {});
+      this.map.delete(id);
+    }
+    await this.resumeSession(id);
+    return { ok: true };
+  }
   async deleteSession(id: string) {
+    // Cascade: discussion branches hang off this session — discard them first.
+    for (const child of this.registry.listSessions().filter((x) => x.parentSessionId === id))
+      await this.deleteSession(child.id);
+
     const s = this.registry.listSessions().find((x) => x.id === id);
     const l = this.map.get(id);
     if (l) {
@@ -273,7 +431,10 @@ export class SupervisorService {
       await l.rpc.stop();
       this.map.delete(id);
     }
-    if (s) {
+    if (s && s.kind === "discussion") {
+      // No git: the child owns no branch/worktree; its cwd is the parent's.
+      if (s.ompSessionFile) await rm(s.ompSessionFile, { force: true }).catch(() => {});
+    } else if (s) {
       const g = this.registry.listGroups().find((x) => x.id === s.groupId);
       if (g) {
         if (s.worktree) {
@@ -327,6 +488,8 @@ export class SupervisorService {
     if (!s) throw new Error("session not found");
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
     if (!g) throw new Error("group not found");
+    if (s.kind === "discussion")
+      throw new Error("discussion branches can't be finished — merge or discard instead");
 
     if (s.worktree) {
       if (!s.worktreePath) throw new Error("session has no worktree");
@@ -443,7 +606,7 @@ export class SupervisorService {
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
     if (!g) throw new Error("group not found");
     const dir = s.worktreePath || g.projectDir;
-    if (!s.worktree && (await this.worktree.currentBranch(g.projectDir)) !== s.branch)
+    if (s.kind !== "discussion" && !s.worktree && (await this.worktree.currentBranch(g.projectDir)) !== s.branch)
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
     const rpc = new RpcSession({ cwd: dir });
     const live = this.wireLive(id, rpc, s.status);

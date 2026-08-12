@@ -38,6 +38,13 @@
         <span class="shell__ver mono">v0.1</span>
       </div>
       <div class="shell__context mono">{{ contextLabel }}</div>
+      <KBtn
+        v-if="selectedGroup"
+        variant="icon"
+        class="shell__settings"
+        title="Налаштування проєкту"
+        @click="openSettings"
+      >⚙</KBtn>
     </q-header>
 
     <!-- PAGE -->
@@ -74,6 +81,30 @@
       </template>
     </KModal>
 
+    <!-- PROJECT SETTINGS MODAL -->
+    <KModal v-model="settingsOpen" :title="`Налаштування · ${selectedGroup?.name ?? ''}`">
+      <div class="shell__form">
+        <KEnvEditor
+          ref="envEditor"
+          :entries="envView.entries"
+          :ignored="envView.ignored"
+        />
+        <KField
+          v-model="carryFilesText"
+          label="Файли для сесії (через кому або з нового рядка)"
+          placeholder=".env"
+        />
+        <p v-if="settingsError" class="shell__error" role="alert">{{ settingsError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" class="shell__danger" @click="deleteProject">
+          Видалити проєкт
+        </KBtn>
+        <KBtn variant="ghost" @click="settingsOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" @click="saveSettings">Зберегти</KBtn>
+      </template>
+    </KModal>
+
     <!-- DIRECTORY PICKER — server-side browser; fills the project dir field -->
     <KDirPicker v-model="pickerOpen" :start="groupDir" @select="groupDir = $event" />
 
@@ -84,7 +115,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import type { SessionStatus } from '@kermanych/core';
+import type { SessionStatus, EnvFileView } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import KRailItem from 'components/kit/KRailItem.vue';
 import KStatusBar from 'components/kit/KStatusBar.vue';
@@ -93,6 +124,7 @@ import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import KToast from 'components/kit/KToast.vue';
+import KEnvEditor from 'components/kit/KEnvEditor.vue';
 
 // The Kermanych app shell (design-system section 07): project rail, brand
 // header, page container, and the fleet status bar. Live groups/sessions come
@@ -163,6 +195,63 @@ async function submitGroup(): Promise<void> {
   } catch (e) {
     // Keep the modal open so the user can correct the input; surface why.
     groupError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+const settingsOpen = ref(false);
+const settingsError = ref<string | null>(null);
+const envView = ref<EnvFileView>({ entries: [], ignored: true });
+const carryFilesText = ref('.env');
+const envEditor = ref<{ collect: () => { set: Record<string, string>; remove: string[] } } | null>(null);
+
+async function openSettings(): Promise<void> {
+  const g = selectedGroup.value;
+  if (!g) return;
+  settingsError.value = null;
+  carryFilesText.value = (g.carryFiles ?? ['.env']).join('\n');
+  envView.value = { entries: [], ignored: true };
+  settingsOpen.value = true;
+  try {
+    envView.value = await store.getEnv(g.id);
+  } catch (e) {
+    settingsError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+async function saveSettings(): Promise<void> {
+  const g = selectedGroup.value;
+  if (!g) return;
+  settingsError.value = null;
+  try {
+    const carryFiles = carryFilesText.value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+    await store.updateGroup(g.id, { carryFiles: carryFiles.length ? carryFiles : ['.env'] });
+    const edits = envEditor.value?.collect();
+    if (edits && (Object.keys(edits.set).length || edits.remove.length)) {
+      await store.saveEnv(g.id, edits);
+    }
+    settingsOpen.value = false;
+  } catch (e) {
+    settingsError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+async function deleteProject(): Promise<void> {
+  const g = selectedGroup.value;
+  if (!g) return;
+  // Destructive + cascading: every agent, discussion branch, and git worktree
+  // under this project is wiped. Spell out the blast radius before firing.
+  const ok = window.confirm(
+    `Видалити проєкт «${g.name}»?\n\n` +
+      'Усі його агенти, гілки-субагенти та робочі дерева (worktrees) буде безповоротно видалено.',
+  );
+  if (!ok) return;
+  settingsError.value = null;
+  try {
+    await store.deleteGroup(g.id);
+    // group_removed streams back over the socket and clears the selection + lists.
+    settingsOpen.value = false;
+  } catch (e) {
+    settingsError.value = e instanceof Error ? e.message : String(e);
   }
 }
 </script>
@@ -258,5 +347,9 @@ async function submitGroup(): Promise<void> {
 
 .shell__browse {
   align-self: flex-start;
+}
+
+.shell__danger {
+  margin-right: auto; // destructive action sits apart, on the left of the footer
 }
 </style>

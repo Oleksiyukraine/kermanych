@@ -44,3 +44,17 @@ test("start() rejects with the exit reason when the child exits before ready", a
   rpc.onExit(() => {});
   await expect(rpc.start()).rejects.toThrow(/startup failure|code 2/);
 });
+
+test("command() rejects when a ready child never answers (wedged RPC)", async () => {
+  // Emits `ready` (so start() resolves) then goes deaf — ignores every command. getState()
+  // must reject via the timeout instead of hanging forever.
+  const omp = fakeOmp(
+    "deaf.mjs",
+    `process.stdout.write(JSON.stringify({type:"ready",protocolVersion:2})+"\\n");setInterval(()=>{},1000);`,
+  );
+  const rpc = new RpcSession({ cwd: dir, ompPath: omp, commandTimeoutMs: 200 });
+  rpc.onExit(() => {});
+  await rpc.start();
+  await expect(rpc.getState()).rejects.toThrow(/did not respond|200ms/);
+  await rpc.stop();
+});
