@@ -123,6 +123,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.deleteSession(id);
   }
 
+  function branchSession(id: string) {
+    return api.branchSession(id);
+  }
+
+  function mergeBranch(id: string, summary?: string) {
+    return api.mergeBranch(id, summary);
+  }
+
   function archiveSession(id: string) {
     return api.archiveSession(id);
   }
@@ -213,6 +221,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     answerUi,
     stopSession,
     deleteSession,
+    branchSession,
+    mergeBranch,
     loadTranscript,
     previews,
     startPreview,

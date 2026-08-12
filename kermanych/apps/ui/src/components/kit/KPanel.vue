@@ -10,6 +10,13 @@
       <div class="k-panel__controls">
         <span class="k-panel__status mono">{{ statusLabel }}</span>
         <button
+          v-if="session.kind === 'agent'"
+          class="k-panel__icon"
+          type="button"
+          title="Обговорити окрему гілку (форк розмови)"
+          @click="emit('branch')"
+        >⑂</button>
+        <button
           v-if="running"
           class="k-panel__icon"
           type="button"
@@ -17,7 +24,7 @@
           @click="emit('stop')"
         >■</button>
         <button
-          v-if="session.status !== 'merged'"
+          v-if="session.status !== 'merged' && session.kind === 'agent'"
           class="k-panel__icon"
           type="button"
           title="Завершити (merge гілки в проєкт)"
@@ -193,6 +200,7 @@ const emit = defineEmits<{
   answer: [res: RpcExtensionUIResponse];
   finish: [];
   editor: [];
+  branch: [];
 }>();
 
 const draft = ref('');
