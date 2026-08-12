@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { RpcEvent } from "../src/types";
-import { INITIAL_STATUS, reduceStatus } from "../src/status";
+import { INITIAL_STATUS, reduceStatus, shouldNotify, NOTIFY_STATUSES } from "../src/status";
 
 test("agent_start -> thinking", () => {
   expect(reduceStatus(INITIAL_STATUS, { type: "agent_start" } as unknown as RpcEvent).status).toBe("thinking");
@@ -27,8 +27,6 @@ test("terminal agent_end -> done, non-terminal ignored", () => {
   expect(reduceStatus(s, { type: "agent_end", isTerminal: true } as unknown as RpcEvent).status).toBe("done");
 });
 
-import { shouldNotify, NOTIFY_STATUSES } from "../src/status";
-
 test("NOTIFY_STATUSES is the attention set", () => {
   expect([...NOTIFY_STATUSES]).toEqual(["waiting_input", "error", "conflict", "done"]);
 });
@@ -38,6 +36,7 @@ test("shouldNotify fires on a transition INTO a notify status", () => {
   expect(shouldNotify("thinking", "error")).toBe(true);
   expect(shouldNotify("tool", "done")).toBe(true);
   expect(shouldNotify("thinking", "conflict")).toBe(true);
+  expect(shouldNotify(undefined, "error")).toBe(true);
 });
 
 test("shouldNotify ignores non-notify targets and same-status repeats", () => {
@@ -45,4 +44,5 @@ test("shouldNotify ignores non-notify targets and same-status repeats", () => {
   expect(shouldNotify("queued", "thinking")).toBe(false);
   expect(shouldNotify("done", "done")).toBe(false);
   expect(shouldNotify("waiting_input", "waiting_input")).toBe(false);
+  expect(shouldNotify(undefined, "thinking")).toBe(false);
 });
