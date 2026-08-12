@@ -37,5 +37,14 @@ export default defineConfig(() => {
     },
 
     animations: [],
+
+    electron: {
+      bundler: 'builder',
+      builder: {
+        appId: 'com.kermanych.app',
+        productName: 'Kermanych',
+        mac: { target: 'dmg', identity: null }, // identity:null → unsigned
+      },
+    },
   };
 });
