@@ -153,6 +153,15 @@ export class SessionsController {
     }
   }
 
+  @Post(":id/restart")
+  async restart(@Param("id") id: string) {
+    try {
+      return await this.sup.restartSession(id);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Delete(":id")
   async remove(@Param("id") id: string) {
     try {

@@ -122,7 +122,11 @@
 
       <!-- live activity — a pinned, pulsing heartbeat so a long turn (thinking or a
            minutes-long tool call) never looks dead -->
-      <div v-if="liveActivity" class="k-panel__thinking" aria-live="polite">{{ liveActivity }}</div>
+      <div v-if="stalled" class="k-panel__stall" role="alert">
+        <span class="k-panel__stall-msg">⚠ Немає активності {{ silentLabel }} — агент міг зависнути</span>
+        <button type="button" class="k-panel__stall-btn" @click="emit('restart')">⟳ Перезапустити</button>
+      </div>
+      <div v-else-if="liveActivity" class="k-panel__thinking" aria-live="polite">{{ liveActivity }}</div>
     </div>
 
     <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎) -->
@@ -181,6 +185,7 @@ import KTag from './KTag.vue';
 import KBtn from './KBtn.vue';
 import KAttachStrip from './KAttachStrip.vue';
 import { useImageAttach } from '../../composables/useImageAttach';
+import { useNow } from '../../composables/useNow';
 
 // The application atom (design-system section 05): three floors — header, log,
 // input — stacked with no gaps (panels dock via 2px rules). The active panel
@@ -202,6 +207,7 @@ const emit = defineEmits<{
   finish: [];
   editor: [];
   branch: [];
+  restart: [];
 }>();
 
 const draft = ref('');
@@ -388,6 +394,20 @@ const liveActivity = computed(() => {
   }
 });
 
+// Stall detection: a running turn that has emitted no omp event for a while is likely
+// wedged (e.g. a provider request hung with no internal timeout). lastEventAt is bumped on
+// every omp event but NOT on user sends, so it isolates real agent progress from nudges.
+const now = useNow(5000);
+const STALL_MS = 60_000;
+const silentMs = computed(() =>
+  running.value && props.session.lastEventAt ? Math.max(0, now.value - props.session.lastEventAt) : 0,
+);
+const stalled = computed(() => silentMs.value >= STALL_MS);
+const silentLabel = computed(() => {
+  const s = Math.round(silentMs.value / 1000);
+  return s >= 90 ? `${Math.round(s / 60)} хв` : `${s} с`;
+});
+
 function submit() {
   const text = draft.value.trim();
   if (!text && !attachImages.value.length) return;
@@ -562,6 +582,28 @@ function answerCancel() {
   0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
 }
+
+// stall — a running turn went silent; warn + offer a one-click respawn (stop + resume).
+.k-panel__stall {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--k-font-ui);
+  font-size: 13px;
+}
+.k-panel__stall-msg { color: var(--k-accent); }
+.k-panel__stall-btn {
+  flex: none;
+  border: 1px solid var(--k-accent);
+  background: transparent;
+  color: var(--k-accent);
+  font-family: var(--k-font-mono);
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.k-panel__stall-btn:hover { background: var(--k-accent); color: #111; }
 
 // error — the omp child exited before finishing; full accent border reads as failure.
 .k-panel__error {

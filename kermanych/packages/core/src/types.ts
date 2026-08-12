@@ -20,7 +20,7 @@ export type Session = {
   parentSessionId?: string;
   ompSessionId?: string; ompSessionFile?: string;
   status: SessionStatus; currentTool?: string; error?: string;
-  todoPhases?: TodoPhase[]; contextPercent?: number;
+  todoPhases?: TodoPhase[]; contextPercent?: number; lastEventAt?: number;
   pendingUiRequest?: RpcExtensionUIRequest; archived?: boolean; createdAt: string;
   lastActivityAt: string;
 };

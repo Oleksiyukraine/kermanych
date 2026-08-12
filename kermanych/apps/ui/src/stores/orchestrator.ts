@@ -211,6 +211,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.resolveConflict(id);
   }
 
+  function restartSession(id: string) {
+    return api.restartSession(id);
+  }
+
   return {
     groups,
     sessions,
@@ -245,5 +249,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     dismissToast,
     openEditor,
     resolveConflict,
+    restartSession,
   };
 });

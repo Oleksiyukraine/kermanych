@@ -33,7 +33,7 @@ export class RpcSession {
   private pending = new Map<string, { resolve: (r: RpcResponseFrame) => void; reject: (e: Error) => void }>();
   private stderr = "";
   private seq = 0;
-  constructor(private opts: { cwd: string; model?: string; ompPath?: string; fork?: string; noTools?: boolean }) {}
+  constructor(private opts: { cwd: string; model?: string; ompPath?: string; fork?: string; noTools?: boolean; commandTimeoutMs?: number }) {}
 
   onEvent(cb: (e: RpcEvent) => void) { this.eventCbs.push(cb); }
   onExit(cb: (code: number | null, reason: string) => void) { this.exitCbs.push(cb); }
@@ -99,7 +99,17 @@ export class RpcSession {
   private command(type: string, extra: Record<string, unknown> = {}): Promise<RpcResponseFrame> {
     const id = `req_${++this.seq}`;
     const { promise, resolve, reject } = Promise.withResolvers<RpcResponseFrame>();
-    this.pending.set(id, { resolve, reject });
+    // A wedged omp child (e.g. a provider request that hung with no internal timeout) would
+    // otherwise leave this pending forever, hanging every caller (the refreshState poll,
+    // resume rehydrate). Reject after a bound so callers fail fast and can recover.
+    const ms = this.opts.commandTimeoutMs ?? 20000;
+    const timer = setTimeout(() => {
+      if (this.pending.delete(id)) reject(new Error(`omp did not respond to "${type}" within ${ms}ms`));
+    }, ms);
+    this.pending.set(id, {
+      resolve: (r) => { clearTimeout(timer); resolve(r); },
+      reject: (e) => { clearTimeout(timer); reject(e); },
+    });
     this.write({ id, type, ...extra });
     return promise;
   }
@@ -135,14 +145,19 @@ export class RpcSession {
   }
 
   async stop(): Promise<void> {
-    try { this.proc?.stdin.end(); } catch {}
     const proc = this.proc;
     if (!proc) return;
+    try { proc.stdin.end(); } catch {}
     // Child already terminated (crashed, or stop() called twice) → 'close' has fired; don't await it.
     if (proc.exitCode !== null || proc.signalCode !== null) return;
     const { promise, resolve } = Promise.withResolvers<void>();
     proc.once("close", () => resolve());
+    // A wedged child may ignore stdin EOF — escalate to signals so stop()/restart never hangs.
+    const term = setTimeout(() => { try { proc.kill("SIGTERM"); } catch {} }, 1000);
+    const kill = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {} }, 4000);
     await promise;
+    clearTimeout(term);
+    clearTimeout(kill);
   }
 
   // Whether the omp child is still running. A dead child must be resumed (respawned),

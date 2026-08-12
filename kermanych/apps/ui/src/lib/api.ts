@@ -153,6 +153,9 @@ export const api = {
   resolveConflict: (id: string): Promise<{ ok: boolean }> =>
     post(`/sessions/${id}/resolve`, {}),
 
+  restartSession: (id: string): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>(`/sessions/${id}/restart`, {}),
+
   branchSession: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/branch`, {}),
 

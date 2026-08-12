@@ -147,6 +147,7 @@
           @finish="onFinish"
           @editor="onEditor"
           @branch="onBranch"
+          @restart="onRestart"
         >
           <template v-if="entries.length">
             <KLogBlock v-for="(entry, i) in entries" :key="i" :entry="entry" />
@@ -603,6 +604,16 @@ async function onBranch(): Promise<void> {
 function onStop(): void {
   const s = selectedSession.value;
   if (s) void store.stopSession(s.id);
+}
+
+async function onRestart(): Promise<void> {
+  const s = selectedSession.value;
+  if (!s) return;
+  try {
+    await store.restartSession(s.id);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
 }
 
 async function onDelete(): Promise<void> {

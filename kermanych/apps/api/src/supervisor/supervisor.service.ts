@@ -280,6 +280,9 @@ export class SupervisorService {
   private onRpcEvent(id: string, e: RpcEvent) {
     const l = this.map.get(id);
     if (!l) return;
+    // Progress heartbeat (in-memory, every event incl. streaming deltas) — distinct from
+    // last_activity_at, which user sends also bump. The UI uses this to spot a wedged turn.
+    l.live.lastEventAt = Date.now();
     // Any agent event counts as activity, except per-token streaming deltas
     // (message_update) — bumping per token would mean a DB write per token.
     if (e.type !== "message_update") {
@@ -401,6 +404,19 @@ export class SupervisorService {
     await l.rpc.stop();
     this.registry.updateSession(id, { status: "stopped" });
     this.pushUpdate(id);
+  }
+
+  // Recover a wedged/stuck agent: kill the (possibly unresponsive) omp child and respawn it,
+  // rehydrating the conversation from its saved session file. No prompt — a continuation.
+  async restartSession(id: string): Promise<{ ok: true }> {
+    const l = this.map.get(id);
+    if (l) {
+      this.stopPoll(l);
+      await l.rpc.stop().catch(() => {});
+      this.map.delete(id);
+    }
+    await this.resumeSession(id);
+    return { ok: true };
   }
   async deleteSession(id: string) {
     // Cascade: discussion branches hang off this session — discard them first.

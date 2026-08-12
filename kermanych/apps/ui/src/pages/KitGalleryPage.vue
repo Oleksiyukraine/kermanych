@@ -90,6 +90,16 @@
         >
           <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" />
         </KPanel>
+        <KPanel
+          :session="stalledSession"
+          :group="group"
+          @send="onSend"
+          @restart="onRestart"
+          @stop="onStop"
+          @delete="onDelete"
+        >
+          <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" />
+        </KPanel>
       </div>
       <div class="kit__caption mono">остання дія: {{ lastAction || '—' }}</div>
     </section>
@@ -223,6 +233,7 @@ function mkSession(over: Partial<Session>): Session {
   };
 }
 const runningSession = mkSession({ id: 's1', status: 'thinking', branch: 'main' });
+const stalledSession = mkSession({ id: 's3', status: 'thinking', branch: 'feat/wedged', lastEventAt: Date.now() - 90_000 });
 const waitingSession = mkSession({
   id: 's2', status: 'waiting_input', branch: 'feat/schema',
   pendingUiRequest: {
@@ -273,6 +284,7 @@ function onSend(text: string) { lastAction.value = `send: ${text}`; }
 function onAnswer(res: RpcExtensionUIResponse) { lastAction.value = `answer: ${JSON.stringify(res)}`; }
 function onStop() { lastAction.value = 'stop'; }
 function onDelete() { lastAction.value = 'delete'; }
+function onRestart() { lastAction.value = 'restart'; }
 </script>
 
 <style scoped lang="scss">
