@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **Node 22.x**; `better-sqlite3` is a native addon (ABI-bound) — it MUST be rebuilt for the **Electron** ABI (`@electron/rebuild`; electron-builder rebuilds at package time).
+- **Node ≥22.12** (electron@43's binary fetch uses ESM `@electron/get`); `better-sqlite3` is pinned to **v13** (N-API) — one prebuilt binary works across the Node and Electron ABIs, so **no electron-rebuild is needed**.
 - **macOS only**; produce an **unsigned** `.dmg` (`mac: { target: 'dmg', identity: null }`). No signing/notarization, no Windows/Linux.
 - pnpm workspace; internal packages referenced as `workspace:*`.
 - Notifications fire **only** on transitions into `waiting_input` / `error` / `conflict` / `done`, and **only while the window is unfocused**.
@@ -397,11 +397,10 @@ const URL =
   'http://localhost:4317';
 ```
 
-- [ ] **Step 6: Rebuild the native module for Electron, then smoke**
+- [ ] **Step 6: Smoke the desktop app**
 
-Run:
+better-sqlite3 v13 (N-API) ships a prebuilt binary that works under both the Node and Electron ABIs, so no electron-rebuild step is needed. Run:
 ```bash
-pnpm --filter @kermanych/ui exec electron-rebuild -f -w better-sqlite3
 pnpm dev:app
 ```
 Expected: window opens; create a group pointing at a real git repo and launch a session — a card appears and status advances. This proves the in-process backend + port hand-off. Close the window; confirm the process exits (no orphaned node).
@@ -502,7 +501,7 @@ Produce the shareable artifact and document how to run desktop mode and open an 
 - [ ] **Step 1: Build the dmg**
 
 Run: `pnpm build:app`
-Expected: electron-builder rebuilds `better-sqlite3` for Electron and emits a `.dmg` under `apps/ui/dist/electron/Packaged/` (path per Quasar). No signing step runs (identity:null).
+Expected: electron-builder emits a `.dmg` under `apps/ui/dist/electron/Packaged/` (path per Quasar). better-sqlite3 v13's N-API prebuild is bundled as-is — no native rebuild. No signing step runs (identity:null).
 
 - [ ] **Step 2: Verify the built app**
 
@@ -530,9 +529,8 @@ with **right-click → Open** (once), or clear the quarantine flag:
 xattr -cr /Applications/Kermanych.app
 ```
 
-Native module note: `better-sqlite3` is rebuilt for the Electron ABI at build
-time; for `pnpm dev:app`, run `pnpm --filter @kermanych/ui exec electron-rebuild
--f -w better-sqlite3` once after install.
+Native module note: `better-sqlite3` is pinned to v13 (N-API); one prebuilt binary
+works under the Electron ABI, so no rebuild step is needed.
 ```
 
 - [ ] **Step 4: Commit**

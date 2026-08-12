@@ -127,10 +127,9 @@ are deferred (a developer account exists but is out of scope for this task).
 - `apps/ui/package.json`: add `electron`, `@electron/rebuild`, and
   `@kermanych/api: "workspace:*"` (so electron-builder bundles the api `dist` +
   its `node_modules` into the app).
-- **Native module:** `better-sqlite3` must match the **Electron** ABI.
-  electron-builder rebuilds native deps at package time; for `dev`, a one-time
-  `electron-rebuild` (or `@electron/rebuild`) after install. This is the same
-  ABI concern the README already calls out for Node upgrades.
+- **Native module:** `better-sqlite3` is pinned to **v13** (N-API); one prebuilt
+  binary works across both the Node and Electron ABIs, so no electron-rebuild is
+  needed (v11 could not compile against Electron 43's V8).
 - Root `package.json`: add `dev:app` = `pnpm --filter @kermanych/ui dev -m
   electron` and `build:app` = `pnpm --filter @kermanych/ui build -m electron`.
   Keep `dev:api`/`dev:ui` for the plain web/debug path.
@@ -170,7 +169,7 @@ are deferred (a developer account exists but is out of scope for this task).
   Open, since unsigned) and repeat the create + notify flow.
 
 **Native-module check:** the first `electron` launch loads `better-sqlite3`
-without an ABI error (the rebuild step is verified).
+(v13, N-API) without an ABI error.
 
 ## 6. Non-goals
 

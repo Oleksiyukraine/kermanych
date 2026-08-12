@@ -4,7 +4,10 @@
 import { io, type Socket } from 'socket.io-client';
 import type { ServerEvent } from '@kermanych/core';
 
-const URL = (import.meta.env.VITE_API_BASE ?? 'http://localhost:4317/api').replace(/\/api\/?$/, '') || 'http://localhost:4317';
+const URL =
+  ((typeof window !== 'undefined' && window.kermanych?.apiBase) ||
+    (import.meta.env.VITE_API_BASE ?? 'http://localhost:4317/api')).replace(/\/api\/?$/, '') ||
+  'http://localhost:4317';
 
 export type ServerEventHandler = (e: ServerEvent) => void;
 

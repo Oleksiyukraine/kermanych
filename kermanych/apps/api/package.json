@@ -18,7 +18,7 @@
     "@nestjs/platform-express": "^10",
     "@nestjs/platform-socket.io": "^10",
     "@nestjs/websockets": "^10",
-    "better-sqlite3": "^11",
+    "better-sqlite3": "^13",
     "reflect-metadata": "^0.2",
     "rxjs": "^7",
     "socket.io": "^4"
