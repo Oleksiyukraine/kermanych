@@ -2,6 +2,8 @@
   "name": "@kermanych/api",
   "version": "0.0.0",
   "private": true,
+  "main": "dist/main.js",
+  "exports": { ".": "./dist/main.js" },
   "scripts": {
     "build": "nest build",
     "typecheck": "tsc --noEmit",
