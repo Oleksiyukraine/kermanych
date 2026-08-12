@@ -11,7 +11,6 @@
       <section class="ws__board">
         <header class="ws__board-head">
           <div class="ws__board-title">
-            <div class="ws__eyebrow mono">РОБОЧИЙ ПРОСТІР</div>
             <h1 class="ws__heading">{{ selectedGroup?.name ?? 'Проєкт' }}</h1>
           </div>
           <div class="ws__board-controls">
@@ -935,12 +934,6 @@ async function submitPreviewConfig(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.ws__eyebrow {
-  font-size: 11px;
-  letter-spacing: 0.2em;
-  color: var(--k-muted);
 }
 
 .ws__heading {
