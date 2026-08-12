@@ -11,10 +11,19 @@ import type {
   ServerEvent,
   RpcExtensionUIResponse,
 } from '@kermanych/core';
+import { shouldNotify } from '@kermanych/core';
 import { connectSocket } from '../lib/socket';
 import { api, type MessageMode } from '../lib/api';
 
 export type Toast = { id: string; message: string; kind: 'error' | 'info' };
+
+// Native-notification copy for the attention-worthy statuses shouldNotify() fires on.
+const STATUS_LABEL: Partial<Record<Session['status'], string>> = {
+  waiting_input: 'потрібна відповідь',
+  error: 'помилка',
+  conflict: 'конфлікт злиття',
+  done: 'завершено',
+};
 
 export const useOrchestrator = defineStore('orchestrator', () => {
   const groups = ref<Group[]>([]);
@@ -47,10 +56,27 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         selectedSessionId.value = undefined;
       }
     } else if (e.type === 'session_update') {
+      const prev = sessions.value.find((x) => x.id === e.session.id)?.status;
       sessions.value = [
         ...sessions.value.filter((x) => x.id !== e.session.id),
         e.session,
       ];
+      // Native notification on an attention-worthy transition, only while the desktop
+      // window is unfocused. Guarded so the browser build (no Notification) never throws.
+      if (
+        shouldNotify(prev, e.session.status) &&
+        typeof document !== 'undefined' &&
+        !document.hasFocus() &&
+        typeof Notification !== 'undefined'
+      ) {
+        const n = new Notification(e.session.name, {
+          body: STATUS_LABEL[e.session.status] ?? e.session.status,
+        });
+        n.onclick = () => {
+          window.kermanych?.focus();
+          selectSession(e.session.id);
+        };
+      }
     } else if (e.type === 'session_removed') {
       sessions.value = sessions.value.filter((x) => x.id !== e.sessionId);
       if (previews.value[e.sessionId]) {
