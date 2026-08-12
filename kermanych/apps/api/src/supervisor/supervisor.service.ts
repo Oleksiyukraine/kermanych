@@ -7,6 +7,7 @@ import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { RpcSession } from "../rpc/rpc-session";
 import { messagesToTranscript } from "./messages-to-transcript";
+import { copyCarryFiles } from "../env/carry-files";
 import {
   INITIAL_STATUS,
   reduceStatus,
@@ -15,6 +16,7 @@ import {
   branchName,
   uniqueSlug,
   worktreeDir,
+  toolCallSummary,
   type BranchPrefix,
   type StatusState,
   type Group,
@@ -40,6 +42,7 @@ type Live = {
 export class SupervisorService {
   private map = new Map<string, Live>();
   private resuming = new Map<string, Promise<Live>>();
+  private toolSeq = 0;
   private events = new Subject<ServerEvent>();
   events$: Observable<ServerEvent> = this.events.asObservable();
 
@@ -64,9 +67,9 @@ export class SupervisorService {
     if (s) this.events.next({ type: "session_update", session: this.merge(s) });
   }
 
-  async addGroup(name: string, projectDir: string): Promise<Group> {
+  async addGroup(name: string, projectDir: string, carryFiles?: string[]): Promise<Group> {
     if (!(await this.worktree.isGitRepo(projectDir))) throw new Error("project dir is not a git repo");
-    const g = this.registry.createGroup({ name, projectDir });
+    const g = this.registry.createGroup({ name, projectDir, carryFiles });
     this.events.next({ type: "group_update", group: g });
     return g;
   }
@@ -75,7 +78,7 @@ export class SupervisorService {
     this.registry.removeGroup(id);
     this.events.next({ type: "group_removed", groupId: id });
   }
-  async updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string }): Promise<Group> {
+  async updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string; carryFiles?: string[] }): Promise<Group> {
     const g = this.registry.updateGroup(id, patch);
     this.events.next({ type: "group_update", group: g });
     return g;
@@ -113,14 +116,20 @@ export class SupervisorService {
 
     const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch, worktree, baseBranch });
     let wtDir = "";
+    let branchCreated = false;
     try {
       if (worktree) {
         wtDir = worktreeDir(session.id);
         await this.worktree.addWorktree(group.projectDir, wtDir, branch);
+        branchCreated = true;
+        await copyCarryFiles(group.projectDir, wtDir, group.carryFiles ?? [".env"]);
       } else {
         await this.worktree.createBranchHere(group.projectDir, branch);
+        branchCreated = true;
       }
     } catch (err) {
+      if (wtDir) await this.worktree.removeWorktree(group.projectDir, wtDir).catch(() => {});
+      if (branchCreated) await this.worktree.removeBranch(group.projectDir, branch).catch(() => {});
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
       throw err;
@@ -248,6 +257,20 @@ export class SupervisorService {
     this.events.next({ type: "transcript_append", sessionId: id, entry });
   }
 
+  // Flip a pending tool entry to its terminal status in place and notify clients.
+  // Match by exact toolCallId when omp provides one, else the oldest pending
+  // entry of the same tool name (FIFO — correct for interchangeable parallel calls).
+  private finishTool(id: string, tool: string, toolCallId: string | undefined, status: "ok" | "error") {
+    const l = this.map.get(id);
+    if (!l) return;
+    const entry =
+      (toolCallId ? l.transcript.find((x) => x.kind === "tool" && x.id === toolCallId) : undefined) ??
+      l.transcript.find((x) => x.kind === "tool" && x.status === "pending" && x.tool === tool);
+    if (!entry || entry.kind !== "tool") return;
+    entry.status = status;
+    this.events.next({ type: "transcript_update", sessionId: id, id: entry.id, status });
+  }
+
   // Echo the user's own message (initial task or follow-up) into the transcript so
   // the log reads as a full conversation. Images ride along as data URLs for render.
   private userEntry(text: string, images?: ImageInput[]): TranscriptEntry {
@@ -282,11 +305,12 @@ export class SupervisorService {
     }
     if (e.type === "tool_execution_start") {
       const ev = e as Extract<RpcEvent, { type: "tool_execution_start" }>;
-      this.appendEntry(id, { kind: "tool_call", tool: ev.toolName ?? "?", summary: ev.args?.command ?? ev.args?.path });
+      const entryId = ev.toolCallId ?? `t${++this.toolSeq}`;
+      this.appendEntry(id, { kind: "tool", id: entryId, tool: ev.toolName ?? "?", status: "pending", summary: toolCallSummary(ev.args) });
     }
     if (e.type === "tool_execution_end") {
       const ev = e as Extract<RpcEvent, { type: "tool_execution_end" }>;
-      this.appendEntry(id, { kind: "tool_result", tool: ev.toolName ?? "?", ok: !ev.isError });
+      this.finishTool(id, ev.toolName ?? "?", ev.toolCallId, ev.isError ? "error" : "ok");
     }
     if (e.type === "extension_ui_request" && l.state.status === "waiting_input")
       l.live.pendingUiRequest = e as Extract<RpcEvent, { type: "extension_ui_request" }>;

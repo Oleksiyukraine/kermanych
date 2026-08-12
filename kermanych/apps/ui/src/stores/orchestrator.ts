@@ -59,6 +59,16 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       };
     } else if (e.type === 'transcript_reset') {
       transcripts.value = { ...transcripts.value, [e.sessionId]: e.entries };
+    } else if (e.type === 'transcript_update') {
+      const list = transcripts.value[e.sessionId];
+      if (list) {
+        transcripts.value = {
+          ...transcripts.value,
+          [e.sessionId]: list.map((x) =>
+            x.kind === 'tool' && x.id === e.id ? { ...x, status: e.status } : x,
+          ),
+        };
+      }
     }
   }
 
@@ -77,8 +87,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   }
 
   // Actions delegating to the REST api.
-  function createGroup(name: string, projectDir: string) {
-    return api.createGroup(name, projectDir);
+  function createGroup(name: string, projectDir: string, carryFiles?: string[]) {
+    return api.createGroup(name, projectDir, carryFiles);
   }
 
   function deleteGroup(id: string) {
@@ -148,8 +158,16 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     previews.value = next;
   }
 
-  function updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string }) {
+  function updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string; carryFiles?: string[] }) {
     return api.updateGroup(id, patch);
+  }
+
+  function getEnv(id: string, file?: string) {
+    return api.getEnv(id, file);
+  }
+
+  function saveEnv(id: string, patch: { file?: string; set?: Record<string, string>; remove?: string[] }) {
+    return api.saveEnv(id, patch);
   }
 
   function finishInfo(id: string) {
@@ -210,6 +228,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     startPreview,
     stopPreview,
     updateGroup,
+    getEnv,
+    saveEnv,
     finishInfo,
     finishSession,
     archiveSession,

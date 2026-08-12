@@ -5,6 +5,7 @@ import type {
   DirListing,
   ImageInput,
   Group,
+  EnvFileView,
   Session,
   TranscriptEntry,
   RpcExtensionUIResponse,
@@ -55,9 +56,19 @@ async function get<T>(path: string): Promise<T> {
   return (await r.json()) as T;
 }
 
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(BASE + path, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw await toError(r);
+  return (await r.json()) as T;
+}
+
 export const api = {
-  createGroup: (name: string, projectDir: string): Promise<Group> =>
-    post<Group>('/groups', { name, projectDir }),
+  createGroup: (name: string, projectDir: string, carryFiles?: string[]): Promise<Group> =>
+    post<Group>('/groups', { name, projectDir, carryFiles }),
 
   deleteGroup: (id: string): Promise<Response> =>
     fetch(`${BASE}/groups/${id}`, { method: 'DELETE' }),
@@ -93,7 +104,7 @@ export const api = {
 
   updateGroup: async (
     id: string,
-    patch: { previewCommand?: string; apiCommand?: string },
+    patch: { previewCommand?: string; apiCommand?: string; carryFiles?: string[] },
   ): Promise<Group> => {
     const r = await fetch(`${BASE}/groups/${id}`, {
       method: 'PATCH',
@@ -103,6 +114,14 @@ export const api = {
     if (!r.ok) throw await toError(r);
     return (await r.json()) as Group;
   },
+
+  getEnv: (id: string, file?: string): Promise<EnvFileView> =>
+    get<EnvFileView>(`/groups/${id}/env${file ? `?file=${encodeURIComponent(file)}` : ''}`),
+
+  saveEnv: (
+    id: string,
+    patch: { file?: string; set?: Record<string, string>; remove?: string[] },
+  ): Promise<EnvFileView> => put<EnvFileView>(`/groups/${id}/env`, patch),
 
   startPreview: (id: string): Promise<{ url?: string; needsCommand?: boolean }> =>
     post(`/sessions/${id}/preview`, {}),

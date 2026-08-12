@@ -147,14 +147,18 @@
           @click="fileInput?.click()"
         >📎</button>
         <span class="k-panel__prompt" aria-hidden="true">❯</span>
-        <input
+        <textarea
+          ref="fieldEl"
           v-model="draft"
           class="k-panel__field mono"
           :placeholder="placeholder"
+          rows="1"
           @focus="focused = true"
           @blur="focused = false"
           @paste="onImagePaste"
-        />
+          @input="autoGrow"
+          @keydown="onComposerKeydown"
+        ></textarea>
         <input
           ref="fileInput"
           type="file"
@@ -202,6 +206,24 @@ const emit = defineEmits<{
 const draft = ref('');
 const focused = ref(false);
 const decisionText = ref('');
+
+// Composer textarea: grows with content up to a cap, then scrolls, so
+// Shift+Enter newlines stay visible instead of being clipped by the input row.
+const fieldEl = ref<HTMLTextAreaElement | null>(null);
+const MAX_COMPOSER_HEIGHT = 160;
+function autoGrow(): void {
+  const el = fieldEl.value;
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_HEIGHT)}px`;
+}
+// Enter sends; Shift+Enter inserts a newline. Enter mid-IME-composition is
+// ignored so committing a candidate doesn't fire the message.
+function onComposerKeydown(e: KeyboardEvent): void {
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+  e.preventDefault();
+  submit();
+}
 
 const {
   images: attachImages,
@@ -355,6 +377,7 @@ function submit() {
   emit('send', text, attachImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType })));
   draft.value = '';
   clearImages();
+  void nextTick(autoGrow);
 }
 
 function answerConfirm(confirmed: boolean) {
@@ -662,7 +685,7 @@ function answerCancel() {
   align-items: center;
   gap: 10px;
   padding: 0 14px;
-  height: 44px;
+  min-height: 44px;
   flex: none;
 }
 
@@ -719,6 +742,10 @@ function answerCancel() {
   border: none;
   outline: none;
   padding: 0;
+  line-height: 1.5;
+  resize: none;
+  max-height: 160px;
+  overflow-y: auto;
 
   &::placeholder {
     color: var(--k-muted);

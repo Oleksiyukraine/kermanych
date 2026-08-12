@@ -65,3 +65,17 @@ test("session worktree flag defaults true and round-trips with baseBranch", () =
   expect(read.worktree).toBe(false);
   expect(read.baseBranch).toBe("main");
 });
+
+test("group carryFiles defaults to [.env] and round-trips", () => {
+  const r = new RegistryService(":memory:");
+  const g = r.createGroup({ name: "app", projectDir: "/tmp/app" });
+  expect(g.carryFiles).toEqual([".env"]);
+  expect(r.listGroups()[0].carryFiles).toEqual([".env"]);
+
+  const withList = r.createGroup({ name: "b", projectDir: "/tmp/b", carryFiles: [".env", ".env.local"] });
+  expect(r.listGroups().find((x) => x.id === withList.id)!.carryFiles).toEqual([".env", ".env.local"]);
+
+  const u = r.updateGroup(g.id, { carryFiles: [".env", "config/svc.json"] });
+  expect(u.carryFiles).toEqual([".env", "config/svc.json"]);
+  expect(r.listGroups().find((x) => x.id === g.id)!.carryFiles).toEqual([".env", "config/svc.json"]);
+});

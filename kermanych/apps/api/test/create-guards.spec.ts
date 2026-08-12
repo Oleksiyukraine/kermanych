@@ -52,3 +52,13 @@ test("in-place create is refused on a detached HEAD", async () => {
   git(repo, "checkout", "-q", head); // detached
   await expect(sup.createSession(g.id, "n", "t", undefined, undefined, false)).rejects.toThrow(/detached/i);
 });
+
+test("worktree create failure on a pre-existing branch does not delete that branch", async () => {
+  const g = reg.createGroup({ name: "g", projectDir: repo });
+  // Pre-create a foreign branch whose name equals the one createSession will derive
+  // for name "collide" (feature/collide), with a commit that must survive.
+  git(repo, "branch", "feature/collide");
+  await expect(sup.createSession(g.id, "collide", "t")).rejects.toThrow();
+  expect(git(repo, "branch", "--list", "feature/collide").trim()).toContain("feature/collide");
+  expect(reg.listSessions(g.id)).toHaveLength(0);
+});
