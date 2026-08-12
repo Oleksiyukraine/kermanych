@@ -97,6 +97,9 @@
         <p v-if="settingsError" class="shell__error" role="alert">{{ settingsError }}</p>
       </div>
       <template #controls>
+        <KBtn variant="ghost" class="shell__danger" @click="deleteProject">
+          Видалити проєкт
+        </KBtn>
         <KBtn variant="ghost" @click="settingsOpen = false">Скасувати</KBtn>
         <KBtn variant="primary" @click="saveSettings">Зберегти</KBtn>
       </template>
@@ -231,6 +234,26 @@ async function saveSettings(): Promise<void> {
     settingsError.value = e instanceof Error ? e.message : String(e);
   }
 }
+
+async function deleteProject(): Promise<void> {
+  const g = selectedGroup.value;
+  if (!g) return;
+  // Destructive + cascading: every agent, discussion branch, and git worktree
+  // under this project is wiped. Spell out the blast radius before firing.
+  const ok = window.confirm(
+    `Видалити проєкт «${g.name}»?\n\n` +
+      'Усі його агенти, гілки-субагенти та робочі дерева (worktrees) буде безповоротно видалено.',
+  );
+  if (!ok) return;
+  settingsError.value = null;
+  try {
+    await store.deleteGroup(g.id);
+    // group_removed streams back over the socket and clears the selection + lists.
+    settingsOpen.value = false;
+  } catch (e) {
+    settingsError.value = e instanceof Error ? e.message : String(e);
+  }
+}
 </script>
 
 <style scoped lang="scss">
@@ -324,5 +347,9 @@ async function saveSettings(): Promise<void> {
 
 .shell__browse {
   align-self: flex-start;
+}
+
+.shell__danger {
+  margin-right: auto; // destructive action sits apart, on the left of the footer
 }
 </style>

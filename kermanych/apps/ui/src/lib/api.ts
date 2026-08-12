@@ -70,8 +70,10 @@ export const api = {
   createGroup: (name: string, projectDir: string, carryFiles?: string[]): Promise<Group> =>
     post<Group>('/groups', { name, projectDir, carryFiles }),
 
-  deleteGroup: (id: string): Promise<Response> =>
-    fetch(`${BASE}/groups/${id}`, { method: 'DELETE' }),
+  deleteGroup: async (id: string): Promise<void> => {
+    const r = await fetch(`${BASE}/groups/${id}`, { method: 'DELETE' });
+    if (!r.ok) throw await toError(r);
+  },
 
   createSession: (
     groupId: string,

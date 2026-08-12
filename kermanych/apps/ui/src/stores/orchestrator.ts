@@ -40,6 +40,12 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     } else if (e.type === 'group_removed') {
       groups.value = groups.value.filter((g) => g.id !== e.groupId);
       sessions.value = sessions.value.filter((x) => x.groupId !== e.groupId);
+      // The selected project just vanished (deleted here or by another client) —
+      // fall back to the "nothing selected" shell so the header/board don't dangle.
+      if (selectedGroupId.value === e.groupId) {
+        selectedGroupId.value = undefined;
+        selectedSessionId.value = undefined;
+      }
     } else if (e.type === 'session_update') {
       sessions.value = [
         ...sessions.value.filter((x) => x.id !== e.session.id),
