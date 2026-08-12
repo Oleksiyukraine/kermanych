@@ -101,44 +101,13 @@ Turn `apps/api` into a package Electron can import and start, without breaking s
 **Files:**
 - Modify: `apps/api/src/main.ts`
 - Modify: `apps/api/package.json`
-- Test: `apps/api/test/bootstrap.spec.ts` (create)
 
 **Interfaces:**
 - Produces: `bootstrap(opts?: { port?: number }): Promise<{ app: INestApplication; url: string }>` from `@kermanych/api` (built entry `dist/main.js`). `url` is always `http://127.0.0.1:<port>`.
 
-- [ ] **Step 1: Write the failing test**
+**Note on verification (no vitest here):** `NestFactory.create(AppModule)` needs `emitDecoratorMetadata` for constructor DI. The api's vitest runs under esbuild, which does NOT emit that metadata, so booting the full app in vitest leaves injected deps `undefined` (e.g. `EventsGateway.supervisor`). `nest build` (tsc) DOES emit it, so the compiled binary is the correct place to prove the boot. This task is therefore verified by a compiled smoke; the existing vitest suite (which instantiates services directly) stays green.
 
-Create `apps/api/test/bootstrap.spec.ts`:
-
-```ts
-import { afterAll, expect, test } from "vitest";
-import type { INestApplication } from "@nestjs/common";
-
-let app: INestApplication | undefined;
-
-test("bootstrap listens on the given port and returns its localhost url", async () => {
-  process.env.KERMANYCH_DB = ":memory:"; // avoid touching the real registry file
-  const { bootstrap } = await import("../src/main");
-  const port = 45999;
-  const res = await bootstrap({ port });
-  app = res.app;
-  expect(res.url).toBe(`http://127.0.0.1:${port}`);
-  const r = await fetch(`${res.url}/api/groups`); // global prefix "api"; empty db → []
-  expect(r.ok).toBe(true);
-  expect(await r.json()).toEqual([]);
-});
-
-afterAll(async () => {
-  await app?.close();
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `pnpm --filter @kermanych/api test -- bootstrap`
-Expected: FAIL — `bootstrap` is not exported from `../src/main`.
-
-- [ ] **Step 3: Rewrite `apps/api/src/main.ts`**
+- [ ] **Step 1: Rewrite `apps/api/src/main.ts`**
 
 Replace the whole file:
 
@@ -160,7 +129,7 @@ export async function bootstrap(opts: { port?: number } = {}): Promise<{ app: IN
   app.enableCors({ origin: "*" });
   app.setGlobalPrefix("api", { exclude: [] });
   app.enableShutdownHooks();
-  const port = opts.port ?? Number(process.env.PORT) || 4317;
+  const port = opts.port ?? (Number(process.env.PORT) || 4317);
   await app.listen(port, "127.0.0.1");
   const url = `http://127.0.0.1:${port}`;
   console.log(`Kermanych API on ${url}`);
@@ -172,12 +141,7 @@ if (require.main === module) void bootstrap();
 
 (`require.main === module` is valid — `apps/api/tsconfig.json` compiles `module: commonjs`.)
 
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `pnpm --filter @kermanych/api test -- bootstrap`
-Expected: PASS.
-
-- [ ] **Step 5: Make the package importable**
+- [ ] **Step 2: Make the package importable**
 
 Edit `apps/api/package.json` — add `"main"` and `"exports"` (keep everything else):
 
@@ -187,13 +151,28 @@ Edit `apps/api/package.json` — add `"main"` and `"exports"` (keep everything e
   "exports": { ".": "./dist/main.js" },
 ```
 
-- [ ] **Step 6: Verify standalone still boots, then commit**
+- [ ] **Step 3: Build**
 
-Run: `pnpm --filter @kermanych/api build && node apps/api/dist/main.js`
-Expected: logs `Kermanych API on http://127.0.0.1:4317`; Ctrl-C to stop.
+Run: `pnpm --filter @kermanych/api build`
+Expected: `nest build` succeeds, emitting `apps/api/dist/main.js`.
+
+- [ ] **Step 4: Compiled smoke — bootstrap listens and serves**
+
+Run:
+```bash
+(KERMANYCH_DB=:memory: PORT=45997 node apps/api/dist/main.js >/tmp/boot.log 2>&1 & BOOTPID=$!; sleep 3; curl -sS -m 5 http://127.0.0.1:45997/api/groups; echo; kill $BOOTPID)
+```
+Expected: the boot log contains `Kermanych API on http://127.0.0.1:45997`, and curl prints `[]` (empty in-memory registry; global prefix `api`).
+
+- [ ] **Step 5: Existing suite still green**
+
+Run: `pnpm --filter @kermanych/api test`
+Expected: 26/26 passing. The refactor is behavior-preserving for standalone use.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add apps/api/src/main.ts apps/api/package.json apps/api/test/bootstrap.spec.ts
+git add apps/api/src/main.ts apps/api/package.json
 git commit -m "refactor(api): export port-parameterized bootstrap returning app+url"
 ```
 
