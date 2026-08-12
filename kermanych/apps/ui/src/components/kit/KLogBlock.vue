@@ -149,6 +149,17 @@ const renderedThinking = computed(() =>
   color: var(--k-muted);
 }
 
+// in-flight call — the diamond pulses in accent so a long tool (e.g. a subagent
+// dispatch) reads as live work, not a dead row.
+.k-log__row--tool .k-log__glyph {
+  color: var(--k-accent);
+  animation: k-log-tool-pulse 1.4s ease-in-out infinite;
+}
+@keyframes k-log-tool-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
 // finished call — glyph + tool stay muted, the summary reads at text weight.
 .k-log__row--result {
   color: var(--k-muted);

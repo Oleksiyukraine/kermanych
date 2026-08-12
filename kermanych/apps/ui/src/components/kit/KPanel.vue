@@ -120,8 +120,9 @@
         <div class="k-panel__error-msg">{{ session.error || 'Сесію завершено з помилкою.' }}</div>
       </div>
 
-      <!-- live reasoning placeholder — a tidy "Думаю…" while the agent thinks -->
-      <div v-if="session.status === 'thinking'" class="k-panel__thinking" aria-live="polite">Думаю…</div>
+      <!-- live activity — a pinned, pulsing heartbeat so a long turn (thinking or a
+           minutes-long tool call) never looks dead -->
+      <div v-if="liveActivity" class="k-panel__thinking" aria-live="polite">{{ liveActivity }}</div>
     </div>
 
     <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎) -->
@@ -351,7 +352,7 @@ const statusLabel = computed(() => {
     case 'thinking':
       return props.session.currentTool ?? 'працює';
     case 'tool':
-      return props.session.currentTool ?? 'інструмент';
+      return props.session.currentTool ?? 'виконує';
     case 'waiting_input':
       return 'чекає';
     case 'done':
@@ -368,6 +369,22 @@ const statusLabel = computed(() => {
       return 'конфлікт';
     default:
       return props.session.status;
+  }
+});
+
+// A pinned "what's happening now" line under the log. `thinking` has no committed entry
+// yet, and a tool call can run for minutes (e.g. dispatching a subagent), so without it
+// the chat looks dead between messages. Mirrors the omp terminal's live status.
+const liveActivity = computed(() => {
+  switch (props.session.status) {
+    case 'queued':
+      return 'Запускаю…';
+    case 'thinking':
+      return 'Думаю…';
+    case 'tool':
+      return props.session.currentTool ? `Виконую: ${props.session.currentTool}…` : 'Виконую…';
+    default:
+      return '';
   }
 });
 

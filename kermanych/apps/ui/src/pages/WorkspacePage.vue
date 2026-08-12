@@ -469,7 +469,7 @@ function statusWord(s: Session): string {
     case 'thinking':
       return 'думає';
     case 'tool':
-      return 'інструмент';
+      return 'виконує';
     case 'waiting_input':
       return 'чекає';
     case 'done':
