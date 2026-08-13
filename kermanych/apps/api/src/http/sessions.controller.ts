@@ -73,6 +73,15 @@ export class SessionsController {
     }
   }
 
+  @Post(":id/review")
+  async review(@Param("id") id: string) {
+    try {
+      return await this.sup.reviewSession(id);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Post(":id/merge")
   async merge(@Param("id") id: string, @Body() b: { summary?: string }) {
     try {

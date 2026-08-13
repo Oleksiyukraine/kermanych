@@ -37,11 +37,12 @@
             </span>
           </template>
           <template #cell-name="{ row }">
-            <span class="ws__cell-name" :class="{ 'ws__cell-name--child': row.kind === 'discussion' }">
-              <span v-if="row.kind === 'discussion'" class="ws__branch-connector" aria-hidden="true">└</span>
+            <span class="ws__cell-name" :class="{ 'ws__cell-name--child': row.kind !== 'agent' }">
+              <span v-if="row.kind !== 'agent'" class="ws__branch-connector" aria-hidden="true">└</span>
               {{ row.name }}
               <KTag v-if="row.kind === 'discussion'">discussion</KTag>
               <KTag v-else-if="row.kind === 'task'">задача</KTag>
+              <KTag v-else-if="row.kind === 'review'">review</KTag>
             </span>
           </template>
           <template #cell-branch="{ row }">
@@ -79,18 +80,18 @@
                   @click.stop="onDeleteTask(row)"
                 >✕</button>
               </template>
-              <template v-else-if="row.kind === 'discussion'">
+              <template v-else-if="row.kind === 'discussion' || row.kind === 'review'">
                 <button
                   v-if="row.status !== 'merged'"
                   type="button"
                   class="ws__card-icon"
-                  title="Влити висновок у батьківського агента"
+                  :title="row.kind === 'review' ? 'Віддати висновок ревізора виконавцю' : 'Влити висновок у батьківського агента'"
                   @click.stop="openMerge(row)"
                 >⤴</button>
                 <button
                   type="button"
                   class="ws__card-icon"
-                  title="Викинути гілку"
+                  :title="row.kind === 'review' ? 'Викинути ревізію' : 'Викинути гілку'"
                   @click.stop="onDiscardRow(row)"
                 >✕</button>
               </template>
@@ -102,6 +103,13 @@
                   :title="store.previews[row.id] ? 'Зупинити превʼю' : 'Превʼю гілки в браузері'"
                   @click.stop="togglePreview(row)"
                 >{{ store.previews[row.id] ? '◼' : '▶' }}</button>
+                <button
+                  v-if="canReview(row)"
+                  type="button"
+                  class="ws__card-icon"
+                  title="Запросити ревізора (незалежний аудит гілки)"
+                  @click.stop="onReview(row)"
+                >⚖</button>
                 <button
                   v-if="row.status !== 'merged'"
                   type="button"
@@ -248,7 +256,7 @@
     </KModal>
 
     <!-- MERGE — pour a discussion branch's conclusion into its parent -->
-    <KModal v-model="mergeOpen" title="Влити гілку в батьківського агента">
+    <KModal v-model="mergeOpen" :title="mergeIsReview ? 'Віддати висновок ревізора виконавцю' : 'Влити гілку в батьківського агента'">
       <div class="ws__form">
         <label class="ws__field">
           <span class="ws__field-label">Summary (піде як повідомлення в батьківського агента)</span>
@@ -256,7 +264,7 @@
             v-model="mergeSummary"
             class="ws__textarea mono"
             rows="6"
-            placeholder="Порожнє — візьму останню відповідь гілки"
+            :placeholder="mergeIsReview ? 'Порожнє — візьму висновок ревізора' : 'Порожнє — візьму останню відповідь гілки'"
           />
         </label>
         <p class="ws__hint mono">
@@ -267,7 +275,7 @@
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="mergeOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" :disabled="mergeBusy" @click="submitMerge">⤴ Влити</KBtn>
+        <KBtn variant="primary" :disabled="mergeBusy" @click="submitMerge">{{ mergeIsReview ? '⤴ Віддати' : '⤴ Влити' }}</KBtn>
       </template>
     </KModal>
 
@@ -675,6 +683,15 @@ async function onBranch(): Promise<void> {
   }
 }
 
+async function onReview(s: Session): Promise<void> {
+  try {
+    const review = await store.reviewSession(s.id);
+    if (review?.id) store.selectSession(review.id);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
 function onStop(): void {
   const s = selectedSession.value;
   if (s) void store.stopSession(s.id);
@@ -706,6 +723,12 @@ function onAnswer(res: RpcExtensionUIResponse): void {
 // Active = agent mid-work or awaiting input; archiving these is refused (the API also
 // enforces it via core's ACTIVE_STATUSES). The UI keeps its own set, like MainLayout's RUNNING.
 const ACTIVE_STATUSES: readonly Session['status'][] = ['queued', 'thinking', 'tool', 'waiting_input'];
+
+// Independent review can be requested on a settled (non-active, non-merged) agent that
+// owns a branch to audit. The API re-checks (refuses a mid-turn or non-agent session).
+function canReview(s: Session): boolean {
+  return s.kind === 'agent' && !!s.branch && s.status !== 'merged' && !ACTIVE_STATUSES.includes(s.status);
+}
 
 // ── Archive / unarchive ────────────────────────────────────────────────────
 // Active agents can't be archived: pre-check and toast (the API also enforces).
@@ -771,6 +794,7 @@ const mergeFor = ref<Session | null>(null);
 const mergeSummary = ref('');
 const mergeBusy = ref(false);
 const mergeError = ref<string | null>(null);
+const mergeIsReview = computed(() => mergeFor.value?.kind === 'review');
 
 function openMerge(s: Session): void {
   mergeFor.value = s;
@@ -801,7 +825,7 @@ async function submitMerge(): Promise<void> {
 }
 
 function onDiscardRow(s: Session): void {
-  if (!window.confirm(`Викинути гілку «${s.name}»? Розмову буде втрачено.`)) return;
+  if (!window.confirm(`Викинути ${s.kind === 'review' ? 'ревізію' : 'гілку'} «${s.name}»? Розмову буде втрачено.`)) return;
   void store.deleteSession(s.id).then(() => {
     if (store.selectedSessionId === s.id) store.selectSession(undefined);
   });

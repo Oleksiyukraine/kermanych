@@ -35,3 +35,31 @@ test("checkout switches branches; force checkout discards uncommitted work", asy
   expect(git(repo, "branch", "--show-current").trim()).toBe("dev");
   expect(git(repo, "show", "dev:file.txt").trim()).toBe("base"); // discarded
 });
+
+test("diff captures the branch's committed and uncommitted changes from the fork point", async () => {
+  await wt.createBranchHere(repo, "feature/x");
+  writeFileSync(join(repo, "file.txt"), "base\ncommitted\n");
+  git(repo, "commit", "-aqm", "committed work");
+  writeFileSync(join(repo, "file.txt"), "base\ncommitted\nuncommitted\n");
+
+  const out = await wt.diff(repo, "dev");
+
+  expect(out).toContain("+committed");
+  expect(out).toContain("+uncommitted");
+});
+
+test("diff shows only the branch's own changes, not commits the base gained after forking", async () => {
+  await wt.createBranchHere(repo, "feature/x");
+  writeFileSync(join(repo, "file.txt"), "base\nfeature\n");
+  git(repo, "commit", "-aqm", "feature work");
+  await wt.checkout(repo, "dev");
+  writeFileSync(join(repo, "other.txt"), "base-only\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-qm", "base moves on");
+  await wt.checkout(repo, "feature/x");
+
+  const out = await wt.diff(repo, "dev");
+
+  expect(out).toContain("+feature");
+  expect(out).not.toContain("base-only");
+});

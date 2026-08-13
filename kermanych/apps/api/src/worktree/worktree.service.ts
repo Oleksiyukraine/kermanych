@@ -75,6 +75,15 @@ export class WorktreeService {
     await git(dir, ["merge", ref]);
   }
 
+  // Unified diff of a worktree against where its branch forked from `base`. The
+  // merge-base captures the session's committed work, and diffing from there also
+  // folds in changes still uncommitted in the tree. Empty string when nothing differs.
+  async diff(dir: string, base: string): Promise<string> {
+    const ref = base || "HEAD";
+    const mergeBase = (await git(dir, ["merge-base", "HEAD", ref])).out.trim() || "HEAD";
+    return (await git(dir, ["diff", mergeBase])).out;
+  }
+
   // Create a branch and switch to it in `dir` (in-place mode: no separate worktree).
   async createBranchHere(dir: string, branch: string): Promise<void> {
     const r = await git(dir, ["checkout", "-b", branch]);

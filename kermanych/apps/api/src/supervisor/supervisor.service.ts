@@ -203,7 +203,7 @@ export class SupervisorService implements OnModuleDestroy {
       // A backlog task hasn't launched, so it never occupies the single in-place slot.
       const activeInPlace = this.registry
         .listSessions(group.id)
-        .some((s) => s.id !== excludeId && !s.worktree && s.kind !== "discussion" && s.status !== "merged" && s.status !== "backlog");
+        .some((s) => s.id !== excludeId && !s.worktree && s.kind !== "discussion" && s.kind !== "review" && s.status !== "merged" && s.status !== "backlog");
       if (activeInPlace)
         throw new Error("an in-place agent is already active in this project — finish or delete it first");
       baseBranch = await this.worktree.currentBranch(group.projectDir);
@@ -270,7 +270,7 @@ export class SupervisorService implements OnModuleDestroy {
     if (!s) throw new Error("session not found");
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
     if (!g) throw new Error("group not found");
-    if (s.kind === "discussion") throw new Error("cannot branch a discussion branch");
+    if (s.kind !== "agent") throw new Error("can only branch an agent session");
 
     let parentFile = s.ompSessionFile;
     if (!parentFile) {
@@ -316,12 +316,73 @@ export class SupervisorService implements OnModuleDestroy {
     return this.merge(child);
   }
 
-  // Merge a discussion branch back into its parent: inject a (reviewed) summary as a
-  // message into the parent's live conversation, then retire the child as merged history.
+  // Request an INDEPENDENT reviewer for a finished agent: spawn a FRESH omp session
+  // (no --fork, so no shared context) with a read-only tool subset in the doer's
+  // worktree, seeded with the original task + the branch diff. It audits with fresh
+  // eyes; its conclusion can be poured back into the doer via mergeDiscussion.
+  async reviewSession(parentId: string): Promise<Session> {
+    const s = this.registry.listSessions().find((x) => x.id === parentId);
+    if (!s) throw new Error("session not found");
+    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
+    if (!g) throw new Error("group not found");
+    if (s.kind !== "agent") throw new Error("only agent sessions can be reviewed");
+
+    const live = this.map.get(parentId);
+    if (live && (live.state.status === "thinking" || live.state.status === "tool"))
+      throw new Error("wait for the agent to finish its turn before requesting a review");
+
+    const cwd = s.worktreePath || g.projectDir;
+    const base = s.worktree ? await this.worktree.currentBranch(g.projectDir) : (s.baseBranch ?? "");
+    const diff = await this.worktree.diff(cwd, base);
+    if (!diff.trim()) throw new Error("nothing to review — the branch has no changes yet");
+
+    const child = this.registry.createSession({
+      groupId: s.groupId,
+      name: `ревізія: ${s.name}`,
+      task: s.task,
+      worktreePath: "",
+      branch: "",
+      worktree: false,
+      kind: "review",
+      parentSessionId: parentId,
+    });
+
+    const prompt =
+      `You are an INDEPENDENT code reviewer. You did NOT do this work and have no prior ` +
+      `context — audit ONLY the task and the diff below, with fresh eyes.\n\n` +
+      `## Original task\n${s.task}\n\n` +
+      `## Diff (base \`${base}\` → branch \`${s.branch}\`)\n` +
+      "```diff\n" + diff + "\n```\n\n" +
+      `Perform a FULL audit: does the change satisfy the task; are any requirements missed ` +
+      `or only partly done; are there bugs, edge cases, or security issues; are tests present ` +
+      `and meaningful; is the code sound? You may read any file in the worktree for context, ` +
+      `but you are read-only — do NOT modify anything or run commands. Finish with a clear ` +
+      `verdict (APPROVE or NEEDS CHANGES) and a prioritized list of findings.`;
+
+    const rpc = new RpcSession({ cwd, tools: ["read", "grep", "glob"] });
+    const childLive = this.wireLive(child.id, rpc, "queued");
+    try {
+      await rpc.start();
+      this.appendEntry(child.id, this.userEntry(prompt));
+      rpc.prompt(prompt);
+    } catch (err) {
+      this.stopPoll(childLive);
+      await rpc.stop().catch(() => {});
+      this.map.delete(child.id);
+      this.registry.removeSession(child.id);
+      this.events.next({ type: "session_removed", sessionId: child.id });
+      throw err;
+    }
+    this.pushUpdate(child.id);
+    return this.merge(child);
+  }
+  // Pour a discussion or review child back into its parent: inject a (reviewed) summary
+  // as a message into the parent's live conversation, then retire the child as merged.
   async mergeDiscussion(childId: string, summary?: string): Promise<{ merged: true }> {
     const c = this.registry.listSessions().find((x) => x.id === childId);
     if (!c) throw new Error("session not found");
-    if (c.kind !== "discussion" || !c.parentSessionId) throw new Error("not a discussion branch");
+    if ((c.kind !== "discussion" && c.kind !== "review") || !c.parentSessionId)
+      throw new Error("not a discussion or review branch");
     const parentId = c.parentSessionId;
 
     const live = this.map.get(childId);
@@ -330,7 +391,8 @@ export class SupervisorService implements OnModuleDestroy {
       .find((e) => e.kind === "assistant_text") as { kind: "assistant_text"; text: string } | undefined;
     const text = (summary?.trim() || last?.text || "").trim();
     if (!text) throw new Error("nothing to merge — the branch has no conclusion yet");
-    const wrapped = `[Висновок гілки «${c.name}»]: ${text}`;
+    const label = c.kind === "review" ? `Ревізія «${c.name}»` : `Висновок гілки «${c.name}»`;
+    const wrapped = `[${label}]: ${text}`;
 
     const parentLive = this.map.get(parentId);
     const mode: "prompt" | "follow_up" =
@@ -531,7 +593,7 @@ export class SupervisorService implements OnModuleDestroy {
       await l.rpc.stop();
       this.map.delete(id);
     }
-    if (s && s.kind === "discussion") {
+    if (s && s.kind !== "agent") {
       // No git: the child owns no branch/worktree; its cwd is the parent's.
       if (s.ompSessionFile) await rm(s.ompSessionFile, { force: true }).catch(() => {});
     } else if (s) {
@@ -588,8 +650,8 @@ export class SupervisorService implements OnModuleDestroy {
     if (!s) throw new Error("session not found");
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
     if (!g) throw new Error("group not found");
-    if (s.kind === "discussion")
-      throw new Error("discussion branches can't be finished — merge or discard instead");
+    if (s.kind !== "agent")
+      throw new Error(`${s.kind} branches can't be finished — merge or discard instead`);
 
     if (s.worktree) {
       if (!s.worktreePath) throw new Error("session has no worktree");
@@ -706,7 +768,7 @@ export class SupervisorService implements OnModuleDestroy {
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
     if (!g) throw new Error("group not found");
     const dir = s.worktreePath || g.projectDir;
-    if (s.kind !== "discussion" && !s.worktree && (await this.worktree.currentBranch(g.projectDir)) !== s.branch)
+    if (s.kind === "agent" && !s.worktree && (await this.worktree.currentBranch(g.projectDir)) !== s.branch)
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
     const rpc = new RpcSession({ cwd: dir });
     const live = this.wireLive(id, rpc, s.status);
