@@ -162,6 +162,9 @@ export const api = {
   branchSession: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/branch`, {}),
 
+  reviewSession: (id: string): Promise<Session> =>
+    post<Session>(`/sessions/${id}/review`, {}),
+
   mergeBranch: (id: string, summary?: string): Promise<{ merged: boolean }> =>
     post<{ merged: boolean }>(`/sessions/${id}/merge`, { summary }),
 

@@ -16,7 +16,7 @@ export type Session = {
   id: string; groupId: string; name: string; task: string;
   worktreePath: string; branch: string;
   worktree: boolean; baseBranch?: string;
-  kind: "agent" | "discussion";
+  kind: "agent" | "discussion" | "review";
   parentSessionId?: string;
   ompSessionId?: string; ompSessionFile?: string;
   status: SessionStatus; currentTool?: string; error?: string;
