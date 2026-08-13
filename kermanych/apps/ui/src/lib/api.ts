@@ -109,7 +109,7 @@ export const api = {
 
   updateGroup: async (
     id: string,
-    patch: { previewCommand?: string; apiCommand?: string; carryFiles?: string[] },
+    patch: { name?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[] },
   ): Promise<Group> => {
     const r = await fetch(`${BASE}/groups/${id}`, {
       method: 'PATCH',

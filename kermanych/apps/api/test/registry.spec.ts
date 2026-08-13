@@ -79,3 +79,13 @@ test("group carryFiles defaults to [.env] and round-trips", () => {
   expect(u.carryFiles).toEqual([".env", "config/svc.json"]);
   expect(r.listGroups().find((x) => x.id === g.id)!.carryFiles).toEqual([".env", "config/svc.json"]);
 });
+
+test("updateGroup renames the group and round-trips", () => {
+  const r = new RegistryService(":memory:");
+  const g = r.createGroup({ name: "old", projectDir: "/tmp/app" });
+  const u = r.updateGroup(g.id, { name: "new" });
+  expect(u.name).toBe("new");
+  expect(r.listGroups().find((x) => x.id === g.id)!.name).toBe("new");
+  // A name-only patch leaves the other columns intact.
+  expect(r.listGroups().find((x) => x.id === g.id)!.carryFiles).toEqual([".env"]);
+});
