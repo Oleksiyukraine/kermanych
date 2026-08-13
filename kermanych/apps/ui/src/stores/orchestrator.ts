@@ -11,7 +11,10 @@ import type {
   ServerEvent,
   RpcExtensionUIResponse,
 } from '@kermanych/core';
-import { shouldNotify } from '@kermanych/core';
+// Import from core's status module directly (not the barrel): @kermanych/core is a CJS
+// workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
+// transformed (see quasar.config commonjsOptions.include); status.js has a direct export.
+import { shouldNotify } from '@kermanych/core/status';
 import { connectSocket } from '../lib/socket';
 import { api, type MessageMode } from '../lib/api';
 

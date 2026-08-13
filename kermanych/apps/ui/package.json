@@ -9,7 +9,7 @@
     "dev": "quasar dev",
     "build": "quasar build",
     "typecheck": "vue-tsc --noEmit",
-    "postinstall": "quasar prepare --silent"
+    "postinstall": "quasar prepare --silent || true"
   },
   "dependencies": {
     "@kermanych/api": "workspace:*",
@@ -26,12 +26,13 @@
   "devDependencies": {
     "@electron/packager": "^18.4.4",
     "@electron/rebuild": "^4.2.0",
-    "@quasar/app-vite": "2.3.0",
     "@nestjs/common": "^10",
+    "@quasar/app-vite": "2.3.0",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22",
     "autoprefixer": "^10.4.27",
     "electron": "^43.4.0",
+    "electron-builder": "^24.13.3",
     "postcss": "^8.4.14",
     "typescript": "^5.6",
     "vue-tsc": "^2.1.0"
