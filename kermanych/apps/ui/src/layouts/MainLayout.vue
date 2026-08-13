@@ -38,13 +38,19 @@
         <span class="shell__ver mono">v0.1</span>
       </div>
       <div class="shell__context mono">{{ contextLabel }}</div>
-      <KBtn
-        v-if="selectedGroup"
-        variant="icon"
-        class="shell__settings"
-        title="Налаштування проєкту"
-        @click="openSettings"
-      >⚙</KBtn>
+      <div v-if="selectedGroup" class="shell__actions">
+        <KBtn
+          variant="icon"
+          title="Змінні середовища (.env)"
+          @click="openEnv"
+        >$</KBtn>
+        <KBtn
+          variant="icon"
+          class="shell__settings"
+          title="Редагувати проєкт"
+          @click="openEditProject"
+        >⚙</KBtn>
+      </div>
     </q-header>
 
     <!-- PAGE -->
@@ -81,8 +87,32 @@
       </template>
     </KModal>
 
-    <!-- PROJECT SETTINGS MODAL -->
-    <KModal v-model="settingsOpen" :title="`Налаштування · ${selectedGroup?.name ?? ''}`">
+    <!-- EDIT-PROJECT MODAL — project identity only (name editable; dir read-only) -->
+    <KModal v-model="editOpen" :title="`Редагувати проєкт · ${selectedGroup?.name ?? ''}`">
+      <div class="shell__form">
+        <KField
+          v-model="groupNameEdit"
+          label="Назва проєкту"
+          placeholder="my-project"
+        />
+        <KField
+          :model-value="selectedGroup?.projectDir ?? ''"
+          label="Директорія проєкту"
+          disabled
+        />
+        <p v-if="editError" class="shell__error" role="alert">{{ editError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" class="shell__danger" @click="deleteProject">
+          Видалити проєкт
+        </KBtn>
+        <KBtn variant="ghost" @click="editOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" @click="saveProject">Зберегти</KBtn>
+      </template>
+    </KModal>
+
+    <!-- ENV MODAL — .env editor + per-session carry files -->
+    <KModal v-model="envOpen" :title="`Змінні середовища · ${selectedGroup?.name ?? ''}`">
       <div class="shell__form">
         <KEnvEditor
           ref="envEditor"
@@ -94,14 +124,11 @@
           label="Файли для сесії (через кому або з нового рядка)"
           placeholder=".env"
         />
-        <p v-if="settingsError" class="shell__error" role="alert">{{ settingsError }}</p>
+        <p v-if="envError" class="shell__error" role="alert">{{ envError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" class="shell__danger" @click="deleteProject">
-          Видалити проєкт
-        </KBtn>
-        <KBtn variant="ghost" @click="settingsOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" @click="saveSettings">Зберегти</KBtn>
+        <KBtn variant="ghost" @click="envOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" @click="saveEnv">Зберегти</KBtn>
       </template>
     </KModal>
 
@@ -198,40 +225,40 @@ async function submitGroup(): Promise<void> {
   }
 }
 
-const settingsOpen = ref(false);
-const settingsError = ref<string | null>(null);
+const editOpen = ref(false);
+const editError = ref<string | null>(null);
+const groupNameEdit = ref('');
+
+const envOpen = ref(false);
+const envError = ref<string | null>(null);
 const envView = ref<EnvFileView>({ entries: [], ignored: true });
 const carryFilesText = ref('.env');
 const envEditor = ref<{ collect: () => { set: Record<string, string>; remove: string[] } } | null>(null);
 
-async function openSettings(): Promise<void> {
+// Edit-project modal: rename the group. Directory is shown read-only — changing
+// projectDir would orphan every worktree/branch/session bound to the old path.
+function openEditProject(): void {
   const g = selectedGroup.value;
   if (!g) return;
-  settingsError.value = null;
-  carryFilesText.value = (g.carryFiles ?? ['.env']).join('\n');
-  envView.value = { entries: [], ignored: true };
-  settingsOpen.value = true;
-  try {
-    envView.value = await store.getEnv(g.id);
-  } catch (e) {
-    settingsError.value = e instanceof Error ? e.message : String(e);
-  }
+  editError.value = null;
+  groupNameEdit.value = g.name;
+  editOpen.value = true;
 }
 
-async function saveSettings(): Promise<void> {
+async function saveProject(): Promise<void> {
   const g = selectedGroup.value;
   if (!g) return;
-  settingsError.value = null;
+  editError.value = null;
+  const name = groupNameEdit.value.trim();
+  if (!name) {
+    editError.value = 'Назва проєкту не може бути порожньою';
+    return;
+  }
   try {
-    const carryFiles = carryFilesText.value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
-    await store.updateGroup(g.id, { carryFiles: carryFiles.length ? carryFiles : ['.env'] });
-    const edits = envEditor.value?.collect();
-    if (edits && (Object.keys(edits.set).length || edits.remove.length)) {
-      await store.saveEnv(g.id, edits);
-    }
-    settingsOpen.value = false;
+    await store.updateGroup(g.id, { name });
+    editOpen.value = false;
   } catch (e) {
-    settingsError.value = e instanceof Error ? e.message : String(e);
+    editError.value = e instanceof Error ? e.message : String(e);
   }
 }
 
@@ -245,13 +272,45 @@ async function deleteProject(): Promise<void> {
       'Усі його агенти, гілки-субагенти та робочі дерева (worktrees) буде безповоротно видалено.',
   );
   if (!ok) return;
-  settingsError.value = null;
+  editError.value = null;
   try {
     await store.deleteGroup(g.id);
     // group_removed streams back over the socket and clears the selection + lists.
-    settingsOpen.value = false;
+    editOpen.value = false;
   } catch (e) {
-    settingsError.value = e instanceof Error ? e.message : String(e);
+    editError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+// Env modal: per-project .env editor plus the carry-files list copied into sessions.
+async function openEnv(): Promise<void> {
+  const g = selectedGroup.value;
+  if (!g) return;
+  envError.value = null;
+  carryFilesText.value = (g.carryFiles ?? ['.env']).join('\n');
+  envView.value = { entries: [], ignored: true };
+  envOpen.value = true;
+  try {
+    envView.value = await store.getEnv(g.id);
+  } catch (e) {
+    envError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+async function saveEnv(): Promise<void> {
+  const g = selectedGroup.value;
+  if (!g) return;
+  envError.value = null;
+  try {
+    const carryFiles = carryFilesText.value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+    await store.updateGroup(g.id, { carryFiles: carryFiles.length ? carryFiles : ['.env'] });
+    const edits = envEditor.value?.collect();
+    if (edits && (Object.keys(edits.set).length || edits.remove.length)) {
+      await store.saveEnv(g.id, edits);
+    }
+    envOpen.value = false;
+  } catch (e) {
+    envError.value = e instanceof Error ? e.message : String(e);
   }
 }
 </script>
@@ -320,6 +379,12 @@ async function deleteProject(): Promise<void> {
   white-space: nowrap;
   font-size: 12px;
   color: var(--k-muted);
+}
+
+.shell__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .shell__footer {

@@ -102,13 +102,13 @@ export class RegistryService {
     return row;
   }
 
-  updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string; carryFiles?: string[] }): Group {
+  updateGroup(id: string, patch: { name?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[] }): Group {
     const cur = this.listGroups().find((g) => g.id === id);
     if (!cur) throw new Error("group not found");
     const next = { ...cur, ...patch };
     this.db
-      .prepare(`UPDATE groups SET preview_command=?, api_command=?, carry_files=? WHERE id=?`)
-      .run(next.previewCommand ?? null, next.apiCommand ?? null, JSON.stringify(next.carryFiles ?? [".env"]), id);
+      .prepare(`UPDATE groups SET name=?, preview_command=?, api_command=?, carry_files=? WHERE id=?`)
+      .run(next.name, next.previewCommand ?? null, next.apiCommand ?? null, JSON.stringify(next.carryFiles ?? [".env"]), id);
     return next;
   }
 

@@ -204,7 +204,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     previews.value = next;
   }
 
-  function updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string; carryFiles?: string[] }) {
+  function updateGroup(id: string, patch: { name?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[] }) {
     return api.updateGroup(id, patch);
   }
 

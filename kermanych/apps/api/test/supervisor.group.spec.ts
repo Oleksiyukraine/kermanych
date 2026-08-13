@@ -75,3 +75,30 @@ describe("removeGroup cascade", () => {
     expect(registry.listGroups().find((x) => x.id === g.id)).toBeUndefined();
   });
 });
+
+describe("updateGroup rename", () => {
+  it("renames the project, trims, and broadcasts the updated group", async () => {
+    const { sup, registry } = make();
+    const g = registry.createGroup({ name: "old", projectDir: "/tmp/proj" });
+
+    const events: ServerEvent[] = [];
+    const sub = sup.events$.subscribe((e) => events.push(e));
+
+    const updated = await sup.updateGroup(g.id, { name: "  renamed  " });
+    sub.unsubscribe();
+
+    expect(updated.name).toBe("renamed");
+    expect(registry.listGroups().find((x) => x.id === g.id)!.name).toBe("renamed");
+    expect(
+      events.some((e) => e.type === "group_update" && e.group.id === g.id && e.group.name === "renamed"),
+    ).toBe(true);
+  });
+
+  it("rejects a blank name and leaves the current name untouched", async () => {
+    const { sup, registry } = make();
+    const g = registry.createGroup({ name: "keep", projectDir: "/tmp/proj" });
+
+    await expect(sup.updateGroup(g.id, { name: "   " })).rejects.toThrow(/empty/);
+    expect(registry.listGroups().find((x) => x.id === g.id)!.name).toBe("keep");
+  });
+});
