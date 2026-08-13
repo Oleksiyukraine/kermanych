@@ -11,7 +11,10 @@ import type {
   RpcExtensionUIResponse,
 } from '@kermanych/core';
 
-const BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:4317/api';
+const BASE =
+  (typeof window !== 'undefined' && window.kermanych?.apiBase) ||
+  import.meta.env.VITE_API_BASE ||
+  'http://localhost:4317/api';
 
 export type MessageMode = 'prompt' | 'follow_up' | 'steer';
 

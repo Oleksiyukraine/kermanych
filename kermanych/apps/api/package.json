@@ -2,6 +2,8 @@
   "name": "@kermanych/api",
   "version": "0.0.0",
   "private": true,
+  "main": "dist/main.js",
+  "exports": { ".": "./dist/main.js" },
   "scripts": {
     "build": "nest build",
     "typecheck": "tsc --noEmit",
@@ -16,7 +18,7 @@
     "@nestjs/platform-express": "^10",
     "@nestjs/platform-socket.io": "^10",
     "@nestjs/websockets": "^10",
-    "better-sqlite3": "^11",
+    "better-sqlite3": "^13",
     "reflect-metadata": "^0.2",
     "rxjs": "^7",
     "socket.io": "^4"

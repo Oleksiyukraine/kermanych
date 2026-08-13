@@ -9,6 +9,15 @@ export const INTERACTIVE_UI_METHODS: Record<string, true> = { select: true, conf
 // ACTIVE_STATUSES.includes(status) — mirrors MainLayout's RUNNING convention.
 export const ACTIVE_STATUSES: readonly SessionStatus[] = ["queued", "thinking", "tool", "waiting_input"];
 
+// Statuses worth a native notification: the agent needs the operator, or it finished.
+export const NOTIFY_STATUSES: readonly SessionStatus[] = ["waiting_input", "error", "conflict", "done"];
+
+// True only on a transition INTO a notify status (never on same-status repeats),
+// so callers fire one notification per meaningful change.
+export function shouldNotify(prev: SessionStatus | undefined, next: SessionStatus): boolean {
+  return prev !== next && NOTIFY_STATUSES.includes(next);
+}
+
 export function reduceStatus(s: StatusState, e: RpcEvent): StatusState {
   switch (e.type) {
     case "agent_start":

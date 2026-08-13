@@ -1,7 +1,10 @@
 {
   "name": "@kermanych/core", "version": "0.0.0", "private": true,
   "main": "dist/index.js", "types": "dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./status": { "types": "./dist/status.d.ts", "default": "./dist/status.js" }
+  },
   "scripts": { "test": "vitest run", "build": "tsc -p tsconfig.json" },
   "devDependencies": { "vitest": "^2", "typescript": "^5.6", "@types/node": "^22" }
 }

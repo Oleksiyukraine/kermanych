@@ -21,6 +21,17 @@ export default defineConfig(() => {
       },
 
       vueRouterMode: 'hash', // 'hash' | 'history'
+
+      // @kermanych/core is a CJS workspace dep that resolves to its real path OUTSIDE
+      // node_modules, so vite's commonjs plugin skips it by default and rollup can't read
+      // its named exports (e.g. shouldNotify). Include its dist so CJS→ESM interop runs.
+      extendViteConf(viteConf) {
+        viteConf.build ??= {};
+        viteConf.build.commonjsOptions = {
+          ...viteConf.build.commonjsOptions,
+          include: [/node_modules/, /packages[/\\]core[/\\]dist/],
+        };
+      },
     },
 
     devServer: {
@@ -37,5 +48,14 @@ export default defineConfig(() => {
     },
 
     animations: [],
+
+    electron: {
+      bundler: 'builder',
+      builder: {
+        appId: 'com.kermanych.app',
+        productName: 'Kermanych',
+        mac: { target: 'dmg', identity: null }, // identity:null → unsigned
+      },
+    },
   };
 });

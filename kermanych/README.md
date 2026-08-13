@@ -16,9 +16,10 @@ same time and you drive them all from one board.
 
 ## Prerequisites
 
-- **Node 22.x** — REQUIRED. The registry uses `better-sqlite3`, a native
-  addon, and its compiled binary is tied to the Node ABI. Running on a
-  different major version will fail to load the module.
+- **Node ≥22.12** — REQUIRED. `better-sqlite3` is pinned to v13, whose N-API
+  prebuilt binary is ABI-stable across Node ≥22.12 and the bundled Electron, so
+  no per-version rebuild is needed. Older Node (including 22.11) crashes the
+  native addon.
 - **`omp` on your PATH, authenticated.** Each session spawns
   `omp --mode rpc`; if `omp` is missing or unauthenticated, sessions cannot
   start.
@@ -37,12 +38,28 @@ pnpm dev:ui           # Quasar UI on  http://localhost:5317
 Run the two dev commands in separate terminals, then open
 <http://localhost:5317> in your browser. The UI talks to the API on `:4317`.
 
-> **Note:** If your Node version changes (e.g. you switch major versions), the
-> `better-sqlite3` native binary must be rebuilt for the new ABI:
->
-> ```bash
-> pnpm rebuild better-sqlite3
-> ```
+> **Note:** `better-sqlite3` v13 ships an N-API prebuilt binary, so switching
+> Node versions (≥22.12) needs no rebuild.
+
+## Desktop app (macOS)
+
+Kermanych also runs as a desktop app (Electron via Quasar): one window that
+starts the API in-process — no browser, no separate dev servers.
+
+```bash
+pnpm dev:app      # run the desktop app in dev
+pnpm build:app    # build a macOS .dmg (unsigned)
+```
+
+The build is **unsigned**, so on first open macOS Gatekeeper blocks it. Open it
+with **right-click → Open** (once), or clear the quarantine flag:
+
+```bash
+xattr -cr /Applications/Kermanych.app
+```
+
+Native module note: `better-sqlite3` is pinned to v13 (N-API); one prebuilt
+binary works under both the Node (≥22.12) and Electron ABIs, so no rebuild.
 
 ## Monorepo layout
 

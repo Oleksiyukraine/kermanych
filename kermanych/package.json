@@ -6,9 +6,11 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "dev:api": "pnpm --filter @kermanych/api start:dev",
-    "dev:ui": "pnpm --filter @kermanych/ui dev"
+    "dev:ui": "pnpm --filter @kermanych/ui dev",
+    "dev:app": "pnpm --filter @kermanych/ui dev -m electron",
+    "build:app": "pnpm --filter @kermanych/ui build -m electron"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["@nestjs/core", "better-sqlite3", "esbuild"]
+    "onlyBuiltDependencies": ["@nestjs/core", "better-sqlite3", "esbuild", "electron"]
   }
 }
