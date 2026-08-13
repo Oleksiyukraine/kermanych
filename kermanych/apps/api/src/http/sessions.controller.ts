@@ -1,6 +1,6 @@
 // apps/api/src/http/sessions.controller.ts
-import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query } from "@nestjs/common";
-import type { BranchPrefix, ImageInput, RpcExtensionUIResponse } from "@kermanych/core";
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
+import type { BranchPrefix, ImageInput, RpcExtensionUIResponse, TaskDraft } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
@@ -21,10 +21,35 @@ export class SessionsController {
   @Post()
   async create(
     @Body()
-    b: { groupId: string; name: string; task: string; model?: string; images?: ImageInput[]; worktree?: boolean; prefix?: BranchPrefix },
+    b: { groupId: string; name: string; task: string; model?: string; images?: ImageInput[]; worktree?: boolean; prefix?: BranchPrefix; asTask?: boolean },
   ) {
     try {
-      return await this.sup.createSession(b.groupId, b.name, b.task, b.model, b.images, b.worktree ?? true, b.prefix ?? "feature");
+      return await this.sup.createSession(b.groupId, b.name, b.task, b.model, b.images, b.worktree ?? true, b.prefix ?? "feature", b.asTask ?? false);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  @Post(":id/start")
+  async start(
+    @Param("id") id: string,
+    @Body() b: TaskDraft & { images?: ImageInput[] },
+  ) {
+    try {
+      const { images, ...draft } = b;
+      return await this.sup.startTask(id, draft, images);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  @Patch(":id")
+  update(
+    @Param("id") id: string,
+    @Body() b: TaskDraft,
+  ) {
+    try {
+      return this.sup.updateTask(id, b);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }

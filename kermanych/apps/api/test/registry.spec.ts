@@ -79,3 +79,17 @@ test("group carryFiles defaults to [.env] and round-trips", () => {
   expect(u.carryFiles).toEqual([".env", "config/svc.json"]);
   expect(r.listGroups().find((x) => x.id === g.id)!.carryFiles).toEqual([".env", "config/svc.json"]);
 });
+
+test("backlog task persists launch config (model, prefix, kind, status) round-trip", () => {
+  const r = new RegistryService(":memory:");
+  const g = r.createGroup({ name: "app", projectDir: "/tmp/app" });
+  const t = r.createSession({
+    groupId: g.id, name: "planned", task: "later", worktreePath: "", branch: "",
+    status: "backlog", kind: "task", model: "opus-5", prefix: "fix",
+  });
+  const read = r.listSessions(g.id).find((s) => s.id === t.id)!;
+  expect(read.status).toBe("backlog");
+  expect(read.kind).toBe("task");
+  expect(read.model).toBe("opus-5");
+  expect(read.prefix).toBe("fix");
+});

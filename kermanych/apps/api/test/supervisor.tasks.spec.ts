@@ -1,0 +1,129 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { WorktreeService } from "../src/worktree/worktree.service";
+
+// Capture every spawned RpcSession so a test can prove whether a launch happened.
+const started: unknown[] = [];
+vi.mock("../src/rpc/rpc-session", () => {
+  class FakeRpc {
+    constructor(opts: unknown) {
+      started.push(opts);
+    }
+    onEvent() {}
+    onExit() {}
+    async start() {}
+    async getState() {
+      return { sessionId: "omp", sessionFile: "/tmp/s.jsonl" };
+    }
+    async getAllMessages() {
+      return [];
+    }
+    async stop() {}
+    prompt() {}
+    followUp() {}
+    steer() {}
+  }
+  return { RpcSession: FakeRpc };
+});
+
+import { SupervisorService } from "../src/supervisor/supervisor.service";
+import { RegistryService } from "../src/registry/registry.service";
+
+function make() {
+  const registry = new RegistryService(":memory:");
+  // vi.fn() members keep their Mock types for call assertions; cast only at the DI boundary.
+  const worktree = {
+    isGitRepo: vi.fn().mockResolvedValue(true),
+    addWorktree: vi.fn(),
+    removeWorktree: vi.fn(),
+    removeBranch: vi.fn(),
+    createBranchHere: vi.fn(),
+    checkout: vi.fn(),
+    currentBranch: vi.fn().mockResolvedValue("main"),
+    hasUncommitted: vi.fn().mockResolvedValue(false),
+  };
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService);
+  return { sup, registry, worktree };
+}
+
+beforeEach(() => {
+  started.length = 0;
+});
+
+describe("backlog tasks", () => {
+  it("createSession asTask stores a backlog task without spawning or a worktree", async () => {
+    const { sup, registry, worktree } = make();
+    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+
+    const t = await sup.createSession(g.id, "planned", "do later", "opus-5", undefined, true, "fix", true);
+
+    expect(t.kind).toBe("task");
+    expect(t.status).toBe("backlog");
+    expect(started).toHaveLength(0);
+    expect(worktree.addWorktree).not.toHaveBeenCalled();
+    // Launch config is persisted so a later Start reuses the operator's choices.
+    const read = registry.listSessions(g.id).find((s) => s.id === t.id)!;
+    expect(read.model).toBe("opus-5");
+    expect(read.prefix).toBe("fix");
+  });
+
+  it("startTask launches a backlog task, flipping the same row into a running agent", async () => {
+    const { sup, registry, worktree } = make();
+    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const t = await sup.createSession(g.id, "planned", "do later", undefined, undefined, true, "feature", true);
+
+    const running = await sup.startTask(t.id);
+
+    expect(running.id).toBe(t.id); // same row, not a new session
+    expect(running.kind).toBe("agent"); // flipped
+    expect(running.status).toBe("queued");
+    expect(started).toHaveLength(1); // omp child spawned
+    expect(worktree.addWorktree).toHaveBeenCalledTimes(1);
+    const read = registry.listSessions(g.id).find((s) => s.id === t.id)!;
+    expect(read.kind).toBe("agent");
+    expect(read.branch).toBeTruthy(); // branch resolved at start time
+  });
+
+  it("startTask rejects a session that is not a backlog task", async () => {
+    const { sup, registry } = make();
+    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const agent = await sup.createSession(g.id, "live", "go", undefined, undefined, true, "feature", false);
+    await expect(sup.startTask(agent.id)).rejects.toThrow(/backlog/i);
+  });
+
+  it("updateTask edits a backlog row in place", async () => {
+    const { sup, registry } = make();
+    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const t = await sup.createSession(g.id, "planned", "do later", undefined, undefined, true, "feature", true);
+
+    const saved = await sup.updateTask(t.id, { task: "do it differently", model: "opus-5" });
+
+    expect(saved.task).toBe("do it differently");
+    expect(saved.status).toBe("backlog"); // still a task
+    const read = registry.listSessions(g.id).find((s) => s.id === t.id)!;
+    expect(read.task).toBe("do it differently");
+    expect(read.model).toBe("opus-5");
+  });
+
+  it("deleteSession removes a backlog task without touching git branches", async () => {
+    const { sup, registry, worktree } = make();
+    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const t = await sup.createSession(g.id, "planned", "later", undefined, undefined, true, "feature", true);
+
+    await sup.deleteSession(t.id);
+
+    expect(registry.listSessions(g.id)).toHaveLength(0);
+    expect(worktree.removeBranch).not.toHaveBeenCalled(); // no branch was ever created
+  });
+
+  it("a backlog in-place task does not occupy the single in-place agent slot", async () => {
+    const { sup, registry } = make();
+    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    // A planned in-place task sitting in the backlog...
+    await sup.createSession(g.id, "planned", "later", undefined, undefined, false, "feature", true);
+    // ...must not block launching a real in-place agent.
+    const agent = await sup.createSession(g.id, "live", "go", undefined, undefined, false, "feature", false);
+
+    expect(agent.status).toBe("queued");
+    expect(agent.worktree).toBe(false);
+  });
+});
