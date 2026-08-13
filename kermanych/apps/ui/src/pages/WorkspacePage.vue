@@ -15,7 +15,7 @@
           </div>
           <div class="ws__board-controls">
             <KToggle :options="viewOptions" v-model="viewMode" />
-            <KBtn variant="primary" @click="openLauncher">+ Новий агент</KBtn>
+            <KBtn variant="primary" @click="openLauncher()">+ Нова задача</KBtn>
           </div>
         </header>
 
@@ -28,7 +28,7 @@
           :selected-key="store.selectedSessionId"
           :row-class="(s) => (isRunning(s) ? 'ws__row--running' : undefined)"
           clickable
-          @row-click="store.selectSession($event.id)"
+          @row-click="onRowClick"
         >
           <template #cell-status="{ row }">
             <span class="ws__cell-status">
@@ -41,6 +41,7 @@
               <span v-if="row.kind === 'discussion'" class="ws__branch-connector" aria-hidden="true">└</span>
               {{ row.name }}
               <KTag v-if="row.kind === 'discussion'">discussion</KTag>
+              <KTag v-else-if="row.kind === 'task'">задача</KTag>
             </span>
           </template>
           <template #cell-branch="{ row }">
@@ -58,7 +59,27 @@
           </template>
           <template #cell-actions="{ row }">
             <div class="ws__cell-actions">
-              <template v-if="row.kind === 'discussion'">
+              <template v-if="row.kind === 'task'">
+                <button
+                  type="button"
+                  class="ws__card-icon"
+                  title="Запустити задачу як агента"
+                  @click.stop="openLauncher(row, false)"
+                >▶</button>
+                <button
+                  type="button"
+                  class="ws__card-icon"
+                  title="Редагувати задачу"
+                  @click.stop="openLauncher(row, true)"
+                >✎</button>
+                <button
+                  type="button"
+                  class="ws__card-icon"
+                  title="Видалити задачу"
+                  @click.stop="onDeleteTask(row)"
+                >✕</button>
+              </template>
+              <template v-else-if="row.kind === 'discussion'">
                 <button
                   v-if="row.status !== 'merged'"
                   type="button"
@@ -106,7 +127,7 @@
           </template>
         </KTable>
         <div v-else class="ws__empty mono">
-          {{ showArchived ? 'Немає заархівованих агентів.' : 'Ще немає агентів. Запусти першого через «+ Новий агент».' }}
+          {{ showArchived ? 'Немає заархівованих агентів.' : showTasks ? 'Беклог порожній. Створи задачу через «+ Нова задача».' : 'Ще немає агентів. Запусти першого через «+ Нова задача».' }}
         </div>
       </section>
 
@@ -158,7 +179,7 @@
     </div>
 
     <!-- NEW-AGENT LAUNCHER — opened by the inline button -->
-    <KModal v-model="launcherOpen" title="Новий агент">
+    <KModal v-model="launcherOpen" :title="editingTaskId ? 'Задача' : 'Нова задача'">
       <div class="ws__form">
         <KField v-model="draftName" label="Назва" placeholder="refactor-auth" />
         <label class="ws__field">
@@ -210,12 +231,18 @@
           label="Модель (необовʼязково)"
           placeholder="opus-5"
         />
+        <div class="ws__field">
+          <KCheckbox v-model="draftAsTask" label="Створити як задачу (не запускати зараз)" />
+          <p v-if="draftAsTask" class="ws__hint mono">
+            Збережеться в беклозі. Запустиш пізніше через ▶ у вкладці «Задачі».
+          </p>
+        </div>
         <p v-if="launcherError" class="ws__error" role="alert">{{ launcherError }}</p>
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="launcherOpen = false">Скасувати</KBtn>
         <KBtn variant="primary" :disabled="!canLaunch" @click="submitLauncher">
-          Запустити
+          {{ draftAsTask ? 'Зберегти' : 'Запустити' }}
         </KBtn>
       </template>
     </KModal>
@@ -344,12 +371,15 @@ const store = useOrchestrator();
 
 const now = useNow();
 
-// Board filter: "Активні" hides archived sessions; "Видалені" shows only them.
+// Board filter: "Активні" = live/finished agents; "Задачі" = the un-launched backlog;
+// "Видалені" = archived. Backlog tasks (status 'backlog') never show under Активні.
 const VIEW_ACTIVE = 'Активні';
+const VIEW_TASKS = 'Задачі';
 const VIEW_ARCHIVED = 'Видалені';
-const viewOptions = [VIEW_ACTIVE, VIEW_ARCHIVED];
+const viewOptions = [VIEW_ACTIVE, VIEW_TASKS, VIEW_ARCHIVED];
 const viewMode = ref<string>(VIEW_ACTIVE);
 const showArchived = computed(() => viewMode.value === VIEW_ARCHIVED);
+const showTasks = computed(() => viewMode.value === VIEW_TASKS);
 // Row order for the agents table. Sessions are bucketed into status tiers and
 // sorted by creation time within each tier. Ranking by tier — not by the live
 // status — is what stops rows from jumping while agents run: every "process
@@ -357,6 +387,7 @@ const showArchived = computed(() => viewMode.value === VIEW_ARCHIVED);
 // flipping between `thinking` and `tool` mid-run never reorders the table. Only
 // real lifecycle moves (a run ending, a branch merging) shift a row's tier.
 const STATUS_RANK: Record<SessionStatus, number> = {
+  backlog: 0,
   queued: 0,
   thinking: 0,
   tool: 0,
@@ -369,7 +400,12 @@ const STATUS_RANK: Record<SessionStatus, number> = {
 };
 const groupSessions = computed(() =>
   store.sessions
-    .filter((s) => s.groupId === store.selectedGroupId && !!s.archived === showArchived.value)
+    .filter((s) => {
+      if (s.groupId !== store.selectedGroupId) return false;
+      if (showArchived.value) return !!s.archived;
+      if (s.archived) return false;
+      return showTasks.value ? s.status === 'backlog' : s.status !== 'backlog';
+    })
     .sort((a, b) => {
       const byStatus = STATUS_RANK[a.status] - STATUS_RANK[b.status];
       return byStatus !== 0 ? byStatus : a.createdAt.localeCompare(b.createdAt);
@@ -484,6 +520,8 @@ function statusWord(s: Session): string {
       return 'влито';
     case 'conflict':
       return 'конфлікт';
+    case 'backlog':
+      return 'у беклозі';
     default:
       return s.status;
   }
@@ -508,6 +546,8 @@ const draftModel = ref('');
 const prefixOptions: BranchPrefix[] = ['feature', 'fix', 'refactoring', 'chore'];
 const draftPrefix = ref<BranchPrefix>('feature');
 const draftWorktree = ref(true);
+const draftAsTask = ref(false);
+const editingTaskId = ref<string | null>(null);
 const branchPreview = computed(() => {
   const slug =
     draftName.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'session';
@@ -539,12 +579,14 @@ const canLaunch = computed(
     draftTask.value.trim() !== '',
 );
 
-function openLauncher(): void {
-  draftName.value = '';
-  draftTask.value = '';
-  draftModel.value = '';
-  draftPrefix.value = 'feature';
-  draftWorktree.value = true;
+function openLauncher(task?: Session, asTask = false): void {
+  editingTaskId.value = task?.id ?? null;
+  draftName.value = task?.name ?? '';
+  draftTask.value = task?.task ?? '';
+  draftModel.value = task?.model ?? '';
+  draftPrefix.value = task?.prefix ?? 'feature';
+  draftWorktree.value = task?.worktree ?? true;
+  draftAsTask.value = asTask;
   launcherError.value = null;
   clearLaunchImages();
   launcherOpen.value = true;
@@ -555,24 +597,56 @@ async function submitLauncher(): Promise<void> {
   const groupId = store.selectedGroupId;
   if (!groupId || !canLaunch.value) return;
   const model = draftModel.value.trim() || undefined;
+  const images = launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));
+  const draft = {
+    name: draftName.value.trim(),
+    task: draftTask.value.trim(),
+    model,
+    prefix: draftPrefix.value,
+    worktree: draftWorktree.value,
+  };
+  const asTask = draftAsTask.value;
   launcherError.value = null;
   try {
-    const session = await store.createSession(
-      groupId,
-      draftName.value.trim(),
-      draftTask.value.trim(),
-      model,
-      launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType })),
-      draftWorktree.value,
-      draftPrefix.value,
-    );
+    let session: Session | undefined;
+    if (editingTaskId.value) {
+      // Editing a backlog task: "Зберегти" keeps it in the backlog; "Запустити" launches it now.
+      session = asTask
+        ? await store.updateTask(editingTaskId.value, draft)
+        : await store.startTask(editingTaskId.value, { ...draft, images });
+    } else {
+      session = await store.createSession(
+        groupId, draft.name, draft.task, model, images, draft.worktree, draft.prefix, asTask,
+      );
+    }
     launcherOpen.value = false;
     clearLaunchImages();
-    if (session?.id) store.selectSession(session.id);
+    // Saved to the backlog → surface it under the Задачі tab; launched → jump to Активні + open its chat.
+    if (asTask) {
+      viewMode.value = VIEW_TASKS;
+    } else {
+      viewMode.value = VIEW_ACTIVE;
+      if (session?.id) store.selectSession(session.id);
+    }
   } catch (e) {
     // Keep the launcher open so the task/name are not lost; show the reason.
     launcherError.value = e instanceof Error ? e.message : String(e);
   }
+}
+
+async function onDeleteTask(s: Session): Promise<void> {
+  if (!window.confirm(`Видалити задачу «${s.name}»?`)) return;
+  try {
+    await store.deleteSession(s.id);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+function onRowClick(s: Session): void {
+  // A backlog task has no chat to open — clicking it edits the task instead.
+  if (s.kind === 'task') openLauncher(s, true);
+  else store.selectSession(s.id);
 }
 
 // ── Detail panel emits → store actions ───────────────────────────────────

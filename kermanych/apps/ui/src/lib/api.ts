@@ -7,6 +7,7 @@ import type {
   Group,
   EnvFileView,
   Session,
+  TaskDraft,
   TranscriptEntry,
   RpcExtensionUIResponse,
 } from '@kermanych/core';
@@ -86,8 +87,9 @@ export const api = {
     images?: ImageInput[],
     worktree = true,
     prefix: BranchPrefix = 'feature',
+    asTask = false,
   ): Promise<Session> =>
-    post<Session>('/sessions', { groupId, name, task, model, images, worktree, prefix }),
+    post<Session>('/sessions', { groupId, name, task, model, images, worktree, prefix, asTask }),
 
   sendMessage: (id: string, text: string, mode: MessageMode, images?: ImageInput[]): Promise<unknown> =>
     post(`/sessions/${id}/message`, { text, mode, images }),
@@ -164,5 +166,18 @@ export const api = {
 
   mergeBranch: (id: string, summary?: string): Promise<{ merged: boolean }> =>
     post<{ merged: boolean }>(`/sessions/${id}/merge`, { summary }),
+
+  startTask: (id: string, draft: TaskDraft & { images?: ImageInput[] } = {}): Promise<Session> =>
+    post<Session>(`/sessions/${id}/start`, draft),
+
+  updateTask: async (id: string, patch: TaskDraft): Promise<Session> => {
+    const r = await fetch(`${BASE}/sessions/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!r.ok) throw await toError(r);
+    return (await r.json()) as Session;
+  },
 
 };
