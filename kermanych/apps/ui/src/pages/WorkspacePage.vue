@@ -344,9 +344,9 @@ const store = useOrchestrator();
 
 const now = useNow();
 
-// Board filter: "Активні" hides archived sessions; "Заархівовані" shows only them.
+// Board filter: "Активні" hides archived sessions; "Видалені" shows only them.
 const VIEW_ACTIVE = 'Активні';
-const VIEW_ARCHIVED = 'Заархівовані';
+const VIEW_ARCHIVED = 'Видалені';
 const viewOptions = [VIEW_ACTIVE, VIEW_ARCHIVED];
 const viewMode = ref<string>(VIEW_ACTIVE);
 const showArchived = computed(() => viewMode.value === VIEW_ARCHIVED);
