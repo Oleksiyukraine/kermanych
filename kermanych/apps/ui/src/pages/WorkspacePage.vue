@@ -120,7 +120,7 @@
                 <button
                   type="button"
                   class="ws__card-icon"
-                  title="Заархівувати"
+                  title="Відкласти"
                   @click.stop="onArchive(row)"
                 >⤓</button>
               </template>
@@ -128,14 +128,14 @@
                 v-else
                 type="button"
                 class="ws__card-icon"
-                title="Розархівувати"
+                title="Повернути в активні"
                 @click.stop="onUnarchive(row)"
               >⤒</button>
             </div>
           </template>
         </KTable>
         <div v-else class="ws__empty mono">
-          {{ showArchived ? 'Немає заархівованих агентів.' : showTasks ? 'Беклог порожній. Створи задачу через «+ Нова задача».' : 'Ще немає агентів. Запусти першого через «+ Нова задача».' }}
+          {{ showArchived ? 'Немає відкладених агентів.' : showTasks ? 'Беклог порожній. Створи задачу через «+ Нова задача».' : 'Ще немає агентів. Запусти першого через «+ Нова задача».' }}
         </div>
       </section>
 
@@ -380,10 +380,10 @@ const store = useOrchestrator();
 const now = useNow();
 
 // Board filter: "Активні" = live/finished agents; "Задачі" = the un-launched backlog;
-// "Видалені" = archived. Backlog tasks (status 'backlog') never show under Активні.
+// "Відкладені" = archived (set aside; worktree kept). Backlog tasks (status 'backlog') never show under Активні.
 const VIEW_ACTIVE = 'Активні';
 const VIEW_TASKS = 'Задачі';
-const VIEW_ARCHIVED = 'Видалені';
+const VIEW_ARCHIVED = 'Відкладені';
 const viewOptions = [VIEW_ACTIVE, VIEW_TASKS, VIEW_ARCHIVED];
 const viewMode = ref<string>(VIEW_ACTIVE);
 const showArchived = computed(() => viewMode.value === VIEW_ARCHIVED);
@@ -734,7 +734,7 @@ function canReview(s: Session): boolean {
 // Active agents can't be archived: pre-check and toast (the API also enforces).
 async function onArchive(s: Session): Promise<void> {
   if (ACTIVE_STATUSES.includes(s.status)) {
-    store.notify('Архівація активного агента неможлива', 'error');
+    store.notify('Не можна відкласти активного агента', 'error');
     return;
   }
   try {
