@@ -77,6 +77,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         });
         n.onclick = () => {
           window.kermanych?.focus();
+          selectGroup(e.session.groupId);
           selectSession(e.session.id);
         };
       }

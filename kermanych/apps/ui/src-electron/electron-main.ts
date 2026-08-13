@@ -97,7 +97,9 @@ app.on('before-quit', (e) => {
     e.preventDefault();
     const closing = nest;
     nest = undefined;
-    // runs onModuleDestroy: kills omp rpc + preview children
-    void closing.close().then(() => app.quit());
+    // nest.close() runs each module's onModuleDestroy: SupervisorService stops the omp
+    // rpc children and PreviewService stops preview children. finally() guarantees quit
+    // even if a child's stop() rejects, so the app can never get stuck un-quittable.
+    void closing.close().finally(() => app.quit());
   }
 });

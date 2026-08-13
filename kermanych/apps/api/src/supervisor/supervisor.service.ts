@@ -1,5 +1,5 @@
 // apps/api/src/supervisor/supervisor.service.ts
-import { Injectable } from "@nestjs/common";
+import { Injectable, type OnModuleDestroy } from "@nestjs/common";
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { Observable, Subject } from "rxjs";
@@ -39,7 +39,7 @@ type Live = {
 };
 
 @Injectable()
-export class SupervisorService {
+export class SupervisorService implements OnModuleDestroy {
   private map = new Map<string, Live>();
   private resuming = new Map<string, Promise<Live>>();
   private toolSeq = 0;
@@ -50,6 +50,13 @@ export class SupervisorService {
     private registry: RegistryService,
     private worktree: WorktreeService,
   ) {}
+
+  onModuleDestroy(): void {
+    for (const live of this.map.values()) {
+      this.stopPoll(live);
+      void live.rpc.stop();
+    }
+  }
 
   snapshot() {
     return {
