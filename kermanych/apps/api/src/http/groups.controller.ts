@@ -29,7 +29,7 @@ export class GroupsController {
   @Patch(":id")
   async update(
     @Param("id") id: string,
-    @Body() b: { previewCommand?: string; apiCommand?: string; carryFiles?: string[] },
+    @Body() b: { name?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[] },
   ) {
     try {
       return await this.sup.updateGroup(id, b);

@@ -7,6 +7,7 @@ import type {
   ImageInput,
   Group,
   Session,
+  TaskDraft,
   TranscriptEntry,
   ServerEvent,
   RpcExtensionUIResponse,
@@ -139,8 +140,17 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     images?: ImageInput[],
     worktree = true,
     prefix: BranchPrefix = 'feature',
+    asTask = false,
   ) {
-    return api.createSession(groupId, name, task, model, images, worktree, prefix);
+    return api.createSession(groupId, name, task, model, images, worktree, prefix, asTask);
+  }
+
+  function startTask(id: string, draft?: TaskDraft & { images?: ImageInput[] }) {
+    return api.startTask(id, draft);
+  }
+
+  function updateTask(id: string, patch: TaskDraft) {
+    return api.updateTask(id, patch);
   }
 
   function sendMessage(id: string, text: string, mode: MessageMode, images?: ImageInput[]) {
@@ -198,7 +208,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     previews.value = next;
   }
 
-  function updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string; carryFiles?: string[] }) {
+  function updateGroup(id: string, patch: { name?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[] }) {
     return api.updateGroup(id, patch);
   }
 
@@ -261,6 +271,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     createGroup,
     deleteGroup,
     createSession,
+    startTask,
+    updateTask,
     sendMessage,
     answerUi,
     stopSession,

@@ -25,6 +25,7 @@ import {
   type RpcExtensionUIResponse,
   type ServerEvent,
   type Session,
+  type TaskDraft,
   type TranscriptEntry,
 } from "@kermanych/core";
 
@@ -85,7 +86,12 @@ export class SupervisorService implements OnModuleDestroy {
     this.registry.removeGroup(id);
     this.events.next({ type: "group_removed", groupId: id });
   }
-  async updateGroup(id: string, patch: { previewCommand?: string; apiCommand?: string; carryFiles?: string[] }): Promise<Group> {
+  async updateGroup(id: string, patch: { name?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[] }): Promise<Group> {
+    if (patch.name !== undefined) {
+      const name = patch.name.trim();
+      if (!name) throw new Error("project name cannot be empty");
+      patch = { ...patch, name };
+    }
     const g = this.registry.updateGroup(id, patch);
     this.events.next({ type: "group_update", group: g });
     return g;
@@ -99,34 +105,127 @@ export class SupervisorService implements OnModuleDestroy {
     images?: ImageInput[],
     worktree = true,
     prefix: BranchPrefix = "feature",
+    asTask = false,
   ): Promise<Session> {
     const group = this.registry.listGroups().find((g) => g.id === groupId);
     if (!group) throw new Error("group not found");
 
-    // In-place guards run first — they must not leave a row, branch, or omp process behind.
+    // A backlog task is just a saved launch config: no branch, no worktree, no omp child.
+    // startTask turns it into a running agent later, reusing exactly these fields.
+    if (asTask) {
+      const session = this.registry.createSession({
+        groupId, name, task, worktreePath: "", branch: "",
+        worktree, model, prefix, status: "backlog", kind: "task",
+      });
+      this.pushUpdate(session.id);
+      return this.merge(session);
+    }
+
+    const { branch, baseBranch } = await this.resolveLaunchParams(group, name, prefix, worktree);
+    const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch, worktree, baseBranch, model, prefix });
+    try {
+      return await this.launch(session, group, images);
+    } catch (err) {
+      this.registry.removeSession(session.id);
+      this.events.next({ type: "session_removed", sessionId: session.id });
+      throw err;
+    }
+  }
+
+  // Turn a backlog task into a running agent in place: apply any last edits, resolve its
+  // branch, flip kind task→agent + status backlog→queued on the SAME row, then launch. On
+  // failure the row returns to the backlog so a transient spawn error never loses the plan.
+  async startTask(
+    id: string,
+    overrides?: TaskDraft,
+    images?: ImageInput[],
+  ): Promise<Session> {
+    const cur = this.registry.listSessions().find((x) => x.id === id);
+    if (!cur) throw new Error("session not found");
+    if (cur.kind !== "task" || cur.status !== "backlog") throw new Error("not a backlog task");
+    const group = this.registry.listGroups().find((g) => g.id === cur.groupId);
+    if (!group) throw new Error("group not found");
+
+    if (overrides)
+      this.registry.updateSession(id, {
+        name: overrides.name ?? cur.name,
+        task: overrides.task ?? cur.task,
+        model: overrides.model ?? cur.model,
+        prefix: overrides.prefix ?? cur.prefix,
+        worktree: overrides.worktree ?? cur.worktree,
+      });
+    const edited = this.registry.listSessions().find((x) => x.id === id)!;
+
+    const { branch, baseBranch } = await this.resolveLaunchParams(group, edited.name, edited.prefix ?? "feature", edited.worktree, id);
+    const session = this.registry.updateSession(id, { status: "queued", kind: "agent", branch, baseBranch, worktreePath: "" });
+    try {
+      return await this.launch(session, group, images);
+    } catch (err) {
+      this.registry.updateSession(id, { status: "backlog", kind: "task", branch: "", baseBranch: undefined, worktreePath: "" });
+      this.pushUpdate(id);
+      throw err;
+    }
+  }
+
+  // Edit a backlog task's saved launch config without starting it.
+  updateTask(
+    id: string,
+    patch: TaskDraft,
+  ): Session {
+    const cur = this.registry.listSessions().find((x) => x.id === id);
+    if (!cur) throw new Error("session not found");
+    if (cur.kind !== "task" || cur.status !== "backlog") throw new Error("not a backlog task");
+    const saved = this.registry.updateSession(id, {
+      name: patch.name ?? cur.name,
+      task: patch.task ?? cur.task,
+      model: patch.model ?? cur.model,
+      prefix: patch.prefix ?? cur.prefix,
+      worktree: patch.worktree ?? cur.worktree,
+    });
+    this.pushUpdate(id);
+    return this.merge(saved);
+  }
+
+  // In-place guards + a de-duplicated branch name, shared by an immediate agent
+  // (createSession) and a started backlog task (startTask). excludeId keeps a task from
+  // colliding with or blocking itself.
+  private async resolveLaunchParams(
+    group: Group,
+    name: string,
+    prefix: BranchPrefix,
+    worktree: boolean,
+    excludeId?: string,
+  ): Promise<{ branch: string; baseBranch?: string }> {
     let baseBranch: string | undefined;
     if (!worktree) {
       if (await this.worktree.hasUncommitted(group.projectDir))
         throw new Error("project working tree must be clean to create an in-place (non-worktree) agent");
+      // A backlog task hasn't launched, so it never occupies the single in-place slot.
       const activeInPlace = this.registry
-        .listSessions(groupId)
-        .some((s) => !s.worktree && s.kind === "agent" && s.status !== "merged");
+        .listSessions(group.id)
+        .some((s) => s.id !== excludeId && !s.worktree && s.kind !== "discussion" && s.kind !== "review" && s.status !== "merged" && s.status !== "backlog");
       if (activeInPlace)
         throw new Error("an in-place agent is already active in this project — finish or delete it first");
       baseBranch = await this.worktree.currentBranch(group.projectDir);
       if (!baseBranch) throw new Error("project has a detached HEAD — checkout a branch first");
     }
-
-    // Branch name: <prefix>/<slug>, de-duplicated against ALL existing session branches.
-    const existing = new Set(this.registry.listSessions(groupId).map((s) => s.branch));
+    const existing = new Set(
+      this.registry.listSessions(group.id).filter((s) => s.id !== excludeId).map((s) => s.branch).filter(Boolean),
+    );
     const branch = uniqueSlug(branchName(slugify(name), prefix), existing);
+    return { branch, baseBranch };
+  }
 
-    const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch, worktree, baseBranch });
+  // Create the git isolation (worktree or in-place branch), spawn the omp child, and send
+  // the task as the first prompt. On failure it undoes any git side effects and rethrows;
+  // the caller owns the registry-row rollback (remove vs return-to-backlog).
+  private async launch(session: Session, group: Group, images?: ImageInput[]): Promise<Session> {
+    const { id, branch, worktree, baseBranch, task, model } = session;
     let wtDir = "";
     let branchCreated = false;
     try {
       if (worktree) {
-        wtDir = worktreeDir(session.id);
+        wtDir = worktreeDir(id);
         await this.worktree.addWorktree(group.projectDir, wtDir, branch);
         branchCreated = true;
         await copyCarryFiles(group.projectDir, wtDir, group.carryFiles ?? [".env"]);
@@ -137,19 +236,15 @@ export class SupervisorService implements OnModuleDestroy {
     } catch (err) {
       if (wtDir) await this.worktree.removeWorktree(group.projectDir, wtDir).catch(() => {});
       if (branchCreated) await this.worktree.removeBranch(group.projectDir, branch).catch(() => {});
-      this.registry.removeSession(session.id);
-      this.events.next({ type: "session_removed", sessionId: session.id });
       throw err;
     }
-    const saved = worktree
-      ? this.registry.updateSession(session.id, { worktreePath: wtDir })
-      : session;
+    const saved = worktree ? this.registry.updateSession(id, { worktreePath: wtDir }) : session;
 
     const rpc = new RpcSession({ cwd: worktree ? wtDir : group.projectDir, model });
-    const live = this.wireLive(session.id, rpc, "queued");
+    const live = this.wireLive(id, rpc, "queued");
     try {
       await rpc.start();
-      this.appendEntry(session.id, this.userEntry(task, images));
+      this.appendEntry(id, this.userEntry(task, images));
       rpc.prompt(task, images);
     } catch (err) {
       this.stopPoll(live);
@@ -160,12 +255,10 @@ export class SupervisorService implements OnModuleDestroy {
         await this.worktree.checkout(group.projectDir, baseBranch, { force: true }).catch(() => {});
       }
       await this.worktree.removeBranch(group.projectDir, branch).catch(() => {});
-      this.map.delete(session.id);
-      this.registry.removeSession(session.id);
-      this.events.next({ type: "session_removed", sessionId: session.id });
+      this.map.delete(id);
       throw err;
     }
-    this.pushUpdate(session.id);
+    this.pushUpdate(id);
     return this.merge(saved);
   }
 
@@ -514,7 +607,7 @@ export class SupervisorService implements OnModuleDestroy {
             .checkout(g.projectDir, s.baseBranch)
             .catch(() => this.worktree.checkout(g.projectDir, s.baseBranch!, { force: true }));
         }
-        await this.worktree.removeBranch(g.projectDir, s.branch);
+        if (s.branch) await this.worktree.removeBranch(g.projectDir, s.branch);
       }
     }
     this.registry.removeSession(id);

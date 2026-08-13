@@ -81,6 +81,10 @@ The visual source of truth lives in [`design/`](./design/):
 - `design/design-system.html` — the rendered design system (colors, type,
   components). Open it in a browser.
 - `design/design-v01.html` — an earlier full-screen design reference.
+- `design/icon-prompt.svg` — the app-icon mark ("Промпт"): a `>` prompt
+  chevron plus an input cursor. Regenerate the whole favicon/Electron icon
+  set from it with `python3 scripts/gen-icons.py` (stdlib only; the macOS
+  `.icns` step needs `iconutil`).
 
 Custom `K*` components implement this look; Quasar is used only for the
 framework, layout, build, and state plumbing.

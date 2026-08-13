@@ -1,5 +1,7 @@
+import type { BranchPrefix } from "./worktree-names";
+
 export type SessionStatus =
-  | "queued" | "thinking" | "tool" | "waiting_input" | "done" | "error" | "stopped" | "merged" | "conflict";
+  | "backlog" | "queued" | "thinking" | "tool" | "waiting_input" | "done" | "error" | "stopped" | "merged" | "conflict";
 
 export type TodoTask = { id: string; content: string; status: "pending" | "in_progress" | "completed" | string };
 export type TodoPhase = { id: string; name: string; tasks: TodoTask[] };
@@ -16,13 +18,20 @@ export type Session = {
   id: string; groupId: string; name: string; task: string;
   worktreePath: string; branch: string;
   worktree: boolean; baseBranch?: string;
-  kind: "agent" | "discussion" | "review";
+  model?: string; prefix?: BranchPrefix;
+  kind: "agent" | "discussion" | "task" | "review";
   parentSessionId?: string;
   ompSessionId?: string; ompSessionFile?: string;
   status: SessionStatus; currentTool?: string; error?: string;
   todoPhases?: TodoPhase[]; contextPercent?: number; lastEventAt?: number;
   pendingUiRequest?: RpcExtensionUIRequest; archived?: boolean; createdAt: string;
   lastActivityAt: string;
+};
+
+// The editable launch config the New-task launcher collects; startTask/updateTask patch
+// these onto a backlog row. All fields optional — it is a partial patch.
+export type TaskDraft = {
+  name?: string | undefined; task?: string | undefined; model?: string | undefined; prefix?: BranchPrefix | undefined; worktree?: boolean | undefined;
 };
 
 export type ImageInput = { data: string; mimeType: string };
