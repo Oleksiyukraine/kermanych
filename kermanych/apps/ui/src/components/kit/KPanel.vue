@@ -174,6 +174,16 @@
         />
       </form>
     </div>
+
+    <!-- floating "+ Задача" — appears over a text selection in the log -->
+    <button
+      v-if="selBtn"
+      type="button"
+      class="k-panel__sel-task"
+      :style="{ left: selBtn.x + 'px', top: selBtn.y + 'px' }"
+      title="Створити задачу з виділеного"
+      @mousedown.prevent.stop="emitNewTask"
+    >+ Задача</button>
   </section>
 </template>
 
@@ -208,6 +218,7 @@ const emit = defineEmits<{
   editor: [];
   branch: [];
   restart: [];
+  newTask: [text: string];
 }>();
 
 const draft = ref('');
@@ -261,6 +272,38 @@ function scrollToBottom(): void {
 function onLogScroll(): void {
   const el = logEl.value;
   if (el) stick = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  hideSelectionButton();
+}
+
+// ── "+ Задача" from a text selection in the log ────────────────────────────
+// Selecting any text inside the transcript surfaces a floating button that turns
+// the selection into a new backlog task. The text is captured when the button
+// appears (not on click), and the button uses mousedown.prevent so pressing it
+// never collapses the selection first.
+const selBtn = ref<{ x: number; y: number; text: string } | null>(null);
+function updateSelectionButton(): void {
+  const log = logEl.value;
+  const sel = window.getSelection();
+  if (!log || !sel || sel.rangeCount === 0 || sel.isCollapsed) {
+    selBtn.value = null;
+    return;
+  }
+  const text = sel.toString().trim();
+  if (!text || !log.contains(sel.anchorNode) || !log.contains(sel.focusNode)) {
+    selBtn.value = null;
+    return;
+  }
+  const rect = sel.getRangeAt(0).getBoundingClientRect();
+  selBtn.value = { x: rect.left + rect.width / 2, y: rect.top, text };
+}
+function hideSelectionButton(): void {
+  selBtn.value = null;
+}
+function emitNewTask(): void {
+  const text = selBtn.value?.text;
+  hideSelectionButton();
+  window.getSelection()?.removeAllRanges();
+  if (text) emit('newTask', text);
 }
 
 // My-message navigation: step between the operator's own (.k-log--user_text)
@@ -326,10 +369,14 @@ onMounted(() => {
   });
   logObserver.observe(el, { childList: true, subtree: true });
   window.addEventListener('keydown', onNavKeydown);
+  document.addEventListener('mouseup', updateSelectionButton);
+  document.addEventListener('mousedown', hideSelectionButton);
 });
 onBeforeUnmount(() => {
   logObserver?.disconnect();
   window.removeEventListener('keydown', onNavKeydown);
+  document.removeEventListener('mouseup', updateSelectionButton);
+  document.removeEventListener('mousedown', hideSelectionButton);
 });
 // Session switch → jump to the newest entry of the newly selected session.
 watch(
@@ -337,6 +384,7 @@ watch(
   () => {
     stick = true;
     userIndex.value = -1;
+    hideSelectionButton();
     void nextTick(() => {
       scrollToBottom();
       refreshUserCount();
@@ -810,4 +858,24 @@ function answerCancel() {
     color: var(--k-muted);
   }
 }
+
+// floating "+ Задача" over a text selection — accent chip, fixed so it escapes
+// the log's scroll clipping; centered just above the selection.
+.k-panel__sel-task {
+  position: fixed;
+  z-index: 50;
+  transform: translate(-50%, calc(-100% - 6px));
+  white-space: nowrap;
+  user-select: none;
+  border: 1px solid var(--k-accent);
+  background: var(--k-bg);
+  color: var(--k-accent);
+  font-family: var(--k-font-mono);
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 10px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.k-panel__sel-task:hover { background: var(--k-accent); color: #111; }
 </style>

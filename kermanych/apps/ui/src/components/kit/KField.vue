@@ -2,6 +2,7 @@
   <label class="k-field">
     <span v-if="label" class="k-field__label">{{ label }}</span>
     <input
+      ref="inputEl"
       class="k-field__input"
       :type="type ?? 'text'"
       :value="modelValue"
@@ -13,6 +14,8 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue';
+
 // Text field: flush-left label above, surface input, accent focus ring. Radius 0.
 defineProps<{
   label?: string;
@@ -23,10 +26,13 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
+const inputEl = ref<HTMLInputElement | null>(null);
 
 function onInput(e: Event) {
   emit('update:modelValue', (e.target as HTMLInputElement).value);
 }
+
+defineExpose({ focus: () => inputEl.value?.focus() });
 </script>
 
 <style scoped lang="scss">
