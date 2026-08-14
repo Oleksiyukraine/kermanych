@@ -15,6 +15,7 @@
           </div>
           <div class="ws__board-controls">
             <KToggle :options="viewOptions" v-model="viewMode" />
+            <KBtn variant="ghost" @click="onNewChat">+ Швидкий чат</KBtn>
             <KBtn variant="primary" @click="openLauncher()">+ Нова задача</KBtn>
           </div>
         </header>
@@ -37,12 +38,13 @@
             </span>
           </template>
           <template #cell-name="{ row }">
-            <span class="ws__cell-name" :class="{ 'ws__cell-name--child': row.kind !== 'agent' }">
-              <span v-if="row.kind !== 'agent'" class="ws__branch-connector" aria-hidden="true">└</span>
+            <span class="ws__cell-name" :class="{ 'ws__cell-name--child': !!row.parentSessionId }">
+              <span v-if="row.parentSessionId" class="ws__branch-connector" aria-hidden="true">└</span>
               {{ row.name }}
               <KTag v-if="row.kind === 'discussion'">discussion</KTag>
               <KTag v-else-if="row.kind === 'task'">задача</KTag>
               <KTag v-else-if="row.kind === 'review'">review</KTag>
+              <KTag v-else-if="row.kind === 'chat'">чат</KTag>
             </span>
           </template>
           <template #cell-branch="{ row }">
@@ -78,6 +80,26 @@
                   class="ws__card-icon"
                   title="Видалити задачу"
                   @click.stop="onDeleteTask(row)"
+                >✕</button>
+              </template>
+              <template v-else-if="row.kind === 'chat' && !showArchived">
+                <button
+                  type="button"
+                  class="ws__card-icon"
+                  title="Створити агента з цього чату (форк розмови в ізольований worktree)"
+                  @click.stop="openChatPromote(row, false)"
+                >⑂</button>
+                <button
+                  type="button"
+                  class="ws__card-icon"
+                  title="Зберегти як задачу в беклог"
+                  @click.stop="openChatPromote(row, true)"
+                >⊕</button>
+                <button
+                  type="button"
+                  class="ws__card-icon"
+                  title="Видалити чат"
+                  @click.stop="onDeleteChat(row)"
                 >✕</button>
               </template>
               <template v-else-if="row.kind === 'discussion' || row.kind === 'review'">
@@ -168,7 +190,10 @@
         <KPanel
           class="ws__panel"
           :session="selectedSession"
-          v-bind="selectedGroup ? { group: selectedGroup } : {}"
+          v-bind="{
+            ...(selectedGroup ? { group: selectedGroup } : {}),
+            ...(selectedSession.kind === 'chat' ? { placeholder: 'запитай або опиши, що потрібно зробити…' } : {}),
+          }"
           @stop="onStop"
           @delete="onDelete"
           @send="onSend"
@@ -177,6 +202,8 @@
           @editor="onEditor"
           @branch="onBranch"
           @restart="onRestart"
+          @promote-agent="onPromoteAgent"
+          @promote-task="onPromoteTask"
         >
           <template v-if="entries.length">
             <KLogBlock v-for="(entry, i) in entries" :key="i" :entry="entry" />
@@ -187,7 +214,7 @@
     </div>
 
     <!-- NEW-AGENT LAUNCHER — opened by the inline button -->
-    <KModal v-model="launcherOpen" :title="editingTaskId ? 'Задача' : 'Нова задача'">
+    <KModal v-model="launcherOpen" :title="launcherTitle">
       <div class="ws__form">
         <KField v-model="draftName" label="Назва" placeholder="refactor-auth" />
         <label class="ws__field">
@@ -239,7 +266,7 @@
           label="Модель (необовʼязково)"
           placeholder="opus-5"
         />
-        <div class="ws__field">
+        <div v-if="!promotingChatId" class="ws__field">
           <KCheckbox v-model="draftAsTask" label="Створити як задачу (не запускати зараз)" />
           <p v-if="draftAsTask" class="ws__hint mono">
             Збережеться в беклозі. Запустиш пізніше через ▶ у вкладці «Задачі».
@@ -250,7 +277,7 @@
       <template #controls>
         <KBtn variant="ghost" @click="launcherOpen = false">Скасувати</KBtn>
         <KBtn variant="primary" :disabled="!canLaunch" @click="submitLauncher">
-          {{ draftAsTask ? 'Зберегти' : 'Запустити' }}
+          {{ draftAsTask ? 'Зберегти' : promotingChatId ? 'Створити агента' : 'Запустити' }}
         </KBtn>
       </template>
     </KModal>
@@ -556,6 +583,7 @@ const draftPrefix = ref<BranchPrefix>('feature');
 const draftWorktree = ref(true);
 const draftAsTask = ref(false);
 const editingTaskId = ref<string | null>(null);
+const promotingChatId = ref<string | null>(null);
 const branchPreview = computed(() => {
   const slug =
     draftName.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'session';
@@ -584,16 +612,44 @@ const canLaunch = computed(
   () =>
     !!store.selectedGroupId &&
     draftName.value.trim() !== '' &&
-    draftTask.value.trim() !== '',
+    (draftTask.value.trim() !== '' || !!promotingChatId.value),
+);
+
+const launcherTitle = computed(() =>
+  promotingChatId.value ? 'Створити агента з чату' : editingTaskId.value ? 'Задача' : 'Нова задача',
 );
 
 function openLauncher(task?: Session, asTask = false): void {
   editingTaskId.value = task?.id ?? null;
+  promotingChatId.value = null;
   draftName.value = task?.name ?? '';
   draftTask.value = task?.task ?? '';
   draftModel.value = task?.model ?? '';
   draftPrefix.value = task?.prefix ?? 'feature';
   draftWorktree.value = task?.worktree ?? true;
+  draftAsTask.value = asTask;
+  launcherError.value = null;
+  clearLaunchImages();
+  launcherOpen.value = true;
+  void nextTick(() => taskInput.value?.focus());
+}
+
+// Promote a quick chat: open the launcher pre-filled from the conversation. asTask=true saves a
+// backlog task (a fresh launch config); asTask=false forks the chat into an isolated agent that
+// continues the same thread.
+function openChatPromote(chat: Session, asTask: boolean): void {
+  const history = store.transcripts[chat.id] ?? [];
+  const firstUser = history.find((e) => e.kind === 'user_text') as
+    | { kind: 'user_text'; text: string }
+    | undefined;
+  const seed = (firstUser?.text ?? '').trim();
+  editingTaskId.value = null;
+  promotingChatId.value = asTask ? null : chat.id;
+  draftName.value = seed.split(/\s+/).slice(0, 6).join(' ').slice(0, 48);
+  draftTask.value = asTask ? seed : '';
+  draftModel.value = chat.model ?? '';
+  draftPrefix.value = 'feature';
+  draftWorktree.value = true;
   draftAsTask.value = asTask;
   launcherError.value = null;
   clearLaunchImages();
@@ -617,7 +673,10 @@ async function submitLauncher(): Promise<void> {
   launcherError.value = null;
   try {
     let session: Session | undefined;
-    if (editingTaskId.value) {
+    if (promotingChatId.value) {
+      // Fork the chat's conversation into a real, isolated worktree agent that continues it.
+      session = await store.promoteChat(promotingChatId.value, draft);
+    } else if (editingTaskId.value) {
       // Editing a backlog task: "Зберегти" keeps it in the backlog; "Запустити" launches it now.
       session = asTask
         ? await store.updateTask(editingTaskId.value, draft)
@@ -628,6 +687,7 @@ async function submitLauncher(): Promise<void> {
       );
     }
     launcherOpen.value = false;
+    promotingChatId.value = null;
     clearLaunchImages();
     // Saved to the backlog → surface it under the Задачі tab; launched → jump to Активні + open its chat.
     if (asTask) {
@@ -651,6 +711,28 @@ async function onDeleteTask(s: Session): Promise<void> {
   }
 }
 
+async function onNewChat(): Promise<void> {
+  const groupId = store.selectedGroupId;
+  if (!groupId) return;
+  try {
+    const chat = await store.createChat(groupId);
+    viewMode.value = VIEW_ACTIVE;
+    if (chat?.id) store.selectSession(chat.id);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+async function onDeleteChat(s: Session): Promise<void> {
+  if (!window.confirm(`Видалити чат «${s.name}»?`)) return;
+  try {
+    await store.deleteSession(s.id);
+    if (store.selectedSessionId === s.id) store.selectSession(undefined);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
 function onRowClick(s: Session): void {
   // A backlog task has no chat to open — clicking it edits the task instead.
   if (s.kind === 'task') openLauncher(s, true);
@@ -661,8 +743,11 @@ function onRowClick(s: Session): void {
 async function onSend(text: string, images: ImageInput[]): Promise<void> {
   const s = selectedSession.value;
   if (!s) return;
-  // Done → a fresh follow-up turn; otherwise steer the in-flight turn.
-  const mode: MessageMode = s.status === 'done' ? 'follow_up' : 'steer';
+  const history = store.transcripts[s.id] ?? [];
+  const hasTurn = history.some((e) => e.kind === 'user_text' || e.kind === 'assistant_text');
+  // An empty session (a fresh quick chat) starts its first turn with a prompt. Otherwise keep the
+  // rule: a settled session gets a fresh follow-up; a live one is steered mid-turn.
+  const mode: MessageMode = !hasTurn ? 'prompt' : s.status === 'done' ? 'follow_up' : 'steer';
   try {
     await store.sendMessage(s.id, text, mode, images);
   } catch (e) {
@@ -690,6 +775,16 @@ async function onReview(s: Session): Promise<void> {
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
+}
+
+function onPromoteAgent(): void {
+  const s = selectedSession.value;
+  if (s) openChatPromote(s, false);
+}
+
+function onPromoteTask(): void {
+  const s = selectedSession.value;
+  if (s) openChatPromote(s, true);
 }
 
 function onStop(): void {

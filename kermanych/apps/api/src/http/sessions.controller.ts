@@ -30,6 +30,15 @@ export class SessionsController {
     }
   }
 
+  @Post("chat")
+  async createChat(@Body() b: { groupId: string }) {
+    try {
+      return await this.sup.createChat(b.groupId);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Post(":id/start")
   async start(
     @Param("id") id: string,
@@ -38,6 +47,15 @@ export class SessionsController {
     try {
       const { images, ...draft } = b;
       return await this.sup.startTask(id, draft, images);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  @Post(":id/promote")
+  async promote(@Param("id") id: string, @Body() b: TaskDraft) {
+    try {
+      return await this.sup.promoteChatToAgent(id, b);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
