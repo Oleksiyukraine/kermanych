@@ -202,6 +202,7 @@
           @editor="onEditor"
           @branch="onBranch"
           @restart="onRestart"
+          @newTask="openTaskFromText"
           @promote-agent="onPromoteAgent"
           @promote-task="onPromoteTask"
         >
@@ -216,7 +217,7 @@
     <!-- NEW-AGENT LAUNCHER — opened by the inline button -->
     <KModal v-model="launcherOpen" :title="launcherTitle">
       <div class="ws__form">
-        <KField v-model="draftName" label="Назва" placeholder="refactor-auth" />
+        <KField ref="nameField" v-model="draftName" label="Назва" placeholder="refactor-auth" />
         <label class="ws__field">
           <span class="ws__field-label">Завдання</span>
           <textarea
@@ -590,6 +591,7 @@ const branchPreview = computed(() => {
   return `${draftPrefix.value}/${slug}`;
 });
 const taskInput = ref<HTMLTextAreaElement | null>(null);
+const nameField = ref<{ focus: () => void } | null>(null);
 const launcherError = ref<string | null>(null);
 const {
   images: launchImages,
@@ -632,6 +634,32 @@ function openLauncher(task?: Session, asTask = false): void {
   clearLaunchImages();
   launcherOpen.value = true;
   void nextTick(() => taskInput.value?.focus());
+}
+
+// Suggest a short task name from the first non-empty line of the selection,
+// stripping leading markdown decoration; capped so it reads as a label.
+function suggestTaskName(text: string): string {
+  const firstLine = text.split('\n').map((l) => l.trim()).find((l) => l.length > 0) ?? '';
+  const clean = firstLine.replace(/^[#>\-*\d.)\s]+/, '').replace(/[*_`]/g, '').trim();
+  return (clean || firstLine).slice(0, 60);
+}
+
+// Turn a transcript text selection into a new backlog task: prefill the launcher
+// with the selection as the task body and a name suggested from its first line,
+// defaulting to "save to backlog" so a finding is parked rather than run now.
+function openTaskFromText(text: string): void {
+  editingTaskId.value = null;
+  promotingChatId.value = null;
+  draftName.value = suggestTaskName(text);
+  draftTask.value = text;
+  draftModel.value = '';
+  draftPrefix.value = 'feature';
+  draftWorktree.value = true;
+  draftAsTask.value = true;
+  launcherError.value = null;
+  clearLaunchImages();
+  launcherOpen.value = true;
+  void nextTick(() => nameField.value?.focus());
 }
 
 // Promote a quick chat: open the launcher pre-filled from the conversation. asTask=true saves a
