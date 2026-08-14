@@ -22,15 +22,24 @@ export default defineConfig(() => {
 
       vueRouterMode: 'hash', // 'hash' | 'history'
 
-      // @kermanych/core is a CJS workspace dep that resolves to its real path OUTSIDE
-      // node_modules, so vite's commonjs plugin skips it by default and rollup can't read
-      // its named exports (e.g. shouldNotify). Include its dist so CJS→ESM interop runs.
+      // @kermanych/core is a CJS workspace dep resolved to its real path OUTSIDE
+      // node_modules, so Vite treats it as raw source and never runs CJS→ESM interop;
+      // named imports (e.g. shouldNotify from /status) then fail. Both build paths need it:
+      //   • prod (rollup):  build.commonjsOptions.include converts its dist.
+      //   • dev  (esbuild): optimizeDeps.include force-prebundles it — linked workspace
+      //     deps are excluded from dep pre-bundling by default, so this is required.
       extendViteConf(viteConf) {
         viteConf.build ??= {};
         viteConf.build.commonjsOptions = {
           ...viteConf.build.commonjsOptions,
           include: [/node_modules/, /packages[/\\]core[/\\]dist/],
         };
+        viteConf.optimizeDeps ??= {};
+        viteConf.optimizeDeps.include = [
+          ...(viteConf.optimizeDeps.include ?? []),
+          '@kermanych/core',
+          '@kermanych/core/status',
+        ];
       },
     },
 
