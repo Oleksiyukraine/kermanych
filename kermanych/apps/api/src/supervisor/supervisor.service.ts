@@ -39,6 +39,10 @@ type Live = {
   poll?: NodeJS.Timeout;
 };
 
+// Chat sessions run omp with a read-only tool subset: they explore and plan in the project
+// dir without ever mutating it (git-free). Promotion to an agent later grants the full toolset.
+const CHAT_TOOLS = ["read", "grep", "glob"];
+
 @Injectable()
 export class SupervisorService implements OnModuleDestroy {
   private map = new Map<string, Live>();
@@ -124,7 +128,7 @@ export class SupervisorService implements OnModuleDestroy {
     const { branch, baseBranch } = await this.resolveLaunchParams(group, name, prefix, worktree);
     const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch, worktree, baseBranch, model, prefix });
     try {
-      return await this.launch(session, group, images);
+      return await this.launch(session, group, { images });
     } catch (err) {
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
@@ -159,7 +163,7 @@ export class SupervisorService implements OnModuleDestroy {
     const { branch, baseBranch } = await this.resolveLaunchParams(group, edited.name, edited.prefix ?? "feature", edited.worktree, id);
     const session = this.registry.updateSession(id, { status: "queued", kind: "agent", branch, baseBranch, worktreePath: "" });
     try {
-      return await this.launch(session, group, images);
+      return await this.launch(session, group, { images });
     } catch (err) {
       this.registry.updateSession(id, { status: "backlog", kind: "task", branch: "", baseBranch: undefined, worktreePath: "" });
       this.pushUpdate(id);
@@ -184,6 +188,81 @@ export class SupervisorService implements OnModuleDestroy {
     });
     this.pushUpdate(id);
     return this.merge(saved);
+  }
+
+  // A quick chat: an instant, git-free omp conversation in the project dir with a read-only
+  // tool subset. No branch, no worktree, no opening prompt — it spawns ready and the operator
+  // sends the first message. It can later be promoted (forked) into a real agent, so a throwaway
+  // exploration becomes real work without losing context.
+  async createChat(groupId: string): Promise<Session> {
+    const group = this.registry.listGroups().find((g) => g.id === groupId);
+    if (!group) throw new Error("group not found");
+    const n = this.registry.listSessions(groupId).filter((s) => s.kind === "chat").length + 1;
+    const session = this.registry.createSession({
+      groupId, name: `чат ${n}`, task: "", worktreePath: "", branch: "",
+      worktree: false, kind: "chat", status: "queued",
+    });
+    const rpc = new RpcSession({ cwd: group.projectDir, tools: CHAT_TOOLS });
+    const live = this.wireLive(session.id, rpc, "queued");
+    try {
+      await rpc.start();
+      // Let the startup event burst (ready/setWidget/available_commands) flow through onRpcEvent
+      // first, then mark the chat idle-ready — otherwise those events reset live status to "queued".
+      await this.refreshState(session.id);
+      live.state = { status: "done" };
+      live.live.status = "done";
+      this.registry.updateSession(session.id, { status: "done" });
+    } catch (err) {
+      this.stopPoll(live);
+      await rpc.stop().catch(() => {});
+      this.map.delete(session.id);
+      this.registry.removeSession(session.id);
+      this.events.next({ type: "session_removed", sessionId: session.id });
+      throw err;
+    }
+    this.pushUpdate(session.id);
+    return this.merge(session);
+  }
+
+  // Promote a chat into a real, isolated agent by FORKING its omp conversation into a fresh
+  // worktree with full tools — the planning context carries over and the agent continues it.
+  // A new standalone row (not a child), so deleting the scratch chat can never cascade-delete
+  // the agent's branch. The chat is left intact for further promotions.
+  async promoteChatToAgent(chatId: string, draft: TaskDraft): Promise<Session> {
+    const chat = this.registry.listSessions().find((x) => x.id === chatId);
+    if (!chat) throw new Error("session not found");
+    if (chat.kind !== "chat") throw new Error("not a chat session");
+    const group = this.registry.listGroups().find((g) => g.id === chat.groupId);
+    if (!group) throw new Error("group not found");
+
+    let chatFile = chat.ompSessionFile;
+    if (!chatFile) {
+      await this.refreshState(chatId);
+      chatFile = this.registry.listSessions().find((x) => x.id === chatId)?.ompSessionFile;
+    }
+    if (!chatFile) throw new Error("chat has no omp session yet — send a message before creating an agent");
+
+    const live = this.map.get(chatId);
+    if (live && (live.state.status === "thinking" || live.state.status === "tool"))
+      throw new Error("wait for the chat to finish its turn before creating an agent");
+
+    const name = draft.name?.trim() || chat.name;
+    const prefix = draft.prefix ?? "feature";
+    const worktree = draft.worktree ?? true;
+    const model = draft.model ?? chat.model;
+    const task = draft.task?.trim() ?? "";
+
+    const { branch, baseBranch } = await this.resolveLaunchParams(group, name, prefix, worktree);
+    const session = this.registry.createSession({
+      groupId: chat.groupId, name, task, worktreePath: "", branch, worktree, baseBranch, model, prefix,
+    });
+    try {
+      return await this.launch(session, group, { fork: chatFile });
+    } catch (err) {
+      this.registry.removeSession(session.id);
+      this.events.next({ type: "session_removed", sessionId: session.id });
+      throw err;
+    }
   }
 
   // In-place guards + a de-duplicated branch name, shared by an immediate agent
@@ -216,11 +295,20 @@ export class SupervisorService implements OnModuleDestroy {
     return { branch, baseBranch };
   }
 
-  // Create the git isolation (worktree or in-place branch), spawn the omp child, and send
-  // the task as the first prompt. On failure it undoes any git side effects and rethrows;
-  // the caller owns the registry-row rollback (remove vs return-to-backlog).
-  private async launch(session: Session, group: Group, images?: ImageInput[]): Promise<Session> {
+  // Create the git isolation (worktree or in-place branch), spawn the omp child, and kick off
+  // the first turn. `fork` seeds the child from a prior omp conversation (chat → agent) and
+  // rehydrates its history; `firstPrompt` overrides the opening message sent (defaults to the
+  // task), and an empty one lands the session idle — a forked agent that just continues the
+  // chat. On failure it undoes any git side effects and rethrows; the caller owns the
+  // registry-row rollback (remove vs return-to-backlog).
+  private async launch(
+    session: Session,
+    group: Group,
+    opts: { images?: ImageInput[]; fork?: string; firstPrompt?: string } = {},
+  ): Promise<Session> {
     const { id, branch, worktree, baseBranch, task, model } = session;
+    const { images, fork } = opts;
+    const firstPrompt = opts.firstPrompt ?? task;
     let wtDir = "";
     let branchCreated = false;
     try {
@@ -240,12 +328,23 @@ export class SupervisorService implements OnModuleDestroy {
     }
     const saved = worktree ? this.registry.updateSession(id, { worktreePath: wtDir }) : session;
 
-    const rpc = new RpcSession({ cwd: worktree ? wtDir : group.projectDir, model });
+    const rpc = new RpcSession({ cwd: worktree ? wtDir : group.projectDir, model, ...(fork ? { fork } : {}) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await rpc.start();
-      this.appendEntry(id, this.userEntry(task, images));
-      rpc.prompt(task, images);
+      // A forked child inherits the source conversation — surface its history before the turn.
+      if (fork) {
+        live.transcript = messagesToTranscript(await rpc.getAllMessages());
+        this.events.next({ type: "transcript_reset", sessionId: id, entries: live.transcript });
+      }
+      if (firstPrompt.trim()) {
+        this.appendEntry(id, this.userEntry(firstPrompt, images));
+        rpc.prompt(firstPrompt, images);
+      } else {
+        // No opening message (a forked agent continuing the chat) — sit idle, ready for input.
+        live.live.status = "done";
+        this.registry.updateSession(id, { status: "done" });
+      }
     } catch (err) {
       this.stopPoll(live);
       await rpc.stop().catch(() => {});
@@ -770,7 +869,7 @@ export class SupervisorService implements OnModuleDestroy {
     const dir = s.worktreePath || g.projectDir;
     if (s.kind === "agent" && !s.worktree && (await this.worktree.currentBranch(g.projectDir)) !== s.branch)
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
-    const rpc = new RpcSession({ cwd: dir });
+    const rpc = new RpcSession({ cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}) });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await rpc.start();

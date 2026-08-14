@@ -5,10 +5,24 @@
       <div class="k-panel__id">
         <KStatusDot :status="session.status" />
         <span class="k-panel__harness mono">omp · {{ groupName }}</span>
-        <KTag>⑂ {{ session.branch }}</KTag>
+        <KTag v-if="session.branch">⑂ {{ session.branch }}</KTag>
       </div>
       <div class="k-panel__controls">
         <span class="k-panel__status mono">{{ statusLabel }}</span>
+        <button
+          v-if="session.kind === 'chat'"
+          class="k-panel__icon"
+          type="button"
+          title="Створити агента з цього чату (форк розмови в ізольований worktree)"
+          @click="emit('promoteAgent')"
+        >⑂</button>
+        <button
+          v-if="session.kind === 'chat'"
+          class="k-panel__icon"
+          type="button"
+          title="Зберегти як задачу в беклог"
+          @click="emit('promoteTask')"
+        >⊕</button>
         <button
           v-if="session.kind === 'agent'"
           class="k-panel__icon"
@@ -208,6 +222,8 @@ const emit = defineEmits<{
   editor: [];
   branch: [];
   restart: [];
+  promoteAgent: [];
+  promoteTask: [];
 }>();
 
 const draft = ref('');

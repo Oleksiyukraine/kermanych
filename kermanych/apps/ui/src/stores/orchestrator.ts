@@ -145,6 +145,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.createSession(groupId, name, task, model, images, worktree, prefix, asTask);
   }
 
+  function createChat(groupId: string) {
+    return api.createChat(groupId);
+  }
+
+  function promoteChat(id: string, draft: TaskDraft) {
+    return api.promoteChat(id, draft);
+  }
+
   function startTask(id: string, draft?: TaskDraft & { images?: ImageInput[] }) {
     return api.startTask(id, draft);
   }
@@ -271,6 +279,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     createGroup,
     deleteGroup,
     createSession,
+    createChat,
+    promoteChat,
     startTask,
     updateTask,
     sendMessage,

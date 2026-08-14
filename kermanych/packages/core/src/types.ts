@@ -19,7 +19,7 @@ export type Session = {
   worktreePath: string; branch: string;
   worktree: boolean; baseBranch?: string;
   model?: string; prefix?: BranchPrefix;
-  kind: "agent" | "discussion" | "task" | "review";
+  kind: "agent" | "discussion" | "task" | "review" | "chat";
   parentSessionId?: string;
   ompSessionId?: string; ompSessionFile?: string;
   status: SessionStatus; currentTool?: string; error?: string;
