@@ -75,7 +75,7 @@ export class RegistryService {
     }
     // Additive migration: backlog tasks persist their launch config (branch prefix + model)
     // so "Start" can spawn them later with the same settings the operator chose.
-    for (const col of ["model", "prefix"]) {
+    for (const col of ["model", "prefix", "platform"]) {
       try {
         this.db.exec(`ALTER TABLE sessions ADD COLUMN ${col} TEXT`);
       } catch {
@@ -118,14 +118,14 @@ export class RegistryService {
   }
 
   listSessions(groupId?: string): Session[] {
-    const sql = `SELECT id, group_id as groupId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, status, archived, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
+    const sql = `SELECT id, group_id as groupId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, status, archived, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
     const rows = (
       groupId
         ? this.db.prepare(sql + ` WHERE group_id = ? ORDER BY created_at`).all(groupId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
     ) as (Omit<Session, "archived" | "worktree"> & { archived: number; worktree: number })[];
     // SQLite stores the flag as 0/1; hand callers a real boolean.
-    return rows.map((r) => ({ ...r, archived: r.archived !== 0, worktree: r.worktree !== 0, model: r.model ?? undefined, prefix: r.prefix ?? undefined }));
+    return rows.map((r) => ({ ...r, archived: r.archived !== 0, worktree: r.worktree !== 0, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined }));
   }
 
   createSession(
@@ -148,7 +148,7 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, group_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions (id, group_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, platform, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id,
@@ -165,6 +165,7 @@ export class RegistryService {
         row.kind,
         row.model ?? null,
         row.prefix ?? null,
+        row.platform ?? null,
         row.status,
         row.createdAt,
         row.lastActivityAt,
@@ -178,7 +179,7 @@ export class RegistryService {
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, status=?, archived=? WHERE id=?`,
+        `UPDATE sessions SET name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, platform=?, status=?, archived=? WHERE id=?`,
       )
       .run(
         next.name,
@@ -192,6 +193,7 @@ export class RegistryService {
         next.kind,
         next.model ?? null,
         next.prefix ?? null,
+        next.platform ?? null,
         next.status,
         next.archived ? 1 : 0,
         id,

@@ -2,6 +2,7 @@
 // Typed REST helpers against the Kermanych API (NestJS, global prefix "api").
 import type {
   BranchPrefix,
+  Platform,
   DirListing,
   ImageInput,
   Group,
@@ -88,8 +89,9 @@ export const api = {
     worktree = true,
     prefix: BranchPrefix = 'feature',
     asTask = false,
+    platform?: Platform,
   ): Promise<Session> =>
-    post<Session>('/sessions', { groupId, name, task, model, images, worktree, prefix, asTask }),
+    post<Session>('/sessions', { groupId, name, task, model, images, worktree, prefix, platform, asTask }),
 
   createChat: (groupId: string): Promise<Session> =>
     post<Session>('/sessions/chat', { groupId }),
