@@ -103,3 +103,13 @@ test("backlog task persists launch config (model, prefix, kind, status) round-tr
   expect(read.model).toBe("opus-5");
   expect(read.prefix).toBe("fix");
 });
+
+test("session platform persists and round-trips", () => {
+  const r = new RegistryService(":memory:");
+  const g = r.createGroup({ name: "app", projectDir: "/tmp/app" });
+  const s = r.createSession({ groupId: g.id, name: "task", task: "do it", worktreePath: "/wt", branch: "kermanych/task", platform: "web" });
+  expect(r.listSessions(g.id)[0].platform).toBe("web");
+  const u = r.updateSession(s.id, { platform: "mobile" });
+  expect(u.platform).toBe("mobile");
+  expect(r.listSessions(g.id)[0].platform).toBe("mobile");
+});

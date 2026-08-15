@@ -4,6 +4,7 @@ import { ref } from 'vue';
 import type { Socket } from 'socket.io-client';
 import type {
   BranchPrefix,
+  Platform,
   ImageInput,
   Group,
   Session,
@@ -141,8 +142,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     worktree = true,
     prefix: BranchPrefix = 'feature',
     asTask = false,
+    platform?: Platform,
   ) {
-    return api.createSession(groupId, name, task, model, images, worktree, prefix, asTask);
+    return api.createSession(groupId, name, task, model, images, worktree, prefix, asTask, platform);
   }
 
   function createChat(groupId: string) {

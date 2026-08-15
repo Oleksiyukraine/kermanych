@@ -110,6 +110,7 @@ export class SupervisorService implements OnModuleDestroy {
     worktree = true,
     prefix: BranchPrefix = "feature",
     asTask = false,
+    platform?: Session["platform"],
   ): Promise<Session> {
     const group = this.registry.listGroups().find((g) => g.id === groupId);
     if (!group) throw new Error("group not found");
@@ -119,14 +120,14 @@ export class SupervisorService implements OnModuleDestroy {
     if (asTask) {
       const session = this.registry.createSession({
         groupId, name, task, worktreePath: "", branch: "",
-        worktree, model, prefix, status: "backlog", kind: "task",
+        worktree, model, prefix, platform, status: "backlog", kind: "task",
       });
       this.pushUpdate(session.id);
       return this.merge(session);
     }
 
     const { branch, baseBranch } = await this.resolveLaunchParams(group, name, prefix, worktree);
-    const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch, worktree, baseBranch, model, prefix });
+    const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch, worktree, baseBranch, model, prefix, platform });
     try {
       return await this.launch(session, group, { images });
     } catch (err) {
@@ -156,6 +157,7 @@ export class SupervisorService implements OnModuleDestroy {
         task: overrides.task ?? cur.task,
         model: overrides.model ?? cur.model,
         prefix: overrides.prefix ?? cur.prefix,
+        platform: overrides.platform ?? cur.platform,
         worktree: overrides.worktree ?? cur.worktree,
       });
     const edited = this.registry.listSessions().find((x) => x.id === id)!;
@@ -184,6 +186,7 @@ export class SupervisorService implements OnModuleDestroy {
       task: patch.task ?? cur.task,
       model: patch.model ?? cur.model,
       prefix: patch.prefix ?? cur.prefix,
+      platform: patch.platform ?? cur.platform,
       worktree: patch.worktree ?? cur.worktree,
     });
     this.pushUpdate(id);
@@ -254,7 +257,7 @@ export class SupervisorService implements OnModuleDestroy {
 
     const { branch, baseBranch } = await this.resolveLaunchParams(group, name, prefix, worktree);
     const session = this.registry.createSession({
-      groupId: chat.groupId, name, task, worktreePath: "", branch, worktree, baseBranch, model, prefix,
+      groupId: chat.groupId, name, task, worktreePath: "", branch, worktree, baseBranch, model, prefix, platform: draft.platform,
     });
     try {
       return await this.launch(session, group, { fork: chatFile });

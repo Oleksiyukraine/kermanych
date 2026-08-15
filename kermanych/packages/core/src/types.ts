@@ -1,4 +1,5 @@
 import type { BranchPrefix } from "./worktree-names";
+import type { Platform } from "./platform";
 
 export type SessionStatus =
   | "backlog" | "queued" | "thinking" | "tool" | "waiting_input" | "done" | "error" | "stopped" | "merged" | "conflict";
@@ -18,7 +19,7 @@ export type Session = {
   id: string; groupId: string; name: string; task: string;
   worktreePath: string; branch: string;
   worktree: boolean; baseBranch?: string;
-  model?: string; prefix?: BranchPrefix;
+  model?: string; prefix?: BranchPrefix; platform?: Platform;
   kind: "agent" | "discussion" | "task" | "review" | "chat";
   parentSessionId?: string;
   ompSessionId?: string; ompSessionFile?: string;
@@ -31,7 +32,7 @@ export type Session = {
 // The editable launch config the New-task launcher collects; startTask/updateTask patch
 // these onto a backlog row. All fields optional — it is a partial patch.
 export type TaskDraft = {
-  name?: string | undefined; task?: string | undefined; model?: string | undefined; prefix?: BranchPrefix | undefined; worktree?: boolean | undefined;
+  name?: string | undefined; task?: string | undefined; model?: string | undefined; prefix?: BranchPrefix | undefined; platform?: Platform | undefined; worktree?: boolean | undefined;
 };
 
 export type ImageInput = { data: string; mimeType: string };

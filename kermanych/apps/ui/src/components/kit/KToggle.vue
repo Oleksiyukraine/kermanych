@@ -17,7 +17,7 @@
 
 <script setup lang="ts">
 // Segmented control (OMP/zsh style). Active segment carries the single accent.
-defineProps<{ options: string[]; modelValue?: string }>();
+defineProps<{ options: string[]; modelValue?: string | undefined }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 </script>
 

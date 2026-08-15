@@ -126,4 +126,21 @@ describe("backlog tasks", () => {
     expect(agent.status).toBe("queued");
     expect(agent.worktree).toBe(false);
   });
+
+  it("persists platform on a backlog task and carries an override through start", async () => {
+    const { sup, registry } = make();
+    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const t = await sup.createSession(g.id, "planned", "do later", undefined, undefined, true, "feature", true, "backend");
+    expect(registry.listSessions(g.id).find((s) => s.id === t.id)!.platform).toBe("backend");
+    const running = await sup.startTask(t.id, { platform: "web" });
+    expect(running.platform).toBe("web");
+  });
+
+  it("updateTask changes the platform in place", async () => {
+    const { sup, registry } = make();
+    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const t = await sup.createSession(g.id, "planned", "do later", undefined, undefined, true, "feature", true, "backend");
+    await sup.updateTask(t.id, { platform: "mobile" });
+    expect(registry.listSessions(g.id).find((s) => s.id === t.id)!.platform).toBe("mobile");
+  });
 });

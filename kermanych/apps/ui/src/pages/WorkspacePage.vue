@@ -45,6 +45,7 @@
               <KTag v-else-if="row.kind === 'task'">задача</KTag>
               <KTag v-else-if="row.kind === 'review'">review</KTag>
               <KTag v-else-if="row.kind === 'chat'">чат</KTag>
+              <KTag v-if="row.platform">{{ row.platform }}</KTag>
             </span>
           </template>
           <template #cell-branch="{ row }">
@@ -254,6 +255,14 @@
             @update:modelValue="(v) => (draftPrefix = v as BranchPrefix)"
           />
         </label>
+        <label class="ws__field">
+          <span class="ws__field-label">Платформа</span>
+          <KToggle
+            :options="platformOptions"
+            :modelValue="draftPlatform"
+            @update:modelValue="(v) => (draftPlatform = v as Platform)"
+          />
+        </label>
         <div class="ws__field">
           <KCheckbox v-model="draftWorktree" label="Ізолювати у worktree" />
           <p v-if="!draftWorktree" class="ws__hint mono">
@@ -394,7 +403,7 @@ import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KToggle from 'components/kit/KToggle.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
-import type { BranchPrefix } from '@kermanych/core';
+import type { BranchPrefix, Platform } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useNow } from '../composables/useNow';
 import { relativeTime } from '../lib/time';
@@ -581,6 +590,8 @@ const draftTask = ref('');
 const draftModel = ref('');
 const prefixOptions: BranchPrefix[] = ['feature', 'fix', 'refactoring', 'chore'];
 const draftPrefix = ref<BranchPrefix>('feature');
+const platformOptions: Platform[] = ['backend', 'web', 'mobile'];
+const draftPlatform = ref<Platform | undefined>(undefined);
 const draftWorktree = ref(true);
 const draftAsTask = ref(false);
 const editingTaskId = ref<string | null>(null);
@@ -628,6 +639,7 @@ function openLauncher(task?: Session, asTask = false): void {
   draftTask.value = task?.task ?? '';
   draftModel.value = task?.model ?? '';
   draftPrefix.value = task?.prefix ?? 'feature';
+  draftPlatform.value = task?.platform;
   draftWorktree.value = task?.worktree ?? true;
   draftAsTask.value = asTask;
   launcherError.value = null;
@@ -654,6 +666,7 @@ function openTaskFromText(text: string): void {
   draftTask.value = text;
   draftModel.value = '';
   draftPrefix.value = 'feature';
+  draftPlatform.value = undefined;
   draftWorktree.value = true;
   draftAsTask.value = true;
   launcherError.value = null;
@@ -677,6 +690,7 @@ function openChatPromote(chat: Session, asTask: boolean): void {
   draftTask.value = asTask ? seed : '';
   draftModel.value = chat.model ?? '';
   draftPrefix.value = 'feature';
+  draftPlatform.value = undefined;
   draftWorktree.value = true;
   draftAsTask.value = asTask;
   launcherError.value = null;
@@ -695,6 +709,7 @@ async function submitLauncher(): Promise<void> {
     task: draftTask.value.trim(),
     model,
     prefix: draftPrefix.value,
+    platform: draftPlatform.value,
     worktree: draftWorktree.value,
   };
   const asTask = draftAsTask.value;
@@ -711,7 +726,7 @@ async function submitLauncher(): Promise<void> {
         : await store.startTask(editingTaskId.value, { ...draft, images });
     } else {
       session = await store.createSession(
-        groupId, draft.name, draft.task, model, images, draft.worktree, draft.prefix, asTask,
+        groupId, draft.name, draft.task, model, images, draft.worktree, draft.prefix, asTask, draft.platform,
       );
     }
     launcherOpen.value = false;
