@@ -7,7 +7,7 @@ export type SessionStatus =
 export type TodoTask = { id: string; content: string; status: "pending" | "in_progress" | "completed" | string };
 export type TodoPhase = { id: string; name: string; tasks: TodoTask[] };
 
-export type Group = { id: string; name: string; projectDir: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; createdAt: string };
+export type Group = { id: string; name: string; projectDir: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; createdAt: string };
 
 export type EnvEntry = { key: string; value: string };
 export type EnvFileView = { entries: EnvEntry[]; ignored: boolean };

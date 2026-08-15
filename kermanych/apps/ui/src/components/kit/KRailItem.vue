@@ -1,10 +1,11 @@
 <template>
   <button
     class="k-rail"
-    :class="{ 'k-rail--active': active }"
+    :class="{ 'k-rail--active': active, 'k-rail--colored': !!group.color }"
     type="button"
     :title="group.name"
     :aria-pressed="active"
+    :style="group.color ? { '--rail-color': group.color } : undefined"
   >
     <span class="k-rail__initials mono">{{ initials }}</span>
     <span v-if="count > 0" class="k-rail__count mono">{{ count }}</span>
@@ -58,21 +59,26 @@ const initials = computed(() => {
   }
 }
 
-// active — surface2 fill, primary text, 2px accent strip flush to the left edge.
+// left strip — project color when set (always shown), else the accent when active.
 .k-rail--active {
   background: var(--k-surface2);
   border-color: var(--k-line-strong);
   color: var(--k-text);
+}
 
-  &::before {
-    content: '';
-    position: absolute;
-    left: -1px;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    background: var(--k-accent);
-  }
+.k-rail--active::before,
+.k-rail--colored::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--k-accent);
+}
+
+.k-rail--colored::before {
+  background: var(--rail-color);
 }
 
 .k-rail__initials {

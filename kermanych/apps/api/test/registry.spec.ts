@@ -90,6 +90,26 @@ test("updateGroup renames the group and round-trips", () => {
   expect(r.listGroups().find((x) => x.id === g.id)!.carryFiles).toEqual([".env"]);
 });
 
+test("group color defaults unset, round-trips, and clears via updateGroup", () => {
+  const r = new RegistryService(":memory:");
+  const g = r.createGroup({ name: "app", projectDir: "/tmp/app" });
+  expect(g.color).toBeUndefined();
+  expect(r.listGroups()[0].color).toBeUndefined();
+
+  const u = r.updateGroup(g.id, { color: "#ff563c" });
+  expect(u.color).toBe("#ff563c");
+  expect(r.listGroups().find((x) => x.id === g.id)!.color).toBe("#ff563c");
+
+  // A name-only patch leaves the color intact.
+  r.updateGroup(g.id, { name: "renamed" });
+  expect(r.listGroups().find((x) => x.id === g.id)!.color).toBe("#ff563c");
+
+  // An empty color clears it back to unset (both the echo and the re-read).
+  const cleared = r.updateGroup(g.id, { color: "" });
+  expect(cleared.color).toBeUndefined();
+  expect(r.listGroups().find((x) => x.id === g.id)!.color).toBeUndefined();
+});
+
 test("backlog task persists launch config (model, prefix, kind, status) round-trip", () => {
   const r = new RegistryService(":memory:");
   const g = r.createGroup({ name: "app", projectDir: "/tmp/app" });

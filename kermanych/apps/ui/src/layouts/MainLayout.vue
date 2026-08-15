@@ -95,6 +95,7 @@
           label="Назва проєкту"
           placeholder="my-project"
         />
+        <KColorPicker v-model="groupColorEdit" label="Колір проєкту" />
         <KField
           :model-value="selectedGroup?.projectDir ?? ''"
           label="Директорія проєкту"
@@ -152,6 +153,7 @@ import KBtn from 'components/kit/KBtn.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import KToast from 'components/kit/KToast.vue';
 import KEnvEditor from 'components/kit/KEnvEditor.vue';
+import KColorPicker from 'components/kit/KColorPicker.vue';
 
 // The Kermanych app shell (design-system section 07): project rail, brand
 // header, page container, and the fleet status bar. Live groups/sessions come
@@ -228,6 +230,7 @@ async function submitGroup(): Promise<void> {
 const editOpen = ref(false);
 const editError = ref<string | null>(null);
 const groupNameEdit = ref('');
+const groupColorEdit = ref('');
 
 const envOpen = ref(false);
 const envError = ref<string | null>(null);
@@ -242,6 +245,7 @@ function openEditProject(): void {
   if (!g) return;
   editError.value = null;
   groupNameEdit.value = g.name;
+  groupColorEdit.value = g.color ?? '';
   editOpen.value = true;
 }
 
@@ -255,7 +259,7 @@ async function saveProject(): Promise<void> {
     return;
   }
   try {
-    await store.updateGroup(g.id, { name });
+    await store.updateGroup(g.id, { name, color: groupColorEdit.value });
     editOpen.value = false;
   } catch (e) {
     editError.value = e instanceof Error ? e.message : String(e);
