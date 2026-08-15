@@ -90,7 +90,7 @@ export class SupervisorService implements OnModuleDestroy {
     this.registry.removeGroup(id);
     this.events.next({ type: "group_removed", groupId: id });
   }
-  async updateGroup(id: string, patch: { name?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[] }): Promise<Group> {
+  async updateGroup(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[] }): Promise<Group> {
     if (patch.name !== undefined) {
       const name = patch.name.trim();
       if (!name) throw new Error("project name cannot be empty");
