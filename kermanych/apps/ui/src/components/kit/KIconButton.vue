@@ -1,0 +1,67 @@
+<template>
+  <button
+    type="button"
+    class="k-icon-btn"
+    :class="{ 'k-icon-btn--on': active }"
+    :title="title"
+  >
+    <slot />
+  </button>
+</template>
+
+<script setup lang="ts">
+// Dense, glyph-only action control for table rows — e.g. the agents board's
+// per-row actions (run / edit / merge / archive …). Square, muted 1px rule,
+// a single glyph in the default slot; `active` lights the accent (e.g. a live
+// preview toggle).
+//
+// Design-system rule: this is the COMPACT 28px control, sized so several pack
+// into one narrow actions column. It is deliberately distinct from
+// KBtn variant="icon" (the 34px standalone icon control). Reach for KIconButton
+// inside data-table rows; reach for KBtn variant="icon" for a lone toolbar icon.
+//
+// `@click`/other listeners fall through to the native <button>, so `@click.stop`
+// on the row's action still suppresses the KTable row-click.
+withDefaults(
+  defineProps<{
+    title?: string;
+    active?: boolean;
+  }>(),
+  { active: false },
+);
+</script>
+
+<style scoped lang="scss">
+.k-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--k-line);
+  background: transparent;
+  color: var(--k-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 0;
+  transition: border-color 0.12s, color 0.12s;
+
+  &:hover {
+    border-color: var(--k-text);
+    color: var(--k-text);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 1px;
+  }
+}
+
+// active — accent frame + glyph (e.g. a running preview toggle).
+.k-icon-btn--on {
+  border-color: var(--k-accent);
+  color: var(--k-accent);
+}
+</style>
