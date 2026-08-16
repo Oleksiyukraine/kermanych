@@ -7,9 +7,9 @@ third-party dependencies. PNG and ICO are written by hand (zlib + struct); the
 macOS .icns is packed by `iconutil` from a generated .iconset.
 
 Palette is fixed by the design: field #12110f, chevron #ff563c, cursor #f3f2f2.
-Rounding: every raster target gets the iOS-style squircle — a continuous-
-curvature (superellipse) corner at the 22.37% radius with transparent corners
-baked in. The source <rect> stays square; the mask lives only here.
+Rounding: every raster target gets a generous iOS-style squircle — a smooth
+continuous-curvature (superellipse) corner (see SQUIRCLE_CORNER) with
+transparent corners baked in. The source <rect> stays square; mask lives here.
 
 Run:  python3 scripts/gen-icons.py
 """
@@ -32,8 +32,8 @@ PUB_ICONS = PUB / "icons"
 ELECTRON_ICONS = UI / "src-electron" / "icons"
 
 CANVAS = 1024.0            # source viewBox size
-SQUIRCLE_CORNER = 0.2237   # corner radius ratio — Apple's "22.37%" icon grid
-SQUIRCLE_N = 5.0           # superellipse exponent → iOS continuous-curvature corners
+SQUIRCLE_CORNER = 0.34     # corner radius ratio — rounder than Apple's 22.37% grid, by design
+SQUIRCLE_N = 3.5           # superellipse exponent → smooth iOS-style continuous-curvature corners
 
 
 # ── SVG source parsing ─────────────────────────────────────────────────────

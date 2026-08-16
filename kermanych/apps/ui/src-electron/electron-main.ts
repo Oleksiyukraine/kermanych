@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, nativeImage } from 'electron';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -82,6 +82,17 @@ ipcMain.on('kermanych:focus', () => {
 
 void app.whenReady().then(async () => {
   try {
+    if (process.platform === 'darwin' && process.env.DEV) {
+      // Dev launches the stock Electron.app from node_modules, whose Dock icon is
+      // Electron's default atom. Our bundle icon (src-electron/icons/icon.icns) only
+      // applies to packaged builds, and BrowserWindow.icon is ignored on macOS — so
+      // set the Dock icon explicitly in dev, resolving the PNG from the source tree
+      // (Quasar does not copy icons/ next to the compiled main).
+      const devIcon = nativeImage.createFromPath(
+        path.resolve(currentDir, '../../src-electron/icons/icon.png'),
+      );
+      if (!devIcon.isEmpty()) app.dock?.setIcon(devIcon);
+    }
     const apiBase = await startBackend();
     await createWindow(apiBase);
   } catch (err) {
