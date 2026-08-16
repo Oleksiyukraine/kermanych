@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" shape-rendering="geometricPrecision">
   <!-- Kermanych app mark "Промпт" (variant 05): chevron prompt ">" + input cursor. -->
   <!-- Fixed palette — field #12110f, chevron #ff563c, cursor #f3f2f2. No other colours. -->
-  <!-- Square by design; the macOS 22.37% squircle is applied only when packing icon.icns. -->
+  <!-- Square master; the iOS 22.37% squircle mask is baked into every raster by scripts/gen-icons.py. -->
   <rect width="1024" height="1024" fill="#12110f"/>
   <path d="M244 214 L344 214 L642 512 L344 810 L244 810 L244 730 L462 512 L244 294 Z" fill="#ff563c"/>
   <rect x="636" y="726" width="300" height="84" fill="#f3f2f2"/>

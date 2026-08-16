@@ -7,9 +7,9 @@ third-party dependencies. PNG and ICO are written by hand (zlib + struct); the
 macOS .icns is packed by `iconutil` from a generated .iconset.
 
 Palette is fixed by the design: field #12110f, chevron #ff563c, cursor #f3f2f2.
-Rounding: only the macOS .icns gets the 22.37% squircle corner (matching the
-design's dock mockup); every other target stays square — exactly like the
-source <rect> — because browsers and Windows do not mask icon corners.
+Rounding: every raster target gets the iOS-style squircle — a continuous-
+curvature (superellipse) corner at the 22.37% radius with transparent corners
+baked in. The source <rect> stays square; the mask lives only here.
 
 Run:  python3 scripts/gen-icons.py
 """
@@ -31,8 +31,9 @@ PUB = UI / "public"
 PUB_ICONS = PUB / "icons"
 ELECTRON_ICONS = UI / "src-electron" / "icons"
 
-CANVAS = 1024.0        # source viewBox size
-MAC_CORNER = 0.2237    # macOS squircle corner ratio (the design's "22.37%")
+CANVAS = 1024.0            # source viewBox size
+SQUIRCLE_CORNER = 0.2237   # corner radius ratio — Apple's "22.37%" icon grid
+SQUIRCLE_N = 5.0           # superellipse exponent → iOS continuous-curvature corners
 
 
 # ── SVG source parsing ─────────────────────────────────────────────────────
@@ -99,8 +100,15 @@ def parse_svg(path: Path) -> Shapes:
 
 
 # ── geometry ────────────────────────────────────────────────────────────────
-def rounded_rect(size: float, r: float, seg: int = 24) -> list[tuple[float, float]]:
+def squircle(size: float, r: float, seg: int = 64) -> list[tuple[float, float]]:
+    """Rounded rect with iOS continuous-curvature (superellipse) corners.
+
+    Straight edges, but each corner follows |x/r|^n + |y/r|^n = 1 rather than a
+    circular arc (n == 2). SQUIRCLE_N > 2 spreads the curvature the way Apple's
+    icon grid does, so corners read as an iOS squircle, not a rounded rectangle.
+    """
     r = min(r, size / 2)
+    p = 2.0 / SQUIRCLE_N
     pts: list[tuple[float, float]] = []
     for cx, cy, a0, a1 in (
         (r, r, 180, 270),
@@ -110,7 +118,10 @@ def rounded_rect(size: float, r: float, seg: int = 24) -> list[tuple[float, floa
     ):
         for s in range(seg + 1):
             a = math.radians(a0 + (a1 - a0) * s / seg)
-            pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+            c, si = math.cos(a), math.sin(a)
+            x = cx + r * math.copysign(abs(c) ** p, c)
+            y = cy + r * math.copysign(abs(si) ** p, si)
+            pts.append((x, y))
     return pts
 
 
@@ -160,7 +171,7 @@ def fill_polygon(cov, W, H, pts, subY):
                     cov[base + ib] += (b - ib) * inv
 
 
-def render(shapes: Shapes, size: int, squircle: bool) -> bytearray:
+def render(shapes: Shapes, size: int) -> bytearray:
     W = H = size
     out = bytearray(W * H * 4)  # transparent RGBA
     subY = 16 if size <= 32 else (8 if size <= 64 else 4)
@@ -185,10 +196,7 @@ def render(shapes: Shapes, size: int, squircle: bool) -> bytearray:
                 out[o + c] = int((sc * a + out[o + c] * da * (1 - a)) / oa + 0.5)
             out[o + 3] = int(oa * 255 + 0.5)
 
-    if squircle:
-        layer(rounded_rect(size, MAC_CORNER * size), shapes.bg)
-    else:
-        out[:] = bytes((*shapes.bg, 255)) * (W * H)  # full square field
+    layer(squircle(size, SQUIRCLE_CORNER * size), shapes.bg)
     layer(scaled(shapes.chevron, size), shapes.chevron_fill)
     layer(scaled(shapes.cursor, size), shapes.cursor_fill)
     return out
@@ -223,11 +231,10 @@ def encode_ico(entries: list[tuple[int, bytes]]) -> bytes:
 
 
 # ── driver ──────────────────────────────────────────────────────────────────
-def png_for(shapes, size, squircle, cache):
-    key = (size, squircle)
-    if key not in cache:
-        cache[key] = encode_png(render(shapes, size, squircle), size, size)
-    return cache[key]
+def png_for(shapes, size, cache):
+    if size not in cache:
+        cache[size] = encode_png(render(shapes, size), size, size)
+    return cache[size]
 
 
 def build_icns(shapes, out: Path, cache) -> None:
@@ -242,7 +249,7 @@ def build_icns(shapes, out: Path, cache) -> None:
         iconset = Path(td) / "icon.iconset"
         iconset.mkdir()
         for name, size in spec.items():
-            (iconset / name).write_bytes(png_for(shapes, size, True, cache))
+            (iconset / name).write_bytes(png_for(shapes, size, cache))
         subprocess.run(
             ["iconutil", "-c", "icns", str(iconset), "-o", str(out)], check=True
         )
@@ -258,16 +265,16 @@ def main() -> None:
         path.write_bytes(data)
         print(f"  {path.relative_to(ROOT)}  ({len(data):,} B)")
 
-    print("favicons (square):")
+    print("favicons (iOS squircle):")
     for s in (16, 32, 96, 128):
-        write(PUB_ICONS / f"favicon-{s}x{s}.png", png_for(shapes, s, False, cache))
+        write(PUB_ICONS / f"favicon-{s}x{s}.png", png_for(shapes, s, cache))
     write(PUB / "favicon.ico",
-          encode_ico([(s, png_for(shapes, s, False, cache)) for s in (16, 32, 48)]))
+          encode_ico([(s, png_for(shapes, s, cache)) for s in (16, 32, 48)]))
 
-    print("electron (square .png/.ico, squircle .icns):")
-    write(ELECTRON_ICONS / "icon.png", png_for(shapes, 1024, False, cache))
+    print("electron (iOS squircle .png/.ico/.icns):")
+    write(ELECTRON_ICONS / "icon.png", png_for(shapes, 1024, cache))
     write(ELECTRON_ICONS / "icon.ico",
-          encode_ico([(s, png_for(shapes, s, False, cache)) for s in (16, 32, 48, 256)]))
+          encode_ico([(s, png_for(shapes, s, cache)) for s in (16, 32, 48, 256)]))
 
     if subprocess.run(["which", "iconutil"], capture_output=True).returncode == 0:
         build_icns(shapes, ELECTRON_ICONS / "icon.icns", cache)
