@@ -146,14 +146,27 @@
                   title="Відкласти"
                   @click.stop="onArchive(row)"
                 >⤓</button>
+                <button
+                  type="button"
+                  class="ws__card-icon"
+                  title="Видалити агента"
+                  @click.stop="onDeleteAgent(row)"
+                >✕</button>
               </template>
-              <button
-                v-else
-                type="button"
-                class="ws__card-icon"
-                title="Повернути в активні"
-                @click.stop="onUnarchive(row)"
-              >⤒</button>
+              <template v-else>
+                <button
+                  type="button"
+                  class="ws__card-icon"
+                  title="Повернути в активні"
+                  @click.stop="onUnarchive(row)"
+                >⤒</button>
+                <button
+                  type="button"
+                  class="ws__card-icon"
+                  title="Видалити агента"
+                  @click.stop="onDeleteAgent(row)"
+                >✕</button>
+              </template>
             </div>
           </template>
         </KTable>
@@ -847,10 +860,20 @@ async function onRestart(): Promise<void> {
 
 async function onDelete(): Promise<void> {
   const s = selectedSession.value;
-  if (!s) return;
+  if (s) await onDeleteAgent(s);
+}
+
+// Physical delete (archive teardown + removal): stops the omp process, removes the
+// worktree/branch and the registry row, cascading to child branches. Works on any
+// status, unlike archive which refuses active agents.
+async function onDeleteAgent(s: Session): Promise<void> {
   if (!window.confirm(`Видалити агента «${s.name}»?`)) return;
-  await store.deleteSession(s.id);
-  if (store.selectedSessionId === s.id) store.selectSession(undefined);
+  try {
+    await store.deleteSession(s.id);
+    if (store.selectedSessionId === s.id) store.selectSession(undefined);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
 }
 
 function onAnswer(res: RpcExtensionUIResponse): void {
