@@ -264,7 +264,13 @@
           />
         </label>
         <div class="ws__field">
-          <KCheckbox v-model="draftWorktree" label="Ізолювати у worktree" />
+          <div class="ws__worktree-row">
+            <KCheckbox v-model="draftWorktree" label="Ізолювати у worktree" />
+            <div v-if="draftWorktree" class="ws__worktree-branch">
+              <span class="ws__worktree-branch-label mono">від гілки</span>
+              <KSelect v-model="draftBaseBranch" :options="launchBranches" />
+            </div>
+          </div>
           <p v-if="!draftWorktree" class="ws__hint mono">
             In-place: агент працюватиме в теці проєкту на гілці
             <code class="mono">{{ branchPreview }}</code>. Дерево має бути чистим;
@@ -403,6 +409,7 @@ import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KToggle from 'components/kit/KToggle.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
+import KSelect from 'components/kit/KSelect.vue';
 import type { BranchPrefix, Platform } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useNow } from '../composables/useNow';
@@ -594,6 +601,8 @@ const platformOptions: Platform[] = ['backend', 'web', 'mobile'];
 const draftPlatform = ref<Platform | undefined>(undefined);
 const draftWorktree = ref(true);
 const draftAsTask = ref(false);
+const draftBaseBranch = ref('');
+const launchBranches = ref<string[]>([]);
 const editingTaskId = ref<string | null>(null);
 const promotingChatId = ref<string | null>(null);
 const branchPreview = computed(() => {
@@ -632,6 +641,23 @@ const launcherTitle = computed(() =>
   promotingChatId.value ? 'Створити агента з чату' : editingTaskId.value ? 'Задача' : 'Нова задача',
 );
 
+// Load the project's branches into the fork-base picker. `preferred` is a base already
+// chosen on the task being edited; otherwise it falls back to the project default, then
+// (after the fetch) to the repo's current HEAD, so the picker always shows a sane base.
+async function loadLaunchBranches(preferred: string | undefined): Promise<void> {
+  const groupId = store.selectedGroupId;
+  launchBranches.value = [];
+  draftBaseBranch.value = preferred ?? selectedGroup.value?.defaultBranch ?? '';
+  if (!groupId) return;
+  try {
+    const info = await store.listBranches(groupId);
+    launchBranches.value = info.branches;
+    if (!draftBaseBranch.value) draftBaseBranch.value = info.default ?? info.current ?? '';
+  } catch {
+    // Non-fatal: the picker degrades to the preferred/default value only.
+  }
+}
+
 function openLauncher(task?: Session, asTask = false): void {
   editingTaskId.value = task?.id ?? null;
   promotingChatId.value = null;
@@ -641,6 +667,7 @@ function openLauncher(task?: Session, asTask = false): void {
   draftPrefix.value = task?.prefix ?? 'feature';
   draftPlatform.value = task?.platform;
   draftWorktree.value = task?.worktree ?? true;
+  void loadLaunchBranches(task?.baseBranch);
   draftAsTask.value = asTask;
   launcherError.value = null;
   clearLaunchImages();
@@ -668,6 +695,7 @@ function openTaskFromText(text: string): void {
   draftPrefix.value = 'feature';
   draftPlatform.value = undefined;
   draftWorktree.value = true;
+  void loadLaunchBranches(undefined);
   draftAsTask.value = true;
   launcherError.value = null;
   clearLaunchImages();
@@ -692,6 +720,7 @@ function openChatPromote(chat: Session, asTask: boolean): void {
   draftPrefix.value = 'feature';
   draftPlatform.value = undefined;
   draftWorktree.value = true;
+  void loadLaunchBranches(undefined);
   draftAsTask.value = asTask;
   launcherError.value = null;
   clearLaunchImages();
@@ -711,6 +740,7 @@ async function submitLauncher(): Promise<void> {
     prefix: draftPrefix.value,
     platform: draftPlatform.value,
     worktree: draftWorktree.value,
+    baseBranch: draftWorktree.value ? (draftBaseBranch.value || undefined) : undefined,
   };
   const asTask = draftAsTask.value;
   launcherError.value = null;
@@ -726,7 +756,7 @@ async function submitLauncher(): Promise<void> {
         : await store.startTask(editingTaskId.value, { ...draft, images });
     } else {
       session = await store.createSession(
-        groupId, draft.name, draft.task, model, images, draft.worktree, draft.prefix, asTask, draft.platform,
+        groupId, draft.name, draft.task, model, images, draft.worktree, draft.prefix, asTask, draft.platform, draft.baseBranch,
       );
     }
     launcherOpen.value = false;
@@ -1350,6 +1380,30 @@ async function submitPreviewConfig(): Promise<void> {
   flex-direction: column;
   gap: 6px;
   font-family: var(--k-font-ui);
+}
+
+.ws__worktree-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ws__worktree-branch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.ws__worktree-branch-label {
+  font-size: 11px;
+  color: var(--k-muted);
+  white-space: nowrap;
+}
+
+.ws__worktree-branch :deep(.k-select__input) {
+  min-width: 150px;
 }
 
 .ws__field-label {

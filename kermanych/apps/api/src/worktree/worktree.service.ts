@@ -19,9 +19,20 @@ export class WorktreeService {
     return (await git(dir, ["rev-parse", "--is-inside-work-tree"])).ok;
   }
 
-  async addWorktree(repoDir: string, wtDir: string, branch: string): Promise<void> {
-    const r = await git(repoDir, ["worktree", "add", wtDir, "-b", branch]);
+  // `base` is the ref the new branch forks from; omit it to fork from the repo's current HEAD.
+  async addWorktree(repoDir: string, wtDir: string, branch: string, base?: string): Promise<void> {
+    const args = ["worktree", "add", wtDir, "-b", branch];
+    if (base) args.push(base);
+    const r = await git(repoDir, args);
     if (!r.ok) throw new Error(`git worktree add failed: ${r.out}`);
+  }
+
+  // Local branch names (refs/heads), for choosing a worktree's fork base. Empty on a
+  // non-repo or error so callers can degrade to "no branches to pick from".
+  async listBranches(repoDir: string): Promise<string[]> {
+    const r = await git(repoDir, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]);
+    if (!r.ok) return [];
+    return r.out.split("\n").map((s) => s.trim()).filter(Boolean);
   }
 
   async removeWorktree(repoDir: string, wtDir: string): Promise<void> {

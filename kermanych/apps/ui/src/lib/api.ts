@@ -90,8 +90,9 @@ export const api = {
     prefix: BranchPrefix = 'feature',
     asTask = false,
     platform?: Platform,
+    baseBranch?: string,
   ): Promise<Session> =>
-    post<Session>('/sessions', { groupId, name, task, model, images, worktree, prefix, platform, asTask }),
+    post<Session>('/sessions', { groupId, name, task, model, images, worktree, prefix, platform, asTask, baseBranch }),
 
   createChat: (groupId: string): Promise<Session> =>
     post<Session>('/sessions/chat', { groupId }),
@@ -119,7 +120,7 @@ export const api = {
 
   updateGroup: async (
     id: string,
-    patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[] },
+    patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string },
   ): Promise<Group> => {
     const r = await fetch(`${BASE}/groups/${id}`, {
       method: 'PATCH',
@@ -129,6 +130,9 @@ export const api = {
     if (!r.ok) throw await toError(r);
     return (await r.json()) as Group;
   },
+
+  listBranches: (id: string): Promise<{ branches: string[]; current: string; default: string | null }> =>
+    get<{ branches: string[]; current: string; default: string | null }>(`/groups/${id}/branches`),
 
   getEnv: (id: string, file?: string): Promise<EnvFileView> =>
     get<EnvFileView>(`/groups/${id}/env${file ? `?file=${encodeURIComponent(file)}` : ''}`),

@@ -143,8 +143,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     prefix: BranchPrefix = 'feature',
     asTask = false,
     platform?: Platform,
+    baseBranch?: string,
   ) {
-    return api.createSession(groupId, name, task, model, images, worktree, prefix, asTask, platform);
+    return api.createSession(groupId, name, task, model, images, worktree, prefix, asTask, platform, baseBranch);
   }
 
   function createChat(groupId: string) {
@@ -218,8 +219,12 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     previews.value = next;
   }
 
-  function updateGroup(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[] }) {
+  function updateGroup(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string }) {
     return api.updateGroup(id, patch);
+  }
+
+  function listBranches(id: string) {
+    return api.listBranches(id);
   }
 
   function getEnv(id: string, file?: string) {
@@ -297,6 +302,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     startPreview,
     stopPreview,
     updateGroup,
+    listBranches,
     getEnv,
     saveEnv,
     finishInfo,
