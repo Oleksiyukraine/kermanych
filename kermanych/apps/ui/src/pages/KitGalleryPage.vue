@@ -35,6 +35,25 @@
       </div>
     </section>
 
+    <!-- 04 — action icon buttons (dense, for table rows) -->
+    <section class="kit__section">
+      <div class="kit__label">04 · Кнопки-дії (рядок таблиці)</div>
+      <div class="kit__row">
+        <KIconButton title="Запустити">▶</KIconButton>
+        <KIconButton title="Редагувати">✎</KIconButton>
+        <KIconButton title="Форк у worktree">⑂</KIconButton>
+        <KIconButton title="Влити висновок">⤴</KIconButton>
+        <KIconButton title="Ревізор">⚖</KIconButton>
+        <KIconButton title="Завершити">✓</KIconButton>
+        <KIconButton title="Відкласти">⤓</KIconButton>
+        <KIconButton title="Видалити">✕</KIconButton>
+        <KIconButton active title="Превʼю активне">◼</KIconButton>
+      </div>
+      <div class="kit__caption mono">
+        28×28 · щільний контроль для дій у рядку таблиці (компактніший за KBtn variant="icon" 34×34). active = акцент.
+      </div>
+    </section>
+
     <!-- 04 — tags & metadata -->
     <section class="kit__section">
       <div class="kit__label">04 · Теги й метадані</div>
@@ -186,8 +205,15 @@
         <template #cell-activity="{ row }">
           <span class="mono">{{ row.currentTool ?? '—' }}</span>
         </template>
+        <template #cell-actions="{ row }">
+          <div class="kit__cell-actions">
+            <KIconButton title="Превʼю" @click.stop="onTableAction(row.id + ':preview')">▶</KIconButton>
+            <KIconButton title="Завершити" @click.stop="onTableAction(row.id + ':finish')">✓</KIconButton>
+            <KIconButton title="Відкласти" @click.stop="onTableAction(row.id + ':archive')">⤓</KIconButton>
+          </div>
+        </template>
       </KTable>
-      <div class="kit__caption mono">вибрано: {{ tableSelected }}</div>
+      <div class="kit__caption mono">вибрано: {{ tableSelected }} · дія: {{ lastTableAction || '—' }}</div>
     </section>
   </main>
 </template>
@@ -198,6 +224,7 @@ import type {
   SessionStatus, Session, Group, TranscriptEntry, RpcExtensionUIResponse,
 } from '@kermanych/core';
 import KBtn from 'components/kit/KBtn.vue';
+import KIconButton from 'components/kit/KIconButton.vue';
 import KTag from 'components/kit/KTag.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KField from 'components/kit/KField.vue';
@@ -248,6 +275,7 @@ const agentColumns: KTableColumn[] = [
   { key: 'branch', label: 'Гілка', width: '150px' },
   { key: 'ctx', label: 'Контекст', align: 'right', width: '96px', mono: true },
   { key: 'activity', label: 'Активність' },
+  { key: 'actions', label: '', align: 'right', width: '96px' },
 ];
 const tableSessions: Session[] = [
   mkSession({ id: 't1', name: 'api-gateway', status: 'thinking', branch: 'main', currentTool: 'Edit', contextPercent: 42 }),
@@ -256,6 +284,8 @@ const tableSessions: Session[] = [
   mkSession({ id: 't4', name: 'web-client', status: 'queued', branch: 'feat/ui', contextPercent: 12 }),
 ];
 const tableSelected = ref('t1');
+const lastTableAction = ref('');
+function onTableAction(a: string): void { lastTableAction.value = a; }
 const panelLog: TranscriptEntry[] = [
   { kind: 'tool', id: '1', tool: 'Edit', status: 'ok', summary: 'src/auth/token.service.ts\n+ this.rotateShared(token);' },
   { kind: 'tool', id: '2', tool: 'Bash', status: 'ok', summary: 'npm run test:e2e -- auth\n12 passed, 0 failed (8.4s)' },
@@ -408,6 +438,12 @@ function onRestart() { lastAction.value = 'restart'; }
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.kit__cell-actions {
+  display: inline-flex;
+  gap: 4px;
+  justify-content: flex-end;
 }
 
 // running — accent strip on the row's leading edge (via KTable rowClass).

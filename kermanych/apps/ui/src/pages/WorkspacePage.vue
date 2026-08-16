@@ -64,96 +64,49 @@
           <template #cell-actions="{ row }">
             <div class="ws__cell-actions">
               <template v-if="row.kind === 'task'">
-                <button
-                  type="button"
-                  class="ws__card-icon"
-                  title="Запустити задачу як агента"
-                  @click.stop="openLauncher(row, false)"
-                >▶</button>
-                <button
-                  type="button"
-                  class="ws__card-icon"
-                  title="Редагувати задачу"
-                  @click.stop="openLauncher(row, true)"
-                >✎</button>
-                <button
-                  type="button"
-                  class="ws__card-icon"
-                  title="Видалити задачу"
-                  @click.stop="onDeleteTask(row)"
-                >✕</button>
+                <KIconButton title="Запустити задачу як агента" @click.stop="openLauncher(row, false)">▶</KIconButton>
+                <KIconButton title="Редагувати задачу" @click.stop="openLauncher(row, true)">✎</KIconButton>
+                <KIconButton title="Видалити задачу" @click.stop="onDeleteTask(row)">✕</KIconButton>
               </template>
               <template v-else-if="row.kind === 'chat' && !showArchived">
-                <button
-                  type="button"
-                  class="ws__card-icon"
-                  title="Створити агента з цього чату (форк розмови в ізольований worktree)"
-                  @click.stop="openChatPromote(row, false)"
-                >⑂</button>
-                <button
-                  type="button"
-                  class="ws__card-icon"
-                  title="Зберегти як задачу в беклог"
-                  @click.stop="openChatPromote(row, true)"
-                >⊕</button>
-                <button
-                  type="button"
-                  class="ws__card-icon"
-                  title="Видалити чат"
-                  @click.stop="onDeleteChat(row)"
-                >✕</button>
+                <KIconButton title="Створити агента з цього чату (форк розмови в ізольований worktree)" @click.stop="openChatPromote(row, false)">⑂</KIconButton>
+                <KIconButton title="Зберегти як задачу в беклог" @click.stop="openChatPromote(row, true)">⊕</KIconButton>
+                <KIconButton title="Видалити чат" @click.stop="onDeleteChat(row)">✕</KIconButton>
               </template>
               <template v-else-if="row.kind === 'discussion' || row.kind === 'review'">
-                <button
+                <KIconButton
                   v-if="row.status !== 'merged'"
-                  type="button"
-                  class="ws__card-icon"
                   :title="row.kind === 'review' ? 'Віддати висновок ревізора виконавцю' : 'Влити висновок у батьківського агента'"
                   @click.stop="openMerge(row)"
-                >⤴</button>
-                <button
-                  type="button"
-                  class="ws__card-icon"
+                >⤴</KIconButton>
+                <KIconButton
                   :title="row.kind === 'review' ? 'Викинути ревізію' : 'Викинути гілку'"
                   @click.stop="onDiscardRow(row)"
-                >✕</button>
+                >✕</KIconButton>
               </template>
               <template v-else-if="!showArchived">
-                <button
-                  type="button"
-                  class="ws__card-icon"
-                  :class="{ 'ws__card-icon--on': store.previews[row.id] }"
+                <KIconButton
+                  :active="!!store.previews[row.id]"
                   :title="store.previews[row.id] ? 'Зупинити превʼю' : 'Превʼю гілки в браузері'"
                   @click.stop="togglePreview(row)"
-                >{{ store.previews[row.id] ? '◼' : '▶' }}</button>
-                <button
+                >{{ store.previews[row.id] ? '◼' : '▶' }}</KIconButton>
+                <KIconButton
                   v-if="canReview(row)"
-                  type="button"
-                  class="ws__card-icon"
                   title="Запросити ревізора (незалежний аудит гілки)"
                   @click.stop="onReview(row)"
-                >⚖</button>
-                <button
+                >⚖</KIconButton>
+                <KIconButton
                   v-if="row.status !== 'merged'"
-                  type="button"
-                  class="ws__card-icon"
                   title="Завершити (merge гілки в проєкт)"
                   @click.stop="openFinish(row)"
-                >✓</button>
-                <button
-                  type="button"
-                  class="ws__card-icon"
-                  title="Відкласти"
-                  @click.stop="onArchive(row)"
-                >⤓</button>
+                >✓</KIconButton>
+                <KIconButton title="Відкласти" @click.stop="onArchive(row)">⤓</KIconButton>
               </template>
-              <button
+              <KIconButton
                 v-else
-                type="button"
-                class="ws__card-icon"
                 title="Повернути в активні"
                 @click.stop="onUnarchive(row)"
-              >⤒</button>
+              >⤒</KIconButton>
             </div>
           </template>
         </KTable>
@@ -398,6 +351,7 @@ import KStatusDot from 'components/kit/KStatusDot.vue';
 import KTag from 'components/kit/KTag.vue';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 import KBtn from 'components/kit/KBtn.vue';
+import KIconButton from 'components/kit/KIconButton.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
@@ -1236,32 +1190,6 @@ async function submitPreviewConfig(): Promise<void> {
 // running — accent strip on the row's leading edge (mirrors the card).
 .ws__table :deep(tr.ws__row--running td:first-child) {
   box-shadow: inset 2px 0 0 0 var(--k-accent);
-}
-
-.ws__card-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid var(--k-line);
-  background: transparent;
-  color: var(--k-muted);
-  font-size: 10px;
-  line-height: 1;
-  cursor: pointer;
-  border-radius: 0;
-}
-
-.ws__card-icon:hover {
-  border-color: var(--k-text);
-  color: var(--k-text);
-}
-
-.ws__card-icon--on {
-  border-color: var(--k-accent);
-  color: var(--k-accent);
 }
 
 .ws__hint {
