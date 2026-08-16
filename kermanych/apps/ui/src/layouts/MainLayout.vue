@@ -96,6 +96,12 @@
           placeholder="my-project"
         />
         <KColorPicker v-model="groupColorEdit" label="Колір проєкту" />
+        <KSelect
+          v-model="groupDefaultBranchEdit"
+          label="Гілка за замовчуванням"
+          :options="editBranches"
+          placeholder="— поточна гілка репозиторію —"
+        />
         <KField
           :model-value="selectedGroup?.projectDir ?? ''"
           label="Директорія проєкту"
@@ -154,6 +160,7 @@ import KDirPicker from 'components/kit/KDirPicker.vue';
 import KToast from 'components/kit/KToast.vue';
 import KEnvEditor from 'components/kit/KEnvEditor.vue';
 import KColorPicker from 'components/kit/KColorPicker.vue';
+import KSelect from 'components/kit/KSelect.vue';
 
 // The Kermanych app shell (design-system section 07): project rail, brand
 // header, page container, and the fleet status bar. Live groups/sessions come
@@ -231,6 +238,8 @@ const editOpen = ref(false);
 const editError = ref<string | null>(null);
 const groupNameEdit = ref('');
 const groupColorEdit = ref('');
+const groupDefaultBranchEdit = ref('');
+const editBranches = ref<string[]>([]);
 
 const envOpen = ref(false);
 const envError = ref<string | null>(null);
@@ -240,13 +249,20 @@ const envEditor = ref<{ collect: () => { set: Record<string, string>; remove: st
 
 // Edit-project modal: rename the group. Directory is shown read-only — changing
 // projectDir would orphan every worktree/branch/session bound to the old path.
-function openEditProject(): void {
+async function openEditProject(): Promise<void> {
   const g = selectedGroup.value;
   if (!g) return;
   editError.value = null;
   groupNameEdit.value = g.name;
   groupColorEdit.value = g.color ?? '';
+  groupDefaultBranchEdit.value = g.defaultBranch ?? '';
+  editBranches.value = [];
   editOpen.value = true;
+  try {
+    editBranches.value = (await store.listBranches(g.id)).branches;
+  } catch {
+    // Non-fatal: the picker degrades to just the current default (or empty).
+  }
 }
 
 async function saveProject(): Promise<void> {
@@ -259,7 +275,7 @@ async function saveProject(): Promise<void> {
     return;
   }
   try {
-    await store.updateGroup(g.id, { name, color: groupColorEdit.value });
+    await store.updateGroup(g.id, { name, color: groupColorEdit.value, defaultBranch: groupDefaultBranchEdit.value });
     editOpen.value = false;
   } catch (e) {
     editError.value = e instanceof Error ? e.message : String(e);

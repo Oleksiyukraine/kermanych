@@ -90,7 +90,7 @@ export class SupervisorService implements OnModuleDestroy {
     this.registry.removeGroup(id);
     this.events.next({ type: "group_removed", groupId: id });
   }
-  async updateGroup(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[] }): Promise<Group> {
+  async updateGroup(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string }): Promise<Group> {
     if (patch.name !== undefined) {
       const name = patch.name.trim();
       if (!name) throw new Error("project name cannot be empty");
@@ -99,6 +99,18 @@ export class SupervisorService implements OnModuleDestroy {
     const g = this.registry.updateGroup(id, patch);
     this.events.next({ type: "group_update", group: g });
     return g;
+  }
+
+  // Local branches of a project plus its current HEAD and configured default — feeds the
+  // worktree fork-base picker in the UI.
+  async projectBranches(groupId: string): Promise<{ branches: string[]; current: string; default: string | null }> {
+    const group = this.registry.listGroups().find((g) => g.id === groupId);
+    if (!group) throw new Error("group not found");
+    const [branches, current] = await Promise.all([
+      this.worktree.listBranches(group.projectDir),
+      this.worktree.currentBranch(group.projectDir),
+    ]);
+    return { branches, current, default: group.defaultBranch ?? null };
   }
 
   async createSession(
@@ -111,6 +123,7 @@ export class SupervisorService implements OnModuleDestroy {
     prefix: BranchPrefix = "feature",
     asTask = false,
     platform?: Session["platform"],
+    baseBranch?: string,
   ): Promise<Session> {
     const group = this.registry.listGroups().find((g) => g.id === groupId);
     if (!group) throw new Error("group not found");
@@ -120,14 +133,14 @@ export class SupervisorService implements OnModuleDestroy {
     if (asTask) {
       const session = this.registry.createSession({
         groupId, name, task, worktreePath: "", branch: "",
-        worktree, model, prefix, platform, status: "backlog", kind: "task",
+        worktree, model, prefix, platform, baseBranch, status: "backlog", kind: "task",
       });
       this.pushUpdate(session.id);
       return this.merge(session);
     }
 
-    const { branch, baseBranch } = await this.resolveLaunchParams(group, name, prefix, worktree);
-    const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch, worktree, baseBranch, model, prefix, platform });
+    const { branch, baseBranch: resolvedBase } = await this.resolveLaunchParams(group, name, prefix, worktree, undefined, baseBranch);
+    const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch, worktree, baseBranch: resolvedBase, model, prefix, platform });
     try {
       return await this.launch(session, group, { images });
     } catch (err) {
@@ -159,10 +172,11 @@ export class SupervisorService implements OnModuleDestroy {
         prefix: overrides.prefix ?? cur.prefix,
         platform: overrides.platform ?? cur.platform,
         worktree: overrides.worktree ?? cur.worktree,
+        baseBranch: overrides.baseBranch ?? cur.baseBranch,
       });
     const edited = this.registry.listSessions().find((x) => x.id === id)!;
 
-    const { branch, baseBranch } = await this.resolveLaunchParams(group, edited.name, edited.prefix ?? "feature", edited.worktree, id);
+    const { branch, baseBranch } = await this.resolveLaunchParams(group, edited.name, edited.prefix ?? "feature", edited.worktree, id, edited.baseBranch);
     const session = this.registry.updateSession(id, { status: "queued", kind: "agent", branch, baseBranch, worktreePath: "" });
     try {
       return await this.launch(session, group, { images });
@@ -188,6 +202,7 @@ export class SupervisorService implements OnModuleDestroy {
       prefix: patch.prefix ?? cur.prefix,
       platform: patch.platform ?? cur.platform,
       worktree: patch.worktree ?? cur.worktree,
+      baseBranch: patch.baseBranch ?? cur.baseBranch,
     });
     this.pushUpdate(id);
     return this.merge(saved);
@@ -255,7 +270,7 @@ export class SupervisorService implements OnModuleDestroy {
     const model = draft.model ?? chat.model;
     const task = draft.task?.trim() ?? "";
 
-    const { branch, baseBranch } = await this.resolveLaunchParams(group, name, prefix, worktree);
+    const { branch, baseBranch } = await this.resolveLaunchParams(group, name, prefix, worktree, undefined, draft.baseBranch);
     const session = this.registry.createSession({
       groupId: chat.groupId, name, task, worktreePath: "", branch, worktree, baseBranch, model, prefix, platform: draft.platform,
     });
@@ -277,6 +292,7 @@ export class SupervisorService implements OnModuleDestroy {
     prefix: BranchPrefix,
     worktree: boolean,
     excludeId?: string,
+    requestedBase?: string,
   ): Promise<{ branch: string; baseBranch?: string }> {
     let baseBranch: string | undefined;
     if (!worktree) {
@@ -290,6 +306,9 @@ export class SupervisorService implements OnModuleDestroy {
         throw new Error("an in-place agent is already active in this project — finish or delete it first");
       baseBranch = await this.worktree.currentBranch(group.projectDir);
       if (!baseBranch) throw new Error("project has a detached HEAD — checkout a branch first");
+    } else {
+      // Worktree agents fork from the chosen base: explicit pick > project default > current HEAD.
+      baseBranch = requestedBase ?? group.defaultBranch ?? undefined;
     }
     const existing = new Set(
       this.registry.listSessions(group.id).filter((s) => s.id !== excludeId).map((s) => s.branch).filter(Boolean),
@@ -317,7 +336,7 @@ export class SupervisorService implements OnModuleDestroy {
     try {
       if (worktree) {
         wtDir = worktreeDir(id);
-        await this.worktree.addWorktree(group.projectDir, wtDir, branch);
+        await this.worktree.addWorktree(group.projectDir, wtDir, branch, baseBranch);
         branchCreated = true;
         await copyCarryFiles(group.projectDir, wtDir, group.carryFiles ?? [".env"]);
       } else {

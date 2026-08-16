@@ -7,7 +7,7 @@ export type SessionStatus =
 export type TodoTask = { id: string; content: string; status: "pending" | "in_progress" | "completed" | string };
 export type TodoPhase = { id: string; name: string; tasks: TodoTask[] };
 
-export type Group = { id: string; name: string; projectDir: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; createdAt: string };
+export type Group = { id: string; name: string; projectDir: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; createdAt: string };
 
 export type EnvEntry = { key: string; value: string };
 export type EnvFileView = { entries: EnvEntry[]; ignored: boolean };
@@ -32,7 +32,7 @@ export type Session = {
 // The editable launch config the New-task launcher collects; startTask/updateTask patch
 // these onto a backlog row. All fields optional — it is a partial patch.
 export type TaskDraft = {
-  name?: string | undefined; task?: string | undefined; model?: string | undefined; prefix?: BranchPrefix | undefined; platform?: Platform | undefined; worktree?: boolean | undefined;
+  name?: string | undefined; task?: string | undefined; model?: string | undefined; prefix?: BranchPrefix | undefined; platform?: Platform | undefined; worktree?: boolean | undefined; baseBranch?: string | undefined;
 };
 
 export type ImageInput = { data: string; mimeType: string };

@@ -110,6 +110,29 @@ test("group color defaults unset, round-trips, and clears via updateGroup", () =
   expect(r.listGroups().find((x) => x.id === g.id)!.color).toBeUndefined();
 });
 
+test("group defaultBranch defaults unset, round-trips, and clears via updateGroup", () => {
+  const r = new RegistryService(":memory:");
+  const g = r.createGroup({ name: "app", projectDir: "/tmp/app" });
+  expect(g.defaultBranch).toBeUndefined();
+  expect(r.listGroups()[0].defaultBranch).toBeUndefined();
+
+  const created = r.createGroup({ name: "app2", projectDir: "/tmp/app2", defaultBranch: "main" });
+  expect(r.listGroups().find((x) => x.id === created.id)!.defaultBranch).toBe("main");
+
+  const u = r.updateGroup(g.id, { defaultBranch: "develop" });
+  expect(u.defaultBranch).toBe("develop");
+  expect(r.listGroups().find((x) => x.id === g.id)!.defaultBranch).toBe("develop");
+
+  // A name-only patch leaves the default branch intact.
+  r.updateGroup(g.id, { name: "renamed" });
+  expect(r.listGroups().find((x) => x.id === g.id)!.defaultBranch).toBe("develop");
+
+  // An empty default branch clears it back to unset.
+  const cleared = r.updateGroup(g.id, { defaultBranch: "" });
+  expect(cleared.defaultBranch).toBeUndefined();
+  expect(r.listGroups().find((x) => x.id === g.id)!.defaultBranch).toBeUndefined();
+});
+
 test("backlog task persists launch config (model, prefix, kind, status) round-trip", () => {
   const r = new RegistryService(":memory:");
   const g = r.createGroup({ name: "app", projectDir: "/tmp/app" });

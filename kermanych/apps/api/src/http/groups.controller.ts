@@ -29,10 +29,19 @@ export class GroupsController {
   @Patch(":id")
   async update(
     @Param("id") id: string,
-    @Body() b: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[] },
+    @Body() b: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string },
   ) {
     try {
       return await this.sup.updateGroup(id, b);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  @Get(":id/branches")
+  async branches(@Param("id") id: string) {
+    try {
+      return await this.sup.projectBranches(id);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }

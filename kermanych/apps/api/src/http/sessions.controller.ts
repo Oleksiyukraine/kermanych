@@ -21,10 +21,10 @@ export class SessionsController {
   @Post()
   async create(
     @Body()
-    b: { groupId: string; name: string; task: string; model?: string; images?: ImageInput[]; worktree?: boolean; prefix?: BranchPrefix; platform?: Platform; asTask?: boolean },
+    b: { groupId: string; name: string; task: string; model?: string; images?: ImageInput[]; worktree?: boolean; prefix?: BranchPrefix; platform?: Platform; asTask?: boolean; baseBranch?: string },
   ) {
     try {
-      return await this.sup.createSession(b.groupId, b.name, b.task, b.model, b.images, b.worktree ?? true, b.prefix ?? "feature", b.asTask ?? false, b.platform);
+      return await this.sup.createSession(b.groupId, b.name, b.task, b.model, b.images, b.worktree ?? true, b.prefix ?? "feature", b.asTask ?? false, b.platform, b.baseBranch);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
