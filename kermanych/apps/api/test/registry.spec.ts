@@ -133,6 +133,29 @@ test("group defaultBranch defaults unset, round-trips, and clears via updateGrou
   expect(r.listGroups().find((x) => x.id === g.id)!.defaultBranch).toBeUndefined();
 });
 
+test("group conventions defaults unset, round-trips, and clears via updateGroup", () => {
+  const r = new RegistryService(":memory:");
+  const g = r.createGroup({ name: "app", projectDir: "/tmp/app" });
+  expect(g.conventions).toBeUndefined();
+  expect(r.listGroups()[0].conventions).toBeUndefined();
+
+  const created = r.createGroup({ name: "app2", projectDir: "/tmp/app2", conventions: "feat: rule" });
+  expect(r.listGroups().find((x) => x.id === created.id)!.conventions).toBe("feat: rule");
+
+  const u = r.updateGroup(g.id, { conventions: "PR body: Summary + Testing" });
+  expect(u.conventions).toBe("PR body: Summary + Testing");
+  expect(r.listGroups().find((x) => x.id === g.id)!.conventions).toBe("PR body: Summary + Testing");
+
+  // A name-only patch leaves the conventions intact.
+  r.updateGroup(g.id, { name: "renamed" });
+  expect(r.listGroups().find((x) => x.id === g.id)!.conventions).toBe("PR body: Summary + Testing");
+
+  // An empty conventions string clears it back to unset.
+  const cleared = r.updateGroup(g.id, { conventions: "" });
+  expect(cleared.conventions).toBeUndefined();
+  expect(r.listGroups().find((x) => x.id === g.id)!.conventions).toBeUndefined();
+});
+
 test("backlog task persists launch config (model, prefix, kind, status) round-trip", () => {
   const r = new RegistryService(":memory:");
   const g = r.createGroup({ name: "app", projectDir: "/tmp/app" });

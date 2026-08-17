@@ -120,7 +120,7 @@ export const api = {
 
   updateGroup: async (
     id: string,
-    patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string },
+    patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string },
   ): Promise<Group> => {
     const r = await fetch(`${BASE}/groups/${id}`, {
       method: 'PATCH',
@@ -157,6 +157,9 @@ export const api = {
     id: string,
   ): Promise<{ merged: boolean; into: string } | { conflict: boolean; files: string[] }> =>
     post(`/sessions/${id}/finish`, {}),
+
+  createPr: (id: string): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>(`/sessions/${id}/pr`, {}),
 
   archiveSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/archive`, {}),
