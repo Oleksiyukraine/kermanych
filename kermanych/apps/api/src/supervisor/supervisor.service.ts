@@ -43,6 +43,16 @@ type Live = {
 // dir without ever mutating it (git-free). Promotion to an agent later grants the full toolset.
 const CHAT_TOOLS = ["read", "grep", "glob"];
 
+// Kermanych's built-in fallback PR/commit conventions, injected only when the target repo
+// defines none of its own (no `### PR Conventions` / `### Commit Conventions` in
+// CLAUDE.md/AGENTS.md) and the group has no override. A project's own rules always win.
+const DEFAULT_PR_CONVENTIONS = [
+  "- Commits: Conventional Commits — `type(scope): summary` in the imperative mood (feat, fix, chore, refactor, docs, test).",
+  "- PR title: the same Conventional-Commit style, summarising the whole change.",
+  "- PR body: a `## Summary` section (what changed and why) and a `## Testing` section (commands run / how it was verified).",
+  "- Keep the PR scoped to this branch's work; do not fold in unrelated changes.",
+].join("\n");
+
 @Injectable()
 export class SupervisorService implements OnModuleDestroy {
   private map = new Map<string, Live>();
@@ -90,7 +100,7 @@ export class SupervisorService implements OnModuleDestroy {
     this.registry.removeGroup(id);
     this.events.next({ type: "group_removed", groupId: id });
   }
-  async updateGroup(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string }): Promise<Group> {
+  async updateGroup(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string }): Promise<Group> {
     if (patch.name !== undefined) {
       const name = patch.name.trim();
       if (!name) throw new Error("project name cannot be empty");
@@ -673,6 +683,39 @@ export class SupervisorService implements OnModuleDestroy {
       `(<<<<<<<, =======, >>>>>>>), and combine BOTH sides so nothing is lost — keep this ` +
       `branch's changes AND the changes merged in from the base branch. When all conflicts ` +
       `are resolved, run \`git add -A && git commit --no-edit\` to complete the merge. Do only this.`;
+    await this.sendMessage(id, prompt, "prompt");
+    return { ok: true };
+  }
+
+  // Open a pull request for the session's branch by delegating to its own omp agent: it already
+  // has the repo's CLAUDE.md/AGENTS.md (auto-loaded) in context, so it honours the repo's own
+  // ### PR/Commit Conventions when present and Kermanych's fallback otherwise, then commits,
+  // pushes, and opens the PR via `gh`. Async — progress streams on the session's normal feed,
+  // mirroring resolveConflict; the branch/worktree are left intact (the PR lives on the remote).
+  async createPullRequest(id: string): Promise<{ ok: true }> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    if (s.kind !== "agent") throw new Error(`only agent sessions can open a pull request (this is a ${s.kind})`);
+    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
+    if (!g) throw new Error("group not found");
+
+    const baseHint = (s.baseBranch || g.defaultBranch || "").trim();
+    const fallback = (g.conventions || "").trim() || DEFAULT_PR_CONVENTIONS;
+    const baseLine = baseHint
+      ? `Target the PR at \`${baseHint}\`, unless the repo's PR conventions dictate a different base.`
+      : `Target the PR at the repository's default branch, unless the repo's PR conventions dictate otherwise.`;
+
+    const prompt =
+      `Open a pull request for this session's branch \`${s.branch}\`.\n\n` +
+      `Follow the repository's own \`### PR Conventions\` and \`### Commit Conventions\` from its ` +
+      `CLAUDE.md / AGENTS.md if they exist. If the repo defines none, follow these defaults instead:\n` +
+      `${fallback}\n\n` +
+      `Steps:\n` +
+      `1. Commit any uncommitted work, following the commit conventions.\n` +
+      `2. Push \`${s.branch}\` to \`origin\` (set the upstream).\n` +
+      `3. Open the PR with \`gh pr create\`. ${baseLine}\n` +
+      `Reply with the PR URL when done. Do only this.`;
+
     await this.sendMessage(id, prompt, "prompt");
     return { ok: true };
   }

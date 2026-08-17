@@ -85,6 +85,12 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: per-project PR/commit convention fallback arrived after the initial schema.
+    try {
+      this.db.exec(`ALTER TABLE groups ADD COLUMN conventions TEXT`);
+    } catch {
+      /* column already exists */
+    }
     // Additive migration: backlog tasks persist their launch config (branch prefix + model)
     // so "Start" can spawn them later with the same settings the operator chose.
     for (const col of ["model", "prefix", "platform"]) {
@@ -99,28 +105,28 @@ export class RegistryService {
   listGroups(): Group[] {
     const rows = this.db
       .prepare(
-        `SELECT id, name, project_dir as projectDir, color, preview_command as previewCommand, api_command as apiCommand, carry_files as carryFiles, default_branch as defaultBranch, created_at as createdAt FROM groups ORDER BY created_at`,
+        `SELECT id, name, project_dir as projectDir, color, preview_command as previewCommand, api_command as apiCommand, carry_files as carryFiles, default_branch as defaultBranch, conventions, created_at as createdAt FROM groups ORDER BY created_at`,
       )
       .all() as (Omit<Group, "carryFiles"> & { carryFiles: string })[];
-    return rows.map((r) => ({ ...r, carryFiles: JSON.parse(r.carryFiles) as string[], color: r.color ?? undefined, defaultBranch: r.defaultBranch ?? undefined }));
+    return rows.map((r) => ({ ...r, carryFiles: JSON.parse(r.carryFiles) as string[], color: r.color ?? undefined, defaultBranch: r.defaultBranch ?? undefined, conventions: r.conventions ?? undefined }));
   }
 
   createGroup(g: Omit<Group, "id" | "createdAt">): Group {
     const carryFiles = g.carryFiles ?? [".env"];
     const row: Group = { ...g, carryFiles, id: randomUUID(), createdAt: new Date().toISOString() };
     this.db
-      .prepare(`INSERT INTO groups (id, name, project_dir, color, carry_files, default_branch, created_at) VALUES (?,?,?,?,?,?,?)`)
-      .run(row.id, row.name, row.projectDir, row.color || null, JSON.stringify(carryFiles), row.defaultBranch || null, row.createdAt);
+      .prepare(`INSERT INTO groups (id, name, project_dir, color, carry_files, default_branch, conventions, created_at) VALUES (?,?,?,?,?,?,?,?)`)
+      .run(row.id, row.name, row.projectDir, row.color || null, JSON.stringify(carryFiles), row.defaultBranch || null, row.conventions || null, row.createdAt);
     return row;
   }
 
-  updateGroup(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string }): Group {
+  updateGroup(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string }): Group {
     const cur = this.listGroups().find((g) => g.id === id);
     if (!cur) throw new Error("group not found");
-    const next = { ...cur, ...patch, color: (patch.color ?? cur.color) || undefined, defaultBranch: (patch.defaultBranch ?? cur.defaultBranch) || undefined };
+    const next = { ...cur, ...patch, color: (patch.color ?? cur.color) || undefined, defaultBranch: (patch.defaultBranch ?? cur.defaultBranch) || undefined, conventions: (patch.conventions ?? cur.conventions) || undefined };
     this.db
-      .prepare(`UPDATE groups SET name=?, color=?, preview_command=?, api_command=?, carry_files=?, default_branch=? WHERE id=?`)
-      .run(next.name, next.color || null, next.previewCommand ?? null, next.apiCommand ?? null, JSON.stringify(next.carryFiles ?? [".env"]), next.defaultBranch || null, id);
+      .prepare(`UPDATE groups SET name=?, color=?, preview_command=?, api_command=?, carry_files=?, default_branch=?, conventions=? WHERE id=?`)
+      .run(next.name, next.color || null, next.previewCommand ?? null, next.apiCommand ?? null, JSON.stringify(next.carryFiles ?? [".env"]), next.defaultBranch || null, next.conventions || null, id);
     return next;
   }
 

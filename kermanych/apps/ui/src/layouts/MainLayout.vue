@@ -103,6 +103,13 @@
           placeholder="— поточна гілка репозиторію —"
         />
         <KField
+          v-model="groupConventionsEdit"
+          label="Конвенції PR/комітів (фолбек, якщо в репо немає)"
+          placeholder="Порожнє — Керманич підставить власні дефолти"
+          multiline
+          :rows="6"
+        />
+        <KField
           :model-value="selectedGroup?.projectDir ?? ''"
           label="Директорія проєкту"
           disabled
@@ -239,6 +246,7 @@ const editError = ref<string | null>(null);
 const groupNameEdit = ref('');
 const groupColorEdit = ref('');
 const groupDefaultBranchEdit = ref('');
+const groupConventionsEdit = ref('');
 const editBranches = ref<string[]>([]);
 
 const envOpen = ref(false);
@@ -256,6 +264,7 @@ async function openEditProject(): Promise<void> {
   groupNameEdit.value = g.name;
   groupColorEdit.value = g.color ?? '';
   groupDefaultBranchEdit.value = g.defaultBranch ?? '';
+  groupConventionsEdit.value = g.conventions ?? '';
   editBranches.value = [];
   editOpen.value = true;
   try {
@@ -275,7 +284,7 @@ async function saveProject(): Promise<void> {
     return;
   }
   try {
-    await store.updateGroup(g.id, { name, color: groupColorEdit.value, defaultBranch: groupDefaultBranchEdit.value });
+    await store.updateGroup(g.id, { name, color: groupColorEdit.value, defaultBranch: groupDefaultBranchEdit.value, conventions: groupConventionsEdit.value });
     editOpen.value = false;
   } catch (e) {
     editError.value = e instanceof Error ? e.message : String(e);

@@ -219,7 +219,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     previews.value = next;
   }
 
-  function updateGroup(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string }) {
+  function updateGroup(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string }) {
     return api.updateGroup(id, patch);
   }
 
@@ -248,6 +248,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       previews.value = next;
     }
     return res;
+  }
+
+  function createPr(id: string) {
+    return api.createPr(id);
   }
 
   // Minimal transient notifications. notify() pushes a toast that auto-dismisses;
@@ -307,6 +311,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     saveEnv,
     finishInfo,
     finishSession,
+    createPr,
     archiveSession,
     unarchiveSession,
     toasts,

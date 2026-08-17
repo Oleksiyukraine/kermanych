@@ -331,6 +331,12 @@
         <KBtn variant="ghost" @click="finishOpen = false">Закрити</KBtn>
         <KBtn v-show="finishFiles.length" variant="secondary" @click="resolveAuto">Вирішити автоматично</KBtn>
         <KBtn
+          v-show="!finishFiles.length"
+          variant="secondary"
+          :disabled="prBusy || finishBusy || !finishData"
+          @click="submitPr"
+        >Створити ПР</KBtn>
+        <KBtn
           variant="primary"
           :disabled="finishBusy || (!finishData && !finishFiles.length)"
           @click="submitFinish"
@@ -892,6 +898,7 @@ const finishData = ref<{ branch: string; target: string; ahead: number; dirty: b
 const finishConflict = ref<string[] | null>(null);
 const finishError = ref<string | null>(null);
 const finishBusy = ref(false);
+const prBusy = ref(false);
 
 // Files to resolve: from a just-attempted merge, else the worktree's current state.
 const finishFiles = computed(() => finishConflict.value ?? finishData.value?.conflicts ?? []);
@@ -993,6 +1000,23 @@ async function submitFinish(): Promise<void> {
     finishError.value = e instanceof Error ? e.message : String(e);
   } finally {
     finishBusy.value = false;
+  }
+}
+
+async function submitPr(): Promise<void> {
+  const s = finishFor.value;
+  if (!s) return;
+  prBusy.value = true;
+  finishError.value = null;
+  try {
+    await store.createPr(s.id);
+    finishOpen.value = false; // agent pushes + opens the PR in the background — watch it in chat
+    store.selectSession(s.id);
+    store.notify(`Створюю ПР для «${s.name}» — стежу за гілкою в чаті`, 'info');
+  } catch (e) {
+    finishError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    prBusy.value = false;
   }
 }
 

@@ -167,6 +167,15 @@ export class SessionsController {
     }
   }
 
+  @Post(":id/pr")
+  async pr(@Param("id") id: string) {
+    try {
+      return await this.sup.createPullRequest(id);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Post(":id/archive")
   archive(@Param("id") id: string) {
     try {

@@ -1,7 +1,18 @@
 <template>
   <label class="k-field">
     <span v-if="label" class="k-field__label">{{ label }}</span>
+    <textarea
+      v-if="multiline"
+      ref="inputEl"
+      class="k-field__input k-field__input--multiline"
+      :rows="rows ?? 4"
+      :value="modelValue"
+      :placeholder="placeholder"
+      :disabled="disabled"
+      @input="onInput"
+    />
     <input
+      v-else
       ref="inputEl"
       class="k-field__input"
       :type="type ?? 'text'"
@@ -17,19 +28,22 @@
 import { ref } from 'vue';
 
 // Text field: flush-left label above, surface input, accent focus ring. Radius 0.
+// `multiline` swaps the <input> for a resizable <textarea> sharing the same surface styling.
 defineProps<{
   label?: string;
   modelValue?: string;
   placeholder?: string;
   disabled?: boolean;
   type?: string;
+  multiline?: boolean;
+  rows?: number;
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
-const inputEl = ref<HTMLInputElement | null>(null);
+const inputEl = ref<HTMLInputElement | HTMLTextAreaElement | null>(null);
 
 function onInput(e: Event) {
-  emit('update:modelValue', (e.target as HTMLInputElement).value);
+  emit('update:modelValue', (e.target as HTMLInputElement | HTMLTextAreaElement).value);
 }
 
 defineExpose({ focus: () => inputEl.value?.focus() });
@@ -74,5 +88,11 @@ defineExpose({ focus: () => inputEl.value?.focus() });
     opacity: 0.45;
     cursor: not-allowed;
   }
+}
+
+.k-field__input--multiline {
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.5;
 }
 </style>
