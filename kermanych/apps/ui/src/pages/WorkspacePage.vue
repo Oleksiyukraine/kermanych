@@ -16,7 +16,7 @@
           <div class="ws__board-controls">
             <KToggle :options="viewOptions" v-model="viewMode" />
             <KBtn variant="ghost" @click="onNewChat">+ Швидкий чат</KBtn>
-            <KBtn variant="primary" @click="openLauncher()">+ Нова задача</KBtn>
+            <KBtn variant="primary" @click="openLauncher()">Нова задача</KBtn>
           </div>
         </header>
 
@@ -111,7 +111,7 @@
           </template>
         </KTable>
         <div v-else class="ws__empty mono">
-          {{ showArchived ? 'Немає відкладених агентів.' : showTasks ? 'Беклог порожній. Створи задачу через «+ Нова задача».' : 'Ще немає агентів. Запусти першого через «+ Нова задача».' }}
+          {{ showArchived ? 'Немає відкладених агентів.' : showTasks ? 'Беклог порожній. Створи задачу через «Нова задача».' : 'Ще немає агентів. Запусти першого через «Нова задача».' }}
         </div>
       </section>
 
