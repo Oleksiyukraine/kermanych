@@ -3,6 +3,12 @@ import { slugify, branchName, uniqueSlug, BRANCH_PREFIXES } from "../src/worktre
 test("slugify lowercases and dashes", () => {
   expect(slugify("Fix Login Bug!")).toBe("fix-login-bug");
 });
+test("slugify transliterates Ukrainian Cyrillic", () => {
+  expect(slugify("Виправити баг логіну")).toBe("vypravyty-bah-lohinu");
+});
+test("slugify falls back to session for symbol-only names", () => {
+  expect(slugify("!!!")).toBe("session");
+});
 test("branchName defaults to the feature prefix", () => {
   expect(branchName("fix-login")).toBe("feature/fix-login");
 });

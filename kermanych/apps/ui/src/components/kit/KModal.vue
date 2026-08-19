@@ -4,13 +4,13 @@
     :persistent="persistent"
     @update:model-value="(v: boolean) => emit('update:modelValue', v)"
   >
-    <div class="k-modal">
+    <div class="k-modal" :class="{ 'k-modal--flush': flush }" :style="width ? { width } : undefined">
       <header class="k-modal__head">
         <h3 class="k-modal__title">{{ title }}</h3>
         <slot name="head-meta" />
       </header>
 
-      <div class="k-modal__body">
+      <div class="k-modal__body" :class="{ 'k-modal__body--flush': flush }">
         <slot />
       </div>
 
@@ -27,7 +27,7 @@ import { QDialog } from 'quasar';
 // The only shadowed layer in the system. QDialog supplies the overlay/backdrop
 // mechanics; the panel itself is styled with tokens (1px border, 2px rule under
 // the title, 1px rule above the controls).
-defineProps<{ modelValue: boolean; title: string; persistent?: boolean }>();
+defineProps<{ modelValue: boolean; title: string; persistent?: boolean; width?: string; flush?: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
 </script>
 
@@ -66,6 +66,15 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
   font-size: 13px;
   line-height: 1.65;
   color: var(--k-muted);
+}
+
+// Flush body: the consumer supplies its own full-bleed layout (e.g. the
+// two-column task launcher), so drop the default padding and muted body text.
+.k-modal__body--flush {
+  padding: 0;
+  color: var(--k-text);
+  font-size: 13px;
+  line-height: 1.65;
 }
 
 .k-modal__controls {
