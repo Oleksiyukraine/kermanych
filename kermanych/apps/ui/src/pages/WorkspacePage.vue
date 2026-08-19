@@ -1507,6 +1507,7 @@ async function submitPreviewConfig(): Promise<void> {
 }
 .ws-launcher__side {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 20px;
   padding: 22px 24px;
@@ -1692,11 +1693,14 @@ async function submitPreviewConfig(): Promise<void> {
 }
 .ws-launcher__from :deep(.k-select) {
   flex: 1;
+  min-width: 0;
 }
 .ws-launcher__from :deep(.k-select__input) {
   background: var(--k-bg);
   font-size: 12.5px;
   padding: 8px 10px;
+  width: 100%;
+  min-width: 0;
 }
 
 .ws-launcher__foot {
