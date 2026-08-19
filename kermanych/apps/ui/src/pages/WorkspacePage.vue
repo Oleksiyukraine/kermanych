@@ -64,8 +64,8 @@
           <template #cell-actions="{ row }">
             <div class="ws__cell-actions">
               <template v-if="row.kind === 'task'">
-                <KIconButton title="Запустити задачу як агента" @click.stop="openLauncher(row, false)">▶</KIconButton>
-                <KIconButton title="Редагувати задачу" @click.stop="openLauncher(row, true)">✎</KIconButton>
+                <KIconButton title="Запустити задачу як агента" @click.stop="openLauncher(row)">▶</KIconButton>
+                <KIconButton title="Редагувати задачу" @click.stop="openLauncher(row)">✎</KIconButton>
                 <KIconButton title="Видалити задачу" @click.stop="onDeleteTask(row)">✕</KIconButton>
               </template>
               <template v-else-if="row.kind === 'chat' && !showArchived">
@@ -168,86 +168,152 @@
       </aside>
     </div>
 
-    <!-- NEW-AGENT LAUNCHER — opened by the inline button -->
-    <KModal v-model="launcherOpen" :title="launcherTitle">
-      <div class="ws__form">
-        <KField ref="nameField" v-model="draftName" label="Назва" placeholder="refactor-auth" />
-        <label class="ws__field">
-          <span class="ws__field-label">Завдання</span>
-          <textarea
-            ref="taskInput"
-            v-model="draftTask"
-            class="ws__textarea mono"
-            rows="5"
-            placeholder="Опиши завдання для агента…"
-            @paste="onLaunchPaste"
-            @drop.prevent="onLaunchDrop"
-            @dragover.prevent
-          />
-        </label>
-        <div class="ws__attach-row">
-          <button type="button" class="ws__attach-btn" @click="launchFileInput?.click()">
-            📎 Додати зображення
-          </button>
-          <input
-            ref="launchFileInput"
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
-            multiple
-            class="ws__file"
-            @change="onLaunchFilePick"
-          />
+    <!-- NEW-TASK LAUNCHER — two columns: left = what to do, right = where it lands -->
+    <KModal v-model="launcherOpen" :title="launcherTitle" width="880px" flush>
+      <template #head-meta>
+        <div class="ws-launcher__headmeta">
+          <span v-if="selectedGroup" class="ws-launcher__tag mono">{{ selectedGroup.name }}</span>
+          <span class="ws-launcher__spacer"></span>
+          <span class="ws-launcher__esc mono">Esc — закрити</span>
         </div>
-        <KAttachStrip v-if="launchImages.length" :images="launchImages" @remove="removeLaunchImage" />
-        <p v-if="launchError" class="ws__error" role="alert">{{ launchError }}</p>
-        <label class="ws__field">
-          <span class="ws__field-label">Префікс гілки</span>
-          <KToggle
-            :options="prefixOptions"
-            :modelValue="draftPrefix"
-            @update:modelValue="(v) => (draftPrefix = v as BranchPrefix)"
-          />
-        </label>
-        <label class="ws__field">
-          <span class="ws__field-label">Платформа</span>
-          <KToggle
-            :options="platformOptions"
-            :modelValue="draftPlatform"
-            @update:modelValue="(v) => (draftPlatform = v as Platform)"
-          />
-        </label>
-        <div class="ws__field">
-          <div class="ws__worktree-row">
-            <KCheckbox v-model="draftWorktree" label="Ізолювати у worktree" />
-            <div v-if="draftWorktree" class="ws__worktree-branch">
-              <span class="ws__worktree-branch-label mono">від гілки</span>
+      </template>
+
+      <div class="ws-launcher" @keydown="onLauncherKeydown">
+        <!-- LEFT — the task itself -->
+        <div class="ws-launcher__main">
+          <div>
+            <div class="ws-launcher__label-row">
+              <span class="ws-launcher__label ws-launcher__label--strong">Завдання</span>
+              <span class="ws-launcher__hint-inline mono">⌘⏎ — запустити</span>
+            </div>
+            <textarea
+              ref="taskInput"
+              v-model="draftTask"
+              class="ws-launcher__task"
+              rows="9"
+              placeholder="Що має зробити агент? Один абзац — далі він сам поставить уточнення."
+              @paste="onLaunchPaste"
+              @drop.prevent="onLaunchDrop"
+              @dragover.prevent
+            />
+          </div>
+
+          <div class="ws-launcher__attach">
+            <button type="button" class="ws-launcher__attach-btn mono" @click="launchFileInput?.click()">
+              ⛶ Зображення
+            </button>
+            <input
+              ref="launchFileInput"
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              class="ws__file"
+              @change="onLaunchFilePick"
+            />
+            <span class="ws-launcher__attach-note mono">або перетягни сюди</span>
+          </div>
+          <KAttachStrip v-if="launchImages.length" :images="launchImages" @remove="removeLaunchImage" />
+          <p v-if="launchError" class="ws__error" role="alert">{{ launchError }}</p>
+
+          <div class="ws-launcher__name">
+            <div class="ws-launcher__label">Назва задачі</div>
+            <input
+              ref="nameField"
+              v-model="draftName"
+              class="ws-launcher__name-input"
+              placeholder="виводиться із завдання"
+              @input="nameEdited = true"
+            />
+            <div class="ws-launcher__hint mono">
+              {{ draftName.trim() ? branchPreview : 'зʼявиться, як напишеш завдання' }}
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT — where it lands -->
+        <div class="ws-launcher__side">
+          <div>
+            <div class="ws-launcher__label">Гілка</div>
+            <div class="ws-launcher__branch mono">{{ branchPreview }}</div>
+            <div class="ws-launcher__hint mono">{{ branchHint }}</div>
+          </div>
+
+          <div>
+            <div class="ws-launcher__label">Тип</div>
+            <div class="ws-launcher__seg ws-launcher__seg--grid2">
+              <button
+                v-for="opt in prefixOptions"
+                :key="opt"
+                type="button"
+                class="ws-launcher__seg-btn mono"
+                :class="{ 'ws-launcher__seg-btn--active': opt === draftPrefix }"
+                @click="draftPrefix = opt"
+              >{{ opt }}</button>
+            </div>
+          </div>
+
+          <div>
+            <div class="ws-launcher__label-row ws-launcher__label-row--tight">
+              <span class="ws-launcher__label">Платформа</span>
+              <span class="ws-launcher__optional mono">необовʼязково</span>
+            </div>
+            <div class="ws-launcher__seg">
+              <button
+                v-for="opt in platformOptions"
+                :key="opt"
+                type="button"
+                class="ws-launcher__seg-btn mono"
+                :class="{ 'ws-launcher__seg-btn--active': opt === draftPlatform }"
+                @click="draftPlatform = draftPlatform === opt ? undefined : opt"
+              >{{ opt }}</button>
+            </div>
+          </div>
+
+          <div class="ws-launcher__block ws-launcher__block--stack">
+            <div class="ws-launcher__check">
+              <KCheckbox v-model="draftWorktree" label="Ізолювати у worktree" />
+              <p class="ws-launcher__check-desc">
+                Окрема тека, окремий чекаут. Агент не чіпає твій робочий стан.
+              </p>
+            </div>
+            <div v-if="draftWorktree" class="ws-launcher__from">
+              <span class="ws-launcher__from-label mono">від</span>
               <KSelect v-model="draftBaseBranch" :options="launchBranches" />
             </div>
           </div>
-          <p v-if="!draftWorktree" class="ws__hint mono">
-            In-place: агент працюватиме в теці проєкту на гілці
-            <code class="mono">{{ branchPreview }}</code>. Дерево має бути чистим;
-            одночасно лише один in-place-агент.
-          </p>
+
+          <div class="ws-launcher__block">
+            <div class="ws-launcher__label">Модель</div>
+            <div class="ws-launcher__seg">
+              <button
+                v-for="opt in modelOptions"
+                :key="opt"
+                type="button"
+                class="ws-launcher__seg-btn mono"
+                :class="{ 'ws-launcher__seg-btn--active': opt === draftModel }"
+                @click="draftModel = opt"
+              >{{ opt }}</button>
+            </div>
+          </div>
         </div>
-        <KField
-          v-model="draftModel"
-          label="Модель (необовʼязково)"
-          placeholder="opus-5"
-        />
-        <div v-if="!promotingChatId" class="ws__field">
-          <KCheckbox v-model="draftAsTask" label="Створити як задачу (не запускати зараз)" />
-          <p v-if="draftAsTask" class="ws__hint mono">
-            Збережеться в беклозі. Запустиш пізніше через ▶ у вкладці «Задачі».
-          </p>
-        </div>
-        <p v-if="launcherError" class="ws__error" role="alert">{{ launcherError }}</p>
       </div>
+
       <template #controls>
-        <KBtn variant="ghost" @click="launcherOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" :disabled="!canLaunch" @click="submitLauncher">
-          {{ draftAsTask ? 'Зберегти' : promotingChatId ? 'Створити агента' : 'Запустити' }}
-        </KBtn>
+        <div class="ws-launcher__foot">
+          <span v-if="launcherError" class="ws__error" role="alert">{{ launcherError }}</span>
+          <span v-else class="ws-launcher__foot-hint mono">{{ footHint }}</span>
+          <span class="ws-launcher__spacer"></span>
+          <KBtn variant="ghost" @click="launcherOpen = false">Скасувати</KBtn>
+          <KBtn
+            v-if="!promotingChatId"
+            variant="secondary"
+            :disabled="!canLaunch"
+            @click="submitLauncher(true)"
+          >{{ editingTaskId ? 'Зберегти' : 'В беклог' }}</KBtn>
+          <KBtn variant="primary" :disabled="!canLaunch" @click="submitLauncher(false)">
+            {{ promotingChatId ? 'Створити агента' : 'Запустити' }}<span class="ws-launcher__kbd mono">⌘⏎</span>
+          </KBtn>
+        </div>
       </template>
     </KModal>
 
@@ -349,6 +415,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import {
+  slugify,
+  branchName,
   type ImageInput,
   type Session,
   type SessionStatus,
@@ -364,7 +432,6 @@ import KTag from 'components/kit/KTag.vue';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
-import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KToggle from 'components/kit/KToggle.vue';
@@ -554,24 +621,31 @@ watch(
 const launcherOpen = ref(false);
 const draftName = ref('');
 const draftTask = ref('');
-const draftModel = ref('');
+const draftModel = ref('opus-5');
 const prefixOptions: BranchPrefix[] = ['feature', 'fix', 'refactoring', 'chore'];
 const draftPrefix = ref<BranchPrefix>('feature');
 const platformOptions: Platform[] = ['backend', 'web', 'mobile'];
+const modelOptions = ['opus-5', 'sonnet-4.5', 'haiku'];
 const draftPlatform = ref<Platform | undefined>(undefined);
 const draftWorktree = ref(true);
-const draftAsTask = ref(false);
+const nameEdited = ref(false);
 const draftBaseBranch = ref('');
 const launchBranches = ref<string[]>([]);
 const editingTaskId = ref<string | null>(null);
 const promotingChatId = ref<string | null>(null);
-const branchPreview = computed(() => {
-  const slug =
-    draftName.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'session';
-  return `${draftPrefix.value}/${slug}`;
-});
+const branchPreview = computed(() =>
+  draftName.value.trim()
+    ? branchName(slugify(draftName.value), draftPrefix.value)
+    : `${draftPrefix.value}/…`,
+);
+// Right-column summary line under the branch box.
+const branchHint = computed(() =>
+  draftWorktree.value
+    ? `нова worktree, чекаут від ${draftBaseBranch.value || selectedGroup.value?.defaultBranch || 'HEAD'}`
+    : 'in-place у теці проєкту; дерево має бути чистим',
+);
 const taskInput = ref<HTMLTextAreaElement | null>(null);
-const nameField = ref<{ focus: () => void } | null>(null);
+const nameField = ref<HTMLInputElement | null>(null);
 const launcherError = ref<string | null>(null);
 const {
   images: launchImages,
@@ -600,6 +674,21 @@ const canLaunch = computed(
 const launcherTitle = computed(() =>
   promotingChatId.value ? 'Створити агента з чату' : editingTaskId.value ? 'Задача' : 'Нова задача',
 );
+// Footer status: silent once launchable, otherwise nudges the operator.
+const footHint = computed(() => (canLaunch.value ? '' : 'опиши завдання, щоб запустити'));
+
+// The name is derived from the task text until the operator edits it by hand.
+watch(draftTask, (t) => {
+  if (!nameEdited.value) draftName.value = suggestTaskName(t);
+});
+
+// ⌘⏎ / Ctrl+⏎ anywhere in the launcher launches now (never saves to backlog).
+function onLauncherKeydown(e: KeyboardEvent): void {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    e.preventDefault();
+    if (canLaunch.value) void submitLauncher(false);
+  }
+}
 
 // Load the project's branches into the fork-base picker. `preferred` is a base already
 // chosen on the task being edited; otherwise it falls back to the project default, then
@@ -618,17 +707,17 @@ async function loadLaunchBranches(preferred: string | undefined): Promise<void> 
   }
 }
 
-function openLauncher(task?: Session, asTask = false): void {
+function openLauncher(task?: Session): void {
   editingTaskId.value = task?.id ?? null;
   promotingChatId.value = null;
   draftName.value = task?.name ?? '';
   draftTask.value = task?.task ?? '';
-  draftModel.value = task?.model ?? '';
+  draftModel.value = task?.model ?? 'opus-5';
   draftPrefix.value = task?.prefix ?? 'feature';
   draftPlatform.value = task?.platform;
   draftWorktree.value = task?.worktree ?? true;
   void loadLaunchBranches(task?.baseBranch);
-  draftAsTask.value = asTask;
+  nameEdited.value = !!task;
   launcherError.value = null;
   clearLaunchImages();
   launcherOpen.value = true;
@@ -651,12 +740,12 @@ function openTaskFromText(text: string): void {
   promotingChatId.value = null;
   draftName.value = suggestTaskName(text);
   draftTask.value = text;
-  draftModel.value = '';
+  draftModel.value = 'opus-5';
   draftPrefix.value = 'feature';
   draftPlatform.value = undefined;
   draftWorktree.value = true;
   void loadLaunchBranches(undefined);
-  draftAsTask.value = true;
+  nameEdited.value = true;
   launcherError.value = null;
   clearLaunchImages();
   launcherOpen.value = true;
@@ -676,19 +765,19 @@ function openChatPromote(chat: Session, asTask: boolean): void {
   promotingChatId.value = asTask ? null : chat.id;
   draftName.value = seed.split(/\s+/).slice(0, 6).join(' ').slice(0, 48);
   draftTask.value = asTask ? seed : '';
-  draftModel.value = chat.model ?? '';
+  draftModel.value = chat.model ?? 'opus-5';
   draftPrefix.value = 'feature';
   draftPlatform.value = undefined;
   draftWorktree.value = true;
   void loadLaunchBranches(undefined);
-  draftAsTask.value = asTask;
+  nameEdited.value = true;
   launcherError.value = null;
   clearLaunchImages();
   launcherOpen.value = true;
   void nextTick(() => taskInput.value?.focus());
 }
 
-async function submitLauncher(): Promise<void> {
+async function submitLauncher(asTask: boolean): Promise<void> {
   const groupId = store.selectedGroupId;
   if (!groupId || !canLaunch.value) return;
   const model = draftModel.value.trim() || undefined;
@@ -702,7 +791,6 @@ async function submitLauncher(): Promise<void> {
     worktree: draftWorktree.value,
     baseBranch: draftWorktree.value ? (draftBaseBranch.value || undefined) : undefined,
   };
-  const asTask = draftAsTask.value;
   launcherError.value = null;
   try {
     let session: Session | undefined;
@@ -768,7 +856,7 @@ async function onDeleteChat(s: Session): Promise<void> {
 
 function onRowClick(s: Session): void {
   // A backlog task has no chat to open — clicking it edits the task instead.
-  if (s.kind === 'task') openLauncher(s, true);
+  if (s.kind === 'task') openLauncher(s);
   else store.selectSession(s.id);
 }
 
@@ -1344,30 +1432,6 @@ async function submitPreviewConfig(): Promise<void> {
   font-family: var(--k-font-ui);
 }
 
-.ws__worktree-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.ws__worktree-branch {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-
-.ws__worktree-branch-label {
-  font-size: 11px;
-  color: var(--k-muted);
-  white-space: nowrap;
-}
-
-.ws__worktree-branch :deep(.k-select__input) {
-  min-width: 150px;
-}
-
 .ws__field-label {
   text-align: left;
   font-size: 13px;
@@ -1404,26 +1468,250 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-accent);
 }
 
-.ws__attach-row {
-  display: flex;
-}
-
-.ws__attach-btn {
-  padding: 6px 10px;
-  background: var(--k-surface2);
-  border: 1px solid var(--k-line-strong);
-  color: var(--k-text);
-  font-family: var(--k-font-ui);
-  font-size: 12px;
-  cursor: pointer;
-  border-radius: 0;
-}
-
-.ws__attach-btn:hover {
-  border-color: var(--k-text);
-}
-
 .ws__file {
   display: none;
+}
+
+// ── New-task launcher (two-column) ────────────────────────────────────────
+.ws-launcher__headmeta {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ws-launcher__tag {
+  font-size: 11.5px;
+  color: var(--k-muted);
+  border: 1px solid var(--k-line);
+  padding: 1px 6px;
+}
+.ws-launcher__spacer {
+  flex: 1;
+}
+.ws-launcher__esc {
+  font-size: 11.5px;
+  color: var(--k-muted);
+}
+
+.ws-launcher {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+}
+.ws-launcher__main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 24px;
+  border-right: 1px solid var(--k-line);
+}
+.ws-launcher__side {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 22px 24px;
+  background: var(--k-surface);
+}
+
+.ws-launcher__label {
+  font-family: var(--k-font-ui);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+  margin-bottom: 8px;
+}
+.ws-launcher__label--strong {
+  color: var(--k-text);
+}
+.ws-launcher__label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.ws-launcher__label-row .ws-launcher__label {
+  margin-bottom: 0;
+}
+.ws-launcher__label-row--tight {
+  justify-content: flex-start;
+  gap: 8px;
+}
+.ws-launcher__hint-inline,
+.ws-launcher__optional {
+  font-size: 11px;
+  color: var(--k-muted);
+}
+.ws-launcher__optional {
+  font-size: 10.5px;
+}
+
+.ws-launcher__task {
+  width: 100%;
+  background: var(--k-surface);
+  border: none;
+  border-left: 2px solid var(--k-accent);
+  color: var(--k-text);
+  font-family: var(--k-font-mono);
+  font-size: 13.5px;
+  line-height: 1.7;
+  padding: 12px 13px;
+  resize: vertical;
+  outline: none;
+}
+.ws-launcher__task::placeholder {
+  color: var(--k-muted);
+}
+
+.ws-launcher__attach {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ws-launcher__attach-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid var(--k-line);
+  color: var(--k-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ws-launcher__attach-btn:hover {
+  border-color: var(--k-accent);
+  color: var(--k-text);
+}
+.ws-launcher__attach-note {
+  font-size: 11.5px;
+  color: var(--k-muted);
+}
+
+.ws-launcher__name {
+  border-top: 1px solid var(--k-line);
+  padding-top: 16px;
+}
+.ws-launcher__name-input {
+  width: 100%;
+  background: var(--k-bg);
+  border: 1px solid var(--k-line);
+  color: var(--k-text);
+  font-family: var(--k-font-mono);
+  font-size: 13px;
+  padding: 9px 11px;
+  outline: none;
+}
+.ws-launcher__name-input::placeholder {
+  color: var(--k-muted);
+}
+.ws-launcher__name-input:focus {
+  border-color: var(--k-accent);
+}
+.ws-launcher__hint {
+  margin-top: 7px;
+  font-family: var(--k-font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--k-muted);
+}
+
+.ws-launcher__branch {
+  background: var(--k-bg);
+  border: 1px solid var(--k-line-strong);
+  padding: 10px 12px;
+  font-family: var(--k-font-mono);
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--k-text);
+  word-break: break-all;
+}
+
+.ws-launcher__seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  background: var(--k-line-strong);
+  border: 1px solid var(--k-line-strong);
+}
+.ws-launcher__seg--grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.ws-launcher__seg-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 8px;
+  background: var(--k-bg);
+  border: 0;
+  color: var(--k-muted);
+  font-family: var(--k-font-mono);
+  font-weight: 500;
+  font-size: 12px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.ws-launcher__seg-btn:hover {
+  color: var(--k-text);
+}
+.ws-launcher__seg-btn--active {
+  background: var(--k-accent);
+  color: var(--k-canvas);
+}
+
+.ws-launcher__block {
+  border-top: 1px solid var(--k-line);
+  padding-top: 16px;
+}
+.ws-launcher__block--stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ws-launcher__check-desc {
+  margin: 3px 0 0;
+  padding-left: 24px;
+  font-family: var(--k-font-ui);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--k-muted);
+}
+.ws-launcher__from {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ws-launcher__from-label {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--k-muted);
+}
+.ws-launcher__from :deep(.k-select) {
+  flex: 1;
+}
+.ws-launcher__from :deep(.k-select__input) {
+  background: var(--k-bg);
+  font-size: 12.5px;
+  padding: 8px 10px;
+}
+
+.ws-launcher__foot {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ws-launcher__foot-hint {
+  font-size: 11.5px;
+  color: var(--k-muted);
+}
+.ws-launcher__kbd {
+  margin-left: 10px;
+  font-size: 11px;
+  opacity: 0.7;
 }
 </style>
