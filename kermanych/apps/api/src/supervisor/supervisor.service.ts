@@ -218,6 +218,18 @@ export class SupervisorService implements OnModuleDestroy {
     return this.merge(saved);
   }
 
+  // Move a backlog task to another project. A backlog row is bound to its project only by
+  // group_id (no branch/worktree/omp child yet), so this is a pure re-parent — no git side effects.
+  moveTask(id: string, groupId: string): Session {
+    const cur = this.registry.listSessions().find((x) => x.id === id);
+    if (!cur) throw new Error("session not found");
+    if (cur.kind !== "task" || cur.status !== "backlog") throw new Error("not a backlog task");
+    if (!this.registry.listGroups().some((g) => g.id === groupId)) throw new Error("group not found");
+    const saved = this.registry.updateSession(id, { groupId });
+    this.pushUpdate(id);
+    return this.merge(saved);
+  }
+
   // A quick chat: an instant, git-free omp conversation in the project dir with a read-only
   // tool subset. No branch, no worktree, no opening prompt — it spawns ready and the operator
   // sends the first message. It can later be promoted (forked) into a real agent, so a throwaway
@@ -797,6 +809,7 @@ export class SupervisorService implements OnModuleDestroy {
     if (!s) throw new Error("session not found");
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
     if (!g) throw new Error("group not found");
+    if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
     const dir = s.worktreePath || g.projectDir;
     const target = s.worktree ? await this.worktree.currentBranch(g.projectDir) : (s.baseBranch ?? "");
     const ahead = target ? await this.worktree.aheadCount(g.projectDir, target, s.branch) : 0;
@@ -875,6 +888,32 @@ export class SupervisorService implements OnModuleDestroy {
     return { merged: true, into: base };
   }
 
+  // Reopen a merged (retired) worktree agent: fork a fresh branch + worktree from the base
+  // — which now holds the merged work — so the same session can continue and be finished again.
+  // The omp child resumes lazily on the next message, rehydrating its saved conversation.
+  async reopenSession(id: string): Promise<Session> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
+    if (!g) throw new Error("group not found");
+    if (s.kind !== "agent") throw new Error(`${s.kind} sessions can't be reopened`);
+    if (!s.worktree) throw new Error("in-place sessions can't be reopened — create a new task");
+    if (s.worktreePath) throw new Error("session already has a worktree");
+    const { branch, baseBranch } = await this.resolveLaunchParams(g, s.name, s.prefix ?? "feature", true, id, s.baseBranch);
+    const wtDir = worktreeDir(id);
+    try {
+      await this.worktree.addWorktree(g.projectDir, wtDir, branch, baseBranch);
+      await copyCarryFiles(g.projectDir, wtDir, g.carryFiles ?? [".env"]);
+    } catch (err) {
+      await this.worktree.removeWorktree(g.projectDir, wtDir).catch(() => {});
+      await this.worktree.removeBranch(g.projectDir, branch).catch(() => {});
+      throw err;
+    }
+    const next = this.registry.updateSession(id, { status: "done", branch, baseBranch, worktreePath: wtDir });
+    this.pushUpdate(id);
+    return this.merge(next);
+  }
+
   // Open the session's worktree in the user's editor ($KERMANYCH_EDITOR or `code`).
   openInEditor(id: string): { ok: true } {
     const s = this.registry.listSessions().find((x) => x.id === id);
@@ -893,7 +932,13 @@ export class SupervisorService implements OnModuleDestroy {
     if (l) return l.transcript;
     // Dormant: in the registry but no live process (e.g. after an api restart).
     const s = this.registry.listSessions().find((x) => x.id === id);
-    if (s) return [{ kind: "notice", text: "Сесія неактивна. Надішли повідомлення, щоб відновити її та підтягнути історію." }];
+    if (s) {
+      const text =
+        s.status === "merged"
+          ? "Сесію влито в проєкт. Натисни «↻ Відновити» вгорі, щоб підняти worktree і продовжити."
+          : "Сесія неактивна. Надішли повідомлення, щоб відновити її та підтягнути історію.";
+      return [{ kind: "notice", text }];
+    }
     return [];
   }
 
@@ -931,6 +976,8 @@ export class SupervisorService implements OnModuleDestroy {
     if (!s) throw new Error("session not found");
     const g = this.registry.listGroups().find((x) => x.id === s.groupId);
     if (!g) throw new Error("group not found");
+    if (s.kind === "agent" && s.worktree && !s.worktreePath)
+      throw new Error("session was merged and its worktree retired — reopen it to continue");
     const dir = s.worktreePath || g.projectDir;
     if (s.kind === "agent" && !s.worktree && (await this.worktree.currentBranch(g.projectDir)) !== s.branch)
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);

@@ -67,6 +67,7 @@
                 <KIconButton title="Запустити задачу як агента" @click.stop="openLauncher(row)">▶</KIconButton>
                 <KIconButton title="Редагувати задачу" @click.stop="openLauncher(row)">✎</KIconButton>
                 <KIconButton title="Видалити задачу" @click.stop="onDeleteTask(row)">✕</KIconButton>
+                <KIconButton v-if="store.groups.length > 1" title="Перемістити в інший проєкт" @click.stop="openMove(row)">→</KIconButton>
               </template>
               <template v-else-if="row.kind === 'chat' && !showArchived">
                 <KIconButton title="Створити агента з цього чату (форк розмови в ізольований worktree)" @click.stop="openChatPromote(row, false)">⑂</KIconButton>
@@ -100,6 +101,11 @@
                   title="Завершити (merge гілки в проєкт)"
                   @click.stop="openFinish(row)"
                 >✓</KIconButton>
+                <KIconButton
+                  v-if="row.status === 'merged'"
+                  title="Відновити (підняти worktree заново, щоб продовжити)"
+                  @click.stop="onReopen(row)"
+                >↻</KIconButton>
                 <KIconButton title="Відкласти" @click.stop="onArchive(row)">⤓</KIconButton>
                 <KIconButton title="Видалити агента" @click.stop="onDeleteAgent(row)">✕</KIconButton>
               </template>
@@ -156,6 +162,7 @@
           @editor="onEditor"
           @branch="onBranch"
           @restart="onRestart"
+          @reopen="onReopenSelected"
           @newTask="openTaskFromText"
           @promote-agent="onPromoteAgent"
           @promote-task="onPromoteTask"
@@ -338,6 +345,29 @@
       <template #controls>
         <KBtn variant="ghost" @click="mergeOpen = false">Скасувати</KBtn>
         <KBtn variant="primary" :disabled="mergeBusy" @click="submitMerge">{{ mergeIsReview ? '⤴ Віддати' : '⤴ Влити' }}</KBtn>
+      </template>
+    </KModal>
+
+    <!-- MOVE TASK — re-parent a backlog task to another project -->
+    <KModal v-model="moveOpen" :title="`Перемістити задачу · ${moveFor?.name ?? ''}`">
+      <div class="ws__form">
+        <p class="ws__hint mono">
+          Задача переїде в інший проєкт разом із назвою, промптом і налаштуваннями запуску.
+        </p>
+        <div class="ws__move-list">
+          <button
+            v-for="g in moveTargets"
+            :key="g.id"
+            type="button"
+            class="ws__move-option"
+            :disabled="moveBusy"
+            @click="confirmMove(g.id)"
+          >{{ g.name }}</button>
+        </div>
+        <p v-if="moveError" class="ws__error" role="alert">{{ moveError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="moveOpen = false">Скасувати</KBtn>
       </template>
     </KModal>
 
@@ -923,6 +953,24 @@ async function onRestart(): Promise<void> {
   }
 }
 
+// Reopen a merged session: the server re-forks its worktree/branch from the base; jump to
+// Активні and select it so the operator can continue and finish again.
+async function onReopen(s: Session): Promise<void> {
+  try {
+    const session = await store.reopenSession(s.id);
+    viewMode.value = VIEW_ACTIVE;
+    if (session?.id) store.selectSession(session.id);
+    store.notify(`Сесію «${s.name}» відновлено — worktree піднято, можна продовжувати`);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+function onReopenSelected(): void {
+  const s = selectedSession.value;
+  if (s) void onReopen(s);
+}
+
 async function onDelete(): Promise<void> {
   const s = selectedSession.value;
   if (s) await onDeleteAgent(s);
@@ -1048,6 +1096,37 @@ async function submitMerge(): Promise<void> {
     mergeError.value = e instanceof Error ? e.message : String(e);
   } finally {
     mergeBusy.value = false;
+  }
+}
+
+// ── Move a backlog task to another project ────────────────────────────────
+const moveOpen = ref(false);
+const moveFor = ref<Session | null>(null);
+const moveBusy = ref(false);
+const moveError = ref<string | null>(null);
+const moveTargets = computed(() => store.groups.filter((g) => g.id !== moveFor.value?.groupId));
+
+function openMove(s: Session): void {
+  moveFor.value = s;
+  moveError.value = null;
+  moveBusy.value = false;
+  moveOpen.value = true;
+}
+
+async function confirmMove(groupId: string): Promise<void> {
+  const s = moveFor.value;
+  if (!s) return;
+  moveBusy.value = true;
+  moveError.value = null;
+  try {
+    await store.moveTask(s.id, groupId);
+    moveOpen.value = false;
+    const dest = store.groups.find((g) => g.id === groupId);
+    store.notify(`Задачу «${s.name}» перенесено в «${dest?.name ?? 'проєкт'}»`);
+  } catch (e) {
+    moveError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    moveBusy.value = false;
   }
 }
 
@@ -1717,5 +1796,34 @@ async function submitPreviewConfig(): Promise<void> {
   margin-left: 10px;
   font-size: 11px;
   opacity: 0.7;
+}
+
+.ws__move-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ws__move-option {
+  font-family: var(--k-font-ui);
+  font-size: 14px;
+  text-align: left;
+  color: var(--k-text);
+  background: var(--k-surface);
+  border: 1px solid var(--k-line-strong);
+  padding: 11px 13px;
+  border-radius: 0;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+
+.ws__move-option:hover {
+  border-color: var(--k-accent);
+  color: var(--k-accent);
+}
+
+.ws__move-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 </style>

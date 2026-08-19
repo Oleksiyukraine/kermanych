@@ -176,6 +176,9 @@ export const api = {
   restartSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/restart`, {}),
 
+  reopenSession: (id: string): Promise<Session> =>
+    post<Session>(`/sessions/${id}/reopen`, {}),
+
   branchSession: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/branch`, {}),
 
@@ -197,5 +200,8 @@ export const api = {
     if (!r.ok) throw await toError(r);
     return (await r.json()) as Session;
   },
+
+  moveTask: (id: string, groupId: string): Promise<Session> =>
+    post<Session>(`/sessions/${id}/move`, { groupId }),
 
 };

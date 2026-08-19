@@ -179,3 +179,15 @@ test("session platform persists and round-trips", () => {
   expect(u.platform).toBe("mobile");
   expect(r.listSessions(g.id)[0].platform).toBe("mobile");
 });
+
+test("updateSession moves a session to another group and round-trips", () => {
+  const r = new RegistryService(":memory:");
+  const a = r.createGroup({ name: "backend", projectDir: "/tmp/be" });
+  const b = r.createGroup({ name: "frontend", projectDir: "/tmp/fe" });
+  const s = r.createSession({ groupId: a.id, name: "task", task: "do it", worktreePath: "", branch: "", status: "backlog", kind: "task" });
+  expect(r.listSessions(a.id)).toHaveLength(1);
+  const u = r.updateSession(s.id, { groupId: b.id });
+  expect(u.groupId).toBe(b.id);
+  expect(r.listSessions(a.id)).toHaveLength(0);
+  expect(r.listSessions(b.id).map((x) => x.id)).toEqual([s.id]);
+});

@@ -197,9 +197,10 @@ export class RegistryService {
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, platform=?, status=?, archived=? WHERE id=?`,
+        `UPDATE sessions SET group_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, platform=?, status=?, archived=? WHERE id=?`,
       )
       .run(
+        next.groupId,
         next.name,
         next.task,
         next.worktreePath,

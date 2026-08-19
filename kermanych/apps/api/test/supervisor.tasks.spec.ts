@@ -143,4 +143,33 @@ describe("backlog tasks", () => {
     await sup.updateTask(t.id, { platform: "mobile" });
     expect(registry.listSessions(g.id).find((s) => s.id === t.id)!.platform).toBe("mobile");
   });
+
+  it("moveTask re-parents a backlog task to another project", async () => {
+    const { sup, registry } = make();
+    const be = registry.createGroup({ name: "backend", projectDir: "/tmp/be" });
+    const fe = registry.createGroup({ name: "frontend", projectDir: "/tmp/fe" });
+    const t = await sup.createSession(be.id, "planned", "do later", undefined, undefined, true, "feature", true);
+
+    const moved = sup.moveTask(t.id, fe.id);
+
+    expect(moved.groupId).toBe(fe.id);
+    expect(moved.status).toBe("backlog"); // still a backlog task, no git side effects
+    expect(registry.listSessions(be.id)).toHaveLength(0);
+    expect(registry.listSessions(fe.id).map((s) => s.id)).toEqual([t.id]);
+  });
+
+  it("moveTask rejects a session that is not a backlog task", async () => {
+    const { sup, registry } = make();
+    const be = registry.createGroup({ name: "backend", projectDir: "/tmp/be" });
+    const fe = registry.createGroup({ name: "frontend", projectDir: "/tmp/fe" });
+    const agent = await sup.createSession(be.id, "live", "go", undefined, undefined, true, "feature", false);
+    expect(() => sup.moveTask(agent.id, fe.id)).toThrow(/backlog/i);
+  });
+
+  it("moveTask rejects an unknown target project", async () => {
+    const { sup, registry } = make();
+    const be = registry.createGroup({ name: "backend", projectDir: "/tmp/be" });
+    const t = await sup.createSession(be.id, "planned", "later", undefined, undefined, true, "feature", true);
+    expect(() => sup.moveTask(t.id, "no-such-group")).toThrow(/group not found/i);
+  });
 });

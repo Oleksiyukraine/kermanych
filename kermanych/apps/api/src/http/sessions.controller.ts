@@ -73,6 +73,15 @@ export class SessionsController {
     }
   }
 
+  @Post(":id/move")
+  move(@Param("id") id: string, @Body() b: { groupId: string }) {
+    try {
+      return this.sup.moveTask(id, b.groupId);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Post(":id/message")
   async message(@Param("id") id: string, @Body() b: { text: string; mode: "prompt" | "follow_up" | "steer"; images?: ImageInput[] }) {
     try {
@@ -218,6 +227,15 @@ export class SessionsController {
   async restart(@Param("id") id: string) {
     try {
       return await this.sup.restartSession(id);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  @Post(":id/reopen")
+  async reopen(@Param("id") id: string) {
+    try {
+      return await this.sup.reopenSession(id);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }

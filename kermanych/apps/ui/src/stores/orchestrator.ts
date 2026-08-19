@@ -164,6 +164,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.updateTask(id, patch);
   }
 
+  function moveTask(id: string, groupId: string) {
+    return api.moveTask(id, groupId);
+  }
+
   function sendMessage(id: string, text: string, mode: MessageMode, images?: ImageInput[]) {
     return api.sendMessage(id, text, mode, images);
   }
@@ -278,6 +282,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.restartSession(id);
   }
 
+  function reopenSession(id: string) {
+    return api.reopenSession(id);
+  }
+
   return {
     groups,
     sessions,
@@ -294,6 +302,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     promoteChat,
     startTask,
     updateTask,
+    moveTask,
     sendMessage,
     answerUi,
     stopSession,
@@ -301,6 +310,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     branchSession,
     reviewSession,
     mergeBranch,
+    reopenSession,
     loadTranscript,
     previews,
     startPreview,

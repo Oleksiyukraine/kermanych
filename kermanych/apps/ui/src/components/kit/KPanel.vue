@@ -45,6 +45,13 @@
           @click="emit('finish')"
         >✓</button>
         <button
+          v-if="session.status === 'merged' && session.kind === 'agent'"
+          class="k-panel__icon"
+          type="button"
+          title="Відновити (підняти worktree заново, щоб продовжити)"
+          @click="emit('reopen')"
+        >↻</button>
+        <button
           class="k-panel__icon"
           type="button"
           title="Відкрити в редакторі"
@@ -144,7 +151,7 @@
     </div>
 
     <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎) -->
-    <div class="k-panel__composer">
+    <div v-if="!isMerged" class="k-panel__composer">
       <KAttachStrip
         v-if="attachImages.length"
         class="k-panel__attach"
@@ -188,6 +195,9 @@
         />
       </form>
     </div>
+    <div v-else class="k-panel__composer k-panel__merged-note mono">
+      Сесію влито в проєкт. Натисни «↻ Відновити» вгорі, щоб підняти worktree і продовжити.
+    </div>
 
     <!-- floating "+ Задача" — appears over a text selection in the log -->
     <button
@@ -229,6 +239,7 @@ const emit = defineEmits<{
   send: [text: string, images: ImageInput[]];
   answer: [res: RpcExtensionUIResponse];
   finish: [];
+  reopen: [];
   editor: [];
   branch: [];
   restart: [];
@@ -416,6 +427,7 @@ const running = computed(
 );
 // active — a running agent lights the top strip; matches KStatusDot's running kind.
 const isActive = computed(() => running.value);
+const isMerged = computed(() => props.session.status === 'merged');
 
 const statusLabel = computed(() => {
   switch (props.session.status) {
@@ -814,6 +826,12 @@ function answerCancel() {
 
 .k-panel__composer {
   border-top: 2px solid var(--k-line-strong);
+}
+.k-panel__merged-note {
+  padding: 14px 16px;
+  color: var(--k-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
 }
 
 .k-panel__attach {
