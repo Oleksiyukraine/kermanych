@@ -150,10 +150,9 @@
         <KPanel
           class="ws__panel"
           :session="selectedSession"
-          v-bind="{
-            ...(selectedGroup ? { group: selectedGroup } : {}),
-            ...(selectedSession.kind === 'chat' ? { placeholder: 'запитай або опиши, що потрібно зробити…' } : {}),
-          }"
+          v-bind="selectedSession.kind === 'chat'
+            ? { placeholder: 'запитай або опиши, що потрібно зробити…' }
+            : {}"
           @stop="onStop"
           @delete="onDelete"
           @send="onSend"
