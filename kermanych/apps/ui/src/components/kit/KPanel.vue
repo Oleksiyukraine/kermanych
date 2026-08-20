@@ -4,7 +4,7 @@
     <header class="k-panel__header">
       <div class="k-panel__id">
         <KStatusDot :status="session.status" />
-        <span class="k-panel__harness mono">omp · {{ groupName }}</span>
+        <span class="k-panel__harness mono">omp</span>
         <KTag v-if="session.branch">⑂ {{ session.branch }}</KTag>
       </div>
       <div class="k-panel__controls">
@@ -213,7 +213,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { Group, Session, RpcExtensionUIResponse, ImageInput } from '@kermanych/core';
+import type { Session, RpcExtensionUIResponse, ImageInput } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KTag from './KTag.vue';
 import KBtn from './KBtn.vue';
@@ -227,7 +227,6 @@ import { useNow } from '../../composables/useNow';
 const props = withDefaults(
   defineProps<{
     session: Session;
-    group?: Group;
     placeholder?: string;
   }>(),
   { placeholder: 'напиши наступний крок…' },
@@ -420,7 +419,6 @@ watch(
 );
 
 const req = computed(() => props.session.pendingUiRequest);
-const groupName = computed(() => props.group?.name ?? props.session.name);
 
 const running = computed(
   () => props.session.status === 'thinking' || props.session.status === 'tool',
