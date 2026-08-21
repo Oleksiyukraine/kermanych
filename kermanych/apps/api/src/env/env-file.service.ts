@@ -12,27 +12,27 @@ import { parseEnv, applyEnvEdits } from "./env-text";
 export class EnvFileService {
   constructor(private worktree: WorktreeService) {}
 
-  // Resolve `<projectDir>/<file>` and refuse anything that escapes projectDir.
-  private target(projectDir: string, file: string): string {
-    const base = resolve(projectDir);
-    const target = resolve(projectDir, file);
+  // Resolve `<repoPath>/<file>` and refuse anything that escapes repoPath.
+  private target(repoPath: string, file: string): string {
+    const base = resolve(repoPath);
+    const target = resolve(repoPath, file);
     if (!target.startsWith(base + sep)) throw new Error(`path escapes project directory: ${file}`);
     return target;
   }
 
-  async read(projectDir: string, file = ".env"): Promise<EnvFileView> {
-    const target = this.target(projectDir, file);
+  async read(repoPath: string, file = ".env"): Promise<EnvFileView> {
+    const target = this.target(repoPath, file);
     const text = existsSync(target) ? await readFile(target, "utf8") : "";
-    const ignored = await this.worktree.isIgnored(projectDir, file);
+    const ignored = await this.worktree.isIgnored(repoPath, file);
     return { entries: parseEnv(text), ignored };
   }
 
   async write(
-    projectDir: string,
+    repoPath: string,
     file = ".env",
     edits: { set?: Record<string, string>; remove?: string[] },
   ): Promise<EnvFileView> {
-    const target = this.target(projectDir, file);
+    const target = this.target(repoPath, file);
     const current = existsSync(target) ? await readFile(target, "utf8") : "";
     const next = applyEnvEdits(current, edits);
     const tmp = `${target}.kmq-${process.pid}-${randomUUID()}.tmp`;
@@ -43,6 +43,6 @@ export class EnvFileService {
       await rm(tmp, { force: true });
       throw err;
     }
-    return this.read(projectDir, file);
+    return this.read(repoPath, file);
   }
 }

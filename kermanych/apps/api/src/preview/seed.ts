@@ -1,13 +1,15 @@
 // apps/api/src/preview/seed.ts
+import { randomUUID } from "node:crypto";
 import type { RegistryService } from "../registry/registry.service";
 import type { SessionStatus } from "@kermanych/core";
 
 // Demo data for a Kermanych-on-Kermanych preview. The previewed api boots on a fresh,
 // isolated DB (KERMANYCH_DB in preview.service.ts), so without this the board comes up
 // empty and there's nothing to eyeball. seedDemo fills the registry with INERT rows —
-// no git, no omp, groups carry no previewCommand and point at an unreachable projectDir —
-// covering every status plus the archived filter so the board, status dots, branch tags
-// and project switcher all render. Idempotent: it only touches an empty registry, so a
+// no git, no omp, no cloud: projects carry no previewCommand, point at an unreachable
+// localRepoPath and use synthetic UUIDs that exist on no Supabase project — covering
+// every status plus the archived filter so the board, status dots, branch tags and
+// project switcher all render. Idempotent: it only touches an empty registry, so a
 // persistent preview DB never accumulates duplicates.
 type Demo = {
   name: string;
@@ -19,14 +21,14 @@ type Demo = {
 };
 
 export function seedDemo(registry: RegistryService): void {
-  if (registry.listGroups().length > 0) return; // already populated — never duplicate
+  if (registry.listProjects().length > 0) return; // already populated — never duplicate
 
-  const acme = registry.createGroup({ name: "Acme Web", projectDir: "/tmp/kermanych-demo/acme-web" });
-  const kmq = registry.createGroup({ name: "Kermanych", projectDir: "/tmp/kermanych-demo/kermanych" });
+  const acme = registry.upsertProject({ id: randomUUID(), name: "Acme Web", localRepoPath: "/tmp/kermanych-demo/acme-web" });
+  const kmq = registry.upsertProject({ id: randomUUID(), name: "Kermanych", localRepoPath: "/tmp/kermanych-demo/kermanych" });
 
-  const seed = (groupId: string, d: Demo) => {
+  const seed = (projectId: string, d: Demo) => {
     const s = registry.createSession({
-      groupId,
+      projectId,
       name: d.name,
       task: d.name,
       // Unreachable path: opening the session shows the dormant notice, and a resume/create
@@ -55,7 +57,7 @@ export function seedDemo(registry: RegistryService): void {
   ];
   for (const r of acmeRows) seed(acme.id, r);
 
-  // A second group so the project switcher has something to switch to.
+  // A second project so the project switcher has something to switch to.
   const kmqRows: Demo[] = [
     { name: "Секція архіву", branch: "feature/archive", status: "done" },
     { name: "Тумблер worktree", branch: "feature/worktree-toggle", status: "thinking" },
