@@ -24,7 +24,7 @@ Sibling plans: Plan C (`tasks`/board) and Plan D (launch-from-task + status sync
 
 - Node ≥22.12 required (`better-sqlite3` v13 N-API prebuilt); pnpm workspace, `packageManager` pinned in `package.json`.
 - Code, identifiers, comments, commit messages and thrown error messages in **English**; UI-visible copy in `.vue` templates in **Ukrainian**. (Existing behaviour: the UI shows raw API error text in toasts, e.g. `MainLayout.vue` `e.message` — that stays English, as today.)
-- **This is a clean cutover.** No `Group` alias, no `projectDir` alias, no `groups` REST route, no deprecated re-export survives. `packages/core`, `apps/api/src` and `apps/ui/src` MUST end with zero `Group` / `groupId` / `projectDir` / `group_id` / `project_dir` identifiers (Task 14 verifies).
+- **This is a clean cutover.** No `Group` alias, no `projectDir` alias, no `groups` REST route, no deprecated re-export survives. `packages/core`, `apps/api/src` and `apps/ui/src` MUST end with zero `Group` / `groupId` / `projectDir` / `group_id` / `project_dir` identifiers (Task 16 Step 3 verifies).
 - **`projects.id` is the cloud UUID.** The local registry NEVER generates a project id — `randomUUID()` is used for sessions only, and for the offline preview seed.
 - **Env secret VALUES never reach the cloud.** `projects.env_keys` holds NAMES only. `.env` reads/writes stay local, path-confined to the bound `localRepoPath`, atomic (`EnvFileService`, unchanged from the 2026-08-11 design).
 - **Requirement 7 (offline).** Nothing on the local launch path may call Supabase. The local `projects` row must be sufficient to launch.
@@ -69,7 +69,7 @@ Decomposition note: cloud PROJECTS and MEMBERS live in their own store (`stores/
 - Produces: `Project = { id: string; name: string; localRepoPath: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string; createdAt: string }`; `Session.projectId: string`; `Session.taskId?: string`; `ServerEvent` variants `{ type: "snapshot"; projects: Project[]; sessions: Session[] }`, `{ type: "project_update"; project: Project }`, `{ type: "project_removed"; projectId: string }`. `SessionStatus` is UNCHANGED (10 values).
 - Consumes: nothing.
 
-This task deliberately breaks `apps/api` and `apps/ui` typechecking. They are repaired by Tasks 2-6 (api) and 8-14 (ui); Task 14 is the gate that proves the whole cutover compiles. Do not add a `Group` alias to "keep things building" — that defeats the cutover.
+This task deliberately breaks `apps/api` and `apps/ui` typechecking. They are repaired by Tasks 2-6 (api) and 8-15 (ui); Task 16 Step 2 is the gate that proves the whole cutover compiles. Do not add a `Group` alias to "keep things building" — that defeats the cutover.
 
 - [ ] **Step 1: Replace the `Group` type**
 
@@ -4567,7 +4567,7 @@ Expected: the throwaway users, profiles and projects are gone and the schema is 
 
 Task-by-task, so nothing is orphaned: **1** shared types · **2** registry migration + local project surface · **3** supervisor project/bind/sync · **4** launch path + preview/seed/env sweep · **5** `/api/projects` · **6** api suite green · **7** `@kermanych/cloud` projects + membership · **8** ui api client · **9** ui orchestrator store · **10** ui cloud store · **11** rail + cloud create · **12** binding + unbound guards · **13** members panel · **14** cloud config + local env + env-keys checklist · **15** cloud deletion · **16** verification.
 
-Two forward references in the front matter were written before the UI half was decomposed and now resolve one task later: the Global Constraints say "Task 14 verifies" the zero-`Group` sweep and Task 1 says "repaired by Tasks 2-6 (api) and 8-14 (ui)". The sweep gate is **Task 16 Step 3**, and the UI repair spans **Tasks 8-15**. Nothing else in Tasks 1-10 needs amending.
+Two forward references in the front matter were written before the UI half was decomposed and resolved one task later: the Global Constraints said "Task 14 verifies" the zero-`Group` sweep and Task 1 said "repaired by Tasks 2-6 (api) and 8-14 (ui)". Both lines have since been corrected in place — the sweep gate is **Task 16 Step 3** and the typecheck gate is **Task 16 Step 2**, and the UI repair spans **Tasks 8-15**. Nothing else in Tasks 1-10 needed amending.
 
 **2. Placeholder scan.** Clean. Every code step carries the literal content to type — three whole files (`KRailItem.vue`, and `MainLayout.vue`'s template and script), and named-function replacements everywhere else. No step says "add error handling": each failure path names the exact string the code produces and the exact Ukrainian copy that answers it —
 
