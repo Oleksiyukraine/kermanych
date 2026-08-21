@@ -6,7 +6,7 @@ import type {
   BranchPrefix,
   Platform,
   ImageInput,
-  Group,
+  Project,
   Session,
   TaskDraft,
   TranscriptEntry,
@@ -31,10 +31,13 @@ const STATUS_LABEL: Partial<Record<Session['status'], string>> = {
 };
 
 export const useOrchestrator = defineStore('orchestrator', () => {
-  const groups = ref<Group[]>([]);
+  // LOCAL project rows, streamed from the api over the socket. Each row is a cloud
+  // project's offline config cache plus this machine's binding (localRepoPath, "" when
+  // unbound). Cloud-side project metadata and membership live in stores/projects.ts.
+  const projects = ref<Project[]>([]);
   const sessions = ref<Session[]>([]);
   const transcripts = ref<Record<string, TranscriptEntry[]>>({});
-  const selectedGroupId = ref<string | undefined>(undefined);
+  const selectedProjectId = ref<string | undefined>(undefined);
   const selectedSessionId = ref<string | undefined>(undefined);
   const previews = ref<Record<string, string>>({});
   const toasts = ref<Toast[]>([]);
@@ -44,20 +47,20 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // Reduce a ServerEvent into state — mirrors the legacy MVP store exactly.
   function reduce(e: ServerEvent): void {
     if (e.type === 'snapshot') {
-      groups.value = e.groups;
+      projects.value = e.projects;
       sessions.value = e.sessions;
-    } else if (e.type === 'group_update') {
-      groups.value = [
-        ...groups.value.filter((g) => g.id !== e.group.id),
-        e.group,
+    } else if (e.type === 'project_update') {
+      projects.value = [
+        ...projects.value.filter((p) => p.id !== e.project.id),
+        e.project,
       ];
-    } else if (e.type === 'group_removed') {
-      groups.value = groups.value.filter((g) => g.id !== e.groupId);
-      sessions.value = sessions.value.filter((x) => x.groupId !== e.groupId);
-      // The selected project just vanished (deleted here or by another client) —
+    } else if (e.type === 'project_removed') {
+      projects.value = projects.value.filter((p) => p.id !== e.projectId);
+      sessions.value = sessions.value.filter((x) => x.projectId !== e.projectId);
+      // The selected project just vanished (pruned here or deleted in the cloud) —
       // fall back to the "nothing selected" shell so the header/board don't dangle.
-      if (selectedGroupId.value === e.groupId) {
-        selectedGroupId.value = undefined;
+      if (selectedProjectId.value === e.projectId) {
+        selectedProjectId.value = undefined;
         selectedSessionId.value = undefined;
       }
     } else if (e.type === 'session_update') {
@@ -79,7 +82,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         });
         n.onclick = () => {
           window.kermanych?.focus();
-          selectGroup(e.session.groupId);
+          selectProject(e.session.projectId);
           selectSession(e.session.id);
         };
       }
@@ -115,8 +118,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     socket = connectSocket(reduce);
   }
 
-  function selectGroup(id: string): void {
-    selectedGroupId.value = id;
+  function selectProject(id: string): void {
+    selectedProjectId.value = id;
     selectedSessionId.value = undefined;
   }
 
@@ -124,17 +127,23 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     selectedSessionId.value = id;
   }
 
-  // Actions delegating to the REST api.
-  function createGroup(name: string, projectDir: string, carryFiles?: string[]) {
-    return api.createGroup(name, projectDir, carryFiles);
+  // Actions delegating to the REST api. There is deliberately no createProject/
+  // deleteProject: projects are born and die in the cloud (stores/projects.ts), and the
+  // local rows follow through syncProjects.
+  function patchProject(id: string, body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string }) {
+    return api.patchProject(id, body);
   }
 
-  function deleteGroup(id: string) {
-    return api.deleteGroup(id);
+  function setProjectBinding(id: string, localRepoPath: string) {
+    return api.setProjectBinding(id, localRepoPath);
+  }
+
+  function syncProjects(cloud: Parameters<typeof api.syncProjects>[0], prune = false) {
+    return api.syncProjects(cloud, prune);
   }
 
   function createSession(
-    groupId: string,
+    projectId: string,
     name: string,
     task: string,
     model?: string,
@@ -145,11 +154,11 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     platform?: Platform,
     baseBranch?: string,
   ) {
-    return api.createSession(groupId, name, task, model, images, worktree, prefix, asTask, platform, baseBranch);
+    return api.createSession(projectId, name, task, model, images, worktree, prefix, asTask, platform, baseBranch);
   }
 
-  function createChat(groupId: string) {
-    return api.createChat(groupId);
+  function createChat(projectId: string) {
+    return api.createChat(projectId);
   }
 
   function promoteChat(id: string) {
@@ -164,8 +173,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.updateTask(id, patch);
   }
 
-  function moveTask(id: string, groupId: string) {
-    return api.moveTask(id, groupId);
+  function moveTask(id: string, projectId: string) {
+    return api.moveTask(id, projectId);
   }
 
   function sendMessage(id: string, text: string, mode: MessageMode, images?: ImageInput[]) {
@@ -221,10 +230,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     const next = { ...previews.value };
     delete next[id];
     previews.value = next;
-  }
-
-  function updateGroup(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string }) {
-    return api.updateGroup(id, patch);
   }
 
   function listBranches(id: string) {
@@ -287,16 +292,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   }
 
   return {
-    groups,
+    projects,
     sessions,
     transcripts,
-    selectedGroupId,
+    selectedProjectId,
     selectedSessionId,
     connect,
-    selectGroup,
+    selectProject,
     selectSession,
-    createGroup,
-    deleteGroup,
     createSession,
     createChat,
     promoteChat,
@@ -315,7 +318,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     previews,
     startPreview,
     stopPreview,
-    updateGroup,
+    patchProject,
+    setProjectBinding,
+    syncProjects,
     listBranches,
     getEnv,
     saveEnv,
