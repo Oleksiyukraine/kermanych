@@ -26,6 +26,83 @@ same time and you drive them all from one board.
 - **pnpm** (the repo pins its version via `packageManager` in
   `package.json`).
 
+## Cloud prerequisites
+
+Kermanych's task board is shared through Supabase (auth, projects, membership,
+tasks, Realtime). Execution stays local — worktrees, `omp` children and
+transcripts never leave your machine — but you need a Supabase backend to sign
+in and to see the board.
+
+**Either** a hosted project (<https://supabase.com/dashboard>) **or** a local
+stack (Docker + the [Supabase CLI](https://supabase.com/docs/guides/local-development)):
+
+```bash
+supabase start        # from the repo root; prints the API URL, anon key, service_role key
+supabase db reset     # apply supabase/migrations/*.sql to a clean database
+supabase status       # re-print the URLs and keys at any time
+```
+
+This repo's `supabase/config.toml` pins the local stack to the **544xx** band
+(API `http://127.0.0.1:54421`, database `postgresql://postgres:postgres@127.0.0.1:54422/postgres`),
+not the CLI's default 543xx, so it can coexist with another Supabase project on
+the same machine. Every URL below uses those ports.
+
+**GitHub OAuth App** — GitHub allows one callback URL per app, so a local stack
+and a hosted project need one each (<https://github.com/settings/developers>):
+
+| target | Authorization callback URL |
+|---|---|
+| local stack | `http://127.0.0.1:54421/auth/v1/callback` |
+| hosted project | `https://<project-ref>.supabase.co/auth/v1/callback` |
+
+For the local stack, export the app's credentials **before** `supabase start` —
+`supabase/config.toml` substitutes them into `[auth.external.github]`:
+
+```bash
+export SUPABASE_AUTH_GITHUB_CLIENT_ID=Ov23li…
+export SUPABASE_AUTH_GITHUB_SECRET=ghs_…
+```
+
+For a hosted project, set the same pair under Authentication → Providers →
+GitHub, and add both redirect URLs (`http://localhost:5317/**` and
+`http://127.0.0.1:53170/callback`) under Authentication → URL Configuration.
+The second one is the fixed loopback the desktop app listens on.
+
+**Four environment variables** — the API and the UI each need the same pair,
+under different names (Vite only inlines `VITE_`-prefixed variables). All four
+hold public values; the anon key is safe to expose because RLS is the
+authorization surface. **No service-role key ever belongs on a machine running
+Kermanych.**
+
+| variable | consumer | value |
+|---|---|---|
+| `SUPABASE_URL` | `apps/api` | the API URL |
+| `SUPABASE_ANON_KEY` | `apps/api` | the anon key |
+| `VITE_SUPABASE_URL` | `apps/ui` | the same API URL |
+| `VITE_SUPABASE_ANON_KEY` | `apps/ui` | the same anon key |
+
+Export the first pair in the shell that runs `pnpm dev:api` (or `pnpm dev:app`,
+which hosts the API in-process), and put the second pair in `apps/ui/.env`:
+
+```bash
+# apps/ui/.env — public values only, not committed
+VITE_SUPABASE_URL=http://127.0.0.1:54421
+VITE_SUPABASE_ANON_KEY=<anon key>
+```
+
+**Running the cloud tests.** `packages/cloud`'s unit suite needs nothing. Its
+RLS/trigger integration suite is skipped unless all three of these are set, and
+`SUPABASE_TEST_SERVICE_KEY` is a *test fixture only* — it mints throwaway users
+through the admin API and is never read by shipped code:
+
+```bash
+supabase start && supabase db reset
+export SUPABASE_TEST_URL=http://127.0.0.1:54421
+export SUPABASE_TEST_ANON_KEY=<anon key>
+export SUPABASE_TEST_SERVICE_KEY=<service_role key>
+pnpm --filter @kermanych/cloud test
+```
+
 ## Setup & run
 
 ```bash
