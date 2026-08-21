@@ -97,8 +97,8 @@ export const api = {
   createChat: (groupId: string): Promise<Session> =>
     post<Session>('/sessions/chat', { groupId }),
 
-  promoteChat: (id: string, draft: TaskDraft): Promise<Session> =>
-    post<Session>(`/sessions/${id}/promote`, draft),
+  promoteChat: (id: string): Promise<Session> =>
+    post<Session>(`/sessions/${id}/promote`, {}),
 
   sendMessage: (id: string, text: string, mode: MessageMode, images?: ImageInput[]): Promise<unknown> =>
     post(`/sessions/${id}/message`, { text, mode, images }),

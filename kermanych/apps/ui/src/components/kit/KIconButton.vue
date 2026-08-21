@@ -63,6 +63,17 @@ withDefaults(
     outline: 1px solid var(--k-accent);
     outline-offset: 1px;
   }
+
+  // In-flight action (e.g. a chat being turned into an agent): down until the server answers.
+  &:disabled {
+    cursor: default;
+    opacity: 0.45;
+
+    &:hover {
+      border-color: var(--k-line);
+      color: var(--k-muted);
+    }
+  }
 }
 
 // active — accent frame + glyph (e.g. a running preview toggle).

@@ -92,7 +92,6 @@
       <div class="kit__panels">
         <KPanel
           :session="runningSession"
-          :group="group"
           @send="onSend"
           @stop="onStop"
           @delete="onDelete"
@@ -101,7 +100,6 @@
         </KPanel>
         <KPanel
           :session="waitingSession"
-          :group="group"
           @send="onSend"
           @answer="onAnswer"
           @stop="onStop"
@@ -111,7 +109,6 @@
         </KPanel>
         <KPanel
           :session="stalledSession"
-          :group="group"
           @send="onSend"
           @restart="onRestart"
           @stop="onStop"
@@ -250,9 +247,6 @@ const focused = ref('');
 const modalOpen = ref(false);
 
 const now = new Date().toISOString();
-const group: Group = {
-  id: 'g1', name: 'api-gateway', projectDir: '/repo/api-gateway', createdAt: now,
-};
 function mkSession(over: Partial<Session>): Session {
   return {
     id: 's', groupId: 'g1', name: 'api-gateway', task: '',

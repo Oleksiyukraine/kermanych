@@ -4,16 +4,19 @@
     <header class="k-panel__header">
       <div class="k-panel__id">
         <KStatusDot :status="session.status" />
-        <span class="k-panel__harness mono">omp · {{ groupName }}</span>
+        <span class="k-panel__harness mono">omp</span>
         <KTag v-if="session.branch">⑂ {{ session.branch }}</KTag>
       </div>
       <div class="k-panel__controls">
         <span class="k-panel__status mono">{{ statusLabel }}</span>
         <KIconButton
           v-if="session.kind === 'chat'"
-          title="Створити агента з цього чату (форк розмови в ізольований worktree)"
+          :disabled="promoting"
+          :title="promoting
+            ? 'Готую worktree…'
+            : 'Почати імплементацію обговореного (worktree + повний доступ, цей же контекст)'"
           @click="emit('promoteAgent')"
-        >⑂</KIconButton>
+        >▶</KIconButton>
         <KIconButton
           v-if="session.kind === 'chat'"
           title="Зберегти як задачу в беклог"
@@ -197,7 +200,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { Group, Session, RpcExtensionUIResponse, ImageInput } from '@kermanych/core';
+import type { Session, RpcExtensionUIResponse, ImageInput } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KTag from './KTag.vue';
 import KBtn from './KBtn.vue';
@@ -212,10 +215,12 @@ import { useNow } from '../../composables/useNow';
 const props = withDefaults(
   defineProps<{
     session: Session;
-    group?: Group;
     placeholder?: string;
+    // The chat is being turned into an agent right now (worktree + omp respawn): the button
+    // stays down until the server answers, so a second click cannot race the first.
+    promoting?: boolean;
   }>(),
-  { placeholder: 'напиши наступний крок…' },
+  { placeholder: 'напиши наступний крок…', promoting: false },
 );
 
 const emit = defineEmits<{
@@ -405,7 +410,6 @@ watch(
 );
 
 const req = computed(() => props.session.pendingUiRequest);
-const groupName = computed(() => props.group?.name ?? props.session.name);
 
 const running = computed(
   () => props.session.status === 'thinking' || props.session.status === 'tool',
