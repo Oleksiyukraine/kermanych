@@ -20,7 +20,7 @@ import {
   toolCallSummary,
   type BranchPrefix,
   type StatusState,
-  type Group,
+  type Project,
   type ImageInput,
   type RpcEvent,
   type RpcExtensionUIResponse,
@@ -29,6 +29,7 @@ import {
   type TaskDraft,
   type TranscriptEntry,
 } from "@kermanych/core";
+import type { CloudProject } from "@kermanych/cloud";
 
 type Live = {
   rpc: RpcSession;
@@ -76,7 +77,7 @@ export class SupervisorService implements OnModuleDestroy {
 
   snapshot() {
     return {
-      groups: this.registry.listGroups(),
+      projects: this.registry.listProjects(),
       sessions: this.registry.listSessions().map((s) => this.merge(s)),
     };
   }
@@ -90,38 +91,87 @@ export class SupervisorService implements OnModuleDestroy {
     if (s) this.events.next({ type: "session_update", session: this.merge(s) });
   }
 
-  async addGroup(name: string, projectDir: string, carryFiles?: string[]): Promise<Group> {
-    if (!(await this.worktree.isGitRepo(projectDir))) throw new Error("project dir is not a git repo");
-    const g = this.registry.createGroup({ name, projectDir, carryFiles });
-    this.events.next({ type: "group_update", group: g });
-    return g;
+  // Every project lookup used to be an inline registry find plus a hand-rolled
+  // throw (13 sites). These two helpers are that pair, and `boundProject` additionally
+  // enforces Requirement 3: no local execution without a local binding.
+  private project(projectId: string): Project {
+    const project = this.registry.listProjects().find((p) => p.id === projectId);
+    if (!project) throw new Error("project not found");
+    return project;
   }
-  async removeGroup(id: string): Promise<void> {
+
+  private boundProject(projectId: string): Project {
+    const project = this.project(projectId);
+    if (!project.localRepoPath) throw new Error("project not bound");
+    return project;
+  }
+
+  async removeProject(id: string): Promise<void> {
     for (const s of this.registry.listSessions(id)) await this.deleteSession(s.id);
-    this.registry.removeGroup(id);
-    this.events.next({ type: "group_removed", groupId: id });
+    this.registry.removeProject(id);
+    this.events.next({ type: "project_removed", projectId: id });
   }
-  async updateGroup(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string }): Promise<Group> {
+
+  async updateProject(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string }): Promise<Project> {
     if (patch.name !== undefined) {
       const name = patch.name.trim();
       if (!name) throw new Error("project name cannot be empty");
       patch = { ...patch, name };
     }
-    const g = this.registry.updateGroup(id, patch);
-    this.events.next({ type: "group_update", group: g });
-    return g;
+    const project = this.registry.patchProject(id, patch);
+    this.events.next({ type: "project_update", project });
+    return project;
   }
 
-  // Local branches of a project plus its current HEAD and configured default — feeds the
-  // worktree fork-base picker in the UI.
-  async projectBranches(groupId: string): Promise<{ branches: string[]; current: string; default: string | null }> {
-    const group = this.registry.listGroups().find((g) => g.id === groupId);
-    if (!group) throw new Error("group not found");
+  // This machine's manual binding (Requirement 3). Kermanych never clones: the path must
+  // already be a git repo, and each developer binds their own checkout.
+  async bindProject(id: string, localRepoPath: string): Promise<Project> {
+    const path = localRepoPath.trim();
+    if (!path) throw new Error("local repo path cannot be empty");
+    if (!(await this.worktree.isGitRepo(path))) throw new Error("local repo path is not a git repo");
+    const project = this.registry.patchProject(id, { localRepoPath: path });
+    this.events.next({ type: "project_update", project });
+    return project;
+  }
+
+  // Refresh the offline config cache from cloud reads (design D1). `prune` is opt-in and
+  // only the UI's full-list refresh passes it; even then a row that still owns local
+  // sessions survives as an orphan, because dropping it would cascade-delete a
+  // developer's worktrees over a transient RLS/network hiccup.
+  async syncProjects(cloud: CloudProject[], prune = false): Promise<Project[]> {
+    for (const c of cloud) {
+      const project = this.registry.upsertProject({
+        id: c.id,
+        name: c.name,
+        color: c.color,
+        previewCommand: c.previewCommand,
+        apiCommand: c.apiCommand,
+        carryFiles: c.carryFiles,
+        defaultBranch: c.defaultBranch,
+        conventions: c.conventions,
+      });
+      this.events.next({ type: "project_update", project });
+    }
+    if (prune) {
+      const known = new Set(cloud.map((c) => c.id));
+      for (const p of this.registry.listProjects()) {
+        if (known.has(p.id) || this.registry.listSessions(p.id).length) continue;
+        this.registry.removeProject(p.id);
+        this.events.next({ type: "project_removed", projectId: p.id });
+      }
+    }
+    return this.registry.listProjects();
+  }
+
+  // Branch list for the bound repo, used by the project-settings default-branch picker and
+  // the worktree fork-base picker in the UI.
+  async projectBranches(projectId: string): Promise<{ branches: string[]; current: string; default: string | null }> {
+    const project = this.boundProject(projectId);
     const [branches, current] = await Promise.all([
-      this.worktree.listBranches(group.projectDir),
-      this.worktree.currentBranch(group.projectDir),
+      this.worktree.listBranches(project.localRepoPath),
+      this.worktree.currentBranch(project.localRepoPath),
     ]);
-    return { branches, current, default: group.defaultBranch ?? null };
+    return { branches, current, default: project.defaultBranch ?? null };
   }
 
   async createSession(
@@ -801,17 +851,17 @@ export class SupervisorService implements OnModuleDestroy {
       // No git: the child owns no branch/worktree; its cwd is the parent's.
       if (s.ompSessionFile) await rm(s.ompSessionFile, { force: true }).catch(() => {});
     } else if (s) {
-      const g = this.registry.listGroups().find((x) => x.id === s.groupId);
-      if (g) {
+      const g = this.registry.listProjects().find((x) => x.id === s.projectId);
+      if (g?.localRepoPath) {
         if (s.worktree) {
-          if (s.worktreePath) await this.worktree.removeWorktree(g.projectDir, s.worktreePath);
-        } else if (s.baseBranch && (await this.worktree.currentBranch(g.projectDir)) === s.branch) {
+          if (s.worktreePath) await this.worktree.removeWorktree(g.localRepoPath, s.worktreePath);
+        } else if (s.baseBranch && (await this.worktree.currentBranch(g.localRepoPath)) === s.branch) {
           // Restore the project to its base branch (delete discards the session's in-progress work).
           await this.worktree
-            .checkout(g.projectDir, s.baseBranch)
-            .catch(() => this.worktree.checkout(g.projectDir, s.baseBranch!, { force: true }));
+            .checkout(g.localRepoPath, s.baseBranch)
+            .catch(() => this.worktree.checkout(g.localRepoPath, s.baseBranch!, { force: true }));
         }
-        if (s.branch) await this.worktree.removeBranch(g.projectDir, s.branch);
+        if (s.branch) await this.worktree.removeBranch(g.localRepoPath, s.branch);
       }
     }
     this.registry.removeSession(id);
