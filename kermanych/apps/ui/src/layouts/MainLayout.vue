@@ -139,7 +139,7 @@
         />
         <KField
           v-model="carryFilesText"
-          label="Файли для сесії (через кому або з нового рядка)"
+          label="Файли для сесії (через кому)"
           placeholder=".env"
           :disabled="!isOwnerOfSelected"
         />
@@ -494,7 +494,8 @@ const isOwnerOfSelected = computed(
   () => !!store.selectedProjectId && projects.isOwner(store.selectedProjectId),
 );
 
-// «через кому або з нового рядка»: carry files and env-key names are both typed as free text.
+// Both separators are accepted, but only the multiline env-keys textarea can actually receive
+// a newline; the single-line carry-files input strips them, so its label promises commas only.
 function parseList(text: string): string[] {
   return text.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
 }

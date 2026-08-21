@@ -1291,6 +1291,14 @@ function openPreviewConfig(s: Session, forceDefaults = false): void {
 async function submitPreviewConfig(): Promise<void> {
   const s = previewCfgSession.value;
   if (!s) return;
+  // previewCommand/apiCommand are owner-only cloud config (projects_update_owner). RLS is the
+  // real gate, but a non-owner UPDATE matches zero rows and postgrest reports it as "Cannot
+  // coerce the result to a single JSON object" — unreadable. Refuse here in Ukrainian instead,
+  // and keep the modal open so the entered commands are not lost.
+  if (!projects.isOwner(s.projectId)) {
+    store.notify('Налаштування проєкту може змінювати лише власник', 'error');
+    return;
+  }
   const win = window.open('', '_blank');
   win?.document.write(LOADING_HTML);
   previewCfgOpen.value = false;
