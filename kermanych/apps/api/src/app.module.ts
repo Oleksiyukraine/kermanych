@@ -1,7 +1,7 @@
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { AuthController } from "./auth/auth.controller";
-import { GroupsController } from "./http/groups.controller";
+import { ProjectsController } from "./http/projects.controller";
 import { SessionsController } from "./http/sessions.controller";
 import { FsController } from "./http/fs.controller";
 import { RegistryService } from "./registry/registry.service";
@@ -14,7 +14,7 @@ import { AuthService } from "./auth/auth.service";
 import { SupabaseAuthGuard } from "./auth/auth.guard";
 
 @Module({
-  controllers: [AuthController, GroupsController, SessionsController, FsController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     AuthService,

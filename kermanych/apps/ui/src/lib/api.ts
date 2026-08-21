@@ -235,11 +235,4 @@ export const api = {
 
   clearAuthSession: (): Promise<void> => del('/auth/session'),
 
-  getAuthSession: (): Promise<{
-    signedIn: boolean;
-    userId?: string;
-    githubUsername?: string;
-    expiresAt?: string;
-  }> => get('/auth/session'),
-
 };

@@ -14,26 +14,26 @@ export class SessionsController {
   ) {}
 
   @Get()
-  list(@Query("groupId") groupId?: string) {
-    return this.reg.listSessions(groupId);
+  list(@Query("projectId") projectId?: string) {
+    return this.reg.listSessions(projectId);
   }
 
   @Post()
   async create(
     @Body()
-    b: { groupId: string; name: string; task: string; model?: string; images?: ImageInput[]; worktree?: boolean; prefix?: BranchPrefix; platform?: Platform; asTask?: boolean; baseBranch?: string },
+    b: { projectId: string; name: string; task: string; model?: string; images?: ImageInput[]; worktree?: boolean; prefix?: BranchPrefix; platform?: Platform; asTask?: boolean; baseBranch?: string },
   ) {
     try {
-      return await this.sup.createSession(b.groupId, b.name, b.task, b.model, b.images, b.worktree ?? true, b.prefix ?? "feature", b.asTask ?? false, b.platform, b.baseBranch);
+      return await this.sup.createSession(b.projectId, b.name, b.task, b.model, b.images, b.worktree ?? true, b.prefix ?? "feature", b.asTask ?? false, b.platform, b.baseBranch);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
   }
 
   @Post("chat")
-  async createChat(@Body() b: { groupId: string }) {
+  async createChat(@Body() b: { projectId: string }) {
     try {
-      return await this.sup.createChat(b.groupId);
+      return await this.sup.createChat(b.projectId);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
@@ -75,9 +75,9 @@ export class SessionsController {
   }
 
   @Post(":id/move")
-  move(@Param("id") id: string, @Body() b: { groupId: string }) {
+  move(@Param("id") id: string, @Body() b: { projectId: string }) {
     try {
-      return this.sup.moveTask(id, b.groupId);
+      return this.sup.moveTask(id, b.projectId);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }

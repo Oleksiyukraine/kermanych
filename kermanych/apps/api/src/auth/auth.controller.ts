@@ -28,10 +28,11 @@ export class AuthController {
     return { ok: true };
   }
 
+  // Guarded like every other route: reaching this handler means the guard already
+  // matched the bearer against the cached session, so `current()` is defined.
   @Get("session")
   getSession() {
-    const cur = this.auth.current();
-    if (!cur) return { signedIn: false };
+    const cur = this.auth.current()!;
     return {
       signedIn: true,
       userId: cur.userId,
