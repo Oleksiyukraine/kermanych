@@ -1,3 +1,4 @@
+import { watch } from 'vue';
 import { defineRouter } from '#q-app/wrappers';
 import {
   createMemoryHistory,
@@ -6,8 +7,9 @@ import {
   createWebHistory,
 } from 'vue-router';
 import routes from './routes';
+import { useAuth } from '../stores/auth';
 
-export default defineRouter((/* { store, ssrContext } */) => {
+export default defineRouter(({ store }) => {
   const createHistory = process.env.SERVER
     ? createMemoryHistory
     : process.env.VUE_ROUTER_MODE === 'history'
@@ -20,6 +22,36 @@ export default defineRouter((/* { store, ssrContext } */) => {
 
     // Leave as is and change quasar.config.ts -> build -> vueRouterMode instead.
     history: createHistory(process.env.VUE_ROUTER_BASE),
+  });
+
+  // Auth gate. `ready` resolves once boot/supabase.ts has read the persisted
+  // session, so a signed-in user never sees /login flash by. The pinia instance
+  // comes from defineRouter's context because guards run outside a component.
+  let watching = false;
+  Router.beforeEach(async (to) => {
+    const auth = useAuth(store);
+    await auth.ready;
+
+    // Losing the session must leave the app shell immediately — on sign-out, or
+    // when a 401 from the local api forces one. beforeEach cannot do that on its
+    // own, because nothing navigated. Installed on the first navigation so the
+    // store is guaranteed to exist.
+    if (!watching) {
+      watching = true;
+      watch(
+        () => auth.user,
+        (u) => {
+          if (!u && Router.currentRoute.value.name !== 'login') {
+            void Router.replace({ name: 'login' });
+          }
+        },
+      );
+    }
+
+    const isPublic = to.matched.some((r) => r.meta.public === true);
+    if (!auth.user && !isPublic) return { name: 'login' };
+    if (auth.user && to.name === 'login') return { name: 'workspace' };
+    return true;
   });
 
   return Router;
