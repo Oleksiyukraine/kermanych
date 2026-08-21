@@ -478,6 +478,7 @@ import {
   type RpcExtensionUIResponse,
 } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
+import { useProjects } from 'stores/projects';
 import type { MessageMode } from '../lib/api';
 import KPanel from 'components/kit/KPanel.vue';
 import KLogBlock from 'components/kit/KLogBlock.vue';
@@ -501,6 +502,9 @@ import { useResizableWidth } from '../composables/useResizableWidth';
 // for the selected project + the full panel for the selected session, plus the
 // new-agent launcher. All mutations go through the Pinia store.
 const store = useOrchestrator();
+// previewCommand/apiCommand are CLOUD config (owner-only), so the write goes to Supabase and
+// mirrors itself into the local row — a local-only edit would not survive the next sync.
+const projects = useProjects();
 
 const now = useNow();
 
@@ -1296,7 +1300,7 @@ async function submitPreviewConfig(): Promise<void> {
     };
     const apiCmd = draftApiCmd.value.trim();
     if (apiCmd) patch.apiCommand = apiCmd;
-    await store.patchProject(s.projectId, patch);
+    await projects.patch(s.projectId, patch);
   } catch (e) {
     win?.close();
     window.alert(`Не вдалось зберегти: ${e instanceof Error ? e.message : String(e)}`);

@@ -94,17 +94,27 @@
       </template>
     </KModal>
 
-    <!-- PROJECT-SETTINGS MODAL — identity + launch defaults. These writes still go to the
-         LOCAL row; Task 14 moves them to the cloud and re-syncs. -->
+    <!-- PROJECT-SETTINGS MODAL — CLOUD config (name, colour, conventions, commands, carry
+         files) plus this machine's read-only binding. Config writes go to Supabase and are
+         mirrored into the local row; they are owner-only (design D1, Requirement 2). -->
     <KModal v-model="settingsOpen" :title="`Редагувати проєкт · ${selectedName}`">
       <div class="shell__form">
-        <KField v-model="nameEdit" label="Назва проєкту" placeholder="my-project" />
-        <KColorPicker v-model="colorEdit" label="Колір проєкту" />
+        <KField
+          v-model="nameEdit"
+          label="Назва проєкту"
+          placeholder="my-project"
+          :disabled="!isOwnerOfSelected"
+        />
+        <KColorPicker
+          v-model="colorEdit"
+          label="Колір проєкту"
+          :class="{ 'shell__readonly': !isOwnerOfSelected }"
+        />
         <KSelect
           v-model="defaultBranchEdit"
           label="Гілка за замовчуванням"
           :options="settingsBranches"
-          :disabled="!isBound"
+          :disabled="!isBound || !isOwnerOfSelected"
           placeholder="— поточна гілка репозиторію —"
         />
         <KField
@@ -113,7 +123,30 @@
           placeholder="Порожнє — Керманич підставить власні дефолти"
           multiline
           :rows="6"
+          :disabled="!isOwnerOfSelected"
         />
+        <KField
+          v-model="previewCommandEdit"
+          label="Команда превʼю (веб)"
+          placeholder="pnpm dev --port $PORT"
+          :disabled="!isOwnerOfSelected"
+        />
+        <KField
+          v-model="apiCommandEdit"
+          label="Команда превʼю (API, необовʼязково)"
+          placeholder="pnpm dev:api"
+          :disabled="!isOwnerOfSelected"
+        />
+        <KField
+          v-model="carryFilesText"
+          label="Файли для сесії (через кому або з нового рядка)"
+          placeholder=".env"
+          :disabled="!isOwnerOfSelected"
+        />
+        <p v-if="!isOwnerOfSelected" class="shell__hint">
+          Налаштування проєкту спільні для команди — змінювати їх може лише власник.
+          Прив’язка теки й «Змінні середовища» — ваші, для цієї машини, і залишаються доступними.
+        </p>
         <KField
           :model-value="selectedProject?.localRepoPath || 'не прив’язано'"
           label="Локальна тека цієї машини"
@@ -136,13 +169,13 @@
             </span>
             <KTag>{{ m.role === 'owner' ? 'власник' : 'учасник' }}</KTag>
             <KBtn
-              v-if="canManageMembers && m.role !== 'owner'"
+              v-if="isOwnerOfSelected && m.role !== 'owner'"
               variant="ghost"
               title="Вилучити з проєкту"
               @click="removeMemberOf(m)"
             >✕</KBtn>
           </div>
-          <div v-if="canManageMembers" class="shell__member-add">
+          <div v-if="isOwnerOfSelected" class="shell__member-add">
             <KField
               v-model="memberHandle"
               label="Додати за GitHub-логіном"
@@ -162,12 +195,14 @@
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="settingsOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" @click="saveSettings">Зберегти</KBtn>
+        <KBtn variant="primary" :disabled="!isOwnerOfSelected" @click="saveSettings">
+          Зберегти
+        </KBtn>
       </template>
     </KModal>
 
-    <!-- ENV MODAL — the BOUND repo's .env plus the per-session carry files. Values are read
-         and written on this machine only (Requirement 9). -->
+    <!-- ENV MODAL — the BOUND repo's .env. VALUES never leave this machine (Requirement 9);
+         the cloud carries the required key NAMES only, as the checklist below. -->
     <KModal v-model="envOpen" :title="`Змінні середовища · ${selectedName}`">
       <div class="shell__form">
         <KEnvEditor
@@ -175,11 +210,29 @@
           :entries="envView.entries"
           :ignored="envView.ignored"
         />
+        <div v-if="envKeyState.length" class="shell__keys">
+          <span class="shell__keys-label">Обовʼязкові ключі (перелік імен із хмари)</span>
+          <div class="shell__keys-list">
+            <KTag v-for="k in envKeyState" :key="k.key">
+              {{ k.present ? '✓' : '✕' }} {{ k.key }}
+            </KTag>
+          </div>
+          <p v-if="missingEnvKeys.length" class="shell__error" role="alert">
+            Немає значень для: {{ missingEnvKeys.join(', ') }}
+          </p>
+        </div>
         <KField
-          v-model="carryFilesText"
-          label="Файли для сесії (через кому або з нового рядка)"
-          placeholder=".env"
+          v-if="isOwnerOfSelected"
+          v-model="envKeysText"
+          label="Обовʼязкові ключі — лише ІМЕНА (через кому або з нового рядка)"
+          placeholder="GITHUB_TOKEN, DATABASE_URL"
+          multiline
+          :rows="3"
         />
+        <p class="shell__hint">
+          У хмарі зберігаються лише імена ключів. Значення живуть у `.env` цієї машини й нікуди
+          не передаються.
+        </p>
         <p v-if="envError" class="shell__error" role="alert">{{ envError }}</p>
       </div>
       <template #controls>
@@ -420,6 +473,8 @@ const nameEdit = ref('');
 const colorEdit = ref('');
 const defaultBranchEdit = ref('');
 const conventionsEdit = ref('');
+const previewCommandEdit = ref('');
+const apiCommandEdit = ref('');
 const settingsBranches = ref<string[]>([]);
 
 const membersLoading = ref(false);
@@ -432,11 +487,17 @@ const members = computed<ProjectMember[]>(() =>
   store.selectedProjectId ? projects.members[store.selectedProjectId] ?? [] : [],
 );
 
-// UX only. The owner-only policies on project_members refuse a non-owner write regardless of
-// what this returns — see memberErrorText() for what that refusal looks like.
-const canManageMembers = computed(
+// UX only. Every owner-only path (membership, project config, env-key names) is enforced by
+// the owner-scoped RLS policies; this just keeps the UI from offering a write that Postgres
+// will refuse.
+const isOwnerOfSelected = computed(
   () => !!store.selectedProjectId && projects.isOwner(store.selectedProjectId),
 );
+
+// «через кому або з нового рядка»: carry files and env-key names are both typed as free text.
+function parseList(text: string): string[] {
+  return text.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+}
 
 // The three refusals a membership write really produces. Everything else is shown verbatim.
 function memberErrorText(e: unknown): string {
@@ -495,6 +556,19 @@ const envError = ref<string | null>(null);
 const envView = ref<EnvFileView>({ entries: [], ignored: true });
 const carryFilesText = ref('.env');
 const envEditor = ref<{ collect: () => { set: Record<string, string>; remove: string[] } } | null>(null);
+const envKeysText = ref('');
+
+// Requirement 9: the cloud holds key NAMES only. This is the checklist — which required names
+// the BOUND repo's .env actually carries a value for. It reflects the file as loaded, so save
+// and reopen to re-check after editing.
+const envKeyState = computed(() => {
+  const present = new Set(envView.value.entries.map((e) => e.key));
+  return (selectedCloud.value?.envKeys ?? []).map((key) => ({ key, present: present.has(key) }));
+});
+
+const missingEnvKeys = computed(() =>
+  envKeyState.value.filter((k) => !k.present).map((k) => k.key),
+);
 
 // Settings modal. Seeded from the cloud project when we have it, from the cached row when we
 // do not, so the form is never blank just because Supabase is down.
@@ -508,6 +582,11 @@ async function openSettings(): Promise<void> {
   colorEdit.value = cloud?.color ?? row?.color ?? '';
   defaultBranchEdit.value = cloud?.defaultBranch ?? row?.defaultBranch ?? '';
   conventionsEdit.value = cloud?.conventions ?? row?.conventions ?? '';
+  previewCommandEdit.value = cloud?.previewCommand ?? row?.previewCommand ?? '';
+  apiCommandEdit.value = cloud?.apiCommand ?? row?.apiCommand ?? '';
+  // Comma-joined, not newline-joined: this is a single-line <input>, which silently strips
+  // newlines — a '\n'-seeded two-entry list would render (and re-save) as one glued name.
+  carryFilesText.value = (cloud?.carryFiles ?? row?.carryFiles ?? ['.env']).join(', ');
   settingsBranches.value = [];
   settingsOpen.value = true;
   memberHandle.value = '';
@@ -538,30 +617,41 @@ async function saveSettings(): Promise<void> {
     settingsError.value = 'Назва проєкту не може бути порожньою';
     return;
   }
+  if (!isOwnerOfSelected.value) {
+    settingsError.value = 'Змінювати налаштування проєкту може лише власник';
+    return;
+  }
+  const carryFiles = parseList(carryFilesText.value);
   try {
-    // LOCAL write for now — Task 14 sends this to the cloud and re-syncs. Until then an edit
-    // here lives only until the next full sync overwrites the cached row.
-    await store.patchProject(id, {
+    // CLOUD first (design D1: it is the source of truth for config), and patch() then mirrors
+    // the returned row into the local registry via api.syncProjects([updated], false) — so the
+    // offline cache the launch path reads matches what the team sees. Empty strings are turned
+    // into NULLs by toProjectRow(), which is how a field gets cleared.
+    await projects.patch(id, {
       name,
       color: colorEdit.value,
       defaultBranch: defaultBranchEdit.value,
       conventions: conventionsEdit.value,
+      previewCommand: previewCommandEdit.value,
+      apiCommand: apiCommandEdit.value,
+      // Never store an empty carry list: the launch path would copy nothing into the worktree.
+      carryFiles: carryFiles.length ? carryFiles : ['.env'],
     });
     settingsOpen.value = false;
   } catch (e) {
-    settingsError.value = e instanceof Error ? e.message : String(e);
+    // We believed this write was allowed, so the raw message is the useful part: an expired
+    // session, an unreachable cloud, or ownership that changed under us.
+    settingsError.value = `Хмара відмовила у записі: ${e instanceof Error ? e.message : String(e)}`;
   }
 }
 
-// Env modal: the bound repo's .env plus the carry-files list copied into every session.
+// Env modal: the BOUND repo's .env (values never leave this machine) plus the cloud's
+// names-only checklist.
 async function openEnv(): Promise<void> {
   const id = store.selectedProjectId;
   if (!id) return;
   envError.value = null;
-  carryFilesText.value = (
-    selectedCloud.value?.carryFiles ??
-    selectedProject.value?.carryFiles ?? ['.env']
-  ).join('\n');
+  envKeysText.value = (selectedCloud.value?.envKeys ?? []).join('\n');
   envView.value = { entries: [], ignored: true };
   envOpen.value = true;
   try {
@@ -576,11 +666,17 @@ async function saveEnv(): Promise<void> {
   if (!id) return;
   envError.value = null;
   try {
-    const carryFiles = carryFilesText.value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
-    await store.patchProject(id, { carryFiles: carryFiles.length ? carryFiles : ['.env'] });
+    // VALUES: local file only, through the api's path-confined atomic writer.
     const edits = envEditor.value?.collect();
     if (edits && (Object.keys(edits.set).length || edits.remove.length)) {
       await store.saveEnv(id, edits);
+    }
+    // NAMES: the cloud checklist, owner-only. Sent only when the owner actually changed it, so
+    // a member saving values never attempts a project write it cannot make.
+    if (isOwnerOfSelected.value) {
+      const next = parseList(envKeysText.value);
+      const current = selectedCloud.value?.envKeys ?? [];
+      if (next.join('\n') !== current.join('\n')) await projects.patch(id, { envKeys: next });
     }
     envOpen.value = false;
   } catch (e) {
@@ -685,6 +781,13 @@ async function saveEnv(): Promise<void> {
   color: var(--k-muted);
 }
 
+// A non-owner sees the value, cannot change it, and gets the same greyed-out signal as a
+// disabled KField (which is why the opacity matches KField's :disabled rule).
+.shell__readonly {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 .shell__members {
   display: flex;
   flex-direction: column;
@@ -737,6 +840,24 @@ async function saveEnv(): Promise<void> {
   display: flex;
   align-items: flex-end;
   gap: 8px;
+}
+
+.shell__keys {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shell__keys-label {
+  text-align: left;
+  font-size: 13px;
+  color: var(--k-text);
+}
+
+.shell__keys-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .shell__dir {
