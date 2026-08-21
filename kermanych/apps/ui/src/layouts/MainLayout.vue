@@ -1,6 +1,6 @@
 <template>
   <q-layout view="lHh Lpr lFf" class="shell">
-    <!-- LEFT RAIL — one tile per project group + add-group affordance (07) -->
+    <!-- LEFT RAIL — one tile per CLOUD project, plus any orphan local row (07) -->
     <q-drawer
       model-value
       side="left"
@@ -12,33 +12,33 @@
       <div class="shell__rail-inner">
         <div class="shell__rail-items">
           <KRailItem
-            v-for="g in store.groups"
-            :key="g.id"
-            :group="g"
-            :active="g.id === store.selectedGroupId"
-            :count="runningCount(g.id)"
-            @click="store.selectGroup(g.id)"
+            v-for="p in railProjects"
+            :key="p.id"
+            :project="p"
+            :active="p.id === store.selectedProjectId"
+            :count="runningCount(p.id)"
+            @click="store.selectProject(p.id)"
           />
         </div>
         <KBtn
           variant="icon"
           class="shell__add"
-          title="Новий проєкт"
-          @click="openAddGroup"
+          title="Новий проєкт у хмарі"
+          @click="openCreate"
         >
           +
         </KBtn>
       </div>
     </q-drawer>
 
-    <!-- TOP HEADER — logo + selected-group context + new-agent action (07) -->
+    <!-- TOP HEADER — logo + selected-project context + project actions (07) -->
     <q-header class="shell__header">
       <div class="shell__brand">
         <span class="shell__logo">КЕРМАНИЧ</span>
         <span class="shell__ver mono">v0.1</span>
       </div>
       <div class="shell__context mono">{{ contextLabel }}</div>
-      <div v-if="selectedGroup" class="shell__actions">
+      <div v-if="store.selectedProjectId" class="shell__actions">
         <KBtn
           variant="icon"
           title="Змінні середовища (.env)"
@@ -48,7 +48,7 @@
           variant="icon"
           class="shell__settings"
           title="Редагувати проєкт"
-          @click="openEditProject"
+          @click="openSettings"
         >⚙</KBtn>
       </div>
     </q-header>
@@ -58,75 +58,72 @@
       <router-view />
     </q-page-container>
 
-    <!-- BOTTOM STATUS BAR — fleet aggregate for the selected group (07) -->
+    <!-- BOTTOM STATUS BAR — fleet aggregate for the selected project (07) -->
     <q-footer class="shell__footer">
       <KStatusBar :counts="counts" />
     </q-footer>
 
-    <!-- ADD-GROUP MODAL -->
-    <KModal v-model="addOpen" title="Новий проєкт">
+    <!-- CREATE-PROJECT MODAL — a project is born in the CLOUD (Requirement 2: any signed-in
+         user may create one and becomes its owner). The local row arrives through
+         POST /api/projects/sync and starts out UNBOUND — no directory picker here. -->
+    <KModal v-model="createOpen" title="Новий проєкт у хмарі">
       <div class="shell__form">
-        <KField v-model="groupName" label="Назва" placeholder="my-project" />
-        <div class="shell__dir">
-          <KField
-            v-model="groupDir"
-            label="Директорія проєкту"
-            placeholder="/path/to/project"
-          />
-          <KBtn variant="secondary" class="shell__browse" @click="pickerOpen = true">
-            Обрати теку…
-          </KBtn>
-        </div>
-        <p v-if="groupError" class="shell__error" role="alert">{{ groupError }}</p>
+        <KField v-model="createName" label="Назва" placeholder="my-project" />
+        <KField
+          v-model="createRemote"
+          label="Git remote (необовʼязково, лише довідково)"
+          placeholder="git@github.com:org/repo.git"
+        />
+        <p class="shell__hint">
+          Проєкт створюється у хмарі й одразу видимий команді. Керманич нічого не клонує —
+          локальну теку цієї машини приєднаєте окремо.
+        </p>
+        <p v-if="createError" class="shell__error" role="alert">{{ createError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="addOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" :disabled="!canCreate" @click="submitGroup">
+        <KBtn variant="ghost" @click="createOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" :disabled="!canCreate || createBusy" @click="submitCreate">
           Створити
         </KBtn>
       </template>
     </KModal>
 
-    <!-- EDIT-PROJECT MODAL — project identity only (name editable; dir read-only) -->
-    <KModal v-model="editOpen" :title="`Редагувати проєкт · ${selectedGroup?.name ?? ''}`">
+    <!-- PROJECT-SETTINGS MODAL — identity + launch defaults. These writes still go to the
+         LOCAL row; Task 14 moves them to the cloud and re-syncs. -->
+    <KModal v-model="settingsOpen" :title="`Редагувати проєкт · ${selectedName}`">
       <div class="shell__form">
-        <KField
-          v-model="groupNameEdit"
-          label="Назва проєкту"
-          placeholder="my-project"
-        />
-        <KColorPicker v-model="groupColorEdit" label="Колір проєкту" />
+        <KField v-model="nameEdit" label="Назва проєкту" placeholder="my-project" />
+        <KColorPicker v-model="colorEdit" label="Колір проєкту" />
         <KSelect
-          v-model="groupDefaultBranchEdit"
+          v-model="defaultBranchEdit"
           label="Гілка за замовчуванням"
-          :options="editBranches"
+          :options="settingsBranches"
+          :disabled="!isBound"
           placeholder="— поточна гілка репозиторію —"
         />
         <KField
-          v-model="groupConventionsEdit"
+          v-model="conventionsEdit"
           label="Конвенції PR/комітів (фолбек, якщо в репо немає)"
           placeholder="Порожнє — Керманич підставить власні дефолти"
           multiline
           :rows="6"
         />
         <KField
-          :model-value="selectedGroup?.projectDir ?? ''"
-          label="Директорія проєкту"
+          :model-value="selectedProject?.localRepoPath || 'не прив’язано'"
+          label="Локальна тека цієї машини"
           disabled
         />
-        <p v-if="editError" class="shell__error" role="alert">{{ editError }}</p>
+        <p v-if="settingsError" class="shell__error" role="alert">{{ settingsError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" class="shell__danger" @click="deleteProject">
-          Видалити проєкт
-        </KBtn>
-        <KBtn variant="ghost" @click="editOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" @click="saveProject">Зберегти</KBtn>
+        <KBtn variant="ghost" @click="settingsOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" @click="saveSettings">Зберегти</KBtn>
       </template>
     </KModal>
 
-    <!-- ENV MODAL — .env editor + per-session carry files -->
-    <KModal v-model="envOpen" :title="`Змінні середовища · ${selectedGroup?.name ?? ''}`">
+    <!-- ENV MODAL — the BOUND repo's .env plus the per-session carry files. Values are read
+         and written on this machine only (Requirement 9). -->
+    <KModal v-model="envOpen" :title="`Змінні середовища · ${selectedName}`">
       <div class="shell__form">
         <KEnvEditor
           ref="envEditor"
@@ -146,9 +143,6 @@
       </template>
     </KModal>
 
-    <!-- DIRECTORY PICKER — server-side browser; fills the project dir field -->
-    <KDirPicker v-model="pickerOpen" :start="groupDir" @select="groupDir = $event" />
-
     <!-- TOAST STACK — transient notifications (errors etc.) -->
     <KToast :toasts="store.toasts" @dismiss="store.dismissToast" />
   </q-layout>
@@ -158,34 +152,65 @@
 import { computed, onMounted, ref } from 'vue';
 import type { SessionStatus, EnvFileView } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
-import KRailItem from 'components/kit/KRailItem.vue';
+import { useProjects } from 'stores/projects';
+import { useAuth } from 'stores/auth';
+import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KStatusBar from 'components/kit/KStatusBar.vue';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
-import KDirPicker from 'components/kit/KDirPicker.vue';
 import KToast from 'components/kit/KToast.vue';
 import KEnvEditor from 'components/kit/KEnvEditor.vue';
 import KColorPicker from 'components/kit/KColorPicker.vue';
 import KSelect from 'components/kit/KSelect.vue';
 
-// The Kermanych app shell (design-system section 07): project rail, brand
-// header, page container, and the fleet status bar. Live groups/sessions come
-// from the Pinia store; the socket is opened once on mount.
+// The Kermanych app shell (design-system section 07): project rail, brand header, page
+// container, fleet status bar. Two stores back it — `store` (useOrchestrator) owns the LOCAL
+// rows and sessions streamed over the socket, `projects` (useProjects) owns the CLOUD project
+// list and membership. The rail is the join of the two.
 const store = useOrchestrator();
+const projects = useProjects();
+const auth = useAuth();
 
-onMounted(() => store.connect());
+// True only once a cloud read has actually succeeded on this run. Until then a local row
+// absent from the (still empty) cloud list is an unread cache, not an orphan — labelling
+// every project «поза хмарою» on a cold or offline boot would be a lie.
+const cloudSynced = ref(false);
 
-// A session is "running" while it is queued or actively working; waiting means
-// it is blocking on an interactive UI request; done is terminal-success.
+onMounted(async () => {
+  // Socket first: the snapshot, and the project_update events the sync inside load() emits,
+  // are how LOCAL rows reach the rail. Connecting afterwards would race those events.
+  store.connect();
+  // The router guard already keeps this layout signed-in-only, but on a cold start `ready`
+  // may still be pending, and useProjects() needs the session for RLS to return any row.
+  await auth.ready;
+  // load() reads the cloud list and mirrors it into the local registry itself
+  // (api.syncProjects(list, true), see stores/projects.ts) — that mirror is what keeps
+  // launching possible with Supabase unreachable (Requirement 7). Do not sync again here.
+  // It never throws: an unreachable cloud degrades into `offlineError` and the cached list,
+  // so the failure has to be read off the store rather than caught.
+  await projects.load();
+  if (projects.offlineError) {
+    store.notify(
+      `Хмара недоступна — працюємо з локальним кешем: ${projects.offlineError}`,
+      'error',
+      6000,
+    );
+    return;
+  }
+  cloudSynced.value = true;
+});
+
+// A session is "running" while it is queued or actively working; waiting means it is blocking
+// on an interactive UI request; done is terminal-success.
 const RUNNING: readonly SessionStatus[] = ['queued', 'thinking', 'tool'];
 
-function sessionsOf(groupId: string | undefined) {
-  return store.sessions.filter((s) => s.groupId === groupId && !s.archived);
+function sessionsOf(projectId: string | undefined) {
+  return store.sessions.filter((s) => s.projectId === projectId && !s.archived);
 }
 
-function runningCount(groupId: string): number {
-  return sessionsOf(groupId).filter((s) => RUNNING.includes(s.status)).length;
+function runningCount(projectId: string): number {
+  return sessionsOf(projectId).filter((s) => RUNNING.includes(s.status)).length;
 }
 
 const counts = computed(() => {
@@ -193,7 +218,7 @@ const counts = computed(() => {
   let waiting = 0;
   let done = 0;
   let error = 0;
-  for (const s of sessionsOf(store.selectedGroupId)) {
+  for (const s of sessionsOf(store.selectedProjectId)) {
     if (RUNNING.includes(s.status)) running++;
     else if (s.status === 'waiting_input') waiting++;
     else if (s.status === 'done') done++;
@@ -202,52 +227,107 @@ const counts = computed(() => {
   return { running, waiting, done, error };
 });
 
-const selectedGroup = computed(() =>
-  store.groups.find((g) => g.id === store.selectedGroupId),
+// The rail: the CLOUD list (what exists, for everyone) in cloud order, then every LOCAL row
+// the cloud list does not contain. Those trailing rows matter — sync's prune deliberately
+// keeps a row that still owns sessions, and agents you cannot select are agents you cannot
+// stop. A cloud project with no local row at all (the mount-time sync failed) shows as
+// unbound, which is exactly what it is: nothing on this machine can run it yet.
+const railProjects = computed<RailProject[]>(() => {
+  const local = new Map(store.projects.map((p) => [p.id, p]));
+  const out: RailProject[] = [];
+  for (const c of projects.projects) {
+    const row = local.get(c.id);
+    local.delete(c.id);
+    out.push({
+      id: c.id,
+      name: c.name,
+      color: c.color ?? row?.color,
+      state: row?.localRepoPath ? 'bound' : 'unbound',
+    });
+  }
+  for (const row of local.values()) {
+    out.push({
+      id: row.id,
+      name: row.name,
+      color: row.color,
+      state: cloudSynced.value ? 'orphan' : row.localRepoPath ? 'bound' : 'unbound',
+    });
+  }
+  return out;
+});
+
+// The LOCAL row carries this machine's binding and the offline config cache; the CLOUD
+// project is the source of truth for config. Same id, two lookups.
+const selectedProject = computed(() =>
+  store.projects.find((p) => p.id === store.selectedProjectId),
 );
 
-const contextLabel = computed(() =>
-  selectedGroup.value
-    ? `${selectedGroup.value.name} · ${selectedGroup.value.projectDir}`
-    : 'Проєкт не вибрано',
+const selectedCloud = computed(() =>
+  store.selectedProjectId ? projects.byId.get(store.selectedProjectId) : undefined,
 );
 
-// Add-group modal state, wired to the store's createGroup action.
-const addOpen = ref(false);
-const groupName = ref('');
-const groupDir = ref('');
-const groupError = ref<string | null>(null);
-const pickerOpen = ref(false);
-const canCreate = computed(
-  () => groupName.value.trim() !== '' && groupDir.value.trim() !== '',
+// Prefer the cloud name, fall back to the cached row, so a project whose sync failed still
+// shows a name rather than a UUID.
+const selectedName = computed(
+  () => selectedCloud.value?.name ?? selectedProject.value?.name ?? '',
 );
 
-function openAddGroup(): void {
-  groupName.value = '';
-  groupDir.value = '';
-  groupError.value = null;
-  addOpen.value = true;
+// Requirement 3: only a bound project can touch the repo. Task 12 hangs every disabled
+// affordance off this one computed.
+const isBound = computed(() => !!selectedProject.value?.localRepoPath);
+
+const contextLabel = computed(() => {
+  if (!store.selectedProjectId) return 'Проєкт не вибрано';
+  return `${selectedName.value} · ${selectedProject.value?.localRepoPath || 'не прив’язано'}`;
+});
+
+// Create-in-the-cloud modal. No directory field: creating a project and binding a repo are
+// different acts on different machines (Requirement 3).
+const createOpen = ref(false);
+const createName = ref('');
+const createRemote = ref('');
+const createError = ref<string | null>(null);
+const createBusy = ref(false);
+const canCreate = computed(() => createName.value.trim() !== '');
+
+function openCreate(): void {
+  createName.value = '';
+  createRemote.value = '';
+  createError.value = null;
+  createBusy.value = false;
+  createOpen.value = true;
 }
 
-async function submitGroup(): Promise<void> {
+async function submitCreate(): Promise<void> {
   if (!canCreate.value) return;
-  groupError.value = null;
+  createError.value = null;
+  createBusy.value = true;
   try {
-    await store.createGroup(groupName.value.trim(), groupDir.value.trim());
-    addOpen.value = false;
+    const remote = createRemote.value.trim();
+    // create() inserts under the user's JWT (handle_new_project adds the owner membership)
+    // and mirrors the one new project into the local registry, so its tile appears without a
+    // second full sync.
+    const created = await projects.create(createName.value.trim(), remote || undefined);
+    createOpen.value = false;
+    store.selectProject(created.id);
+    store.notify(`Проєкт «${created.name}» створено у хмарі`);
   } catch (e) {
-    // Keep the modal open so the user can correct the input; surface why.
-    groupError.value = e instanceof Error ? e.message : String(e);
+    // Keep the modal open. The two real refusals are `not signed in` (the session expired
+    // between the router guard and this click) and a postgrest/RLS or network failure; both
+    // are fixable without retyping the name.
+    createError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    createBusy.value = false;
   }
 }
 
-const editOpen = ref(false);
-const editError = ref<string | null>(null);
-const groupNameEdit = ref('');
-const groupColorEdit = ref('');
-const groupDefaultBranchEdit = ref('');
-const groupConventionsEdit = ref('');
-const editBranches = ref<string[]>([]);
+const settingsOpen = ref(false);
+const settingsError = ref<string | null>(null);
+const nameEdit = ref('');
+const colorEdit = ref('');
+const defaultBranchEdit = ref('');
+const conventionsEdit = ref('');
+const settingsBranches = ref<string[]>([]);
 
 const envOpen = ref(false);
 const envError = ref<string | null>(null);
@@ -255,87 +335,81 @@ const envView = ref<EnvFileView>({ entries: [], ignored: true });
 const carryFilesText = ref('.env');
 const envEditor = ref<{ collect: () => { set: Record<string, string>; remove: string[] } } | null>(null);
 
-// Edit-project modal: rename the group. Directory is shown read-only — changing
-// projectDir would orphan every worktree/branch/session bound to the old path.
-async function openEditProject(): Promise<void> {
-  const g = selectedGroup.value;
-  if (!g) return;
-  editError.value = null;
-  groupNameEdit.value = g.name;
-  groupColorEdit.value = g.color ?? '';
-  groupDefaultBranchEdit.value = g.defaultBranch ?? '';
-  groupConventionsEdit.value = g.conventions ?? '';
-  editBranches.value = [];
-  editOpen.value = true;
+// Settings modal. Seeded from the cloud project when we have it, from the cached row when we
+// do not, so the form is never blank just because Supabase is down.
+async function openSettings(): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  const cloud = selectedCloud.value;
+  const row = selectedProject.value;
+  settingsError.value = null;
+  nameEdit.value = cloud?.name ?? row?.name ?? '';
+  colorEdit.value = cloud?.color ?? row?.color ?? '';
+  defaultBranchEdit.value = cloud?.defaultBranch ?? row?.defaultBranch ?? '';
+  conventionsEdit.value = cloud?.conventions ?? row?.conventions ?? '';
+  settingsBranches.value = [];
+  settingsOpen.value = true;
+  // GET /projects/:id/branches answers `project not bound` without a binding, so do not ask.
+  if (!isBound.value) return;
   try {
-    editBranches.value = (await store.listBranches(g.id)).branches;
+    settingsBranches.value = (await store.listBranches(id)).branches;
   } catch {
-    // Non-fatal: the picker degrades to just the current default (or empty).
+    // Non-fatal: the picker degrades to the value already selected.
   }
 }
 
-async function saveProject(): Promise<void> {
-  const g = selectedGroup.value;
-  if (!g) return;
-  editError.value = null;
-  const name = groupNameEdit.value.trim();
+async function saveSettings(): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  settingsError.value = null;
+  const name = nameEdit.value.trim();
   if (!name) {
-    editError.value = 'Назва проєкту не може бути порожньою';
+    settingsError.value = 'Назва проєкту не може бути порожньою';
     return;
   }
   try {
-    await store.updateGroup(g.id, { name, color: groupColorEdit.value, defaultBranch: groupDefaultBranchEdit.value, conventions: groupConventionsEdit.value });
-    editOpen.value = false;
+    // LOCAL write for now — Task 14 sends this to the cloud and re-syncs. Until then an edit
+    // here lives only until the next full sync overwrites the cached row.
+    await store.patchProject(id, {
+      name,
+      color: colorEdit.value,
+      defaultBranch: defaultBranchEdit.value,
+      conventions: conventionsEdit.value,
+    });
+    settingsOpen.value = false;
   } catch (e) {
-    editError.value = e instanceof Error ? e.message : String(e);
+    settingsError.value = e instanceof Error ? e.message : String(e);
   }
 }
 
-async function deleteProject(): Promise<void> {
-  const g = selectedGroup.value;
-  if (!g) return;
-  // Destructive + cascading: every agent, discussion branch, and git worktree
-  // under this project is wiped. Spell out the blast radius before firing.
-  const ok = window.confirm(
-    `Видалити проєкт «${g.name}»?\n\n` +
-      'Усі його агенти, гілки-субагенти та робочі дерева (worktrees) буде безповоротно видалено.',
-  );
-  if (!ok) return;
-  editError.value = null;
-  try {
-    await store.deleteGroup(g.id);
-    // group_removed streams back over the socket and clears the selection + lists.
-    editOpen.value = false;
-  } catch (e) {
-    editError.value = e instanceof Error ? e.message : String(e);
-  }
-}
-
-// Env modal: per-project .env editor plus the carry-files list copied into sessions.
+// Env modal: the bound repo's .env plus the carry-files list copied into every session.
 async function openEnv(): Promise<void> {
-  const g = selectedGroup.value;
-  if (!g) return;
+  const id = store.selectedProjectId;
+  if (!id) return;
   envError.value = null;
-  carryFilesText.value = (g.carryFiles ?? ['.env']).join('\n');
+  carryFilesText.value = (
+    selectedCloud.value?.carryFiles ??
+    selectedProject.value?.carryFiles ?? ['.env']
+  ).join('\n');
   envView.value = { entries: [], ignored: true };
   envOpen.value = true;
   try {
-    envView.value = await store.getEnv(g.id);
+    envView.value = await store.getEnv(id);
   } catch (e) {
     envError.value = e instanceof Error ? e.message : String(e);
   }
 }
 
 async function saveEnv(): Promise<void> {
-  const g = selectedGroup.value;
-  if (!g) return;
+  const id = store.selectedProjectId;
+  if (!id) return;
   envError.value = null;
   try {
     const carryFiles = carryFilesText.value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
-    await store.updateGroup(g.id, { carryFiles: carryFiles.length ? carryFiles : ['.env'] });
+    await store.patchProject(id, { carryFiles: carryFiles.length ? carryFiles : ['.env'] });
     const edits = envEditor.value?.collect();
     if (edits && (Object.keys(edits.set).length || edits.remove.length)) {
-      await store.saveEnv(g.id, edits);
+      await store.saveEnv(id, edits);
     }
     envOpen.value = false;
   } catch (e) {
@@ -431,6 +505,13 @@ async function saveEnv(): Promise<void> {
   font-size: 12.5px;
   line-height: 1.5;
   color: var(--k-accent);
+}
+
+.shell__hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--k-muted);
 }
 
 .shell__dir {

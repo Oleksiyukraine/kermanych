@@ -133,9 +133,9 @@
       <div class="kit__label">07 · Рейка та рядок стану</div>
       <div class="kit__rail">
         <KRailItem
-          v-for="r in railGroups"
-          :key="r.group.id"
-          :group="r.group"
+          v-for="r in railProjects"
+          :key="r.project.id"
+          :project="r.project"
           :active="r.active"
           :count="r.count"
         />
@@ -218,7 +218,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import type {
-  SessionStatus, Session, Group, TranscriptEntry, RpcExtensionUIResponse,
+  SessionStatus, Session, TranscriptEntry, RpcExtensionUIResponse,
 } from '@kermanych/core';
 import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
@@ -229,7 +229,7 @@ import KToggle from 'components/kit/KToggle.vue';
 import KModal from 'components/kit/KModal.vue';
 import KPanel from 'components/kit/KPanel.vue';
 import KLogBlock from 'components/kit/KLogBlock.vue';
-import KRailItem from 'components/kit/KRailItem.vue';
+import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KStatusBar from 'components/kit/KStatusBar.vue';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 
@@ -249,7 +249,7 @@ const modalOpen = ref(false);
 const now = new Date().toISOString();
 function mkSession(over: Partial<Session>): Session {
   return {
-    id: 's', groupId: 'g1', name: 'api-gateway', task: '',
+    id: 's', projectId: 'p1', name: 'api-gateway', task: '',
     worktreePath: '', worktree: true, branch: 'main', kind: 'agent', status: 'thinking', createdAt: now, lastActivityAt: now, ...over,
   };
 }
@@ -298,10 +298,10 @@ const logSamples: TranscriptEntry[] = [
   { kind: 'assistant_text', text: '## Знайшов два місця\n\nСесія зберігається у **двох** місцях — треба звести:\n\n- `session.ts` — запис у файл\n- `store.ts` — дубль у памʼяті\n\n```ts\nconst s = load();\n```' },
   { kind: 'notice', text: 'Гілку перемкнено на feat/schema.' },
 ];
-const railGroups: { group: Group; active: boolean; count: number }[] = [
-  { group: { id: 'g1', name: 'api-gateway', projectDir: '', createdAt: now }, active: true, count: 4 },
-  { group: { id: 'g2', name: 'web client', projectDir: '', createdAt: now }, active: false, count: 0 },
-  { group: { id: 'g3', name: 'billing', projectDir: '', createdAt: now }, active: false, count: 1 },
+const railProjects: { project: RailProject; active: boolean; count: number }[] = [
+  { project: { id: 'p1', name: 'api-gateway', state: 'bound' }, active: true, count: 4 },
+  { project: { id: 'p2', name: 'web client', state: 'unbound' }, active: false, count: 0 },
+  { project: { id: 'p3', name: 'billing', state: 'orphan' }, active: false, count: 1 },
 ];
 const lastAction = ref('');
 function onSend(text: string) { lastAction.value = `send: ${text}`; }
