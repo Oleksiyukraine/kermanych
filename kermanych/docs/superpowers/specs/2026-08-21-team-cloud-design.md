@@ -150,7 +150,7 @@ create table projects (
   carry_files text[] not null default array['.env'],
   env_keys text[] not null default '{}',  -- NAMES only, never values
   color text,
-  owner_id uuid not null references profiles(id),
+  owner_id uuid not null references profiles(id) on delete restrict,
   created_at timestamptz not null default now());
 
 create table project_members (
@@ -165,8 +165,8 @@ create table tasks (
   project_id uuid not null references projects on delete cascade,
   title text not null, description text,
   status task_status not null default 'backlog',
-  assignee_id uuid references profiles(id),
-  created_by uuid not null references profiles(id),
+  assignee_id uuid references profiles(id) on delete set null,
+  created_by uuid references profiles(id) on delete set null,
   model text, prefix text, platform text, kind text, branch text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now());
@@ -175,6 +175,15 @@ create index tasks_project_idx on tasks (project_id);
 create index members_user_idx on project_members (user_id);
 alter publication supabase_realtime add table tasks;
 ```
+
+Account deletion is a deliberate part of this shape. `profiles.id` cascades from
+`auth.users`, so every FK into `profiles` decides what happens when a person
+leaves: `tasks.assignee_id` and `tasks.created_by` are `on delete set null`
+(nullable — an unassigned or authorless task is valid; losing a person must not
+delete the team's work), while `projects.owner_id` stays `not null` with
+`on delete restrict`, so ownership must be handed over before an account can be
+removed. No orphan projects, and the refusal is legible instead of a silent
+cascade.
 
 Triggers and helpers:
 
