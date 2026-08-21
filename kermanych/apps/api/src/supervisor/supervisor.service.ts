@@ -13,6 +13,7 @@ import {
   reduceStatus,
   ACTIVE_STATUSES,
   slugify,
+  taskNameFromText,
   branchName,
   uniqueSlug,
   worktreeDir,
@@ -264,11 +265,12 @@ export class SupervisorService implements OnModuleDestroy {
     return this.merge(session);
   }
 
-  // Promote a chat into a real, isolated agent by FORKING its omp conversation into a fresh
-  // worktree with full tools — the planning context carries over and the agent continues it.
-  // A new standalone row (not a child), so deleting the scratch chat can never cascade-delete
-  // the agent's branch. The chat is left intact for further promotions.
-  async promoteChatToAgent(chatId: string, draft: TaskDraft): Promise<Session> {
+  // Mature a chat into a real agent IN PLACE: the same row — same id, same conversation, same
+  // board entry — grows a branch and a worktree, forks its omp conversation into that worktree
+  // with the full toolset, and is immediately told to build what was just discussed. One thing
+  // that goes from "we're talking about it" to "it's being built"; there is no second row and
+  // nothing to fill in, so the operator's click is the whole ceremony.
+  async promoteChatToAgent(chatId: string): Promise<Session> {
     const chat = this.registry.listSessions().find((x) => x.id === chatId);
     if (!chat) throw new Error("session not found");
     if (chat.kind !== "chat") throw new Error("not a chat session");
@@ -280,27 +282,47 @@ export class SupervisorService implements OnModuleDestroy {
       await this.refreshState(chatId);
       chatFile = this.registry.listSessions().find((x) => x.id === chatId)?.ompSessionFile;
     }
-    if (!chatFile) throw new Error("chat has no omp session yet — send a message before creating an agent");
+    if (!chatFile)
+      throw new Error("chat has no omp session yet — send a message before starting implementation");
 
     const live = this.map.get(chatId);
     if (live && (live.state.status === "thinking" || live.state.status === "tool"))
-      throw new Error("wait for the chat to finish its turn before creating an agent");
+      throw new Error("wait for the chat to finish its turn before starting implementation");
 
-    const name = draft.name?.trim() || chat.name;
-    const prefix = draft.prefix ?? "feature";
-    const worktree = draft.worktree ?? true;
-    const model = draft.model ?? chat.model;
-    const task = draft.task?.trim() ?? "";
+    // Everything the launcher used to ask for is derived: the chat's opening message is the
+    // task, its first line the name, and the rest are the project's defaults.
+    const name = taskNameFromText(chat.task) || chat.name;
+    const { branch, baseBranch } = await this.resolveLaunchParams(group, name, "feature", true, chatId);
+    const prompt =
+      `The planning discussion above is settled — implement it now.\n\n` +
+      `You are no longer read-only: you have been moved out of the project directory into a ` +
+      `dedicated git worktree on branch \`${branch}\`, with the full toolset. Everything agreed ` +
+      `above is the specification — do not re-open it and do not re-ask what was already ` +
+      `answered.\n\n` +
+      `Implement it end to end: follow the repo's existing conventions and patterns, leave no ` +
+      `stubs or TODOs behind, and commit your work on this branch. Where the discussion left ` +
+      `something ambiguous, take the most reasonable reading, say which one you took, and keep ` +
+      `going — stop only for a genuinely blocking question.`;
 
-    const { branch, baseBranch } = await this.resolveLaunchParams(group, name, prefix, worktree, undefined, draft.baseBranch);
-    const session = this.registry.createSession({
-      groupId: chat.groupId, name, task, worktreePath: "", branch, worktree, baseBranch, model, prefix, platform: draft.platform,
+    // The read-only child must die before the worktree one takes over this row's event stream.
+    if (live) {
+      this.stopPoll(live);
+      await live.rpc.stop().catch(() => {});
+      this.map.delete(chatId);
+    }
+    const session = this.registry.updateSession(chatId, {
+      name, kind: "agent", worktree: true, branch, baseBranch, worktreePath: "", prefix: "feature", status: "queued",
     });
     try {
-      return await this.launch(session, group, { fork: chatFile });
+      return await this.launch(session, group, { fork: chatFile, firstPrompt: prompt });
     } catch (err) {
-      this.registry.removeSession(session.id);
-      this.events.next({ type: "session_removed", sessionId: session.id });
+      // Back to being a chat: the row keeps its conversation, and the next message resumes its
+      // read-only omp child through doResume.
+      this.registry.updateSession(chatId, {
+        name: chat.name, kind: "chat", worktree: false, branch: "", baseBranch: undefined,
+        worktreePath: "", prefix: undefined, status: "done",
+      });
+      this.pushUpdate(chatId);
       throw err;
     }
   }
@@ -670,6 +692,12 @@ export class SupervisorService implements OnModuleDestroy {
       this.registry.touchSession(id);
     } catch {
       /* never let a bookkeeping write break message delivery */
+    }
+    // A chat's opening message IS the ask. Record it once, so promoting the chat can name the
+    // agent and its branch after the thing being built, and so review/PR prompts have a task.
+    if (text.trim()) {
+      const s = this.registry.listSessions().find((x) => x.id === id);
+      if (s?.kind === "chat" && !s.task.trim()) this.registry.updateSession(id, { task: text.trim() });
     }
     if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images));
     if (mode === "steer") l.rpc.steer(text, images);

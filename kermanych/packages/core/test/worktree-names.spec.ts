@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { slugify, branchName, uniqueSlug, BRANCH_PREFIXES } from "../src/worktree-names";
+import { slugify, branchName, uniqueSlug, taskNameFromText, BRANCH_PREFIXES } from "../src/worktree-names";
 test("slugify lowercases and dashes", () => {
   expect(slugify("Fix Login Bug!")).toBe("fix-login-bug");
 });
@@ -21,4 +21,18 @@ test("BRANCH_PREFIXES lists the four allowed prefixes", () => {
 test("uniqueSlug suffixes on collision", () => {
   expect(uniqueSlug("fix", new Set(["fix", "fix-2"]))).toBe("fix-3");
   expect(uniqueSlug("fix", new Set())).toBe("fix");
+});
+test("taskNameFromText takes the first non-empty line", () => {
+  expect(taskNameFromText("\n\n  Додати експорт у CSV  \nа ще подумати про фільтри")).toBe(
+    "Додати експорт у CSV",
+  );
+});
+test("taskNameFromText strips markdown decoration", () => {
+  expect(taskNameFromText("## 1. **Полагодити** `логін`")).toBe("Полагодити логін");
+});
+test("taskNameFromText caps the name at 60 characters", () => {
+  expect(taskNameFromText("я".repeat(80))).toBe("я".repeat(60));
+});
+test("taskNameFromText returns empty for blank text so callers can fall back", () => {
+  expect(taskNameFromText("   \n\n ")).toBe("");
 });

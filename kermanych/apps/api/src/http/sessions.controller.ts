@@ -52,10 +52,11 @@ export class SessionsController {
     }
   }
 
+  // No body: a chat carries everything the promotion needs (its conversation, its opening ask).
   @Post(":id/promote")
-  async promote(@Param("id") id: string, @Body() b: TaskDraft) {
+  async promote(@Param("id") id: string) {
     try {
-      return await this.sup.promoteChatToAgent(id, b);
+      return await this.sup.promoteChatToAgent(id);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
