@@ -1,3 +1,7 @@
 .superpowers/
 node_modules/
 dist/
+
+# Local secrets (Supabase CLI env() substitution reads kermanych/.env). Never committed.
+.env
+.env.local
