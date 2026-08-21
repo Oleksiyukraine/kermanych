@@ -31,3 +31,16 @@ export {
   removeMember,
   deleteProject,
 } from "./projects";
+
+export {
+  toTask,
+  toTaskRow,
+  listTasks,
+  getTask,
+  createTask,
+  patchTask,
+  assignTask,
+  claimTask,
+  pushTaskStatus,
+  deleteTask,
+} from "./tasks";
