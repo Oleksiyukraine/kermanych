@@ -16,6 +16,16 @@ export function slugify(name: string): string {
   const latin = name.toLowerCase().replace(/[\u0400-\u04ff]/g, (ch) => TRANSLIT[ch] ?? "");
   return latin.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "session";
 }
+
+// A short human label for a task, derived from the text that started it (a chat's
+// first message, a transcript selection). First non-empty line, leading markdown
+// decoration and inline emphasis stripped, capped so it reads as a label. Empty
+// text yields "" so the caller can fall back to a name of its own.
+export function taskNameFromText(text: string): string {
+  const firstLine = text.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+  const clean = firstLine.replace(/^[#>\-*\d.)\s]+/, "").replace(/[*_`]/g, "").trim();
+  return (clean || firstLine).slice(0, 60);
+}
 export const BRANCH_PREFIXES = ["feature", "fix", "refactoring", "chore"] as const;
 export type BranchPrefix = (typeof BRANCH_PREFIXES)[number];
 

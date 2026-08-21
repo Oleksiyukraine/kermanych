@@ -13,9 +13,12 @@
           v-if="session.kind === 'chat'"
           class="k-panel__icon"
           type="button"
-          title="Створити агента з цього чату (форк розмови в ізольований worktree)"
+          :disabled="promoting"
+          :title="promoting
+            ? 'Готую worktree…'
+            : 'Почати імплементацію обговореного (worktree + повний доступ, цей же контекст)'"
           @click="emit('promoteAgent')"
-        >⑂</button>
+        >▶</button>
         <button
           v-if="session.kind === 'chat'"
           class="k-panel__icon"
@@ -228,8 +231,11 @@ const props = withDefaults(
   defineProps<{
     session: Session;
     placeholder?: string;
+    // The chat is being turned into an agent right now (worktree + omp respawn): the button
+    // stays down until the server answers, so a second click cannot race the first.
+    promoting?: boolean;
   }>(),
-  { placeholder: 'напиши наступний крок…' },
+  { placeholder: 'напиши наступний крок…', promoting: false },
 );
 
 const emit = defineEmits<{
@@ -624,6 +630,15 @@ function answerCancel() {
   &:focus-visible {
     outline: 1px solid var(--k-accent);
     outline-offset: -1px;
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.45;
+
+    &:hover {
+      color: var(--k-muted);
+    }
   }
 }
 

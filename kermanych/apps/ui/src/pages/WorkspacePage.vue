@@ -70,8 +70,12 @@
                 <KIconButton v-if="store.groups.length > 1" title="Перемістити в інший проєкт" @click.stop="openMove(row)">→</KIconButton>
               </template>
               <template v-else-if="row.kind === 'chat' && !showArchived">
-                <KIconButton title="Створити агента з цього чату (форк розмови в ізольований worktree)" @click.stop="openChatPromote(row, false)">⑂</KIconButton>
-                <KIconButton title="Зберегти як задачу в беклог" @click.stop="openChatPromote(row, true)">⊕</KIconButton>
+                <KIconButton
+                  :disabled="promotingId === row.id"
+                  :title="promotingId === row.id ? 'Готую worktree…' : 'Почати імплементацію обговореного (worktree + повний доступ)'"
+                  @click.stop="startImplementation(row)"
+                >▶</KIconButton>
+                <KIconButton title="Зберегти як задачу в беклог" @click.stop="openChatToBacklog(row)">⊕</KIconButton>
                 <KIconButton title="Видалити чат" @click.stop="onDeleteChat(row)">✕</KIconButton>
               </template>
               <template v-else-if="row.kind === 'discussion' || row.kind === 'review'">
@@ -151,7 +155,7 @@
           class="ws__panel"
           :session="selectedSession"
           v-bind="selectedSession.kind === 'chat'
-            ? { placeholder: 'запитай або опиши, що потрібно зробити…' }
+            ? { placeholder: 'запитай або опиши, що потрібно зробити…', promoting: promotingId === selectedSession.id }
             : {}"
           @stop="onStop"
           @delete="onDelete"
@@ -311,13 +315,12 @@
           <span class="ws-launcher__spacer"></span>
           <KBtn variant="ghost" @click="launcherOpen = false">Скасувати</KBtn>
           <KBtn
-            v-if="!promotingChatId"
             variant="secondary"
             :disabled="!canLaunch"
             @click="submitLauncher(true)"
           >{{ editingTaskId ? 'Зберегти' : 'В беклог' }}</KBtn>
           <KBtn variant="primary" :disabled="!canLaunch" @click="submitLauncher(false)">
-            {{ promotingChatId ? 'Створити агента' : 'Запустити' }}<span class="ws-launcher__kbd mono">⌘⏎</span>
+            Запустити<span class="ws-launcher__kbd mono">⌘⏎</span>
           </KBtn>
         </div>
       </template>
@@ -446,6 +449,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import {
   slugify,
   branchName,
+  taskNameFromText,
   type ImageInput,
   type Session,
   type SessionStatus,
@@ -661,7 +665,6 @@ const nameEdited = ref(false);
 const draftBaseBranch = ref('');
 const launchBranches = ref<string[]>([]);
 const editingTaskId = ref<string | null>(null);
-const promotingChatId = ref<string | null>(null);
 const branchPreview = computed(() =>
   draftName.value.trim()
     ? branchName(slugify(draftName.value), draftPrefix.value)
@@ -694,21 +697,16 @@ function onLaunchFilePick(e: Event): void {
 }
 
 const canLaunch = computed(
-  () =>
-    !!store.selectedGroupId &&
-    draftName.value.trim() !== '' &&
-    (draftTask.value.trim() !== '' || !!promotingChatId.value),
+  () => !!store.selectedGroupId && draftName.value.trim() !== '' && draftTask.value.trim() !== '',
 );
 
-const launcherTitle = computed(() =>
-  promotingChatId.value ? 'Створити агента з чату' : editingTaskId.value ? 'Задача' : 'Нова задача',
-);
+const launcherTitle = computed(() => (editingTaskId.value ? 'Задача' : 'Нова задача'));
 // Footer status: silent once launchable, otherwise nudges the operator.
 const footHint = computed(() => (canLaunch.value ? '' : 'опиши завдання, щоб запустити'));
 
 // The name is derived from the task text until the operator edits it by hand.
 watch(draftTask, (t) => {
-  if (!nameEdited.value) draftName.value = suggestTaskName(t);
+  if (!nameEdited.value) draftName.value = taskNameFromText(t);
 });
 
 // ⌘⏎ / Ctrl+⏎ anywhere in the launcher launches now (never saves to backlog).
@@ -738,7 +736,6 @@ async function loadLaunchBranches(preferred: string | undefined): Promise<void> 
 
 function openLauncher(task?: Session): void {
   editingTaskId.value = task?.id ?? null;
-  promotingChatId.value = null;
   draftName.value = task?.name ?? '';
   draftTask.value = task?.task ?? '';
   draftModel.value = task?.model ?? 'opus-5';
@@ -753,12 +750,24 @@ function openLauncher(task?: Session): void {
   void nextTick(() => taskInput.value?.focus());
 }
 
-// Suggest a short task name from the first non-empty line of the selection,
-// stripping leading markdown decoration; capped so it reads as a label.
-function suggestTaskName(text: string): string {
-  const firstLine = text.split('\n').map((l) => l.trim()).find((l) => l.length > 0) ?? '';
-  const clean = firstLine.replace(/^[#>\-*\d.)\s]+/, '').replace(/[*_`]/g, '').trim();
-  return (clean || firstLine).slice(0, 60);
+// The chat matures into an agent on the spot — no launcher, nothing to fill in. The server
+// derives the name and branch from what was asked, builds the worktree, forks the very same
+// conversation into it and hands the agent the implementation order. The row keeps its id, so
+// an open panel simply turns into the running agent under the operator's eyes.
+const promotingId = ref<string | null>(null);
+
+async function startImplementation(chat: Session): Promise<void> {
+  if (promotingId.value) return;
+  promotingId.value = chat.id;
+  try {
+    await store.promoteChat(chat.id);
+    viewMode.value = VIEW_ACTIVE;
+    store.selectSession(chat.id);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    promotingId.value = null;
+  }
 }
 
 // Turn a transcript text selection into a new backlog task: prefill the launcher
@@ -766,8 +775,7 @@ function suggestTaskName(text: string): string {
 // defaulting to "save to backlog" so a finding is parked rather than run now.
 function openTaskFromText(text: string): void {
   editingTaskId.value = null;
-  promotingChatId.value = null;
-  draftName.value = suggestTaskName(text);
+  draftName.value = taskNameFromText(text);
   draftTask.value = text;
   draftModel.value = 'opus-5';
   draftPrefix.value = 'feature';
@@ -781,19 +789,17 @@ function openTaskFromText(text: string): void {
   void nextTick(() => nameField.value?.focus());
 }
 
-// Promote a quick chat: open the launcher pre-filled from the conversation. asTask=true saves a
-// backlog task (a fresh launch config); asTask=false forks the chat into an isolated agent that
-// continues the same thread.
-function openChatPromote(chat: Session, asTask: boolean): void {
+// Park a quick chat's opening ask in the backlog: open the launcher pre-filled from the
+// conversation, as a fresh launch config to be started (or edited) later.
+function openChatToBacklog(chat: Session): void {
   const history = store.transcripts[chat.id] ?? [];
   const firstUser = history.find((e) => e.kind === 'user_text') as
     | { kind: 'user_text'; text: string }
     | undefined;
   const seed = (firstUser?.text ?? '').trim();
   editingTaskId.value = null;
-  promotingChatId.value = asTask ? null : chat.id;
-  draftName.value = seed.split(/\s+/).slice(0, 6).join(' ').slice(0, 48);
-  draftTask.value = asTask ? seed : '';
+  draftName.value = taskNameFromText(seed);
+  draftTask.value = seed;
   draftModel.value = chat.model ?? 'opus-5';
   draftPrefix.value = 'feature';
   draftPlatform.value = undefined;
@@ -823,10 +829,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
   launcherError.value = null;
   try {
     let session: Session | undefined;
-    if (promotingChatId.value) {
-      // Fork the chat's conversation into a real, isolated worktree agent that continues it.
-      session = await store.promoteChat(promotingChatId.value, draft);
-    } else if (editingTaskId.value) {
+    if (editingTaskId.value) {
       // Editing a backlog task: "Зберегти" keeps it in the backlog; "Запустити" launches it now.
       session = asTask
         ? await store.updateTask(editingTaskId.value, draft)
@@ -837,7 +840,6 @@ async function submitLauncher(asTask: boolean): Promise<void> {
       );
     }
     launcherOpen.value = false;
-    promotingChatId.value = null;
     clearLaunchImages();
     // Saved to the backlog → surface it under the Задачі tab; launched → jump to Активні + open its chat.
     if (asTask) {
@@ -929,12 +931,12 @@ async function onReview(s: Session): Promise<void> {
 
 function onPromoteAgent(): void {
   const s = selectedSession.value;
-  if (s) openChatPromote(s, false);
+  if (s) void startImplementation(s);
 }
 
 function onPromoteTask(): void {
   const s = selectedSession.value;
-  if (s) openChatPromote(s, true);
+  if (s) openChatToBacklog(s);
 }
 
 function onStop(): void {
