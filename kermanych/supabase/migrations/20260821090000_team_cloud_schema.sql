@@ -30,7 +30,7 @@ create table projects (
   carry_files text[] not null default array['.env'],
   env_keys text[] not null default '{}',  -- NAMES only, never values
   color text,
-  owner_id uuid not null references profiles(id),
+  owner_id uuid not null references profiles(id) on delete restrict,
   created_at timestamptz not null default now());
 
 create table project_members (
@@ -49,8 +49,8 @@ create table tasks (
   title text not null,
   description text,
   status task_status not null default 'backlog',
-  assignee_id uuid references profiles(id),
-  created_by uuid not null references profiles(id),
+  assignee_id uuid references profiles(id) on delete set null,
+  created_by uuid references profiles(id) on delete set null,
   model text,
   prefix text,
   platform text,
