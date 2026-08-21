@@ -1,27 +1,32 @@
 <template>
   <main class="ws">
     <!-- No project selected — the rail invites a choice. -->
-    <div v-if="!store.selectedGroupId" class="ws__blank">
+    <div v-if="!store.selectedProjectId" class="ws__blank">
       <div class="ws__blank-eyebrow mono">КЕРМАНИЧ</div>
       <p class="ws__blank-text">Виберіть проєкт у лівій панелі, щоб побачити його агентів.</p>
     </div>
 
     <div v-else class="ws__content" ref="contentEl" :class="{ 'ws__content--resizing': resizing }">
-      <!-- BOARD — one card per session in the selected group -->
+      <!-- BOARD — one card per session in the selected project -->
       <section class="ws__board">
         <header class="ws__board-head">
           <div class="ws__board-title">
-            <h1 class="ws__heading">{{ selectedGroup?.name ?? 'Проєкт' }}</h1>
+            <h1 class="ws__heading">{{ selectedProject?.name ?? 'Проєкт' }}</h1>
           </div>
           <div class="ws__board-controls">
             <KToggle :options="viewOptions" v-model="viewMode" />
-            <KBtn variant="ghost" @click="onNewChat">+ Швидкий чат</KBtn>
+            <KBtn
+              variant="ghost"
+              :disabled="!isBound"
+              :title="isBound ? 'Сесія-чат без worktree' : BIND_HINT"
+              @click="onNewChat"
+            >+ Швидкий чат</KBtn>
             <KBtn variant="primary" @click="openLauncher()">Нова задача</KBtn>
           </div>
         </header>
 
         <KTable
-          v-if="groupSessions.length"
+          v-if="projectSessions.length"
           class="ws__table"
           :columns="agentColumns"
           :rows="boardRows"
@@ -64,10 +69,14 @@
           <template #cell-actions="{ row }">
             <div class="ws__cell-actions">
               <template v-if="row.kind === 'task'">
-                <KIconButton title="Запустити задачу як агента" @click.stop="openLauncher(row)">▶</KIconButton>
+                <KIconButton
+                  :disabled="!isBoundFor(row.projectId)"
+                  :title="isBoundFor(row.projectId) ? 'Запустити задачу як агента' : BIND_HINT"
+                  @click.stop="openLauncher(row)"
+                >▶</KIconButton>
                 <KIconButton title="Редагувати задачу" @click.stop="openLauncher(row)">✎</KIconButton>
                 <KIconButton title="Видалити задачу" @click.stop="onDeleteTask(row)">✕</KIconButton>
-                <KIconButton v-if="store.groups.length > 1" title="Перемістити в інший проєкт" @click.stop="openMove(row)">→</KIconButton>
+                <KIconButton v-if="store.projects.length > 1" title="Перемістити в інший проєкт" @click.stop="openMove(row)">→</KIconButton>
               </template>
               <template v-else-if="row.kind === 'chat' && !showArchived">
                 <KIconButton
@@ -92,7 +101,14 @@
               <template v-else-if="!showArchived">
                 <KIconButton
                   :active="!!store.previews[row.id]"
-                  :title="store.previews[row.id] ? 'Зупинити превʼю' : 'Превʼю гілки в браузері'"
+                  :disabled="!isBoundFor(row.projectId)"
+                  :title="
+                    !isBoundFor(row.projectId)
+                      ? BIND_HINT
+                      : store.previews[row.id]
+                        ? 'Зупинити превʼю'
+                        : 'Превʼю гілки в браузері'
+                  "
                   @click.stop="togglePreview(row)"
                 >{{ store.previews[row.id] ? '◼' : '▶' }}</KIconButton>
                 <KIconButton
@@ -182,7 +198,7 @@
     <KModal v-model="launcherOpen" :title="launcherTitle" width="880px" flush>
       <template #head-meta>
         <div class="ws-launcher__headmeta">
-          <span v-if="selectedGroup" class="ws-launcher__tag mono">{{ selectedGroup.name }}</span>
+          <span v-if="selectedProject" class="ws-launcher__tag mono">{{ selectedProject.name }}</span>
           <span class="ws-launcher__spacer"></span>
           <span class="ws-launcher__esc mono">Esc — закрити</span>
         </div>
@@ -319,7 +335,12 @@
             :disabled="!canLaunch"
             @click="submitLauncher(true)"
           >{{ editingTaskId ? 'Зберегти' : 'В беклог' }}</KBtn>
-          <KBtn variant="primary" :disabled="!canLaunch" @click="submitLauncher(false)">
+          <KBtn
+            variant="primary"
+            :disabled="!canLaunch || !isBound"
+            :title="isBound ? '' : BIND_HINT"
+            @click="submitLauncher(false)"
+          >
             Запустити<span class="ws-launcher__kbd mono">⌘⏎</span>
           </KBtn>
         </div>
@@ -358,13 +379,13 @@
         </p>
         <div class="ws__move-list">
           <button
-            v-for="g in moveTargets"
-            :key="g.id"
+            v-for="p in moveTargets"
+            :key="p.id"
             type="button"
             class="ws__move-option"
             :disabled="moveBusy"
-            @click="confirmMove(g.id)"
-          >{{ g.name }}</button>
+            @click="confirmMove(p.id)"
+          >{{ p.name }}</button>
         </div>
         <p v-if="moveError" class="ws__error" role="alert">{{ moveError }}</p>
       </div>
@@ -477,7 +498,7 @@ import { relativeTime } from '../lib/time';
 import { useResizableWidth } from '../composables/useResizableWidth';
 
 // The Workspace screen (design-system section 07): the board of session cards
-// for the selected group + the full panel for the selected session, plus the
+// for the selected project + the full panel for the selected session, plus the
 // new-agent launcher. All mutations go through the Pinia store.
 const store = useOrchestrator();
 
@@ -510,10 +531,10 @@ const STATUS_RANK: Record<SessionStatus, number> = {
   stopped: 2,
   merged: 3,
 };
-const groupSessions = computed(() =>
+const projectSessions = computed(() =>
   store.sessions
     .filter((s) => {
-      if (s.groupId !== store.selectedGroupId) return false;
+      if (s.projectId !== store.selectedProjectId) return false;
       if (showArchived.value) return !!s.archived;
       if (s.archived) return false;
       return showTasks.value ? s.status === 'backlog' : s.status !== 'backlog';
@@ -525,9 +546,9 @@ const groupSessions = computed(() =>
 );
 
 // Board order: each discussion child immediately follows its parent (a one-level
-// tree). Orphans (parent filtered out by the archived/group view) still render.
+// tree). Orphans (parent filtered out by the archived/project view) still render.
 const boardRows = computed<Session[]>(() => {
-  const all = groupSessions.value;
+  const all = projectSessions.value;
   const parents = all.filter((s) => !s.parentSessionId);
   const out: Session[] = [];
   for (const p of parents) {
@@ -537,9 +558,21 @@ const boardRows = computed<Session[]>(() => {
   for (const s of all) if (!out.includes(s)) out.push(s);
   return out;
 });
-const selectedGroup = computed(() =>
-  store.groups.find((g) => g.id === store.selectedGroupId),
+const selectedProject = computed(() =>
+  store.projects.find((p) => p.id === store.selectedProjectId),
 );
+
+// Requirement 3 in the UI: a task can be created, edited and moved without a binding, but
+// nothing that touches the repo may run. `BIND_HINT` is the same string MainLayout uses; both
+// copies are the operator's next action, not an apology.
+const BIND_HINT = 'Прив’яжіть локальну теку репозиторію';
+const isBound = computed(() => !!selectedProject.value?.localRepoPath);
+
+// Row-level check: the board can show sessions of an orphan project whose row is still here
+// but whose binding was never made, so per-row actions ask about the row's own project.
+function isBoundFor(projectId: string): boolean {
+  return !!store.projects.find((p) => p.id === projectId)?.localRepoPath;
+}
 const selectedSession = computed(() =>
   store.sessions.find((s) => s.id === store.selectedSessionId),
 );
@@ -673,7 +706,7 @@ const branchPreview = computed(() =>
 // Right-column summary line under the branch box.
 const branchHint = computed(() =>
   draftWorktree.value
-    ? `нова worktree, чекаут від ${draftBaseBranch.value || selectedGroup.value?.defaultBranch || 'HEAD'}`
+    ? `нова worktree, чекаут від ${draftBaseBranch.value || selectedProject.value?.defaultBranch || 'HEAD'}`
     : 'in-place у теці проєкту; дерево має бути чистим',
 );
 const taskInput = ref<HTMLTextAreaElement | null>(null);
@@ -697,12 +730,16 @@ function onLaunchFilePick(e: Event): void {
 }
 
 const canLaunch = computed(
-  () => !!store.selectedGroupId && draftName.value.trim() !== '' && draftTask.value.trim() !== '',
+  () => !!store.selectedProjectId && draftName.value.trim() !== '' && draftTask.value.trim() !== '',
 );
 
 const launcherTitle = computed(() => (editingTaskId.value ? 'Задача' : 'Нова задача'));
-// Footer status: silent once launchable, otherwise nudges the operator.
-const footHint = computed(() => (canLaunch.value ? '' : 'опиши завдання, щоб запустити'));
+// Footer status: the binding first (it blocks launching outright), then the form nudge,
+// then silence once launchable.
+const footHint = computed(() => {
+  if (!isBound.value) return BIND_HINT;
+  return canLaunch.value ? '' : 'опиши завдання, щоб запустити';
+});
 
 // The name is derived from the task text until the operator edits it by hand.
 watch(draftTask, (t) => {
@@ -713,7 +750,7 @@ watch(draftTask, (t) => {
 function onLauncherKeydown(e: KeyboardEvent): void {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
     e.preventDefault();
-    if (canLaunch.value) void submitLauncher(false);
+    if (canLaunch.value && isBound.value) void submitLauncher(false);
   }
 }
 
@@ -721,12 +758,12 @@ function onLauncherKeydown(e: KeyboardEvent): void {
 // chosen on the task being edited; otherwise it falls back to the project default, then
 // (after the fetch) to the repo's current HEAD, so the picker always shows a sane base.
 async function loadLaunchBranches(preferred: string | undefined): Promise<void> {
-  const groupId = store.selectedGroupId;
+  const projectId = store.selectedProjectId;
   launchBranches.value = [];
-  draftBaseBranch.value = preferred ?? selectedGroup.value?.defaultBranch ?? '';
-  if (!groupId) return;
+  draftBaseBranch.value = preferred ?? selectedProject.value?.defaultBranch ?? '';
+  if (!projectId || !isBound.value) return;
   try {
-    const info = await store.listBranches(groupId);
+    const info = await store.listBranches(projectId);
     launchBranches.value = info.branches;
     if (!draftBaseBranch.value) draftBaseBranch.value = info.default ?? info.current ?? '';
   } catch {
@@ -813,8 +850,14 @@ function openChatToBacklog(chat: Session): void {
 }
 
 async function submitLauncher(asTask: boolean): Promise<void> {
-  const groupId = store.selectedGroupId;
-  if (!groupId || !canLaunch.value) return;
+  const projectId = store.selectedProjectId;
+  if (!projectId || !canLaunch.value) return;
+  // Saving to the backlog is allowed unbound; starting an agent is not, and the api would
+  // refuse it with `project not bound` anyway.
+  if (!asTask && !isBound.value) {
+    launcherError.value = BIND_HINT;
+    return;
+  }
   const model = draftModel.value.trim() || undefined;
   const images = launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));
   const draft = {
@@ -836,7 +879,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
         : await store.startTask(editingTaskId.value, { ...draft, images });
     } else {
       session = await store.createSession(
-        groupId, draft.name, draft.task, model, images, draft.worktree, draft.prefix, asTask, draft.platform, draft.baseBranch,
+        projectId, draft.name, draft.task, model, images, draft.worktree, draft.prefix, asTask, draft.platform, draft.baseBranch,
       );
     }
     launcherOpen.value = false;
@@ -864,10 +907,10 @@ async function onDeleteTask(s: Session): Promise<void> {
 }
 
 async function onNewChat(): Promise<void> {
-  const groupId = store.selectedGroupId;
-  if (!groupId) return;
+  const projectId = store.selectedProjectId;
+  if (!projectId || !isBound.value) return;
   try {
-    const chat = await store.createChat(groupId);
+    const chat = await store.createChat(projectId);
     viewMode.value = VIEW_ACTIVE;
     if (chat?.id) store.selectSession(chat.id);
   } catch (e) {
@@ -1105,7 +1148,7 @@ const moveOpen = ref(false);
 const moveFor = ref<Session | null>(null);
 const moveBusy = ref(false);
 const moveError = ref<string | null>(null);
-const moveTargets = computed(() => store.groups.filter((g) => g.id !== moveFor.value?.groupId));
+const moveTargets = computed(() => store.projects.filter((p) => p.id !== moveFor.value?.projectId));
 
 function openMove(s: Session): void {
   moveFor.value = s;
@@ -1114,15 +1157,15 @@ function openMove(s: Session): void {
   moveOpen.value = true;
 }
 
-async function confirmMove(groupId: string): Promise<void> {
+async function confirmMove(projectId: string): Promise<void> {
   const s = moveFor.value;
   if (!s) return;
   moveBusy.value = true;
   moveError.value = null;
   try {
-    await store.moveTask(s.id, groupId);
+    await store.moveTask(s.id, projectId);
     moveOpen.value = false;
-    const dest = store.groups.find((g) => g.id === groupId);
+    const dest = store.projects.find((p) => p.id === projectId);
     store.notify(`Задачу «${s.name}» перенесено в «${dest?.name ?? 'проєкт'}»`);
   } catch (e) {
     moveError.value = e instanceof Error ? e.message : String(e);
@@ -1223,8 +1266,8 @@ async function togglePreview(s: Session): Promise<void> {
     await store.stopPreview(s.id);
     return;
   }
-  const g = store.groups.find((x) => x.id === s.groupId);
-  if (!g?.previewCommand) {
+  const p = store.projects.find((x) => x.id === s.projectId);
+  if (!p?.previewCommand) {
     openPreviewConfig(s);
     return;
   }
@@ -1235,9 +1278,9 @@ async function togglePreview(s: Session): Promise<void> {
 
 function openPreviewConfig(s: Session, forceDefaults = false): void {
   previewCfgSession.value = s;
-  const g = store.groups.find((x) => x.id === s.groupId);
-  draftWebCmd.value = (forceDefaults ? '' : g?.previewCommand ?? '') || DEFAULT_WEB_CMD;
-  draftApiCmd.value = (forceDefaults ? '' : g?.apiCommand ?? '') || DEFAULT_API_CMD;
+  const p = store.projects.find((x) => x.id === s.projectId);
+  draftWebCmd.value = (forceDefaults ? '' : p?.previewCommand ?? '') || DEFAULT_WEB_CMD;
+  draftApiCmd.value = (forceDefaults ? '' : p?.apiCommand ?? '') || DEFAULT_API_CMD;
   previewCfgOpen.value = true;
 }
 
@@ -1253,7 +1296,7 @@ async function submitPreviewConfig(): Promise<void> {
     };
     const apiCmd = draftApiCmd.value.trim();
     if (apiCmd) patch.apiCommand = apiCmd;
-    await store.updateGroup(s.groupId, patch);
+    await store.patchProject(s.projectId, patch);
   } catch (e) {
     win?.close();
     window.alert(`Не вдалось зберегти: ${e instanceof Error ? e.message : String(e)}`);

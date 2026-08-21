@@ -40,8 +40,14 @@
       <div class="shell__context mono">{{ contextLabel }}</div>
       <div v-if="store.selectedProjectId" class="shell__actions">
         <KBtn
+          variant="secondary"
+          :title="isBound ? 'Змінити локальну теку цього проєкту' : BIND_HINT"
+          @click="openBinding"
+        >{{ isBound ? 'Змінити теку' : 'Прив’язати теку' }}</KBtn>
+        <KBtn
           variant="icon"
-          title="Змінні середовища (.env)"
+          :disabled="!isBound"
+          :title="isBound ? 'Змінні середовища (.env)' : BIND_HINT"
           @click="openEnv"
         >$</KBtn>
         <KBtn
@@ -143,6 +149,14 @@
       </template>
     </KModal>
 
+    <!-- DIRECTORY PICKER — server-side browser (GET /api/fs/list, still the LOCAL api). Its
+         choice becomes THIS machine's binding for the selected project. -->
+    <KDirPicker
+      v-model="pickerOpen"
+      :start="selectedProject?.localRepoPath ?? ''"
+      @select="bindTo"
+    />
+
     <!-- TOAST STACK — transient notifications (errors etc.) -->
     <KToast :toasts="store.toasts" @dismiss="store.dismissToast" />
   </q-layout>
@@ -163,6 +177,7 @@ import KToast from 'components/kit/KToast.vue';
 import KEnvEditor from 'components/kit/KEnvEditor.vue';
 import KColorPicker from 'components/kit/KColorPicker.vue';
 import KSelect from 'components/kit/KSelect.vue';
+import KDirPicker from 'components/kit/KDirPicker.vue';
 
 // The Kermanych app shell (design-system section 07): project rail, brand header, page
 // container, fleet status bar. Two stores back it — `store` (useOrchestrator) owns the LOCAL
@@ -275,6 +290,43 @@ const selectedName = computed(
 // Requirement 3: only a bound project can touch the repo. Task 12 hangs every disabled
 // affordance off this one computed.
 const isBound = computed(() => !!selectedProject.value?.localRepoPath);
+
+// Requirement 3: the binding is manual and per machine. Kermanych never clones — the path
+// must already be a git repo, and each teammate binds their own checkout. One string for
+// every disabled affordance, so the copy cannot drift.
+const BIND_HINT = 'Прив’яжіть локальну теку репозиторію';
+
+// The three refusals PUT /api/projects/:id/binding actually returns — the first two thrown by
+// bindProject (supervisor.service.ts:130-131), the third by registry.patchProject when this
+// machine has no row for the project at all. Anything else is shown verbatim: the api's own
+// message beats a guess.
+const BIND_ERRORS: Record<string, string> = {
+  'local repo path cannot be empty': 'Шлях до теки не може бути порожнім',
+  'local repo path is not a git repo':
+    'Обрана тека не є git-репозиторієм — виберіть корінь репозиторію (той, що містить .git)',
+  'project not found':
+    'Цього проєкту немає в локальному реєстрі — перезапустіть Керманич, щоб синхронізувати список із хмари',
+};
+
+const pickerOpen = ref(false);
+
+function openBinding(): void {
+  pickerOpen.value = true;
+}
+
+async function bindTo(path: string): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  try {
+    const bound = await store.setProjectBinding(id, path);
+    // project_update streams back over the socket, so the rail tile drops its dashed frame and
+    // the header picks up the path on their own — nothing to refresh here.
+    store.notify(`Проєкт прив’язано до ${bound.localRepoPath}`);
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e);
+    store.notify(BIND_ERRORS[raw] ?? raw, 'error', 6000);
+  }
+}
 
 const contextLabel = computed(() => {
   if (!store.selectedProjectId) return 'Проєкт не вибрано';

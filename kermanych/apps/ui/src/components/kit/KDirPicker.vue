@@ -45,8 +45,9 @@ import { api } from '../../lib/api';
 import KModal from './KModal.vue';
 import KBtn from './KBtn.vue';
 
-// Directory browser for the New-Project modal. Stacks over the add-group modal
-// (QDialog handles the layering) and emits the chosen absolute path.
+// Directory browser. Two callers, one contract: it stacks over whatever modal opened it
+// (QDialog handles the layering) and emits the chosen absolute path. In MainLayout it picks
+// THIS machine's binding for a cloud project; `⑂` marks the git repos.
 const props = withDefaults(defineProps<{ modelValue: boolean; start?: string }>(), { start: '' });
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; select: [path: string] }>();
 
