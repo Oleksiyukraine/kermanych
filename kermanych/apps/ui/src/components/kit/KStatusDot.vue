@@ -1,5 +1,5 @@
 <template>
-  <span class="k-dot" :class="`k-dot--${kind}`" :title="status" aria-hidden="true" />
+  <span class="k-dot" :class="`k-dot--${kind}`" aria-hidden="true" />
 </template>
 
 <script setup lang="ts">
@@ -8,6 +8,10 @@ import type { SessionStatus } from '@kermanych/core';
 
 // 7x7 status square. Colour carries only "running" and "waiting"; terminal and
 // cold states stay grey (design-system section 03).
+//
+// No tooltip on purpose: the dot is decoration that always sits beside the
+// spelled-out status (board status cell, panel header, gallery row), so a bubble
+// would only repeat the neighbouring word — in raw enum form at that.
 const props = defineProps<{ status: SessionStatus }>();
 
 type Kind = 'running' | 'waiting' | 'done' | 'cold';

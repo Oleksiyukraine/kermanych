@@ -131,7 +131,7 @@
         :aria-valuenow="Math.round(detailWidth)"
         :aria-valuemin="MIN_DETAIL"
         tabindex="0"
-        title="Перетягніть, щоб змінити ширину секції з чатом"
+        v-tip="'Перетягніть, щоб змінити ширину секції з чатом'"
         @pointerdown="startResize"
         @keydown="onResizeKeydown"
       ></div>
@@ -143,7 +143,8 @@
           <button
             type="button"
             class="ws__close"
-            title="Закрити"
+            v-tip="'Закрити'"
+            aria-label="Закрити"
             @click="store.selectSession(undefined)"
           >✕</button>
         </div>

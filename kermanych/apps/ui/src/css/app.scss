@@ -20,6 +20,36 @@ body,
   font-family: var(--k-font-mono);
 }
 
+// Tooltip bubble for `v-tip` (src/lib/tip.ts). One shared node lives under
+// <body>, so the rule is global and `position: fixed` keeps it clear of the
+// scroll containers that would crop an in-flow bubble.
+.k-tip {
+  position: fixed;
+  z-index: 9000;
+  top: 0;
+  left: 0;
+  max-width: 280px;
+  padding: 5px 8px;
+  background: var(--k-surface2);
+  border: 1px solid var(--k-line-strong);
+  color: var(--k-text);
+  font-family: var(--k-font-mono);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: normal;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+// Resting state stays laid out (hidden, not display:none) so the bubble can be
+// measured before it is positioned.
+.k-tip--on {
+  visibility: visible;
+  opacity: 1;
+}
+
 // Brief highlight when jumping to a message (my-message navigation). Global
 // because the target element belongs to the KLogBlock child; a left accent strip
 // + fading accent tint, then gone.

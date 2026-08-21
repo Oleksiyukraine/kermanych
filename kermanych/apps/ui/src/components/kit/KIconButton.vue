@@ -3,22 +3,28 @@
     type="button"
     class="k-icon-btn"
     :class="{ 'k-icon-btn--on': active }"
-    :title="title"
+    v-tip="title"
+    :aria-label="title"
   >
     <slot />
   </button>
 </template>
 
 <script setup lang="ts">
-// Dense, glyph-only action control for table rows — e.g. the agents board's
-// per-row actions (run / edit / merge / archive …). Square, muted 1px rule,
-// a single glyph in the default slot; `active` lights the accent (e.g. a live
-// preview toggle).
+// Dense, glyph-only action control for the app's icon clusters — the agents
+// board's per-row actions (run / edit / merge / archive …) and the session
+// panel's header controls. Square, muted 1px rule, a single glyph in the default
+// slot; `active` lights the accent (e.g. a live preview toggle).
 //
 // Design-system rule: this is the COMPACT 28px control, sized so several pack
-// into one narrow actions column. It is deliberately distinct from
-// KBtn variant="icon" (the 34px standalone icon control). Reach for KIconButton
-// inside data-table rows; reach for KBtn variant="icon" for a lone toolbar icon.
+// into one narrow actions column or a 34px panel header. It is deliberately
+// distinct from KBtn variant="icon" (the 34px standalone icon control). Reach for
+// KIconButton wherever glyph actions sit side by side; reach for
+// KBtn variant="icon" for a lone toolbar icon.
+//
+// `title` drives the app tooltip (`v-tip`, src/lib/tip.ts) instead of the native
+// attribute, and doubles as the `aria-label`: the default slot holds a bare
+// glyph, which gives the control no accessible name of its own.
 //
 // `@click`/other listeners fall through to the native <button>, so `@click.stop`
 // on the row's action still suppresses the KTable row-click.
