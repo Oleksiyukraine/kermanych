@@ -1,12 +1,13 @@
 // apps/ui/src/stores/board.ts
 import { defineStore } from 'pinia';
-import { computed, ref } from 'vue';
-import type { Task, TaskChannelState, TaskInsert, TaskPatch } from '@kermanych/cloud';
+import { computed, ref, watch } from 'vue';
+import type { Task, TaskChange, TaskChannelState, TaskInsert, TaskPatch } from '@kermanych/cloud';
 import {
   createTask as cloudCreateTask,
   deleteTask as cloudDeleteTask,
   listTasks as cloudListTasks,
   patchTask as cloudPatchTask,
+  subscribeTasks as cloudSubscribeTasks,
 } from '@kermanych/cloud';
 // Import from core's status module directly (not the barrel): @kermanych/core is a CJS
 // workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
@@ -37,6 +38,10 @@ export const useBoard = defineStore('board', () => {
   const offline = computed(() => channelState.value !== 'SUBSCRIBED');
 
   const projectIds = computed(() => cloud.projects.map((p) => p.id));
+
+  // Store-local, not reactive: nothing renders it, and exposing it would let a component
+  // tear the channel down behind the store's back.
+  let unsubscribeChannel: (() => void) | undefined;
 
   // Sorted by createdAt so a Realtime insert lands in a stable place instead of appending
   // to whichever column happened to render last. Replace-or-append keyed by id, so the
@@ -79,6 +84,32 @@ export const useBoard = defineStore('board', () => {
     } finally {
       loading.value = false;
     }
+  }
+
+  // A full refetch on every (re)subscribe is the whole staleness story: events that fired
+  // while the channel was down are gone forever, so the snapshot has to be re-read rather
+  // than patched. Idempotent — calling it twice rebuilds one channel, never two.
+  async function subscribe(): Promise<void> {
+    unsubscribe();
+    await load();
+    if (!auth.user || !projectIds.value.length) return;
+    unsubscribeChannel = cloudSubscribeTasks(
+      auth.client,
+      projectIds.value,
+      (change: TaskChange) => {
+        if (change.kind === 'delete') drop(change.taskId);
+        else upsert(change.task);
+      },
+      (state) => {
+        channelState.value = state;
+      },
+    );
+  }
+
+  function unsubscribe(): void {
+    unsubscribeChannel?.();
+    unsubscribeChannel = undefined;
+    channelState.value = 'CLOSED';
   }
 
   // Apply a patch to a local copy exactly the way Postgres will, so the optimistic row and
@@ -165,6 +196,29 @@ export const useBoard = defineStore('board', () => {
     }
   }
 
+  // The project set is the channel's filter, and a postgres_changes filter cannot be edited
+  // in place — a project added, or membership revoked, means rebuilding the channel. Only
+  // while a channel actually exists: before the board mounts there is nothing to rebuild.
+  watch(
+    () => projectIds.value.join(','),
+    (next, prev) => {
+      if (next === prev || !unsubscribeChannel) return;
+      void subscribe();
+    },
+  );
+
+  // Sign-out must take the channel with it. Left running, the socket would keep a revoked
+  // token alive and the next user on this machine would inherit this user's cards.
+  watch(
+    () => auth.user,
+    (u) => {
+      if (u) return;
+      unsubscribe();
+      tasks.value = [];
+      loadError.value = null;
+    },
+  );
+
   return {
     tasks,
     loading,
@@ -172,6 +226,8 @@ export const useBoard = defineStore('board', () => {
     channelState,
     offline,
     load,
+    subscribe,
+    unsubscribe,
     createTask,
     updateTaskFields,
     assignTask,
