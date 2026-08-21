@@ -9,11 +9,27 @@ declare module 'vue-router' {
 }
 
 const routes: RouteRecordRaw[] = [
+  // The signed-out shell. Two records rather than one, because /login and
+  // /auth/callback share no path prefix; both mount AuthLayout so the sign-in
+  // toast surface exists on either screen.
   {
     path: '/login',
-    name: 'login',
     component: () => import('layouts/AuthLayout.vue'),
     meta: { public: true },
+    children: [{ path: '', name: 'login', component: () => import('pages/LoginPage.vue') }],
+  },
+
+  // Where the browser OAuth redirect lands (redirectTo in stores/auth.ts) and
+  // where the desktop flow is parked while exchangeCodeForSession runs. It only
+  // waits: the `auth.user` watcher in router/index.ts moves on to the workspace
+  // the moment the session exists.
+  {
+    path: '/auth/callback',
+    component: () => import('layouts/AuthLayout.vue'),
+    meta: { public: true },
+    children: [
+      { path: '', name: 'auth-callback', component: () => import('pages/AuthCallbackPage.vue') },
+    ],
   },
 
   {

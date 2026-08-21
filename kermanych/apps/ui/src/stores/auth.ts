@@ -4,6 +4,7 @@ import { ref } from 'vue';
 import type { Session as SupabaseSession, SupabaseClient } from '@supabase/supabase-js';
 import { cloudEnv, createCloudClient, type Profile } from '@kermanych/cloud';
 import { api, setAuthToken, setUnauthorizedHandler } from '../lib/api';
+import { useOrchestrator } from './orchestrator';
 
 // One Supabase client per renderer, built when this module is first imported —
 // which boot/supabase.ts triggers before the first navigation. PKCE, session
@@ -30,6 +31,14 @@ export const useAuth = defineStore('auth', () => {
     resolveReady = resolve;
   });
   let initialized = false;
+  // The token the local api has actually ACCEPTED. Deduping the handoff on this
+  // rather than on `accessToken` keeps a signed-in boot to a single POST —
+  // supabase-js re-emits INITIAL_SESSION with the same session right after
+  // init()'s own getSession(), and tab-focus SIGNED_IN / USER_UPDATED repeat it
+  // later — while still retrying a handoff that FAILED because the api was
+  // still booting. That retry matters: the guard no longer adopts an unknown
+  // bearer, so a dropped handoff would leave every later call 401.
+  let handedOff: string | undefined;
 
   // Mirror the Supabase session into this store AND into the local api. Called
   // on init and on every onAuthStateChange event (SIGNED_IN, TOKEN_REFRESHED,
@@ -52,11 +61,13 @@ export const useAuth = defineStore('auth', () => {
       };
       accessToken.value = session.access_token;
       setAuthToken(session.access_token);
+      if (handedOff === session.access_token) return;
       try {
         await api.authSession(session.access_token);
+        handedOff = session.access_token;
       } catch {
         // The local api may still be booting (Electron starts it in-process).
-        // The next auth event — or the guard's own re-validation — recovers.
+        // `handedOff` stays behind, so the next auth event retries.
       }
       return;
     }
@@ -75,24 +86,45 @@ export const useAuth = defineStore('auth', () => {
         // Already signed out locally, or the api is down. Nothing to undo.
       }
     }
+    handedOff = undefined;
     setAuthToken(undefined);
   }
 
   async function init(): Promise<void> {
     if (initialized) return ready;
     initialized = true;
+    // Resolved here, not inside the handler, so the toast surface exists before
+    // the first 401 can land. The orchestrator store holds only refs until
+    // connect() is called, which AuthLayout never does.
+    const ui = useOrchestrator();
     // A 401 from any local call means our token is no longer the one the api
     // trusts. Surfacing it as a sign-out is the honest response; the guard on
-    // `user` keeps it from recursing.
+    // `user` keeps it from recursing — a 401 on the sign-out DELETE itself
+    // cannot bounce back in.
     setUnauthorizedHandler(() => {
-      if (user.value) void signOut();
+      if (!user.value) return;
+      ui.notify('Сесія завершилася. Увійдіть знову.', 'error');
+      void signOut();
     });
-    const { data } = await client.auth.getSession();
-    await apply(data.session);
-    client.auth.onAuthStateChange((_event, session) => {
-      void apply(session);
-    });
-    resolveReady();
+    try {
+      const { data } = await client.auth.getSession();
+      await apply(data.session);
+      client.auth.onAuthStateChange((_event, session) => {
+        void apply(session);
+      });
+    } catch (e) {
+      // boot/supabase.ts awaits init(); rethrowing would take the whole app
+      // down over a storage hiccup. A signed-out app that still renders /login
+      // is strictly better than a dead boot.
+      console.error('[auth] init failed, continuing signed out', e);
+    } finally {
+      // ALWAYS settle. getSession() can reject (NavigatorLock acquire timeout,
+      // blocked storage), and router/index.ts awaits `ready` in every
+      // beforeEach — an unsettled promise is a permanently blank screen that a
+      // reload cannot fix. Failing leaves `user` null, so the guard sends the
+      // user to /login, which is the honest fallback.
+      resolveReady();
+    }
     return ready;
   }
 

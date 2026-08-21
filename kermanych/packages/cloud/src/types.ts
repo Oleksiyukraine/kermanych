@@ -44,7 +44,9 @@ export type Task = {
   description?: string;
   status: TaskStatus;
   assigneeId?: string;
-  createdBy: string;
+  // Nullable: tasks.created_by is `on delete set null`, so a task outlives the
+  // account that filed it.
+  createdBy?: string;
   // Launch params the assignee's machine feeds into registry.createSession().
   model?: string;
   prefix?: string;

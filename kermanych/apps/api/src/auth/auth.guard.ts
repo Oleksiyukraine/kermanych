@@ -29,23 +29,20 @@ export class SupabaseAuthGuard implements CanActivate {
     if (!token) throw new UnauthorizedException("missing bearer token");
 
     const cur = this.auth.current();
-    // A cached-token match wins UNCONDITIONALLY — expiry included. The machine's
-    // owner is unambiguous, and refusing local session control because a JWT aged
-    // out (or because Supabase is unreachable) would break Requirement 7. Cloud
-    // freshness only gates cloud pushes, which queue in the outbox instead.
+    // ONLY the cached token is accepted — expiry included. The machine's owner is
+    // unambiguous, and refusing local session control because a JWT aged out (or
+    // because Supabase is unreachable) would break Requirement 7. Cloud freshness
+    // only gates cloud pushes, which queue in the outbox instead.
+    //
+    // An unknown bearer is refused even when the cloud would happily verify it:
+    // adopting it here silently undid DELETE /api/auth/session, because the same
+    // still-valid token re-created the session the user had just ended.
+    // POST /api/auth/session is the sole way to establish a local session.
     if (cur && cur.accessToken === token) {
       req.user = { id: cur.userId };
       return true;
     }
 
-    // Unknown token — usually a refresh the UI has not handed over yet. Spend one
-    // online validation on it; offline or genuinely invalid means 401.
-    try {
-      const { userId } = await this.auth.setToken(token);
-      req.user = { id: userId };
-      return true;
-    } catch {
-      throw new UnauthorizedException("invalid access token");
-    }
+    throw new UnauthorizedException("invalid access token");
   }
 }

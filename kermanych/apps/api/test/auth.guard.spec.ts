@@ -121,14 +121,33 @@ test("an EXPIRED cached token still controls the local machine (offline rule)", 
   expect(req.user).toEqual({ id: "u-1" });
 });
 
-test("an unknown but valid token is adopted by one online re-validation", async () => {
+test("an unknown token is refused even when the cloud would verify it", async () => {
   const reg = new RegistryService(":memory:");
   const auth = new AuthService(reg, factory({ [FRESH]: "u-9" }));
   const guard = new SupabaseAuthGuard(auth, new Reflector());
   const { context, req } = ctx({ authorization: `Bearer ${FRESH}` });
-  await expect(guard.canActivate(context)).resolves.toBe(true);
-  expect(req.user).toEqual({ id: "u-9" });
-  expect(reg.getAuthSession()?.accessToken).toBe(FRESH);
+  await expect(guard.canActivate(context)).rejects.toThrow("invalid access token");
+  expect(req.user).toBeUndefined();
+  // Adopting it would have written a session nobody asked for. POST
+  // /api/auth/session is the only way in.
+  expect(reg.getAuthSession()).toBeUndefined();
+});
+
+test("after DELETE /api/auth/session the same bearer is refused", async () => {
+  const reg = new RegistryService(":memory:");
+  const auth = new AuthService(reg, factory({ [FRESH]: "u-1" }));
+  await auth.setToken(FRESH);
+  const guard = new SupabaseAuthGuard(auth, new Reflector());
+  await expect(guard.canActivate(ctx({ authorization: `Bearer ${FRESH}` }).context)).resolves.toBe(
+    true,
+  );
+
+  // What DELETE /api/auth/session does. The token itself is still perfectly
+  // valid upstream, so an adopting guard would have resurrected the session.
+  auth.clear();
+  const after = ctx({ authorization: `Bearer ${FRESH}` });
+  await expect(guard.canActivate(after.context)).rejects.toThrow("invalid access token");
+  expect(after.req.user).toBeUndefined();
 });
 
 test("a @Public() handler bypasses the guard entirely", async () => {
