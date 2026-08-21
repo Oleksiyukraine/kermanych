@@ -327,20 +327,18 @@ source (see `## Verified upstream behaviour`).
   `GET /auth/v1/user` round trip) when the project signs with a symmetric
   secret. It then stores `{ userId (claims.sub), accessToken, expiresAt
   (claims.exp), githubUsername }` in `auth_session`.
-- **Client for pushes**: `createCloudClient({ url, anonKey, accessToken })`
-  builds a client with `global.headers.Authorization = Bearer <token>` and
-  `auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl:
-  false }`. NOT `auth.setSession()` — that mutates shared client state and races
-  across concurrent requests. The anon key still travels as the `apikey` header,
-  so RLS sees the user's role.
 - **Local guard**: `SupabaseAuthGuard` registered as `APP_GUARD` in
   `AppModule`; `@Public()` marks exactly one route, `POST /api/auth/session`
   (there is no health route in `apps/api` today, and this design does not add
-  one).
-  It requires `Authorization: Bearer <token>` equal to the cached token;
-  an unknown token is re-validated (network) and accepted if it verifies;
-  unknown token while offline → 401. Requests without a token get 401, so the
-  loopback API is no longer anonymously drivable.
+  one). It requires `Authorization: Bearer <token>` EQUAL to the cached token
+  and nothing else: a token the cache does not know is refused, even if it would
+  verify against Supabase. Adopting an unknown-but-valid token would undo
+  `DELETE /api/auth/session` — the same still-valid bearer would silently
+  re-create the session the user just ended. The only way to establish a local
+  session is `POST /api/auth/session`, which the UI calls on `SIGNED_IN` /
+  `TOKEN_REFRESHED` / `INITIAL_SESSION`, so a restarted API or a refreshed token
+  needs no guard-side magic. Requests without a token get 401, so the loopback
+  API is no longer anonymously drivable.
 - **Offline**: because `getClaims` verifies locally against a cached JWKS, an
   already-known token needs no network at all. An EXPIRED cached token is still
   accepted for LOCAL session control (the machine's owner is unambiguous) while
