@@ -5,13 +5,14 @@ import type {
   Platform,
   DirListing,
   ImageInput,
-  Group,
+  Project,
   EnvFileView,
   Session,
   TaskDraft,
   TranscriptEntry,
   RpcExtensionUIResponse,
 } from '@kermanych/core';
+import type { CloudProject } from '@kermanych/cloud';
 
 const BASE =
   (typeof window !== 'undefined' && window.kermanych?.apiBase) ||
@@ -115,13 +116,25 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 export const api = {
-  createGroup: (name: string, projectDir: string, carryFiles?: string[]): Promise<Group> =>
-    post<Group>('/groups', { name, projectDir, carryFiles }),
+  // LOCAL project rows. Creation and deletion live in the cloud (see stores/projects.ts);
+  // these routes cache cloud config and own this machine's binding.
+  listProjects: (): Promise<Project[]> => get<Project[]>('/projects'),
 
-  deleteGroup: (id: string): Promise<void> => del(`/groups/${id}`),
+  patchProject: (
+    id: string,
+    body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string },
+  ): Promise<Project> => patchJson<Project>(`/projects/${id}`, body),
+
+  setProjectBinding: (id: string, localRepoPath: string): Promise<Project> =>
+    put<Project>(`/projects/${id}/binding`, { localRepoPath }),
+
+  // `prune` is only safe when `projects` is the FULL cloud list; a single-project refresh
+  // must leave it false or it would sweep every other cached row.
+  syncProjects: (projects: CloudProject[], prune = false): Promise<Project[]> =>
+    post<Project[]>('/projects/sync', { projects, prune }),
 
   createSession: (
-    groupId: string,
+    projectId: string,
     name: string,
     task: string,
     model?: string,
@@ -132,10 +145,10 @@ export const api = {
     platform?: Platform,
     baseBranch?: string,
   ): Promise<Session> =>
-    post<Session>('/sessions', { groupId, name, task, model, images, worktree, prefix, platform, asTask, baseBranch }),
+    post<Session>('/sessions', { projectId, name, task, model, images, worktree, prefix, platform, asTask, baseBranch }),
 
-  createChat: (groupId: string): Promise<Session> =>
-    post<Session>('/sessions/chat', { groupId }),
+  createChat: (projectId: string): Promise<Session> =>
+    post<Session>('/sessions/chat', { projectId }),
 
   promoteChat: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/promote`, {}),
@@ -158,21 +171,16 @@ export const api = {
   listDirs: (path?: string): Promise<DirListing> =>
     get<DirListing>(`/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`),
 
-  updateGroup: (
-    id: string,
-    body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string },
-  ): Promise<Group> => patchJson<Group>(`/groups/${id}`, body),
-
   listBranches: (id: string): Promise<{ branches: string[]; current: string; default: string | null }> =>
-    get<{ branches: string[]; current: string; default: string | null }>(`/groups/${id}/branches`),
+    get<{ branches: string[]; current: string; default: string | null }>(`/projects/${id}/branches`),
 
   getEnv: (id: string, file?: string): Promise<EnvFileView> =>
-    get<EnvFileView>(`/groups/${id}/env${file ? `?file=${encodeURIComponent(file)}` : ''}`),
+    get<EnvFileView>(`/projects/${id}/env${file ? `?file=${encodeURIComponent(file)}` : ''}`),
 
   saveEnv: (
     id: string,
-    patch: { file?: string; set?: Record<string, string>; remove?: string[] },
-  ): Promise<EnvFileView> => put<EnvFileView>(`/groups/${id}/env`, patch),
+    edits: { file?: string; set?: Record<string, string>; remove?: string[] },
+  ): Promise<EnvFileView> => put<EnvFileView>(`/projects/${id}/env`, edits),
 
   startPreview: (id: string): Promise<{ url?: string; needsCommand?: boolean }> =>
     post(`/sessions/${id}/preview`, {}),
@@ -225,8 +233,8 @@ export const api = {
   updateTask: (id: string, draft: TaskDraft): Promise<Session> =>
     patchJson<Session>(`/sessions/${id}`, draft),
 
-  moveTask: (id: string, groupId: string): Promise<Session> =>
-    post<Session>(`/sessions/${id}/move`, { groupId }),
+  moveTask: (id: string, projectId: string): Promise<Session> =>
+    post<Session>(`/sessions/${id}/move`, { projectId }),
 
   // Token handoff to the local api. POST is @Public() on the server (the UI has
   // no bearer to present yet); DELETE and GET are guarded like everything else.
