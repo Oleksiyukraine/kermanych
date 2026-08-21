@@ -696,9 +696,16 @@ async function confirmDelete(): Promise<void> {
     store.notify('Проєкт видалено у хмарі');
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
-    deleteError.value = raw.startsWith('cloud refused the delete')
-      ? 'Хмара відмовила: видалити проєкт може лише власник'
-      : raw;
+    if (raw.startsWith('cloud delete unconfirmed')) {
+      // The delete itself did not error; only the confirming re-read did. Do not accuse the
+      // user of a refusal for something that most likely landed.
+      deleteError.value =
+        'Видалення надіслано, але підтвердити його не вдалося: хмара недоступна. Список оновиться, коли зв’язок відновиться';
+    } else if (raw.startsWith('cloud refused the delete')) {
+      deleteError.value = 'Хмара відмовила: видалити проєкт може лише власник';
+    } else {
+      deleteError.value = raw;
+    }
   } finally {
     deleteBusy.value = false;
   }

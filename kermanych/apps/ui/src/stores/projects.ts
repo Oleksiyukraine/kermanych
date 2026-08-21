@@ -96,6 +96,12 @@ export const useProjects = defineStore('projects', () => {
     // re-read rather than trust the call. load() is also the drop-and-prune: it replaces
     // `projects` with the cloud truth and mirrors it into the registry with prune=true.
     const after = await load();
+    // load() degrades instead of throwing, so a failed re-read leaves the PREVIOUS list in
+    // place — which still contains this id. Claiming a refusal there would be a lie about a
+    // delete that most likely landed, so the two outcomes get distinct signals.
+    if (offlineError.value) {
+      throw new Error(`cloud delete unconfirmed: ${offlineError.value}`);
+    }
     if (after.some((p) => p.id === id)) {
       throw new Error('cloud refused the delete: only the project owner may delete a project');
     }
