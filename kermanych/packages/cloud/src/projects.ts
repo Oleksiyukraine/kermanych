@@ -169,3 +169,13 @@ export async function removeMember(client: SupabaseClient, projectId: string, us
   const { error } = await client.from("project_members").delete().eq("project_id", projectId).eq("user_id", userId);
   if (error) throw new Error(error.message);
 }
+
+// Owner-only by policy (projects_delete_owner). `tasks` and `project_members` cascade, so this
+// takes the whole card wall with it for every member; the LOCAL row on each machine disappears
+// through the next full sync's prune, unless it still owns sessions. A DELETE the policy refuses
+// matches zero rows WITHOUT an error, so callers must confirm with a re-read — see
+// `remove()` in apps/ui/src/stores/projects.ts.
+export async function deleteProject(client: SupabaseClient, id: string): Promise<void> {
+  const { error } = await client.from("projects").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}

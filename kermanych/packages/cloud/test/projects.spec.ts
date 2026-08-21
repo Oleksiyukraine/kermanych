@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   addMember,
   createProject,
+  deleteProject,
   listMembers,
   listProjects,
   patchProject,
@@ -175,5 +176,21 @@ describe("removeMember", () => {
 
     expect(queries[0]!.table).toBe("project_members");
     expect(queries[0]!.ops).toEqual([["delete"], ["eq", "project_id", "p1"], ["eq", "user_id", "u2"]]);
+  });
+});
+
+describe("deleteProject", () => {
+  it("deletes by id and nothing else", async () => {
+    const { client, queries } = fakeClient({ data: null, error: null });
+
+    await deleteProject(client, "p1");
+
+    expect(queries[0]!.table).toBe("projects");
+    expect(queries[0]!.ops).toEqual([["delete"], ["eq", "id", "p1"]]);
+  });
+
+  it("throws the postgrest message so the UI can toast a refusal", async () => {
+    const { client } = fakeClient({ data: null, error: { message: "permission denied for table projects" } });
+    await expect(deleteProject(client, "p1")).rejects.toThrow(/permission denied/);
   });
 });

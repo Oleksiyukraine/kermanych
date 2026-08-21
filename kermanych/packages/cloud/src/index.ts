@@ -29,4 +29,5 @@ export {
   listMembers,
   addMember,
   removeMember,
+  deleteProject,
 } from "./projects";

@@ -194,10 +194,35 @@
         <p v-if="settingsError" class="shell__error" role="alert">{{ settingsError }}</p>
       </div>
       <template #controls>
+        <KBtn
+          v-if="isOwnerOfSelected"
+          variant="ghost"
+          class="shell__danger"
+          @click="openDelete"
+        >Видалити проєкт</KBtn>
         <KBtn variant="ghost" @click="settingsOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" :disabled="!isOwnerOfSelected" @click="saveSettings">
-          Зберегти
-        </KBtn>
+        <KBtn variant="primary" :disabled="!isOwnerOfSelected" @click="saveSettings">Зберегти</KBtn>
+      </template>
+    </KModal>
+
+    <!-- DELETE-PROJECT MODAL — owner only. The project dies in the CLOUD; each machine's local
+         row follows through the next sync's prune, except where it still owns sessions. -->
+    <KModal v-model="deleteOpen" :title="`Видалити проєкт · ${selectedName}`">
+      <div class="shell__form">
+        <p class="shell__error" role="alert">
+          Проєкт «{{ selectedName }}» буде видалено у хмарі для ВСІХ учасників, разом з усіма
+          його задачами на дошці. Це не відкотити.
+        </p>
+        <p class="shell__hint">
+          Локальні сесії й робочі дерева на цій машині нікуди не зникнуть: якщо в проєкта є
+          сесії, його локальний рядок залишиться як «поза хмарою», і агентів можна довести до
+          кінця. Порожній локальний рядок буде прибрано синхронізацією.
+        </p>
+        <p v-if="deleteError" class="shell__error" role="alert">{{ deleteError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="deleteOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" :disabled="deleteBusy" @click="confirmDelete">Видалити</KBtn>
       </template>
     </KModal>
 
@@ -477,6 +502,10 @@ const previewCommandEdit = ref('');
 const apiCommandEdit = ref('');
 const settingsBranches = ref<string[]>([]);
 
+const deleteOpen = ref(false);
+const deleteError = ref<string | null>(null);
+const deleteBusy = ref(false);
+
 const membersLoading = ref(false);
 const memberHandle = ref('');
 const memberBusy = ref(false);
@@ -643,6 +672,35 @@ async function saveSettings(): Promise<void> {
     // We believed this write was allowed, so the raw message is the useful part: an expired
     // session, an unreachable cloud, or ownership that changed under us.
     settingsError.value = `Хмара відмовила у записі: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
+function openDelete(): void {
+  deleteError.value = null;
+  deleteBusy.value = false;
+  deleteOpen.value = true;
+}
+
+async function confirmDelete(): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  deleteError.value = null;
+  deleteBusy.value = true;
+  try {
+    await projects.remove(id);
+    deleteOpen.value = false;
+    settingsOpen.value = false;
+    // The prune emits project_removed over the socket, which clears the selection and the
+    // session list; a row that still owns sessions survives instead and its tile turns into
+    // the «поза хмарою» state.
+    store.notify('Проєкт видалено у хмарі');
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e);
+    deleteError.value = raw.startsWith('cloud refused the delete')
+      ? 'Хмара відмовила: видалити проєкт може лише власник'
+      : raw;
+  } finally {
+    deleteBusy.value = false;
   }
 }
 

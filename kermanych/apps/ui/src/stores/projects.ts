@@ -5,6 +5,7 @@ import type { CloudProject, CloudProjectPatch, ProjectMember } from '@kermanych/
 import {
   addMember as cloudAddMember,
   createProject as cloudCreateProject,
+  deleteProject as cloudDeleteProject,
   listMembers as cloudListMembers,
   listProjects as cloudListProjects,
   patchProject as cloudPatchProject,
@@ -87,6 +88,22 @@ export const useProjects = defineStore('projects', () => {
     };
   }
 
+  // Deleting a project is a CLOUD act — there is no local delete route. The local rows follow
+  // through load()'s prune, which never drops a row that still owns sessions.
+  async function remove(id: string): Promise<void> {
+    await cloudDeleteProject(auth.client, id);
+    // projects_delete_owner refuses a non-owner by matching zero rows and never errors, so
+    // re-read rather than trust the call. load() is also the drop-and-prune: it replaces
+    // `projects` with the cloud truth and mirrors it into the registry with prune=true.
+    const after = await load();
+    if (after.some((p) => p.id === id)) {
+      throw new Error('cloud refused the delete: only the project owner may delete a project');
+    }
+    const rest = { ...members.value };
+    delete rest[id];
+    members.value = rest;
+  }
+
   const byId = computed(() => new Map(projects.value.map((p) => [p.id, p])));
 
   // UX only — RLS is the real gate: the owner-only policies refuse a non-owner write
@@ -105,6 +122,7 @@ export const useProjects = defineStore('projects', () => {
     load,
     create,
     patch,
+    remove,
     loadMembers,
     addMember,
     removeMember,
