@@ -6,7 +6,7 @@ import { defineConfig } from '#q-app/wrappers';
 export default defineConfig(() => {
   return {
     // app boot files (/src/boot) — order matters
-    boot: ['tokens'],
+    boot: ['tokens', 'supabase'],
 
     // global CSS (/src/css)
     css: ['app.scss'],
