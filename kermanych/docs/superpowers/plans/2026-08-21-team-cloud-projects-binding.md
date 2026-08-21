@@ -2412,3 +2412,2180 @@ git commit -m "feat(ui): cloud projects and membership store"
 ```
 
 ---
+
+### Task 11: MainLayout rail — cloud projects joined with local rows
+
+**Files:**
+- Modify: `apps/ui/src/components/kit/KRailItem.vue:1-106` (whole file)
+- Modify: `apps/ui/src/layouts/MainLayout.vue:1-155` (template), `:157-345` (script), `:423-448` (style tail)
+- Modify: `apps/ui/src/pages/KitGalleryPage.vue:135-141` (rail block), `:220-222` (type import), `:251-254` (session fixture), `:301-305` (rail fixture)
+
+**Interfaces:**
+- Consumes: `Project`, `SessionStatus`, `EnvFileView` (Task 1); `useOrchestrator()` — state `projects`, `sessions`, `selectedProjectId`, `toasts`, actions `connect()`, `selectProject(id)`, `patchProject(id, body)`, `listBranches(id)`, `getEnv(id, file?)`, `saveEnv(id, edits)`, `notify(message, kind, ms)`, `dismissToast(id)` (Task 9); `useProjects()` — `projects: CloudProject[]`, `byId`, `load()`, `create(name, gitRemoteUrl?)` (Task 10); `useAuth().ready` (Plan A).
+- Produces: `RailProject = { id: string; name: string; color?: string | undefined; state: 'bound' | 'unbound' | 'orphan' }`, exported from `KRailItem.vue` (same dual-`<script>` pattern as `KTableColumn` in `KTable.vue:1-12`). In `MainLayout.vue`: `railProjects: RailProject[]`, `selectedProject` (the LOCAL row), `selectedCloud` (the `CloudProject`), `selectedName`, `isBound`, `runningCount(id)`, `openSettings()`, `saveSettings()`, `openEnv()`, `saveEnv()`, and the refs `settingsOpen`/`settingsError`/`nameEdit`/`colorEdit`/`defaultBranchEdit`/`conventionsEdit`/`settingsBranches`/`envOpen`/`envError`/`envView`/`carryFilesText`/`envEditor`. Tasks 12-14 extend exactly these; they add no second source of project state.
+- Declared removals: the add-project modal's directory picker (`groupDir`, `pickerOpen`, the `KDirPicker` import and tag) and `deleteProject()` are GONE from this task's file. The picker comes back in Task 12 as the BINDING flow; deletion moves to the CLOUD in Task 15 — there is still no `DELETE /api/projects/:id`, a project dies in Supabase and its local row disappears through sync's prune.
+
+Read `apps/ui/src/components/kit/KTable.vue:1-12` first: that is the pattern for exporting a type from an SFC (a plain `<script lang="ts">` block above `<script setup>`), and `KitGalleryPage.vue:234` is the matching import form.
+
+- [ ] **Step 1: Rewrite `KRailItem.vue`**
+
+Replace the whole file (all 106 lines):
+
+```vue
+<script lang="ts">
+// The rail tile's view model. MainLayout builds it by joining the CLOUD project list (what
+// exists for the whole team) with the LOCAL project rows (what this machine can actually
+// run), so the tile renders the binding state without importing either store:
+//   bound   — a local row with a localRepoPath; agents can be launched here.
+//   unbound — the project exists in the cloud, this machine has no repo for it yet.
+//   orphan  — a local row whose cloud project is gone (sync's prune kept it because it
+//             still owns sessions); its agents stay usable, nothing new should start.
+export type RailProject = {
+  id: string;
+  name: string;
+  color?: string | undefined;
+  state: 'bound' | 'unbound' | 'orphan';
+};
+</script>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+
+// A project tile in the left rail (design-system section 07). Initials stand in for the
+// project, the count badge is the number of running agents, and the corner glyph is the
+// binding state. Active tile gets surface2 and a 2px accent strip on the left edge.
+const props = defineProps<{ project: RailProject; active?: boolean; count?: number }>();
+
+const count = computed(() => props.count ?? 0);
+
+// Ukrainian copy for the two states worth naming; a bound project needs no explanation.
+const STATE_HINT: Record<RailProject['state'], string> = {
+  bound: '',
+  unbound: ' · не прив’язано',
+  orphan: ' · поза хмарою',
+};
+
+const STATE_GLYPH: Record<RailProject['state'], string> = {
+  bound: '',
+  unbound: '○',
+  orphan: '⚠',
+};
+
+const title = computed(() => props.project.name + STATE_HINT[props.project.state]);
+
+const initials = computed(() => {
+  const words = props.project.name.trim().split(/[\s/_-]+/).filter(Boolean);
+  const [first, second] = words;
+  if (!first) return '·';
+  if (!second) return first.slice(0, 2).toUpperCase();
+  return ((first[0] ?? '') + (second[0] ?? '')).toUpperCase();
+});
+</script>
+
+<template>
+  <button
+    class="k-rail"
+    :class="{
+      'k-rail--active': active,
+      'k-rail--colored': !!project.color,
+      'k-rail--unbound': project.state === 'unbound',
+      'k-rail--orphan': project.state === 'orphan',
+    }"
+    type="button"
+    :title="title"
+    :aria-pressed="active"
+    :style="project.color ? { '--rail-color': project.color } : undefined"
+  >
+    <span class="k-rail__initials mono">{{ initials }}</span>
+    <span v-if="count > 0" class="k-rail__count mono">{{ count }}</span>
+    <span v-if="project.state !== 'bound'" class="k-rail__state mono" aria-hidden="true">
+      {{ STATE_GLYPH[project.state] }}
+    </span>
+  </button>
+</template>
+
+<style scoped lang="scss">
+.k-rail {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--k-line);
+  background: transparent;
+  color: var(--k-muted);
+  cursor: pointer;
+  border-radius: 0;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+
+  &:hover:not(.k-rail--active) {
+    border-color: var(--k-line-strong);
+    color: var(--k-text);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 1px;
+  }
+}
+
+// left strip — project color when set (always shown), else the accent when active.
+.k-rail--active {
+  background: var(--k-surface2);
+  border-color: var(--k-line-strong);
+  color: var(--k-text);
+}
+
+.k-rail--active::before,
+.k-rail--colored::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--k-accent);
+}
+
+.k-rail--colored::before {
+  background: var(--rail-color);
+}
+
+// binding state — dashed frame while this machine has no repo, accent frame for a row the
+// cloud no longer lists.
+.k-rail--unbound {
+  border-style: dashed;
+}
+
+.k-rail--orphan {
+  border-color: var(--k-accent);
+}
+
+.k-rail__state {
+  position: absolute;
+  bottom: -1px;
+  right: 1px;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--k-muted);
+}
+
+.k-rail__initials {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+// count badge — accent square, top-right, machine number.
+.k-rail__count {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--k-canvas);
+  background: var(--k-accent);
+}
+</style>
+```
+
+- [ ] **Step 2: Replace the `MainLayout.vue` template**
+
+Replace lines 1-155 (`<template>` … `</template>`):
+
+```vue
+<template>
+  <q-layout view="lHh Lpr lFf" class="shell">
+    <!-- LEFT RAIL — one tile per CLOUD project, plus any orphan local row (07) -->
+    <q-drawer
+      model-value
+      side="left"
+      :width="60"
+      :breakpoint="0"
+      bordered
+      class="shell__rail"
+    >
+      <div class="shell__rail-inner">
+        <div class="shell__rail-items">
+          <KRailItem
+            v-for="p in railProjects"
+            :key="p.id"
+            :project="p"
+            :active="p.id === store.selectedProjectId"
+            :count="runningCount(p.id)"
+            @click="store.selectProject(p.id)"
+          />
+        </div>
+        <KBtn
+          variant="icon"
+          class="shell__add"
+          title="Новий проєкт у хмарі"
+          @click="openCreate"
+        >
+          +
+        </KBtn>
+      </div>
+    </q-drawer>
+
+    <!-- TOP HEADER — logo + selected-project context + project actions (07) -->
+    <q-header class="shell__header">
+      <div class="shell__brand">
+        <span class="shell__logo">КЕРМАНИЧ</span>
+        <span class="shell__ver mono">v0.1</span>
+      </div>
+      <div class="shell__context mono">{{ contextLabel }}</div>
+      <div v-if="store.selectedProjectId" class="shell__actions">
+        <KBtn
+          variant="icon"
+          title="Змінні середовища (.env)"
+          @click="openEnv"
+        >$</KBtn>
+        <KBtn
+          variant="icon"
+          class="shell__settings"
+          title="Редагувати проєкт"
+          @click="openSettings"
+        >⚙</KBtn>
+      </div>
+    </q-header>
+
+    <!-- PAGE -->
+    <q-page-container>
+      <router-view />
+    </q-page-container>
+
+    <!-- BOTTOM STATUS BAR — fleet aggregate for the selected project (07) -->
+    <q-footer class="shell__footer">
+      <KStatusBar :counts="counts" />
+    </q-footer>
+
+    <!-- CREATE-PROJECT MODAL — a project is born in the CLOUD (Requirement 2: any signed-in
+         user may create one and becomes its owner). The local row arrives through
+         POST /api/projects/sync and starts out UNBOUND — no directory picker here. -->
+    <KModal v-model="createOpen" title="Новий проєкт у хмарі">
+      <div class="shell__form">
+        <KField v-model="createName" label="Назва" placeholder="my-project" />
+        <KField
+          v-model="createRemote"
+          label="Git remote (необовʼязково, лише довідково)"
+          placeholder="git@github.com:org/repo.git"
+        />
+        <p class="shell__hint">
+          Проєкт створюється у хмарі й одразу видимий команді. Керманич нічого не клонує —
+          локальну теку цієї машини приєднаєте окремо.
+        </p>
+        <p v-if="createError" class="shell__error" role="alert">{{ createError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="createOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" :disabled="!canCreate || createBusy" @click="submitCreate">
+          Створити
+        </KBtn>
+      </template>
+    </KModal>
+
+    <!-- PROJECT-SETTINGS MODAL — identity + launch defaults. These writes still go to the
+         LOCAL row; Task 14 moves them to the cloud and re-syncs. -->
+    <KModal v-model="settingsOpen" :title="`Редагувати проєкт · ${selectedName}`">
+      <div class="shell__form">
+        <KField v-model="nameEdit" label="Назва проєкту" placeholder="my-project" />
+        <KColorPicker v-model="colorEdit" label="Колір проєкту" />
+        <KSelect
+          v-model="defaultBranchEdit"
+          label="Гілка за замовчуванням"
+          :options="settingsBranches"
+          :disabled="!isBound"
+          placeholder="— поточна гілка репозиторію —"
+        />
+        <KField
+          v-model="conventionsEdit"
+          label="Конвенції PR/комітів (фолбек, якщо в репо немає)"
+          placeholder="Порожнє — Керманич підставить власні дефолти"
+          multiline
+          :rows="6"
+        />
+        <KField
+          :model-value="selectedProject?.localRepoPath || 'не прив’язано'"
+          label="Локальна тека цієї машини"
+          disabled
+        />
+        <p v-if="settingsError" class="shell__error" role="alert">{{ settingsError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="settingsOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" @click="saveSettings">Зберегти</KBtn>
+      </template>
+    </KModal>
+
+    <!-- ENV MODAL — the BOUND repo's .env plus the per-session carry files. Values are read
+         and written on this machine only (Requirement 9). -->
+    <KModal v-model="envOpen" :title="`Змінні середовища · ${selectedName}`">
+      <div class="shell__form">
+        <KEnvEditor
+          ref="envEditor"
+          :entries="envView.entries"
+          :ignored="envView.ignored"
+        />
+        <KField
+          v-model="carryFilesText"
+          label="Файли для сесії (через кому або з нового рядка)"
+          placeholder=".env"
+        />
+        <p v-if="envError" class="shell__error" role="alert">{{ envError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="envOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" @click="saveEnv">Зберегти</KBtn>
+      </template>
+    </KModal>
+
+    <!-- TOAST STACK — transient notifications (errors etc.) -->
+    <KToast :toasts="store.toasts" @dismiss="store.dismissToast" />
+  </q-layout>
+</template>
+```
+
+- [ ] **Step 3: Replace the `MainLayout.vue` script**
+
+Replace lines 157-345 (`<script setup lang="ts">` … `</script>`):
+
+```vue
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue';
+import type { SessionStatus, EnvFileView } from '@kermanych/core';
+import { useOrchestrator } from 'stores/orchestrator';
+import { useProjects } from 'stores/projects';
+import { useAuth } from 'stores/auth';
+import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
+import KStatusBar from 'components/kit/KStatusBar.vue';
+import KModal from 'components/kit/KModal.vue';
+import KField from 'components/kit/KField.vue';
+import KBtn from 'components/kit/KBtn.vue';
+import KToast from 'components/kit/KToast.vue';
+import KEnvEditor from 'components/kit/KEnvEditor.vue';
+import KColorPicker from 'components/kit/KColorPicker.vue';
+import KSelect from 'components/kit/KSelect.vue';
+
+// The Kermanych app shell (design-system section 07): project rail, brand header, page
+// container, fleet status bar. Two stores back it — `store` (useOrchestrator) owns the LOCAL
+// rows and sessions streamed over the socket, `projects` (useProjects) owns the CLOUD project
+// list and membership. The rail is the join of the two.
+const store = useOrchestrator();
+const projects = useProjects();
+const auth = useAuth();
+
+// True only once a cloud read has actually succeeded on this run. Until then a local row
+// absent from the (still empty) cloud list is an unread cache, not an orphan — labelling
+// every project «поза хмарою» on a cold or offline boot would be a lie.
+const cloudSynced = ref(false);
+
+onMounted(async () => {
+  // Socket first: the snapshot, and the project_update events the sync inside load() emits,
+  // are how LOCAL rows reach the rail. Connecting afterwards would race those events.
+  store.connect();
+  // The router guard already keeps this layout signed-in-only, but on a cold start `ready`
+  // may still be pending, and useProjects() needs the session for RLS to return any row.
+  await auth.ready;
+  try {
+    // load() reads the cloud list and mirrors it into the local registry itself
+    // (api.syncProjects(list, true), see stores/projects.ts) — that mirror is what keeps
+    // launching possible with Supabase unreachable (Requirement 7). Do not sync again here.
+    await projects.load();
+    cloudSynced.value = true;
+  } catch (e) {
+    store.notify(
+      `Хмара недоступна — працюємо з локальним кешем: ${e instanceof Error ? e.message : String(e)}`,
+      'error',
+      6000,
+    );
+  }
+});
+
+// A session is "running" while it is queued or actively working; waiting means it is blocking
+// on an interactive UI request; done is terminal-success.
+const RUNNING: readonly SessionStatus[] = ['queued', 'thinking', 'tool'];
+
+function sessionsOf(projectId: string | undefined) {
+  return store.sessions.filter((s) => s.projectId === projectId && !s.archived);
+}
+
+function runningCount(projectId: string): number {
+  return sessionsOf(projectId).filter((s) => RUNNING.includes(s.status)).length;
+}
+
+const counts = computed(() => {
+  let running = 0;
+  let waiting = 0;
+  let done = 0;
+  let error = 0;
+  for (const s of sessionsOf(store.selectedProjectId)) {
+    if (RUNNING.includes(s.status)) running++;
+    else if (s.status === 'waiting_input') waiting++;
+    else if (s.status === 'done') done++;
+    else if (s.status === 'error') error++;
+  }
+  return { running, waiting, done, error };
+});
+
+// The rail: the CLOUD list (what exists, for everyone) in cloud order, then every LOCAL row
+// the cloud list does not contain. Those trailing rows matter — sync's prune deliberately
+// keeps a row that still owns sessions, and agents you cannot select are agents you cannot
+// stop. A cloud project with no local row at all (the mount-time sync failed) shows as
+// unbound, which is exactly what it is: nothing on this machine can run it yet.
+const railProjects = computed<RailProject[]>(() => {
+  const local = new Map(store.projects.map((p) => [p.id, p]));
+  const out: RailProject[] = [];
+  for (const c of projects.projects) {
+    const row = local.get(c.id);
+    local.delete(c.id);
+    out.push({
+      id: c.id,
+      name: c.name,
+      color: c.color ?? row?.color,
+      state: row?.localRepoPath ? 'bound' : 'unbound',
+    });
+  }
+  for (const row of local.values()) {
+    out.push({
+      id: row.id,
+      name: row.name,
+      color: row.color,
+      state: cloudSynced.value ? 'orphan' : row.localRepoPath ? 'bound' : 'unbound',
+    });
+  }
+  return out;
+});
+
+// The LOCAL row carries this machine's binding and the offline config cache; the CLOUD
+// project is the source of truth for config. Same id, two lookups.
+const selectedProject = computed(() =>
+  store.projects.find((p) => p.id === store.selectedProjectId),
+);
+
+const selectedCloud = computed(() =>
+  store.selectedProjectId ? projects.byId.get(store.selectedProjectId) : undefined,
+);
+
+// Prefer the cloud name, fall back to the cached row, so a project whose sync failed still
+// shows a name rather than a UUID.
+const selectedName = computed(
+  () => selectedCloud.value?.name ?? selectedProject.value?.name ?? '',
+);
+
+// Requirement 3: only a bound project can touch the repo. Task 12 hangs every disabled
+// affordance off this one computed.
+const isBound = computed(() => !!selectedProject.value?.localRepoPath);
+
+const contextLabel = computed(() => {
+  if (!store.selectedProjectId) return 'Проєкт не вибрано';
+  return `${selectedName.value} · ${selectedProject.value?.localRepoPath || 'не прив’язано'}`;
+});
+
+// Create-in-the-cloud modal. No directory field: creating a project and binding a repo are
+// different acts on different machines (Requirement 3).
+const createOpen = ref(false);
+const createName = ref('');
+const createRemote = ref('');
+const createError = ref<string | null>(null);
+const createBusy = ref(false);
+const canCreate = computed(() => createName.value.trim() !== '');
+
+function openCreate(): void {
+  createName.value = '';
+  createRemote.value = '';
+  createError.value = null;
+  createBusy.value = false;
+  createOpen.value = true;
+}
+
+async function submitCreate(): Promise<void> {
+  if (!canCreate.value) return;
+  createError.value = null;
+  createBusy.value = true;
+  try {
+    const remote = createRemote.value.trim();
+    // create() inserts under the user's JWT (handle_new_project adds the owner membership)
+    // and mirrors the one new project into the local registry, so its tile appears without a
+    // second full sync.
+    const created = await projects.create(createName.value.trim(), remote || undefined);
+    createOpen.value = false;
+    store.selectProject(created.id);
+    store.notify(`Проєкт «${created.name}» створено у хмарі`);
+  } catch (e) {
+    // Keep the modal open. The two real refusals are `not signed in` (the session expired
+    // between the router guard and this click) and a postgrest/RLS or network failure; both
+    // are fixable without retyping the name.
+    createError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    createBusy.value = false;
+  }
+}
+
+const settingsOpen = ref(false);
+const settingsError = ref<string | null>(null);
+const nameEdit = ref('');
+const colorEdit = ref('');
+const defaultBranchEdit = ref('');
+const conventionsEdit = ref('');
+const settingsBranches = ref<string[]>([]);
+
+const envOpen = ref(false);
+const envError = ref<string | null>(null);
+const envView = ref<EnvFileView>({ entries: [], ignored: true });
+const carryFilesText = ref('.env');
+const envEditor = ref<{ collect: () => { set: Record<string, string>; remove: string[] } } | null>(null);
+
+// Settings modal. Seeded from the cloud project when we have it, from the cached row when we
+// do not, so the form is never blank just because Supabase is down.
+async function openSettings(): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  const cloud = selectedCloud.value;
+  const row = selectedProject.value;
+  settingsError.value = null;
+  nameEdit.value = cloud?.name ?? row?.name ?? '';
+  colorEdit.value = cloud?.color ?? row?.color ?? '';
+  defaultBranchEdit.value = cloud?.defaultBranch ?? row?.defaultBranch ?? '';
+  conventionsEdit.value = cloud?.conventions ?? row?.conventions ?? '';
+  settingsBranches.value = [];
+  settingsOpen.value = true;
+  // GET /projects/:id/branches answers `project not bound` without a binding, so do not ask.
+  if (!isBound.value) return;
+  try {
+    settingsBranches.value = (await store.listBranches(id)).branches;
+  } catch {
+    // Non-fatal: the picker degrades to the value already selected.
+  }
+}
+
+async function saveSettings(): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  settingsError.value = null;
+  const name = nameEdit.value.trim();
+  if (!name) {
+    settingsError.value = 'Назва проєкту не може бути порожньою';
+    return;
+  }
+  try {
+    // LOCAL write for now — Task 14 sends this to the cloud and re-syncs. Until then an edit
+    // here lives only until the next full sync overwrites the cached row.
+    await store.patchProject(id, {
+      name,
+      color: colorEdit.value,
+      defaultBranch: defaultBranchEdit.value,
+      conventions: conventionsEdit.value,
+    });
+    settingsOpen.value = false;
+  } catch (e) {
+    settingsError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+// Env modal: the bound repo's .env plus the carry-files list copied into every session.
+async function openEnv(): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  envError.value = null;
+  carryFilesText.value = (
+    selectedCloud.value?.carryFiles ??
+    selectedProject.value?.carryFiles ?? ['.env']
+  ).join('\n');
+  envView.value = { entries: [], ignored: true };
+  envOpen.value = true;
+  try {
+    envView.value = await store.getEnv(id);
+  } catch (e) {
+    envError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+async function saveEnv(): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  envError.value = null;
+  try {
+    const carryFiles = carryFilesText.value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+    await store.patchProject(id, { carryFiles: carryFiles.length ? carryFiles : ['.env'] });
+    const edits = envEditor.value?.collect();
+    if (edits && (Object.keys(edits.set).length || edits.remove.length)) {
+      await store.saveEnv(id, edits);
+    }
+    envOpen.value = false;
+  } catch (e) {
+    envError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+</script>
+```
+
+- [ ] **Step 4: Adjust the style block**
+
+In the `<style scoped lang="scss">` block, add `.shell__hint` after `.shell__error` (line 434):
+
+```scss
+.shell__hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--k-muted);
+}
+```
+
+Keep `.shell__dir` (436-440), `.shell__browse` (442-444) and `.shell__danger` (446-448) exactly as they are: Task 12's binding row reuses the first two, and Task 15's owner-only «Видалити проєкт» control reuses the third. Nothing else in the style block changes.
+
+- [ ] **Step 5: Follow the rename through `KitGalleryPage.vue`**
+
+This page is the other `KRailItem` call site, so it changes with the prop. Replace lines 135-141:
+
+```vue
+        <KRailItem
+          v-for="r in railProjects"
+          :key="r.project.id"
+          :project="r.project"
+          :active="r.active"
+          :count="r.count"
+        />
+```
+
+Replace lines 220-222 (drop `Group`, which no longer exists):
+
+```ts
+import type {
+  SessionStatus, Session, TranscriptEntry, RpcExtensionUIResponse,
+} from '@kermanych/core';
+```
+
+Add the rail view-model import after line 232 (`import KRailItem from 'components/kit/KRailItem.vue';` becomes):
+
+```ts
+import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
+```
+
+Replace lines 251-254 (`groupId` → `projectId`):
+
+```ts
+  return {
+    id: 's', projectId: 'p1', name: 'api-gateway', task: '',
+    worktreePath: '', worktree: true, branch: 'main', kind: 'agent', status: 'thinking', createdAt: now, lastActivityAt: now, ...over,
+  };
+```
+
+Replace lines 301-305 — the gallery now shows all three tile states, which is the point of a gallery:
+
+```ts
+const railProjects: { project: RailProject; active: boolean; count: number }[] = [
+  { project: { id: 'p1', name: 'api-gateway', state: 'bound' }, active: true, count: 4 },
+  { project: { id: 'p2', name: 'web client', state: 'unbound' }, active: false, count: 0 },
+  { project: { id: 'p3', name: 'billing', state: 'orphan' }, active: false, count: 1 },
+];
+```
+
+(`now` is still used by `mkSession` above, so the `const now` on line 249 stays.)
+
+- [ ] **Step 6: Verify the shell typechecks**
+
+Run: `pnpm --filter @kermanych/ui exec vue-tsc --noEmit`
+Expected: no errors in `src/layouts/MainLayout.vue`, `src/components/kit/KRailItem.vue` or `src/pages/KitGalleryPage.vue`. The only remaining errors are in `src/pages/WorkspacePage.vue` (`store.groups`, `s.groupId`, `store.selectedGroupId`, `store.updateGroup`), which Task 12 fixes.
+
+- [ ] **Step 7: Smoke the rail against a real stack**
+
+Terminal 1: `pnpm dev:api`. Terminal 2: `pnpm dev:ui`. Sign in, then:
+
+1. The rail shows one tile per cloud project you are a member of; a project with no local binding has a **dashed** frame and an `○` in its bottom-right corner, and hovering it shows «<назва> · не прив’язано».
+2. The header for a selected unbound project reads `<назва> · не прив’язано`.
+3. Click `+`, type a name, press «Створити» → the modal closes, a new dashed tile appears and is selected, and the toast reads «Проєкт «…» створено у хмарі».
+4. Reload the page → the new tile is still there (it came back through `projects.load()` → `POST /api/projects/sync`), and `sqlite3 ~/.kermanych/kermanych.sqlite 'select id, name, local_repo_path from projects'` shows the row with an empty `local_repo_path`.
+5. Stop `supabase stop`, reload → the error toast «Хмара недоступна — працюємо з локальним кешем: …» appears and the rail still lists the cached projects by their binding state (no `⚠`, because `cloudSynced` stayed false). Start Supabase again before continuing.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add apps/ui/src/layouts/MainLayout.vue apps/ui/src/components/kit/KRailItem.vue apps/ui/src/pages/KitGalleryPage.vue
+git commit -m "feat(ui): rail joins cloud projects with local rows and projects are created in the cloud"
+```
+
+---
+
+### Task 12: the binding flow — «Прив’язати теку» and the unbound guards
+
+**Files:**
+- Modify: `apps/ui/src/layouts/MainLayout.vue` — **the file as Task 11 Step 2/3 left it.** Task 11 replaced the whole template and the whole script, so the pre-plan line numbers are void; the anchors below are the marker comments and function names Task 11 wrote. Read the file before editing.
+- Modify: `apps/ui/src/pages/WorkspacePage.vue` — still untouched by this plan, so the line numbers are the real ones: template `:4`, `:10`, `:14`, `:16-21`, `:24`, `:67`, `:70`, `:93-97`, `:185`, `:317-324`, `:361-367`; script `:480`, `:513-525`, `:528`, `:530`, `:540-542`, `:676`, `:699-705`, `:713-718`, `:723-735`, `:815-817`, `:838-840`, `:866-870`, `:1108`, `:1117-1126`, `:1226`, `:1238`, `:1256`
+- Modify: `apps/ui/src/components/kit/KDirPicker.vue:48-49` (its header comment still says "New-Project modal")
+
+**Interfaces:**
+- Consumes: `store.setProjectBinding(id, localRepoPath)` (Task 9); `store.projects`, `store.patchProject`, `store.listBranches`, `store.notify` (Task 9); `isBound`, `selectedProject`, `selectedName` (Task 11); `KDirPicker`'s existing contract — `v-model:modelValue: boolean`, `start?: string`, `@select: [path: string]` (`KDirPicker.vue:50-51`, unchanged).
+- Produces: in `MainLayout.vue` — `BIND_HINT`, `BIND_ERRORS`, `pickerOpen`, `openBinding()`, `bindTo(path)`. In `WorkspacePage.vue` — `projectSessions`, `selectedProject`, `BIND_HINT`, `isBound`, `isBoundFor(projectId)`; `store.patchProject(s.projectId, patch)` replaces the old `store.updateGroup` call in `submitPreviewConfig()` (Task 14 moves that one call to the cloud).
+- After this task `apps/ui` typechecks end to end for the first time since Task 1.
+
+The three refusals `PUT /api/projects/:id/binding` really returns, verbatim, and where they come from:
+
+| API message | Source | Ukrainian toast |
+|---|---|---|
+| `local repo path cannot be empty` | `supervisor.service.ts:130` | «Шлях до теки не може бути порожнім» |
+| `local repo path is not a git repo` | `supervisor.service.ts:131` (`worktree.isGitRepo`) | «Обрана тека не є git-репозиторієм — виберіть корінь репозиторію (той, що містить .git)» |
+| `project not found` | `registry.service.ts:200` via `patchProject` — this machine has no row for the project, i.e. the mount-time sync did not land | «Цього проєкту немає в локальному реєстрі — перезапустіть Керманич, щоб синхронізувати список із хмари» |
+
+- [ ] **Step 1: Bring `KDirPicker` back, as the binding picker**
+
+In `MainLayout.vue`, add the import next to the other kit imports in the `<script setup>` block Task 11 wrote:
+
+```ts
+import KDirPicker from 'components/kit/KDirPicker.vue';
+```
+
+Then, immediately before the `<!-- TOAST STACK … -->` comment in the template, add:
+
+```vue
+    <!-- DIRECTORY PICKER — server-side browser (GET /api/fs/list, still the LOCAL api). Its
+         choice becomes THIS machine's binding for the selected project. -->
+    <KDirPicker
+      v-model="pickerOpen"
+      :start="selectedProject?.localRepoPath ?? ''"
+      @select="bindTo"
+    />
+```
+
+- [ ] **Step 2: Add the binding action to the header**
+
+Replace the whole `<div v-if="store.selectedProjectId" class="shell__actions">` block Task 11 wrote (the `$` and `⚙` buttons) with:
+
+```vue
+      <div v-if="store.selectedProjectId" class="shell__actions">
+        <KBtn
+          variant="secondary"
+          :title="isBound ? 'Змінити локальну теку цього проєкту' : BIND_HINT"
+          @click="openBinding"
+        >{{ isBound ? 'Змінити теку' : 'Прив’язати теку' }}</KBtn>
+        <KBtn
+          variant="icon"
+          :disabled="!isBound"
+          :title="isBound ? 'Змінні середовища (.env)' : BIND_HINT"
+          @click="openEnv"
+        >$</KBtn>
+        <KBtn
+          variant="icon"
+          class="shell__settings"
+          title="Редагувати проєкт"
+          @click="openSettings"
+        >⚙</KBtn>
+      </div>
+```
+
+The `⚙` button is deliberately NOT guarded: project settings are CLOUD config and a member with no local checkout must still be able to read and (if owner) edit them. Only `.env` — a file in the bound repo — needs the binding.
+
+- [ ] **Step 3: Add the binding state and the error mapping**
+
+In the `<script setup>` block, immediately after the `isBound` computed Task 11 wrote, add:
+
+```ts
+// Requirement 3: the binding is manual and per machine. Kermanych never clones — the path
+// must already be a git repo, and each teammate binds their own checkout. One string for
+// every disabled affordance, so the copy cannot drift.
+const BIND_HINT = 'Прив’яжіть локальну теку репозиторію';
+
+// The three refusals PUT /api/projects/:id/binding actually returns — the first two thrown by
+// bindProject (supervisor.service.ts:130-131), the third by registry.patchProject when this
+// machine has no row for the project at all. Anything else is shown verbatim: the api's own
+// message beats a guess.
+const BIND_ERRORS: Record<string, string> = {
+  'local repo path cannot be empty': 'Шлях до теки не може бути порожнім',
+  'local repo path is not a git repo':
+    'Обрана тека не є git-репозиторієм — виберіть корінь репозиторію (той, що містить .git)',
+  'project not found':
+    'Цього проєкту немає в локальному реєстрі — перезапустіть Керманич, щоб синхронізувати список із хмари',
+};
+
+const pickerOpen = ref(false);
+
+function openBinding(): void {
+  pickerOpen.value = true;
+}
+
+async function bindTo(path: string): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  try {
+    const bound = await store.setProjectBinding(id, path);
+    // project_update streams back over the socket, so the rail tile drops its dashed frame and
+    // the header picks up the path on their own — nothing to refresh here.
+    store.notify(`Проєкт прив’язано до ${bound.localRepoPath}`);
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e);
+    store.notify(BIND_ERRORS[raw] ?? raw, 'error', 6000);
+  }
+}
+```
+
+- [ ] **Step 4: Fix `KDirPicker`'s header comment**
+
+Replace `apps/ui/src/components/kit/KDirPicker.vue:48-49`:
+
+```ts
+// Directory browser. Two callers, one contract: it stacks over whatever modal opened it
+// (QDialog handles the layering) and emits the chosen absolute path. In MainLayout it picks
+// THIS machine's binding for a cloud project; `⑂` marks the git repos.
+```
+
+- [ ] **Step 5: Rename sweep — `WorkspacePage.vue` template**
+
+Line 4:
+
+```vue
+    <div v-if="!store.selectedProjectId" class="ws__blank">
+```
+
+Line 10:
+
+```vue
+      <!-- BOARD — one card per session in the selected project -->
+```
+
+Line 14:
+
+```vue
+            <h1 class="ws__heading">{{ selectedProject?.name ?? 'Проєкт' }}</h1>
+```
+
+Line 24:
+
+```vue
+          v-if="projectSessions.length"
+```
+
+Line 70:
+
+```vue
+                <KIconButton v-if="store.projects.length > 1" title="Перемістити в інший проєкт" @click.stop="openMove(row)">→</KIconButton>
+```
+
+Line 185:
+
+```vue
+          <span v-if="selectedProject" class="ws-launcher__tag mono">{{ selectedProject.name }}</span>
+```
+
+Lines 361-367 (the move list — `g` was a group):
+
+```vue
+            v-for="p in moveTargets"
+            :key="p.id"
+            type="button"
+            class="ws__move-option"
+            :disabled="moveBusy"
+            @click="confirmMove(p.id)"
+          >{{ p.name }}</button>
+```
+
+- [ ] **Step 6: Rename sweep — `WorkspacePage.vue` script**
+
+Line 480:
+
+```ts
+// for the selected project + the full panel for the selected session, plus the
+```
+
+Lines 513-525:
+
+```ts
+const projectSessions = computed(() =>
+  store.sessions
+    .filter((s) => {
+      if (s.projectId !== store.selectedProjectId) return false;
+      if (showArchived.value) return !!s.archived;
+      if (s.archived) return false;
+      return showTasks.value ? s.status === 'backlog' : s.status !== 'backlog';
+    })
+    .sort((a, b) => {
+      const byStatus = STATUS_RANK[a.status] - STATUS_RANK[b.status];
+      return byStatus !== 0 ? byStatus : a.createdAt.localeCompare(b.createdAt);
+    }),
+);
+```
+
+Line 528:
+
+```ts
+// tree). Orphans (parent filtered out by the archived/project view) still render.
+```
+
+Line 530:
+
+```ts
+  const all = projectSessions.value;
+```
+
+Lines 540-542:
+
+```ts
+const selectedProject = computed(() =>
+  store.projects.find((p) => p.id === store.selectedProjectId),
+);
+```
+
+Line 676:
+
+```ts
+    ? `нова worktree, чекаут від ${draftBaseBranch.value || selectedProject.value?.defaultBranch || 'HEAD'}`
+```
+
+Line 1108:
+
+```ts
+const moveTargets = computed(() => store.projects.filter((p) => p.id !== moveFor.value?.projectId));
+```
+
+Lines 1117-1126:
+
+```ts
+async function confirmMove(projectId: string): Promise<void> {
+  const s = moveFor.value;
+  if (!s) return;
+  moveBusy.value = true;
+  moveError.value = null;
+  try {
+    await store.moveTask(s.id, projectId);
+    moveOpen.value = false;
+    const dest = store.projects.find((p) => p.id === projectId);
+    store.notify(`Задачу «${s.name}» перенесено в «${dest?.name ?? 'проєкт'}»`);
+```
+
+Line 1226:
+
+```ts
+  const p = store.projects.find((x) => x.id === s.projectId);
+```
+
+Line 1227 reads `if (!g?.previewCommand) {` — change it to `if (!p?.previewCommand) {`.
+
+Lines 1238-1240:
+
+```ts
+  const p = store.projects.find((x) => x.id === s.projectId);
+  draftWebCmd.value = (forceDefaults ? '' : p?.previewCommand ?? '') || DEFAULT_WEB_CMD;
+  draftApiCmd.value = (forceDefaults ? '' : p?.apiCommand ?? '') || DEFAULT_API_CMD;
+```
+
+Line 1256:
+
+```ts
+    await store.patchProject(s.projectId, patch);
+```
+
+- [ ] **Step 7: Add the unbound guards to `WorkspacePage.vue`**
+
+Insert after the `selectedProject` computed (the block that was lines 540-542):
+
+```ts
+// Requirement 3 in the UI: a task can be created, edited and moved without a binding, but
+// nothing that touches the repo may run. `BIND_HINT` is the same string MainLayout uses; both
+// copies are the operator's next action, not an apology.
+const BIND_HINT = 'Прив’яжіть локальну теку репозиторію';
+const isBound = computed(() => !!selectedProject.value?.localRepoPath);
+
+// Row-level check: the board can show sessions of an orphan project whose row is still here
+// but whose binding was never made, so per-row actions ask about the row's own project.
+function isBoundFor(projectId: string): boolean {
+  return !!store.projects.find((p) => p.id === projectId)?.localRepoPath;
+}
+```
+
+Replace lines 16-21 (the board controls). «Нова задача» stays enabled on purpose — it opens the launcher, and saving a task to the backlog is explicitly allowed without a binding (`supervisor.service.ts:191-193`); the launch button inside the launcher is what gets guarded, in Step 8. «Швидкий чат» creates a live session immediately, so it is disabled:
+
+```vue
+          <div class="ws__board-controls">
+            <KToggle :options="viewOptions" v-model="viewMode" />
+            <KBtn
+              variant="ghost"
+              :disabled="!isBound"
+              :title="isBound ? 'Сесія-чат без worktree' : BIND_HINT"
+              @click="onNewChat"
+            >+ Швидкий чат</KBtn>
+            <KBtn variant="primary" @click="openLauncher()">Нова задача</KBtn>
+          </div>
+```
+
+Replace line 67 (run a backlog task) — `KIconButton` passes `disabled` straight through to its native `<button>`, exactly as line 74 already does:
+
+```vue
+                <KIconButton
+                  :disabled="!isBoundFor(row.projectId)"
+                  :title="isBoundFor(row.projectId) ? 'Запустити задачу як агента' : BIND_HINT"
+                  @click.stop="openLauncher(row)"
+                >▶</KIconButton>
+```
+
+Replace lines 93-97 (the preview toggle — a preview runs `previewCommand` inside the session's worktree, and falls back to the project's repo path):
+
+```vue
+                <KIconButton
+                  :active="!!store.previews[row.id]"
+                  :disabled="!isBoundFor(row.projectId)"
+                  :title="
+                    __omp_shell("isBoundFor(row.projectId)")
+                      ? BIND_HINT
+                      : store.previews[row.id]
+                        ? 'Зупинити превʼю'
+                        : 'Превʼю гілки в браузері'
+                  "
+                  @click.stop="togglePreview(row)"
+                >{{ store.previews[row.id] ? '◼' : '▶' }}</KIconButton>
+```
+
+Replace lines 317-324 (the launcher's two submit buttons — «В беклог»/«Зберегти» stays enabled, «Запустити» does not):
+
+```vue
+          <KBtn
+            variant="secondary"
+            :disabled="!canLaunch"
+            @click="submitLauncher(true)"
+          >{{ editingTaskId ? 'Зберегти' : 'В беклог' }}</KBtn>
+          <KBtn
+            variant="primary"
+            :disabled="!canLaunch || !isBound"
+            :title="isBound ? '' : BIND_HINT"
+            @click="submitLauncher(false)"
+          >
+            Запустити<span class="ws-launcher__kbd mono">⌘⏎</span>
+          </KBtn>
+```
+
+Replace lines 699-705 (`canLaunch` keeps meaning "the form is complete"; the hint carries the binding):
+
+```ts
+const canLaunch = computed(
+  () => !!store.selectedProjectId && draftName.value.trim() !== '' && draftTask.value.trim() !== '',
+);
+
+const launcherTitle = computed(() => (editingTaskId.value ? 'Задача' : 'Нова задача'));
+// Footer status: the binding first (it blocks launching outright), then the form nudge,
+// then silence once launchable.
+const footHint = computed(() => {
+  if (!isBound.value) return BIND_HINT;
+  return canLaunch.value ? '' : 'опиши завдання, щоб запустити';
+});
+```
+
+Replace lines 713-718 (⌘⏎ must respect the same gate as the button it stands for):
+
+```ts
+function onLauncherKeydown(e: KeyboardEvent): void {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    e.preventDefault();
+    if (canLaunch.value && isBound.value) void submitLauncher(false);
+  }
+}
+```
+
+Replace lines 723-735 (`GET /projects/:id/branches` answers `project not bound` without a binding, so do not ask):
+
+```ts
+async function loadLaunchBranches(preferred: string | undefined): Promise<void> {
+  const projectId = store.selectedProjectId;
+  launchBranches.value = [];
+  draftBaseBranch.value = preferred ?? selectedProject.value?.defaultBranch ?? '';
+  if (!projectId || !isBound.value) return;
+  try {
+    const info = await store.listBranches(projectId);
+    launchBranches.value = info.branches;
+    if (!draftBaseBranch.value) draftBaseBranch.value = info.default ?? info.current ?? '';
+  } catch {
+    // Non-fatal: the picker degrades to the preferred/default value only.
+  }
+}
+```
+
+Replace lines 815-817 (the launch path refuses without a binding even if a stale DOM state got past the disabled button):
+
+```ts
+async function submitLauncher(asTask: boolean): Promise<void> {
+  const projectId = store.selectedProjectId;
+  if (!projectId || !canLaunch.value) return;
+  // Saving to the backlog is allowed unbound; starting an agent is not, and the api would
+  // refuse it with `project not bound` anyway.
+  if (!asTask && !isBound.value) {
+    launcherError.value = BIND_HINT;
+    return;
+  }
+```
+
+Replace lines 838-840:
+
+```ts
+      session = await store.createSession(
+        projectId, draft.name, draft.task, model, images, draft.worktree, draft.prefix, asTask, draft.platform, draft.baseBranch,
+      );
+```
+
+Replace lines 866-870 (`createChat` goes through `boundProject`, `supervisor.service.ts:289`):
+
+```ts
+async function onNewChat(): Promise<void> {
+  const projectId = store.selectedProjectId;
+  if (!projectId || !isBound.value) return;
+  try {
+    const chat = await store.createChat(projectId);
+```
+
+- [ ] **Step 8: Verify the whole UI typechecks**
+
+Run: `pnpm --filter @kermanych/ui exec vue-tsc --noEmit`
+Expected: **no output, exit 0.** This is the gate Task 1 deliberately broke: `packages/core`, `apps/api` and `apps/ui` now all compile against `Project`/`projectId`.
+
+- [ ] **Step 9: Smoke the binding against a real stack**
+
+With `pnpm dev:api` + `pnpm dev:ui` running and signed in, on a project with no binding:
+
+1. «Швидкий чат» is greyed out and its tooltip reads «Прив’яжіть локальну теку репозиторію»; «Нова задача» still opens, its footer shows the same hint, «Запустити» is greyed out and «В беклог» is not. Save a task to the backlog → it appears under «Задачі» with a greyed-out `▶`.
+2. `$` (env) is greyed out with the same tooltip; `⚙` (settings) still opens, and its «Гілка за замовчуванням» select is disabled.
+3. Press «Прив’язати теку», navigate to a directory that is NOT a git repo, press «Обрати цю теку» → error toast «Обрана тека не є git-репозиторієм — виберіть корінь репозиторію (той, що містить .git)», and the rail tile stays dashed.
+4. Press «Прив’язати теку» again, pick a real repo → toast «Проєкт прив’язано до /…», the tile's dashed frame and `○` disappear, the header shows the path, and every control from steps 1-2 becomes live. The button now reads «Змінити теку».
+5. `sqlite3 ~/.kermanych/kermanych.sqlite "select name, local_repo_path from projects"` shows the path.
+6. Launch a task → it runs (this is the same launch path as before the plan; the binding is the only thing that changed).
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add apps/ui/src/layouts/MainLayout.vue apps/ui/src/pages/WorkspacePage.vue apps/ui/src/components/kit/KDirPicker.vue
+git commit -m "feat(ui): manual per-machine repo binding and unbound-project guards"
+```
+
+---
+
+### Task 13: members panel in the project settings (owner-only writes)
+
+**Files:**
+- Modify: `apps/ui/src/layouts/MainLayout.vue` — the file as Tasks 11-12 left it; anchors are the `<!-- PROJECT-SETTINGS MODAL … -->` block, the `openSettings()` function and the `<style scoped>` block.
+
+**Interfaces:**
+- Consumes: `useProjects()` — `members: Record<string, ProjectMember[]>`, `loadMembers(id)`, `addMember(id, githubUsername)`, `removeMember(id, userId)`, `isOwner(id)` (Task 10); `ProjectMember` and `Profile` from `@kermanych/cloud` (Plan A's types); `store.notify` (Task 9); `KTag` (`KTag.vue`, existing).
+- Produces: in `MainLayout.vue` — `members`, `membersLoading`, `canManageMembers`, `memberHandle`, `memberBusy`, `memberErrorText(e)`, `submitMember()`, `removeMemberOf(m)`.
+
+Requirement 2: owners manage membership. `isOwner()` is a UX gate only — the real gate is RLS. `members_insert_owner`, `members_update_owner` and `members_delete_owner` (`supabase/migrations/20260821090200_team_cloud_rls.sql:65-84`) each require an owner row in `project_members`, so a non-owner's write is refused by Postgres whatever this component renders. The two shapes that refusal takes are different and both must be handled:
+
+| Failure | What the client sees | Ukrainian toast |
+|---|---|---|
+| the handle has no `profiles` row (never signed in) | `Error: no Kermanych profile for @<handle> — ask them to sign in with GitHub first` — thrown by `addMember` itself (`packages/cloud/src/projects.ts:158`) | «Немає профілю з таким GitHub-логіном — попросіть колегу спершу увійти в Керманич через GitHub» |
+| non-owner INSERT | postgrest error whose message contains `violates row-level security policy` | «Хмара відмовила: керувати складом учасників може лише власник проєкту» |
+| the person is already a member | postgrest error containing `duplicate key value` (`project_members_pkey`) | «Цей користувач уже в проєкті» |
+| non-owner DELETE | **no error at all** — a DELETE the policy refuses simply matches zero rows, and `removeMember` has already filtered the local list optimistically | re-read the list; if the member is still there, «Хмара відмовила: керувати складом учасників може лише власник проєкту» |
+
+- [ ] **Step 1: Add the members block to the settings modal**
+
+In the `<!-- PROJECT-SETTINGS MODAL … -->` block, insert this between the read-only «Локальна тека цієї машини» field and the `<p v-if="settingsError" …>` line:
+
+```vue
+        <!-- MEMBERS — cloud membership. Writes are owner-only; RLS enforces it, this is UX. -->
+        <div class="shell__members">
+          <span class="shell__members-label">Учасники</span>
+          <div v-if="membersLoading" class="shell__hint mono">Завантаження…</div>
+          <div v-for="m in members" :key="m.userId" class="shell__member">
+            <img
+              v-if="m.profile?.avatarUrl"
+              class="shell__member-avatar"
+              :src="m.profile.avatarUrl"
+              :alt="m.profile.githubUsername ?? ''"
+            />
+            <span v-else class="shell__member-avatar shell__member-avatar--blank mono">?</span>
+            <span class="shell__member-name mono">
+              @{{ m.profile?.githubUsername ?? m.userId.slice(0, 8) }}
+            </span>
+            <KTag>{{ m.role === 'owner' ? 'власник' : 'учасник' }}</KTag>
+            <KBtn
+              v-if="canManageMembers && m.role !== 'owner'"
+              variant="ghost"
+              title="Вилучити з проєкту"
+              @click="removeMemberOf(m)"
+            >✕</KBtn>
+          </div>
+          <div v-if="canManageMembers" class="shell__member-add">
+            <KField
+              v-model="memberHandle"
+              label="Додати за GitHub-логіном"
+              placeholder="octocat"
+            />
+            <KBtn
+              variant="secondary"
+              :disabled="memberHandle.trim() === '' || memberBusy"
+              @click="submitMember"
+            >Додати</KBtn>
+          </div>
+          <p v-else class="shell__hint">
+            Змінювати склад учасників може лише власник проєкту.
+          </p>
+        </div>
+```
+
+- [ ] **Step 2: Add the members state and actions**
+
+In the `<script setup>` block, add `KTag` to the kit imports and the member type to the type imports:
+
+```ts
+import type { ProjectMember } from '@kermanych/cloud';
+import KTag from 'components/kit/KTag.vue';
+```
+
+Then, immediately after the `settingsBranches` ref, add:
+
+```ts
+const membersLoading = ref(false);
+const memberHandle = ref('');
+const memberBusy = ref(false);
+
+// `members` is keyed by project id and may be missing entirely before the first read, so the
+// `?? []` is load-bearing (noUncheckedIndexedAccess is on).
+const members = computed<ProjectMember[]>(() =>
+  store.selectedProjectId ? projects.members[store.selectedProjectId] ?? [] : [],
+);
+
+// UX only. The owner-only policies on project_members refuse a non-owner write regardless of
+// what this returns — see memberErrorText() for what that refusal looks like.
+const canManageMembers = computed(
+  () => !!store.selectedProjectId && projects.isOwner(store.selectedProjectId),
+);
+
+// The three refusals a membership write really produces. Everything else is shown verbatim.
+function memberErrorText(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  if (raw.startsWith('no Kermanych profile for @')) {
+    return 'Немає профілю з таким GitHub-логіном — попросіть колегу спершу увійти в Керманич через GitHub';
+  }
+  if (raw.includes('violates row-level security policy')) {
+    return 'Хмара відмовила: керувати складом учасників може лише власник проєкту';
+  }
+  if (raw.includes('duplicate key value')) {
+    return 'Цей користувач уже в проєкті';
+  }
+  return raw;
+}
+
+async function submitMember(): Promise<void> {
+  const id = store.selectedProjectId;
+  const handle = memberHandle.value.trim();
+  if (!id || !handle) return;
+  memberBusy.value = true;
+  try {
+    const added = await projects.addMember(id, handle);
+    memberHandle.value = '';
+    store.notify(`@${added.profile?.githubUsername ?? handle} додано до проєкту`);
+  } catch (e) {
+    store.notify(memberErrorText(e), 'error', 6000);
+  } finally {
+    memberBusy.value = false;
+  }
+}
+
+async function removeMemberOf(m: ProjectMember): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  const who = m.profile?.githubUsername ?? m.userId;
+  if (!window.confirm(`Вилучити @${who} з проєкту «${selectedName.value}»?`)) return;
+  try {
+    await projects.removeMember(id, m.userId);
+    // A DELETE the owner-only policy refuses does NOT error — it matches zero rows, while the
+    // store has already dropped the row locally. Re-read so the panel cannot show a removal
+    // that never happened.
+    const after = await projects.loadMembers(id);
+    if (after.some((x) => x.userId === m.userId)) {
+      store.notify('Хмара відмовила: керувати складом учасників може лише власник проєкту', 'error', 6000);
+      return;
+    }
+    store.notify(`@${who} вилучено з проєкту`);
+  } catch (e) {
+    store.notify(memberErrorText(e), 'error', 6000);
+  }
+}
+```
+
+- [ ] **Step 3: Load the members when the settings modal opens**
+
+In `openSettings()`, replace the tail — the `if (!isBound.value) return;` line and the `try { settingsBranches.value = … }` block Task 11 wrote — with:
+
+```ts
+  memberHandle.value = '';
+  membersLoading.value = true;
+  try {
+    await projects.loadMembers(id);
+  } catch (e) {
+    // Non-fatal: the panel stays empty and says why. Config editing still works.
+    store.notify(`Не вдалось прочитати учасників: ${e instanceof Error ? e.message : String(e)}`, 'error');
+  } finally {
+    membersLoading.value = false;
+  }
+  // GET /projects/:id/branches answers `project not bound` without a binding, so do not ask.
+  if (!isBound.value) return;
+  try {
+    settingsBranches.value = (await store.listBranches(id)).branches;
+  } catch {
+    // Non-fatal: the picker degrades to the value already selected.
+  }
+```
+
+- [ ] **Step 4: Style the panel**
+
+Add to the `<style scoped lang="scss">` block, after `.shell__hint`:
+
+```scss
+.shell__members {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--k-line);
+}
+
+.shell__members-label {
+  text-align: left;
+  font-size: 13px;
+  color: var(--k-text);
+}
+
+.shell__member {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shell__member-avatar {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--k-line);
+  border-radius: 0; // no circles anywhere in this system
+  object-fit: cover;
+}
+
+.shell__member-avatar--blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--k-muted);
+  background: var(--k-surface2);
+}
+
+.shell__member-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--k-text);
+}
+
+.shell__member-add {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+```
+
+- [ ] **Step 5: Verify it typechecks**
+
+Run: `pnpm --filter @kermanych/ui exec vue-tsc --noEmit`
+Expected: no output, exit 0. If `projects.members[...]` errors with "possibly undefined", the `?? []` in the `members` computed was dropped — put it back rather than turning off `noUncheckedIndexedAccess`.
+
+- [ ] **Step 6: Smoke the panel with two accounts**
+
+You need two profiles in the local Supabase. Both flows are covered in Task 16 Steps 5-6; the shortest path here is the throwaway-user recipe from Plan A (Task 10 Step 4): create `alice@kermanych.test` and `bob@kermanych.test` through the admin API with `user_metadata.user_name` set to `alice` / `bob`, so `handle_new_user` fills `profiles.github_username`.
+
+As alice (the owner of a project):
+
+1. Open `⚙` → the «Учасники» block lists exactly one row, `@alice`, tagged «власник», with no `✕` (an owner cannot remove themselves here).
+2. Type `bob`, press «Додати» → the row `@bob` / «учасник» appears with a `✕`, toast «@bob додано до проєкту».
+3. Press «Додати» with `bob` again → error toast «Цей користувач уже в проєкті».
+4. Type `nosuchuser`, «Додати» → error toast «Немає профілю з таким GitHub-логіном — попросіть колегу спершу увійти в Керманич через GitHub».
+5. Press `✕` on `@bob`, confirm → toast «@bob вилучено з проєкту» and the row goes.
+
+As bob (a member of a project alice owns), signed in on the second machine or a second browser profile:
+
+6. Open `⚙` → the same two rows render, there is no «Додати за GitHub-логіном» field and no `✕`; instead: «Змінювати склад учасників може лише власник проєкту.»
+7. Prove RLS is the real gate, not the hidden button — in bob's devtools console:
+
+```js
+const { useProjects } = await import('/src/stores/projects.ts');
+await useProjects().addMember('<project id>', 'alice').catch((e) => e.message);
+```
+Expected: a rejected promise whose message contains `violates row-level security policy for table "project_members"`. Doing the same through `removeMember` resolves but changes nothing — re-open `⚙` and both rows are still there, which is exactly the silent-refusal path Step 2 re-reads for.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add apps/ui/src/layouts/MainLayout.vue
+git commit -m "feat(ui): project members panel with owner-only membership writes"
+```
+
+---
+
+### Task 14: project settings write to the CLOUD; env stays on this machine
+
+**Files:**
+- Modify: `apps/ui/src/layouts/MainLayout.vue` — the file as Tasks 11-13 left it; anchors are the `<!-- PROJECT-SETTINGS MODAL … -->` and `<!-- ENV MODAL … -->` blocks, `saveSettings()`, `openEnv()`, `saveEnv()`, `canManageMembers` and the `<style scoped>` block.
+- Modify: `apps/ui/src/pages/WorkspacePage.vue` — `submitPreviewConfig()` (the `store.patchProject(s.projectId, patch)` line Task 12 Step 6 wrote) plus the store import next to `useOrchestrator`.
+
+**Interfaces:**
+- Consumes: `useProjects().patch(id, patch)` and `isOwner(id)` (Task 10); `CloudProjectPatch` — `Partial<Pick<CloudProject, 'name' | 'gitRemoteUrl' | 'conventions' | 'previewCommand' | 'apiCommand' | 'defaultBranch' | 'carryFiles' | 'envKeys' | 'color'>>` (`packages/cloud/src/projects.ts:45-50`, Task 7); `CloudProject.envKeys: string[]` (Plan A's types); `store.getEnv`/`store.saveEnv` (Task 9); `selectedCloud`, `isBound`, `envView`, `envEditor`, `carryFilesText` (Task 11).
+- Produces: in `MainLayout.vue` — `isOwnerOfSelected` (the single owner predicate, renamed from Task 13's `canManageMembers`), `parseList(text)`, `previewCommandEdit`, `apiCommandEdit`, `envKeysText`, `envKeyState`, `missingEnvKeys`.
+- Declared removals: `store.patchProject` has no caller left in `apps/ui` after this task. It stays on the store (Task 9) because the binding route is the only local project write the UI still makes — but every CONFIG write now goes to the cloud, which then mirrors itself into the local row.
+
+Why config cannot stay local: `registry.upsertProject` overwrites `preview_command`, `api_command`, `carry_files`, `default_branch`, `conventions`, `color` and `name` from the cloud row on every sync (`registry.service.ts:182-190` — only `local_repo_path` is protected by the `CASE`). A local-only config edit therefore survives exactly until the next `projects.load()`. Cloud-first, mirror-after is the only consistent order (design D1).
+
+The consequence to accept, not paper over: `projects_update_owner` (`supabase/migrations/20260821090200_team_cloud_rls.sql:51-55`) makes ALL project config owner-only, preview commands included. A non-owner's `patchProject` sends `update … eq(id) … select().single()`, which matches zero rows under RLS, so postgrest answers with a "no rows returned" error rather than a policy message. That is unreadable copy, so the UI gates on `isOwnerOfSelected` first and says plainly who may edit; the raw message is only ever appended when a write we believed was allowed still failed.
+
+- [ ] **Step 1: Unify the owner predicate and add the list parser**
+
+Rename Task 13's `canManageMembers` to `isOwnerOfSelected` — membership, config and env-key names are all owner-only, and one predicate cannot be allowed to drift into two names:
+
+```ts
+// UX only. Every owner-only path (membership, project config, env-key names) is enforced by
+// the owner-scoped RLS policies; this just keeps the UI from offering a write that Postgres
+// will refuse.
+const isOwnerOfSelected = computed(
+  () => !!store.selectedProjectId && projects.isOwner(store.selectedProjectId),
+);
+```
+
+Update its two uses in the members block (`v-if="canManageMembers && m.role !== 'owner'"` → `v-if="isOwnerOfSelected && m.role !== 'owner'"`, and `v-if="canManageMembers"` → `v-if="isOwnerOfSelected"` on the add row, with the `v-else` hint unchanged).
+
+Add the parser next to it — three fields now take «через кому або з нового рядка»:
+
+```ts
+function parseList(text: string): string[] {
+  return text.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+}
+```
+
+- [ ] **Step 2: Extend the settings form**
+
+Add these refs next to `conventionsEdit`:
+
+```ts
+const previewCommandEdit = ref('');
+const apiCommandEdit = ref('');
+```
+
+In the `<!-- PROJECT-SETTINGS MODAL … -->` block, insert after the «Конвенції PR/комітів» field and before the read-only «Локальна тека цієї машини» field:
+
+```vue
+        <KField
+          v-model="previewCommandEdit"
+          label="Команда превʼю (веб)"
+          placeholder="pnpm dev --port $PORT"
+          :disabled="!isOwnerOfSelected"
+        />
+        <KField
+          v-model="apiCommandEdit"
+          label="Команда превʼю (API, необовʼязково)"
+          placeholder="pnpm dev:api"
+          :disabled="!isOwnerOfSelected"
+        />
+        <KField
+          v-model="carryFilesText"
+          label="Файли для сесії (через кому або з нового рядка)"
+          placeholder=".env"
+          :disabled="!isOwnerOfSelected"
+        />
+        <p v-if="!isOwnerOfSelected" class="shell__hint">
+          Налаштування проєкту спільні для команди — змінювати їх може лише власник.
+        </p>
+```
+
+Then close the other four controls to a non-owner. Add `:disabled="!isOwnerOfSelected"` to the `nameEdit` and `conventionsEdit` `KField`s and to the modal's «Зберегти» button; the branch `KSelect` already carries `:disabled="!isBound"` from Task 11 and needs both reasons, so it becomes:
+
+```vue
+          :disabled="!isBound || !isOwnerOfSelected"
+```
+
+`KColorPicker` has no `disabled` prop at all (`KColorPicker.vue:38`), so grey the whole swatch row instead:
+
+```vue
+        <KColorPicker
+          v-model="colorEdit"
+          label="Колір проєкту"
+          :class="{ 'shell__readonly': !isOwnerOfSelected }"
+        />
+```
+
+with
+
+```scss
+// A non-owner sees the value, cannot change it, and gets the same greyed-out signal as a
+// disabled KField (which is why the opacity matches KField's :disabled rule).
+.shell__readonly {
+  opacity: 0.45;
+  pointer-events: none;
+}
+```
+
+- [ ] **Step 3: Seed the new fields and carry files from the cloud project**
+
+In `openSettings()`, after the `conventionsEdit.value = …` line, add:
+
+```ts
+  previewCommandEdit.value = cloud?.previewCommand ?? row?.previewCommand ?? '';
+  apiCommandEdit.value = cloud?.apiCommand ?? row?.apiCommand ?? '';
+  carryFilesText.value = (cloud?.carryFiles ?? row?.carryFiles ?? ['.env']).join('\n');
+```
+
+- [ ] **Step 4: Point `saveSettings()` at the cloud**
+
+Replace the whole `saveSettings()` function Task 11 wrote:
+
+```ts
+async function saveSettings(): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  settingsError.value = null;
+  const name = nameEdit.value.trim();
+  if (!name) {
+    settingsError.value = 'Назва проєкту не може бути порожньою';
+    return;
+  }
+  if (!isOwnerOfSelected.value) {
+    settingsError.value = 'Змінювати налаштування проєкту може лише власник';
+    return;
+  }
+  const carryFiles = parseList(carryFilesText.value);
+  try {
+    // CLOUD first (design D1: it is the source of truth for config), and patch() then mirrors
+    // the returned row into the local registry via api.syncProjects([updated], false) — so the
+    // offline cache the launch path reads matches what the team sees. Empty strings are turned
+    // into NULLs by toProjectRow(), which is how a field gets cleared.
+    await projects.patch(id, {
+      name,
+      color: colorEdit.value,
+      defaultBranch: defaultBranchEdit.value,
+      conventions: conventionsEdit.value,
+      previewCommand: previewCommandEdit.value,
+      apiCommand: apiCommandEdit.value,
+      // Never store an empty carry list: the launch path would copy nothing into the worktree.
+      carryFiles: carryFiles.length ? carryFiles : ['.env'],
+    });
+    settingsOpen.value = false;
+  } catch (e) {
+    // We believed this write was allowed, so the raw message is the useful part: an expired
+    // session, an unreachable cloud, or ownership that changed under us.
+    settingsError.value = `Хмара відмовила у записі: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+```
+
+- [ ] **Step 5: Add the env-keys checklist to the env modal**
+
+Add next to the other env refs:
+
+```ts
+const envKeysText = ref('');
+
+// Requirement 9: the cloud holds key NAMES only. This is the checklist — which required names
+// the BOUND repo's .env actually carries a value for. It reflects the file as loaded, so save
+// and reopen to re-check after editing.
+const envKeyState = computed(() => {
+  const present = new Set(envView.value.entries.map((e) => e.key));
+  return (selectedCloud.value?.envKeys ?? []).map((key) => ({ key, present: present.has(key) }));
+});
+
+const missingEnvKeys = computed(() =>
+  envKeyState.value.filter((k) => !k.present).map((k) => k.key),
+);
+```
+
+In the `<!-- ENV MODAL … -->` block, DELETE the «Файли для сесії …» `KField` (it moved to the settings modal in Step 2) and put this in its place:
+
+```vue
+        <div v-if="envKeyState.length" class="shell__keys">
+          <span class="shell__keys-label">Обовʼязкові ключі (перелік імен із хмари)</span>
+          <div class="shell__keys-list">
+            <KTag v-for="k in envKeyState" :key="k.key">
+              {{ k.present ? '✓' : '✕' }} {{ k.key }}
+            </KTag>
+          </div>
+          <p v-if="missingEnvKeys.length" class="shell__error" role="alert">
+            Немає значень для: {{ missingEnvKeys.join(', ') }}
+          </p>
+        </div>
+        <KField
+          v-if="isOwnerOfSelected"
+          v-model="envKeysText"
+          label="Обовʼязкові ключі — лише ІМЕНА (через кому або з нового рядка)"
+          placeholder="GITHUB_TOKEN, DATABASE_URL"
+          multiline
+          :rows="3"
+        />
+        <p class="shell__hint">
+          У хмарі зберігаються лише імена ключів. Значення живуть у `.env` цієї машини й нікуди
+          не передаються.
+        </p>
+```
+
+- [ ] **Step 6: Rewrite `openEnv()` and `saveEnv()`**
+
+Replace both functions Task 11 wrote:
+
+```ts
+// Env modal: the BOUND repo's .env (values never leave this machine) plus the cloud's
+// names-only checklist.
+async function openEnv(): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  envError.value = null;
+  envKeysText.value = (selectedCloud.value?.envKeys ?? []).join('\n');
+  envView.value = { entries: [], ignored: true };
+  envOpen.value = true;
+  try {
+    envView.value = await store.getEnv(id);
+  } catch (e) {
+    envError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+async function saveEnv(): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  envError.value = null;
+  try {
+    // VALUES: local file only, through the api's path-confined atomic writer.
+    const edits = envEditor.value?.collect();
+    if (edits && (Object.keys(edits.set).length || edits.remove.length)) {
+      await store.saveEnv(id, edits);
+    }
+    // NAMES: the cloud checklist, owner-only. Sent only when the owner actually changed it, so
+    // a member saving values never attempts a project write it cannot make.
+    if (isOwnerOfSelected.value) {
+      const next = parseList(envKeysText.value);
+      const current = selectedCloud.value?.envKeys ?? [];
+      if (next.join('\n') !== current.join('\n')) await projects.patch(id, { envKeys: next });
+    }
+    envOpen.value = false;
+  } catch (e) {
+    envError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+```
+
+- [ ] **Step 7: Style the checklist**
+
+Add to the `<style scoped lang="scss">` block:
+
+```scss
+.shell__keys {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shell__keys-label {
+  text-align: left;
+  font-size: 13px;
+  color: var(--k-text);
+}
+
+.shell__keys-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+```
+
+- [ ] **Step 8: Send the preview config to the cloud too**
+
+`submitPreviewConfig()` in `WorkspacePage.vue` writes `previewCommand`/`apiCommand`, which are cloud config. Add the store import next to `useOrchestrator`:
+
+```ts
+import { useProjects } from 'stores/projects';
+```
+
+and next to `const store = useOrchestrator();` (line 482):
+
+```ts
+const projects = useProjects();
+```
+
+Then replace the `store.patchProject(s.projectId, patch)` line Task 12 Step 6 wrote with:
+
+```ts
+    await projects.patch(s.projectId, patch);
+```
+
+`patch` is already typed `{ previewCommand: string; apiCommand?: string }`, which is a valid `CloudProjectPatch`. A non-owner's attempt lands in the existing `catch`, which already alerts `Не вдалось зберегти: <message>` and closes the preview window — the honest outcome, since only the owner may set a shared project's commands.
+
+- [ ] **Step 9: Verify it typechecks**
+
+Run: `pnpm --filter @kermanych/ui exec vue-tsc --noEmit`
+Expected: no output, exit 0. If `projects.patch(...)` complains about `carryFiles`, the argument is `string[]` and `CloudProjectPatch.carryFiles` is `string[]` — check you passed `carryFiles.length ? carryFiles : ['.env']` and not the raw `parseList` result typed as `string[] | undefined`.
+
+- [ ] **Step 10: Smoke the round trip**
+
+With `pnpm dev:api` + `pnpm dev:ui` running, as the OWNER of a bound project:
+
+1. `⚙` → change the name, pick a colour, set «Команда превʼю (веб)» to `pnpm dev`, set «Файли для сесії» to `.env` and `.env.local`, «Зберегти».
+2. `sqlite3 ~/.kermanych/kermanych.sqlite "select name, color, preview_command, carry_files from projects"` → all four values are there (the local mirror `patch()` wrote).
+3. Reload the page → the values survive, now having come back from the cloud through `projects.load()`.
+4. `⚙` → «Обовʼязкові ключі» in the env modal: type `GITHUB_TOKEN` and `DATABASE_URL`, «Зберегти». Reopen `$` → the checklist shows `✕ GITHUB_TOKEN` and `✕ DATABASE_URL` plus «Немає значень для: GITHUB_TOKEN, DATABASE_URL».
+5. Add `GITHUB_TOKEN=abc` in the editor, «Зберегти», reopen `$` → `✓ GITHUB_TOKEN`, `✕ DATABASE_URL`, and the warning lists only `DATABASE_URL`.
+6. `grep -c GITHUB_TOKEN <bound repo>/.env` → 1, and in Supabase Studio `select env_keys from projects` → `{GITHUB_TOKEN,DATABASE_URL}` with **no values anywhere** (Requirement 9).
+
+As a MEMBER of that project (second account):
+
+7. `⚙` → every config field is greyed out, «Зберегти» is disabled, and the hint reads «Налаштування проєкту спільні для команди — змінювати їх може лише власник.»
+8. `$` → the `.env` editor is fully usable (their own machine, their own file) and the checklist renders, but there is no env-keys field.
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add apps/ui/src/layouts/MainLayout.vue apps/ui/src/pages/WorkspacePage.vue
+git commit -m "feat(ui): project config lives in the cloud, env values stay on the machine"
+```
+
+---
+
+### Task 15: deleting a cloud project
+
+**Files:**
+- Modify: `packages/cloud/src/projects.ts:168-171` (append after `removeMember`)
+- Modify: `packages/cloud/test/projects.spec.ts:3-10` (import list) and append after `:179`
+- Modify: `apps/ui/src/stores/projects.ts` — the file Task 10 created; anchors are its import list, the `removeMember` function and the returned object
+- Modify: `apps/ui/src/layouts/MainLayout.vue` — the file as Tasks 11-14 left it; anchors are the settings modal's `#controls` slot, the `<!-- ENV MODAL … -->` block (the new modal goes before it) and the script's create/settings state
+
+**Interfaces:**
+- Consumes: `SupabaseClient` (Plan A); `auth.client` and the existing `load()` inside `useProjects` (Task 10); `isOwnerOfSelected`, `selectedName`, `store.notify` (Tasks 11-14).
+- Produces: `deleteProject(client, id): Promise<void>` exported from `@kermanych/cloud`; `useProjects().remove(id): Promise<void>`; `MainLayout.vue`'s `deleteOpen`, `deleteError`, `deleteBusy`, `openDelete()`, `confirmDelete()`.
+
+Why this task exists at all: the spec's RLS matrix grants `projects` DELETE to the owner (`projects_delete_owner`, `supabase/migrations/20260821090200_team_cloud_rls.sql:56-58`), and the pre-plan UI had a «Видалити проєкт» button wired to the now-deleted `api.deleteGroup`. There is deliberately still **no** `DELETE /api/projects/:id` — a project dies in the cloud, and each machine's local row follows through the next full sync's prune.
+
+The four outcomes this task must state in the UI, all of them from the schema rather than from hope:
+
+| Fact | Source | Consequence |
+|---|---|---|
+| `tasks.project_id references projects on delete cascade` | `20260821090000_team_cloud_schema.sql:47` | every board card of the project disappears for every member |
+| `project_members.project_id … on delete cascade` | same file, `:37` | memberships go with it |
+| prune skips a local row that still owns sessions | `supervisor.service.ts:155-162` | this machine's row survives as «поза хмарою» (the orphan tile from Task 11) and its agents stay usable |
+| `projects.owner_id references profiles(id) on delete restrict` | `20260821090000_team_cloud_schema.sql:32` | deleting the ACCOUNT of an owner is refused while it owns projects. That is a different operation, it is not offered anywhere in this UI, and ownership transfer is out of scope (`CloudProjectPatch` deliberately excludes `ownerId`, `packages/cloud/src/projects.ts:43-50`) — delete the projects first. |
+
+And the failure shape: `projects_delete_owner` refuses a non-owner by matching **zero rows, with no error**. `remove()` therefore confirms with a re-read instead of trusting the call, and a refused delete leaves both the cloud and the local registry exactly as they were.
+
+- [ ] **Step 1: Add `deleteProject` to the cloud package**
+
+Append to `packages/cloud/src/projects.ts` (after `removeMember`, line 171):
+
+```ts
+// Owner-only by policy (projects_delete_owner). `tasks` and `project_members` cascade, so this
+// takes the whole card wall with it for every member; the LOCAL row on each machine disappears
+// through the next full sync's prune, unless it still owns sessions. A DELETE the policy refuses
+// matches zero rows WITHOUT an error, so callers must confirm with a re-read — see
+// `remove()` in apps/ui/src/stores/projects.ts.
+export async function deleteProject(client: SupabaseClient, id: string): Promise<void> {
+  const { error } = await client.from("projects").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+```
+
+- [ ] **Step 2: Write the unit test**
+
+Add `deleteProject` to the import list at `packages/cloud/test/projects.spec.ts:3-10`:
+
+```ts
+import {
+  addMember,
+  createProject,
+  deleteProject,
+  listMembers,
+  listProjects,
+  patchProject,
+  removeMember,
+} from "../src/projects";
+```
+
+and append this describe block:
+
+```ts
+describe("deleteProject", () => {
+  it("deletes by id and nothing else", async () => {
+    const { client, queries } = fakeClient({ data: null, error: null });
+
+    await deleteProject(client, "p1");
+
+    expect(queries[0]!.table).toBe("projects");
+    expect(queries[0]!.ops).toEqual([["delete"], ["eq", "id", "p1"]]);
+  });
+
+  it("throws the postgrest message so the UI can toast a refusal", async () => {
+    const { client } = fakeClient({ data: null, error: { message: "permission denied for table projects" } });
+    await expect(deleteProject(client, "p1")).rejects.toThrow(/permission denied/);
+  });
+});
+```
+
+- [ ] **Step 3: Run the cloud suite**
+
+Run: `pnpm --filter @kermanych/cloud exec vitest run test/projects.spec.ts`
+Expected: the two new tests pass alongside the existing ones; `deleteProject` records exactly `[["delete"], ["eq", "id", "p1"]]` — an accidental `.select()` or a missing `.eq` would fail here rather than in production, where a missing `.eq` would try to delete every project the policy allows.
+
+- [ ] **Step 4: Add `remove()` to the cloud store**
+
+In `apps/ui/src/stores/projects.ts`, add the import (keeping the list alphabetical, as Task 10 wrote it):
+
+```ts
+  createProject as cloudCreateProject,
+  deleteProject as cloudDeleteProject,
+```
+
+and add this after `removeMember`:
+
+```ts
+  // Deleting a project is a CLOUD act — there is no local delete route. The local rows follow
+  // through load()'s prune, which never drops a row that still owns sessions.
+  async function remove(id: string): Promise<void> {
+    await cloudDeleteProject(auth.client, id);
+    // projects_delete_owner refuses a non-owner by matching zero rows and never errors, so
+    // re-read rather than trust the call. load() is also the drop-and-prune: it replaces
+    // `projects` with the cloud truth and mirrors it into the registry with prune=true.
+    const after = await load();
+    if (after.some((p) => p.id === id)) {
+      throw new Error('cloud refused the delete: only the project owner may delete a project');
+    }
+    const rest = { ...members.value };
+    delete rest[id];
+    members.value = rest;
+  }
+```
+
+Add `remove,` to the returned object, immediately after `patch,`.
+
+- [ ] **Step 5: Add the owner-only affordance to `MainLayout.vue`**
+
+Replace the settings modal's `#controls` slot (the one Task 11 wrote, whose «Зберегти» button Task 14 gave `:disabled="!isOwnerOfSelected"`):
+
+```vue
+      <template #controls>
+        <KBtn
+          v-if="isOwnerOfSelected"
+          variant="ghost"
+          class="shell__danger"
+          @click="openDelete"
+        >Видалити проєкт</KBtn>
+        <KBtn variant="ghost" @click="settingsOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" :disabled="!isOwnerOfSelected" @click="saveSettings">Зберегти</KBtn>
+      </template>
+```
+
+Insert this modal immediately before the `<!-- ENV MODAL … -->` comment:
+
+```vue
+    <!-- DELETE-PROJECT MODAL — owner only. The project dies in the CLOUD; each machine's local
+         row follows through the next sync's prune, except where it still owns sessions. -->
+    <KModal v-model="deleteOpen" :title="`Видалити проєкт · ${selectedName}`">
+      <div class="shell__form">
+        <p class="shell__error" role="alert">
+          Проєкт «{{ selectedName }}» буде видалено у хмарі для ВСІХ учасників, разом з усіма
+          його задачами на дошці. Це не відкотити.
+        </p>
+        <p class="shell__hint">
+          Локальні сесії й робочі дерева на цій машині нікуди не зникнуть: якщо в проєкта є
+          сесії, його локальний рядок залишиться як «поза хмарою», і агентів можна довести до
+          кінця. Порожній локальний рядок буде прибрано синхронізацією.
+        </p>
+        <p v-if="deleteError" class="shell__error" role="alert">{{ deleteError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="deleteOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" :disabled="deleteBusy" @click="confirmDelete">Видалити</KBtn>
+      </template>
+    </KModal>
+```
+
+- [ ] **Step 6: Add the delete state and action**
+
+In the `<script setup>` block, after the settings refs:
+
+```ts
+const deleteOpen = ref(false);
+const deleteError = ref<string | null>(null);
+const deleteBusy = ref(false);
+
+function openDelete(): void {
+  deleteError.value = null;
+  deleteBusy.value = false;
+  deleteOpen.value = true;
+}
+
+async function confirmDelete(): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  deleteError.value = null;
+  deleteBusy.value = true;
+  try {
+    await projects.remove(id);
+    deleteOpen.value = false;
+    settingsOpen.value = false;
+    // The prune emits project_removed over the socket, which clears the selection and the
+    // session list; a row that still owns sessions survives instead and its tile turns into
+    // the «поза хмарою» state.
+    store.notify('Проєкт видалено у хмарі');
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e);
+    deleteError.value = raw.startsWith('cloud refused the delete')
+      ? 'Хмара відмовила: видалити проєкт може лише власник'
+      : raw;
+  } finally {
+    deleteBusy.value = false;
+  }
+}
+```
+
+No new styles: the destructive statement reuses `.shell__error`, the survival note reuses `.shell__hint`, and the button reuses `.shell__danger` (kept in Task 11 Step 4 for exactly this).
+
+- [ ] **Step 7: Verify**
+
+```bash
+pnpm --filter @kermanych/cloud exec vitest run
+pnpm --filter @kermanych/ui exec vue-tsc --noEmit
+```
+Expected: the cloud suite is green including the two new tests; `vue-tsc` prints nothing, exit 0.
+
+- [ ] **Step 8: Smoke the deletion**
+
+With `pnpm dev:api` + `pnpm dev:ui`, as the OWNER:
+
+1. Create a throwaway cloud project, bind nothing, `⚙` → «Видалити проєкт» → the modal names the project → «Видалити». The tile disappears, the toast reads «Проєкт видалено у хмарі», and `sqlite3 ~/.kermanych/kermanych.sqlite "select count(*) from projects where id='<id>'"` → `0` (prune removed the empty row).
+2. Create a second throwaway project, bind it to a repo, launch one agent, then delete the project the same way. Expected: the tile stays but turns into the orphan state (accent frame, `⚠`, tooltip «… · поза хмарою»), the agent's session is still listed and still answers, and `select name, local_repo_path from projects` still shows the row — prune refuses to cascade into local work. Delete the session, reload → the row and the tile are gone.
+3. As a MEMBER (second account) of a project you do not own: `⚙` shows no «Видалити проєкт» button at all. Prove RLS is the gate, in the member's devtools console:
+
+```js
+const { useProjects } = await import('/src/stores/projects.ts');
+await useProjects().remove('<project id>').catch((e) => e.message);
+```
+Expected: the string `cloud refused the delete: only the project owner may delete a project`, and the project is still in the rail for both accounts — a refused delete changed nothing anywhere.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add packages/cloud/src/projects.ts packages/cloud/test/projects.spec.ts apps/ui/src/stores/projects.ts apps/ui/src/layouts/MainLayout.vue
+git commit -m "feat: owner-only cloud project deletion with local rows pruned by sync"
+```
+
+---
+
+### Task 16: verification — typecheck, cutover sweep, and the two-account smoke
+
+**Files:**
+- Modify: `apps/ui/.env` (local config, not committed — `VITE_API_BASE` is stale)
+- No source changes. If a step fails, fix it in the task that owns the file and re-run this one.
+
+**Interfaces:**
+- Consumes: everything Tasks 1-15 produced.
+- Produces: the evidence that this plan is done. Plan C (board) and Plan D (status sync) start from this state.
+
+- [ ] **Step 1: Fix the stale local api base**
+
+`apps/ui/.env` currently carries `VITE_API_BASE=http://127.0.0.1:4417/api`, left over from a test harness; the api listens on 4317 (`apps/api/src/main.ts:23`, `PORT` or 4317). Either delete the line — `lib/api.ts:16-19` already falls back to `http://localhost:4317/api` — or set it to:
+
+```
+VITE_API_BASE=http://127.0.0.1:4317/api
+```
+
+Run: `grep -n VITE_ apps/ui/.env`
+Expected: `VITE_SUPABASE_URL=http://127.0.0.1:54421`, `VITE_SUPABASE_ANON_KEY=…`, and either no `VITE_API_BASE` or the 4317 one. A 4417 here makes every local call fail with a network error that looks exactly like "the api is down".
+
+- [ ] **Step 2: Typecheck every package**
+
+```bash
+cd kermanych
+pnpm --filter @kermanych/core exec tsc -p tsconfig.json --noEmit
+pnpm --filter @kermanych/cloud exec tsc -p tsconfig.json --noEmit
+pnpm --filter @kermanych/api exec tsc -p tsconfig.json --noEmit
+pnpm --filter @kermanych/ui exec vue-tsc --noEmit
+```
+Expected: four silent commands, exit 0 each. This is the gate Task 1 deliberately broke.
+
+- [ ] **Step 3: Prove the cutover left nothing behind**
+
+```bash
+cd kermanych
+grep -rniE 'group|projectdir|project_dir' apps/ui/src apps/ui/test apps/ui/src-electron
+```
+Expected: **exactly one** match —
+
+```
+apps/ui/src/components/kit/KPanel.vue:74:    <div v-if="userMsgCount > 1" class="k-panel__nav" role="group" aria-label="Навігація по моїх повідомленнях">
+```
+
+`role="group"` is the WAI-ARIA role name, not our identifier; it stays. Note the pattern deliberately has **no** `\b` anchors: `\bgroup\b` would not match `selectedGroupId` or `railGroups` (no word boundary inside camelCase), so an anchored grep would pass while the identifiers were still there.
+
+Then the two places where the old names legitimately survive outside `apps/ui`:
+
+```bash
+grep -rniE 'group|project_dir' apps/api/src packages/core/src packages/cloud/src
+```
+Expected: exactly ten matches in two files, all of them correct —
+- `apps/api/src/registry/registry.service.ts:133-136` (the `migrateToV1` doc comment) and `:142-146` (the three `ALTER TABLE … RENAME` statements) — the v0→v1 migration must name `groups`, `project_dir` and `sessions.group_id`, because those are precisely the things it renames; a migration that stopped mentioning the old names would have stopped migrating;
+- `apps/api/src/preview/preview.service.ts:84` and `:196` — "process group" comments about `process.kill(-pid)`, an unrelated meaning of the word.
+
+`packages/core/src` and `packages/cloud/src` contribute zero matches.
+
+(`apps/api/test/registry.migration.spec.ts` also builds a v0 schema on purpose; that is the point of the test.)
+
+- [ ] **Step 4: Run every automated suite**
+
+```bash
+cd kermanych
+export SUPABASE_TEST_URL=http://127.0.0.1:54421
+export SUPABASE_TEST_ANON_KEY="<anon key from supabase status>"
+export SUPABASE_TEST_SERVICE_KEY="<service_role key from supabase status>"
+supabase db reset
+pnpm --filter @kermanych/core exec vitest run
+pnpm --filter @kermanych/cloud exec vitest run
+pnpm --filter @kermanych/api exec vitest run
+```
+Expected: core unchanged and green; cloud green including `projects.spec.ts` (mapping, patch, membership, and the two `deleteProject` tests from Task 15) and the RLS integration spec; api green including `registry.migration.spec.ts` and `supervisor.project.spec.ts`. `apps/ui` has no vitest config and no component harness — its verification is Steps 2, 3, 6 and 7.
+
+- [ ] **Step 5: Seed two accounts without GitHub**
+
+`kermanych/.env` holds `GITHUB_CLIENT_ID=local-dev-placeholder` / `GITHUB_SECRET=local-dev-placeholder`, so the real OAuth round trip cannot run until someone pastes credentials from a GitHub OAuth App whose "Authorization callback URL" is exactly `http://127.0.0.1:54421/auth/v1/callback`. Everything this plan added is reachable without them, because `[auth.email] enable_signup = true` and `enable_confirmations = false` (`supabase/config.toml`), so two password users can stand in for two GitHub identities:
+
+```bash
+export SUPABASE_URL=http://127.0.0.1:54421
+export SUPABASE_ANON_KEY="<anon key from supabase status>"
+SERVICE="<service_role key from supabase status>"
+
+for u in alice bob; do
+  curl -s -X POST "$SUPABASE_URL/auth/v1/admin/users" \
+    -H "apikey: $SERVICE" -H "authorization: Bearer $SERVICE" -H 'content-type: application/json' \
+    -d "{\"email\":\"$u@kermanych.test\",\"password\":\"kermanych-test-password\",\"email_confirm\":true,\"user_metadata\":{\"user_name\":\"$u\"}}" \
+    > /dev/null
+done
+```
+
+Expected: `select github_username from profiles order by github_username;` in Supabase Studio returns `alice` and `bob` — `handle_new_user` reads `raw_user_meta_data ->> 'user_name'`, which is the same key GitHub fills, so membership-by-handle works exactly as it will in production.
+
+Sign either account in from the app's devtools console (the renderer holds the one Supabase client; Vite serves the store as a module, so this is the same instance the app uses, not a second client):
+
+```js
+const { useAuth } = await import('/src/stores/auth.ts');
+await useAuth().client.auth.signInWithPassword({
+  email: 'alice@kermanych.test',
+  password: 'kermanych-test-password',
+});
+```
+Expected: the app leaves `/login` on its own (`router/index.ts` watches `auth.user`), and the header shows the shell.
+
+- [ ] **Step 6: Stand up two machines on one host**
+
+Machine A is the default pair. Machine B needs its own registry and its own origin (a separate origin is also what gives it a separate `localStorage`, hence a separate session):
+
+```bash
+# terminal 1 — machine A api (registry ~/.kermanych/kermanych.sqlite, port 4317)
+cd kermanych && pnpm dev:api
+# terminal 2 — machine A ui (http://localhost:5317)
+cd kermanych && pnpm dev:ui
+# terminal 3 — machine B api: its OWN sqlite file and port
+cd kermanych && KERMANYCH_DB=/tmp/kermanych-bob.sqlite PORT=4318 pnpm dev:api
+# terminal 4 — machine B ui (http://localhost:5318), pointed at machine B's api
+cd kermanych && PORT=5318 VITE_API_BASE=http://127.0.0.1:4318/api pnpm dev:ui
+```
+
+Expected: `Kermanych API on http://127.0.0.1:4317` and `…:4318`, two dev servers. Sign in as `alice` on 5317 and as `bob` on 5318, using Step 5's console snippet in each. (Only the injected session works on 5318: `additional_redirect_urls` in `supabase/config.toml` allows `http://localhost:5317/**` and the Electron loopback, not 5318. Do not widen it just for a smoke.)
+
+Also prepare two DIFFERENT checkouts of the same repo, e.g. `/tmp/smoke-a` and `/tmp/smoke-b` (`git clone` the same repo twice, or `git init` two throwaway repos).
+
+- [ ] **Step 7: The two-account smoke**
+
+As **alice** (5317):
+
+1. `+` → «Новий проєкт у хмарі» → name `demo`, no remote → «Створити». The tile appears dashed, selected; the header reads `demo · не прив’язано`.
+2. While still unbound, confirm every local action refuses with the same hint: «Швидкий чат» disabled with tooltip «Прив’яжіть локальну теку репозиторію»; `$` disabled with the same tooltip; «Нова задача» opens, its footer shows the hint, «Запустити» is disabled, «В беклог» is not — save a task called `later`, it lands under «Задачі» with a disabled `▶`. Confirm the api agrees, not just the DOM:
+   ```bash
+   TOKEN="<alice's access_token — copy from the devtools console: (await useAuth().client.auth.getSession()).data.session.access_token>"
+   curl -s -X POST localhost:4317/api/sessions/chat -H "authorization: Bearer $TOKEN" \
+     -H 'content-type: application/json' -d '{"projectId":"<project id>"}'
+   ```
+   Expected: `{"statusCode":400,"message":"project not bound",…}`.
+3. «Прив’язати теку» → pick `/tmp` (not a repo) → error toast «Обрана тека не є git-репозиторієм — виберіть корінь репозиторію (той, що містить .git)». Pick `/tmp/smoke-a` → toast «Проєкт прив’язано до /tmp/smoke-a», the tile goes solid, every control from step 2 comes alive.
+4. `⚙` → colour, «Гілка за замовчуванням» = `main`, «Команда превʼю (веб)» = `pnpm dev`, «Файли для сесії» = `.env`, «Зберегти». Then «Учасники» → add `bob` → the `@bob` / «учасник» row appears.
+5. `$` → «Обовʼязкові ключі» = `DEMO_TOKEN`, add `DEMO_TOKEN=alice-value` in the editor, «Зберегти». Reopen `$` → `✓ DEMO_TOKEN`.
+
+As **bob** (5318):
+
+6. Reload → the `demo` tile is in the rail, **dashed** (bob has no binding of his own — Requirement 3 is per machine). The header reads `demo · не прив’язано`.
+7. `⚙` → name, colour, branch, conventions, preview command and carry files all show alice's values and are all greyed out, «Зберегти» is disabled, the hint reads «Налаштування проєкту спільні для команди — змінювати їх може лише власник.» The «Учасники» block lists `@alice` (власник) and `@bob` (учасник) with no `✕` and no add field.
+8. «Прив’язати теку» → `/tmp/smoke-b`. The tile goes solid. `sqlite3 /tmp/kermanych-bob.sqlite "select name, local_repo_path from projects"` → `demo|/tmp/smoke-b`, while `sqlite3 ~/.kermanych/kermanych.sqlite "select name, local_repo_path from projects"` still says `/tmp/smoke-a`. One cloud project, two bindings.
+9. `$` → the checklist shows `✕ DEMO_TOKEN` (bob's repo has no `.env` yet — names are shared, values are not). Add `DEMO_TOKEN=bob-value`, «Зберегти». Then:
+   ```bash
+   cat /tmp/smoke-b/.env   # DEMO_TOKEN=bob-value
+   cat /tmp/smoke-a/.env   # DEMO_TOKEN=alice-value — untouched
+   ```
+   Expected: exactly that. And in Supabase Studio, `select env_keys from projects` → `{DEMO_TOKEN}` with no value anywhere in the database (Requirement 9).
+10. «Нова задача» → name `smoke`, task `echo hi`, keep «нова worktree», «Запустити». The agent starts. Then:
+    ```bash
+    ls /tmp/smoke-b/../  # find the worktree dir printed in the session panel
+    cat <worktree path>/.env
+    ```
+    Expected: `DEMO_TOKEN=bob-value` — the carry-files list from the CLOUD config, applied to BOB's `.env`, in bob's worktree.
+11. Back on alice's window: the rail still shows one tile, alice's own sessions only. Nothing of bob's execution crossed over (that is Plan D's job, and it is deliberately absent here).
+
+- [ ] **Step 8: What still needs real GitHub credentials**
+
+State this in the PR description rather than pretending the smoke was complete:
+
+- **Covered by Step 7 with injected sessions:** cloud project creation and ownership, membership by handle (`profiles.github_username` is filled from the same metadata key GitHub uses), RLS owner/member behaviour, per-machine binding and every unbound refusal, cloud config + local env split, the env-keys checklist, carry files into a worktree, project deletion (Task 15 Step 8).
+- **Needs the real OAuth app** (`kermanych/.env` holds `local-dev-placeholder` today, and `supabase/config.toml:343-351` expects a GitHub OAuth App with callback `http://127.0.0.1:54421/auth/v1/callback`): the sign-in flow itself in the browser, the Electron loopback exchange on `http://127.0.0.1:53170/callback`, and real avatars/display names in the members panel (a password user has `avatar_url` null, so the panel renders its `?` placeholder — which is itself worth seeing once).
+- Requirement 1 and both OAuth paths are **Plan A's** verification (its Task 16), not this plan's. This plan must not re-litigate them; it must only avoid breaking them, which Step 2 and Step 7's sign-in prove.
+
+- [ ] **Step 9: Clean up the smoke artifacts**
+
+```bash
+cd kermanych && supabase db reset
+rm -f /tmp/kermanych-bob.sqlite
+rm -rf /tmp/smoke-a /tmp/smoke-b
+```
+Expected: the throwaway users, profiles and projects are gone and the schema is intact. `~/.kermanych/kermanych.sqlite` keeps whatever local rows you made — delete the `demo` project from the UI first if you want a clean registry, or leave it: after `db reset` it simply has no cloud project, so its tile shows «поза хмарою» if it still owns sessions and is pruned away otherwise. Both are correct behaviour, and seeing it is a free extra check.
+
+- [ ] **Step 10: Nothing to commit**
+
+`apps/ui/.gitignore:6` is `.env*`, so Step 1 edits local config that git never sees (`git check-ignore -v apps/ui/.env` prints the rule). This plan's last commit is Task 15's; this task produces evidence, not a diff.
+
+---
+
+## Self-Review
+
+**1. Spec coverage.** The four spec items this plan owns, each mapped to the tasks that implement it:
+
+- **Requirement 2** (projects are cloud entities with owner/member roles; any authenticated user may create one and becomes owner; owners manage membership and project config) → Task 7 (`createProject` sets `owner_id`, `handle_new_project` adds the owner membership; `listMembers`/`addMember`/`removeMember`), Task 10 (`useProjects.create/patch/loadMembers/addMember/removeMember/isOwner`), Task 11 (the cloud create modal — no local create path survives), Task 13 (the members panel, owner-only writes, all three refusal shapes named), Task 14 (config edits go to the cloud, owner-gated), Task 15 (owner-only deletion, the last piece of the RLS matrix that had a UI affordance). Task 5 is the negative half: `POST /api/projects` and `DELETE /api/projects/:id` do not exist, so a project cannot be born or die locally.
+- **Requirement 3** (each machine binds a cloud project to a LOCAL repo path, manual, through the existing directory picker; tasks visible without a binding; launching refused until it exists) → Task 2 (`local_repo_path`, `""` when unbound), Task 3 (`bindProject` + `boundProject`, the two error strings), Task 4 (the launch path reads `localRepoPath` and refuses unbound), Task 5 (`PUT /api/projects/:id/binding`), Task 9 (`setProjectBinding`), Task 11 (the rail's bound/unbound/orphan affordance), Task 12 (the picker wired to the binding, the three refusals mapped to Ukrainian, and every repo-touching control disabled with one hint — while «В беклог» and task editing stay live, which is the "tasks are visible without a binding" half), Task 16 Step 7.2 and 7.8 (the api refuses `project not bound` even when the DOM is bypassed; two machines, two different paths, one project).
+- **Requirement 9** (env secret VALUES never reach the cloud; `projects.env_keys` is a NAMES-only checklist) → Task 4 (`EnvFileService` keyed on the bound repo path), Task 5 (`GET|PUT /api/projects/:id/env`, refused without a binding), Task 7 (`env_keys` is `string[]` on `CloudProject` with the comment that says so, and `toProjectRow` only ever sends names), Task 14 (the checklist rendered from `CloudProject.envKeys`, the owner-only names editor, and the standing note in the modal), Task 16 Step 7.9 (`alice-value` and `bob-value` in two different files, `env_keys` in Postgres holding a name and no value).
+- **Deviation D1** (no `project_bindings` table; the local `projects` row IS the binding plus an offline config cache; cloud is the source of truth for config and the local row is refreshed on every successful cloud read) → Task 2 (the v0→v1 migration and `upsertProject`'s `CASE` that protects `local_repo_path`), Task 3 (`syncProjects`, prune that never cascades into local sessions), Task 10 (`load()` mirrors with `prune=true`, `create`/`patch` mirror the single row with `prune=false`), Task 11 (mount order: socket, `auth.ready`, `load()`; and the rail's honesty about a cloud read that has not succeeded yet), Task 14 (cloud-first, mirror-after, with the reason spelled out: `upsertProject` overwrites every config column, so a local-only config edit cannot survive a sync).
+
+Task-by-task, so nothing is orphaned: **1** shared types · **2** registry migration + local project surface · **3** supervisor project/bind/sync · **4** launch path + preview/seed/env sweep · **5** `/api/projects` · **6** api suite green · **7** `@kermanych/cloud` projects + membership · **8** ui api client · **9** ui orchestrator store · **10** ui cloud store · **11** rail + cloud create · **12** binding + unbound guards · **13** members panel · **14** cloud config + local env + env-keys checklist · **15** cloud deletion · **16** verification.
+
+Two forward references in the front matter were written before the UI half was decomposed and now resolve one task later: the Global Constraints say "Task 14 verifies" the zero-`Group` sweep and Task 1 says "repaired by Tasks 2-6 (api) and 8-14 (ui)". The sweep gate is **Task 16 Step 3**, and the UI repair spans **Tasks 8-15**. Nothing else in Tasks 1-10 needs amending.
+
+**2. Placeholder scan.** Clean. Every code step carries the literal content to type — three whole files (`KRailItem.vue`, and `MainLayout.vue`'s template and script), and named-function replacements everywhere else. No step says "add error handling": each failure path names the exact string the code produces and the exact Ukrainian copy that answers it —
+
+- binding: `local repo path cannot be empty`, `local repo path is not a git repo`, `project not found` (Task 12, table + `BIND_ERRORS`);
+- membership: `no Kermanych profile for @<handle> — ask them to sign in with GitHub first`, `violates row-level security policy`, `duplicate key value`, and the silent zero-row DELETE (Task 13, table + `memberErrorText` + the re-read);
+- config: the owner gate first, because a non-owner UPDATE matches zero rows and postgrest reports "no rows", not a policy name (Task 14);
+- deletion: the same silent zero-row shape, caught by `remove()`'s re-read and surfaced as «Хмара відмовила: видалити проєкт може лише власник» (Task 15);
+- mount: a failed cloud read degrades to the local cache with a named toast, and `cloudSynced` keeps the rail from lying about orphans (Task 11).
+
+The angle-bracket values that remain are runtime secrets and per-run values the operator substitutes — `<anon key from supabase status>`, `<service_role key…>`, `<project id>`, `<worktree path>`, `<alice's access_token…>` — never code to be written.
+
+**3. Type consistency.** `RailProject` is declared once (Task 11, exported from `KRailItem.vue` in the same dual-`<script>` shape as `KTableColumn`) and consumed by both call sites, `MainLayout.vue` and `KitGalleryPage.vue`; its `color?: string | undefined` is deliberate — `exactOptionalPropertyTypes` is on in `.quasar/tsconfig.json`, so a plain `color?: string` would reject `c.color ?? row?.color`. `store.patchProject(id, body)` keeps the exact seven-field body of Task 8/9 and Task 5's `PATCH` DTO; `projects.patch(id, patch)` takes `CloudProjectPatch` (Task 7) and every key Task 14 sends — `name`, `color`, `defaultBranch`, `conventions`, `previewCommand`, `apiCommand`, `carryFiles`, `envKeys` — is in that `Pick`. The owner predicate exists once and is named once: Task 13 introduces `canManageMembers`, Task 14 renames it to `isOwnerOfSelected` in the same commit that adds its second and third caller, so no two names for one check survive. `BIND_HINT` is the same literal in `MainLayout.vue` (Task 12 Step 3) and `WorkspacePage.vue` (Task 12 Step 7) — two files, one string, because the copy is an instruction the operator can act on and it must read identically wherever it appears. `members[projectId]` and `projects.members[...]` are always `?? []`-guarded because `noUncheckedIndexedAccess` is on. `deleteProject(client, id)` (Task 15) matches the signature shape of its five siblings in `packages/cloud/src/projects.ts` — client first, `Promise<void>` like `removeMember`.
+
+**4. Deliberately left to Plans C and D.** Declared, not dropped:
+
+- **Requirements 4, 5, 8** — the shared board, task cards, Realtime fan-out, assignment, atomic self-assign, the active-task lock → **Plan C** (`packages/cloud/src/tasks.ts`, `stores/board.ts`, `BoardPage.vue`, and the `export * from "./tasks"` line appended to `packages/cloud/src/index.ts`). This plan's Task 10 decomposition note is the seam: `useProjects()` owns projects and membership, `useBoard()` will own tasks and Realtime and read the project list from here. `Session.taskId` (Task 1) is the field Plan C's launcher fills.
+- **Requirements 6, 7 (the push half)** — status flowing local → cloud, `status_outbox`, `CloudSyncService`, `POST /api/sessions/from-task` → **Plan D**. The offline half of Requirement 7 is this plan's and is done: the local row caches everything `launch()` reads, and nothing on the launch path calls Supabase.
+- `WorkspacePage.vue` keeps rendering LOCAL sessions only (spec D6). Its header link to the cloud board, and showing a task title when `taskId` is set, are Plan C's — Task 12 renames identifiers and adds binding guards there and nothing else.
+- Ownership transfer is out of scope by construction: `CloudProjectPatch` excludes `ownerId`, and `projects.owner_id` is `on delete restrict`, so an account that owns projects cannot be deleted until its projects are (Task 15 states this in one line and offers no UI for it).
+- Avatars in the members panel are whatever `profiles.avatar_url` holds; there is no upload, no cache, no fallback service — a null renders the `?` placeholder (Task 13).
+- The socket.io gateway still has no handshake auth and still broadcasts every local event to every local client — untouched here, exactly as Plan A left it, and harmless while the server is loopback-only.
