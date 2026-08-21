@@ -119,6 +119,45 @@
           label="Локальна тека цієї машини"
           disabled
         />
+        <!-- MEMBERS — cloud membership. Writes are owner-only; RLS enforces it, this is UX. -->
+        <div class="shell__members">
+          <span class="shell__members-label">Учасники</span>
+          <div v-if="membersLoading" class="shell__hint mono">Завантаження…</div>
+          <div v-for="m in members" :key="m.userId" class="shell__member">
+            <img
+              v-if="m.profile?.avatarUrl"
+              class="shell__member-avatar"
+              :src="m.profile.avatarUrl"
+              :alt="m.profile.githubUsername ?? ''"
+            />
+            <span v-else class="shell__member-avatar shell__member-avatar--blank mono">?</span>
+            <span class="shell__member-name mono">
+              @{{ m.profile?.githubUsername ?? m.userId.slice(0, 8) }}
+            </span>
+            <KTag>{{ m.role === 'owner' ? 'власник' : 'учасник' }}</KTag>
+            <KBtn
+              v-if="canManageMembers && m.role !== 'owner'"
+              variant="ghost"
+              title="Вилучити з проєкту"
+              @click="removeMemberOf(m)"
+            >✕</KBtn>
+          </div>
+          <div v-if="canManageMembers" class="shell__member-add">
+            <KField
+              v-model="memberHandle"
+              label="Додати за GitHub-логіном"
+              placeholder="octocat"
+            />
+            <KBtn
+              variant="secondary"
+              :disabled="memberHandle.trim() === '' || memberBusy"
+              @click="submitMember"
+            >Додати</KBtn>
+          </div>
+          <p v-else class="shell__hint">
+            Змінювати склад учасників може лише власник проєкту.
+          </p>
+        </div>
         <p v-if="settingsError" class="shell__error" role="alert">{{ settingsError }}</p>
       </div>
       <template #controls>
@@ -165,6 +204,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import type { SessionStatus, EnvFileView } from '@kermanych/core';
+import type { ProjectMember } from '@kermanych/cloud';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
@@ -178,6 +218,7 @@ import KEnvEditor from 'components/kit/KEnvEditor.vue';
 import KColorPicker from 'components/kit/KColorPicker.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
+import KTag from 'components/kit/KTag.vue';
 
 // The Kermanych app shell (design-system section 07): project rail, brand header, page
 // container, fleet status bar. Two stores back it — `store` (useOrchestrator) owns the LOCAL
@@ -381,6 +422,74 @@ const defaultBranchEdit = ref('');
 const conventionsEdit = ref('');
 const settingsBranches = ref<string[]>([]);
 
+const membersLoading = ref(false);
+const memberHandle = ref('');
+const memberBusy = ref(false);
+
+// `members` is keyed by project id and may be missing entirely before the first read, so the
+// `?? []` is load-bearing (noUncheckedIndexedAccess is on).
+const members = computed<ProjectMember[]>(() =>
+  store.selectedProjectId ? projects.members[store.selectedProjectId] ?? [] : [],
+);
+
+// UX only. The owner-only policies on project_members refuse a non-owner write regardless of
+// what this returns — see memberErrorText() for what that refusal looks like.
+const canManageMembers = computed(
+  () => !!store.selectedProjectId && projects.isOwner(store.selectedProjectId),
+);
+
+// The three refusals a membership write really produces. Everything else is shown verbatim.
+function memberErrorText(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  if (raw.startsWith('no Kermanych profile for @')) {
+    return 'Немає профілю з таким GitHub-логіном — попросіть колегу спершу увійти в Керманич через GitHub';
+  }
+  if (raw.includes('violates row-level security policy')) {
+    return 'Хмара відмовила: керувати складом учасників може лише власник проєкту';
+  }
+  if (raw.includes('duplicate key value')) {
+    return 'Цей користувач уже в проєкті';
+  }
+  return raw;
+}
+
+async function submitMember(): Promise<void> {
+  const id = store.selectedProjectId;
+  const handle = memberHandle.value.trim();
+  if (!id || !handle) return;
+  memberBusy.value = true;
+  try {
+    const added = await projects.addMember(id, handle);
+    memberHandle.value = '';
+    store.notify(`@${added.profile?.githubUsername ?? handle} додано до проєкту`);
+  } catch (e) {
+    store.notify(memberErrorText(e), 'error', 6000);
+  } finally {
+    memberBusy.value = false;
+  }
+}
+
+async function removeMemberOf(m: ProjectMember): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id) return;
+  const who = m.profile?.githubUsername ?? m.userId;
+  if (!window.confirm(`Вилучити @${who} з проєкту «${selectedName.value}»?`)) return;
+  try {
+    await projects.removeMember(id, m.userId);
+    // A DELETE the owner-only policy refuses does NOT error — it matches zero rows, while the
+    // store has already dropped the row locally. Re-read so the panel cannot show a removal
+    // that never happened.
+    const after = await projects.loadMembers(id);
+    if (after.some((x) => x.userId === m.userId)) {
+      store.notify('Хмара відмовила: керувати складом учасників може лише власник проєкту', 'error', 6000);
+      return;
+    }
+    store.notify(`@${who} вилучено з проєкту`);
+  } catch (e) {
+    store.notify(memberErrorText(e), 'error', 6000);
+  }
+}
+
 const envOpen = ref(false);
 const envError = ref<string | null>(null);
 const envView = ref<EnvFileView>({ entries: [], ignored: true });
@@ -401,6 +510,16 @@ async function openSettings(): Promise<void> {
   conventionsEdit.value = cloud?.conventions ?? row?.conventions ?? '';
   settingsBranches.value = [];
   settingsOpen.value = true;
+  memberHandle.value = '';
+  membersLoading.value = true;
+  try {
+    await projects.loadMembers(id);
+  } catch (e) {
+    // Non-fatal: the panel stays empty and says why. Config editing still works.
+    store.notify(`Не вдалось прочитати учасників: ${e instanceof Error ? e.message : String(e)}`, 'error');
+  } finally {
+    membersLoading.value = false;
+  }
   // GET /projects/:id/branches answers `project not bound` without a binding, so do not ask.
   if (!isBound.value) return;
   try {
@@ -564,6 +683,60 @@ async function saveEnv(): Promise<void> {
   font-size: 12.5px;
   line-height: 1.5;
   color: var(--k-muted);
+}
+
+.shell__members {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--k-line);
+}
+
+.shell__members-label {
+  text-align: left;
+  font-size: 13px;
+  color: var(--k-text);
+}
+
+.shell__member {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shell__member-avatar {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--k-line);
+  border-radius: 0; // no circles anywhere in this system
+  object-fit: cover;
+}
+
+.shell__member-avatar--blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--k-muted);
+  background: var(--k-surface2);
+}
+
+.shell__member-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--k-text);
+}
+
+.shell__member-add {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
 }
 
 .shell__dir {
