@@ -26,8 +26,8 @@ beforeEach(() => { started.length = 0; });
 describe("discard + cascade", () => {
   it("deletes a discussion child without any git calls", async () => {
     const { sup, registry, worktree } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const parent = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const parent = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(parent.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "done" });
     await sup.branchSession(parent.id);
     const child = registry.listSessions(g.id).find((x) => x.kind === "discussion")!;
@@ -42,8 +42,8 @@ describe("discard + cascade", () => {
 
   it("cascade-deletes children when the parent is deleted", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const parent = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "", branch: "feature/aaa", worktree: false, baseBranch: "main" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const parent = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "", branch: "feature/aaa", worktree: false, baseBranch: "main" });
     registry.updateSession(parent.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "done" });
     await sup.branchSession(parent.id);
     expect(registry.listSessions(g.id).some((x) => x.kind === "discussion")).toBe(true);
@@ -55,8 +55,8 @@ describe("discard + cascade", () => {
 
   it("refuses finishSession on a discussion branch", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const parent = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const parent = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(parent.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "done" });
     await sup.branchSession(parent.id);
     const child = registry.listSessions(g.id).find((x) => x.kind === "discussion")!;

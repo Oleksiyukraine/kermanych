@@ -35,7 +35,7 @@ afterEach(() => {
 
 // A worktree agent that has been merged: worktree retired, branch deleted, status "merged".
 async function seedMerged(): Promise<string> {
-  const g = reg.createGroup({ name: "g", projectDir: repo });
+  const g = reg.upsertProject({ id: "p1", name: "g", localRepoPath: repo });
   const parent = mkdtempSync(join(tmpdir(), "kmq-reopen-wt-"));
   trash.push(parent);
   const wtDir = join(parent, "wt");
@@ -44,7 +44,7 @@ async function seedMerged(): Promise<string> {
   git(wtDir, "add", "-A");
   git(wtDir, "commit", "-q", "-m", "feature");
   const s = reg.createSession({
-    groupId: g.id, name: "task one", task: "t", worktreePath: wtDir, branch: "feature/task-one", baseBranch: "dev",
+    projectId: g.id, name: "task one", task: "t", worktreePath: wtDir, branch: "feature/task-one", baseBranch: "dev",
   });
   await sup.finishSession(s.id);
   const merged = reg.listSessions().find((x) => x.id === s.id)!;
@@ -86,13 +86,13 @@ test("reopenSession re-forks a worktree + branch from base and re-queues the ses
 });
 
 test("reopenSession refuses a session that still owns a worktree", async () => {
-  const g = reg.createGroup({ name: "g2", projectDir: repo });
+  const g = reg.upsertProject({ id: "p1", name: "g2", localRepoPath: repo });
   const parent = mkdtempSync(join(tmpdir(), "kmq-reopen-live-"));
   trash.push(parent);
   const wtDir = join(parent, "wt");
   await wt.addWorktree(repo, wtDir, "feature/live", "dev");
   const s = reg.createSession({
-    groupId: g.id, name: "live one", task: "t", worktreePath: wtDir, branch: "feature/live", baseBranch: "dev",
+    projectId: g.id, name: "live one", task: "t", worktreePath: wtDir, branch: "feature/live", baseBranch: "dev",
   });
   await expect(sup.reopenSession(s.id)).rejects.toThrow(/already has a worktree/i);
 });

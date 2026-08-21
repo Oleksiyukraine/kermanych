@@ -52,7 +52,7 @@ beforeEach(() => {
 describe("backlog tasks", () => {
   it("createSession asTask stores a backlog task without spawning or a worktree", async () => {
     const { sup, registry, worktree } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
 
     const t = await sup.createSession(g.id, "planned", "do later", "opus-5", undefined, true, "fix", true);
 
@@ -68,7 +68,7 @@ describe("backlog tasks", () => {
 
   it("startTask launches a backlog task, flipping the same row into a running agent", async () => {
     const { sup, registry, worktree } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const t = await sup.createSession(g.id, "planned", "do later", undefined, undefined, true, "feature", true);
 
     const running = await sup.startTask(t.id);
@@ -85,14 +85,14 @@ describe("backlog tasks", () => {
 
   it("startTask rejects a session that is not a backlog task", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const agent = await sup.createSession(g.id, "live", "go", undefined, undefined, true, "feature", false);
     await expect(sup.startTask(agent.id)).rejects.toThrow(/backlog/i);
   });
 
   it("updateTask edits a backlog row in place", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const t = await sup.createSession(g.id, "planned", "do later", undefined, undefined, true, "feature", true);
 
     const saved = await sup.updateTask(t.id, { task: "do it differently", model: "opus-5" });
@@ -106,7 +106,7 @@ describe("backlog tasks", () => {
 
   it("deleteSession removes a backlog task without touching git branches", async () => {
     const { sup, registry, worktree } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const t = await sup.createSession(g.id, "planned", "later", undefined, undefined, true, "feature", true);
 
     await sup.deleteSession(t.id);
@@ -117,7 +117,7 @@ describe("backlog tasks", () => {
 
   it("a backlog in-place task does not occupy the single in-place agent slot", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     // A planned in-place task sitting in the backlog...
     await sup.createSession(g.id, "planned", "later", undefined, undefined, false, "feature", true);
     // ...must not block launching a real in-place agent.
@@ -129,7 +129,7 @@ describe("backlog tasks", () => {
 
   it("persists platform on a backlog task and carries an override through start", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const t = await sup.createSession(g.id, "planned", "do later", undefined, undefined, true, "feature", true, "backend");
     expect(registry.listSessions(g.id).find((s) => s.id === t.id)!.platform).toBe("backend");
     const running = await sup.startTask(t.id, { platform: "web" });
@@ -138,7 +138,7 @@ describe("backlog tasks", () => {
 
   it("updateTask changes the platform in place", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const t = await sup.createSession(g.id, "planned", "do later", undefined, undefined, true, "feature", true, "backend");
     await sup.updateTask(t.id, { platform: "mobile" });
     expect(registry.listSessions(g.id).find((s) => s.id === t.id)!.platform).toBe("mobile");
@@ -146,13 +146,13 @@ describe("backlog tasks", () => {
 
   it("moveTask re-parents a backlog task to another project", async () => {
     const { sup, registry } = make();
-    const be = registry.createGroup({ name: "backend", projectDir: "/tmp/be" });
-    const fe = registry.createGroup({ name: "frontend", projectDir: "/tmp/fe" });
+    const be = registry.upsertProject({ id: "p1", name: "backend", localRepoPath: "/tmp/be" });
+    const fe = registry.upsertProject({ id: "p2", name: "frontend", localRepoPath: "/tmp/fe" });
     const t = await sup.createSession(be.id, "planned", "do later", undefined, undefined, true, "feature", true);
 
     const moved = sup.moveTask(t.id, fe.id);
 
-    expect(moved.groupId).toBe(fe.id);
+    expect(moved.projectId).toBe(fe.id);
     expect(moved.status).toBe("backlog"); // still a backlog task, no git side effects
     expect(registry.listSessions(be.id)).toHaveLength(0);
     expect(registry.listSessions(fe.id).map((s) => s.id)).toEqual([t.id]);
@@ -160,16 +160,16 @@ describe("backlog tasks", () => {
 
   it("moveTask rejects a session that is not a backlog task", async () => {
     const { sup, registry } = make();
-    const be = registry.createGroup({ name: "backend", projectDir: "/tmp/be" });
-    const fe = registry.createGroup({ name: "frontend", projectDir: "/tmp/fe" });
+    const be = registry.upsertProject({ id: "p1", name: "backend", localRepoPath: "/tmp/be" });
+    const fe = registry.upsertProject({ id: "p2", name: "frontend", localRepoPath: "/tmp/fe" });
     const agent = await sup.createSession(be.id, "live", "go", undefined, undefined, true, "feature", false);
     expect(() => sup.moveTask(agent.id, fe.id)).toThrow(/backlog/i);
   });
 
   it("moveTask rejects an unknown target project", async () => {
     const { sup, registry } = make();
-    const be = registry.createGroup({ name: "backend", projectDir: "/tmp/be" });
+    const be = registry.upsertProject({ id: "p1", name: "backend", localRepoPath: "/tmp/be" });
     const t = await sup.createSession(be.id, "planned", "later", undefined, undefined, true, "feature", true);
-    expect(() => sup.moveTask(t.id, "no-such-group")).toThrow(/group not found/i);
+    expect(() => sup.moveTask(t.id, "no-such-project")).toThrow(/project not found/i);
   });
 });

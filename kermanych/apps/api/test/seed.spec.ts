@@ -11,7 +11,12 @@ test("seedDemo populates an empty registry across every status, both modes, and 
   const reg = new RegistryService(":memory:");
   seedDemo(reg);
 
-  expect(reg.listGroups().length).toBe(2);
+  expect(reg.listProjects().length).toBe(2);
+  // The preview has no cloud: seeded projects carry synthetic UUIDs and every seeded
+  // session must hang off one of them.
+  const ids = new Set(reg.listProjects().map((p) => p.id));
+  expect(ids.size).toBe(2);
+  expect(reg.listSessions().every((s) => ids.has(s.projectId))).toBe(true);
   const sessions = reg.listSessions();
   expect(sessions.length).toBe(12);
 
@@ -32,6 +37,6 @@ test("seedDemo is idempotent — a populated registry is left untouched", () => 
   seedDemo(reg);
   const before = reg.listSessions().length;
   seedDemo(reg);
-  expect(reg.listGroups().length).toBe(2);
+  expect(reg.listProjects().length).toBe(2);
   expect(reg.listSessions().length).toBe(before);
 });

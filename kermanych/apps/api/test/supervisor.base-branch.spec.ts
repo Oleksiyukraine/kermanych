@@ -52,7 +52,7 @@ beforeEach(() => {
 describe("worktree fork base", () => {
   it("forks a worktree from the project's default branch and persists it on the session", async () => {
     const { sup, registry, worktree } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj", defaultBranch: "develop" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj", defaultBranch: "develop" });
 
     const s = await sup.createSession(g.id, "task", "t");
 
@@ -62,7 +62,7 @@ describe("worktree fork base", () => {
 
   it("an explicit base branch overrides the project default", async () => {
     const { sup, registry, worktree } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj", defaultBranch: "develop" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj", defaultBranch: "develop" });
 
     const s = await sup.createSession(g.id, "task", "t", undefined, undefined, true, "feature", false, undefined, "release");
 
@@ -71,7 +71,7 @@ describe("worktree fork base", () => {
 
   it("forks from HEAD (no base arg) when neither a default nor an explicit base is set", async () => {
     const { sup, registry, worktree } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
 
     await sup.createSession(g.id, "task", "t");
 
@@ -80,7 +80,7 @@ describe("worktree fork base", () => {
 
   it("carries a base chosen on a backlog task through to its start", async () => {
     const { sup, registry, worktree } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj", defaultBranch: "develop" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj", defaultBranch: "develop" });
     const t = await sup.createSession(g.id, "planned", "later", undefined, undefined, true, "feature", true, undefined, "release");
 
     await sup.startTask(t.id);
