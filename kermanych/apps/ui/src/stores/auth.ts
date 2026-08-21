@@ -1,6 +1,6 @@
 // apps/ui/src/stores/auth.ts
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { markRaw, ref } from 'vue';
 import type { Session as SupabaseSession, SupabaseClient } from '@supabase/supabase-js';
 import { cloudEnv, createCloudClient, type Profile } from '@kermanych/cloud';
 import { api, setAuthToken, setUnauthorizedHandler } from '../lib/api';
@@ -10,8 +10,13 @@ import { useOrchestrator } from './orchestrator';
 // which boot/supabase.ts triggers before the first navigation. PKCE, session
 // persisted in localStorage, detectSessionInUrl on, so the SDK owns sign-in and
 // token refresh. The anon key is public; RLS is the authorization surface.
-const client: SupabaseClient = createCloudClient(
-  cloudEnv('ui', import.meta.env as unknown as Record<string, string | undefined>),
+// NEVER remove the markRaw: the store exposes this client, and Pinia wraps a setup
+// store's return in reactive(), whose deep unwrapping would strip the client's
+// protected fields (no @kermanych/cloud helper would then accept `auth.client`) and
+// put a Proxy around the realtime socket. Consumers — including Plan C's channels —
+// must use it raw and must not re-wrap it.
+const client = markRaw(
+  createCloudClient(cloudEnv('ui', import.meta.env as unknown as Record<string, string | undefined>)),
 );
 
 // Must match OAUTH_REDIRECT in src-electron/oauth-loopback.ts and the entry in

@@ -1,0 +1,113 @@
+// apps/ui/src/stores/projects.ts
+import { defineStore } from 'pinia';
+import { computed, ref } from 'vue';
+import type { CloudProject, CloudProjectPatch, ProjectMember } from '@kermanych/cloud';
+import {
+  addMember as cloudAddMember,
+  createProject as cloudCreateProject,
+  listMembers as cloudListMembers,
+  listProjects as cloudListProjects,
+  patchProject as cloudPatchProject,
+  removeMember as cloudRemoveMember,
+} from '@kermanych/cloud';
+import { useAuth } from './auth';
+import { api } from '../lib/api';
+
+// Cloud projects + membership: the source of truth for project CONFIG and who is on a
+// project. Every successful read is mirrored into the LOCAL registry
+// (POST /api/projects/sync) so launching keeps working with Supabase unreachable
+// (design D1 / Requirement 7). Tasks and Realtime live in stores/board.ts.
+export const useProjects = defineStore('projects', () => {
+  const auth = useAuth();
+  const projects = ref<CloudProject[]>([]);
+  const members = ref<Record<string, ProjectMember[]>>({});
+  const loading = ref(false);
+  const offlineError = ref<string | null>(null);
+
+  async function load(): Promise<CloudProject[]> {
+    loading.value = true;
+    try {
+      const list = await cloudListProjects(auth.client);
+      projects.value = list;
+      // This IS the full cloud list, so prune is safe: local rows missing from it are
+      // stale cache. The api still refuses to prune a row that owns local sessions.
+      await api.syncProjects(list, true);
+      offlineError.value = null;
+      return list;
+    } catch (e) {
+      // Offline degrades, it does not crash: record why and keep whatever is already
+      // cached. The rail is driven by the LOCAL rows, so a failed cloud read means "no
+      // fresh config", not "no projects" — and the caller gets a list, not an exception.
+      offlineError.value = e instanceof Error ? e.message : String(e);
+      return projects.value;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function create(name: string, gitRemoteUrl?: string): Promise<CloudProject> {
+    const userId = auth.user?.id;
+    if (!userId) throw new Error('not signed in');
+    // exactOptionalPropertyTypes: an absent remote is an absent KEY, not `undefined`.
+    const created = await cloudCreateProject(auth.client, {
+      name,
+      ownerId: userId,
+      ...(gitRemoteUrl ? { gitRemoteUrl } : {}),
+    });
+    projects.value = [...projects.value, created];
+    // prune=false: this is one project, not the full list.
+    await api.syncProjects([created], false);
+    return created;
+  }
+
+  async function patch(id: string, p: CloudProjectPatch): Promise<CloudProject> {
+    const updated = await cloudPatchProject(auth.client, id, p);
+    projects.value = projects.value.map((x) => (x.id === id ? updated : x));
+    await api.syncProjects([updated], false);
+    return updated;
+  }
+
+  async function loadMembers(id: string): Promise<ProjectMember[]> {
+    const list = await cloudListMembers(auth.client, id);
+    members.value = { ...members.value, [id]: list };
+    return list;
+  }
+
+  async function addMember(id: string, githubUsername: string): Promise<ProjectMember> {
+    const m = await cloudAddMember(auth.client, id, githubUsername);
+    members.value = { ...members.value, [id]: [...(members.value[id] ?? []), m] };
+    return m;
+  }
+
+  async function removeMember(id: string, userId: string): Promise<void> {
+    await cloudRemoveMember(auth.client, id, userId);
+    members.value = {
+      ...members.value,
+      [id]: (members.value[id] ?? []).filter((m) => m.userId !== userId),
+    };
+  }
+
+  const byId = computed(() => new Map(projects.value.map((p) => [p.id, p])));
+
+  // UX only — RLS is the real gate: the owner-only policies refuse a non-owner write
+  // regardless of what this returns.
+  function isOwner(id: string): boolean {
+    const uid = auth.user?.id;
+    return !!uid && byId.value.get(id)?.ownerId === uid;
+  }
+
+  return {
+    projects,
+    members,
+    loading,
+    offlineError,
+    byId,
+    load,
+    create,
+    patch,
+    loadMembers,
+    addMember,
+    removeMember,
+    isOwner,
+  };
+});
