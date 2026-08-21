@@ -18,12 +18,37 @@ const BASE =
   import.meta.env.VITE_API_BASE ||
   'http://localhost:4317/api';
 
+// The local API is guarded by SupabaseAuthGuard: every route except
+// POST /auth/session needs the user's Supabase access token. boot/supabase.ts
+// pushes the token in here on every auth state change, so this module never
+// imports the auth store (that would be circular: store → api → store).
+let authToken: string | undefined;
+let onUnauthorized: (() => void) | undefined;
+
+export function setAuthToken(token: string | undefined): void {
+  authToken = token;
+}
+
+export function setUnauthorizedHandler(fn: () => void): void {
+  onUnauthorized = fn;
+}
+
+function authHeaders(json: boolean): Record<string, string> {
+  const h: Record<string, string> = json ? { 'content-type': 'application/json' } : {};
+  if (authToken) h.authorization = `Bearer ${authToken}`;
+  return h;
+}
+
 export type MessageMode = 'prompt' | 'follow_up' | 'steer';
 
 // Turn a non-2xx Response into an Error carrying the server's message. Nest
 // error bodies look like { statusCode, message, error }; message may be a
 // string or an array of validation strings. Fall back to statusText.
 async function toError(r: Response): Promise<Error> {
+  // 401 means the cached token on the api no longer matches ours (expired
+  // refresh, another machine signed out, api restarted with a cleared cache).
+  // One hook, one place: every helper below funnels its failures through here.
+  if (r.status === 401) onUnauthorized?.();
   const text = await r.text();
   let message = r.statusText || `HTTP ${r.status}`;
   if (text) {
@@ -46,7 +71,7 @@ async function toError(r: Response): Promise<Error> {
 async function post<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(BASE + path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: authHeaders(true),
     body: JSON.stringify(body),
   });
   if (!r.ok) throw await toError(r);
@@ -56,7 +81,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const r = await fetch(BASE + path);
+  const r = await fetch(BASE + path, { headers: authHeaders(false) });
   if (!r.ok) throw await toError(r);
   return (await r.json()) as T;
 }
@@ -64,7 +89,25 @@ async function get<T>(path: string): Promise<T> {
 async function put<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(BASE + path, {
     method: 'PUT',
-    headers: { 'content-type': 'application/json' },
+    headers: authHeaders(true),
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw await toError(r);
+  return (await r.json()) as T;
+}
+
+// DELETE and PATCH used to be hand-rolled at five call sites, two of which never
+// checked r.ok. Two helpers instead, so the Authorization header and the 401 hook
+// cannot be forgotten at a new call site.
+async function del(path: string): Promise<void> {
+  const r = await fetch(BASE + path, { method: 'DELETE', headers: authHeaders(false) });
+  if (!r.ok) throw await toError(r);
+}
+
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(BASE + path, {
+    method: 'PATCH',
+    headers: authHeaders(true),
     body: JSON.stringify(body),
   });
   if (!r.ok) throw await toError(r);
@@ -75,10 +118,7 @@ export const api = {
   createGroup: (name: string, projectDir: string, carryFiles?: string[]): Promise<Group> =>
     post<Group>('/groups', { name, projectDir, carryFiles }),
 
-  deleteGroup: async (id: string): Promise<void> => {
-    const r = await fetch(`${BASE}/groups/${id}`, { method: 'DELETE' });
-    if (!r.ok) throw await toError(r);
-  },
+  deleteGroup: (id: string): Promise<void> => del(`/groups/${id}`),
 
   createSession: (
     groupId: string,
@@ -109,8 +149,8 @@ export const api = {
   stopSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/stop`, {}),
 
-  deleteSession: (id: string): Promise<Response> =>
-    fetch(`${BASE}/sessions/${id}`, { method: 'DELETE' }),
+  // Was Promise<Response> with no r.ok check; now it throws like every sibling.
+  deleteSession: (id: string): Promise<void> => del(`/sessions/${id}`),
 
   loadTranscript: (id: string): Promise<TranscriptEntry[]> =>
     get<TranscriptEntry[]>(`/sessions/${id}/transcript`),
@@ -118,18 +158,10 @@ export const api = {
   listDirs: (path?: string): Promise<DirListing> =>
     get<DirListing>(`/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`),
 
-  updateGroup: async (
+  updateGroup: (
     id: string,
-    patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string },
-  ): Promise<Group> => {
-    const r = await fetch(`${BASE}/groups/${id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    if (!r.ok) throw await toError(r);
-    return (await r.json()) as Group;
-  },
+    body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string },
+  ): Promise<Group> => patchJson<Group>(`/groups/${id}`, body),
 
   listBranches: (id: string): Promise<{ branches: string[]; current: string; default: string | null }> =>
     get<{ branches: string[]; current: string; default: string | null }>(`/groups/${id}/branches`),
@@ -145,8 +177,7 @@ export const api = {
   startPreview: (id: string): Promise<{ url?: string; needsCommand?: boolean }> =>
     post(`/sessions/${id}/preview`, {}),
 
-  stopPreview: (id: string): Promise<void> =>
-    fetch(`${BASE}/sessions/${id}/preview`, { method: 'DELETE' }).then(() => undefined),
+  stopPreview: (id: string): Promise<void> => del(`/sessions/${id}/preview`),
 
   finishInfo: (
     id: string,
@@ -191,17 +222,24 @@ export const api = {
   startTask: (id: string, draft: TaskDraft & { images?: ImageInput[] } = {}): Promise<Session> =>
     post<Session>(`/sessions/${id}/start`, draft),
 
-  updateTask: async (id: string, patch: TaskDraft): Promise<Session> => {
-    const r = await fetch(`${BASE}/sessions/${id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    if (!r.ok) throw await toError(r);
-    return (await r.json()) as Session;
-  },
+  updateTask: (id: string, draft: TaskDraft): Promise<Session> =>
+    patchJson<Session>(`/sessions/${id}`, draft),
 
   moveTask: (id: string, groupId: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/move`, { groupId }),
+
+  // Token handoff to the local api. POST is @Public() on the server (the UI has
+  // no bearer to present yet); DELETE and GET are guarded like everything else.
+  authSession: (accessToken: string): Promise<{ userId: string; githubUsername?: string }> =>
+    post<{ userId: string; githubUsername?: string }>('/auth/session', { accessToken }),
+
+  clearAuthSession: (): Promise<void> => del('/auth/session'),
+
+  getAuthSession: (): Promise<{
+    signedIn: boolean;
+    userId?: string;
+    githubUsername?: string;
+    expiresAt?: string;
+  }> => get('/auth/session'),
 
 };
