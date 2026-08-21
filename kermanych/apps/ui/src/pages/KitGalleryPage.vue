@@ -35,9 +35,9 @@
       </div>
     </section>
 
-    <!-- 04 — action icon buttons (dense, for table rows) -->
+    <!-- 04 — action icon buttons (dense, for icon clusters) -->
     <section class="kit__section">
-      <div class="kit__label">04 · Кнопки-дії (рядок таблиці)</div>
+      <div class="kit__label">04 · Кнопки-дії (рядок таблиці, хедер панелі)</div>
       <div class="kit__row">
         <KIconButton title="Запустити">▶</KIconButton>
         <KIconButton title="Редагувати">✎</KIconButton>
@@ -50,7 +50,7 @@
         <KIconButton active title="Превʼю активне">◼</KIconButton>
       </div>
       <div class="kit__caption mono">
-        28×28 · щільний контроль для дій у рядку таблиці (компактніший за KBtn variant="icon" 34×34). active = акцент.
+        28×28 · щільний контроль для груп глиф-дій: рядок таблиці й хедер панелі (компактніший за KBtn variant="icon" 34×34). active = акцент. Підказка — власний тултіп (v-tip), не нативний title.
       </div>
     </section>
 
@@ -280,10 +280,15 @@ const tableSessions: Session[] = [
 const tableSelected = ref('t1');
 const lastTableAction = ref('');
 function onTableAction(a: string): void { lastTableAction.value = a; }
+// Two operator turns on purpose: the panel's my-message navigation (▲/▼) only
+// appears above a second user message, and the gallery is where that control is
+// documented.
 const panelLog: TranscriptEntry[] = [
+  { kind: 'user_text', text: 'Зведи ротацію токенів в один запит.' },
   { kind: 'tool', id: '1', tool: 'Edit', status: 'ok', summary: 'src/auth/token.service.ts\n+ this.rotateShared(token);' },
   { kind: 'tool', id: '2', tool: 'Bash', status: 'ok', summary: 'npm run test:e2e -- auth\n12 passed, 0 failed (8.4s)' },
   { kind: 'assistant_text', text: 'Готово. Ротація токенів зведена в один запит.' },
+  { kind: 'user_text', text: 'Додай тест на прострочений refresh.' },
 ];
 const waitingLog: TranscriptEntry[] = [
   { kind: 'tool', id: '1', tool: 'Read', status: 'pending', summary: 'src/session.ts' },

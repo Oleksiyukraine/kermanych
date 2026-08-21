@@ -24,7 +24,7 @@
           @click="enter(e.name)"
         >
           <span class="k-dirpicker__name">{{ e.name }}</span>
-          <span v-if="e.isRepo" class="k-dirpicker__repo" title="git-репозиторій">⑂</span>
+          <span v-if="e.isRepo" class="k-dirpicker__repo" v-tip="'git-репозиторій'">⑂</span>
         </button>
         <div v-if="listing && !listing.entries.length" class="k-dirpicker__empty mono">
           (немає піддиректорій)

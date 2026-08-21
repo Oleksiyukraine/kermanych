@@ -5,7 +5,8 @@
       <button
         type="button"
         class="k-attach__remove"
-        title="Прибрати"
+        v-tip="'Прибрати'"
+        aria-label="Прибрати"
         @click="emit('remove', i)"
       >✕</button>
     </div>
