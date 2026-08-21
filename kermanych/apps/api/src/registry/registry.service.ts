@@ -7,6 +7,15 @@ import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import type { Group, Session, SessionStatus } from "@kermanych/core";
 
+// The cached Supabase session. Lives in SQLite so a restarted api still knows who
+// its user is without a cloud round trip.
+export type AuthSessionRow = {
+  userId: string;
+  accessToken: string;
+  expiresAt?: string;
+  githubUsername?: string;
+};
+
 @Injectable()
 export class RegistryService {
   private db: Database.Database;
@@ -23,6 +32,13 @@ export class RegistryService {
     );
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, group_id TEXT, name TEXT, task TEXT, worktree_path TEXT, branch TEXT, omp_session_id TEXT, omp_session_file TEXT, status TEXT, created_at TEXT)`,
+    );
+    // The one cached Supabase session for this machine. Single-row by construction
+    // (CHECK id = 1): one developer per Kermanych install. The guard compares the
+    // presented bearer against access_token; expires_at is informational for the
+    // UI, because an expired token must still control the LOCAL machine (spec D4).
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS auth_session (id INTEGER PRIMARY KEY CHECK (id = 1), user_id TEXT NOT NULL, access_token TEXT NOT NULL, expires_at TEXT, github_username TEXT)`,
     );
     // Additive migration: preview commands arrived after the initial schema.
     for (const col of ["preview_command", "api_command"]) {
@@ -228,5 +244,27 @@ export class RegistryService {
 
   removeSession(id: string): void {
     this.db.prepare(`DELETE FROM sessions WHERE id = ?`).run(id);
+  }
+
+  getAuthSession(): AuthSessionRow | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT user_id as userId, access_token as accessToken, expires_at as expiresAt, github_username as githubUsername FROM auth_session WHERE id = 1`,
+      )
+      .get() as AuthSessionRow | undefined;
+    if (!row) return undefined;
+    return { ...row, expiresAt: row.expiresAt ?? undefined, githubUsername: row.githubUsername ?? undefined };
+  }
+
+  setAuthSession(row: AuthSessionRow): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO auth_session (id, user_id, access_token, expires_at, github_username) VALUES (1,?,?,?,?)`,
+      )
+      .run(row.userId, row.accessToken, row.expiresAt ?? null, row.githubUsername ?? null);
+  }
+
+  clearAuthSession(): void {
+    this.db.prepare(`DELETE FROM auth_session WHERE id = 1`).run();
   }
 }
