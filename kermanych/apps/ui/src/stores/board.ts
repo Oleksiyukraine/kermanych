@@ -1,0 +1,180 @@
+// apps/ui/src/stores/board.ts
+import { defineStore } from 'pinia';
+import { computed, ref } from 'vue';
+import type { Task, TaskChannelState, TaskInsert, TaskPatch } from '@kermanych/cloud';
+import {
+  createTask as cloudCreateTask,
+  deleteTask as cloudDeleteTask,
+  listTasks as cloudListTasks,
+  patchTask as cloudPatchTask,
+} from '@kermanych/cloud';
+// Import from core's status module directly (not the barrel): @kermanych/core is a CJS
+// workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
+// transformed (see quasar.config commonjsOptions.include) — same reason as
+// stores/orchestrator.ts:16-19.
+import { ACTIVE_STATUSES } from '@kermanych/core/status';
+import { useAuth } from './auth';
+import { useProjects } from './projects';
+import { useOrchestrator } from './orchestrator';
+
+// The shared board's TASKS, and nothing else. Cloud projects and membership live in
+// stores/projects.ts; local sessions and the socket live in stores/orchestrator.ts. Writes
+// are optimistic and roll back when the cloud refuses, because RLS and tasks_guard() — not
+// this store — decide what is allowed.
+export const useBoard = defineStore('board', () => {
+  const auth = useAuth();
+  const cloud = useProjects();
+  const local = useOrchestrator();
+
+  const tasks = ref<Task[]>([]);
+  const loading = ref(false);
+  const loadError = ref<string | null>(null);
+  // 'CLOSED' until a subscription actually reports otherwise, so `offline` starts true and
+  // nothing can claim the board is live before Realtime says so.
+  const channelState = ref<TaskChannelState>('CLOSED');
+  // Anything other than a live SUBSCRIBED channel means "the board may be stale". Plan D
+  // renders this; the store only computes it.
+  const offline = computed(() => channelState.value !== 'SUBSCRIBED');
+
+  const projectIds = computed(() => cloud.projects.map((p) => p.id));
+
+  // Sorted by createdAt so a Realtime insert lands in a stable place instead of appending
+  // to whichever column happened to render last. Replace-or-append keyed by id, so the
+  // optimistic row, the awaited response and the Realtime echo all collapse into one.
+  function upsert(task: Task): void {
+    tasks.value = [...tasks.value.filter((t) => t.id !== task.id), task].sort((a, b) =>
+      a.createdAt.localeCompare(b.createdAt),
+    );
+  }
+
+  function drop(taskId: string): void {
+    tasks.value = tasks.value.filter((t) => t.id !== taskId);
+  }
+
+  // TaskStatus === SessionStatus, so core's constant applies verbatim. Active = the omp
+  // process is mid-work or blocked on its user.
+  function isActive(task: Task): boolean {
+    return ACTIVE_STATUSES.includes(task.status);
+  }
+
+  function fail(e: unknown): void {
+    local.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+
+  // The task query is scoped by project, so the cloud project list is a hard prerequisite.
+  // Loading it here keeps every caller a one-liner instead of sequencing two stores.
+  async function load(): Promise<void> {
+    await auth.ready;
+    if (!auth.user) return;
+    loading.value = true;
+    loadError.value = null;
+    try {
+      if (!cloud.projects.length) await cloud.load();
+      tasks.value = await cloudListTasks(auth.client, projectIds.value);
+    } catch (e) {
+      // Deliberately NOT a toast: load() also runs from the workspace page on every app
+      // open, and an unreachable Supabase must not greet the user with a popup. BoardPage
+      // renders loadError inline instead.
+      loadError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  // Apply a patch to a local copy exactly the way Postgres will, so the optimistic row and
+  // the eventual server row agree. `assigneeId: null` means "clear it", which on the Task
+  // type is an absent key, not a null.
+  function applyPatch(task: Task, patch: TaskPatch): Task {
+    const next: Task = { ...task };
+    if (patch.title !== undefined) next.title = patch.title;
+    if (patch.description !== undefined) next.description = patch.description;
+    if (patch.assigneeId !== undefined) {
+      if (patch.assigneeId === null) delete next.assigneeId;
+      else next.assigneeId = patch.assigneeId;
+    }
+    if (patch.model !== undefined) next.model = patch.model;
+    if (patch.prefix !== undefined) next.prefix = patch.prefix;
+    if (patch.platform !== undefined) next.platform = patch.platform;
+    if (patch.kind !== undefined) next.kind = patch.kind;
+    if (patch.branch !== undefined) next.branch = patch.branch;
+    return next;
+  }
+
+  async function createTask(input: TaskInsert): Promise<Task | undefined> {
+    const userId = auth.user?.id;
+    if (!userId) {
+      local.notify('Спочатку увійдіть у Kermanych', 'error');
+      return undefined;
+    }
+    try {
+      // No optimistic row here: the id is minted by Postgres. Realtime delivers the same
+      // task moments later and upsert() dedupes it by id.
+      const created = await cloudCreateTask(auth.client, { ...input, createdBy: userId });
+      upsert(created);
+      return created;
+    } catch (e) {
+      fail(e);
+      return undefined;
+    }
+  }
+
+  async function updateTaskFields(id: string, patch: TaskPatch): Promise<boolean> {
+    const before = tasks.value.find((t) => t.id === id);
+    if (!before) return false;
+    // UX pre-check only. tasks_guard() refuses this server-side with `task is active`
+    // whatever the UI allows — this exists so the user gets an instant, readable answer
+    // instead of a round trip and a Postgres sentence.
+    if (patch.assigneeId !== undefined && isActive(before)) {
+      local.notify('Активну задачу не можна переасайнити', 'error');
+      return false;
+    }
+    upsert(applyPatch(before, patch));
+    try {
+      upsert(await cloudPatchTask(auth.client, id, patch));
+      return true;
+    } catch (e) {
+      // The cloud refused — an RLS policy or tasks_guard(). Put the row back exactly as it
+      // was and surface the Postgres message, which names the invariant that fired.
+      upsert(before);
+      fail(e);
+      return false;
+    }
+  }
+
+  // Assignment is just the field edit tasks_guard() guards, so it shares the pre-check and
+  // the rollback rather than duplicating them.
+  function assignTask(id: string, assigneeId: string | null): Promise<boolean> {
+    return updateTaskFields(id, { assigneeId });
+  }
+
+  async function deleteTask(id: string): Promise<boolean> {
+    const before = tasks.value.find((t) => t.id === id);
+    if (!before) return false;
+    if (isActive(before)) {
+      local.notify('Активну задачу не можна видалити', 'error');
+      return false;
+    }
+    drop(id);
+    try {
+      await cloudDeleteTask(auth.client, id);
+      return true;
+    } catch (e) {
+      upsert(before);
+      fail(e);
+      return false;
+    }
+  }
+
+  return {
+    tasks,
+    loading,
+    loadError,
+    channelState,
+    offline,
+    load,
+    createTask,
+    updateTaskFields,
+    assignTask,
+    deleteTask,
+  };
+});
