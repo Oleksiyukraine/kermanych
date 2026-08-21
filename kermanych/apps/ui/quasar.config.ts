@@ -32,13 +32,14 @@ export default defineConfig(() => {
         viteConf.build ??= {};
         viteConf.build.commonjsOptions = {
           ...viteConf.build.commonjsOptions,
-          include: [/node_modules/, /packages[/\\]core[/\\]dist/],
+          include: [/node_modules/, /packages[/\\]core[/\\]dist/, /packages[/\\]cloud[/\\]dist/],
         };
         viteConf.optimizeDeps ??= {};
         viteConf.optimizeDeps.include = [
           ...(viteConf.optimizeDeps.include ?? []),
           '@kermanych/core',
           '@kermanych/core/status',
+          '@kermanych/cloud',
         ];
       },
     },

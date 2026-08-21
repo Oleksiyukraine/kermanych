@@ -12,7 +12,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@kermanych/cloud": "workspace:*",
     "@kermanych/core": "workspace:*",
+    "@supabase/supabase-js": "^2",
     "@nestjs/common": "^10",
     "@nestjs/core": "^10",
     "@nestjs/platform-express": "^10",
