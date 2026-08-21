@@ -2,7 +2,7 @@
 // for `tasks`: nothing outside @kermanych/cloud ever sees a Postgres column name. Every
 // call runs under the caller's JWT, so the RLS policies and tasks_guard() — not this code —
 // are the authorization surface; refusals surface as thrown postgrest messages.
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import type { Task, TaskInsert, TaskPatch, TaskStatus } from "./types";
 
 const TASK_COLUMNS =
@@ -170,4 +170,78 @@ export async function pushTaskStatus(
 export async function deleteTask(client: SupabaseClient, id: string): Promise<void> {
   const { error } = await client.from("tasks").delete().eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+// ── Realtime ──────────────────────────────────────────────────────────────────
+// The board engine. One channel per client, one binding on it; a status push from any
+// machine's local Nest and an assignment from any UI both arrive here.
+
+// `kind: 'delete'` is ONLY ever observed on the unfiltered fallback path below. On the
+// normal filtered binding the Realtime server drops DELETE events outright: with the
+// default replica identity a DELETE payload's `old` is `{ id }` and nothing else, so the
+// `project_id=in.(…)` filter has no column to match and the event never leaves the server.
+// Verified live against a local stack — one member on a filtered binding saw INSERT and
+// UPDATE only, the same member on an unfiltered one saw the DELETE too. This is Postgres's
+// replica identity, NOT a bug in this file: do not "fix" it with `replica identity full`,
+// because RLS is not applied to DELETE events and a full old-image would hand the whole
+// deleted row — title and description — to any non-member subscribed without a filter. The
+// board reconciles instead: a full listTasks refetch on (re)subscribe, on visibilitychange,
+// and on a slow timer (see the board store).
+export type TaskChange = { kind: "upsert"; task: Task } | { kind: "delete"; taskId: string };
+
+// The four states realtime-js hands to a subscribe() callback.
+export type TaskChannelState = "SUBSCRIBED" | "TIMED_OUT" | "CLOSED" | "CHANNEL_ERROR";
+
+// The Realtime server caps an `in` filter at 100 values. Past that the filter is dropped
+// and the `tasks` SELECT policy scopes the stream instead — RLS IS enforced per subscriber
+// for postgres_changes INSERT/UPDATE (the table is in the supabase_realtime publication and
+// `authenticated` has SELECT), so a filterless binding is safe for row data, just chattier:
+// it also carries bare DELETE ids for projects the subscriber cannot read.
+export const REALTIME_IN_FILTER_MAX = 100;
+
+export function tasksFilter(projectIds: string[]): string | undefined {
+  if (projectIds.length > REALTIME_IN_FILTER_MAX) return undefined;
+  return `project_id=in.(${projectIds.join(",")})`;
+}
+
+export function subscribeTasks(
+  client: SupabaseClient,
+  projectIds: string[],
+  onChange: (change: TaskChange) => void,
+  onState?: (state: TaskChannelState) => void,
+): () => void {
+  // Nothing to watch, and `project_id=in.()` is not valid filter syntax.
+  if (projectIds.length === 0) return () => {};
+
+  const filter = tasksFilter(projectIds);
+  const channel: RealtimeChannel = client.channel("kermanych-tasks");
+
+  // ONE binding, registered BEFORE subscribe(): .on() throws once the channel is
+  // subscribed, and a second identical postgres_changes binding on the same channel is
+  // silently dropped. Never call realtime.setAuth here — supabase-js refreshes the socket
+  // token itself from onAuthStateChange, and pinning it would disable that.
+  channel.on(
+    "postgres_changes",
+    { event: "*", schema: "public", table: "tasks", ...(filter ? { filter } : {}) },
+    (payload) => {
+      if (payload.eventType === "DELETE") {
+        // `old` carries the primary key ONLY (default replica identity), and DELETE events
+        // are not RLS-filtered, so an id from a project we do not track can arrive. The
+        // consumer removes by id, which is a no-op for an unknown one.
+        const id = (payload.old as { id?: string }).id;
+        if (id) onChange({ kind: "delete", taskId: id });
+        return;
+      }
+      onChange({ kind: "upsert", task: toTask(payload.new as TaskRow) });
+    },
+  );
+
+  channel.subscribe((status) => onState?.(status as TaskChannelState));
+
+  // removeChannel unsubscribes AND drops the channel from the client, so a later
+  // subscribeTasks() can rebuild the binding with a different project set. A
+  // postgres_changes filter cannot be edited in place.
+  return () => {
+    void client.removeChannel(channel);
+  };
 }

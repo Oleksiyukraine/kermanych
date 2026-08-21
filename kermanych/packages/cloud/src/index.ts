@@ -32,6 +32,7 @@ export {
   deleteProject,
 } from "./projects";
 
+export type { TaskChange, TaskChannelState } from "./tasks";
 export {
   toTask,
   toTaskRow,
@@ -43,4 +44,7 @@ export {
   claimTask,
   pushTaskStatus,
   deleteTask,
+  REALTIME_IN_FILTER_MAX,
+  tasksFilter,
+  subscribeTasks,
 } from "./tasks";

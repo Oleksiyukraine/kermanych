@@ -9,6 +9,9 @@ import {
   listTasks,
   patchTask,
   pushTaskStatus,
+  REALTIME_IN_FILTER_MAX,
+  subscribeTasks,
+  tasksFilter,
 } from "../src/tasks";
 
 type Op = [string, ...unknown[]];
@@ -232,5 +235,149 @@ describe("deleteTask", () => {
 
     const refused = fakeClient({ data: null, error: { message: "task is active" } });
     await expect(deleteTask(refused.client, "t1")).rejects.toThrow(/task is active/);
+  });
+});
+
+type Binding = { event: string; config: Record<string, unknown> };
+
+// A RealtimeChannel fake that enforces the two upstream rules this design depends on:
+// .on() throws after subscribe(), and removeChannel is the only teardown.
+function fakeRealtime() {
+  const bindings: Binding[] = [];
+  const handlers: ((payload: unknown) => void)[] = [];
+  const states: string[] = [];
+  const removed: unknown[] = [];
+  const channels: string[] = [];
+  let subscribed = false;
+  let stateCb: ((s: string) => void) | undefined;
+
+  const channel = {
+    on(event: string, config: Record<string, unknown>, cb: (payload: unknown) => void) {
+      if (subscribed) throw new Error("cannot .on() after subscribe()");
+      bindings.push({ event, config });
+      handlers.push(cb);
+      return channel;
+    },
+    subscribe(cb?: (s: string) => void) {
+      subscribed = true;
+      stateCb = cb;
+      return channel;
+    },
+  };
+
+  const client = {
+    channel(name: string) {
+      channels.push(name);
+      return channel;
+    },
+    removeChannel(c: unknown) {
+      removed.push(c);
+      return Promise.resolve("ok");
+    },
+  } as unknown as SupabaseClient;
+
+  return {
+    client,
+    bindings,
+    channels,
+    removed,
+    states,
+    emit: (payload: unknown) => handlers.forEach((h) => h(payload)),
+    setState: (s: string) => stateCb?.(s),
+  };
+}
+
+describe("tasksFilter", () => {
+  it("builds one `in` filter for the whole project set", () => {
+    expect(tasksFilter(["a"])).toBe("project_id=in.(a)");
+    expect(tasksFilter(["a", "b", "c"])).toBe("project_id=in.(a,b,c)");
+  });
+
+  it("keeps the filter at exactly the server cap and drops it past it", () => {
+    const at = Array.from({ length: REALTIME_IN_FILTER_MAX }, (_, i) => `p${i}`);
+    expect(tasksFilter(at)).toContain("project_id=in.(p0,");
+    expect(tasksFilter([...at, "p100"])).toBeUndefined();
+  });
+});
+
+describe("subscribeTasks", () => {
+  it("registers exactly one filtered postgres_changes binding before subscribing", () => {
+    const rt = fakeRealtime();
+
+    subscribeTasks(rt.client, ["p1", "p2"], () => {});
+
+    expect(rt.channels).toHaveLength(1);
+    expect(rt.bindings).toHaveLength(1);
+    expect(rt.bindings[0]!.event).toBe("postgres_changes");
+    expect(rt.bindings[0]!.config).toEqual({
+      event: "*",
+      schema: "public",
+      table: "tasks",
+      filter: "project_id=in.(p1,p2)",
+    });
+  });
+
+  it("omits the filter key entirely past the 100-project cap", () => {
+    const rt = fakeRealtime();
+    const many = Array.from({ length: 101 }, (_, i) => `p${i}`);
+
+    subscribeTasks(rt.client, many, () => {});
+
+    expect(rt.bindings[0]!.config).toEqual({ event: "*", schema: "public", table: "tasks" });
+  });
+
+  it("opens no channel for an empty project set and returns a usable no-op", () => {
+    const rt = fakeRealtime();
+    const off = subscribeTasks(rt.client, [], () => {});
+    expect(rt.channels).toHaveLength(0);
+    expect(() => off()).not.toThrow();
+    expect(rt.removed).toHaveLength(0);
+  });
+
+  it("maps INSERT and UPDATE payloads into upserts", () => {
+    const rt = fakeRealtime();
+    const seen: unknown[] = [];
+    subscribeTasks(rt.client, ["p1"], (c) => seen.push(c));
+
+    rt.emit({ eventType: "INSERT", new: taskRow, old: {} });
+    rt.emit({ eventType: "UPDATE", new: { ...taskRow, status: "thinking" }, old: {} });
+
+    expect(seen).toEqual([
+      { kind: "upsert", task: expect.objectContaining({ id: "t1", status: "backlog" }) },
+      { kind: "upsert", task: expect.objectContaining({ id: "t1", status: "thinking" }) },
+    ]);
+  });
+
+  it("tolerates a DELETE payload carrying only the primary key", () => {
+    // RLS is not applied to DELETE events and this schema uses the default replica
+    // identity, so `old` is `{ id }` and nothing else — mapping it as a task would crash.
+    const rt = fakeRealtime();
+    const seen: unknown[] = [];
+    subscribeTasks(rt.client, ["p1"], (c) => seen.push(c));
+
+    rt.emit({ eventType: "DELETE", new: {}, old: { id: "t1" } });
+    rt.emit({ eventType: "DELETE", new: {}, old: {} });
+
+    expect(seen).toEqual([{ kind: "delete", taskId: "t1" }]);
+  });
+
+  it("reports every channel state to the optional state callback", () => {
+    const rt = fakeRealtime();
+    const states: string[] = [];
+    subscribeTasks(rt.client, ["p1"], () => {}, (s) => states.push(s));
+
+    rt.setState("SUBSCRIBED");
+    rt.setState("CHANNEL_ERROR");
+    rt.setState("TIMED_OUT");
+    rt.setState("CLOSED");
+
+    expect(states).toEqual(["SUBSCRIBED", "CHANNEL_ERROR", "TIMED_OUT", "CLOSED"]);
+  });
+
+  it("tears down through removeChannel exactly once per unsubscribe", () => {
+    const rt = fakeRealtime();
+    const off = subscribeTasks(rt.client, ["p1"], () => {});
+    off();
+    expect(rt.removed).toHaveLength(1);
   });
 });
