@@ -1,0 +1,179 @@
+// packages/cloud/test/rls.spec.ts
+// Integration suite against a LOCAL Supabase stack (`supabase start`). Skipped
+// unless the three SUPABASE_TEST_* variables are set, so `pnpm -r test` stays
+// green on a machine without Docker.
+//
+// The service-role key is used ONLY to mint test users through the admin API —
+// the same thing GitHub OAuth would do — and never to bypass a policy under
+// test. Every assertion below runs through an anon-key client carrying a real
+// user JWT, exactly like the shipped app.
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { beforeAll, describe, expect, it } from "vitest";
+
+const URL = process.env.SUPABASE_TEST_URL;
+const ANON = process.env.SUPABASE_TEST_ANON_KEY;
+const SERVICE = process.env.SUPABASE_TEST_SERVICE_KEY;
+
+type TestUser = { id: string; client: SupabaseClient };
+
+describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
+  // `describe.skipIf` still EXECUTES this callback at collection time — it only
+  // marks the tests it registers as skipped. So the clients must not be built
+  // here: createClient("") throws, which would fail the file on a machine
+  // without the env vars. Everything real happens in beforeAll, which is the
+  // hook skipIf actually suppresses.
+  let admin: SupabaseClient;
+
+  let owner: TestUser;
+  let member: TestUser;
+  let outsider: TestUser;
+  let projectId: string;
+  let taskId: string;
+
+  async function makeUser(tag: string): Promise<TestUser> {
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const email = `${tag}-${stamp}@kermanych.test`;
+    const password = "kermanych-test-password";
+    const created = await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        user_name: `${tag}-${stamp}`,
+        full_name: `${tag} Tester`,
+        avatar_url: `https://example.test/${tag}.png`,
+      },
+    });
+    if (created.error) throw created.error;
+    const client = createClient(URL ?? "", ANON ?? "", {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const signedIn = await client.auth.signInWithPassword({ email, password });
+    if (signedIn.error) throw signedIn.error;
+    return { id: created.data.user.id, client };
+  }
+
+  beforeAll(async () => {
+    admin = createClient(URL ?? "", SERVICE ?? "", {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
+    owner = await makeUser("owner");
+    member = await makeUser("member");
+    outsider = await makeUser("outsider");
+
+    const project = await owner.client
+      .from("projects")
+      .insert({ name: "rls-suite", owner_id: owner.id })
+      .select()
+      .single();
+    if (project.error) throw project.error;
+    projectId = project.data.id as string;
+
+    const task = await owner.client
+      .from("tasks")
+      .insert({ project_id: projectId, title: "rls task", created_by: owner.id })
+      .select()
+      .single();
+    if (task.error) throw task.error;
+    taskId = task.data.id as string;
+  }, 30_000);
+
+  it("handle_new_user fills profiles from the GitHub metadata", async () => {
+    const { data, error } = await owner.client
+      .from("profiles")
+      .select("id, github_username, display_name, avatar_url")
+      .eq("id", owner.id)
+      .single();
+    expect(error).toBeNull();
+    expect(data?.display_name).toBe("owner Tester");
+    expect(data?.github_username).toMatch(/^owner-/);
+    expect(data?.avatar_url).toBe("https://example.test/owner.png");
+  });
+
+  it("handle_new_project inserts the creator as owner-member", async () => {
+    const { data, error } = await owner.client
+      .from("project_members")
+      .select("user_id, role")
+      .eq("project_id", projectId);
+    expect(error).toBeNull();
+    expect(data).toEqual([{ user_id: owner.id, role: "owner" }]);
+  });
+
+  it("a non-member sees zero projects and zero tasks", async () => {
+    const projects = await outsider.client.from("projects").select("id").eq("id", projectId);
+    expect(projects.error).toBeNull();
+    expect(projects.data).toEqual([]);
+
+    const tasks = await outsider.client.from("tasks").select("id").eq("project_id", projectId);
+    expect(tasks.error).toBeNull();
+    expect(tasks.data).toEqual([]);
+  });
+
+  it("the anon key with no session sees nothing", async () => {
+    const anonymous = createClient(URL ?? "", ANON ?? "", {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data, error } = await anonymous.from("tasks").select("id");
+    // Either a permission error or an empty set is acceptable; a row is not.
+    expect(error ? [] : data).toEqual([]);
+  });
+
+  it("a non-owner cannot add a project member", async () => {
+    const { error } = await outsider.client
+      .from("project_members")
+      .insert({ project_id: projectId, user_id: outsider.id, role: "member" });
+    expect(error?.code).toBe("42501");
+  });
+
+  it("the owner can add a member, who then sees the project's tasks", async () => {
+    const added = await owner.client
+      .from("project_members")
+      .insert({ project_id: projectId, user_id: member.id, role: "member" });
+    expect(added.error).toBeNull();
+
+    const tasks = await member.client.from("tasks").select("id").eq("project_id", projectId);
+    expect(tasks.error).toBeNull();
+    expect(tasks.data?.map((t) => t.id)).toEqual([taskId]);
+  });
+
+  it("a non-assignee cannot change a task's status", async () => {
+    const assigned = await owner.client
+      .from("tasks")
+      .update({ assignee_id: member.id })
+      .eq("id", taskId);
+    expect(assigned.error).toBeNull();
+
+    // owner is a member (so the UPDATE policy lets the row through) but not the
+    // assignee, so tasks_guard raises.
+    const { error } = await owner.client.from("tasks").update({ status: "queued" }).eq("id", taskId);
+    expect(error?.message).toContain("only the assignee can change status");
+  });
+
+  it("an active task cannot be reassigned", async () => {
+    const started = await member.client
+      .from("tasks")
+      .update({ status: "thinking" })
+      .eq("id", taskId);
+    expect(started.error).toBeNull();
+
+    const { error } = await owner.client
+      .from("tasks")
+      .update({ assignee_id: owner.id })
+      .eq("id", taskId);
+    expect(error?.message).toContain("task is active");
+  });
+
+  it("an active task cannot be deleted", async () => {
+    const { error } = await owner.client.from("tasks").delete().eq("id", taskId);
+    expect(error?.message).toContain("task is active");
+  });
+
+  it("a finished task can be deleted", async () => {
+    const finished = await member.client.from("tasks").update({ status: "done" }).eq("id", taskId);
+    expect(finished.error).toBeNull();
+
+    const { error } = await owner.client.from("tasks").delete().eq("id", taskId);
+    expect(error).toBeNull();
+  });
+});
