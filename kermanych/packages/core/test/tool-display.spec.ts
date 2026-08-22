@@ -146,3 +146,47 @@ test("grep flags upstream truncation in the stat", () => {
   const out = toolDisplay("grep", { pattern: "x" }, { matchCount: 900, fileCount: 40, truncated: true, fileMatches: [], displayContent: "" }, "");
   expect(out.stat).toBe("900 збігів / 40 ф ·обрізано");
 });
+
+test("bash reports wall time, and exit code when non-zero", () => {
+  const fast = toolDisplay("bash", { command: "cd x && pnpm typecheck" }, { wallTimeMs: 92, timeoutSeconds: 300 }, "ok");
+  expect(fast.target).toBe("cd x && pnpm typecheck");
+  expect(fast.stat).toBe("92 ms");
+  expect(fast.lines[0]).toEqual({ t: "head", text: "$ cd x && pnpm typecheck" });
+  expect(fast.lines.at(-1)).toEqual({ t: "head", text: "wall 92 ms · timeout 300s" });
+
+  const failed = toolDisplay("bash", { command: "false" }, { wallTimeMs: 1043, timeoutSeconds: 300, exitCode: 1 }, "boom");
+  expect(failed.stat).toBe("exit 1 · 1.0 с");
+});
+
+test("bash collapses whitespace in a multi-line command for the row target", () => {
+  const out = toolDisplay("bash", { command: "cd a &&\n  pnpm test" }, { wallTimeMs: 5 }, "");
+  expect(out.target).toBe("cd a && pnpm test");
+});
+
+test("todo renders the phase tree with checkbox glyphs and counts", () => {
+  const d = {
+    op: "done",
+    phases: [
+      { id: "p1", name: "Виконання", tasks: [
+        { id: "t1", content: "директива", status: "completed" },
+        { id: "t2", content: "хедер", status: "in_progress" },
+        { id: "t3", content: "стилі", status: "pending" },
+      ] },
+    ],
+  };
+  const out = toolDisplay("todo", { op: "done" }, d, "");
+  expect(out.stat).toBe("1/3");
+  expect(out.count).toBe(1);
+  expect(out.lines).toEqual([
+    { t: "head", text: "Виконання  1/3" },
+    { t: "ctx", text: "[x] директива" },
+    { t: "hit", text: "[/] хедер" },
+    { t: "ctx", text: "[ ] стилі" },
+  ]);
+});
+
+test("hub and eval expose their operation as the stat", () => {
+  expect(toolDisplay("hub", { op: "start" }, { op: "start" }, "").stat).toBe("start");
+  expect(toolDisplay("hub", { op: "wait" }, { op: "wait", timedOut: true }, "").stat).toBe("wait · таймаут");
+  expect(toolDisplay("eval", { language: "py" }, { language: "py", cells: 1 }, "").stat).toBe("py");
+});

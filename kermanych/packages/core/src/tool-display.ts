@@ -164,13 +164,70 @@ const grepDisplay: Reducer = (args, d) => {
   };
 };
 
+const TODO_GLYPH: Record<string, string> = {
+  pending: "[ ]", in_progress: "[/]", completed: "[x]", abandoned: "[-]", blocked: "[!]",
+};
+
+const ms = (v: number): string => (v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(1)} с`);
+
+const bashDisplay: Reducer = (args, d, content) => {
+  const command = str(args["command"]).split(/\s+/).join(" ");
+  const wall = num(d["wallTimeMs"]) ?? 0;
+  const exit = num(d["exitCode"]);
+  const lines: ToolLine[] = [{ t: "head", text: `$ ${command}` }, ...textLines(content)];
+  const meta = [`wall ${ms(wall)}`];
+  const timeout = num(d["timeoutSeconds"]);
+  if (timeout !== undefined) meta.push(`timeout ${timeout}s`);
+  if (exit) meta.push(`exit ${exit}`);
+  lines.push({ t: "head", text: meta.join(" · ") });
+  return {
+    target: command,
+    stat: exit ? `exit ${exit} · ${ms(wall)}` : ms(wall),
+    count: Math.round(wall),
+    lines,
+    totalLines: lines.length,
+  };
+};
+
+const todoDisplay: Reducer = (_args, d) => {
+  const phases = (d["phases"] as { name?: string; tasks?: { content?: string; status?: string }[] }[] | undefined) ?? [];
+  const lines: ToolLine[] = [];
+  let done = 0;
+  let total = 0;
+  for (const phase of phases) {
+    const tasks = phase.tasks ?? [];
+    const phaseDone = tasks.filter((t) => t.status === "completed").length;
+    done += phaseDone;
+    total += tasks.length;
+    lines.push({ t: "head", text: `${phase.name ?? ""}  ${phaseDone}/${tasks.length}` });
+    for (const t of tasks)
+      lines.push({ t: t.status === "in_progress" ? "hit" : "ctx", text: `${TODO_GLYPH[t.status ?? "pending"] ?? "[ ]"} ${t.content ?? ""}` });
+  }
+  return { stat: `${done}/${total}`, count: done, lines, totalLines: lines.length };
+};
+
+const hubDisplay: Reducer = (args, d, content) => {
+  const op = str(d["op"]) || str(args["op"]);
+  return { target: op, stat: `${op}${d["timedOut"] ? " · таймаут" : ""}`, lines: textLines(content), totalLines: content ? content.split("\n").length : 0 };
+};
+
+const evalDisplay: Reducer = (args, d, content) => ({
+  target: str(d["language"]) || str(args["language"]),
+  stat: str(d["language"]) || str(args["language"]),
+  lines: textLines(content),
+  totalLines: content ? content.split("\n").length : 0,
+});
+
 const genericDisplay: Reducer = (args, _d, content) => ({
   target: shortPath(str(args["path"]) || str(args["i"]), 2),
   lines: textLines(content),
   totalLines: content ? content.split("\n").length : 0,
 });
 
-const REDUCERS: Record<string, Reducer> = { read: readDisplay, write: writeDisplay, glob: globDisplay, edit: editDisplay, grep: grepDisplay };
+const REDUCERS: Record<string, Reducer> = {
+  read: readDisplay, write: writeDisplay, glob: globDisplay, edit: editDisplay, grep: grepDisplay,
+  bash: bashDisplay, todo: todoDisplay, hub: hubDisplay, eval: evalDisplay,
+};
 
 export function toolDisplay(tool: string, args: Args | undefined, details: Details | undefined, content: string): ToolDisplay {
   return (REDUCERS[tool] ?? genericDisplay)(args ?? {}, details ?? {}, content ?? "");
