@@ -1,5 +1,5 @@
 // apps/api/src/supervisor/supervisor.service.ts
-import { Injectable, type OnModuleDestroy } from "@nestjs/common";
+import { GoneException, Injectable, type OnModuleDestroy } from "@nestjs/common";
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { Observable, Subject } from "rxjs";
@@ -1026,6 +1026,14 @@ export class SupervisorService implements OnModuleDestroy {
       return [{ kind: "notice", id: "dormant", at: Date.now(), level: "info", text }];
     }
     return [];
+  }
+
+  // Full tool output on demand. A miss means the FIFO cache dropped it (or the API
+  // restarted) — the UI says so rather than pretending the output was empty.
+  getToolDetail(id: string, callId: string): { lines: ToolLine[]; totalLines: number } {
+    const lines = this.toolDetails.get(id, callId);
+    if (!lines) throw new GoneException("вивід більше недоступний");
+    return { lines, totalLines: lines.length };
   }
 
   // Shared live-session wiring (fresh create + resume): build the Live, register it,

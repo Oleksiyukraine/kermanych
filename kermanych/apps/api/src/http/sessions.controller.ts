@@ -143,6 +143,11 @@ export class SessionsController {
     return this.sup.getTranscript(id);
   }
 
+  @Get(":id/tools/:callId")
+  toolDetail(@Param("id") id: string, @Param("callId") callId: string) {
+    return this.sup.getToolDetail(id, callId);
+  }
+
   @Post(":id/preview")
   async startPreview(@Param("id") id: string) {
     try {
