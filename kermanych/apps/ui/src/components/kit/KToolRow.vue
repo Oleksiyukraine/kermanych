@@ -62,8 +62,10 @@ async function loadFull(): Promise<void> {
 .k-tr__g--pending { color: var(--k-accent); animation: k-tr-pulse 1.4s ease-in-out infinite; }
 .k-tr__g--error { color: var(--k-accent); }
 @keyframes k-tr-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
-/* Fixed column: this is what stops `bash` from wrapping as `bas`/`h`. */
-.k-tr__t { flex: none; width: 44px; color: var(--k-text); }
+/* Fixed column: this is what stops `bash` from wrapping as `bas`/`h`. 60px is eight
+   characters at 12.5px mono, covering the builtin toolset up to `ast_edit`; the
+   ellipsis is the backstop for longer outliers like `web_search`. */
+.k-tr__t { flex: none; width: 60px; overflow: hidden; text-overflow: ellipsis; color: var(--k-text); }
 .k-tr__tg { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .k-tr__st { flex: none; font-size: 11.5px; color: var(--k-text); }
 .k-tr__ch { flex: none; width: 10px; text-align: right; font-size: 11px; color: var(--k-line-strong); }
