@@ -73,7 +73,7 @@
 - Coordinated edit: `packages/cloud/src/index.ts` gains `export * from "./tasks";`. Plan A ships that file with exactly three lines (`./types`, `./client`, `./status`) and cannot forward-declare a module that does not exist yet, so each module's author appends its own barrel line — Plan B appended `./projects`, this task appends `./tasks`. Change nothing else in that file.
 - **Two functions beyond the spec's list, both required by a sibling and declared here:** `getTask` is consumed by Plan D's `SupervisorService.createSessionFromTask` (its Interfaces block names it verbatim); `deleteTask` is the other half of Requirement 8 ("an active task cannot be reassigned **or deleted**") — without it the guard's delete branch is unreachable from the product.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `packages/cloud/test/tasks.spec.ts`. The fake client is the same shape Plan B's `test/projects.spec.ts` uses — a `PostgrestBuilder` is a thenable that collects chained calls, so this fake records every op and resolves to a queued result. Convention: `describe`/`it`, double quotes, relative `../src/<module>` import.
 
@@ -317,12 +317,12 @@ describe("deleteTask", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `pnpm --filter @kermanych/cloud exec vitest run test/tasks.spec.ts`
 Expected: FAIL — `Cannot find module '../src/tasks'`.
 
-- [ ] **Step 3: Implement the module**
+- [x] **Step 3: Implement the module**
 
 Create `packages/cloud/src/tasks.ts`:
 
@@ -502,7 +502,7 @@ export async function deleteTask(client: SupabaseClient, id: string): Promise<vo
 }
 ```
 
-- [ ] **Step 4: Append the barrel line**
+- [x] **Step 4: Append the barrel line**
 
 Add ONE line to the end of `packages/cloud/src/index.ts`, after Plan A's three (`./types`, `./client`, `./status`) and Plan B's `./projects`:
 
@@ -510,17 +510,17 @@ Add ONE line to the end of `packages/cloud/src/index.ts`, after Plan A's three (
 export * from "./tasks";
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `pnpm --filter @kermanych/cloud exec vitest run test/tasks.spec.ts`
 Expected: PASS — 16 tests.
 
-- [ ] **Step 6: Typecheck and build the package**
+- [x] **Step 6: Typecheck and build the package**
 
 Run: `pnpm --filter @kermanych/cloud exec tsc -p tsconfig.json --noEmit && pnpm --filter @kermanych/cloud build`
 Expected: no type errors. The build is REQUIRED — `apps/ui` resolves `@kermanych/cloud` through its `dist`, so Task 3 cannot import from it until this runs.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add kermanych/packages/cloud/src/tasks.ts kermanych/packages/cloud/src/index.ts \
@@ -545,7 +545,7 @@ git commit -m "feat(cloud): task queries with snake-case mapping and an atomic c
   - `tasksFilter(projectIds: string[]): string | undefined`
   - `subscribeTasks(client, projectIds, onChange: (c: TaskChange) => void, onState?: (s: TaskChannelState) => void): () => void` — the returned function is the unsubscribe.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `packages/cloud/test/tasks.spec.ts`. Extend the import at the top of the file to also pull the new symbols:
 
@@ -713,12 +713,12 @@ describe("subscribeTasks", () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `pnpm --filter @kermanych/cloud exec vitest run test/tasks.spec.ts`
 Expected: FAIL — `subscribeTasks is not a function` / `tasksFilter is not a function` (the Task 1 suites still pass).
 
-- [ ] **Step 3: Implement the Realtime section**
+- [x] **Step 3: Implement the Realtime section**
 
 Append to `packages/cloud/src/tasks.ts`. Extend the type import at the top of the file to `import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";`, then add:
 
@@ -786,17 +786,17 @@ export function subscribeTasks(
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `pnpm --filter @kermanych/cloud exec vitest run test/tasks.spec.ts`
 Expected: PASS — 25 tests.
 
-- [ ] **Step 5: Typecheck, build, and run the whole package suite**
+- [x] **Step 5: Typecheck, build, and run the whole package suite**
 
 Run: `pnpm --filter @kermanych/cloud exec tsc -p tsconfig.json --noEmit && pnpm --filter @kermanych/cloud build && pnpm --filter @kermanych/cloud exec vitest run`
 Expected: no type errors; `status.spec.ts`, `client.spec.ts`, `projects.spec.ts` and `tasks.spec.ts` all green. (`rls.spec.ts` stays skipped unless `SUPABASE_TEST_URL` is set.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add kermanych/packages/cloud/src/tasks.ts kermanych/packages/cloud/test/tasks.spec.ts
@@ -820,7 +820,7 @@ git commit -m "feat(cloud): realtime task subscription with a single filtered bi
 - Produces: `useBoard()` exposing `tasks: Task[]`, `loading: boolean`, `loadError: string | null`, `channelState: TaskChannelState`, `offline: boolean`, `load(): Promise<void>`, `createTask(input: TaskInsert): Promise<Task | undefined>`, `updateTaskFields(id, patch: TaskPatch): Promise<boolean>`, `assignTask(id, assigneeId: string | null): Promise<boolean>`, `deleteTask(id): Promise<boolean>`. `subscribe()`/`unsubscribe()` land in Task 4.
 - Coordinated: Plan D renders `offline` (its Task 7) and replaces `BoardPage.vue`'s `launch()` seam (its Task 6). This store must therefore EXPOSE `offline` and never render it.
 
-- [ ] **Step 1: Create the store with state and reads**
+- [x] **Step 1: Create the store with state and reads**
 
 Create `apps/ui/src/stores/board.ts`:
 
@@ -920,7 +920,7 @@ export const useBoard = defineStore('board', () => {
 });
 ```
 
-- [ ] **Step 2: Add the optimistic write path**
+- [x] **Step 2: Add the optimistic write path**
 
 Insert the following into `stores/board.ts`, after `load()` and before the `return` block:
 
@@ -1010,7 +1010,7 @@ Insert the following into `stores/board.ts`, after `load()` and before the `retu
   }
 ```
 
-- [ ] **Step 3: Extend the return block**
+- [x] **Step 3: Extend the return block**
 
 Replace the `return` block added in Step 1 with:
 
@@ -1029,12 +1029,12 @@ Replace the `return` block added in Step 1 with:
   };
 ```
 
-- [ ] **Step 4: Verify it typechecks**
+- [x] **Step 4: Verify it typechecks**
 
 Run: `pnpm --filter @kermanych/ui exec vue-tsc --noEmit`
 Expected: no errors inside `src/stores/board.ts`. If the `@kermanych/cloud` named imports fail to resolve, the package was not built (Task 2 Step 5) or Plan A's `quasar.config.ts` CJS-interop entry for `@kermanych/cloud` is missing — fix that, do not add a workaround here.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add kermanych/apps/ui/src/stores/board.ts
@@ -1056,7 +1056,7 @@ git commit -m "feat(ui): cloud task board store with optimistic writes and activ
   - losing the session (sign-out, or a 401 that forced one) tears the channel down and clears the task list;
   - `channelState` is written only by the channel's own state callback and by `unsubscribe()`.
 
-- [ ] **Step 1: Add subscribe / unsubscribe**
+- [x] **Step 1: Add subscribe / unsubscribe**
 
 In `apps/ui/src/stores/board.ts`, extend the `@kermanych/cloud` value import with `subscribeTasks as cloudSubscribeTasks,` and the type import with `TaskChange`, then add `watch` to the `vue` import:
 
@@ -1111,7 +1111,7 @@ Add both functions after `load()`:
   }
 ```
 
-- [ ] **Step 2: Add the two watchers**
+- [x] **Step 2: Add the two watchers**
 
 Insert immediately before the `return` block. These watchers are created in the store's setup scope on purpose: they have no owning component, so they live as long as the app — which is exactly the lifetime of the channel they manage.
 
@@ -1140,7 +1140,7 @@ Insert immediately before the `return` block. These watchers are created in the 
   );
 ```
 
-- [ ] **Step 3: Extend the return block**
+- [x] **Step 3: Extend the return block**
 
 ```ts
   return {
@@ -1159,12 +1159,12 @@ Insert immediately before the `return` block. These watchers are created in the 
   };
 ```
 
-- [ ] **Step 4: Verify it typechecks**
+- [x] **Step 4: Verify it typechecks**
 
 Run: `pnpm --filter @kermanych/ui exec vue-tsc --noEmit`
 Expected: no errors. In particular `channelState.value = state` must typecheck without a cast — `subscribeTasks`'s fourth parameter is typed `(state: TaskChannelState) => void`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add kermanych/apps/ui/src/stores/board.ts
@@ -1193,7 +1193,7 @@ git commit -m "feat(ui): realtime lifecycle for the board store with refetch on 
 
 **Column decision (one line, as required):** ten `SessionStatus` values collapse to five columns because `thinking` and `tool` are one human state («агент працює») and `done`/`merged`/`stopped`/`error`/`conflict` are all «не рухається» — ten lanes would be ten mostly-empty columns on a team board.
 
-- [ ] **Step 1: Write the page template**
+- [x] **Step 1: Write the page template**
 
 Create `apps/ui/src/pages/BoardPage.vue` with this template. (Step 2 adds the script, Step 3 the styles; the file is only valid after all three.)
 
@@ -1280,7 +1280,7 @@ Create `apps/ui/src/pages/BoardPage.vue` with this template. (Step 2 adds the sc
 </template>
 ```
 
-- [ ] **Step 2: Write the script**
+- [x] **Step 2: Write the script**
 
 Append to `apps/ui/src/pages/BoardPage.vue`:
 
@@ -1453,7 +1453,7 @@ const editingId = ref<string | null>(null);
 
 The four members at the bottom exist because the template above references them; Task 6 replaces them with the real create/edit flow. They are wired, not stubbed: `onDelete` already performs a real cloud delete with the active-task guard, and `openCreate`/`openEdit` already open the modal Task 6 fills in.
 
-- [ ] **Step 3: Write the styles**
+- [x] **Step 3: Write the styles**
 
 Append to `apps/ui/src/pages/BoardPage.vue`. Tokens only — no raw hex.
 
@@ -1655,7 +1655,7 @@ Append to `apps/ui/src/pages/BoardPage.vue`. Tokens only — no raw hex.
 </style>
 ```
 
-- [ ] **Step 4: Register the route**
+- [x] **Step 4: Register the route**
 
 Replace the whole of `apps/ui/src/router/routes.ts` with the merged file. Plan A's `/login` record, the `RouteMeta` augmentation and the `not-found` record are unchanged; the only addition is the `board` child, dropped exactly where Plan A left its marker comment.
 
@@ -1700,12 +1700,12 @@ const routes: RouteRecordRaw[] = [
 export default routes;
 ```
 
-- [ ] **Step 5: Verify it typechecks**
+- [x] **Step 5: Verify it typechecks**
 
 Run: `pnpm --filter @kermanych/ui exec vue-tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 6: Verify the board renders in the browser**
+- [x] **Step 6: Verify the board renders in the browser**
 
 `supabase start` must be running, plus `pnpm dev:api` and `pnpm dev:ui`. Sign in, then create a project and a task from the Supabase Studio SQL editor (<http://127.0.0.1:54323>) so there is something to look at — the create modal lands in Task 6:
 
@@ -1726,7 +1726,7 @@ Open <http://localhost:5317/#/board>. Expected, in order:
 6. In Studio, `delete from tasks where title = 'Інша назва';` → the card disappears live (the DELETE payload carries only the id, and the store still removes the right row).
 7. The browser console is clean — no errors, no `.on() after subscribe` warning, no unhandled rejection.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add kermanych/apps/ui/src/pages/BoardPage.vue kermanych/apps/ui/src/router/routes.ts
@@ -1745,7 +1745,7 @@ git commit -m "feat(ui): cloud board page with status columns and the /board rou
 - Produces: a «Нова задача» / «Змінити задачу» modal reusing the local launcher's field vocabulary; `MODEL_OPTIONS`, `PREFIX_OPTIONS`, `PLATFORM_OPTIONS`; `submitEditor()`; the finished assign + delete + launch card controls.
 - The launch-param vocabulary is copied from the local launcher (`WorkspacePage.vue:658-661`) so a cloud task and a hand-started agent offer identical choices: models `opus-5` / `sonnet-4.5` / `haiku`, prefixes `feature` / `fix` / `refactoring` / `chore`, platforms `backend` / `web` / `mobile`.
 
-- [ ] **Step 1: Add the modal to the template**
+- [x] **Step 1: Add the modal to the template**
 
 In `apps/ui/src/pages/BoardPage.vue`, insert immediately before the closing `</main>` of the template:
 
@@ -1795,7 +1795,7 @@ In `apps/ui/src/pages/BoardPage.vue`, insert immediately before the closing `</m
     </KModal>
 ```
 
-- [ ] **Step 2: Extend the script imports**
+- [x] **Step 2: Extend the script imports**
 
 In the same file, extend the two component imports:
 
@@ -1804,7 +1804,7 @@ import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 ```
 
-- [ ] **Step 3: Replace the placeholder members with the real editor**
+- [x] **Step 3: Replace the placeholder members with the real editor**
 
 Delete the `// ── Placeholder handlers wired by Task 6 ──` block from Task 5 Step 2 (`openCreate`, `openEdit`, `onDelete`, `editorOpen`, `editingId`) and put this in its place:
 
@@ -1899,7 +1899,7 @@ function onDelete(task: Task): void {
 }
 ```
 
-- [ ] **Step 4: Add the modal styles**
+- [x] **Step 4: Add the modal styles**
 
 Append to the `<style scoped lang="scss">` block:
 
@@ -1931,12 +1931,12 @@ Append to the `<style scoped lang="scss">` block:
 }
 ```
 
-- [ ] **Step 5: Verify it typechecks**
+- [x] **Step 5: Verify it typechecks**
 
 Run: `pnpm --filter @kermanych/ui exec vue-tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 6: Verify create, edit, assign and the invariants in the browser**
+- [x] **Step 6: Verify create, edit, assign and the invariants in the browser**
 
 With `supabase start`, `pnpm dev:api` and `pnpm dev:ui` running and a signed-in user who owns a project, open <http://localhost:5317/#/board>. Expected, in order:
 
@@ -1952,7 +1952,7 @@ With `supabase start`, `pnpm dev:api` and `pnpm dev:ui` running and a signed-in 
 8. Set it back (`update tasks set status = 'backlog' …`), then «Видалити» → the card disappears and the row is gone.
 9. Console clean throughout.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add kermanych/apps/ui/src/pages/BoardPage.vue
@@ -1971,7 +1971,7 @@ git commit -m "feat(ui): board task create/edit modal, assign control and reserv
 - Produces: a «Дошка команди» button in the board header, and a `☁` tag on every local session row that carries a `taskId`.
 - Non-goals: the file is NOT restructured. No new modal, no change to `KTable`'s columns, `boardRows`, `STATUS_RANK`, the launcher or any existing handler.
 
-- [ ] **Step 1: Add the header link**
+- [x] **Step 1: Add the header link**
 
 In the template, `.ws__board-controls` currently reads (lines 16-20):
 
@@ -1989,7 +1989,7 @@ Insert one line directly after line 16, so the cloud link sits leftmost and the 
             <KBtn variant="ghost" title="Спільна дошка задач команди" @click="goToBoard">Дошка команди</KBtn>
 ```
 
-- [ ] **Step 2: Surface the cloud task title on local rows**
+- [x] **Step 2: Surface the cloud task title on local rows**
 
 The `#cell-name` slot currently reads (lines 40-50):
 
@@ -2007,7 +2007,7 @@ Insert one line directly after line 43 (`{{ row.name }}`), before the first kind
               <KTag v-if="row.taskId">☁ {{ cloudTaskTitle(row.taskId) }}</KTag>
 ```
 
-- [ ] **Step 3: Extend the script imports**
+- [x] **Step 3: Extend the script imports**
 
 Line 448 currently reads:
 
@@ -2028,7 +2028,7 @@ import { useBoard } from 'stores/board';
 import { useRouter } from 'vue-router';
 ```
 
-- [ ] **Step 4: Wire the board store and the two helpers**
+- [x] **Step 4: Wire the board store and the two helpers**
 
 Line 484 currently reads `const now = useNow();`. Insert after it:
 
@@ -2053,12 +2053,12 @@ function goToBoard(): void {
 }
 ```
 
-- [ ] **Step 5: Verify it typechecks**
+- [x] **Step 5: Verify it typechecks**
 
 Run: `pnpm --filter @kermanych/ui exec vue-tsc --noEmit`
 Expected: no errors. `row.taskId` must resolve — it comes from Plan B's `Session.taskId?: string`.
 
-- [ ] **Step 6: Verify both surfaces in the browser**
+- [x] **Step 6: Verify both surfaces in the browser**
 
 With the stack running and signed in, open <http://localhost:5317/#/>. Expected:
 1. The selected project's board header shows «Дошка команди» to the left of the view toggle; clicking it navigates to `#/board`, and the browser Back button returns to the workspace.
@@ -2071,7 +2071,7 @@ With the stack running and signed in, open <http://localhost:5317/#/>. Expected:
    Reload the page. Expected: that row shows `☁ <the task's title>` next to its name — the title comes from the board store, which `onMounted` loaded. If Supabase is unreachable the tag degrades to `☁ з дошки` and no toast appears.
 4. Console clean.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add kermanych/apps/ui/src/pages/WorkspacePage.vue
@@ -2086,7 +2086,7 @@ git commit -m "feat(ui): link the workspace to the cloud board and name a sessio
 
 **Prerequisites:** `supabase start`; `pnpm dev:api` and `pnpm dev:ui` running; TWO GitHub accounts, each having signed in at least once so both have a `profiles` row; two separate browser profiles (Chrome «Add profile», or one Chrome window plus one Firefox window — NOT two tabs of the same profile, which share the Supabase session storage).
 
-- [ ] **Step 1: Set up one shared project**
+- [x] **Step 1: Set up one shared project**
 
 As user **A**, sign in and create a project. Add user **B** as a member. If Plan B's members panel is not in front of you, do it in psql:
 
@@ -2102,25 +2102,25 @@ SQL
 
 Expected: two rows — A as `owner`, B as `member`.
 
-- [ ] **Step 2: A creates a task, B sees it appear with no reload**
+- [x] **Step 2: A creates a task, B sees it appear with no reload**
 
 Open `#/board` in BOTH windows. As A: «Нова задача» → title «Оновити хедер», description «Прибрати захардкоджені кольори», model `opus-5`, prefix `feature` → «Створити».
 
 Expected: the card appears in A's Беклог immediately, and in **B's Беклог within about a second without B touching anything** — this is the Realtime binding doing its job. B's card carries the same tags and «оновлено щойно».
 
-- [ ] **Step 3: A assigns to B; both boards update**
+- [x] **Step 3: A assigns to B; both boards update**
 
 As A, pick B's GitHub handle in the card's assignee select.
 
 Expected: A's card shows B's handle and avatar. B's card shows the same, live. `select assignee_id from tasks;` in psql matches B's profile id.
 
-- [ ] **Step 4: B edits the description; A sees it**
+- [x] **Step 4: B edits the description; A sees it**
 
 As B, «Змінити» on the card, replace the description with «Замінити hex на var(--k-*)», «Зберегти».
 
 Expected: B's card text changes on save; A's card text changes live without a reload. This proves a `member` (not just the owner) may update a task — the `tasks` UPDATE policy is membership-scoped.
 
-- [ ] **Step 5: An active task refuses reassignment, with the toast and no change**
+- [x] **Step 5: An active task refuses reassignment, with the toast and no change**
 
 In Supabase Studio (<http://127.0.0.1:54323>) set the status directly, bypassing the UI:
 
@@ -2141,7 +2141,7 @@ Expected: on BOTH boards the card moves to «В роботі» live, and its ass
 
 Then release it: `update tasks set status = 'backlog' where title = 'Оновити хедер';` → both cards return to Беклог and the select re-enables.
 
-- [ ] **Step 6: Sign-out tears the channel down**
+- [x] **Step 6: Sign-out tears the channel down**
 
 In B's window, open devtools → Network → WS and note the live `/realtime/v1/websocket` connection. Sign out (Plan A's sign-out path, or from the console:
 `document.querySelector('#q-app').__vue_app__.config.globalProperties.$pinia._s.get('auth').signOut()`).
@@ -2153,7 +2153,7 @@ Expected, in order:
 4. As A, edit the task title. B's window receives NOTHING — no console noise, no state change; the board store's task list was cleared on sign-out.
 5. B signs back in and opens `#/board`: the full current board is there, including A's edit, because `subscribe()` refetches before it opens the channel.
 
-- [ ] **Step 7: Verify the board tolerates a lost channel**
+- [x] **Step 7: Verify the board tolerates a lost channel**
 
 With both boards open, stop the Realtime service (`supabase stop` then `supabase start`, or block it in devtools' offline mode). Expected: `useBoard().channelState` flips to `CHANNEL_ERROR`/`TIMED_OUT`/`CLOSED` — check in A's console:
 
@@ -2163,12 +2163,12 @@ document.querySelector('#q-app').__vue_app__.config.globalProperties.$pinia._s.g
 
 Expected: not `SUBSCRIBED`, and `offline` is `true`. Nothing is rendered for it yet — Plan D's Task 7 owns that banner. Navigate away from `/board` and back: the page remounts, `subscribe()` refetches the full list and re-opens the channel, and `channelState` returns to `SUBSCRIBED`.
 
-- [ ] **Step 8: Full suites**
+- [x] **Step 8: Full suites**
 
 Run: `pnpm --filter @kermanych/cloud exec vitest run && pnpm --filter @kermanych/ui exec vue-tsc --noEmit`
 Expected: PASS / no type errors. (`apps/api` and `packages/core` are untouched by this plan; run their suites too if the working tree also carries sibling-plan work.)
 
-- [ ] **Step 9: Clean up the smoke data**
+- [x] **Step 9: Clean up the smoke data**
 
 Delete the smoke task and, if you created it only for this run, the project. B's membership row goes with the project (`on delete cascade`).
 
@@ -2181,7 +2181,7 @@ SQL
 
 Expected: both boards go empty live (the cascade fires DELETE events for the tasks), and no card is left behind.
 
-- [ ] **Step 10: Commit the completed plan**
+- [x] **Step 10: Commit the completed plan**
 
 This task ships no source change, so the only artifact is the plan itself with its boxes ticked — that is what tells the next reader the board half was actually verified.
 
@@ -2189,6 +2189,24 @@ This task ships no source change, so the only artifact is the plan itself with i
 git add kermanych/docs/superpowers/plans/2026-08-21-team-cloud-board-tasks.md
 git commit -m "docs(plan): record the two-account cloud board verification"
 ```
+
+**How Task 8 was actually run** (full log:
+`.superpowers/sdd/2026-08-21-team-cloud-board-tasks/task-7-8-report.md`). Two accounts, two origins
+(`5318`/api `4417` and `5319`/api `4418`), each with its own `/tmp` registry; every step above passed.
+Three steps had to be performed differently than written, and one is a HUMAN HANDOFF:
+
+- Step 5's «set the status in Supabase Studio» is impossible: `tasks_guard()` raises `only the assignee
+  can change status` for the `postgres` role too (`auth.uid()` is null there). The status was set with the
+  ASSIGNEE's JWT over PostgREST — which is exactly what Plan D's `pushTaskStatus` will do.
+- Step 9's «both boards go empty live» is wrong by this plan's own ruling: a filtered binding never
+  delivers DELETE. Both boards dropped the deleted card on the next reconcile poll (~12 s observed, the
+  ≤60 s contract).
+- HUMAN HANDOFF — sign-in itself. `kermanych/.env` still carries placeholder GitHub OAuth credentials, so
+  both accounts were signed in by injecting a password-grant session. Once the real OAuth App values are
+  in place, a human must repeat: the «Увійти через GitHub» round trip for both accounts, and Step 6's
+  sign-out → sign-back-in through that same button. Everything the button hands to the app afterwards
+  (session in `localStorage`, `profiles` row, RLS-scoped reads, channel teardown on sign-out and the
+  refetch on sign-in) was verified.
 
 ---
 
