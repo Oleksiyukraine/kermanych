@@ -40,7 +40,6 @@ export {
   getTask,
   createTask,
   patchTask,
-  assignTask,
   claimTask,
   pushTaskStatus,
   deleteTask,

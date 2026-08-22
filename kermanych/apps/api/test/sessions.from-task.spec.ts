@@ -44,10 +44,10 @@ vi.mock("@kermanych/cloud", () => ({
     cloudTasks.set(taskId, next);
     return next;
   },
-  assignTask: async (_client: unknown, taskId: string, assigneeId: string | null) => {
+  patchTask: async (_client: unknown, taskId: string, patch: { assigneeId?: string | null }) => {
     const t = cloudTasks.get(taskId);
     if (!t) throw new Error("task not found");
-    const next: Task = { ...t, assigneeId: assigneeId ?? undefined };
+    const next: Task = { ...t, assigneeId: patch.assigneeId ?? undefined };
     cloudTasks.set(taskId, next);
     return next;
   },

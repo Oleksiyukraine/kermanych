@@ -31,7 +31,7 @@ import {
   type TaskDraft,
   type TranscriptEntry,
 } from "@kermanych/core";
-import { assignTask, claimTask, getTask, listProjects, type CloudProject } from "@kermanych/cloud";
+import { claimTask, getTask, listProjects, patchTask, type CloudProject } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 
 type Live = {
@@ -294,7 +294,7 @@ export class SupervisorService implements OnModuleDestroy {
       // a pre-existing assignment is somebody's deliberate state and stays. The cloud
       // status is still `backlog` here, so `tasks_guard()` permits the write.
       if (claimed)
-        await assignTask(client, taskId, null).catch((e: unknown) =>
+        await patchTask(client, taskId, { assigneeId: null }).catch((e: unknown) =>
           console.warn(`[supervisor] could not release the claim on task ${taskId}: ${(e as Error).message}`),
         );
       throw err;

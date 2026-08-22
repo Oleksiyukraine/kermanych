@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  assignTask,
   claimTask,
   createTask,
   deleteTask,
@@ -164,18 +163,6 @@ describe("patchTask", () => {
   it("surfaces the tasks_guard refusal verbatim", async () => {
     const { client } = fakeClient({ data: null, error: { message: "task is active" } });
     await expect(patchTask(client, "t1", { assigneeId: "u2" })).rejects.toThrow(/task is active/);
-  });
-});
-
-describe("assignTask", () => {
-  it("updates assignee_id for the given id", async () => {
-    const { client, queries } = fakeClient({ data: { ...taskRow, assignee_id: "u2" }, error: null });
-
-    const t = await assignTask(client, "t1", "u2");
-
-    expect(queries[0]!.ops[0]).toEqual(["update", { assignee_id: "u2" }]);
-    expect(queries[0]!.ops[1]).toEqual(["eq", "id", "t1"]);
-    expect(t.assigneeId).toBe("u2");
   });
 });
 

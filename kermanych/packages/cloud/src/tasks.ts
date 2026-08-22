@@ -125,13 +125,6 @@ export async function patchTask(client: SupabaseClient, id: string, patch: TaskP
   return toTask(data as TaskRow);
 }
 
-// Assignment has its own name because it is the one edit tasks_guard refuses on an active
-// task (message `task is active`); a dedicated call keeps that refusal legible at the call
-// site. `null` clears the assignment.
-export function assignTask(client: SupabaseClient, id: string, assigneeId: string | null): Promise<Task> {
-  return patchTask(client, id, { assigneeId });
-}
-
 // Atomic self-assign: one `UPDATE tasks SET assignee_id = $1 WHERE id = $2 AND assignee_id
 // IS NULL`. Zero matched rows come back as `{ data: null, error: null }` — that is what
 // maybeSingle means — and it is the "someone else claimed it first" signal, NOT an error.
