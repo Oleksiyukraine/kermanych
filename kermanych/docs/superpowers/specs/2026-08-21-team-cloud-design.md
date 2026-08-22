@@ -406,10 +406,22 @@ implementation depends on, with their consequences.
   `onAuthStateChange` (`SIGNED_IN` / `TOKEN_REFRESHED` / `INITIAL_SESSION` →
   `realtime.setAuth(token)`); the app MUST NOT call `setAuth` itself, which
   would pin the token and disable that refresh.
-- **RLS is NOT applied to `DELETE` events** (Postgres cannot authorize a deleted
-  row). Accepted limitation: a non-member who guesses a project UUID and
-  subscribes could observe task-deletion primary keys — ids only, no content.
-  Deletion is rare (owner/author, non-active tasks) and carries no secret.
+- **A filtered binding never receives `DELETE` at all** — verified live against
+  the local stack. With the default replica identity the `old` image is only
+  `{ id }`, so `project_id=in.(…)` cannot match it and the event is dropped for
+  every filtered subscriber; the unfiltered fallback path does receive it.
+  Consequence, decided deliberately: the board reconciles deletions with a full
+  `listTasks` refetch (on every (re)subscribe, on `visibilitychange` after the
+  tab was hidden, and on a 60 s safety timer while visible), mirroring the
+  existing `installVisibilityResync` pattern in `apps/ui/src/lib/socket.ts`. A
+  card deleted by someone else therefore disappears on the next reconcile rather
+  than instantly, and launching a stale card fails with `task not found`.
+- **`replica identity full` is REJECTED as the fix for that.** It would make the
+  filter match, but RLS is NOT applied to `DELETE` events (Postgres cannot
+  authorize a deleted row), so a full old-image would hand any non-member who
+  guesses a project UUID the entire deleted row — title and description
+  included. With the default identity the same attacker learns a bare uuid.
+  Trading a content leak for instant card removal is the wrong trade.
 - **Bindings must be registered before `subscribe()`** and duplicate identical
   `postgres_changes` filters on one channel are silently dropped, so
   `subscribeTasks` builds exactly one binding and tears down with
