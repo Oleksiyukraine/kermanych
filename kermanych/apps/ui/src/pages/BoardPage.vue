@@ -16,6 +16,17 @@
       Локальних проєктів поза хмарою: {{ orphanCount }} — дошка їх не показує.
     </p>
 
+    <!-- Two different failures, two different lines: the browser's own channel to the cloud
+         (board.offline, computed by the store) and this machine's unsent push queue. -->
+    <div v-if="board.offline || outboxPending > 0" class="board__alerts">
+      <p v-if="board.offline" class="board__alert board__alert--offline" role="status">
+        Немає звʼязку з хмарою — показано останній відомий стан дошки. Локальні сесії працюють як завжди.
+      </p>
+      <p v-if="outboxPending > 0" class="board__alert board__alert--outbox" role="status">
+        Статуси цієї машини ще не відправлені: {{ outboxPending }}. Надішлемо автоматично, щойно зʼявиться звʼязок.
+      </p>
+    </div>
+
     <div v-if="cloud.projects.length" class="board__columns">
       <section v-for="col in COLUMNS" :key="col.key" class="board__column">
         <header class="board__column-head">
@@ -53,6 +64,11 @@
 
             <footer class="board__card-foot">
               <span class="board__card-age mono">оновлено {{ relativeTime(task.updatedAt, now) }}</span>
+              <span
+                v-if="isStale(task)"
+                class="board__stale"
+                :title="`Останнє оновлення ${relativeTime(task.updatedAt, now)} — машина виконавця, схоже, офлайн`"
+              >⚠ давно без змін</span>
               <span class="board__spacer"></span>
               <KBtn variant="ghost" @click="openEdit(task)">Змінити</KBtn>
               <KBtn variant="ghost" @click="onDelete(task)">Видалити</KBtn>
@@ -165,6 +181,7 @@ import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
 import { relativeTime } from '../lib/time';
 import { api } from '../lib/api';
+import { installReconcile } from '../lib/reconcile';
 
 const board = useBoard();
 const cloud = useProjects();
@@ -213,6 +230,40 @@ async function open(): Promise<void> {
 
 onMounted(open);
 onUnmounted(() => board.unsubscribe());
+
+// 5 s: fast enough that «щойно відправили» feels immediate, slow enough to be a rounding
+// error against the local API (one SELECT COUNT-shaped read of a table with at most a few
+// rows), and it only ticks while the board is on screen.
+const OUTBOX_POLL_MS = 5_000;
+
+// ── Local push queue ──────────────────────────────────────────────────────────
+// The local queue is invisible to Supabase: this browser can be perfectly online while
+// THIS machine's pushes are stuck (expired token, blocked host). Only the local API knows,
+// and only by polling — there is no ServerEvent for it (see cloud.controller.ts).
+//
+// installReconcile, not a bare setInterval: it already owns the "poll while visible, stop
+// while hidden, catch up on return, detach everything on teardown" contract the board's
+// task reconcile uses, so a hidden tab costs nothing and unmount leaves no timer.
+const outboxPending = ref(0);
+let stopOutboxPoll: (() => void) | undefined;
+
+async function refreshOutbox(): Promise<void> {
+  try {
+    outboxPending.value = (await api.cloudOutbox()).pending;
+  } catch {
+    // Local API unreachable (Electron still booting, dev server restarting): keep the last
+    // known count rather than flashing a false "all clear".
+  }
+}
+
+onMounted(() => {
+  void refreshOutbox();
+  stopOutboxPoll = installReconcile(() => void refreshOutbox(), { intervalMs: OUTBOX_POLL_MS });
+});
+onUnmounted(() => {
+  stopOutboxPoll?.();
+  stopOutboxPoll = undefined;
+});
 
 // 0 → n only: once a channel exists the store rebuilds it on every project-set change, and
 // a board that never had one is exactly the case the store skips.
@@ -273,6 +324,23 @@ const orphanCount = computed(() => {
   const known = new Set(cloud.projects.map((p) => p.id));
   return local.projects.filter((p) => !known.has(p.id)).length;
 });
+
+// ── Staleness ─────────────────────────────────────────────────────────────────
+// Stale = the card claims to be working, but nothing has moved for a while. There is no
+// heartbeat in v1 (spec Non-goals), so the age of `updated_at` is the only signal — and
+// because tasks_guard() overwrites it with now() on every push, that age measures time
+// since the executing machine last PUSHED, which is exactly the thing that goes quiet.
+//
+// Only self-driving statuses qualify. `waiting_input` is excluded on purpose: a task
+// blocked on its owner's answer is legitimately idle for hours — that is not staleness,
+// that is the design (model B1). `backlog` and the five end states are not moving by
+// definition, so age says nothing about them either.
+const STALE_MS = 90_000;
+const SELF_DRIVING: readonly TaskStatus[] = ['queued', 'thinking', 'tool'];
+
+function isStale(task: Task): boolean {
+  return SELF_DRIVING.includes(task.status) && now.value - new Date(task.updatedAt).getTime() > STALE_MS;
+}
 
 // ── Assignee ──────────────────────────────────────────────────────────────────
 function membersOf(projectId: string): ProjectMember[] {
@@ -731,6 +799,35 @@ function onDelete(task: Task): void {
   margin: 0;
   font-size: 12px;
   // The kit has no `--k-danger`; `--k-accent` is what every other refusal on this page uses.
+  color: var(--k-accent);
+}
+
+.board__alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.board__alert {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--k-surface2);
+}
+
+.board__alert--offline {
+  color: var(--k-muted);
+}
+
+.board__alert--outbox {
+  color: var(--k-accent);
+}
+
+.board__stale {
+  font-size: 11px;
+  white-space: nowrap;
   color: var(--k-accent);
 }
 </style>

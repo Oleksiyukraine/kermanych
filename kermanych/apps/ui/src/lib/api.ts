@@ -155,6 +155,11 @@ export const api = {
   createSessionFromTask: (taskId: string): Promise<Session> =>
     post<Session>('/sessions/from-task', { taskId }),
 
+  // How many status pushes THIS machine still owes the cloud. Only the local process can
+  // see that, so the board polls it (see the api controller for why it is not an event).
+  cloudOutbox: (): Promise<{ pending: number }> =>
+    get<{ pending: number }>('/cloud/outbox'),
+
   promoteChat: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/promote`, {}),
 
