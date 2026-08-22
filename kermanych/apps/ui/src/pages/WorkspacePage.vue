@@ -563,7 +563,7 @@ const entries = computed<TranscriptEntry[]>(() =>
 // The log is grouped into request blocks: one collapsed summary row per finished
 // request. The detail toolbar drives the whole block — muted rows, coalesced groups,
 // tool cards and reasoning chains — so it is a command with a sequence number rather
-// than a boolean: pressing «згорнути все» while already collapsed still has to collapse
+// than a boolean: pressing «стиснути все» while already collapsed still has to collapse
 // what the operator opened by hand.
 const expandAll = ref<ExpandAllCommand>(EXPAND_ALL_NONE);
 function onExpandAll(on: boolean): void {

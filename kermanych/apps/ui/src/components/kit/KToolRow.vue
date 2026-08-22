@@ -58,7 +58,7 @@ watch(() => props.entry.id, () => {
 });
 
 // The toolbar is a command, not an override: every press writes the block-wide answer
-// into this row's own state, so `розгорнути все` really opens the card and `згорнути все`
+// into this row's own state, so `розгорнути все` really opens the card and `стиснути все`
 // really closes it — including a card the operator opened by hand — and the row stays
 // individually toggleable afterwards in either position. Keyed on `seq`, not `on`, so a
 // press that re-asserts the mode already set still acts, and `immediate` covers a row

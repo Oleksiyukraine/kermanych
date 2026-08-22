@@ -70,11 +70,16 @@
       </div>
     </header>
 
-    <!-- detail toolbar — the log's density switch (muted rows of finished blocks) -->
+    <!-- detail toolbar — the log's density switch (muted rows of finished blocks).
+         «стиснути все», not «згорнути все»: Ukrainian `роз|горнути` contains `з|горнути`,
+         so «згорнути все» is a strict substring of «розгорнути все» and the two controls
+         had no distinguishable accessible name — every name-based consumer, from voice
+         control to a text locator, resolved the collapse button to the expand one.
+         «стиснути» is the plain antonym and shares no prefix with it. -->
     <div class="k-panel__tools mono">
       <span class="k-panel__tools-label">деталі:</span>
       <button type="button" class="k-panel__tools-btn" @click="emit('expandAll', true)">розгорнути все</button>
-      <button type="button" class="k-panel__tools-btn" @click="emit('expandAll', false)">згорнути все</button>
+      <button type="button" class="k-panel__tools-btn" @click="emit('expandAll', false)">стиснути все</button>
     </div>
 
     <!-- my-message navigation — jump between the operator's own messages -->

@@ -103,9 +103,9 @@ function toggle(i: number): void {
 // The toolbar reaches the coalesced groups too: their members are KToolRow rows that are
 // not even rendered while the group is shut, so leaving the set alone would make
 // `розгорнути все` a no-op for every grouped call. Written as a command, like `open`
-// above, so `згорнути все` also closes a group the operator opened by hand.
+// above, so `стиснути все` also closes a group the operator opened by hand.
 // Deliberately NOT applied to `open`: this switch is about detail inside a block, and a
-// `згорнути все` that shut the live block would hide the work in flight.
+// `стиснути все` that shut the live block would hide the work in flight.
 watch(
   () => props.expandAll.seq,
   () => {

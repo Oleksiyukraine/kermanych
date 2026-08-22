@@ -93,7 +93,7 @@ import the density this design exists to remove.
    spends a line without one.
 2. The tool name occupies a fixed-width column and never wraps.
 3. All detail is collapsed by default, including errors; a row click toggles a
-   card. `розгорнути все` / `згорнути все` act on the whole block.
+   card. `розгорнути все` / `стиснути все` act on the whole block.
 4. Cards are per-tool: `edit` renders a real diff with gutters; `grep` renders
    per-file counts then match lines; `read`/`write` render numbered content;
    `bash` renders command, output and `wall/timeout/exit`; `todo` renders the

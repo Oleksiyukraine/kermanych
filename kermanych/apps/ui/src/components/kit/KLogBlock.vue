@@ -61,11 +61,17 @@ const renderedText = computed(() =>
 
 // Reasoning is collapsed by default; expand to read the full chain. The detail toolbar
 // reaches it too — `деталі: розгорнути все` that left every reasoning chain shut would be
-// showing the chips and hiding the details they label, and `згорнути все` has to be able
+// showing the chips and hiding the details they label, and `стиснути все` has to be able
 // to undo a chain the operator opened by hand or the pair is not symmetric. Keyed on
 // `seq` so a press that re-asserts the current mode still acts.
 const open = ref(false);
-watch(() => props.entry, () => { open.value = props.expandAll.on; });
+// The log renders its items index-keyed, so one instance is rebound to another entry as
+// the transcript grows. Watch the id, not the object, exactly as KToolRow does:
+// `transcript_update` rebuilds the matched entry copy-on-write and `transcript_reset`
+// replaces the whole array, so object identity changes on every patch of a live session
+// and would snap a hand-opened reasoning body shut mid-turn. Every `TranscriptEntry`
+// variant carries an `id`, so this is a total ordering on rebinds, not a tool-only trick.
+watch(() => props.entry.id, () => { open.value = props.expandAll.on; });
 watch(() => props.expandAll.seq, () => { open.value = props.expandAll.on; }, { immediate: true });
 
 const renderedThinking = computed(() =>
