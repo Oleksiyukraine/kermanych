@@ -16,7 +16,7 @@ import { useNow } from '../../composables/useNow';
 // The one row that never disappears: model, context budget, accumulated spend and — on
 // the right — what the agent is doing right now. Every figure here is either true or
 // absent; a rounded-down zero would be a claim the project does not let this row make.
-const props = defineProps<{ session: Session; cost: number; stalled: boolean }>();
+const props = defineProps<{ session: Session; cost: number }>();
 
 const now = useNow(1000);
 
@@ -37,6 +37,9 @@ const metrics = computed(() => {
   const pc = props.session.contextPercent;
   return [
     // Sub-half-percent context is still context loaded; `toFixed(0)` would call it 0%.
+    // An exact 0 is not rounded from anything — the supervisor assigns omp's raw reading
+    // or nothing, with no `?? 0` anywhere — so it keeps `0%`; flooring that too would be
+    // the mirror-image lie, hiding a true zero behind a `<`. Do not "tidy" this guard.
     pc == null ? '' : pc > 0 && pc < 0.5 ? '<1%' : `${pc.toFixed(0)}%`,
     // Sub-cent spend is real spend: rounding it to `$0.00` would assert the chat was free.
     props.cost >= 0.005 ? `$${props.cost.toFixed(2)}` : props.cost ? '<$0.01' : '',
@@ -50,12 +53,17 @@ const live = computed(() =>
   : '',
 );
 // `lastEventAt` is a silence heartbeat, not a turn clock — every streaming delta resets
-// it — so it is labelled as silence rather than passed off as time spent working. Past
-// the stall threshold the pinned banner tells that story with its own wording, and one
-// fact reported twice with two roundings is worse than reporting it once: the accent
-// figure stands down and leaves the banner to it.
+// it — so it is labelled as silence rather than passed off as time spent working. That
+// label is the whole fix: a row reading `тиша 3 хв` beside a stall banner reading
+// `Немає активності 3 хв` agrees with it rather than contradicting it. The figure is
+// deliberately NOT suppressed at the stall threshold: the banner is an in-flow block at
+// the tail of a scrollable log, so it is off-screen whenever the operator has scrolled
+// back through history (`onLogScroll` and `jumpUser` both drop auto-follow), and this row
+// is the one lane that never scrolls away. Suppressing here would blank the only visible
+// evidence exactly when it matters most — and `queued` is live here but outside
+// KPanel's `running`, so no banner could ever arrive to replace it.
 const silence = computed(() => {
-  if (!live.value || props.stalled || !props.session.lastEventAt) return '';
+  if (!live.value || !props.session.lastEventAt) return '';
   return dur(Math.max(0, now.value - props.session.lastEventAt));
 });
 </script>

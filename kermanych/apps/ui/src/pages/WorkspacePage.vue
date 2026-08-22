@@ -170,7 +170,7 @@
           @newTask="openTaskFromText"
           @promote-agent="onPromoteAgent"
           @promote-task="onPromoteTask"
-          @expand-all="expandAll = $event"
+          @expand-all="onExpandAll"
         >
           <template v-if="blocks.length">
             <KRequestBlock
@@ -468,6 +468,7 @@ import {
 } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import type { MessageMode } from '../lib/api';
+import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
@@ -560,8 +561,14 @@ const entries = computed<TranscriptEntry[]>(() =>
 );
 
 // The log is grouped into request blocks: one collapsed summary row per finished
-// request. `expandAll` is the detail toolbar's switch for muted rows.
-const expandAll = ref(false);
+// request. The detail toolbar drives the whole block — muted rows, coalesced groups,
+// tool cards and reasoning chains — so it is a command with a sequence number rather
+// than a boolean: pressing «згорнути все» while already collapsed still has to collapse
+// what the operator opened by hand.
+const expandAll = ref<ExpandAllCommand>(EXPAND_ALL_NONE);
+function onExpandAll(on: boolean): void {
+  expandAll.value = nextExpandAll(expandAll.value, on);
+}
 const blocks = computed(() => buildChatBlocks(entries.value));
 // Accumulated spend of the whole transcript, for the panel's status row. A computed
 // rather than an inline template reduce, so it is not re-summed on every re-render.

@@ -95,8 +95,9 @@
           @send="onSend"
           @stop="onStop"
           @delete="onDelete"
+          @expand-all="onGalleryExpandAll"
         >
-          <KLogBlock v-for="(e, i) in panelLog" :key="i" :entry="e" session-id="kit-demo" />
+          <KLogBlock v-for="(e, i) in panelLog" :key="i" :entry="e" session-id="kit-demo" :expand-all="galleryExpandAll" />
         </KPanel>
         <KPanel
           :session="waitingSession"
@@ -104,8 +105,9 @@
           @answer="onAnswer"
           @stop="onStop"
           @delete="onDelete"
+          @expand-all="onGalleryExpandAll"
         >
-          <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" session-id="kit-demo" />
+          <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" session-id="kit-demo" :expand-all="galleryExpandAll" />
         </KPanel>
         <KPanel
           :session="stalledSession"
@@ -113,8 +115,9 @@
           @restart="onRestart"
           @stop="onStop"
           @delete="onDelete"
+          @expand-all="onGalleryExpandAll"
         >
-          <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" session-id="kit-demo" />
+          <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" session-id="kit-demo" :expand-all="galleryExpandAll" />
         </KPanel>
       </div>
       <div class="kit__caption mono">остання дія: {{ lastAction || '—' }}</div>
@@ -124,7 +127,7 @@
     <section class="kit__section">
       <div class="kit__label">06 · Блоки логу</div>
       <div class="kit__logblocks">
-        <KLogBlock v-for="(e, i) in logSamples" :key="i" :entry="e" session-id="kit-demo" />
+        <KLogBlock v-for="(e, i) in logSamples" :key="i" :entry="e" session-id="kit-demo" :expand-all="galleryExpandAll" />
       </div>
     </section>
 
@@ -220,6 +223,7 @@ import { ref } from 'vue';
 import type {
   SessionStatus, Session, Group, TranscriptEntry, RpcExtensionUIResponse,
 } from '@kermanych/core';
+import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KTag from 'components/kit/KTag.vue';
@@ -384,6 +388,12 @@ const railGroups: { group: Group; active: boolean; count: number }[] = [
   { group: { id: 'g3', name: 'billing', projectDir: '', createdAt: now }, active: false, count: 1 },
 ];
 const lastAction = ref('');
+// The gallery panels carry the real detail toolbar, so it drives a real command here too
+// — a showcase with a dead button showcases the wrong thing.
+const galleryExpandAll = ref<ExpandAllCommand>(EXPAND_ALL_NONE);
+function onGalleryExpandAll(on: boolean): void {
+  galleryExpandAll.value = nextExpandAll(galleryExpandAll.value, on);
+}
 function onSend(text: string) { lastAction.value = `send: ${text}`; }
 function onAnswer(res: RpcExtensionUIResponse) { lastAction.value = `answer: ${JSON.stringify(res)}`; }
 function onStop() { lastAction.value = 'stop'; }

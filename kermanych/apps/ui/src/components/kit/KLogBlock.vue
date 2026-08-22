@@ -2,7 +2,7 @@
   <!-- `turn` is ledger data for block summaries, not a row: it renders nothing at
        all, wrapper included, so it leaves no phantom gap in the log. -->
   <div v-if="entry.kind !== 'turn'" class="k-log" :class="`k-log--${entry.kind}`">
-    <KToolRow v-if="entry.kind === 'tool'" :entry="entry" :session-id="sessionId" />
+    <KToolRow v-if="entry.kind === 'tool'" :entry="entry" :session-id="sessionId" :expand-all="expandAll" />
 
     <!-- assistant_text — Markdown-rendered prose, UI font -->
     <div v-else-if="entry.kind === 'assistant_text'" class="k-log__markdown" v-html="renderedText" />
@@ -46,11 +46,12 @@
 import { computed, ref, watch } from 'vue';
 import type { TranscriptEntry } from '@kermanych/core';
 import { renderMarkdown } from '../../lib/markdown';
+import type { ExpandAllCommand } from '../../lib/expand-all';
 import KToolRow from './KToolRow.vue';
 
 // One transcript block. Tool rows delegate to KToolRow; `turn` entries are ledger
 // data for block summaries and deliberately render nothing.
-const props = defineProps<{ entry: TranscriptEntry; sessionId: string }>();
+const props = defineProps<{ entry: TranscriptEntry; sessionId: string; expandAll: ExpandAllCommand }>();
 
 // assistant_text renders as Markdown (headings, lists, code, links). Output is a
 // controlled tag set (html:false), safe for v-html.
@@ -58,9 +59,14 @@ const renderedText = computed(() =>
   props.entry.kind === 'assistant_text' ? renderMarkdown(props.entry.text) : '',
 );
 
-// Reasoning is collapsed by default; expand to read the full chain.
+// Reasoning is collapsed by default; expand to read the full chain. The detail toolbar
+// reaches it too — `деталі: розгорнути все` that left every reasoning chain shut would be
+// showing the chips and hiding the details they label, and `згорнути все` has to be able
+// to undo a chain the operator opened by hand or the pair is not symmetric. Keyed on
+// `seq` so a press that re-asserts the current mode still acts.
 const open = ref(false);
-watch(() => props.entry, () => { open.value = false; });
+watch(() => props.entry, () => { open.value = props.expandAll.on; });
+watch(() => props.expandAll.seq, () => { open.value = props.expandAll.on; }, { immediate: true });
 
 const renderedThinking = computed(() =>
   props.entry.kind === 'assistant_thinking' ? renderMarkdown(props.entry.text) : '',

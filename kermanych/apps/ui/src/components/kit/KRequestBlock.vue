@@ -33,13 +33,14 @@
             <span class="k-rb__gch" aria-hidden="true">{{ opened.has(i) ? '⌄' : '›' }}</span>
           </button>
           <div v-if="opened.has(i)" class="k-rb__members">
-            <KToolRow v-for="m in item.members" :key="m.id" :entry="m" :session-id="sessionId" />
+            <KToolRow v-for="m in item.members" :key="m.id" :entry="m" :session-id="sessionId" :expand-all="expandAll" />
           </div>
         </div>
         <KLogBlock
-          v-else-if="!item.muted || expandAll"
+          v-else-if="!item.muted || expandAll.on"
           :entry="item.entry"
           :session-id="sessionId"
+          :expand-all="expandAll"
         />
       </template>
     </template>
@@ -51,8 +52,9 @@ import { computed, ref, watch } from 'vue';
 import type { ChatBlock, ToolEntry } from '@kermanych/core';
 import KLogBlock from './KLogBlock.vue';
 import KToolRow from './KToolRow.vue';
+import type { ExpandAllCommand } from '../../lib/expand-all';
 
-const props = defineProps<{ block: ChatBlock; sessionId: string; open: boolean; expandAll: boolean }>();
+const props = defineProps<{ block: ChatBlock; sessionId: string; open: boolean; expandAll: ExpandAllCommand }>();
 
 const open = ref(props.open);
 // The live block is the open one: when a new request arrives this block stops being
@@ -92,6 +94,22 @@ function toggle(i: number): void {
   else next.add(i);
   opened.value = next;
 }
+
+// The toolbar reaches the coalesced groups too: their members are KToolRow rows that are
+// not even rendered while the group is shut, so leaving the set alone would make
+// `розгорнути все` a no-op for every grouped call. Written as a command, like `open`
+// above, so `згорнути все` also closes a group the operator opened by hand.
+// Deliberately NOT applied to `open`: this switch is about detail inside a block, and a
+// `згорнути все` that shut the live block would hide the work in flight.
+watch(
+  () => props.expandAll.seq,
+  () => {
+    opened.value = props.expandAll.on
+      ? new Set(props.block.items.flatMap((it, i) => (it.kind === 'group' ? [i] : [])))
+      : new Set();
+  },
+  { immediate: true },
+);
 
 // A coalesced run is only as good as its worst member: `buildChatBlocks` groups
 // consecutive read-likes regardless of status, so a hardcoded tick would hide a failed

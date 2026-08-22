@@ -163,9 +163,8 @@
     <!-- plan lane — present only while the agent keeps a todo list -->
     <KTodoLane :phases="session.todoPhases" />
 
-    <!-- status row — never hidden: model, context, spend, live action. `stalled` is
-         passed so the row's silence figure stands down once the banner above owns it. -->
-    <KStatusRow :session="session" :cost="cost" :stalled="stalled" />
+    <!-- status row — never hidden: model, context, spend, live action -->
+    <KStatusRow :session="session" :cost="cost" />
 
     <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎) -->
     <div v-if="!isMerged" class="k-panel__composer">

@@ -26,9 +26,17 @@
 import { computed, ref, watch } from 'vue';
 import type { ToolLine, TranscriptEntry } from '@kermanych/core';
 import { api } from '../../lib/api';
+import type { ExpandAllCommand } from '../../lib/expand-all';
 import KToolCard from './KToolCard.vue';
 
-const props = defineProps<{ entry: Extract<TranscriptEntry, { kind: 'tool' }>; sessionId: string }>();
+const props = defineProps<{
+  entry: Extract<TranscriptEntry, { kind: 'tool' }>;
+  sessionId: string;
+  // The detail toolbar's last command. Required rather than optional: a card that
+  // silently never hears the toolbar is exactly the defect this prop exists to fix, so a
+  // call site that forgets to thread it has to fail the typecheck.
+  expandAll: ExpandAllCommand;
+}>();
 
 const open = ref(false);
 const fullLines = ref<ToolLine[] | undefined>(undefined);
@@ -40,11 +48,22 @@ const loading = ref(false);
 // the entry copy-on-write on every patch, and identity would collapse an expanded row
 // the moment its tool finishes.
 watch(() => props.entry.id, () => {
-  open.value = false;
+  // A rebound row is a different call, so its own toggle is forgotten — but the last
+  // block-wide command still applies, or `розгорнути все` would silently lapse as the
+  // log grows.
+  open.value = props.expandAll.on;
   fullLines.value = undefined;
   error.value = '';
   loading.value = false;
 });
+
+// The toolbar is a command, not an override: every press writes the block-wide answer
+// into this row's own state, so `розгорнути все` really opens the card and `згорнути все`
+// really closes it — including a card the operator opened by hand — and the row stays
+// individually toggleable afterwards in either position. Keyed on `seq`, not `on`, so a
+// press that re-asserts the mode already set still acts, and `immediate` covers a row
+// that mounts while the toolbar is already expanded.
+watch(() => props.expandAll.seq, () => { open.value = props.expandAll.on; }, { immediate: true });
 
 const glyph = computed(() => (props.entry.status === 'pending' ? '◆' : props.entry.status === 'ok' ? '✓' : '✗'));
 // The glyph alone reaches assistive technology as nothing, and no visible word follows it.
