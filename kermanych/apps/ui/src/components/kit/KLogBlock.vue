@@ -70,7 +70,8 @@ const renderedThinking = computed(() =>
 // Missing fields drop out entirely rather than leaving dangling separators.
 const chip = computed(() => {
   if (props.entry.kind !== 'assistant_thinking') return '';
-  const secs = props.entry.ms ? Math.round(props.entry.ms / 1000) : undefined;
+  // Sub-second reasoning clamps to 1 с: `думав 0 с` reads as broken, not as brief.
+  const secs = props.entry.ms ? Math.max(1, Math.round(props.entry.ms / 1000)) : undefined;
   const tok = props.entry.tokens;
   const tokLabel = tok === undefined ? '' : tok >= 1000 ? `${(tok / 1000).toFixed(1)}k ток` : `${tok} ток`;
   // `думав` is the label, not a metric: the dot only ever separates two metrics,

@@ -282,45 +282,64 @@ const tableSessions: Session[] = [
 const tableSelected = ref('t1');
 const lastTableAction = ref('');
 function onTableAction(a: string): void { lastTableAction.value = a; }
-// Log fixtures use the v2 transcript shape: tool rows carry `target`/`stat` for the
-// row and a small `detail.lines` sample so the expandable card has something to show.
+// Log fixtures use the v2 transcript shape, and deliberately mirror what the core
+// reducers actually emit: tool names are the lowercase runtime vocabulary (`read`,
+// `edit`, `grep`, `bash` — `KToolCard` keys its wrapping mode off `edit`/`write`),
+// `stat` follows each reducer's own format, and every `detail.totalLines` equals the
+// lines supplied so no sample offers a «показати всі» button the gallery cannot serve.
+// A tiny inline SVG stands in for a pasted screenshot — the catalogue never hits the network.
+const sampleImage =
+  'data:image/svg+xml;utf8,' +
+  '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="110">' +
+  '<rect width="180" height="110" fill="%232a2724"/>' +
+  '<text x="14" y="60" fill="%238f8b88" font-family="monospace" font-size="11">session.png</text></svg>';
 const panelLog: TranscriptEntry[] = [
+  { kind: 'user_text', id: '0', at: nowMs, text: 'Зведи ротацію токенів в один запит.' },
   {
-    kind: 'tool', id: '1', at: nowMs, tool: 'Edit', status: 'ok',
+    kind: 'tool', id: '1', at: nowMs, tool: 'edit', status: 'ok',
     target: 'auth/token.service.ts', stat: '+1 −0',
     detail: { lines: [{ t: 'add', n: '84', text: '    this.rotateShared(token);' }], totalLines: 1 },
   },
   {
-    kind: 'tool', id: '2', at: nowMs, tool: 'Bash', status: 'ok',
-    target: 'npm run test:e2e -- auth', stat: 'wall 8.4s',
+    kind: 'tool', id: '2', at: nowMs, tool: 'bash', status: 'ok',
+    target: 'npm run test:e2e -- auth', stat: '8.4 с',
     detail: {
       lines: [
         { t: 'head', text: '$ npm run test:e2e -- auth' },
-        { t: 'ctx', text: '12 passed, 0 failed (8.4s)' },
+        { t: 'ctx', text: '12 passed, 0 failed' },
+        { t: 'head', text: 'wall 8.4 с' },
       ],
-      totalLines: 2,
+      totalLines: 3,
     },
   },
   { kind: 'assistant_text', id: '3', at: nowMs, text: 'Готово. Ротація токенів зведена в один запит.' },
 ];
 const waitingLog: TranscriptEntry[] = [
-  { kind: 'tool', id: '1', at: nowMs, tool: 'Read', status: 'pending', target: 'src/session.ts' },
+  { kind: 'user_text', id: '0', at: nowMs, text: 'Де саме зберігається сесія?' },
+  { kind: 'tool', id: '1', at: nowMs, tool: 'read', status: 'pending', target: 'src/session.ts' },
   { kind: 'assistant_text', id: '2', at: nowMs, text: 'Знайшов два місця, де зберігається сесія.' },
 ];
 const logSamples: TranscriptEntry[] = [
   {
-    kind: 'tool', id: '1', at: nowMs, tool: 'Read', status: 'ok',
-    target: 'routes/login.tsx', stat: '1—40 з 212',
+    kind: 'user_text', id: '0', at: nowMs,
+    text: 'Ось скрин — зведи зберігання сесії в одне місце.',
+    images: [sampleImage],
+  },
+  {
+    kind: 'tool', id: '1', at: nowMs, tool: 'read', status: 'ok',
+    target: 'routes/login.tsx', stat: '4 ln',
     detail: {
       lines: [
         { t: 'ctx', n: '1', text: "import { useAuth } from '../auth';" },
         { t: 'ctx', n: '2', text: 'export function Login() {' },
+        { t: 'ctx', n: '3', text: '  return <Form onSubmit={useAuth().login} />;' },
+        { t: 'ctx', n: '4', text: '}' },
       ],
-      totalLines: 40,
+      totalLines: 4,
     },
   },
   {
-    kind: 'tool', id: '2', at: nowMs, tool: 'Edit', status: 'ok',
+    kind: 'tool', id: '2', at: nowMs, tool: 'edit', status: 'ok',
     target: 'db/schema/users.ts', stat: '+1 −1',
     detail: {
       lines: [
@@ -330,23 +349,28 @@ const logSamples: TranscriptEntry[] = [
       totalLines: 2,
     },
   },
-  { kind: 'tool', id: '3', at: nowMs, tool: 'Vitest', status: 'ok', target: 'auth', stat: '12 passed · 8.4s' },
+  // A grep with no hits is the real detail-less row: expanding it shows the empty state.
+  { kind: 'tool', id: '3', at: nowMs, tool: 'grep', status: 'ok', target: '/useAuth/ src', stat: '0 збігів', count: 0 },
   {
-    kind: 'tool', id: '4', at: nowMs, tool: 'Bash', status: 'error',
-    target: 'pnpm test', stat: 'exit 1',
+    kind: 'tool', id: '4', at: nowMs, tool: 'bash', status: 'error',
+    target: 'pnpm test', stat: 'exit 1 · 3.2 с',
     detail: {
       lines: [
         { t: 'head', text: '$ pnpm test' },
         { t: 'ctx', text: '2 failing specs' },
+        { t: 'head', text: 'wall 3.2 с · exit 1' },
       ],
-      totalLines: 2,
+      totalLines: 3,
       truncatedUpstream: true,
     },
   },
+  // All three chip forms: both metrics, duration only, tokens only.
   {
     kind: 'assistant_thinking', id: '5', at: nowMs, ms: 12_400, tokens: 1840,
     text: 'Сесія зберігається у двох місцях — треба звести.',
   },
+  { kind: 'assistant_thinking', id: '5a', at: nowMs, ms: 4_200, text: 'Лише тривалість — без токенів.' },
+  { kind: 'assistant_thinking', id: '5b', at: nowMs, tokens: 320, text: 'Лише токени — без тривалості.' },
   { kind: 'assistant_text', id: '6', at: nowMs, text: '## Знайшов два місця\n\nСесія зберігається у **двох** місцях — треба звести:\n\n- `session.ts` — запис у файл\n- `store.ts` — дубль у памʼяті\n\n```ts\nconst s = load();\n```' },
   { kind: 'notice', id: '7', at: nowMs, level: 'info', text: 'Гілку перемкнено на feat/schema.' },
   { kind: 'notice', id: '8', at: nowMs, level: 'warn', text: 'Контекст заповнено на 82% — скоро потрібне стиснення.' },
