@@ -329,9 +329,11 @@ const logSamples: TranscriptEntry[] = [
     text: 'Ось скрин — зведи зберігання сесії в одне місце.',
     images: [sampleImage],
   },
+  // A partial read is one of exactly three tools that flag upstream truncation (`read`,
+  // `glob`, `grep`); the marker belongs on a row whose reducer can actually set it.
   {
     kind: 'tool', id: '1', at: nowMs, tool: 'read', status: 'ok',
-    target: 'routes/login.tsx', stat: '4 ln',
+    target: 'routes/login.tsx', stat: '4/145 ln', count: 4,
     detail: {
       lines: [
         { t: 'ctx', n: '1', text: "import { useAuth } from '../auth';" },
@@ -340,6 +342,7 @@ const logSamples: TranscriptEntry[] = [
         { t: 'ctx', n: '4', text: '}' },
       ],
       totalLines: 4,
+      truncatedUpstream: true,
     },
   },
   {
@@ -365,7 +368,6 @@ const logSamples: TranscriptEntry[] = [
         { t: 'head', text: 'wall 3.2 с · exit 1' },
       ],
       totalLines: 3,
-      truncatedUpstream: true,
     },
   },
   // All three chip forms: both metrics, duration only, tokens only.

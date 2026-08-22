@@ -517,8 +517,8 @@ const silentMs = computed(() =>
 const stalled = computed(() => silentMs.value >= STALL_MS);
 // NOT the shared `dur()`, and deliberately so: this label only renders once `stalled` is
 // true, so a sub-second value is unreachable and a floor marker would be dead code, and it
-// holds seconds until 90 rather than 60 because `91 с` reads as a sharper stall figure than
-// a rounded `2 хв` at the moment the operator is deciding whether the turn is wedged.
+// holds seconds until 90 rather than 60 because `89 с` reads as a sharper stall figure than
+// a rounded `1 хв` at the moment the operator is deciding whether the turn is wedged.
 // Do not fold it into the shared formatter.
 const silentLabel = computed(() => {
   const s = Math.round(silentMs.value / 1000);
@@ -637,6 +637,9 @@ function answerCancel() {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  // Only bites at the narrow end, where `space-between` has no free space left to give:
+  // it keeps the ellipsised branch tag from sitting flush against the status word.
+  gap: 8px;
   height: 34px;
   padding: 0 6px 0 12px;
   background: var(--k-surface);
@@ -651,6 +654,19 @@ function answerCancel() {
   min-width: 0;
 }
 
+// At the 360px panel minimum the branch tag and the status word overlapped: `.k-panel__id`
+// shrinks, but its tag child did not, so `space-between` drove the tag straight through
+// `.k-panel__controls`. The tag is the one box here with a droppable tail — a branch name is
+// recognisable from its head — so it ellipsises and the controls keep their width.
+// `display: block` (not the tag's own inline-flex) is what makes `text-overflow` apply:
+// a flex container wraps its text in an anonymous item and never renders the ellipsis.
+.k-panel__id .k-tag {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .k-panel__harness {
   font-size: 12.5px;
   font-weight: 700;
@@ -662,6 +678,7 @@ function answerCancel() {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex: none;
 }
 
 .k-panel__status {

@@ -9,7 +9,9 @@
       @click="onHead"
     >
       <span class="k-rb__bar" aria-hidden="true"></span>
-      <span class="k-rb__tx" :class="{ 'k-rb__tx--full': shown }">{{ block.request.text || '(вкладення)' }}</span>
+      <!-- `.trim()`: a whitespace-only request is as empty as a missing one, and would
+           otherwise render a blank header line instead of the attachment placeholder. -->
+      <span class="k-rb__tx" :class="{ 'k-rb__tx--full': shown }">{{ block.request.text.trim() || '(вкладення)' }}</span>
       <span v-if="!shown" class="k-rb__sum mono">{{ summary }}</span>
       <span v-else class="k-rb__time mono">{{ clock }}</span>
     </button>

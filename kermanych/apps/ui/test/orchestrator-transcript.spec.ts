@@ -23,12 +23,18 @@ describe('applyTranscriptUpdate', () => {
     expect(next).toBe(pending);
   });
 
-  it('applies a zero count and ms instead of treating them as absent', () => {
+  it('applies a falsy count, ms and stat instead of treating them as absent', () => {
     const next = applyTranscriptUpdate(pending, {
       type: 'transcript_update', sessionId: 's1', id: 'c1', status: 'ok',
       stat: '0 збігів', count: 0, ms: 0,
     });
     expect(next[0]).toMatchObject({ status: 'ok', stat: '0 збігів', count: 0, ms: 0 });
+    // `'0 збігів'` is truthy; only an empty stat distinguishes "present and falsy" from
+    // "omitted", and the patch must still overwrite the previous value with it.
+    const cleared = applyTranscriptUpdate(next, {
+      type: 'transcript_update', sessionId: 's1', id: 'c1', status: 'ok', stat: '',
+    });
+    expect(cleared[0]).toMatchObject({ stat: '' });
   });
 
   it('adopts the improved target the result reported', () => {
@@ -45,10 +51,18 @@ describe('applyTranscriptUpdate', () => {
   });
 
   it('keeps fields a later status-only update omits', () => {
+    // `detail` is the heaviest of them: a rebuild that forgets to spread the prior entry
+    // would silently empty the expanded card, so it is pinned here too.
     const done: TranscriptEntry[] = [
-      { kind: 'tool', id: 'c1', at: 1, tool: 'edit', status: 'ok', stat: '+7 \u22125', count: 12, ms: 40 },
+      {
+        kind: 'tool', id: 'c1', at: 1, tool: 'edit', status: 'ok', stat: '+7 \u22125', count: 12, ms: 40,
+        detail: { lines: [{ t: 'add', n: '28', text: 'x' }], totalLines: 31 },
+      },
     ];
     const next = applyTranscriptUpdate(done, { type: 'transcript_update', sessionId: 's1', id: 'c1', status: 'error' });
     expect(next[0]).toMatchObject({ status: 'error', stat: '+7 \u22125', count: 12, ms: 40 });
+    expect(next[0]?.kind === 'tool' ? next[0].detail : undefined).toEqual({
+      lines: [{ t: 'add', n: '28', text: 'x' }], totalLines: 31,
+    });
   });
 });

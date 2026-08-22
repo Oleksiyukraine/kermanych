@@ -1,4 +1,4 @@
-import { clampLines, msLabel, toolDisplay, type RpcEvent, type ToolLine, type TranscriptEntry } from "@kermanych/core";
+import { clampLines, toolDisplay, type RpcEvent, type ToolLine, type TranscriptEntry } from "@kermanych/core";
 
 export type ToolEntry = Extract<TranscriptEntry, { kind: "tool" }>;
 export type TurnEntry = Extract<TranscriptEntry, { kind: "turn" }>;
@@ -78,14 +78,12 @@ export function applyToolResult(
 ): ToolLine[] {
   const d = toolDisplay(entry.tool, args, details, content);
   entry.status = isError ? "error" : "ok";
-  // A reducer that names a stat source its payload did not carry yields an empty string —
-  // `hub` with no op, `eval` with no language — and an empty stat cell is a row spending a
-  // line without a fact. The wall time is the fact we always have: callers set `entry.ms`
-  // from the start/end frame gap before reducing, so it stands in, in the same form
-  // `bashDisplay` prints. A reducer that offers no stat at all (the unknown-tool case) is
-  // left bare on purpose — the spec sanctions that row.
+  // The stat is whatever the reducer named and nothing else. A reducer that carries no stat
+  // — an unknown tool, a `hub` frame without an op — leaves the cell bare, which is the row
+  // the spec sanctions. Standing the wall time in here would break parity: only
+  // `reduceRpcEvents` sets `entry.ms`, so such a row would show a figure while streaming
+  // and lose it after a resume.
   if (d.stat) entry.stat = d.stat;
-  else if (d.stat !== undefined && entry.ms !== undefined) entry.stat = msLabel(entry.ms);
   if (d.count !== undefined) entry.count = d.count;
   // `edit` is the one tool whose result reports an authoritative repo-relative path, and it
   // is better than the call-side one. Every other target stays as the call derived it —

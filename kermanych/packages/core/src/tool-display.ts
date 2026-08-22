@@ -21,9 +21,11 @@ export const PREVIEW_DEFAULT = 8;
 export function clampLines(tool: string, lines: ToolLine[]): ToolLine[] {
   const budget = PREVIEW_LINES[tool] ?? PREVIEW_DEFAULT;
   if (lines.length <= budget) return lines;
-  // bash appends its wall/timeout/exit footer last; a head-only slice would drop it.
+  // bash appends its wall/timeout/exit footer last; a head-only slice would drop it. Only
+  // bash: `grep`'s card can be all `head` lines, and there a kept last line would read as
+  // the twelfth file when it is the hundredth, with no gap marker to say otherwise.
   const last = lines[lines.length - 1];
-  return last.t === "head" ? [...lines.slice(0, budget - 1), last] : lines.slice(0, budget);
+  return tool === "bash" && last.t === "head" ? [...lines.slice(0, budget - 1), last] : lines.slice(0, budget);
 }
 
 // A 558px panel cannot hold a repo-root-relative path. Keep the last `keep`
@@ -66,11 +68,14 @@ const readDisplay: Reducer = (args, d, content) => {
     : textLines(content);
   const shown = nums.length || lines.length;
   // Only a partial read earns the shown/total form; a whole-file read reports the file's size in
-  // lines. `count` must always be the number `stat` prints, so coalesced rows can sum it.
+  // lines. `count` must always be the number `stat` prints, so coalesced rows can sum it —
+  // hence no `count` on the byte fallback: `groupStat` sums counts and appends `ln`, and a
+  // row whose own stat is "4.6 KB" must not be part of a line total.
   const partial = d["truncation"] ? true : undefined;
   const ranged = Boolean(partial && total && shown && shown < total);
   const stat = ranged ? `${shown}/${total} ln` : total ? `${total} ln` : humanBytes(num(d["fileSize"]));
-  return { target, stat, count: ranged ? shown : total ?? shown, lines, totalLines: lines.length, truncatedUpstream: partial };
+  const count = ranged ? shown : total;
+  return { target, stat, ...(count === undefined ? {} : { count }), lines, totalLines: lines.length, truncatedUpstream: partial };
 };
 
 const writeDisplay: Reducer = (args, d) => {
@@ -179,10 +184,9 @@ const TODO_GLYPH: Record<string, string> = {
   pending: "[ ]", in_progress: "[/]", completed: "[x]", abandoned: "[-]", blocked: "[!]",
 };
 
-// The stat column's wall-time form: sub-second in whole milliseconds, then tenths of a
-// second. Exported because it is also the stand-in for a reducer that named a stat source
-// its payload did not carry — see `applyToolResult`.
-export const msLabel = (v: number): string => (v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(1)} с`);
+// The bash card's wall-time form: sub-second in whole milliseconds, then tenths of a second.
+// `bashDisplay` prints both its footer and its stat with it.
+const msLabel = (v: number): string => (v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(1)} с`);
 
 const bashDisplay: Reducer = (args, d, content) => {
   const command = str(args["command"]).split(/\s+/).join(" ");
@@ -225,12 +229,17 @@ const hubDisplay: Reducer = (args, d, content) => {
   // The peer or process is the identity of the row; the op belongs in the stat column.
   const who = str(args["to"]) || str(args["name"]);
   const lines = textLines(content);
-  return { target: who, stat: `${op}${d["timedOut"] ? " · таймаут" : ""}`, lines, totalLines: lines.length };
+  // No op in either the result or the call means there is no stat to name. An omitted stat
+  // renders as a bare cell on both the live and the rehydrated path; an empty string is a
+  // cell that claims a fact and shows none.
+  const parts = [op, d["timedOut"] ? "таймаут" : ""].filter(Boolean);
+  return { target: who, ...(parts.length ? { stat: parts.join(" · ") } : {}), lines, totalLines: lines.length };
 };
 
 const evalDisplay: Reducer = (args, d, content) => {
   const lines = textLines(content);
-  return { target: str(args["i"]), stat: str(d["language"]) || str(args["language"]), lines, totalLines: lines.length };
+  const language = str(d["language"]) || str(args["language"]);
+  return { target: str(args["i"]), ...(language ? { stat: language } : {}), lines, totalLines: lines.length };
 };
 
 const genericDisplay: Reducer = (args, _d, content) => {

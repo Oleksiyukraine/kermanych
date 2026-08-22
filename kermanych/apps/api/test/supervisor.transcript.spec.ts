@@ -106,9 +106,10 @@ test("start and end frames arriving in separate calls keep the call-time target 
   expect(patch.target).toBeUndefined();
 });
 
-// No row may spend a line without a fact. `hub` names its op as the stat, so a frame that
-// reports none would leave the cell empty — the measured wall time stands in.
-test("a reducer whose stat source is absent falls back to the measured wall time", () => {
+// `hub` names its op as the stat; a frame that reports none yields no stat at all, and the
+// row stays bare. It must not borrow the wall time: `messagesToTranscript` never sets `ms`
+// on a tool row, so a live-only figure would vanish on the next resume.
+test("a reducer whose stat source is absent leaves the cell bare rather than borrowing the wall time", () => {
   const { entries } = reduceRpcEvents(
     [
       { type: "tool_execution_start", toolName: "hub", toolCallId: "c1", args: { to: "Main" } },
@@ -116,7 +117,9 @@ test("a reducer whose stat source is absent falls back to the measured wall time
     ],
     { now: at },
   );
-  expect(entries[0]).toMatchObject({ kind: "tool", tool: "hub", target: "Main", stat: "1 ms", ms: 1 });
+  const entry = entries[0] as ToolEntry;
+  expect(entry).toMatchObject({ kind: "tool", tool: "hub", target: "Main", ms: 1 });
+  expect(entry.stat).toBeUndefined();
 });
 
 // The unknown-tool case is deliberately not the same: `genericDisplay` names no stat at all,

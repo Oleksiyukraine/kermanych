@@ -205,6 +205,19 @@ test("hub and eval expose their operation as the stat, and name the row separate
   expect(ev.target).toBe("scan deps");
 });
 
+// An empty stat cell is a row that claims a fact and shows none, and the api reducer must not
+// have to paper over it: the property is absent, so the live and rehydrated rows match.
+test("hub and eval omit the stat entirely when neither the result nor the call names one", () => {
+  const hub = toolDisplay("hub", { to: "Main" }, {}, "delivered");
+  expect(hub.stat).toBeUndefined();
+  expect(hub.target).toBe("Main");
+  const ev = toolDisplay("eval", { i: "scan deps" }, {}, "");
+  expect(ev.stat).toBeUndefined();
+  // A timeout is a fact of its own: it survives the missing op without a dangling separator.
+  const waited = toolDisplay("hub", { to: "Main" }, { timedOut: true }, "");
+  expect(waited.stat).toBe("таймаут");
+});
+
 test("clampLines keeps the trailing footer head that bash appends", () => {
   const body = Array.from({ length: 29 }, (_, i) => ({ t: "ctx" as const, text: String(i) }));
   const lines = [...body, { t: "head" as const, text: "wall 5 ms" }];
@@ -213,6 +226,15 @@ test("clampLines keeps the trailing footer head that bash appends", () => {
   expect(out.at(-1)).toEqual({ t: "head", text: "wall 5 ms" });
   expect(out[0]).toEqual({ t: "ctx", text: "0" });
   expect(out[8]).toEqual({ t: "ctx", text: "8" });
+});
+
+// The kept-footer rule is bash's alone. A grep card can be all `head` lines, and there the
+// last line would read as the twelfth file while it is the hundredth.
+test("clampLines gives grep a contiguous slice instead of keeping its last head", () => {
+  const lines = Array.from({ length: 40 }, (_, i) => ({ t: "head" as const, text: `file${i}` }));
+  const out = clampLines("grep", lines);
+  expect(out).toHaveLength(12);
+  expect(out.at(-1)).toEqual({ t: "head", text: "file11" });
 });
 
 test("a trailing newline in content does not add a phantom line", () => {
@@ -242,6 +264,14 @@ test("a partial read omp did not flag reports the same number in stat and count"
   expect(out.stat).toBe("145 ln");
   expect(out.count).toBe(145);
   expect(out.truncatedUpstream).toBeUndefined();
+});
+
+// `groupStat` sums `count` across a coalesced run and appends `ln`. A read whose stat is a
+// byte size is not a line count, so it must not contribute a number to that sum.
+test("a read that reports only a file size carries no count", () => {
+  const out = toolDisplay("read", { path: "a/b.ts" }, { fileSize: 4730, displayContent: { text: "a\nb", lineNumbers: [1, 2] } }, "");
+  expect(out.stat).toBe("4.6 KB");
+  expect(out.count).toBeUndefined();
 });
 
 test("an unknown tool falls back to content lines and no stat", () => {
