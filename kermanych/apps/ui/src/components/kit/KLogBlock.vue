@@ -1,26 +1,11 @@
 <template>
-  <div class="k-log" :class="`k-log--${entry.kind}`">
-    <!-- tool — one row per invocation; glyph ◆ pending → ✓ ok / ✗ error, in place -->
-    <template v-if="entry.kind === 'tool'">
-      <div class="k-log__row" :class="entry.status === 'pending' ? 'k-log__row--tool' : 'k-log__row--result'">
-        <span class="k-log__glyph" aria-hidden="true">{{ glyph }}</span>
-        <span class="k-log__tool">{{ entry.tool }}</span>
-        <span v-if="head" class="k-log__summary">{{ head }}</span>
-      </div>
-      <div
-        v-for="(line, i) in body"
-        :key="i"
-        class="k-log__body"
-        :class="{ 'k-log__diff': line.diff, [`k-log__diff--${line.sign}`]: line.diff }"
-      >{{ line.text }}</div>
-    </template>
+  <!-- `turn` is ledger data for block summaries, not a row: it renders nothing at
+       all, wrapper included, so it leaves no phantom gap in the log. -->
+  <div v-if="entry.kind !== 'turn'" class="k-log" :class="`k-log--${entry.kind}`">
+    <KToolRow v-if="entry.kind === 'tool'" :entry="entry" :session-id="sessionId" />
 
     <!-- assistant_text — Markdown-rendered prose, UI font -->
-    <div
-      v-else-if="entry.kind === 'assistant_text'"
-      class="k-log__markdown"
-      v-html="renderedText"
-    />
+    <div v-else-if="entry.kind === 'assistant_text'" class="k-log__markdown" v-html="renderedText" />
 
     <!-- user_text — the operator's own message: prompt text + any attached images -->
     <template v-else-if="entry.kind === 'user_text'">
@@ -36,7 +21,7 @@
       </div>
     </template>
 
-    <!-- assistant_thinking — collapsed reasoning; expand to read the full chain -->
+    <!-- assistant_thinking — a chip carrying duration and token cost; expand to read the chain -->
     <div v-else-if="entry.kind === 'assistant_thinking'" class="k-log__reason">
       <button
         type="button"
@@ -45,13 +30,15 @@
         @click="open = !open"
       >
         <span class="k-log__reason-caret" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
-        Думаю
+        {{ chip }}
       </button>
       <div v-if="open" class="k-log__reason-body k-log__markdown" v-html="renderedThinking" />
     </div>
 
-    <!-- notice — muted -->
-    <div v-else class="k-log__notice">{{ entry.text }}</div>
+    <!-- notice — muted by default; warn and error lift into the accent -->
+    <div v-else-if="entry.kind === 'notice'" class="k-log__notice" :class="`k-log__notice--${entry.level}`">
+      {{ entry.text }}
+    </div>
   </div>
 </template>
 
@@ -59,52 +46,11 @@
 import { computed, ref, watch } from 'vue';
 import type { TranscriptEntry } from '@kermanych/core';
 import { renderMarkdown } from '../../lib/markdown';
+import KToolRow from './KToolRow.vue';
 
-// A single transcript block (design-system section 06). Every kind is flush-left;
-// all machine text is mono, only assistant prose uses the UI font. diff lines
-// (leading + / -) get a 2px green strip and a 7% accent tint — the sole use of
-// green, per the design rules.
-const props = defineProps<{ entry: TranscriptEntry }>();
-
-type Line = { text: string; diff: boolean; sign: 'add' | 'del' };
-
-function classify(raw: string, allowDiff: boolean): Line {
-  if (!allowDiff) return { text: raw, diff: false, sign: 'add' };
-  const trimmed = raw.replace(/^\s+/, '');
-  const add = /^\+(?!\+)/.test(trimmed);
-  const del = /^-(?!-)/.test(trimmed);
-  return { text: raw, diff: add || del, sign: del ? 'del' : 'add' };
-}
-
-function toLines(src: string | undefined, allowDiff: boolean): Line[] {
-  if (!src) return [];
-  return src.split('\n').map((line) => classify(line, allowDiff));
-}
-
-// First line of a tool summary sits inline with the tool name; any remaining
-// lines (typically a diff hunk) render below as body lines.
-const head = computed(() => {
-  if (props.entry.kind === 'tool') {
-    return (props.entry.summary ?? '').split('\n')[0] ?? '';
-  }
-  return '';
-});
-
-// The status glyph mirrors the omp terminal: ◆ while the call is in flight, ✓ on
-// success, ✗ on failure — the single row updates in place as status changes.
-const glyph = computed(() => {
-  if (props.entry.kind !== 'tool') return '';
-  return props.entry.status === 'pending' ? '◆' : props.entry.status === 'ok' ? '✓' : '✗';
-});
-
-// Diff striping (green strip + accent tint) is reserved for real diff/tool
-// output. Assistant prose is Markdown-rendered separately (see renderedText).
-const body = computed<Line[]>(() => {
-  if (props.entry.kind === 'tool') {
-    return toLines(props.entry.summary, true).slice(1);
-  }
-  return [];
-});
+// One transcript block. Tool rows delegate to KToolRow; `turn` entries are ledger
+// data for block summaries and deliberately render nothing.
+const props = defineProps<{ entry: TranscriptEntry; sessionId: string }>();
 
 // assistant_text renders as Markdown (headings, lists, code, links). Output is a
 // controlled tag set (html:false), safe for v-html.
@@ -115,9 +61,23 @@ const renderedText = computed(() =>
 // Reasoning is collapsed by default; expand to read the full chain.
 const open = ref(false);
 watch(() => props.entry, () => { open.value = false; });
+
 const renderedThinking = computed(() =>
   props.entry.kind === 'assistant_thinking' ? renderMarkdown(props.entry.text) : '',
 );
+
+// The chip carries the two facts that answer "is it alive and what did it cost".
+// Missing fields drop out entirely rather than leaving dangling separators.
+const chip = computed(() => {
+  if (props.entry.kind !== 'assistant_thinking') return '';
+  const secs = props.entry.ms ? Math.round(props.entry.ms / 1000) : undefined;
+  const tok = props.entry.tokens;
+  const tokLabel = tok === undefined ? '' : tok >= 1000 ? `${(tok / 1000).toFixed(1)}k ток` : `${tok} ток`;
+  // `думав` is the label, not a metric: the dot only ever separates two metrics,
+  // so a missing ms or tokens leaves no dangling separator behind.
+  const parts = [secs === undefined ? '' : `${secs} с`, tokLabel].filter(Boolean);
+  return parts.length ? `думав ${parts.join(' · ')}` : 'думав';
+});
 </script>
 
 <style scoped lang="scss">
@@ -131,66 +91,8 @@ const renderedThinking = computed(() =>
   margin-top: 10px;
 }
 
-.k-log__row {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.k-log__glyph {
-  flex: none;
-  font-size: 11px;
-}
-
-// pending call — everything muted, diamond marker.
-.k-log__row--tool {
-  color: var(--k-muted);
-}
-
-// in-flight call — the diamond pulses in accent so a long tool (e.g. a subagent
-// dispatch) reads as live work, not a dead row.
-.k-log__row--tool .k-log__glyph {
-  color: var(--k-accent);
-  animation: k-log-tool-pulse 1.4s ease-in-out infinite;
-}
-@keyframes k-log-tool-pulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; }
-}
-
-// finished call — glyph + tool stay muted, the summary reads at text weight.
-.k-log__row--result {
-  color: var(--k-muted);
-
-  .k-log__summary {
-    color: var(--k-text);
-  }
-}
-
-.k-log__tool {
-  color: var(--k-text);
-}
-
-.k-log__row--tool .k-log__tool {
-  color: var(--k-muted);
-}
-
-.k-log__summary {
-  color: var(--k-muted);
-}
-
-.k-log__body {
-  margin-top: 3px;
-  padding-left: 20px;
-  color: var(--k-text);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-// assistant reasoning — a muted, collapsed disclosure ("Думаю"); expanded body
-// reuses the Markdown prose styles, dimmed.
+// assistant reasoning — a muted, collapsed disclosure chip; expanded body reuses
+// the Markdown prose styles, dimmed.
 .k-log__reason { font-family: var(--k-font-ui); }
 .k-log__reason-toggle {
   display: inline-flex;
@@ -221,24 +123,10 @@ const renderedThinking = computed(() =>
   white-space: pre-wrap;
 }
 
-// diff — the one place green appears: 2px strip + 7% accent tint.
-.k-log__diff {
-  font-family: var(--k-font-mono);
-  font-size: 12.5px;
-  padding: 3px 12px;
-  margin-left: 0;
-  border-left: 2px solid var(--k-diff);
-  background: color-mix(in srgb, var(--k-accent) 7%, transparent);
-  color: var(--k-diff);
-}
-
-.k-log__body.k-log__diff {
-  padding-left: 12px;
-}
-
-.k-log__diff--del {
-  opacity: 0.85;
-}
+// Three levels off a four-colour palette: info stays muted, warn lifts to full text
+// weight, error takes the accent — which the design rules reserve for errors.
+.k-log__notice--warn { color: var(--k-text); font-weight: 500; }
+.k-log__notice--error { color: var(--k-accent); font-weight: 500; }
 
 // user_text — the operator's own message: UI font, neutral left strip + surface.
 .k-log__user {
