@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { reduceRpcEvents } from "../src/supervisor/transcript-reducer";
+import { reduceRpcEvents, type ToolEntry } from "../src/supervisor/transcript-reducer";
 import type { RpcEvent } from "@kermanych/core";
 
 const at = (n: number) => 1_700_000_000_000 + n;
@@ -82,4 +82,35 @@ test("a toolResult message_end does not duplicate the tool entry", () => {
 test("notice frames become notice entries instead of vanishing", () => {
   const { entries } = reduceRpcEvents([{ type: "notice", message: "context is getting full" }], { now: at });
   expect(entries[0]).toMatchObject({ kind: "notice", level: "info", text: "context is getting full" });
+});
+
+// How the live service actually drives the reducer: one event per call, with the caller
+// owning the buffers and the start-time map.
+test("start and end frames arriving in separate calls keep the call-time target and the wall time", () => {
+  const startedAt = new Map<string, number>();
+  let tick = 0;
+  const now = () => at(++tick);
+  const opened = reduceRpcEvents(
+    [{ type: "tool_execution_start", toolName: "grep", toolCallId: "c1", args: { pattern: "def", path: "hello.py" } }],
+    { now, startedAt },
+  );
+  expect(opened.entries[0]).toMatchObject({ kind: "tool", id: "c1", status: "pending", target: "/def/ hello.py" });
+
+  const closed = reduceRpcEvents(
+    [{ type: "tool_execution_end", toolName: "grep", toolCallId: "c1", isError: false, result: { content: [], details: { matchCount: 2, fileCount: 1 } } }],
+    { now, startedAt },
+  );
+  const patch = closed.entries[0] as ToolEntry;
+  expect(patch).toMatchObject({ kind: "tool", id: "c1", status: "ok", stat: "2 збігів / 1 ф", ms: 1 });
+  // The end frame carries no args; inventing a target here would clobber the pattern.
+  expect(patch.target).toBeUndefined();
+});
+
+test("the assistant buffers survive across calls and come back emptied", () => {
+  const first = reduceRpcEvents([{ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "half " } }], { now: at });
+  expect(first).toMatchObject({ entries: [], textBuf: "half " });
+  const second = reduceRpcEvents([{ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } }], { now: at, textBuf: first.textBuf });
+  const ended = reduceRpcEvents([{ type: "message_end", message: { role: "assistant" } }], { now: at, textBuf: second.textBuf });
+  expect(ended.entries[0]).toMatchObject({ kind: "assistant_text", text: "half done" });
+  expect(ended.textBuf).toBe("");
 });

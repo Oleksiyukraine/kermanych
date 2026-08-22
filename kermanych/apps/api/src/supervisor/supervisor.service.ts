@@ -7,6 +7,8 @@ import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { RpcSession } from "../rpc/rpc-session";
 import { messagesToTranscript } from "./messages-to-transcript";
+import { reduceRpcEvents } from "./transcript-reducer";
+import { ToolDetailCache } from "./tool-detail-cache";
 import { copyCarryFiles } from "../env/carry-files";
 import {
   INITIAL_STATUS,
@@ -17,7 +19,6 @@ import {
   branchName,
   uniqueSlug,
   worktreeDir,
-  toolCallSummary,
   type BranchPrefix,
   type StatusState,
   type Group,
@@ -37,6 +38,9 @@ type Live = {
   live: Partial<Session>;
   textBuf: string;
   thinkBuf: string;
+  // Tool start stamps live across events: the wall time of a call is only knowable once
+  // its end frame arrives, several reducer calls later.
+  toolStarted: Map<string, number>;
   poll?: NodeJS.Timeout;
 };
 
@@ -58,7 +62,10 @@ const DEFAULT_PR_CONVENTIONS = [
 export class SupervisorService implements OnModuleDestroy {
   private map = new Map<string, Live>();
   private resuming = new Map<string, Promise<Live>>();
-  private toolSeq = 0;
+  // One cache for every session, live or dormant: GET /sessions/:id/tools/:callId must
+  // still serve a session whose omp child has already been torn down.
+  private toolDetails = new ToolDetailCache();
+  private lastStamp = 0;
   private events = new Subject<ServerEvent>();
   events$: Observable<ServerEvent> = this.events.asObservable();
 
@@ -257,6 +264,7 @@ export class SupervisorService implements OnModuleDestroy {
       this.stopPoll(live);
       await rpc.stop().catch(() => {});
       this.map.delete(session.id);
+      this.toolDetails.dropSession(session.id);
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
       throw err;
@@ -309,6 +317,7 @@ export class SupervisorService implements OnModuleDestroy {
       this.stopPoll(live);
       await live.rpc.stop().catch(() => {});
       this.map.delete(chatId);
+      this.toolDetails.dropSession(chatId);
     }
     const session = this.registry.updateSession(chatId, {
       name, kind: "agent", worktree: true, branch, baseBranch, worktreePath: "", prefix: "feature", status: "queued",
@@ -421,6 +430,7 @@ export class SupervisorService implements OnModuleDestroy {
       }
       await this.worktree.removeBranch(group.projectDir, branch).catch(() => {});
       this.map.delete(id);
+      this.toolDetails.dropSession(id);
       throw err;
     }
     this.pushUpdate(id);
@@ -473,6 +483,7 @@ export class SupervisorService implements OnModuleDestroy {
       this.stopPoll(childLive);
       await rpc.stop().catch(() => {});
       this.map.delete(child.id);
+      this.toolDetails.dropSession(child.id);
       this.registry.removeSession(child.id);
       this.events.next({ type: "session_removed", sessionId: child.id });
       throw err;
@@ -534,6 +545,7 @@ export class SupervisorService implements OnModuleDestroy {
       this.stopPoll(childLive);
       await rpc.stop().catch(() => {});
       this.map.delete(child.id);
+      this.toolDetails.dropSession(child.id);
       this.registry.removeSession(child.id);
       this.events.next({ type: "session_removed", sessionId: child.id });
       throw err;
@@ -572,6 +584,7 @@ export class SupervisorService implements OnModuleDestroy {
       this.stopPoll(live);
       await live.rpc.stop();
       this.map.delete(childId);
+      this.toolDetails.dropSession(childId);
     }
     this.registry.updateSession(childId, { status: "merged" });
     this.pushUpdate(childId);
@@ -584,24 +597,41 @@ export class SupervisorService implements OnModuleDestroy {
     this.events.next({ type: "transcript_append", sessionId: id, entry });
   }
 
-  // Flip a pending tool entry to its terminal status in place and notify clients.
+  // Complete a pending tool row in place from the reduced patch and notify clients.
   // Match by exact toolCallId when omp provides one, else the oldest pending
   // entry of the same tool name (FIFO — correct for interchangeable parallel calls).
-  private finishTool(id: string, tool: string, toolCallId: string | undefined, status: "ok" | "error") {
+  private finishTool(id: string, patch: Extract<TranscriptEntry, { kind: "tool" }>) {
     const l = this.map.get(id);
     if (!l) return;
     const entry =
-      (toolCallId ? l.transcript.find((x) => x.kind === "tool" && x.id === toolCallId) : undefined) ??
-      l.transcript.find((x) => x.kind === "tool" && x.status === "pending" && x.tool === tool);
+      l.transcript.find((x) => x.kind === "tool" && x.id === patch.id) ??
+      l.transcript.find((x) => x.kind === "tool" && x.status === "pending" && x.tool === patch.tool);
     if (!entry || entry.kind !== "tool") return;
-    entry.status = status;
-    this.events.next({ type: "transcript_update", sessionId: id, id: entry.id, status });
+    entry.status = patch.status;
+    entry.stat = patch.stat;
+    entry.count = patch.count;
+    entry.ms = patch.ms;
+    entry.detail = patch.detail;
+    // The patch only carries a target when the result improved on the one derived at call time.
+    if (patch.target) entry.target = patch.target;
+    this.events.next({
+      type: "transcript_update", sessionId: id, id: entry.id, status: entry.status as "ok" | "error",
+      stat: entry.stat, count: entry.count, ms: entry.ms, detail: entry.detail,
+    });
+  }
+
+  // Strictly increasing so every entry gets a distinct id, even when two frames land in
+  // the same millisecond.
+  private stamp(): number {
+    this.lastStamp = Math.max(Date.now(), this.lastStamp + 1);
+    return this.lastStamp;
   }
 
   // Echo the user's own message (initial task or follow-up) into the transcript so
   // the log reads as a full conversation. Images ride along as data URLs for render.
   private userEntry(text: string, images?: ImageInput[]): TranscriptEntry {
-    return { kind: "user_text", text, images: images?.map((i) => `data:${i.mimeType};base64,${i.data}`) };
+    const at = this.stamp();
+    return { kind: "user_text", id: `u${at}`, at, text, ...(images?.length ? { images: images.map((i) => `data:${i.mimeType};base64,${i.data}`) } : {}) };
   }
 
   private onRpcEvent(id: string, e: RpcEvent) {
@@ -621,27 +651,23 @@ export class SupervisorService implements OnModuleDestroy {
     }
     const before = l.state.status;
     l.state = reduceStatus(l.state, e);
+    // One reducer for the live stream and for rehydrated history, so a session that
+    // streamed and the same session after a reload produce identical entries.
+    const reduced = reduceRpcEvents([e], {
+      now: () => this.stamp(),
+      textBuf: l.textBuf,
+      thinkBuf: l.thinkBuf,
+      startedAt: l.toolStarted,
+    });
+    l.textBuf = reduced.textBuf;
+    l.thinkBuf = reduced.thinkBuf;
+    for (const [callId, lines] of reduced.full) this.toolDetails.put(id, callId, lines);
+    for (const entry of reduced.entries) {
+      // A completion carries no new entry — it patches the pending one in place.
+      if (entry.kind === "tool" && entry.status !== "pending") this.finishTool(id, entry);
+      else this.appendEntry(id, entry);
+    }
     // RpcEvent carries an index-signature fallback member; Extract recovers the concrete typed member.
-    if (e.type === "message_update") {
-      const ame = (e as Extract<RpcEvent, { type: "message_update" }>).assistantMessageEvent;
-      if (ame?.type === "text_delta") l.textBuf += ame.delta ?? "";
-      else if (ame?.type === "thinking_delta") l.thinkBuf += ame.delta ?? "";
-    }
-    if (e.type === "message_end") {
-      if (l.thinkBuf.trim()) this.appendEntry(id, { kind: "assistant_thinking", text: l.thinkBuf });
-      if (l.textBuf.trim()) this.appendEntry(id, { kind: "assistant_text", text: l.textBuf });
-      l.textBuf = "";
-      l.thinkBuf = "";
-    }
-    if (e.type === "tool_execution_start") {
-      const ev = e as Extract<RpcEvent, { type: "tool_execution_start" }>;
-      const entryId = ev.toolCallId ?? `t${++this.toolSeq}`;
-      this.appendEntry(id, { kind: "tool", id: entryId, tool: ev.toolName ?? "?", status: "pending", summary: toolCallSummary(ev.args) });
-    }
-    if (e.type === "tool_execution_end") {
-      const ev = e as Extract<RpcEvent, { type: "tool_execution_end" }>;
-      this.finishTool(id, ev.toolName ?? "?", ev.toolCallId, ev.isError ? "error" : "ok");
-    }
     if (e.type === "extension_ui_request" && l.state.status === "waiting_input")
       l.live.pendingUiRequest = e as Extract<RpcEvent, { type: "extension_ui_request" }>;
     l.live.status = l.state.status;
@@ -685,6 +711,7 @@ export class SupervisorService implements OnModuleDestroy {
     if (l && !l.rpc.isAlive()) {
       this.stopPoll(l);
       this.map.delete(id);
+      this.toolDetails.dropSession(id);
       l = undefined;
     }
     if (!l) l = await this.resumeSession(id);
@@ -780,6 +807,7 @@ export class SupervisorService implements OnModuleDestroy {
       this.stopPoll(l);
       await l.rpc.stop().catch(() => {});
       this.map.delete(id);
+      this.toolDetails.dropSession(id);
     }
     await this.resumeSession(id);
     return { ok: true };
@@ -796,6 +824,7 @@ export class SupervisorService implements OnModuleDestroy {
       this.stopPoll(l);
       await l.rpc.stop();
       this.map.delete(id);
+      this.toolDetails.dropSession(id);
     }
     if (s && s.kind !== "agent") {
       // No git: the child owns no branch/worktree; its cwd is the parent's.
@@ -878,7 +907,7 @@ export class SupervisorService implements OnModuleDestroy {
         return { conflict: true, files: await this.worktree.unmergedFiles(s.worktreePath) };
       }
       const l = this.map.get(id);
-      if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); }
+      if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); this.toolDetails.dropSession(id); }
       await this.worktree.removeWorktree(g.projectDir, s.worktreePath);
       await this.worktree.removeBranch(g.projectDir, s.branch);
       this.registry.updateSession(id, { status: "merged", worktreePath: "" });
@@ -909,7 +938,7 @@ export class SupervisorService implements OnModuleDestroy {
       return { conflict: true, files: await this.worktree.unmergedFiles(g.projectDir) };
     }
     const l = this.map.get(id);
-    if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); }
+    if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); this.toolDetails.dropSession(id); }
     await this.worktree.removeBranch(g.projectDir, s.branch); // projectDir left on base
     this.registry.updateSession(id, { status: "merged" });
     this.pushUpdate(id);
@@ -965,7 +994,8 @@ export class SupervisorService implements OnModuleDestroy {
         s.status === "merged"
           ? "Сесію влито в проєкт. Натисни «↻ Відновити» вгорі, щоб підняти worktree і продовжити."
           : "Сесія неактивна. Надішли повідомлення, щоб відновити її та підтягнути історію.";
-      return [{ kind: "notice", text }];
+      // Synthesised on every read, never appended to a transcript, so a fixed id is enough.
+      return [{ kind: "notice", id: "dormant", at: Date.now(), level: "info", text }];
     }
     return [];
   }
@@ -973,7 +1003,7 @@ export class SupervisorService implements OnModuleDestroy {
   // Shared live-session wiring (fresh create + resume): build the Live, register it,
   // and route exit + events. onExit marks error unless the session ended cleanly.
   private wireLive(sessionId: string, rpc: RpcSession, status: Session["status"]): Live {
-    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status }, textBuf: "", thinkBuf: "" };
+    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status }, textBuf: "", thinkBuf: "", toolStarted: new Map() };
     this.map.set(sessionId, live);
     rpc.onExit((_code, reason) => {
       this.stopPoll(live);
@@ -1021,6 +1051,7 @@ export class SupervisorService implements OnModuleDestroy {
       this.stopPoll(live);
       await rpc.stop().catch(() => {});
       this.map.delete(id);
+      this.toolDetails.dropSession(id);
       this.registry.updateSession(id, { status: "error" });
       this.pushUpdate(id);
       throw err;

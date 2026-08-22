@@ -21,11 +21,14 @@ export function joinResultText(content: { text?: string }[] | undefined): string
 // The call side of a tool row. `args` exist only here — omp never repeats them on the
 // result — so this is the only chance to derive a target from the pattern/command/path.
 export function pendingToolEntry(id: string, at: number, tool: string, args: Record<string, unknown> | undefined, intent?: string): ToolEntry {
-  const d = toolDisplay(tool, args, undefined, "");
+  // No recorded arguments means there is nothing to derive a target from. Asking the
+  // display reducers with an empty object would invent one — grep answers "//" — and that
+  // would later clobber the good target on a row whose start frame we did see.
+  const target = args ? toolDisplay(tool, args, undefined, "").target : undefined;
   return {
     kind: "tool", id, at, tool, status: "pending",
     ...(intent === undefined ? {} : { intent }),
-    ...(d.target ? { target: d.target } : {}),
+    ...(target ? { target } : {}),
   };
 }
 
