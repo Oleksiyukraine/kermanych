@@ -74,8 +74,14 @@
               <KBtn variant="ghost" @click="onDelete(task)">Видалити</KBtn>
               <KBtn
                 variant="primary"
-                :disabled="launching !== null"
-                :title="isBound(task) ? 'Запустити локальну сесію' : 'Проєкт не звʼязано з локальною текою — вкажи її'"
+                :disabled="launching !== null || isActiveTask(task)"
+                :title="
+                  isActiveTask(task)
+                    ? 'Задача вже виконується — зупини сесію, щоб запустити її знову'
+                    : isBound(task)
+                      ? 'Запустити локальну сесію'
+                      : 'Проєкт не звʼязано з локальною текою — вкажи її'
+                "
                 @click="launch(task)"
               >Запустити</KBtn>
             </footer>
@@ -399,6 +405,7 @@ const LAUNCH_ERRORS: Record<string, string> = {
   'task not found': 'Задачі вже немає — хтось її видалив. Онови дошку.',
   'task assigned to someone else': 'Задача призначена іншому учаснику — запустити її може лише він.',
   'task already claimed': 'Задачу щойно забрав інший учасник — онови дошку.',
+  'task is already running': 'Задача вже виконується — зупини поточну сесію, перш ніж запускати нову.',
   'not signed in': 'Локальний Керманич не має токена — увійди ще раз.',
 };
 

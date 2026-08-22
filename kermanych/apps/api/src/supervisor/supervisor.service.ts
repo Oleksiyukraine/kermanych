@@ -225,6 +225,16 @@ export class SupervisorService implements OnModuleDestroy {
     const task = await getTask(client, taskId);
     if (!task) throw new Error("task not found");
     if (task.assigneeId && task.assigneeId !== userId) throw new Error("task assigned to someone else");
+
+    // A second launch of a running card mints a second worktree and a second omp child
+    // bound to the same taskId; both would then mirror status for it and the board would
+    // flap between them. Two checks, because neither alone is enough: the cloud status
+    // covers a session running on ANOTHER machine, the local scan covers THIS one, whose
+    // status push may not have landed yet. Terminal and backlog cards stay launchable —
+    // retrying an errored or stopped task is the point of the board.
+    if (ACTIVE_STATUSES.includes(task.status)) throw new Error("task is already running");
+    const mine = this.registry.listSessions().some((s) => s.taskId === taskId && ACTIVE_STATUSES.includes(this.merge(s).status));
+    if (mine) throw new Error("task is already running");
     // Did THIS call take the assignment? Only a claim we made may be rolled back below.
     let claimed = false;
     if (!task.assigneeId) {

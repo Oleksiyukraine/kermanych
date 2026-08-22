@@ -169,6 +169,49 @@ describe("createSessionFromTask", () => {
     expect(registry.listSessions()).toHaveLength(0);
   });
 
+  it("refuses a task that is already running somewhere", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, status: "thinking" });
+
+    await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("task is already running");
+    expect(started).toHaveLength(0);
+    expect(registry.listSessions()).toHaveLength(0);
+  });
+
+  it("still launches a task left in a terminal status", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, status: "stopped" });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    expect(session.taskId).toBe("task-1");
+    expect(started).toHaveLength(1);
+    expect(registry.listSessions()).toHaveLength(1);
+  });
+
+  it("refuses a stale-backlog task this machine is already running", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    // The cloud still says `backlog` (a push has not landed yet) but the local registry
+    // already holds a live session for the card — a second launch would duplicate it.
+    task({ assigneeId: USER });
+    registry.createSession({
+      projectId: PROJECT,
+      taskId: "task-1",
+      name: "Add login",
+      task: "wire GitHub OAuth",
+      worktreePath: "/tmp/wt",
+      branch: "feature/add-login",
+      status: "thinking",
+    });
+
+    await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("task is already running");
+    expect(started).toHaveLength(0);
+    expect(registry.listSessions()).toHaveLength(1);
+  });
+
   it("refuses when the project has no local binding", async () => {
     const { sup, registry } = make();
     task({ assigneeId: USER });
