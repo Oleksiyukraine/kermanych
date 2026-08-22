@@ -108,3 +108,41 @@ test("edit without a diff still names the file", () => {
   expect(out.stat).toBe("+0 \u22120");
   expect(out.lines).toEqual([]);
 });
+
+test("grep lists per-file counts then the matches, marking hit lines", () => {
+  const d = {
+    scopePath: "kermanych/apps/ui/src",
+    matchCount: 3,
+    fileCount: 2,
+    fileMatches: [
+      { path: "kermanych/apps/ui/src/composables/useNow.ts", count: 2 },
+      { path: "kermanych/apps/ui/src/lib/tip.ts", count: 1 },
+    ],
+    truncated: false,
+    displayContent: ["# kermanych/apps/ui/src/", "## composables/", "### useNow.ts#3309", " 7│const now = ref();", "*8│let timer: number;"].join("\n"),
+  };
+  const out = toolDisplay("grep", { pattern: "setTimeout|setInterval", path: "kermanych/apps/ui/src" }, d, "");
+  expect(out.target).toBe("/setTimeout|setInterval/ src");
+  expect(out.stat).toBe("3 збігів / 2 ф");
+  expect(out.count).toBe(3);
+  expect(out.lines).toEqual([
+    { t: "head", text: "composables/useNow.ts  2" },
+    { t: "head", text: "lib/tip.ts  1" },
+    { t: "gap" },
+    { t: "head", text: "useNow.ts#3309" },
+    { t: "ctx", n: " 7", text: "const now = ref();" },
+    { t: "hit", n: "8", text: "let timer: number;" },
+  ]);
+});
+
+test("grep with no matches degrades to an empty card, not a blank row", () => {
+  const out = toolDisplay("grep", { pattern: "Транскрипт", path: "kermanych/apps/ui/src" }, {}, "No matches found");
+  expect(out.stat).toBe("0 збігів");
+  expect(out.count).toBe(0);
+  expect(out.lines).toEqual([]);
+});
+
+test("grep flags upstream truncation in the stat", () => {
+  const out = toolDisplay("grep", { pattern: "x" }, { matchCount: 900, fileCount: 40, truncated: true, fileMatches: [], displayContent: "" }, "");
+  expect(out.stat).toBe("900 збігів / 40 ф ·обрізано");
+});

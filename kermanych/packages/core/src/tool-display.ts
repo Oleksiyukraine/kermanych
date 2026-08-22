@@ -126,13 +126,51 @@ const editDisplay: Reducer = (args, d) => {
   };
 };
 
+// omp pre-groups grep output: "#" root, "##" directory, "###" file#tag, then
+// " N│line" for context and "*N│line" for a match. Keep the whole pattern in the
+// target (it is the informative half) and shorten only the scope.
+const grepDisplay: Reducer = (args, d) => {
+  const pattern = str(args["pattern"]);
+  const scope = shortPath(str(args["path"]), 1);
+  const target = `/${pattern}/${scope ? ` ${scope}` : ""}`;
+  const matches = num(d["matchCount"]);
+  if (matches === undefined) return { target, stat: "0 збігів", count: 0, lines: [], totalLines: 0 };
+  const lines: ToolLine[] = [];
+  for (const fm of (d["fileMatches"] as { path: string; count: number }[] | undefined) ?? [])
+    lines.push({ t: "head", text: `${shortPath(fm.path)}  ${fm.count}` });
+  const body = str(d["displayContent"]);
+  const rows = body ? body.split("\n").filter((r) => r.trim()) : [];
+  if (lines.length && rows.length) lines.push({ t: "gap" });
+  for (const row of rows) {
+    if (row.startsWith("###")) {
+      lines.push({ t: "head", text: row.replace(/^#+\s*/, "") });
+      continue;
+    }
+    if (row.startsWith("#")) continue;
+    const hit = row.startsWith("*");
+    const rest = hit ? row.slice(1) : row;
+    const bar = rest.indexOf("\u2502");
+    const n = bar >= 0 ? rest.slice(0, bar) : undefined;
+    const text = bar >= 0 ? rest.slice(bar + 1) : rest;
+    lines.push({ t: hit ? "hit" : "ctx", ...(n === undefined ? {} : { n }), text });
+  }
+  return {
+    target,
+    stat: `${matches} збігів / ${num(d["fileCount"]) ?? 0} ф${d["truncated"] ? " ·обрізано" : ""}`,
+    count: matches,
+    lines,
+    totalLines: lines.length,
+    truncatedUpstream: d["truncated"] ? true : undefined,
+  };
+};
+
 const genericDisplay: Reducer = (args, _d, content) => ({
   target: shortPath(str(args["path"]) || str(args["i"]), 2),
   lines: textLines(content),
   totalLines: content ? content.split("\n").length : 0,
 });
 
-const REDUCERS: Record<string, Reducer> = { read: readDisplay, write: writeDisplay, glob: globDisplay, edit: editDisplay };
+const REDUCERS: Record<string, Reducer> = { read: readDisplay, write: writeDisplay, glob: globDisplay, edit: editDisplay, grep: grepDisplay };
 
 export function toolDisplay(tool: string, args: Args | undefined, details: Details | undefined, content: string): ToolDisplay {
   return (REDUCERS[tool] ?? genericDisplay)(args ?? {}, details ?? {}, content ?? "");
