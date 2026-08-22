@@ -175,7 +175,7 @@
           <template v-if="blocks.length">
             <KRequestBlock
               v-for="(block, i) in blocks"
-              :key="block.id"
+              :key="selectedSession.id + ':' + block.id"
               :block="block"
               :session-id="selectedSession.id"
               :open="i === blocks.length - 1"

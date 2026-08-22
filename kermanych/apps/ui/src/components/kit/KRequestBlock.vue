@@ -2,19 +2,26 @@
   <section class="k-rb">
     <button v-if="block.request" type="button" class="k-rb__head" :aria-expanded="shown" @click="open = !open">
       <span class="k-rb__bar" aria-hidden="true"></span>
-      <span class="k-rb__tx">{{ block.request.text }}</span>
+      <span class="k-rb__tx" :class="{ 'k-rb__tx--full': shown }">{{ block.request.text || '(вкладення)' }}</span>
       <span v-if="!shown" class="k-rb__sum mono">{{ summary }}</span>
       <span v-else class="k-rb__time mono">{{ clock }}</span>
     </button>
+
+    <!-- The operator's attachments. `buildChatBlocks` keeps `user_text` out of `items`, so
+         this is the only place they can render; gated on `shown` to keep the collapsed row
+         one line, and outside the header because a button may not contain images. -->
+    <div v-if="shown && block.request?.images?.length" class="k-rb__imgs">
+      <img v-for="(src, n) in block.request.images" :key="n" :src="src" class="k-rb__img" alt="вкладення" />
+    </div>
 
     <template v-if="shown">
       <template v-for="(item, i) in block.items" :key="i">
         <div v-if="item.kind === 'group'" class="k-rb__group">
           <button type="button" class="k-rb__grow" :aria-expanded="opened.has(i)" @click="toggle(i)">
-            <span class="k-rb__g" aria-hidden="true">✓</span>
+            <span class="k-rb__g" :class="`k-rb__g--${gStatus(item.members)}`" aria-hidden="true">{{ GLYPH[gStatus(item.members)] }}</span>
             <span class="k-rb__gt">{{ item.tool }}</span>
-            <span class="k-rb__gx">×{{ item.members.length }}</span>
             <span class="k-rb__gtg">{{ item.members.map((m) => m.target).filter(Boolean).join(', ') }}</span>
+            <span class="k-rb__gx">×{{ item.members.length }}</span>
             <span class="k-rb__gst">{{ item.stat }}</span>
             <span class="k-rb__gch" aria-hidden="true">{{ opened.has(i) ? '⌄' : '›' }}</span>
           </button>
@@ -34,7 +41,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import type { ChatBlock } from '@kermanych/core';
+import type { ChatBlock, ToolEntry } from '@kermanych/core';
 import KLogBlock from './KLogBlock.vue';
 import KToolRow from './KToolRow.vue';
 
@@ -59,7 +66,20 @@ function toggle(i: number): void {
   opened.value = next;
 }
 
+// A coalesced run is only as good as its worst member: `buildChatBlocks` groups
+// consecutive read-likes regardless of status, so a hardcoded tick would hide a failed
+// read behind a collapsed row. Same glyphs as KToolRow, which renders the members.
+const GLYPH = { pending: '◆', ok: '✓', error: '✗' } as const;
+function gStatus(members: ToolEntry[]): 'pending' | 'ok' | 'error' {
+  if (members.some((m) => m.status === 'error')) return 'error';
+  if (members.some((m) => m.status === 'pending')) return 'pending';
+  return 'ok';
+}
+
+// Whole seconds below a minute, then whole minutes. A sub-second span gets a floor marker
+// instead of `0 с`, which would claim the block took no time at all.
 function dur(ms: number): string {
+  if (ms < 1000) return '<1 с';
   const s = Math.round(ms / 1000);
   return s < 60 ? `${s} с` : `${Math.round(s / 60)} хв`;
 }
@@ -69,14 +89,19 @@ const clock = computed(() =>
 );
 
 // Five facts, all derived from the block's own entries — see the spec's requirement 8.
+// A metric that did not happen renders nothing rather than a zero, so a prose-only answer
+// collapses to its duration instead of claiming `0 викликів · 0 файлів`.
 const summary = computed(() => {
   const s = props.block.summary;
   return [
     dur(s.ms),
-    `${s.calls} викликів`,
-    `${s.files} файлів`,
-    s.thinkMs ? `роздуми ${dur(s.thinkMs)}` : '',
-    s.cost ? `$${s.cost.toFixed(2)}` : '',
+    s.calls ? `${s.calls} викликів` : '',
+    s.files ? `${s.files} файлів` : '',
+    // Reasoning under a second is latency, not a pause: `summary.thinkMs` sums even the
+    // sub-threshold entries that render no chip, and they do not earn one of five slots.
+    s.thinkMs >= 1000 ? `роздуми ${dur(s.thinkMs)}` : '',
+    // Sub-cent spend is real spend: rounding it to `$0.00` would assert the turn was free.
+    s.cost >= 0.005 ? `$${s.cost.toFixed(2)}` : s.cost ? '<$0.01' : '',
   ].filter(Boolean).join(' · ');
 });
 </script>
@@ -93,6 +118,11 @@ const summary = computed(() => {
   flex: 1; font-family: var(--k-font-ui); font-size: 14px; line-height: 1.5; color: var(--k-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Collapsed the request is a one-line summary; expanded it is the only copy of the
+   operator's message in the log, so it wraps in full like KLogBlock's `.k-log__user`. */
+.k-rb__tx--full { overflow: visible; text-overflow: clip; white-space: pre-wrap; word-break: break-word; }
+.k-rb__imgs { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 0 10px; }
+.k-rb__img { display: block; max-width: 220px; max-height: 220px; border: 1px solid var(--k-line-strong); }
 .k-rb__sum, .k-rb__time { flex: none; font-size: 10.5px; color: var(--k-muted); }
 .k-rb__grow {
   display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 0;
@@ -103,6 +133,11 @@ const summary = computed(() => {
 .k-rb__grow:hover { background: var(--k-surface); }
 .k-rb__grow:focus-visible { outline: 1px solid var(--k-accent); outline-offset: -1px; }
 .k-rb__g { flex: none; width: 9px; font-size: 10.5px; }
+.k-rb__g--pending { color: var(--k-accent); animation: k-rb-pulse 1.4s ease-in-out infinite; }
+.k-rb__g--error { color: var(--k-accent); }
+/* Scoped `@keyframes` names are hash-rewritten per SFC, so KToolRow's pulse cannot be
+   reused by name — this is the same animation, declared locally. */
+@keyframes k-rb-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 /* Same fixed column as KToolRow's `.k-tr__t`: the group row sits directly among
    those rows, so its tool name has to land on the same 60px grid — with the same
    ellipsis backstop for names past eight characters. */
