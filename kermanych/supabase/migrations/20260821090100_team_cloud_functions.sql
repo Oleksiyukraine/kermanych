@@ -1,20 +1,61 @@
 -- Kermanych team cloud — triggers and the one policy helper.
 -- `security definer` is used in exactly three places, each justified inline.
 
+-- The team allowlist. The repository is PUBLIC and sign-in is GitHub OAuth, so
+-- without this table any GitHub account on earth could sign in and consume the
+-- team's backend quota (RLS would isolate their rows, but they would still be
+-- users). Sign-in therefore fails CLOSED: `handle_new_user()` refuses any GitHub
+-- login name that is not listed here, and an EMPTY table admits NOBODY.
+--
+-- This is operator data, not application data: it is edited in Studio or psql as
+-- `postgres`, and no client role gets a single privilege on it (see the revoke
+-- below). Only the `security definer` trigger reads it.
+--   insert into allowed_github_users (github_username, note)
+--   values ('octocat', 'Jane, backend');
+create table public.allowed_github_users (
+  github_username text primary key,
+  added_at timestamptz not null default now(),
+  note text);
+
+comment on table public.allowed_github_users is
+  'GitHub login names permitted to sign in. handle_new_user() refuses anyone absent, case-insensitively; an empty table admits nobody. Operator-managed (psql/Studio as postgres) — anon and authenticated hold no privileges.';
+
+-- RLS on with no policies at all: even if a grant ever leaked in, every client
+-- statement still matches nothing. The revoke is the primary lock — Supabase
+-- grants new public tables to anon and authenticated by default.
+alter table public.allowed_github_users enable row level security;
+revoke all on table public.allowed_github_users from anon, authenticated;
+
 -- First sign-in provisions the profile from GitHub's OAuth metadata. Must be
 -- `security definer`: the inserting role is the auth service, not the new user,
 -- and profiles has no INSERT policy at all (spec's RLS matrix: "trigger only").
+-- It is also where the team allowlist is enforced, because raising here aborts
+-- the `auth.users` insert itself — a refused account never exists.
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  handle text := nullif(trim(new.raw_user_meta_data ->> 'user_name'), '');
 begin
+  -- Fail closed. A null/blank handle (a provider that sent no GitHub login, or a
+  -- password user minted through the admin API) can never match a row, so the
+  -- `handle is null` arm only exists to give the operator a better log line.
+  -- The primary key already indexes github_username; the lower() comparison is a
+  -- sequential scan over a table with one row per teammate, which is free.
+  if handle is null or not exists (
+       select 1 from public.allowed_github_users a
+       where lower(a.github_username) = lower(handle)) then
+    raise exception 'github user % is not on the Kermanych team allowlist',
+      coalesce(handle, '(unknown)');
+  end if;
+
   insert into public.profiles (id, github_username, display_name, avatar_url)
   values (
     new.id,
-    new.raw_user_meta_data ->> 'user_name',
+    handle,
     new.raw_user_meta_data ->> 'full_name',
     new.raw_user_meta_data ->> 'avatar_url')
   on conflict (id) do nothing;

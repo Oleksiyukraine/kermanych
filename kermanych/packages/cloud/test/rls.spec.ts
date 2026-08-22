@@ -7,12 +7,37 @@
 // the same thing GitHub OAuth would do — and never to bypass a policy under
 // test. Every assertion below runs through an anon-key client carrying a real
 // user JWT, exactly like the shipped app.
+//
+// Sign-in is allowlisted (`public.allowed_github_users`), so every handle this
+// suite invents has to be seeded first. The allowlist deliberately grants
+// NOTHING to anon or authenticated — not even to service_role for DML — so it is
+// reachable only as `postgres`, i.e. through psql on the local DSN.
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { beforeAll, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const URL = process.env.SUPABASE_TEST_URL;
 const ANON = process.env.SUPABASE_TEST_ANON_KEY;
 const SERVICE = process.env.SUPABASE_TEST_SERVICE_KEY;
+const DB_URL =
+  process.env.SUPABASE_TEST_DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54422/postgres";
+
+function sql(statement: string): void {
+  execFileSync("psql", [DB_URL, "-v", "ON_ERROR_STOP=1", "-q", "-c", statement], {
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+}
+
+// Handles seeded by this run, so afterAll removes exactly those and nothing else.
+const seeded: string[] = [];
+
+function allow(handle: string): void {
+  sql(
+    `insert into public.allowed_github_users (github_username, note)
+     values ('${handle}', 'rls-suite') on conflict do nothing`,
+  );
+  seeded.push(handle);
+}
 
 type TestUser = { id: string; client: SupabaseClient };
 
@@ -32,14 +57,16 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
 
   async function makeUser(tag: string): Promise<TestUser> {
     const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const email = `${tag}-${stamp}@kermanych.test`;
+    const handle = `${tag}-${stamp}`;
+    const email = `${handle}@kermanych.test`;
     const password = "kermanych-test-password";
+    allow(handle);
     const created = await admin.auth.admin.createUser({
       email,
       password,
       email_confirm: true,
       user_metadata: {
-        user_name: `${tag}-${stamp}`,
+        user_name: handle,
         full_name: `${tag} Tester`,
         avatar_url: `https://example.test/${tag}.png`,
       },
@@ -79,6 +106,14 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     taskId = task.data.id as string;
   }, 30_000);
 
+  // Id-scoped: only the handles this run seeded. Removing them does NOT affect the
+  // users already created — the allowlist is checked at signup, once.
+  afterAll(() => {
+    for (const handle of seeded) {
+      sql(`delete from public.allowed_github_users where github_username = '${handle}'`);
+    }
+  });
+
   it("handle_new_user fills profiles from the GitHub metadata", async () => {
     const { data, error } = await owner.client
       .from("profiles")
@@ -89,6 +124,29 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(data?.display_name).toBe("owner Tester");
     expect(data?.github_username).toMatch(/^owner-/);
     expect(data?.avatar_url).toBe("https://example.test/owner.png");
+  });
+
+  // The team gate. The repo is public, so this is the difference between "our
+  // team can sign in" and "every GitHub account on earth can". handle_new_user()
+  // raises, which aborts the auth.users insert itself: no user, no profile.
+  it("a GitHub handle that is not on the allowlist cannot become a user", async () => {
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const handle = `intruder-${stamp}`;
+    const created = await admin.auth.admin.createUser({
+      email: `${handle}@kermanych.test`,
+      password: "kermanych-test-password",
+      email_confirm: true,
+      user_metadata: { user_name: handle, full_name: "Intruder" },
+    });
+    expect(created.error).not.toBeNull();
+    expect(created.data.user).toBeNull();
+
+    // And nothing was left behind: no profile row carries that handle.
+    const { data } = await owner.client
+      .from("profiles")
+      .select("id")
+      .eq("github_username", handle);
+    expect(data).toEqual([]);
   });
 
   it("handle_new_project inserts the creator as owner-member", async () => {
