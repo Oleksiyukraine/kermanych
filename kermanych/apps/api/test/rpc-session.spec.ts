@@ -80,20 +80,22 @@ test("one undecodable frame yields exactly one warning notice and the stream kee
   rpc.onExit(() => {});
   const notices: { message?: string; level?: string }[] = [];
   let deltas = 0;
-  // Settle on the third delta, or give up after a bound — a poisoned reassembler never
-  // delivers them, and the assertions below should report the counts, not time the suite out.
+  // Subscribe before start() so no frame is missed, but bound the wait only after the child is
+  // up: a window opened before spawn would also cover spawn time and could expire early on a
+  // loaded machine. The bound exists so a poisoned reassembler reports counts instead of
+  // timing the suite out.
+  let settle = () => {};
   const settled = new Promise<void>((res) => {
-    const done = setTimeout(res, 600);
-    rpc.onEvent((e) => {
-      if (e.type === "notice") notices.push(e as { message?: string; level?: string });
-      if (e.type === "message_update" && ++deltas === 3) {
-        clearTimeout(done);
-        res();
-      }
-    });
+    settle = res;
+  });
+  rpc.onEvent((e) => {
+    if (e.type === "notice") notices.push(e as { message?: string; level?: string });
+    if (e.type === "message_update" && ++deltas === 3) settle();
   });
   await rpc.start();
+  const bail = setTimeout(settle, 600);
   await settled;
+  clearTimeout(bail);
   await rpc.stop();
 
   expect(notices).toHaveLength(1);

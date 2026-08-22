@@ -141,17 +141,23 @@ describe("live transcript", () => {
     ]);
   });
 
-  it("renders a plain omp notice at info and the synthetic lost-frame one at warn", async () => {
+  it("normalises omp's notice levels into the transcript's own vocabulary", async () => {
     const { sup, registry } = make();
     const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
     const chat = await sup.createChat(g.id);
 
+    // omp 17.3.8 spells a warning "warning" and never "warn"; the api's own synthetic frame
+    // says "warn". Both must land as `warn`, or a real warning renders as muted info text.
     emit({ type: "notice", message: "context is getting full" });
+    emit({ type: "notice", level: "warning", message: "автостиснення не вдалося" });
     emit({ type: "notice", level: "warn", message: "втрачено кадр від omp" });
+    emit({ type: "notice", level: "error", message: "collab ended" });
 
     expect(sup.getTranscript(chat.id)).toMatchObject([
       { kind: "notice", level: "info", text: "context is getting full" },
+      { kind: "notice", level: "warn", text: "автостиснення не вдалося" },
       { kind: "notice", level: "warn", text: "втрачено кадр від omp" },
+      { kind: "notice", level: "error", text: "collab ended" },
     ]);
   });
 });

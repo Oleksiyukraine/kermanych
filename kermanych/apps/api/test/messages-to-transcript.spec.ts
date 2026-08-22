@@ -102,7 +102,7 @@ test("marks failed results as error and reduces them with the paired call's argu
   ]);
 });
 
-test("pairs parallel same-name calls FIFO", () => {
+test("pairs parallel same-name calls FIFO when history carries no call ids", () => {
   const out = entriesOf([
     {
       role: "assistant",
@@ -113,6 +113,25 @@ test("pairs parallel same-name calls FIFO", () => {
     },
     { role: "toolResult", toolName: "read", isError: false, details: { totalLines: 1, displayContent: { text: "A", lineNumbers: [1] } }, content: [] },
     { role: "toolResult", toolName: "read", isError: false, details: { totalLines: 1, displayContent: { text: "B", lineNumbers: [1] } }, content: [] },
+  ]);
+  expect(out).toEqual([
+    { kind: "tool", id: "h1", at: 1, tool: "read", status: "ok", target: "a.ts", stat: "1 ln", count: 1, detail: { lines: [{ t: "ctx", n: "1", text: "A" }], totalLines: 1 } },
+    { kind: "tool", id: "h2", at: 1, tool: "read", status: "ok", target: "b.ts", stat: "1 ln", count: 1, detail: { lines: [{ t: "ctx", n: "1", text: "B" }], totalLines: 1 } },
+  ]);
+});
+
+test("pairs parallel calls by id, so results returning out of order keep their own rows", () => {
+  const out = entriesOf([
+    {
+      role: "assistant",
+      content: [
+        { type: "toolCall", id: "toolu_a", name: "read", arguments: { path: "a.ts" } },
+        { type: "toolCall", id: "toolu_b", name: "read", arguments: { path: "b.ts" } },
+      ],
+    },
+    // omp returns whichever call finished first; FIFO by tool name would hand B's lines to A.
+    { role: "toolResult", toolCallId: "toolu_b", toolName: "read", isError: false, details: { totalLines: 1, displayContent: { text: "B", lineNumbers: [1] } }, content: [] },
+    { role: "toolResult", toolCallId: "toolu_a", toolName: "read", isError: false, details: { totalLines: 1, displayContent: { text: "A", lineNumbers: [1] } }, content: [] },
   ]);
   expect(out).toEqual([
     { kind: "tool", id: "h1", at: 1, tool: "read", status: "ok", target: "a.ts", stat: "1 ln", count: 1, detail: { lines: [{ t: "ctx", n: "1", text: "A" }], totalLines: 1 } },

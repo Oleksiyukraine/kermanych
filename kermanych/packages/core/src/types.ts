@@ -101,9 +101,10 @@ export type RpcEvent =
       result?: { content?: { type?: string; text?: string }[]; details?: Record<string, unknown> };
     }
   | { type: "agent_end"; isTerminal?: boolean }
-  // omp's own notices carry no level and read as `info`. `level` is set only by the frames
-  // the api synthesises for itself, so a dropped frame can render as the warning it is.
-  | { type: "notice"; message?: string; level?: "info" | "warn" | "error" }
+  // omp's `emitNotice` forwards its own level verbatim: it spells a warning `"warning"` and
+  // never `"warn"`. Left as an open string because the vocabulary is omp's, not ours — the
+  // transcript reducer normalises it into `TranscriptEntry`'s closed `info | warn | error`.
+  | { type: "notice"; message?: string; level?: string }
   | RpcExtensionUIRequest
   | { type: "rpc_chunk"; chunkId: string; index: number; count: number; byteLength: number; data: string }
   | { type: string; [k: string]: unknown };

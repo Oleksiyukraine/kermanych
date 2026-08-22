@@ -4,6 +4,8 @@ import { applyToolResult, hasTurnMeta, joinResultText, pendingToolEntry, turnEnt
 // Shape of omp's converted history messages (get_messages / get_messages_page) we map from.
 export type OmpPart = {
   type: string;
+  // omp's own id for a `toolCall` part; the matching `toolResult` message repeats it.
+  id?: string;
   text?: string;
   thinking?: string;
   name?: string;
@@ -16,6 +18,7 @@ export type OmpMessage = TurnMeta & {
   role?: string;
   content?: OmpPart[];
   toolName?: string;
+  toolCallId?: string;
   isError?: boolean;
   details?: Record<string, unknown>;
   timestamp?: number;
@@ -40,6 +43,10 @@ export function messagesToTranscript(messages: unknown[]): Rehydrated {
   // Call args per pending entry id, so the result reduction sees exactly what the live path
   // sees from `ReduceOpts.pendingArgs` — omp's history repeats them no more than its stream does.
   const pendingArgs = new Map<string, Record<string, unknown>>();
+  // omp's own toolCall id -> the entry id we minted for it. Real history issues 2-4 parallel
+  // calls per assistant message, and their results come back in whatever order they finished:
+  // pairing on the id is the only way a row keeps its own stat, count and detail.
+  const rowByCallId = new Map<string, string>();
   for (const raw of messages) {
     const m = raw as OmpMessage;
     const parts = m.content ?? [];
@@ -65,6 +72,7 @@ export function messagesToTranscript(messages: unknown[]): Rehydrated {
         else if (p.type === "toolCall") {
           const id = `h${++seq}`;
           if (p.arguments) pendingArgs.set(id, p.arguments);
+          if (p.id) rowByCallId.set(p.id, id);
           entries.push(pendingToolEntry(id, at, p.name ?? "?", p.arguments, p.intent));
         }
       }
@@ -73,7 +81,11 @@ export function messagesToTranscript(messages: unknown[]): Rehydrated {
       if (hasTurnMeta(m)) entries.push(turnEntry(`h${++seq}`, at, m));
     } else if (m.role === "toolResult") {
       const tool = m.toolName ?? "?";
-      const found = entries.find((x) => x.kind === "tool" && x.status === "pending" && x.tool === tool);
+      const rowId = m.toolCallId === undefined ? undefined : rowByCallId.get(m.toolCallId);
+      // FIFO by tool name is only the fallback, for history that predates the ids.
+      const found =
+        (rowId === undefined ? undefined : entries.find((x) => x.kind === "tool" && x.id === rowId)) ??
+        entries.find((x) => x.kind === "tool" && x.status === "pending" && x.tool === tool);
       // An unmatched result (history paged mid-call) still earns its own completed row.
       const entry = found?.kind === "tool" ? found : pendingToolEntry(`h${++seq}`, at, tool, undefined);
       const args = pendingArgs.get(entry.id);

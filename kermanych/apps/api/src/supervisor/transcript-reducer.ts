@@ -175,8 +175,10 @@ export function reduceRpcEvents(events: RpcEvent[], opts?: ReduceOpts): Reduced 
       const text = ev.message ?? "";
       if (!text.trim()) continue;
       const at = stamp();
-      // omp's own notices carry no level; only the api's synthetic ones do.
-      entries.push({ kind: "notice", id: `n${at}`, at, level: ev.level ?? "info", text });
+      // omp spells it `warning`, the transcript union spells it `warn`; anything else omp
+      // adds later reads as `info` rather than leaking an unknown value into a typed field.
+      const level = ev.level === "warn" || ev.level === "warning" ? "warn" : ev.level === "error" ? "error" : "info";
+      entries.push({ kind: "notice", id: `n${at}`, at, level, text });
       continue;
     }
   }
