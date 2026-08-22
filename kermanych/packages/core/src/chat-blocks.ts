@@ -5,7 +5,8 @@ export type UserEntry = Extract<TranscriptEntry, { kind: "user_text" }>;
 
 export type ChatItem =
   | { kind: "entry"; entry: TranscriptEntry; muted: boolean }
-  | { kind: "group"; tool: string; members: ToolEntry[]; stat: string };
+  // `stat` is absent when the run cannot be summed — see `groupStat`.
+  | { kind: "group"; tool: string; members: ToolEntry[]; stat?: string };
 
 export type BlockSummary = { ms: number; calls: number; files: number; thinkMs: number; cost: number };
 export type ChatBlock = { id: string; request?: UserEntry; items: ChatItem[]; summary: BlockSummary };
@@ -21,8 +22,17 @@ export const COALESCE_TOOLS = ["read", "grep", "glob"] as const;
 const TOUCHING = ["edit", "write"];
 const UNIT: Record<string, string> = { read: "ln", grep: "збігів", glob: "файлів" };
 
-function groupStat(tool: string, members: ToolEntry[]): string {
-  const total = members.reduce((sum, m) => sum + (m.count ?? 0), 0);
+// The group row's only number is its members' own counts added up, so it may be shown only
+// when every member carries one. A `read` whose stat is a byte size (no `totalLines` in the
+// payload) reports no count: treating that as 0 would under-report a mixed run and would
+// print `0 ln` for a run of nothing but those — a total the data never contained. An
+// unsummable run keeps its `×N` and each member row keeps its own truthful stat.
+function groupStat(tool: string, members: ToolEntry[]): string | undefined {
+  let total = 0;
+  for (const m of members) {
+    if (m.count === undefined) return undefined;
+    total += m.count;
+  }
   return `${total} ${UNIT[tool] ?? ""}`.trim();
 }
 
@@ -65,12 +75,17 @@ export function buildChatBlocks(entries: TranscriptEntry[], opts?: { thinkMinMs?
       const groupable = (COALESCE_TOOLS as readonly string[]).includes(entry.tool);
       if (groupable && last?.kind === "group" && last.tool === entry.tool) {
         last.members.push(entry);
-        last.stat = groupStat(entry.tool, last.members);
+        const stat = groupStat(entry.tool, last.members);
+        // A count-less member joining a summable run takes the total away with it: the key
+        // goes rather than lingering as an explicit `undefined`.
+        if (stat === undefined) delete last.stat;
+        else last.stat = stat;
         continue;
       }
       if (groupable && last?.kind === "entry" && last.entry.kind === "tool" && last.entry.tool === entry.tool) {
         const members = [last.entry, entry];
-        block.items[block.items.length - 1] = { kind: "group", tool: entry.tool, members, stat: groupStat(entry.tool, members) };
+        const stat = groupStat(entry.tool, members);
+        block.items[block.items.length - 1] = { kind: "group", tool: entry.tool, members, ...(stat === undefined ? {} : { stat }) };
         continue;
       }
       block.items.push({ kind: "entry", entry, muted: false });

@@ -34,6 +34,57 @@ test("coalesces a run of same-tool reads and sums their counts", () => {
   expect(items[2]).toMatchObject({ kind: "entry" });
 });
 
+// A `read` whose payload carried no `totalLines` reports a byte size and no count. Adding it
+// into a sum would under-report the run; summing a run of only those would print `0 ln`.
+test("a group containing a count-less member reports no stat at all", () => {
+  const blocks = buildChatBlocks([
+    user("u1", 0, "x"),
+    tool("t1", 1, "read", { target: "a.ts", count: 145, stat: "145 ln" }),
+    tool("t2", 2, "read", { target: "b.ts", stat: "4.6 KB" }),
+  ]);
+  const group = blocks[0]!.items[0] as { kind: string; stat?: string; members: unknown[] };
+  expect(group.kind).toBe("group");
+  expect(group.members).toHaveLength(2);
+  expect(group.stat).toBeUndefined();
+  expect("stat" in group).toBe(false);
+});
+
+test("a group of only count-less members does not invent a zero total", () => {
+  const blocks = buildChatBlocks([
+    user("u1", 0, "x"),
+    tool("t1", 1, "read", { target: "a.ts", stat: "4.6 KB" }),
+    tool("t2", 2, "read", { target: "b.ts", stat: "1.2 KB" }),
+    tool("t3", 3, "read", { target: "c.ts", stat: "820 B" }),
+  ]);
+  const group = blocks[0]!.items[0] as { kind: string; stat?: string; members: unknown[] };
+  expect(group.kind).toBe("group");
+  expect(group.members).toHaveLength(3);
+  expect(group.stat).toBeUndefined();
+  expect(group.stat).not.toBe("0 ln");
+});
+
+// The count-less member arrives after the run was already summable, so the total has to be
+// withdrawn rather than left standing at its earlier value.
+test("a count-less member joining a summable run withdraws the total", () => {
+  const blocks = buildChatBlocks([
+    user("u1", 0, "x"),
+    tool("t1", 1, "grep", { target: "/a/ src", count: 4, stat: "4 збігів" }),
+    tool("t2", 2, "grep", { target: "/b/ src", count: 6, stat: "6 збігів" }),
+  ]);
+  expect(blocks[0]!.items[0]).toMatchObject({ kind: "group", stat: "10 збігів" });
+
+  const widened = buildChatBlocks([
+    user("u1", 0, "x"),
+    tool("t1", 1, "grep", { target: "/a/ src", count: 4, stat: "4 збігів" }),
+    tool("t2", 2, "grep", { target: "/b/ src", count: 6, stat: "6 збігів" }),
+    tool("t3", 3, "grep", { target: "/c/ src" }),
+  ]);
+  const group = widened[0]!.items[0] as { stat?: string; members: unknown[] };
+  expect(group.members).toHaveLength(3);
+  expect(group.stat).toBeUndefined();
+  expect("stat" in group).toBe(false);
+});
+
 test("a lone read is not grouped", () => {
   const blocks = buildChatBlocks([user("u1", 0, "x"), tool("t1", 1, "read", { count: 3 })]);
   expect(blocks[0]!.items[0]).toMatchObject({ kind: "entry" });
