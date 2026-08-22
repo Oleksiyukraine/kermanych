@@ -150,6 +150,11 @@ export const api = {
   createChat: (projectId: string): Promise<Session> =>
     post<Session>('/sessions/chat', { projectId }),
 
+  // The user is NOT sent: the api takes it from the guard's cached token, so a board
+  // client cannot launch a task on somebody else's behalf.
+  createSessionFromTask: (taskId: string): Promise<Session> =>
+    post<Session>('/sessions/from-task', { taskId }),
+
   promoteChat: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/promote`, {}),
 

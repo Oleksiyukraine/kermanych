@@ -58,8 +58,8 @@
               <KBtn variant="ghost" @click="onDelete(task)">Видалити</KBtn>
               <KBtn
                 variant="primary"
-                :disabled="!isBound(task)"
-                :title="isBound(task) ? 'Запустити локальну сесію' : 'Прив’яжіть локальну теку репозиторію'"
+                :disabled="launching !== null"
+                :title="isBound(task) ? 'Запустити локальну сесію' : 'Проєкт не звʼязано з локальною текою — вкажи її'"
                 @click="launch(task)"
               >Запустити</KBtn>
             </footer>
@@ -120,6 +120,27 @@
         </KBtn>
       </template>
     </KModal>
+
+    <!-- LOCAL BINDING: a cloud task only runs where its repo actually lives -->
+    <KModal v-model="bindingOpen" title="Звʼязати проєкт з локальною текою">
+      <div class="board__bind">
+        <p class="board__bind-note">
+          Задача «{{ pendingLaunch?.title ?? '' }}» виконується на цій машині. Вкажи локальний
+          git-репозиторій проєкту «{{ bindingProjectId ? projectName(bindingProjectId) : '' }}» —
+          шлях лишається лише тут і в хмару не потрапляє.
+        </p>
+        <KField v-model="bindingPath" label="Локальна тека" placeholder="/Users/me/code/project" />
+        <KBtn variant="secondary" @click="pickerOpen = true">Обрати теку…</KBtn>
+        <p v-if="bindingError" class="board__bind-error" role="alert">{{ bindingError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="bindingOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" :disabled="!bindingPath.trim()" @click="confirmBinding">
+          Звʼязати і запустити
+        </KBtn>
+      </template>
+    </KModal>
+    <KDirPicker v-model="pickerOpen" :start="bindingPath" @select="bindingPath = $event" />
   </main>
 </template>
 
@@ -128,6 +149,7 @@
 // from WorkspacePage's LOCAL session table. Cards are cloud tasks; execution still happens
 // on the assignee's own machine, which is why «Запустити» needs a local binding.
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import type { ProjectMember, Task, TaskStatus } from '@kermanych/cloud';
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import { useBoard } from 'stores/board';
@@ -139,13 +161,16 @@ import KModal from 'components/kit/KModal.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KTag from 'components/kit/KTag.vue';
+import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
 import { relativeTime } from '../lib/time';
+import { api } from '../lib/api';
 
 const board = useBoard();
 const cloud = useProjects();
 const local = useOrchestrator();
 const now = useNow();
+const router = useRouter();
 
 // Ten task statuses, five columns: `thinking` and `tool` are one human state («агент
 // працює»), and the five end states are all «не рухається». Ten lanes would be ten
@@ -280,7 +305,7 @@ function onAssign(task: Task, handle: string): void {
   void board.assignTask(task.id, userId);
 }
 
-// ── Launch seam ───────────────────────────────────────────────────────────────
+// ── Launch ────────────────────────────────────────────────────────────────────
 function isActiveTask(task: Task): boolean {
   return ACTIVE_STATUSES.includes(task.status);
 }
@@ -291,15 +316,82 @@ function isBound(task: Task): boolean {
   return !!local.projects.find((p) => p.id === task.projectId)?.localRepoPath;
 }
 
-// RESERVED SEAM — Plan D (status sync) replaces this entire body with
-// api.createSessionFromTask(task.id) plus the unbound-project binding detour. Until then
-// the button, its disabled state and its hint are real, and pressing it says so rather than
-// pretending to have started anything.
-function launch(task: Task): void {
-  local.notify(
-    `Запуск задачі «${task.title}» зʼявиться разом із локальною синхронізацією статусів`,
-    'info',
-  );
+const launching = ref<string | null>(null);
+const bindingOpen = ref(false);
+const bindingProjectId = ref<string | null>(null);
+const bindingPath = ref('');
+const bindingError = ref<string | null>(null);
+const pickerOpen = ref(false);
+const pendingLaunch = ref<Task | null>(null);
+
+// Every refusal `POST /sessions/from-task` can produce, phrased for the person who pressed
+// the button. `project not bound` is deliberately absent: it is not a toast, it opens the
+// picker — a dead end would leave the user with no way to fix it from here.
+const LAUNCH_ERRORS: Record<string, string> = {
+  'task not found': 'Задачі вже немає — хтось її видалив. Онови дошку.',
+  'task assigned to someone else': 'Задача призначена іншому учаснику — запустити її може лише він.',
+  'task already claimed': 'Задачу щойно забрав інший учасник — онови дошку.',
+  'not signed in': 'Локальний Керманич не має токена — увійди ще раз.',
+};
+
+// The board is a shared surface, so this is a pre-check for UX only: the API re-checks the
+// binding and the RLS-backed assignee rule regardless of what the button allowed.
+async function launch(task: Task): Promise<void> {
+  if (launching.value) return;
+  if (!isBound(task)) {
+    openBinding(task);
+    return;
+  }
+  await runLaunch(task);
+}
+
+async function runLaunch(task: Task): Promise<void> {
+  launching.value = task.id;
+  try {
+    const session = await api.createSessionFromTask(task.id);
+    local.notify(`Сесію «${session.name}» запущено на цій машині.`, 'info');
+    // The local session lives on the workspace board, so go where the work is.
+    await router.push('/');
+  } catch (e) {
+    // `fetch` itself rejects with a TypeError; every refusal from the api arrives as a
+    // plain Error carrying the server's message. That is what separates "the local
+    // Kermanych is not answering" from "it answered no".
+    if (e instanceof TypeError) {
+      local.notify('Локальний Керманич не відповідає — перевір, чи він запущений.', 'error');
+      return;
+    }
+    const message = e instanceof Error ? e.message : String(e);
+    if (message === 'project not bound') {
+      // Raced with someone unbinding, or the row vanished — offer the picker instead of a toast.
+      openBinding(task);
+      return;
+    }
+    local.notify(LAUNCH_ERRORS[message] ?? `Не вдалося запустити задачу: ${message}`, 'error');
+  } finally {
+    launching.value = null;
+  }
+}
+
+function openBinding(task: Task): void {
+  pendingLaunch.value = task;
+  bindingProjectId.value = task.projectId;
+  bindingPath.value = local.projects.find((p) => p.id === task.projectId)?.localRepoPath ?? '';
+  bindingError.value = null;
+  bindingOpen.value = true;
+}
+
+async function confirmBinding(): Promise<void> {
+  const projectId = bindingProjectId.value;
+  const task = pendingLaunch.value;
+  if (!projectId || !task) return;
+  bindingError.value = null;
+  try {
+    await api.setProjectBinding(projectId, bindingPath.value.trim());
+    bindingOpen.value = false;
+    await runLaunch(task);
+  } catch (e) {
+    bindingError.value = e instanceof Error ? e.message : String(e);
+  }
 }
 
 // ── Create / edit ─────────────────────────────────────────────────────────────
@@ -620,6 +712,25 @@ function onDelete(task: Task): void {
   font-family: var(--k-font-mono);
   font-size: 12px;
   line-height: 1.5;
+  color: var(--k-accent);
+}
+
+.board__bind {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.board__bind-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--k-muted);
+}
+
+.board__bind-error {
+  margin: 0;
+  font-size: 12px;
+  // The kit has no `--k-danger`; `--k-accent` is what every other refusal on this page uses.
   color: var(--k-accent);
 }
 </style>
