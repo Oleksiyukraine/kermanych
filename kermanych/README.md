@@ -37,7 +37,7 @@ in and to see the board.
 stack (Docker + the [Supabase CLI](https://supabase.com/docs/guides/local-development)):
 
 ```bash
-supabase start        # from the repo root; prints the API URL, anon key, service_role key
+supabase start        # from the repo root; prints the API URL and the local keys
 supabase db reset     # apply supabase/migrations/*.sql to a clean database
 supabase status       # re-print the URLs and keys at any time
 ```
@@ -69,31 +69,58 @@ GitHub, and add both redirect URLs (`http://localhost:5317/**` and
 `http://127.0.0.1:53170/callback`) under Authentication → URL Configuration.
 The second one is the fixed loopback the desktop app listens on.
 
-**Four environment variables** — the API and the UI each need the same pair,
-under different names (Vite only inlines `VITE_`-prefixed variables). All four
-hold public values; the anon key is safe to expose because RLS is the
-authorization surface. **No service-role key ever belongs on a machine running
-Kermanych.**
+**Two values, two consumers** — the API and the UI each need the same URL and the
+same public API key, under different names (Vite only inlines `VITE_`-prefixed
+variables). Both values are public; the API key is safe to expose because RLS is
+the authorization surface. **No secret key — `sb_secret_…`, formerly
+`service_role` — ever belongs on a machine running Kermanych.**
+
+The key itself has two accepted spellings, because Supabase renamed it. A modern
+dashboard shows a **`Publishable key`** (`sb_publishable_…`) under Project
+Settings → API keys: that IS the value formerly called `anon`, with the same
+public-by-design role. Kermanych reads both names and prefers the publishable
+one:
 
 | variable | consumer | value |
 |---|---|---|
 | `SUPABASE_URL` | `apps/api` | the API URL |
-| `SUPABASE_ANON_KEY` | `apps/api` | the anon key |
+| `SUPABASE_PUBLISHABLE_KEY` | `apps/api` | the publishable key |
+| `SUPABASE_ANON_KEY` | `apps/api` | legacy name for the same value, still accepted |
 | `VITE_SUPABASE_URL` | `apps/ui` | the same API URL |
-| `VITE_SUPABASE_ANON_KEY` | `apps/ui` | the same anon key |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | `apps/ui` | the same publishable key |
+| `VITE_SUPABASE_ANON_KEY` | `apps/ui` | legacy name for the same value, still accepted |
 
-Export the first pair in the shell that runs `pnpm dev:api` (or `pnpm dev:app`,
-which hosts the API in-process), and put the second pair in `apps/ui/.env`:
+Set one key name per consumer — whichever format your backend hands you. If both
+are set, the publishable one wins. With neither, startup fails with
+`cloud env missing: set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY (or the legacy
+SUPABASE_ANON_KEY)`.
+
+**Expect both key shapes on the same machine, and do not try to unify them.** A
+hosted dashboard offers only the new format (`Publishable key` / `Secret key`).
+The local CLI stack keeps issuing the LEGACY JWTs: `supabase status` on a recent
+CLI prints `ANON_KEY` and `SERVICE_ROLE_KEY` (the fixed local demo JWTs) next to
+a `PUBLISHABLE_KEY` / `SECRET_KEY` pair, and an older CLI prints only the legacy
+two. So a developer who works locally AND against the hosted project rightly has
+an `eyJ…` anon JWT for one and an `sb_publishable_…` key for the other — same
+public role, two formats, neither more correct than the other. Kermanych takes
+either value under either variable name, so nothing has to be converted.
+
+Export the api pair in the shell that runs `pnpm dev:api` (or `pnpm dev:app`,
+which hosts the API in-process), and put the ui pair in `apps/ui/.env`:
 
 ```bash
 # apps/ui/.env — public values only, not committed
 VITE_SUPABASE_URL=http://127.0.0.1:54421
-VITE_SUPABASE_ANON_KEY=<anon key>
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_…   # or VITE_SUPABASE_ANON_KEY=<anon key>
 ```
 
+The dashboard's **`Secret key`** (`sb_secret_…`) is **never used by Kermanych**.
+It must not go into any environment variable, `.env` file or shell export here —
+nothing in this repo reads it, and RLS assumes it never leaves the dashboard.
+
 `GITHUB_SECRET` is the **only** real secret in this repo, and it is never one of
-the four above. Everything else — both URLs, both anon keys and
-`GITHUB_CLIENT_ID` — is a public value.
+the variables above. Everything else — both URLs, both spellings of the public
+API key and `GITHUB_CLIENT_ID` — is a public value.
 
 ### Joining the team (new teammate, start here)
 
@@ -102,10 +129,12 @@ cp .env.example .env                 # only needed for LOCAL GitHub sign-in
 cp apps/ui/.env.example apps/ui/.env # public values; fill both in
 ```
 
-Fill `apps/ui/.env` (and the `SUPABASE_URL` / `SUPABASE_ANON_KEY` pair for the
-API) by pasting from `supabase status` for a local stack, or from the hosted
-project's Settings → API. Those are public values — RLS is the authorization
-surface, and the anon key ships inside the browser bundle anyway.
+Fill `apps/ui/.env` (and the `SUPABASE_URL` + key pair for the API) by pasting
+from `supabase status` for a local stack, or from the hosted project's Settings →
+API keys. Those are public values — RLS is the authorization surface, and the
+publishable key ships inside the browser bundle anyway. A hosted dashboard gives
+you a `Publishable key`; a local stack gives you the legacy `anon` key; both
+names are accepted. Leave the dashboard's `Secret key` where it is.
 
 You do **not** need `GITHUB_SECRET`. The hosted project holds it in the Supabase
 dashboard; nobody has to send it to you. It only appears in `kermanych/.env` if
@@ -135,9 +164,13 @@ row, no `profiles` row, and the GoTrue log carries
 `github user <handle> is not on the Kermanych team allowlist`.
 
 **Running the cloud tests.** `packages/cloud`'s unit suite needs nothing. Its
-RLS/trigger integration suite is skipped unless all three of these are set, and
-`SUPABASE_TEST_SERVICE_KEY` is a *test fixture only* — it mints throwaway users
-through the admin API and is never read by shipped code:
+RLS/trigger integration suite is skipped unless all three of these are set. They
+are LOCAL-STACK fixtures and keep the legacy CLI spelling on purpose — that is
+what `supabase status` labels them — and `SUPABASE_TEST_SERVICE_KEY` is a *test
+fixture only*: it mints throwaway users through the admin API on your own local
+stack, is never read by shipped code, and must never hold a hosted project's
+secret key. `SUPABASE_TEST_ANON_KEY` takes either format — the suite passes with
+the local stack's `PUBLISHABLE_KEY` in it just as it does with `ANON_KEY`:
 
 ```bash
 supabase start && supabase db reset

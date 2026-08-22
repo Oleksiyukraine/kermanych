@@ -5,7 +5,7 @@ import { RegistryService, type AuthSessionRow } from "../registry/registry.servi
 
 export type CloudClientFactory = (opts: {
   url: string;
-  anonKey: string;
+  apiKey: string;
   accessToken?: string;
 }) => SupabaseClient;
 
@@ -52,8 +52,8 @@ export class AuthService {
   // getClaims return `{ data: null, error: null }`; that is the documented
   // "cannot verify locally" signal, and we fall back to getUser().
   async setToken(accessToken: string): Promise<{ userId: string; githubUsername?: string }> {
-    const { url, anonKey } = cloudEnv("api");
-    const client = this.makeClient({ url, anonKey, accessToken });
+    const { url, apiKey } = cloudEnv("api");
+    const client = this.makeClient({ url, apiKey, accessToken });
 
     const verified = await client.auth.getClaims(accessToken);
     if (verified.error) throw new Error(verified.error.message);
@@ -108,8 +108,8 @@ export class AuthService {
     const cur = this.cached;
     if (!cur) throw new Error("not signed in");
     if (!this.client) {
-      const { url, anonKey } = cloudEnv("api");
-      this.client = this.makeClient({ url, anonKey, accessToken: cur.accessToken });
+      const { url, apiKey } = cloudEnv("api");
+      this.client = this.makeClient({ url, apiKey, accessToken: cur.accessToken });
     }
     return this.client;
   }

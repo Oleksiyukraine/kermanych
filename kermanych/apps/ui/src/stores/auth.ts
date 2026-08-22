@@ -9,7 +9,7 @@ import { useOrchestrator } from './orchestrator';
 // One Supabase client per renderer, built when this module is first imported —
 // which boot/supabase.ts triggers before the first navigation. PKCE, session
 // persisted in localStorage, detectSessionInUrl on, so the SDK owns sign-in and
-// token refresh. The anon key is public; RLS is the authorization surface.
+// token refresh. The publishable/anon key is public; RLS is the authorization surface.
 // NEVER remove the markRaw: the store exposes this client, and Pinia wraps a setup
 // store's return in reactive(), whose deep unwrapping would strip the client's
 // protected fields (no @kermanych/cloud helper would then accept `auth.client`) and

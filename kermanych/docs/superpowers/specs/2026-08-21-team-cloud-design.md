@@ -30,8 +30,9 @@ status — while each AI session keeps executing locally on the assignee's machi
   status flows back to the cloud.
 - **Two Supabase clients, both under the user's JWT, no service-role key on any
   machine.** The UI talks to Supabase directly (auth, board CRUD, Realtime) with
-  the anon key; the local Nest holds a second client that acts under the user's
-  access token, obtained from the UI. RLS is the single authorization surface.
+  the publishable key (formerly `anon`); the local Nest holds a second client
+  that acts under the user's access token, obtained from the UI. RLS is the
+  single authorization surface.
 - **Realtime is the board engine.** A status push (from anyone's local Nest) or
   an assignment (from anyone's UI) fans out through Supabase Realtime. No custom
   WebSocket fan-out between machines; the existing socket.io gateway
@@ -40,7 +41,7 @@ status — while each AI session keeps executing locally on the assignee's machi
 ```
 Supabase: Auth (GitHub OAuth) · Postgres (profiles, projects, project_members,
           tasks) · Realtime · RLS
-   ▲ anon key + RLS (auth, board CRUD, realtime)      ▲ user JWT (status push only)
+   ▲ publishable key + RLS (auth, CRUD, realtime)     ▲ user JWT (status push only)
    │                                                  │
  Quasar UI ──── local REST (JWT) ────► local NestJS ──┴── SQLite (sessions,
  (per machine)                         (per machine)      projects, outbox)
@@ -87,8 +88,8 @@ Supabase: Auth (GitHub OAuth) · Postgres (profiles, projects, project_members,
 9. Env secret VALUES never reach the cloud. `projects.env_keys` stores key NAMES
    only, as a checklist; values stay in the bound repo's `.env` (unchanged from
    the 2026-08-11 per-project-env design).
-10. No service-role key on any client machine; every cloud write is under the
-    user's JWT + RLS.
+10. No service-role / secret key (`service_role` JWT or `sb_secret_…`) on any
+    client machine; every cloud write is under the user's JWT + RLS.
 11. Local mutating REST endpoints require a valid user token, so the local API
     acts as a known user (today it is fully unauthenticated with `CORS: *`).
 
@@ -303,10 +304,11 @@ non-UI code; consumed by both `apps/api` and `apps/ui` (mirrors how
 - `src/types.ts` — `CloudProject`, `ProjectMember`, `Task`, `TaskInsert`,
   `TaskPatch`; `TaskStatus = SessionStatus` re-exported from `@kermanych/core`
   so the enum cannot drift.
-- `src/client.ts` — `createCloudClient({ url, anonKey, accessToken? })`
-  returning a typed `SupabaseClient`; `cloudEnv()` reads
-  `SUPABASE_URL`/`SUPABASE_ANON_KEY` (api) or
-  `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` (ui).
+- `src/client.ts` — `createCloudClient({ url, apiKey, accessToken? })`
+  returning a typed `SupabaseClient`; `cloudEnv()` reads `SUPABASE_URL` plus
+  `SUPABASE_PUBLISHABLE_KEY` or the legacy `SUPABASE_ANON_KEY` (api), or
+  `VITE_SUPABASE_URL` plus `VITE_SUPABASE_PUBLISHABLE_KEY` or the legacy
+  `VITE_SUPABASE_ANON_KEY` (ui); the publishable name wins when both are set.
 - `src/tasks.ts` — `listTasks`, `createTask`, `assignTask`, `claimTask`
   (atomic self-assign: `update … set assignee_id = uid where id = ? and
   assignee_id is null`), `patchTask`, `pushTaskStatus(client, taskId, status,
@@ -458,6 +460,16 @@ implementation depends on, with their consequences.
   not an error.
 - **`getClaims(jwt)` supersedes `getUser(jwt)`** for server-side validation
   (local JWKS verification vs. a round trip per call) — see `## Auth`.
+- **The publishable/anon key travels as the `apikey` header**, which is why the
+  key's FORMAT is irrelevant to this design: `fetchWithAuth` sets `apikey` on
+  every request and only fills `Authorization` when the caller left it empty. Our
+  api client pins `Authorization: Bearer <user JWT>` and the ui gets one from the
+  session, so the public key is never presented as a session token. That is what
+  lets a modern `sb_publishable_…` key and a local stack's legacy `anon` JWT be
+  used interchangeably (`cloudEnv` accepts both names, publishable first). The
+  one asymmetry: with no session and no explicit header, supabase-js still uses
+  the key as the Bearer fallback for PostgREST — harmless, it is the `anon` role
+  either way — while refusing to do so for Edge Functions with a new-format key.
 - **PKCE verifiers are per client instance and per flow**; in Node/Electron main
   the default storage is in-memory, which is why the renderer, not main, runs
   both `signInWithOAuth` and `exchangeCodeForSession`.

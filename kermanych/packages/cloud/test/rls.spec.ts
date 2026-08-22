@@ -1,11 +1,14 @@
 // packages/cloud/test/rls.spec.ts
 // Integration suite against a LOCAL Supabase stack (`supabase start`). Skipped
 // unless the three SUPABASE_TEST_* variables are set, so `pnpm -r test` stays
-// green on a machine without Docker.
+// green on a machine without Docker. Those three names are LOCAL-STACK ONLY
+// fixtures: they keep the legacy spelling `supabase status` labels them with, no
+// hosted project's keys belong here, and SUPABASE_TEST_ANON_KEY takes either key
+// format (the local stack's `PUBLISHABLE_KEY` works here as well as `ANON_KEY`).
 //
 // The service-role key is used ONLY to mint test users through the admin API —
 // the same thing GitHub OAuth would do — and never to bypass a policy under
-// test. Every assertion below runs through an anon-key client carrying a real
+// test. Every assertion below runs through a public-key client carrying a real
 // user JWT, exactly like the shipped app.
 //
 // Sign-in is allowlisted (`public.allowed_github_users`), so every handle this
