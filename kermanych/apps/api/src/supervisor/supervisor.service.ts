@@ -38,9 +38,10 @@ type Live = {
   live: Partial<Session>;
   textBuf: string;
   thinkBuf: string;
-  // Tool start stamps live across events: the wall time of a call is only knowable once
-  // its end frame arrives, several reducer calls later.
+  // Tool start stamps and call args live across events: the wall time and the `$ <command>`
+  // header of a call are only reducible once its end frame arrives, several calls later.
   toolStarted: Map<string, number>;
+  toolArgs: Map<string, Record<string, unknown>>;
   poll?: NodeJS.Timeout;
 };
 
@@ -658,6 +659,7 @@ export class SupervisorService implements OnModuleDestroy {
       textBuf: l.textBuf,
       thinkBuf: l.thinkBuf,
       startedAt: l.toolStarted,
+      pendingArgs: l.toolArgs,
     });
     l.textBuf = reduced.textBuf;
     l.thinkBuf = reduced.thinkBuf;
@@ -1003,7 +1005,7 @@ export class SupervisorService implements OnModuleDestroy {
   // Shared live-session wiring (fresh create + resume): build the Live, register it,
   // and route exit + events. onExit marks error unless the session ended cleanly.
   private wireLive(sessionId: string, rpc: RpcSession, status: Session["status"]): Live {
-    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status }, textBuf: "", thinkBuf: "", toolStarted: new Map() };
+    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status }, textBuf: "", thinkBuf: "", toolStarted: new Map(), toolArgs: new Map() };
     this.map.set(sessionId, live);
     rpc.onExit((_code, reason) => {
       this.stopPoll(live);

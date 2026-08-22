@@ -48,7 +48,7 @@ test("collapses a tool call and its result into one entry with target, stat and 
   ]);
 });
 
-test("marks failed results as error and keeps the call-time target", () => {
+test("marks failed results as error and reduces them with the paired call's arguments", () => {
   const out = messagesToTranscript([
     { role: "assistant", content: [{ type: "toolCall", name: "bash", arguments: { command: "false" } }] },
     { role: "toolResult", toolName: "bash", isError: true, details: { wallTimeMs: 4, exitCode: 1 }, content: [{ type: "text", text: "" }] },
@@ -56,8 +56,8 @@ test("marks failed results as error and keeps the call-time target", () => {
   expect(out).toEqual([
     {
       kind: "tool", id: "h1", at: 1, tool: "bash", status: "error", target: "false", stat: "exit 1 · 4 ms", count: 4,
-      // The result frame carries no args, so the command survives in `target`, not in the detail head.
-      detail: { lines: [{ t: "head", text: "$ " }, { t: "head", text: "wall 4 ms · exit 1" }], totalLines: 2 },
+      // The result frame has no args of its own; they are carried over from the paired toolCall.
+      detail: { lines: [{ t: "head", text: "$ false" }, { t: "head", text: "wall 4 ms · exit 1" }], totalLines: 2 },
     },
   ]);
 });

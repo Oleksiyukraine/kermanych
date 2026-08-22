@@ -7,6 +7,10 @@ export type ReduceOpts = {
   textBuf?: string;
   thinkBuf?: string;
   startedAt?: Map<string, number>;
+  // The start frame's args, kept for the same lifetime as `startedAt`: omp does not repeat
+  // them on the result, yet reducers need them there too — `$ <command>` in a bash card is
+  // the whole point of opening it.
+  pendingArgs?: Map<string, Record<string, unknown>>;
 };
 
 export type Reduced = { entries: TranscriptEntry[]; full: Map<string, ToolLine[]>; textBuf: string; thinkBuf: string };
@@ -18,8 +22,8 @@ export function joinResultText(content: { text?: string }[] | undefined): string
   return (content ?? []).map((c) => c.text ?? "").join("\n");
 }
 
-// The call side of a tool row. `args` exist only here — omp never repeats them on the
-// result — so this is the only chance to derive a target from the pattern/command/path.
+// The call side of a tool row. Deriving the target here is what makes it deterministic:
+// it never depends on what the result happened to report.
 export function pendingToolEntry(id: string, at: number, tool: string, args: Record<string, unknown> | undefined, intent?: string): ToolEntry {
   // No recorded arguments means there is nothing to derive a target from. Asking the
   // display reducers with an empty object would invent one — grep answers "//" — and that
@@ -32,16 +36,23 @@ export function pendingToolEntry(id: string, at: number, tool: string, args: Rec
   };
 }
 
-// The result side. Both the live stream and rehydrated history call this on an entry
-// built by `pendingToolEntry`, which is what makes a reloaded session render identically
-// to the one that streamed. Returns the unclamped lines for the detail cache.
-export function applyToolResult(entry: ToolEntry, details: Record<string, unknown> | undefined, content: string, isError: boolean): ToolLine[] {
-  const d = toolDisplay(entry.tool, {}, details, content);
+// The result side. Both the live stream and rehydrated history call this on an entry built
+// by `pendingToolEntry`, with the same call args, which is what makes a reloaded session
+// render identically to the one that streamed. Returns the unclamped lines for the cache.
+export function applyToolResult(
+  entry: ToolEntry,
+  args: Record<string, unknown> | undefined,
+  details: Record<string, unknown> | undefined,
+  content: string,
+  isError: boolean,
+): ToolLine[] {
+  const d = toolDisplay(entry.tool, args, details, content);
   entry.status = isError ? "error" : "ok";
   if (d.stat !== undefined) entry.stat = d.stat;
   if (d.count !== undefined) entry.count = d.count;
-  // Only `edit` reports a path on the result, and it is the repo-relative one. Every other
-  // tool would produce a target from an empty args object and clobber the good one.
+  // `edit` is the one tool whose result reports an authoritative repo-relative path, and it
+  // is better than the call-side one. Every other target stays as the call derived it —
+  // deterministic, and independent of whether the result frame happened to echo a path.
   if (entry.tool === "edit" && typeof details?.["path"] === "string" && details["path"]) entry.target = d.target;
   entry.detail = {
     lines: clampLines(entry.tool, d.lines),
@@ -54,13 +65,15 @@ export function applyToolResult(entry: ToolEntry, details: Record<string, unknow
 // The single reduction from omp's event stream to transcript entries. Kept pure and
 // exported so both the live supervisor and the tests drive the identical code path.
 //
-// The streaming state that cannot live inside one call — the partial assistant text and
-// the tool start times — is passed in and handed back: the service owns one set per live
-// session, the tests hand a whole event run to a single call and let it own its own.
+// The streaming state that cannot live inside one call — the partial assistant text, the
+// tool start times and the tool call args — is passed in and handed back: the service owns
+// one set per live session, the tests hand a whole event run to a single call and let it
+// own its own.
 export function reduceRpcEvents(events: RpcEvent[], opts?: ReduceOpts): Reduced {
   const entries: TranscriptEntry[] = [];
   const full = new Map<string, ToolLine[]>();
   const startedAt = opts?.startedAt ?? new Map<string, number>();
+  const pendingArgs = opts?.pendingArgs ?? new Map<string, Record<string, unknown>>();
   let seq = 0;
   let textBuf = opts?.textBuf ?? "";
   let thinkBuf = opts?.thinkBuf ?? "";
@@ -110,6 +123,7 @@ export function reduceRpcEvents(events: RpcEvent[], opts?: ReduceOpts): Reduced 
       const at = stamp();
       const id = ev.toolCallId ?? `t${at}`;
       startedAt.set(id, at);
+      if (ev.args) pendingArgs.set(id, ev.args);
       entries.push(pendingToolEntry(id, at, ev.toolName ?? "?", ev.args, ev.intent));
       continue;
     }
@@ -131,7 +145,9 @@ export function reduceRpcEvents(events: RpcEvent[], opts?: ReduceOpts): Reduced 
         entry.ms = at - started;
         startedAt.delete(entry.id);
       }
-      const lines = applyToolResult(entry, ev.result?.details, joinResultText(ev.result?.content), ev.isError === true);
+      const args = pendingArgs.get(entry.id);
+      pendingArgs.delete(entry.id);
+      const lines = applyToolResult(entry, args, ev.result?.details, joinResultText(ev.result?.content), ev.isError === true);
       if (lines.length) full.set(entry.id, lines);
       if (found?.kind !== "tool") entries.push(entry);
       continue;

@@ -32,6 +32,9 @@ export function messagesToTranscript(messages: unknown[]): TranscriptEntry[] {
   const out: TranscriptEntry[] = [];
   let seq = 0;
   let clock = 0;
+  // Call args per pending entry id, so the result reduction sees exactly what the live path
+  // sees from `ReduceOpts.pendingArgs` — omp's history repeats them no more than its stream does.
+  const pendingArgs = new Map<string, Record<string, unknown>>();
   for (const raw of messages) {
     const m = raw as OmpMessage;
     const parts = m.content ?? [];
@@ -47,14 +50,20 @@ export function messagesToTranscript(messages: unknown[]): TranscriptEntry[] {
       for (const p of parts) {
         if (p.type === "thinking" && p.thinking?.trim()) out.push({ kind: "assistant_thinking", id: `h${++seq}`, at, text: p.thinking });
         else if (p.type === "text" && p.text?.trim()) out.push({ kind: "assistant_text", id: `h${++seq}`, at, text: p.text });
-        else if (p.type === "toolCall") out.push(pendingToolEntry(`h${++seq}`, at, p.name ?? "?", p.arguments, p.intent));
+        else if (p.type === "toolCall") {
+          const id = `h${++seq}`;
+          if (p.arguments) pendingArgs.set(id, p.arguments);
+          out.push(pendingToolEntry(id, at, p.name ?? "?", p.arguments, p.intent));
+        }
       }
     } else if (m.role === "toolResult") {
       const tool = m.toolName ?? "?";
       const found = out.find((x) => x.kind === "tool" && x.status === "pending" && x.tool === tool);
       // An unmatched result (history paged mid-call) still earns its own completed row.
       const entry = found?.kind === "tool" ? found : pendingToolEntry(`h${++seq}`, at, tool, undefined);
-      applyToolResult(entry, m.details, joinResultText(parts.filter((p) => p.type === "text")), m.isError === true);
+      const args = pendingArgs.get(entry.id);
+      pendingArgs.delete(entry.id);
+      applyToolResult(entry, args, m.details, joinResultText(parts.filter((p) => p.type === "text")), m.isError === true);
       if (found?.kind !== "tool") out.push(entry);
     }
   }

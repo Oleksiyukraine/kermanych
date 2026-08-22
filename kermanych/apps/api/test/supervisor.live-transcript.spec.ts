@@ -79,6 +79,25 @@ describe("live transcript", () => {
     expect(seen.find((e) => e.type === "transcript_update")).toMatchObject({ id: "c1", status: "ok", stat: "2 ln", count: 2 });
   });
 
+  it("carries the call's arguments across frames so a bash card shows the command that ran", async () => {
+    const { sup, registry } = make();
+    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const chat = await sup.createChat(g.id);
+
+    // Two separate callbacks — the args are gone by the time the result lands unless the
+    // service keeps them for the session.
+    emit({ type: "tool_execution_start", toolName: "bash", toolCallId: "b1", args: { command: "pnpm test" } });
+    emit({ type: "tool_execution_end", toolName: "bash", toolCallId: "b1", isError: false, result: { content: [{ type: "text", text: "ok" }], details: { wallTimeMs: 30 } } });
+
+    const row = sup.getTranscript(chat.id).find((e): e is Extract<TranscriptEntry, { kind: "tool" }> => e.kind === "tool");
+    expect(row).toMatchObject({ id: "b1", tool: "bash", status: "ok", target: "pnpm test", stat: "30 ms" });
+    expect(row!.detail!.lines).toEqual([
+      { t: "head", text: "$ pnpm test" },
+      { t: "ctx", text: "ok" },
+      { t: "head", text: "wall 30 ms" },
+    ]);
+  });
+
   it("records assistant text and the per-turn usage omp reports at message_end", async () => {
     const { sup, registry } = make();
     const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });

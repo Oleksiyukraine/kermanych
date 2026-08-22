@@ -47,15 +47,18 @@ test("an edit keeps the same target and diff detail on both paths", () => {
   expect(visible(live)).toMatchObject({ target: "lib/tip.ts", stat: "+1 \u22121" });
 });
 
-test("a bash failure agrees on status, stat and clamped detail across both paths", () => {
+test("a bash failure agrees on the command header, status, stat and clamped detail across both paths", () => {
   const bashDetails = { wallTimeMs: 1_200, exitCode: 2 };
   const text = Array.from({ length: 30 }, (_, i) => `row ${i}`).join("\n");
+  // Driven the way the service drives it: one frame per call, sharing the caller-owned maps.
+  const startedAt = new Map<string, number>();
+  const pendingArgs = new Map<string, Record<string, unknown>>();
+  let tick = 0;
+  const now = () => ++tick;
+  reduceRpcEvents([{ type: "tool_execution_start", toolName: "bash", toolCallId: "c2", args: { command: "make test" } }], { now, startedAt, pendingArgs });
   const live = reduceRpcEvents(
-    [
-      { type: "tool_execution_start", toolName: "bash", toolCallId: "c2", args: { command: "make test" } },
-      { type: "tool_execution_end", toolName: "bash", toolCallId: "c2", isError: true, result: { content: [{ type: "text", text }], details: bashDetails } },
-    ] as RpcEvent[],
-    { now: (n) => n },
+    [{ type: "tool_execution_end", toolName: "bash", toolCallId: "c2", isError: true, result: { content: [{ type: "text", text }], details: bashDetails } }] as RpcEvent[],
+    { now, startedAt, pendingArgs },
   ).entries[0] as ToolEntry;
 
   const history = messagesToTranscript([
@@ -63,8 +66,14 @@ test("a bash failure agrees on status, stat and clamped detail across both paths
     { role: "toolResult", toolName: "bash", isError: true, details: bashDetails, content: [{ type: "text", text }] },
   ])[0] as ToolEntry;
 
-  expect(visible(history)).toEqual(visible(live));
-  expect(visible(live)).toMatchObject({ status: "error", target: "make test", stat: "exit 2 · 1.2 с", count: 1_200 });
+  // The live entry is a patch (its start frame landed in an earlier call), so it carries no
+  // target of its own; the row it patches keeps the one derived at call time.
+  expect({ ...visible(history), target: undefined }).toEqual(visible(live));
+  expect(visible(live)).toMatchObject({ status: "error", stat: "exit 2 · 1.2 с", count: 1_200 });
+  expect(visible(history)).toMatchObject({ target: "make test" });
+  // The command is the point of opening a bash card: it must survive into the detail on both paths.
+  expect(live.detail!.lines[0]).toEqual({ t: "head", text: "$ make test" });
+  expect(history.detail!.lines[0]).toEqual({ t: "head", text: "$ make test" });
   expect(live.detail!.lines).toHaveLength(10);
   expect(live.detail!.totalLines).toBe(32);
 });
