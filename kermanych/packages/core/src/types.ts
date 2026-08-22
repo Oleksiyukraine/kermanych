@@ -87,9 +87,19 @@ export type RpcEvent =
   | { type: "turn_start" }
   | { type: "message_start" }
   | { type: "message_update"; assistantMessageEvent?: { type: string; delta?: string } }
-  | { type: "message_end"; message?: any }
-  | { type: "tool_execution_start"; toolName?: string; toolCallId?: string; args?: any }
-  | { type: "tool_execution_end"; toolName?: string; toolCallId?: string; isError?: boolean }
+  | {
+      type: "message_end";
+      message?: {
+        role?: string; model?: string; provider?: string; duration?: number; ttft?: number; stopReason?: string;
+        toolCallId?: string; toolName?: string; content?: unknown[];
+        usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } };
+      };
+    }
+  | { type: "tool_execution_start"; toolName?: string; toolCallId?: string; args?: Record<string, unknown>; intent?: string }
+  | {
+      type: "tool_execution_end"; toolName?: string; toolCallId?: string; isError?: boolean;
+      result?: { content?: { type?: string; text?: string }[]; details?: Record<string, unknown> };
+    }
   | { type: "agent_end"; isTerminal?: boolean }
   | { type: "notice"; message?: string }
   | RpcExtensionUIRequest
@@ -102,7 +112,9 @@ export type ServerEvent =
   | { type: "session_update"; session: Session }
   | { type: "transcript_append"; sessionId: string; entry: TranscriptEntry }
   | { type: "transcript_reset"; sessionId: string; entries: TranscriptEntry[] }
-  | { type: "transcript_update"; sessionId: string; id: string; status: "ok" | "error" }
+  // A tool row completing in place: the pending entry keeps its id and gains the reduced
+  // display fields. The full line list stays on the API behind GET /sessions/:id/tools/:callId.
+  | { type: "transcript_update"; sessionId: string; id: string; status: "ok" | "error"; stat?: string; count?: number; ms?: number; detail?: ToolDetail }
   | { type: "group_update"; group: Group }
   | { type: "session_removed"; sessionId: string }
   | { type: "group_removed"; groupId: string };
