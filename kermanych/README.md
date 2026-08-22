@@ -220,3 +220,14 @@ Local work never waits for the cloud:
   («Статуси цієї машини ще не відправлені: N») means this machine still owes the cloud
   pushes; «⚠ давно без змін» on a card means the assignee's machine has gone quiet
   (there is no heartbeat — it is the age of the task's `updated_at`).
+
+### A task stuck «in progress»
+
+A task's status is written only by the machine running it, and there is no heartbeat by
+design — so a machine that crashes (rather than quitting cleanly) leaves its card active
+forever, and an active task cannot be reassigned or deleted. Two people can free it with
+«Позначити зупиненою» on the card: the **assignee**, from any machine, and the **project
+owner**, for when the assignee is gone for good; the database refuses everyone else, and
+refuses even the owner any status other than `stopped`. It only corrects the board — it
+cannot stop a session on a machine you do not control, and if that machine is still alive
+it will simply push its real status again.

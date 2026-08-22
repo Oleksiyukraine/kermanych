@@ -553,7 +553,13 @@ code: string }>`), wired in `electron-main.ts` via `ipcMain.handle`
 - No transcripts, `currentTool`, `contextPercent`, `todoPhases` or interactive
   prompts in the cloud.
 - No auto-clone of repos; binding is manual (`git_remote_url` is informational).
-- No heartbeat in v1 — stale detection is `updated_at` age in the UI only.
+- No heartbeat in v1 — stale detection is `updated_at` age in the UI only. The
+  consequence is that a machine which crashes instead of quitting cleanly leaves
+  its card active forever, and `tasks_guard()` will not let an active task be
+  reassigned or deleted. That is answered by a recovery path, not by a heartbeat:
+  «Позначити зупиненою» on the card forces `stopped`, and `tasks_guard()` permits
+  it for exactly two callers — the assignee from any machine (rule 1 already) and
+  the project's OWNER, `stopped` only. See README «A task stuck "in progress"».
 - No team/workspace layer above projects (flat owner/member).
 - No service-role key, and no secret VALUES, on any machine or in the cloud.
 - No transcript persistence (see D2), no new WS fan-out, no cloud-side
