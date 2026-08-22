@@ -44,6 +44,13 @@ vi.mock("@kermanych/cloud", () => ({
     cloudTasks.set(taskId, next);
     return next;
   },
+  assignTask: async (_client: unknown, taskId: string, assigneeId: string | null) => {
+    const t = cloudTasks.get(taskId);
+    if (!t) throw new Error("task not found");
+    const next: Task = { ...t, assigneeId: assigneeId ?? undefined };
+    cloudTasks.set(taskId, next);
+    return next;
+  },
   listProjects: async () => cloudProjects,
 }));
 
@@ -230,5 +237,28 @@ describe("createSessionFromTask", () => {
     await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("fatal: invalid reference");
     expect(registry.listSessions()).toHaveLength(0);
     expect(started).toHaveLength(0);
+  });
+
+  it("releases a claim it made itself when the launch fails", async () => {
+    const { sup, registry, worktree } = make();
+    bind(registry);
+    task();
+    worktree.addWorktree.mockRejectedValueOnce(new Error("fatal: invalid reference"));
+
+    await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("fatal: invalid reference");
+    // Nobody could pick the card up again if the failed claim stuck to us.
+    expect(cloudTasks.get("task-1")!.assigneeId).toBeUndefined();
+    expect(registry.listSessions()).toHaveLength(0);
+    expect(started).toHaveLength(0);
+  });
+
+  it("leaves a pre-existing assignment alone when the launch fails", async () => {
+    const { sup, registry, worktree } = make();
+    bind(registry);
+    task({ assigneeId: USER });
+    worktree.addWorktree.mockRejectedValueOnce(new Error("fatal: invalid reference"));
+
+    await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("fatal: invalid reference");
+    expect(cloudTasks.get("task-1")!.assigneeId).toBe(USER);
   });
 });

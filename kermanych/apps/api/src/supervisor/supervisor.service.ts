@@ -31,7 +31,7 @@ import {
   type TaskDraft,
   type TranscriptEntry,
 } from "@kermanych/core";
-import { claimTask, getTask, listProjects, type CloudProject } from "@kermanych/cloud";
+import { assignTask, claimTask, getTask, listProjects, type CloudProject } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 
 type Live = {
@@ -225,11 +225,14 @@ export class SupervisorService implements OnModuleDestroy {
     const task = await getTask(client, taskId);
     if (!task) throw new Error("task not found");
     if (task.assigneeId && task.assigneeId !== userId) throw new Error("task assigned to someone else");
+    // Did THIS call take the assignment? Only a claim we made may be rolled back below.
+    let claimed = false;
     if (!task.assigneeId) {
       // Atomic self-assign (`update … where assignee_id is null`). A lost race is not a DB
       // error, it is zero updated rows — hence `undefined` rather than a throw.
-      const claimed = await claimTask(client, taskId, userId);
-      if (!claimed) throw new Error("task already claimed");
+      const won = await claimTask(client, taskId, userId);
+      if (!won) throw new Error("task already claimed");
+      claimed = true;
     }
 
     const local = this.registry.listProjects().find((p) => p.id === task.projectId);
@@ -286,6 +289,14 @@ export class SupervisorService implements OnModuleDestroy {
     } catch (err) {
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
+      // A launch that never started must not leave the card pinned to whoever failed to
+      // start it — nobody else could then pick it up. Release ONLY a claim we just made;
+      // a pre-existing assignment is somebody's deliberate state and stays. The cloud
+      // status is still `backlog` here, so `tasks_guard()` permits the write.
+      if (claimed)
+        await assignTask(client, taskId, null).catch((e: unknown) =>
+          console.warn(`[supervisor] could not release the claim on task ${taskId}: ${(e as Error).message}`),
+        );
       throw err;
     }
   }
