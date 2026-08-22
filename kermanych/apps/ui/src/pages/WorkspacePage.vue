@@ -14,6 +14,7 @@
             <h1 class="ws__heading">{{ selectedProject?.name ?? 'Проєкт' }}</h1>
           </div>
           <div class="ws__board-controls">
+            <KBtn variant="ghost" title="Спільна дошка задач команди" @click="goToBoard">Дошка команди</KBtn>
             <KToggle :options="viewOptions" v-model="viewMode" />
             <KBtn
               variant="ghost"
@@ -46,6 +47,7 @@
             <span class="ws__cell-name" :class="{ 'ws__cell-name--child': !!row.parentSessionId }">
               <span v-if="row.parentSessionId" class="ws__branch-connector" aria-hidden="true">└</span>
               {{ row.name }}
+              <KTag v-if="row.taskId">☁ {{ cloudTaskTitle(row.taskId) }}</KTag>
               <KTag v-if="row.kind === 'discussion'">discussion</KTag>
               <KTag v-else-if="row.kind === 'task'">задача</KTag>
               <KTag v-else-if="row.kind === 'review'">review</KTag>
@@ -466,7 +468,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import {
   slugify,
   branchName,
@@ -478,6 +480,8 @@ import {
   type RpcExtensionUIResponse,
 } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
+import { useBoard } from 'stores/board';
+import { useRouter } from 'vue-router';
 import { useProjects } from 'stores/projects';
 import type { MessageMode } from '../lib/api';
 import KPanel from 'components/kit/KPanel.vue';
@@ -507,6 +511,25 @@ const store = useOrchestrator();
 const projects = useProjects();
 
 const now = useNow();
+
+const board = useBoard();
+const router = useRouter();
+
+// Sessions launched from the shared board carry `taskId`; naming the cloud task next to the
+// local row is what ties the two boards together. load() — not subscribe() — on purpose:
+// Realtime belongs to /board, this page only needs the titles, and load() swallows an
+// unreachable cloud into board.loadError instead of toasting on every app open.
+onMounted(() => {
+  void board.load();
+});
+
+function cloudTaskTitle(taskId: string): string {
+  return board.tasks.find((t) => t.id === taskId)?.title ?? 'з дошки';
+}
+
+function goToBoard(): void {
+  void router.push({ name: 'board' });
+}
 
 // Board filter: "Активні" = live/finished agents; "Задачі" = the un-launched backlog;
 // "Відкладені" = archived (set aside; worktree kept). Backlog tasks (status 'backlog') never show under Активні.
