@@ -1,6 +1,6 @@
 <template>
   <section class="k-rb">
-    <button v-if="block.request" type="button" class="k-rb__head" :aria-expanded="shown" @click="open = !open">
+    <button v-if="block.request" type="button" class="k-rb__head" :aria-expanded="shown" @click="onHead">
       <span class="k-rb__bar" aria-hidden="true"></span>
       <span class="k-rb__tx" :class="{ 'k-rb__tx--full': shown }">{{ block.request.text || '(вкладення)' }}</span>
       <span v-if="!shown" class="k-rb__sum mono">{{ summary }}</span>
@@ -18,7 +18,7 @@
       <template v-for="(item, i) in block.items" :key="i">
         <div v-if="item.kind === 'group'" class="k-rb__group">
           <button type="button" class="k-rb__grow" :aria-expanded="opened.has(i)" @click="toggle(i)">
-            <span class="k-rb__g" :class="`k-rb__g--${gStatus(item.members)}`" aria-hidden="true">{{ GLYPH[gStatus(item.members)] }}</span>
+            <span class="k-rb__g" :class="`k-rb__g--${gStatus(item.members)}`" role="img" :aria-label="STATUS_LABEL[gStatus(item.members)]">{{ GLYPH[gStatus(item.members)] }}</span>
             <span class="k-rb__gt">{{ item.tool }}</span>
             <span class="k-rb__gtg">{{ item.members.map((m) => m.target).filter(Boolean).join(', ') }}</span>
             <span class="k-rb__gx">×{{ item.members.length }}</span>
@@ -53,6 +53,15 @@ const open = ref(props.open);
 // A manual toggle survives, because the prop only changes when the tail moves.
 watch(() => props.open, (v) => { open.value = v; });
 
+// The header is a button wrapping the operator's own prose, and a drag-select that ends
+// inside it fires `click` too — collapsing the block would throw away the text just
+// selected. `detail === 0` marks keyboard activation, which stays unconditional: a
+// selection elsewhere on the page must not make Enter dead.
+function onHead(e: MouseEvent): void {
+  if (e.detail > 0 && window.getSelection()?.toString().trim()) return;
+  open.value = !open.value;
+}
+
 // A block with no request — buildChatBlocks' "pre" block, holding startup notices and
 // anything before the first user message — renders no header, so nothing could ever
 // expand it. Its rows are always shown rather than silently unreachable.
@@ -68,8 +77,10 @@ function toggle(i: number): void {
 
 // A coalesced run is only as good as its worst member: `buildChatBlocks` groups
 // consecutive read-likes regardless of status, so a hardcoded tick would hide a failed
-// read behind a collapsed row. Same glyphs as KToolRow, which renders the members.
+// read behind a collapsed row. Glyphs and labels are KToolRow's, since the members render
+// as KToolRow rows right below and the aggregate must not invent a second vocabulary.
 const GLYPH = { pending: '◆', ok: '✓', error: '✗' } as const;
+const STATUS_LABEL = { pending: 'виконується', ok: 'завершено', error: 'помилка' } as const;
 function gStatus(members: ToolEntry[]): 'pending' | 'ok' | 'error' {
   if (members.some((m) => m.status === 'error')) return 'error';
   if (members.some((m) => m.status === 'pending')) return 'pending';
@@ -119,8 +130,11 @@ const summary = computed(() => {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Collapsed the request is a one-line summary; expanded it is the only copy of the
-   operator's message in the log, so it wraps in full like KLogBlock's `.k-log__user`. */
-.k-rb__tx--full { overflow: visible; text-overflow: clip; white-space: pre-wrap; word-break: break-word; }
+   operator's message in the log, so it wraps in full like KLogBlock's `.k-log__user`.
+   Chrome makes a button's contents unselectable, verified by drag-selecting one, so the
+   expanded prose also has to opt back into selection to be readable and copyable — the
+   collapsed one-liner stays unselectable, which keeps a stray drag from eating its click. */
+.k-rb__tx--full { overflow: visible; text-overflow: clip; white-space: pre-wrap; word-break: break-word; user-select: text; }
 .k-rb__imgs { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 0 10px; }
 .k-rb__img { display: block; max-width: 220px; max-height: 220px; border: 1px solid var(--k-line-strong); }
 .k-rb__sum, .k-rb__time { flex: none; font-size: 10.5px; color: var(--k-muted); }

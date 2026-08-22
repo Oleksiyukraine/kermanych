@@ -70,13 +70,15 @@ const renderedThinking = computed(() =>
 // Missing fields drop out entirely rather than leaving dangling separators.
 const chip = computed(() => {
   if (props.entry.kind !== 'assistant_thinking') return '';
-  // Sub-second reasoning clamps to 1 с: `думав 0 с` reads as broken, not as brief.
-  const secs = props.entry.ms ? Math.max(1, Math.round(props.entry.ms / 1000)) : undefined;
+  // Sub-second reasoning reads `<1 с`, the same floor marker the block summary uses: a clamp
+  // to `1 с` states a duration the agent did not spend, and `0 с` reads as broken.
+  const ms = props.entry.ms;
+  const msLabel = !ms ? '' : ms < 1000 ? '<1 с' : `${Math.round(ms / 1000)} с`;
   const tok = props.entry.tokens;
   const tokLabel = tok === undefined ? '' : tok >= 1000 ? `${(tok / 1000).toFixed(1)}k ток` : `${tok} ток`;
   // `думав` is the label, not a metric: the dot only ever separates two metrics,
   // so a missing ms or tokens leaves no dangling separator behind.
-  const parts = [secs === undefined ? '' : `${secs} с`, tokLabel].filter(Boolean);
+  const parts = [msLabel, tokLabel].filter(Boolean);
   return parts.length ? `думав ${parts.join(' · ')}` : 'думав';
 });
 </script>
