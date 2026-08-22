@@ -24,12 +24,13 @@ vi.mock("../src/rpc/rpc-session", () => {
 
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
+import { offlineAuth } from "./offline-auth";
 
 function make() {
   const registry = new RegistryService(":memory:");
   const worktree = { currentBranch: vi.fn().mockResolvedValue("main") };
   // Partial mock: createPullRequest only resumes the agent — the DI seam is cast once.
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService);
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth());
   return { sup, registry };
 }
 beforeEach(() => { started.length = 0; prompts.length = 0; });

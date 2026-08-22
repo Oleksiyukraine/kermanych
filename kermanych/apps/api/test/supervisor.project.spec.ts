@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CloudProject } from "@kermanych/cloud";
 import type { ServerEvent } from "@kermanych/core";
 import { RegistryService } from "../src/registry/registry.service";
+import { offlineAuth } from "./offline-auth";
 import type { WorktreeService } from "../src/worktree/worktree.service";
 
 vi.mock("../src/rpc/rpc-session", () => {
@@ -32,7 +33,7 @@ function make() {
     removeBranch: vi.fn(),
     checkout: vi.fn(),
   } as unknown as WorktreeService;
-  return { sup: new SupervisorService(registry, worktree), registry, worktree, isGitRepo };
+  return { sup: new SupervisorService(registry, worktree, offlineAuth()), registry, worktree, isGitRepo };
 }
 
 function cloudProject(id: string, over: Partial<CloudProject> = {}): CloudProject {

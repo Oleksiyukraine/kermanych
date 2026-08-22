@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RegistryService } from "../src/registry/registry.service";
+import { offlineAuth } from "./offline-auth";
 import { WorktreeService } from "../src/worktree/worktree.service";
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 
@@ -25,7 +26,7 @@ beforeEach(() => {
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "base");
   reg = new RegistryService(":memory:");
-  sup = new SupervisorService(reg, wt);
+  sup = new SupervisorService(reg, wt, offlineAuth());
 });
 afterEach(() => rmSync(repo, { recursive: true, force: true }));
 

@@ -18,6 +18,8 @@ import {
   uniqueSlug,
   worktreeDir,
   toolCallSummary,
+  BRANCH_PREFIXES,
+  PLATFORMS,
   type BranchPrefix,
   type StatusState,
   type Project,
@@ -29,7 +31,8 @@ import {
   type TaskDraft,
   type TranscriptEntry,
 } from "@kermanych/core";
-import type { CloudProject } from "@kermanych/cloud";
+import { claimTask, getTask, listProjects, type CloudProject } from "@kermanych/cloud";
+import { AuthService } from "../auth/auth.service";
 
 type Live = {
   rpc: RpcSession;
@@ -66,6 +69,7 @@ export class SupervisorService implements OnModuleDestroy {
   constructor(
     private registry: RegistryService,
     private worktree: WorktreeService,
+    private auth: AuthService,
   ) {}
 
   onModuleDestroy(): void {
@@ -204,6 +208,81 @@ export class SupervisorService implements OnModuleDestroy {
     const session = this.registry.createSession({ projectId, name, task, worktreePath: "", branch, worktree, baseBranch: resolvedBase, model, prefix, platform });
     try {
       return await this.launch(session, project, { images });
+    } catch (err) {
+      this.registry.removeSession(session.id);
+      this.events.next({ type: "session_removed", sessionId: session.id });
+      throw err;
+    }
+  }
+
+  // Launch a CLOUD task on this machine. The cloud decides who may run a task (assignee +
+  // atomic claim) and owns the project config; SQLite owns where the repo lives locally.
+  // From `registry.createSession` onward this is byte-for-byte the ordinary launch path, so
+  // a task-born session behaves exactly like a locally created one — including offline.
+  async createSessionFromTask(taskId: string, userId: string): Promise<Session> {
+    const client = this.auth.cloudClient();
+
+    const task = await getTask(client, taskId);
+    if (!task) throw new Error("task not found");
+    if (task.assigneeId && task.assigneeId !== userId) throw new Error("task assigned to someone else");
+    if (!task.assigneeId) {
+      // Atomic self-assign (`update … where assignee_id is null`). A lost race is not a DB
+      // error, it is zero updated rows — hence `undefined` rather than a throw.
+      const claimed = await claimTask(client, taskId, userId);
+      if (!claimed) throw new Error("task already claimed");
+    }
+
+    const local = this.registry.listProjects().find((p) => p.id === task.projectId);
+    if (!local?.localRepoPath) throw new Error("project not bound");
+
+    // D1: the local row is the binding AND the offline config cache. Refresh it while we
+    // are demonstrably online, so the next launch of this project needs no network at all.
+    const cloudProject = (await listProjects(client)).find((p) => p.id === task.projectId);
+    const project = cloudProject
+      ? this.registry.patchProject(local.id, {
+          name: cloudProject.name,
+          color: cloudProject.color,
+          previewCommand: cloudProject.previewCommand,
+          apiCommand: cloudProject.apiCommand,
+          carryFiles: cloudProject.carryFiles,
+          defaultBranch: cloudProject.defaultBranch,
+          conventions: cloudProject.conventions,
+        })
+      : local;
+
+    // The board stores launch params as free text; validate them against the local
+    // vocabularies instead of casting, so a bad card cannot produce a bogus branch prefix.
+    const prefix: BranchPrefix = (BRANCH_PREFIXES as readonly string[]).includes(task.prefix ?? "")
+      ? (task.prefix as BranchPrefix)
+      : "feature";
+    const platform = (PLATFORMS as readonly string[]).includes(task.platform ?? "")
+      ? (task.platform as Session["platform"])
+      : undefined;
+
+    // Always a worktree: a cloud task must never commandeer the developer's checkout.
+    const { branch, baseBranch } = await this.resolveLaunchParams(
+      project,
+      task.title,
+      prefix,
+      true,
+      undefined,
+      task.branch ?? project.defaultBranch,
+    );
+    const session = this.registry.createSession({
+      projectId: project.id,
+      taskId: task.id,
+      name: task.title,
+      task: task.description ?? task.title,
+      worktreePath: "",
+      branch,
+      worktree: true,
+      baseBranch,
+      model: task.model,
+      prefix,
+      platform,
+    });
+    try {
+      return await this.launch(session, project);
     } catch (err) {
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });

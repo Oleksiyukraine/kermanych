@@ -19,6 +19,7 @@ vi.mock("../src/rpc/rpc-session", () => {
 
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
+import { offlineAuth } from "./offline-auth";
 
 function make() {
   const registry = new RegistryService(":memory:");
@@ -31,7 +32,7 @@ function make() {
     diff: vi.fn().mockResolvedValue("diff --git a/x.ts b/x.ts\n+const answer = 42;"),
   };
   // Partial mock: reviewSession only touches these worktree ops. Cast once at the DI seam.
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService);
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth());
   return { sup, registry, worktree };
 }
 

@@ -30,6 +30,7 @@ vi.mock("../src/rpc/rpc-session", () => {
 
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
+import { offlineAuth } from "./offline-auth";
 
 function make() {
   const registry = new RegistryService(":memory:");
@@ -39,7 +40,7 @@ function make() {
     isGitRepo: vi.fn().mockResolvedValue(true),
     currentBranch: vi.fn().mockResolvedValue("main"),
   } as unknown as WorktreeService;
-  const sup = new SupervisorService(registry, worktree);
+  const sup = new SupervisorService(registry, worktree, offlineAuth());
   return { sup, registry };
 }
 
