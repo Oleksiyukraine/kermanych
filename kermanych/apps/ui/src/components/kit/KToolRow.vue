@@ -1,7 +1,7 @@
 <template>
   <div>
     <button type="button" class="k-tr" :aria-expanded="open" @click="toggle">
-      <span class="k-tr__g" :class="`k-tr__g--${entry.status}`" aria-hidden="true">{{ glyph }}</span>
+      <span class="k-tr__g" :class="`k-tr__g--${entry.status}`" role="img" :aria-label="statusLabel">{{ glyph }}</span>
       <span class="k-tr__t">{{ entry.tool }}</span>
       <span class="k-tr__tg">{{ entry.target ?? '' }}</span>
       <span class="k-tr__st">{{ entry.stat ?? '' }}</span>
@@ -12,14 +12,18 @@
       :entry="{ ...entry, truncatedNote: note }"
       :lines="shown"
       :total-lines="total"
+      :busy="loading"
       @more="loadFull"
     />
-    <div v-else-if="open" class="k-tr__empty mono">{{ note || 'Деталей немає.' }}</div>
+    <div v-else-if="open" class="k-tr__empty mono">
+      <div v-if="entry.intent" class="k-tr__intent">{{ entry.intent }}</div>
+      <div>{{ note || 'Деталей немає.' }}</div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type { ToolLine, TranscriptEntry } from '@kermanych/core';
 import { api } from '../../lib/api';
 import KToolCard from './KToolCard.vue';
@@ -29,8 +33,24 @@ const props = defineProps<{ entry: Extract<TranscriptEntry, { kind: 'tool' }>; s
 const open = ref(false);
 const fullLines = ref<ToolLine[] | undefined>(undefined);
 const error = ref('');
+const loading = ref(false);
+
+// The log renders its items index-keyed, so one instance is rebound to another call —
+// in another session, even. Watch the id, not the object: `transcript_update` rebuilds
+// the entry copy-on-write on every patch, and identity would collapse an expanded row
+// the moment its tool finishes.
+watch(() => props.entry.id, () => {
+  open.value = false;
+  fullLines.value = undefined;
+  error.value = '';
+  loading.value = false;
+});
 
 const glyph = computed(() => (props.entry.status === 'pending' ? '◆' : props.entry.status === 'ok' ? '✓' : '✗'));
+// The glyph alone reaches assistive technology as nothing, and no visible word follows it.
+const statusLabel = computed(() =>
+  props.entry.status === 'pending' ? 'виконується' : props.entry.status === 'ok' ? 'завершено' : 'помилка',
+);
 const shown = computed(() => fullLines.value ?? props.entry.detail?.lines ?? []);
 const total = computed(() => (fullLines.value ? fullLines.value.length : props.entry.detail?.totalLines ?? 0));
 const note = computed(() => error.value || (props.entry.detail?.truncatedUpstream ? 'віддано обрізаним' : ''));
@@ -40,11 +60,21 @@ function toggle(): void {
 }
 
 async function loadFull(): Promise<void> {
+  // Overlapping fetches would race to assign `fullLines`; a stale failure would otherwise
+  // pin the accent note for the row's lifetime and mask the truncation warning.
+  if (loading.value) return;
+  const id = props.entry.id;
+  loading.value = true;
+  error.value = '';
   try {
-    const res = await api.getToolDetail(props.sessionId, props.entry.id);
+    const res = await api.getToolDetail(props.sessionId, id);
+    // The instance may have been rebound mid-flight; that call's output is not this row's.
+    if (props.entry.id !== id) return;
     fullLines.value = res.lines;
   } catch (e) {
-    error.value = (e as Error).message;
+    if (props.entry.id === id) error.value = (e as Error).message;
+  } finally {
+    if (props.entry.id === id) loading.value = false;
   }
 }
 </script>
@@ -67,7 +97,11 @@ async function loadFull(): Promise<void> {
    ellipsis is the backstop for longer outliers like `web_search`. */
 .k-tr__t { flex: none; width: 60px; overflow: hidden; text-overflow: ellipsis; color: var(--k-text); }
 .k-tr__tg { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-.k-tr__st { flex: none; font-size: 11.5px; color: var(--k-text); }
+/* Capped so the stat ellipsises instead of starving the target, which is the only
+   shrinkable cell, at the panel's 360px minimum. */
+.k-tr__st { flex: 0 1 auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: var(--k-text); }
 .k-tr__ch { flex: none; width: 10px; text-align: right; font-size: 11px; color: var(--k-line-strong); }
 .k-tr__empty { margin: 2px 0 8px 17px; font-size: 11.5px; color: var(--k-muted); }
+/* Same treatment the card gives the intent, so the pending row reads identically. */
+.k-tr__intent { font-family: var(--k-font-ui); font-size: 12px; font-style: italic; }
 </style>

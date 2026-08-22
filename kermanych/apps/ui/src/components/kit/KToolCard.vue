@@ -13,8 +13,8 @@
         </div>
       </template>
     </div>
-    <button v-if="rest > 0" type="button" class="k-tc__more" @click="emit('more')">
-      показати всі {{ totalLines }} рядків
+    <button v-if="rest > 0" type="button" class="k-tc__more" :disabled="busy" @click="emit('more')">
+      {{ busy ? 'завантаження…' : `показати всі ${totalLines} рядків` }}
     </button>
   </div>
 </template>
@@ -29,6 +29,7 @@ const props = defineProps<{
   entry: Extract<TranscriptEntry, { kind: 'tool' }> & { truncatedNote?: string };
   lines: ToolLine[];
   totalLines: number;
+  busy?: boolean;
 }>();
 const emit = defineEmits<{ more: [] }>();
 
@@ -52,11 +53,14 @@ const rest = computed(() => props.totalLines - props.lines.length);
 .k-tc__line--del .k-tc__s, .k-tc__line--del .k-tc__tx { color: var(--k-accent); }
 .k-tc__line--hit .k-tc__tx { color: var(--k-text); }
 .k-tc__line--hit .k-tc__s { color: var(--k-accent); }
-.k-tc__body--wrap .k-tc__line { display: block; padding-left: 51px; text-indent: -51px; white-space: pre-wrap; word-break: break-word; }
+/* 45px = the 34px gutter (border-box, padding included) + the 11px sign cell, so a
+   wrapped continuation lands under the text it continues. */
+.k-tc__body--wrap .k-tc__line { display: block; padding-left: 45px; text-indent: -45px; white-space: pre-wrap; word-break: break-word; }
 .k-tc__body--wrap .k-tc__n { display: inline-block; width: 34px; }
 .k-tc__body--wrap .k-tc__s { display: inline-block; width: 11px; }
 .k-tc__body--wrap .k-tc__tx { display: inline; overflow: visible; text-overflow: clip; }
 .k-tc__gap { padding-left: 34px; font-family: var(--k-font-mono); font-size: 11px; line-height: 1.4; color: var(--k-line-strong); }
 .k-tc__head { padding: 4px 0 1px 6px; font-family: var(--k-font-mono); font-size: 11px; color: var(--k-text); }
 .k-tc__more { margin-top: 5px; padding: 0; background: transparent; border: none; font-family: var(--k-font-mono); font-size: 11px; color: var(--k-accent); cursor: pointer; }
+.k-tc__more:disabled { color: var(--k-muted); cursor: default; }
 </style>
