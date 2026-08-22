@@ -1,6 +1,13 @@
 <template>
   <section class="k-rb">
-    <button v-if="block.request" type="button" class="k-rb__head" :aria-expanded="shown" @click="onHead">
+    <button
+      v-if="block.request"
+      type="button"
+      class="k-rb__head"
+      :aria-expanded="shown"
+      @pointerdown="onHeadDown"
+      @click="onHead"
+    >
       <span class="k-rb__bar" aria-hidden="true"></span>
       <span class="k-rb__tx" :class="{ 'k-rb__tx--full': shown }">{{ block.request.text || '(вкладення)' }}</span>
       <span v-if="!shown" class="k-rb__sum mono">{{ summary }}</span>
@@ -53,18 +60,23 @@ const open = ref(props.open);
 // A manual toggle survives, because the prop only changes when the tail moves.
 watch(() => props.open, (v) => { open.value = v; });
 
-// The header is a button wrapping the operator's own prose, and a drag-select that ends
-// inside it fires `click` too — collapsing the block would throw away the text just
-// selected. Only a selection touching THIS header suppresses the toggle: selecting a line
-// in a tool card is a workflow of its own here, and it must not deaden every header on the
-// page. `detail === 0` marks keyboard activation, which is never suppressed.
+// The header is a button wrapping the operator's own prose, so a gesture that lands on it
+// is either a click (toggle) or a selection (leave the block alone). The question asked is
+// "did the pointer travel", not "is something selected": selection state at click time is
+// unreliable — mousedown may already have collapsed it — while the drag terminus is not.
+// A stationary click therefore always toggles, whatever is selected anywhere on the page,
+// and keyboard activation (`detail === 0`) is never suppressed.
+const DRAG_SLOP = 4;
+let downX = 0;
+let downY = 0;
+function onHeadDown(e: PointerEvent): void {
+  downX = e.clientX;
+  downY = e.clientY;
+}
 function onHead(e: MouseEvent): void {
-  const sel = window.getSelection();
-  const host = e.currentTarget as HTMLElement;
-  const inHead =
-    !!sel && !sel.isCollapsed && !!sel.toString().trim() &&
-    ((!!sel.anchorNode && host.contains(sel.anchorNode)) || (!!sel.focusNode && host.contains(sel.focusNode)));
-  if (e.detail > 0 && inHead) return;
+  // Double- and triple-click select a word or the whole message; neither is a toggle.
+  if (e.detail > 1) return;
+  if (e.detail > 0 && Math.hypot(e.clientX - downX, e.clientY - downY) > DRAG_SLOP) return;
   open.value = !open.value;
 }
 
