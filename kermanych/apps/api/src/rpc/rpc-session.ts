@@ -32,6 +32,9 @@ export class RpcSession {
   private exitCbs: ((code: number | null, reason: string) => void)[] = [];
   private pending = new Map<string, { resolve: (r: RpcResponseFrame) => void; reject: (e: Error) => void }>();
   private stderr = "";
+  // Frames omp sent that we could not decode. Silent loss is the exact failure class the
+  // transcript work exists to remove, so the count is kept and each loss is announced.
+  droppedFrames = 0;
   private seq = 0;
   constructor(private opts: { cwd: string; model?: string; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; commandTimeoutMs?: number }) {}
 
@@ -87,14 +90,21 @@ export class RpcSession {
 
   private handleLine(line: string) {
     let frame: unknown;
-    try { frame = JSON.parse(line); } catch { return; }
+    try { frame = JSON.parse(line); } catch { return this.dropFrame(); }
     let obj: unknown;
-    try { obj = this.reassembler.push(frame); } catch { return; }
+    try { obj = this.reassembler.push(frame); } catch { return this.dropFrame(); }
     if (obj === null) return;
     if (isResponseFrame(obj) && obj.id && this.pending.has(obj.id)) {
       this.pending.get(obj.id)!.resolve(obj); this.pending.delete(obj.id);
     }
     this.eventCbs.forEach((cb) => cb(obj as RpcEvent));
+  }
+
+  // Shaped like an omp notice so the transcript reducer turns it into a visible row
+  // rather than the turn simply missing output.
+  private dropFrame() {
+    this.droppedFrames++;
+    this.eventCbs.forEach((cb) => cb({ type: "notice", message: "втрачено кадр від omp" }));
   }
 
   private command(type: string, extra: Record<string, unknown> = {}): Promise<RpcResponseFrame> {
