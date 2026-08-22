@@ -62,12 +62,22 @@ const open = ref(props.open);
 // A manual toggle survives, because the prop only changes when the tail moves.
 watch(() => props.open, (v) => { open.value = v; });
 
+// A block with no request — buildChatBlocks' "pre" block, holding startup notices and
+// anything before the first user message — renders no header, so nothing could ever
+// expand it. Its rows are always shown rather than silently unreachable.
+const shown = computed(() => !props.block.request || open.value);
+
 // The header is a button wrapping the operator's own prose, so a gesture that lands on it
 // is either a click (toggle) or a selection (leave the block alone). The question asked is
 // "did the pointer travel", not "is something selected": selection state at click time is
 // unreliable — mousedown may already have collapsed it — while the drag terminus is not.
 // A stationary click therefore always toggles, whatever is selected anywhere on the page,
 // and keyboard activation (`detail === 0`) is never suppressed.
+//
+// Travel only reads as a selection while the block is expanded: `user-select: text` lives
+// on `.k-rb__tx--full` alone, so on the collapsed one-liner there is nothing to select and
+// a shaky click is only ever a click. Suppressing it there would swallow the operator's
+// press for the sake of a selection that cannot happen.
 const DRAG_SLOP = 4;
 let downX = 0;
 let downY = 0;
@@ -78,14 +88,9 @@ function onHeadDown(e: PointerEvent): void {
 function onHead(e: MouseEvent): void {
   // Double- and triple-click select a word or the whole message; neither is a toggle.
   if (e.detail > 1) return;
-  if (e.detail > 0 && Math.hypot(e.clientX - downX, e.clientY - downY) > DRAG_SLOP) return;
+  if (shown.value && e.detail > 0 && Math.hypot(e.clientX - downX, e.clientY - downY) > DRAG_SLOP) return;
   open.value = !open.value;
 }
-
-// A block with no request — buildChatBlocks' "pre" block, holding startup notices and
-// anything before the first user message — renders no header, so nothing could ever
-// expand it. Its rows are always shown rather than silently unreachable.
-const shown = computed(() => !props.block.request || open.value);
 
 const opened = ref(new Set<number>());
 function toggle(i: number): void {
@@ -175,7 +180,8 @@ const summary = computed(() => {
    operator's message in the log, so it wraps in full like KLogBlock's `.k-log__user`.
    Chrome makes a button's contents unselectable, verified by drag-selecting one, so the
    expanded prose also has to opt back into selection to be readable and copyable — the
-   collapsed one-liner stays unselectable, which keeps a stray drag from eating its click. */
+   collapsed one-liner stays unselectable, and `onHead`'s drag guard is scoped to match:
+   with nothing to select there, travel over the collapsed row is not a selection. */
 .k-rb__tx--full { overflow: visible; text-overflow: clip; white-space: pre-wrap; word-break: break-word; user-select: text; }
 .k-rb__imgs { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 0 10px; }
 .k-rb__img { display: block; max-width: 220px; max-height: 220px; border: 1px solid var(--k-line-strong); }
