@@ -70,6 +70,13 @@
       </div>
     </header>
 
+    <!-- detail toolbar — the log's density switch (muted rows of finished blocks) -->
+    <div class="k-panel__tools mono">
+      <span class="k-panel__tools-label">деталі:</span>
+      <button type="button" class="k-panel__tools-btn" @click="emit('expandAll', true)">розгорнути все</button>
+      <button type="button" class="k-panel__tools-btn" @click="emit('expandAll', false)">згорнути все</button>
+    </div>
+
     <!-- my-message navigation — jump between the operator's own messages -->
     <div v-if="userMsgCount > 1" class="k-panel__nav" role="group" aria-label="Навігація по моїх повідомленнях">
       <button type="button" class="k-panel__nav-btn" title="Попереднє моє повідомлення (Alt+↑)" @click="jumpUser(-1)">▲</button>
@@ -153,6 +160,12 @@
       <div v-else-if="liveActivity" class="k-panel__thinking" aria-live="polite">{{ liveActivity }}</div>
     </div>
 
+    <!-- plan lane — present only while the agent keeps a todo list -->
+    <KTodoLane :phases="session.todoPhases" />
+
+    <!-- status row — never hidden: model, context, spend, live action -->
+    <KStatusRow :session="session" :cost="cost" />
+
     <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎) -->
     <div v-if="!isMerged" class="k-panel__composer">
       <KAttachStrip
@@ -221,6 +234,8 @@ import KStatusDot from './KStatusDot.vue';
 import KTag from './KTag.vue';
 import KBtn from './KBtn.vue';
 import KAttachStrip from './KAttachStrip.vue';
+import KTodoLane from './KTodoLane.vue';
+import KStatusRow from './KStatusRow.vue';
 import { useImageAttach } from '../../composables/useImageAttach';
 import { useNow } from '../../composables/useNow';
 
@@ -234,9 +249,16 @@ const props = withDefaults(
     // The chat is being turned into an agent right now (worktree + omp respawn): the button
     // stays down until the server answers, so a second click cannot race the first.
     promoting?: boolean;
+    // Accumulated spend of the whole transcript, summed by the page from the block
+    // summaries; the panel only renders it.
+    cost?: number;
   }>(),
   { placeholder: 'напиши наступний крок…', promoting: false },
 );
+// Explicit passthrough rather than a withDefaults entry: under
+// `exactOptionalPropertyTypes` the template still sees the optional prop as
+// possibly-undefined, and KStatusRow wants a plain number.
+const cost = computed(() => props.cost ?? 0);
 
 const emit = defineEmits<{
   stop: [];
@@ -251,6 +273,7 @@ const emit = defineEmits<{
   newTask: [text: string];
   promoteAgent: [];
   promoteTask: [];
+  expandAll: [value: boolean];
 }>();
 
 const draft = ref('');
@@ -338,21 +361,25 @@ function emitNewTask(): void {
   if (text) emit('newTask', text);
 }
 
-// My-message navigation: step between the operator's own (.k-log--user_text)
-// blocks. Count is kept in sync with the log via the existing MutationObserver.
+// My-message navigation: step between the operator's own messages. Since the log is
+// grouped into request blocks, the operator's message IS the block header
+// (`.k-rb__head` in KRequestBlock) — that is the element we count, scroll to and
+// flash. Count is kept in sync with the log via the existing MutationObserver.
 const rootEl = ref<HTMLElement | null>(null);
 const userMsgCount = ref(0);
 const userIndex = ref(-1); // last message we jumped to; -1 = derive from scroll
 
 function userEls(): HTMLElement[] {
   const el = logEl.value;
-  return el ? Array.from(el.querySelectorAll<HTMLElement>('.k-log--user_text')) : [];
+  return el ? Array.from(el.querySelectorAll<HTMLElement>('.k-rb__head')) : [];
 }
 function refreshUserCount(): void {
   userMsgCount.value = userEls().length;
 }
-const userNavLabel = computed(() =>
-  userIndex.value >= 0 ? `${userIndex.value + 1}/${userMsgCount.value}` : `–/${userMsgCount.value}`,
+// Before the first jump the stepper sits on the first message, so it reads 1/N — a
+// "–/N" would suggest the panel had lost its place.
+const userNavLabel = computed(
+  () => `${userIndex.value < 0 ? 1 : userIndex.value + 1}/${userMsgCount.value}`,
 );
 // Index of the last user message whose top is at/above the log viewport top.
 function currentUserIdx(els: HTMLElement[]): number {
@@ -524,11 +551,36 @@ function answerCancel() {
   position: relative;
 }
 
+// detail toolbar — a fixed-height strip under the header; the nav stepper is pinned
+// below it, so its height is declared rather than left to the content.
+.k-panel__tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  padding: 0 12px;
+  box-shadow: inset 0 -1px 0 0 var(--k-line); // a rule that costs no layout height
+  font-size: 11px;
+  color: var(--k-muted);
+}
+.k-panel__tools-btn {
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--k-muted);
+  font: inherit;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+.k-panel__tools-btn:hover { color: var(--k-text); }
+.k-panel__tools-btn:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
+
 // my-message nav — floating stepper pinned to the log's top-right, over the log
 // (outside the scroll container so it stays put while the log scrolls).
 .k-panel__nav {
   position: absolute;
-  top: 42px; // header (34px) + 8px
+  top: 68px; // header (34px) + tools (26px) + 8px
   right: 14px;
   z-index: 2;
   display: flex;

@@ -157,6 +157,7 @@
           v-bind="selectedSession.kind === 'chat'
             ? { placeholder: 'запитай або опиши, що потрібно зробити…', promoting: promotingId === selectedSession.id }
             : {}"
+          :cost="chatCost"
           @stop="onStop"
           @delete="onDelete"
           @send="onSend"
@@ -169,6 +170,7 @@
           @newTask="openTaskFromText"
           @promote-agent="onPromoteAgent"
           @promote-task="onPromoteTask"
+          @expand-all="expandAll = $event"
         >
           <template v-if="blocks.length">
             <KRequestBlock
@@ -561,6 +563,9 @@ const entries = computed<TranscriptEntry[]>(() =>
 // request. `expandAll` is the detail toolbar's switch for muted rows.
 const expandAll = ref(false);
 const blocks = computed(() => buildChatBlocks(entries.value));
+// Accumulated spend of the whole transcript, for the panel's status row. A computed
+// rather than an inline template reduce, so it is not re-summed on every re-render.
+const chatCost = computed(() => blocks.value.reduce((s, b) => s + b.summary.cost, 0));
 
 // ── Resizable chat section ────────────────────────────────────────────────
 // The detail column (KPanel = the chat) is drag-resizable via the seam on its
