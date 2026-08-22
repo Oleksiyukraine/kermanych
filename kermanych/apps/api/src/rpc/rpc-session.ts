@@ -104,7 +104,11 @@ export class RpcSession {
   // rather than the turn simply missing output.
   private dropFrame() {
     this.droppedFrames++;
-    this.eventCbs.forEach((cb) => cb({ type: "notice", message: "втрачено кадр від omp" }));
+    // A chunk-sequence throw leaves the reassembler mid-sequence, so every following frame
+    // would throw too — including every streaming token delta. Without this reset one loss
+    // becomes one notice row and one all-sockets broadcast per frame for the rest of the session.
+    this.reassembler.reset();
+    this.eventCbs.forEach((cb) => cb({ type: "notice", level: "warn", message: "втрачено кадр від omp" }));
   }
 
   private command(type: string, extra: Record<string, unknown> = {}): Promise<RpcResponseFrame> {

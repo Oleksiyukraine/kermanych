@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { RpcEvent, ServerEvent, TranscriptEntry } from "@kermanych/core";
+import type { ToolDetailCache } from "../src/supervisor/tool-detail-cache";
 
 // Capture the supervisor's own event callback so a test can play omp frames at it and then
 // read back the transcript it built — this is the wiring the reducer exists to feed.
 let emit: (e: RpcEvent) => void = () => {};
+// What a resumed child reports as its prior conversation.
+let history: unknown[] = [];
 vi.mock("../src/rpc/rpc-session", () => {
   class FakeRpc {
     onEvent(cb: (e: RpcEvent) => void) {
@@ -19,8 +22,9 @@ vi.mock("../src/rpc/rpc-session", () => {
       return {};
     }
     async getAllMessages() {
-      return [];
+      return history;
     }
+    async switchSession() {}
     async stop() {}
     prompt() {}
     followUp() {}
@@ -52,6 +56,7 @@ function make() {
 
 beforeEach(() => {
   emit = () => {};
+  history = [];
 });
 
 describe("live transcript", () => {
@@ -98,6 +103,26 @@ describe("live transcript", () => {
     ]);
   });
 
+  it("keeps an unlabelled call's row, cache slot and wall time in sync, and releases its maps", async () => {
+    const { sup, registry } = make();
+    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const chat = await sup.createChat(g.id);
+
+    // No toolCallId: the end frame's reducer mints an id that differs from the row's, so the
+    // cache slot, the wall time and the map cleanup all have to key off the row instead.
+    emit({ type: "tool_execution_start", toolName: "read", args: { path: "a/b.ts" } });
+    emit({ type: "tool_execution_end", toolName: "read", isError: false, result: { content: [{ type: "text", text: "x\ny" }] } });
+
+    const row = sup.getTranscript(chat.id).find((e): e is Extract<TranscriptEntry, { kind: "tool" }> => e.kind === "tool");
+    expect(row).toMatchObject({ tool: "read", status: "ok", target: "a/b.ts" });
+    expect(row!.ms).toBeGreaterThan(0);
+    const internals = sup as unknown as { toolDetails: ToolDetailCache; map: Map<string, { toolStarted: Map<string, number>; toolArgs: Map<string, unknown> }> };
+    expect(internals.toolDetails.get(chat.id, row!.id)).toHaveLength(2);
+    const live = internals.map.get(chat.id)!;
+    expect(live.toolStarted.size).toBe(0);
+    expect(live.toolArgs.size).toBe(0);
+  });
+
   it("records assistant text and the per-turn usage omp reports at message_end", async () => {
     const { sup, registry } = make();
     const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
@@ -116,13 +141,46 @@ describe("live transcript", () => {
     ]);
   });
 
-  it("shows an omp notice — including the synthetic one for a lost frame — as a transcript row", async () => {
+  it("renders a plain omp notice at info and the synthetic lost-frame one at warn", async () => {
     const { sup, registry } = make();
     const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
     const chat = await sup.createChat(g.id);
 
-    emit({ type: "notice", message: "втрачено кадр від omp" });
+    emit({ type: "notice", message: "context is getting full" });
+    emit({ type: "notice", level: "warn", message: "втрачено кадр від omp" });
 
-    expect(sup.getTranscript(chat.id)).toMatchObject([{ kind: "notice", level: "info", text: "втрачено кадр від omp" }]);
+    expect(sup.getTranscript(chat.id)).toMatchObject([
+      { kind: "notice", level: "info", text: "context is getting full" },
+      { kind: "notice", level: "warn", text: "втрачено кадр від omp" },
+    ]);
+  });
+});
+
+describe("rehydrated transcript", () => {
+  it("rebuilds a dormant session's rows and files their full output so they can still be expanded", async () => {
+    const { sup, registry } = make();
+    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const s = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    registry.updateSession(s.id, { ompSessionFile: "/tmp/s.jsonl", status: "done" });
+    history = [
+      { role: "assistant", content: [{ type: "toolCall", name: "bash", arguments: { command: "seq 30" } }] },
+      {
+        role: "toolResult", toolName: "bash", isError: false, details: { wallTimeMs: 5 },
+        content: [{ type: "text", text: Array.from({ length: 30 }, (_, i) => `row ${i}`).join("\n") }],
+      },
+    ];
+
+    // A send against a dormant session resumes it, which is the rehydration path.
+    await sup.sendMessage(s.id, "again", "follow_up");
+
+    const row = sup.getTranscript(s.id).find((e): e is Extract<TranscriptEntry, { kind: "tool" }> => e.kind === "tool");
+    expect(row).toMatchObject({ tool: "bash", status: "ok", target: "seq 30" });
+    expect(row!.detail!.lines).toHaveLength(10);
+    expect(row!.detail!.totalLines).toBe(32);
+
+    // Task 8 serves this through GET /sessions/:id/tools/:callId; until that endpoint exists,
+    // assert the slot it will read, keyed by the row's own id.
+    const cache = (sup as unknown as { toolDetails: ToolDetailCache }).toolDetails;
+    expect(cache.get(s.id, row!.id)).toHaveLength(32);
   });
 });

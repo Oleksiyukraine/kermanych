@@ -18,6 +18,14 @@ export class ChunkReassembler {
   private parts: string[] = [];
   private count = 0;
   private byteLength = 0;
+  // A throw leaves the sequence half-open, and every following frame then throws on it.
+  // Callers that recover from a dropped frame MUST reset, or one loss poisons the stream.
+  reset(): void {
+    this.id = null;
+    this.parts = [];
+    this.count = 0;
+    this.byteLength = 0;
+  }
   push(frame: any): any | null {
     if (!frame || frame.type !== "rpc_chunk") {
       if (this.id !== null) throw new Error("non-chunk frame interleaved into chunk sequence");

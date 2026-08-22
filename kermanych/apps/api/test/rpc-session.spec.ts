@@ -58,3 +58,46 @@ test("command() rejects when a ready child never answers (wedged RPC)", async ()
   await expect(rpc.getState()).rejects.toThrow(/did not respond|200ms/);
   await rpc.stop();
 });
+
+test("one undecodable frame yields exactly one warning notice and the stream keeps flowing", async () => {
+  // Opens a chunk sequence, then interleaves a different one so the reassembler throws.
+  // Without a reset it would stay mid-sequence and reject the three deltas that follow,
+  // turning one loss into a notice per frame for the rest of the session.
+  const omp = fakeOmp(
+    "poisoned-chunk.mjs",
+    `const w=(o)=>process.stdout.write(JSON.stringify(o)+"\\n");` +
+      `w({type:"ready",protocolVersion:2});` +
+      `setTimeout(()=>{` +
+      `w({type:"rpc_chunk",chunkId:"c1",index:0,count:2,byteLength:10,data:"AA"});` +
+      `w({type:"rpc_chunk",chunkId:"c2",index:0,count:2,byteLength:10,data:"BB"});` +
+      `w({type:"message_update",assistantMessageEvent:{type:"text_delta",delta:"a"}});` +
+      `w({type:"message_update",assistantMessageEvent:{type:"text_delta",delta:"b"}});` +
+      `w({type:"message_update",assistantMessageEvent:{type:"text_delta",delta:"c"}});` +
+      `},40);` +
+      `setInterval(()=>{},1000);`,
+  );
+  const rpc = new RpcSession({ cwd: dir, ompPath: omp });
+  rpc.onExit(() => {});
+  const notices: { message?: string; level?: string }[] = [];
+  let deltas = 0;
+  // Settle on the third delta, or give up after a bound — a poisoned reassembler never
+  // delivers them, and the assertions below should report the counts, not time the suite out.
+  const settled = new Promise<void>((res) => {
+    const done = setTimeout(res, 600);
+    rpc.onEvent((e) => {
+      if (e.type === "notice") notices.push(e as { message?: string; level?: string });
+      if (e.type === "message_update" && ++deltas === 3) {
+        clearTimeout(done);
+        res();
+      }
+    });
+  });
+  await rpc.start();
+  await settled;
+  await rpc.stop();
+
+  expect(notices).toHaveLength(1);
+  expect(notices[0]).toMatchObject({ level: "warn", message: "втрачено кадр від omp" });
+  expect(rpc.droppedFrames).toBe(1);
+  expect(deltas).toBe(3);
+});

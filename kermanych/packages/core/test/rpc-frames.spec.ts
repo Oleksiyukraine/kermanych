@@ -37,3 +37,19 @@ test("ChunkReassembler rejects interleaved sequences", () => {
   r.push({ type: "rpc_chunk", chunkId: "c1", index: 0, count: 2, byteLength: 10, data: "AA" });
   expect(() => r.push({ type: "rpc_chunk", chunkId: "c2", index: 0, count: 2, byteLength: 10, data: "BB" })).toThrow();
 });
+
+test("a thrown sequence poisons every following frame until reset clears it", () => {
+  const r = new ChunkReassembler();
+  r.push({ type: "rpc_chunk", chunkId: "c1", index: 0, count: 2, byteLength: 10, data: "AA" });
+  expect(() => r.push({ type: "rpc_chunk", chunkId: "c2", index: 0, count: 2, byteLength: 10, data: "BB" })).toThrow();
+  // Still mid-sequence: an ordinary frame that has nothing to do with chunking throws too.
+  expect(() => r.push({ type: "agent_start" })).toThrow();
+
+  r.reset();
+  expect(r.push({ type: "agent_start" })).toEqual({ type: "agent_start" });
+  const obj = { type: "notice", message: "z".repeat(20) };
+  const bytes = Buffer.from(JSON.stringify(obj), "utf8");
+  const seg = Math.ceil(bytes.length / 2);
+  expect(r.push({ type: "rpc_chunk", chunkId: "c3", index: 0, count: 2, byteLength: bytes.length, data: bytes.subarray(0, seg).toString("base64") })).toBeNull();
+  expect(r.push({ type: "rpc_chunk", chunkId: "c3", index: 1, count: 2, byteLength: bytes.length, data: bytes.subarray(seg).toString("base64") })).toEqual(obj);
+});

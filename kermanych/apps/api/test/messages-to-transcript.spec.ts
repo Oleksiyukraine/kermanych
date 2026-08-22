@@ -1,8 +1,14 @@
 import { expect, test } from "vitest";
 import { messagesToTranscript } from "../src/supervisor/messages-to-transcript";
 
+// Every fixture in this file is CONSTRUCTED from omp's documented frame shapes, not recorded
+// from a live omp run. The `usage` / `duration` / `model` fields in particular are the shape
+// the live `message_end` frame carries; whether omp's converted `get_messages_page` history
+// preserves them could not be verified, which is why the mapper no-ops when they are absent.
+const entriesOf = (messages: unknown[]) => messagesToTranscript(messages).entries;
+
 test("maps assistant reasoning before text, preserving in-message order", () => {
-  const out = messagesToTranscript([
+  const out = entriesOf([
     {
       role: "assistant",
       content: [
@@ -18,19 +24,39 @@ test("maps assistant reasoning before text, preserving in-message order", () => 
 });
 
 test("skips empty/whitespace reasoning parts", () => {
-  const out = messagesToTranscript([
+  const out = entriesOf([
     { role: "assistant", content: [{ type: "thinking", thinking: "  " }, { type: "text", text: "x" }] },
   ]);
   expect(out).toEqual([{ kind: "assistant_text", id: "h1", at: 1, text: "x" }]);
 });
 
 test("prefers the message timestamp over the ordering counter", () => {
-  const out = messagesToTranscript([{ role: "user", timestamp: 1_700_000_000_000, content: [{ type: "text", text: "hi" }] }]);
+  const out = entriesOf([{ role: "user", timestamp: 1_700_000_000_000, content: [{ type: "text", text: "hi" }] }]);
   expect(out).toEqual([{ kind: "user_text", id: "h1", at: 1_700_000_000_000, text: "hi" }]);
 });
 
+test("rebuilds the turn accounting and the reasoning duration when history preserves them", () => {
+  const out = entriesOf([
+    {
+      role: "assistant", model: "claude-opus-4-8", duration: 12_000,
+      usage: { input: 3, output: 44, cacheRead: 1, cacheWrite: 2, cost: { total: 0.31 } },
+      content: [{ type: "thinking", thinking: "weigh options" }, { type: "text", text: "done" }],
+    },
+  ]);
+  expect(out).toEqual([
+    { kind: "assistant_thinking", id: "h1", at: 1, text: "weigh options", ms: 12_000, tokens: 44 },
+    { kind: "assistant_text", id: "h2", at: 1, text: "done" },
+    { kind: "turn", id: "h3", at: 1, model: "claude-opus-4-8", ms: 12_000, usage: { input: 3, output: 44, cacheRead: 1, cacheWrite: 2, cost: 0.31 } },
+  ]);
+});
+
+test("emits no turn entry when history carries no accounting, rather than a zero-cost one", () => {
+  const out = entriesOf([{ role: "assistant", content: [{ type: "text", text: "done" }] }]);
+  expect(out).toEqual([{ kind: "assistant_text", id: "h1", at: 1, text: "done" }]);
+});
+
 test("collapses a tool call and its result into one entry with target, stat and detail", () => {
-  const out = messagesToTranscript([
+  const out = entriesOf([
     { role: "user", content: [{ type: "text", text: "hi" }] },
     { role: "assistant", content: [{ type: "toolCall", name: "read", arguments: { path: "src/a.ts" } }] },
     {
@@ -48,8 +74,22 @@ test("collapses a tool call and its result into one entry with target, stat and 
   ]);
 });
 
+test("returns the unclamped lines keyed by the entry id, so a rehydrated row can be expanded", () => {
+  const text = Array.from({ length: 30 }, (_, i) => `row ${i}`).join("\n");
+  const { entries, full } = messagesToTranscript([
+    { role: "assistant", content: [{ type: "toolCall", name: "bash", arguments: { command: "seq 30" } }] },
+    { role: "toolResult", toolName: "bash", isError: false, details: { wallTimeMs: 5 }, content: [{ type: "text", text }] },
+  ]);
+  const row = entries[0] as Extract<(typeof entries)[number], { kind: "tool" }>;
+  expect(row.id).toBe("h1");
+  expect(row.detail!.lines).toHaveLength(10);
+  expect(row.detail!.totalLines).toBe(32);
+  // Same key the entry carries — the expand endpoint looks it up by the row's id.
+  expect(full.get("h1")).toHaveLength(32);
+});
+
 test("marks failed results as error and reduces them with the paired call's arguments", () => {
-  const out = messagesToTranscript([
+  const out = entriesOf([
     { role: "assistant", content: [{ type: "toolCall", name: "bash", arguments: { command: "false" } }] },
     { role: "toolResult", toolName: "bash", isError: true, details: { wallTimeMs: 4, exitCode: 1 }, content: [{ type: "text", text: "" }] },
   ]);
@@ -63,7 +103,7 @@ test("marks failed results as error and reduces them with the paired call's argu
 });
 
 test("pairs parallel same-name calls FIFO", () => {
-  const out = messagesToTranscript([
+  const out = entriesOf([
     {
       role: "assistant",
       content: [
@@ -81,14 +121,14 @@ test("pairs parallel same-name calls FIFO", () => {
 });
 
 test("derives a pending call's target from its arguments and keeps the intent", () => {
-  const out = messagesToTranscript([
+  const out = entriesOf([
     { role: "assistant", content: [{ type: "toolCall", name: "grep", arguments: { pattern: "foo" }, intent: "searching" }] },
   ]);
   expect(out).toEqual([{ kind: "tool", id: "h1", at: 1, tool: "grep", status: "pending", intent: "searching", target: "/foo/" }]);
 });
 
 test("keeps an unmatched result as its own done entry", () => {
-  const out = messagesToTranscript([
+  const out = entriesOf([
     { role: "toolResult", toolName: "bash", isError: false, details: { wallTimeMs: 2 }, content: [{ type: "text", text: "orphan" }] },
   ]);
   expect(out).toEqual([

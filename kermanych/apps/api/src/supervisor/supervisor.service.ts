@@ -28,6 +28,7 @@ import {
   type ServerEvent,
   type Session,
   type TaskDraft,
+  type ToolLine,
   type TranscriptEntry,
 } from "@kermanych/core";
 
@@ -410,7 +411,7 @@ export class SupervisorService implements OnModuleDestroy {
       await rpc.start();
       // A forked child inherits the source conversation — surface its history before the turn.
       if (fork) {
-        live.transcript = messagesToTranscript(await rpc.getAllMessages());
+        this.rehydrate(live, id, await rpc.getAllMessages());
         this.events.next({ type: "transcript_reset", sessionId: id, entries: live.transcript });
       }
       if (firstPrompt.trim()) {
@@ -475,7 +476,7 @@ export class SupervisorService implements OnModuleDestroy {
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
-      childLive.transcript = messagesToTranscript(await rpc.getAllMessages());
+      this.rehydrate(childLive, child.id, await rpc.getAllMessages());
       this.events.next({ type: "transcript_reset", sessionId: child.id, entries: childLive.transcript });
       await this.refreshState(child.id);
       childLive.live.status = "done";
@@ -598,20 +599,41 @@ export class SupervisorService implements OnModuleDestroy {
     this.events.next({ type: "transcript_append", sessionId: id, entry });
   }
 
+  // Rebuild a transcript from omp's converted history and file the full tool output that
+  // came with it, so a row opened after a reload can still expand through
+  // GET /sessions/:id/tools/:callId instead of 410-ing.
+  private rehydrate(l: Live, id: string, messages: unknown[]) {
+    const { entries, full } = messagesToTranscript(messages);
+    l.transcript = entries;
+    for (const [callId, lines] of full) this.toolDetails.put(id, callId, lines);
+  }
+
   // Complete a pending tool row in place from the reduced patch and notify clients.
   // Match by exact toolCallId when omp provides one, else the oldest pending
   // entry of the same tool name (FIFO — correct for interchangeable parallel calls).
-  private finishTool(id: string, patch: Extract<TranscriptEntry, { kind: "tool" }>) {
+  private finishTool(id: string, patch: Extract<TranscriptEntry, { kind: "tool" }>, lines?: ToolLine[]) {
     const l = this.map.get(id);
     if (!l) return;
     const entry =
       l.transcript.find((x) => x.kind === "tool" && x.id === patch.id) ??
       l.transcript.find((x) => x.kind === "tool" && x.status === "pending" && x.tool === patch.tool);
+    // The call is over either way: release its streaming state under both ids, since a frame
+    // with no toolCallId makes the reducer mint one that differs from the row's.
+    l.toolStarted.delete(patch.id);
+    l.toolArgs.delete(patch.id);
     if (!entry || entry.kind !== "tool") return;
+    // An unlabelled call makes the reducer mint an id it cannot correlate, so it returns no
+    // wall time — but the row's own start stamp is right here, and `patch.at` is the end stamp.
+    const started = l.toolStarted.get(entry.id);
+    l.toolStarted.delete(entry.id);
+    l.toolArgs.delete(entry.id);
+    // Filed under the row's own id, not the frame's, or the expand endpoint would look in the
+    // wrong slot for exactly the calls omp did not label.
+    if (lines?.length) this.toolDetails.put(id, entry.id, lines);
     entry.status = patch.status;
     entry.stat = patch.stat;
     entry.count = patch.count;
-    entry.ms = patch.ms;
+    entry.ms = patch.ms ?? (started === undefined ? undefined : patch.at - started);
     entry.detail = patch.detail;
     // The patch only carries a target when the result improved on the one derived at call time.
     if (patch.target) entry.target = patch.target;
@@ -663,10 +685,10 @@ export class SupervisorService implements OnModuleDestroy {
     });
     l.textBuf = reduced.textBuf;
     l.thinkBuf = reduced.thinkBuf;
-    for (const [callId, lines] of reduced.full) this.toolDetails.put(id, callId, lines);
     for (const entry of reduced.entries) {
-      // A completion carries no new entry — it patches the pending one in place.
-      if (entry.kind === "tool" && entry.status !== "pending") this.finishTool(id, entry);
+      // A completion carries no new entry — it patches the pending one in place, and files its
+      // full output under the id of the row it actually patched.
+      if (entry.kind === "tool" && entry.status !== "pending") this.finishTool(id, entry, reduced.full.get(entry.id));
       else this.appendEntry(id, entry);
     }
     // RpcEvent carries an index-signature fallback member; Extract recovers the concrete typed member.
@@ -679,6 +701,10 @@ export class SupervisorService implements OnModuleDestroy {
       this.registry.updateSession(id, { status: "done" });
       this.refreshState(id);
       this.stopPoll(l);
+      // A turn cannot end with a tool still running, so anything left here belongs to a call
+      // that was aborted and will never send its end frame. Without this the maps only shrink.
+      l.toolStarted.clear();
+      l.toolArgs.clear();
     }
     if ((l.state.status === "thinking" || l.state.status === "tool") && !l.poll)
       l.poll = setInterval(() => this.refreshState(id), 2000);
@@ -1047,7 +1073,7 @@ export class SupervisorService implements OnModuleDestroy {
       await rpc.start();
       if (s.ompSessionFile) {
         await rpc.switchSession(s.ompSessionFile);
-        live.transcript = messagesToTranscript(await rpc.getAllMessages());
+        this.rehydrate(live, id, await rpc.getAllMessages());
       }
     } catch (err) {
       this.stopPoll(live);

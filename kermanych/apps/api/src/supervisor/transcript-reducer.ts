@@ -1,6 +1,36 @@
 import { clampLines, toolDisplay, type RpcEvent, type ToolLine, type TranscriptEntry } from "@kermanych/core";
 
 export type ToolEntry = Extract<TranscriptEntry, { kind: "tool" }>;
+export type TurnEntry = Extract<TranscriptEntry, { kind: "turn" }>;
+
+// The per-turn accounting omp reports when an assistant message closes.
+export type TurnMeta = {
+  model?: string;
+  duration?: number;
+  usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } };
+};
+
+// A `turn` renders no row of its own: `buildChatBlocks` folds `usage.cost` into the collapsed
+// block footer. Rehydrated history must rebuild it through this same builder, or every footer
+// reads 0 after a reload.
+export function turnEntry(id: string, at: number, m: TurnMeta): TurnEntry {
+  return {
+    kind: "turn", id, at,
+    ...(m.model === undefined ? {} : { model: m.model }),
+    ...(m.duration === undefined ? {} : { ms: m.duration }),
+    usage: {
+      input: m.usage?.input ?? 0, output: m.usage?.output ?? 0,
+      cacheRead: m.usage?.cacheRead ?? 0, cacheWrite: m.usage?.cacheWrite ?? 0,
+      cost: m.usage?.cost?.total ?? 0,
+    },
+  };
+}
+
+// Whether omp reported any turn accounting at all. A history message that carries none must
+// not produce a turn of zeros — that would assert the turn was free rather than unrecorded.
+export function hasTurnMeta(m: TurnMeta | undefined): m is TurnMeta {
+  return m !== undefined && (m.model !== undefined || m.duration !== undefined || m.usage !== undefined);
+}
 
 export type ReduceOpts = {
   now?: (seq: number) => number;
@@ -15,11 +45,11 @@ export type ReduceOpts = {
 
 export type Reduced = { entries: TranscriptEntry[]; full: Map<string, ToolLine[]>; textBuf: string; thinkBuf: string };
 
-// omp splits a tool result into content blocks; they are consecutive chunks of the same
-// output, so the join has to be the same on the live and the history path or the two
-// would disagree on line counts for any multi-block result.
-export function joinResultText(content: { text?: string }[] | undefined): string {
-  return (content ?? []).map((c) => c.text ?? "").join("\n");
+// omp splits a tool result into content blocks; the text ones are consecutive chunks of the
+// same output. Both the filter and the join live here, so neither caller can pass a
+// differently-prepared list and make an image block cost the live side a phantom blank row.
+export function joinResultText(content: { type?: string; text?: string }[] | undefined): string {
+  return (content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
 }
 
 // The call side of a tool row. Deriving the target here is what makes it deterministic:
@@ -101,19 +131,7 @@ export function reduceRpcEvents(events: RpcEvent[], opts?: ReduceOpts): Reduced 
           ...(m?.usage?.output === undefined ? {} : { tokens: m.usage.output }),
         });
       if (textBuf.trim()) entries.push({ kind: "assistant_text", id: `a${at}`, at, text: textBuf });
-      // The turn entry renders no row of its own — it carries the per-turn cost and token
-      // counts that the block footer sums.
-      if (m?.role === "assistant")
-        entries.push({
-          kind: "turn", id: `r${at}`, at,
-          ...(m.model === undefined ? {} : { model: m.model }),
-          ...(m.duration === undefined ? {} : { ms: m.duration }),
-          usage: {
-            input: m.usage?.input ?? 0, output: m.usage?.output ?? 0,
-            cacheRead: m.usage?.cacheRead ?? 0, cacheWrite: m.usage?.cacheWrite ?? 0,
-            cost: m.usage?.cost?.total ?? 0,
-          },
-        });
+      if (m?.role === "assistant") entries.push(turnEntry(`r${at}`, at, m));
       textBuf = "";
       thinkBuf = "";
       continue;
@@ -153,10 +171,12 @@ export function reduceRpcEvents(events: RpcEvent[], opts?: ReduceOpts): Reduced 
       continue;
     }
     if (e.type === "notice") {
-      const text = (e as Extract<RpcEvent, { type: "notice" }>).message ?? "";
+      const ev = e as Extract<RpcEvent, { type: "notice" }>;
+      const text = ev.message ?? "";
       if (!text.trim()) continue;
       const at = stamp();
-      entries.push({ kind: "notice", id: `n${at}`, at, level: "info", text });
+      // omp's own notices carry no level; only the api's synthetic ones do.
+      entries.push({ kind: "notice", id: `n${at}`, at, level: ev.level ?? "info", text });
       continue;
     }
   }
