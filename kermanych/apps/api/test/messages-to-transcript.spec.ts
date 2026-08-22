@@ -2,9 +2,13 @@ import { expect, test } from "vitest";
 import { messagesToTranscript } from "../src/supervisor/messages-to-transcript";
 
 // Every fixture in this file is CONSTRUCTED from omp's documented frame shapes, not recorded
-// from a live omp run. The `usage` / `duration` / `model` fields in particular are the shape
-// the live `message_end` frame carries; whether omp's converted `get_messages_page` history
-// preserves them could not be verified, which is why the mapper no-ops when they are absent.
+// from a live omp run. The shapes themselves are confirmed against a real omp session file:
+// converted `get_messages_page` history does preserve the accounting — assistant messages
+// carry `timestamp`, `model`, `duration` and `usage.cost.total`, toolResult messages carry
+// `toolCallId`, and assistant `toolCall` parts carry `id` and `intent`. So the turn mirror is
+// the path every reloaded block footer takes for its cost figure, not an inert branch. The
+// mapper still no-ops on absent fields, for an omp build that omits them: a missing footer
+// number beats a fabricated zero-cost turn.
 const entriesOf = (messages: unknown[]) => messagesToTranscript(messages).entries;
 
 test("maps assistant reasoning before text, preserving in-message order", () => {

@@ -116,8 +116,11 @@ export type ServerEvent =
   | { type: "transcript_append"; sessionId: string; entry: TranscriptEntry }
   | { type: "transcript_reset"; sessionId: string; entries: TranscriptEntry[] }
   // A tool row completing in place: the pending entry keeps its id and gains the reduced
-  // display fields. The full line list stays on the API behind GET /sessions/:id/tools/:callId.
-  | { type: "transcript_update"; sessionId: string; id: string; status: "ok" | "error"; stat?: string; count?: number; ms?: number; detail?: ToolDetail }
+  // display fields. `target` rides along because the result can improve on the one derived
+  // at call time (an `edit` reporting an authoritative repo-relative path), and without it
+  // the client would keep the call-time value while the server's transcript shows the better
+  // one. The full line list stays on the API behind GET /sessions/:id/tools/:callId.
+  | { type: "transcript_update"; sessionId: string; id: string; status: "ok" | "error"; target?: string; stat?: string; count?: number; ms?: number; detail?: ToolDetail }
   | { type: "group_update"; group: Group }
   | { type: "session_removed"; sessionId: string }
   | { type: "group_removed"; groupId: string };

@@ -515,6 +515,11 @@ const silentMs = computed(() =>
   running.value && props.session.lastEventAt ? Math.max(0, now.value - props.session.lastEventAt) : 0,
 );
 const stalled = computed(() => silentMs.value >= STALL_MS);
+// NOT the shared `dur()`, and deliberately so: this label only renders once `stalled` is
+// true, so a sub-second value is unreachable and a floor marker would be dead code, and it
+// holds seconds until 90 rather than 60 because `91 с` reads as a sharper stall figure than
+// a rounded `2 хв` at the moment the operator is deciding whether the turn is wedged.
+// Do not fold it into the shared formatter.
 const silentLabel = computed(() => {
   const s = Math.round(silentMs.value / 1000);
   return s >= 90 ? `${Math.round(s / 60)} хв` : `${s} с`;

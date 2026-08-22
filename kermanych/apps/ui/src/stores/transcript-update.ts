@@ -14,6 +14,9 @@ export function applyTranscriptUpdate(list: TranscriptEntry[], e: Update): Trans
     return {
       ...x,
       status: e.status,
+      // The result can improve on the call-time target (an `edit` reporting an authoritative
+      // repo-relative path), so the patch carries it and the row adopts it.
+      ...(e.target === undefined ? {} : { target: e.target }),
       ...(e.stat === undefined ? {} : { stat: e.stat }),
       ...(e.count === undefined ? {} : { count: e.count }),
       ...(e.ms === undefined ? {} : { ms: e.ms }),

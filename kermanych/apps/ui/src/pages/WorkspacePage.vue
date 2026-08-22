@@ -569,6 +569,10 @@ const expandAll = ref<ExpandAllCommand>(EXPAND_ALL_NONE);
 function onExpandAll(on: boolean): void {
   expandAll.value = nextExpandAll(expandAll.value, on);
 }
+// Both row watchers on the command are immediate, and the blocks remount on switch (they
+// are keyed on the session id), so a stale «розгорнути все» would be adopted by every row
+// of the session the operator just opened. The command is per-session state: reset it.
+watch(() => store.selectedSessionId, () => { expandAll.value = EXPAND_ALL_NONE; });
 const blocks = computed(() => buildChatBlocks(entries.value));
 // Accumulated spend of the whole transcript, for the panel's status row. A computed
 // rather than an inline template reduce, so it is not re-summed on every re-render.

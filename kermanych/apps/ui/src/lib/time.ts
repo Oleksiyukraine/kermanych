@@ -14,3 +14,14 @@ export function relativeTime(iso: string, nowMs: number): string {
   if (delta < DAY) return `${Math.floor(delta / HOUR)} год тому`;
   return `${Math.floor(delta / DAY)} дн тому`;
 }
+
+// The house duration form for a measured span, shared by every component that prints one:
+// the collapsed block summary, the status row and the reasoning chip. Whole seconds below a
+// minute, then whole minutes; a sub-second span gets a floor marker, because `0 с` would
+// claim the work took no time at all. One function on purpose — the chip used to stop at
+// seconds and printed `думав 127 с` beside a summary reading `роздуми 2 хв`.
+export function dur(ms: number): string {
+  if (ms < 1000) return '<1 с';
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s} с` : `${Math.round(s / 60)} хв`;
+}

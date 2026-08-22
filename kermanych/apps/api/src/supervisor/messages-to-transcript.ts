@@ -31,10 +31,11 @@ export type Rehydrated = { entries: TranscriptEntry[]; full: Map<string, ToolLin
 // Map omp's converted message history into transcript entries through the same reducers the
 // live stream uses (`pendingToolEntry` / `applyToolResult` / `turnEntry`), so a session that
 // streamed and the same session after a reload render identically. Each toolCall becomes one
-// `pending` entry; the following toolResult message pairs to the oldest pending entry of the
-// same tool name (FIFO — correct for interchangeable parallel calls) and fills in its stat,
-// count and clamped detail. Reasoning parts ({ type:"thinking" }) map to assistant_thinking
-// and render as a collapsed block.
+// `pending` entry; the following toolResult message pairs to it on omp's own call id, and
+// only falls back to the oldest pending entry of the same tool name for history that
+// predates those ids — a real assistant message issues two to four parallel calls, so the
+// id is what keeps each row's own stat, count and clamped detail. Reasoning parts
+// ({ type:"thinking" }) map to assistant_thinking and render as a collapsed block.
 export function messagesToTranscript(messages: unknown[]): Rehydrated {
   const entries: TranscriptEntry[] = [];
   const full = new Map<string, ToolLine[]>();

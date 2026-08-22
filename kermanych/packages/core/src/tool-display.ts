@@ -179,21 +179,24 @@ const TODO_GLYPH: Record<string, string> = {
   pending: "[ ]", in_progress: "[/]", completed: "[x]", abandoned: "[-]", blocked: "[!]",
 };
 
-const ms = (v: number): string => (v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(1)} с`);
+// The stat column's wall-time form: sub-second in whole milliseconds, then tenths of a
+// second. Exported because it is also the stand-in for a reducer that named a stat source
+// its payload did not carry — see `applyToolResult`.
+export const msLabel = (v: number): string => (v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(1)} с`);
 
 const bashDisplay: Reducer = (args, d, content) => {
   const command = str(args["command"]).split(/\s+/).join(" ");
   const wall = num(d["wallTimeMs"]) ?? 0;
   const exit = num(d["exitCode"]);
   const lines: ToolLine[] = [{ t: "head", text: `$ ${command}` }, ...textLines(content)];
-  const meta = [`wall ${ms(wall)}`];
+  const meta = [`wall ${msLabel(wall)}`];
   const timeout = num(d["timeoutSeconds"]);
   if (timeout !== undefined) meta.push(`timeout ${timeout}s`);
   if (exit) meta.push(`exit ${exit}`);
   lines.push({ t: "head", text: meta.join(" · ") });
   return {
     target: command,
-    stat: exit ? `exit ${exit} · ${ms(wall)}` : ms(wall),
+    stat: exit ? `exit ${exit} · ${msLabel(wall)}` : msLabel(wall),
     count: Math.round(wall),
     lines,
     totalLines: lines.length,

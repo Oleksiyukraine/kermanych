@@ -31,6 +31,19 @@ describe('applyTranscriptUpdate', () => {
     expect(next[0]).toMatchObject({ status: 'ok', stat: '0 збігів', count: 0, ms: 0 });
   });
 
+  it('adopts the improved target the result reported', () => {
+    const next = applyTranscriptUpdate(pending, {
+      type: 'transcript_update', sessionId: 's1', id: 'c1', status: 'ok',
+      target: 'src/lib/tip.ts', stat: '+7 \u22125',
+    });
+    expect(next[0]).toMatchObject({ target: 'src/lib/tip.ts', stat: '+7 \u22125' });
+  });
+
+  it('keeps the call-time target when the patch omits one', () => {
+    const next = applyTranscriptUpdate(pending, { type: 'transcript_update', sessionId: 's1', id: 'c1', status: 'ok' });
+    expect(next[0]).toMatchObject({ target: 'lib/tip.ts' });
+  });
+
   it('keeps fields a later status-only update omits', () => {
     const done: TranscriptEntry[] = [
       { kind: 'tool', id: 'c1', at: 1, tool: 'edit', status: 'ok', stat: '+7 \u22125', count: 12, ms: 40 },

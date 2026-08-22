@@ -11,6 +11,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { Session } from '@kermanych/core';
+import { dur } from '../../lib/time';
 import { useNow } from '../../composables/useNow';
 
 // The one row that never disappears: model, context budget, accumulated spend and — on
@@ -19,15 +20,6 @@ import { useNow } from '../../composables/useNow';
 const props = defineProps<{ session: Session; cost: number }>();
 
 const now = useNow(1000);
-
-// The house duration form, identical to KRequestBlock's `dur()`: whole seconds below a
-// minute, then whole minutes, and a floor marker under a second — `0 с` would claim no
-// time passed at all.
-function dur(ms: number): string {
-  if (ms < 1000) return '<1 с';
-  const s = Math.round(ms / 1000);
-  return s < 60 ? `${s} с` : `${Math.round(s / 60)} хв`;
-}
 
 // The machine metrics, assembled the way KRequestBlock's `summary` is: an array filtered
 // of the facts we do not have, then joined. Gating each separator on the field that

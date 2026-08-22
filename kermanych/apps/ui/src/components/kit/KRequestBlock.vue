@@ -53,6 +53,7 @@ import type { ChatBlock, ToolEntry } from '@kermanych/core';
 import KLogBlock from './KLogBlock.vue';
 import KToolRow from './KToolRow.vue';
 import type { ExpandAllCommand } from '../../lib/expand-all';
+import { dur } from '../../lib/time';
 
 const props = defineProps<{ block: ChatBlock; sessionId: string; open: boolean; expandAll: ExpandAllCommand }>();
 
@@ -133,14 +134,6 @@ function gStatus(members: ToolEntry[]): 'pending' | 'ok' | 'error' {
 const rows = computed(() =>
   props.block.items.map((item) => (item.kind === 'group' ? { ...item, status: gStatus(item.members) } : item)),
 );
-
-// Whole seconds below a minute, then whole minutes. A sub-second span gets a floor marker
-// instead of `0 с`, which would claim the block took no time at all.
-function dur(ms: number): string {
-  if (ms < 1000) return '<1 с';
-  const s = Math.round(ms / 1000);
-  return s < 60 ? `${s} с` : `${Math.round(s / 60)} хв`;
-}
 
 const clock = computed(() =>
   props.block.request ? new Date(props.block.request.at).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' }) : '',

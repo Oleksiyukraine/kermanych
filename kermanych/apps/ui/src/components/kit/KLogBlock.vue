@@ -47,6 +47,7 @@ import { computed, ref, watch } from 'vue';
 import type { TranscriptEntry } from '@kermanych/core';
 import { renderMarkdown } from '../../lib/markdown';
 import type { ExpandAllCommand } from '../../lib/expand-all';
+import { dur } from '../../lib/time';
 import KToolRow from './KToolRow.vue';
 
 // One transcript block. Tool rows delegate to KToolRow; `turn` entries are ledger
@@ -82,10 +83,11 @@ const renderedThinking = computed(() =>
 // Missing fields drop out entirely rather than leaving dangling separators.
 const chip = computed(() => {
   if (props.entry.kind !== 'assistant_thinking') return '';
-  // Sub-second reasoning reads `<1 с`, the same floor marker the block summary uses: a clamp
-  // to `1 с` states a duration the agent did not spend, and `0 с` reads as broken.
-  const ms = props.entry.ms;
-  const msLabel = !ms ? '' : ms < 1000 ? '<1 с' : `${Math.round(ms / 1000)} с`;
+  // The house duration form, shared with the block summary and the status row: the chip and
+  // the `роздуми` figure one press away describe the same quantity, so they must agree on
+  // both the sub-second floor marker and the switch to minutes.
+  // A zero or absent `ms` drops out entirely rather than claiming a measured span.
+  const msLabel = props.entry.ms ? dur(props.entry.ms) : '';
   const tok = props.entry.tokens;
   const tokLabel = tok === undefined ? '' : tok >= 1000 ? `${(tok / 1000).toFixed(1)}k ток` : `${tok} ток`;
   // `думав` is the label, not a metric: the dot only ever separates two metrics,

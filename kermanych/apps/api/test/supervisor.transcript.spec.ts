@@ -106,6 +106,34 @@ test("start and end frames arriving in separate calls keep the call-time target 
   expect(patch.target).toBeUndefined();
 });
 
+// No row may spend a line without a fact. `hub` names its op as the stat, so a frame that
+// reports none would leave the cell empty — the measured wall time stands in.
+test("a reducer whose stat source is absent falls back to the measured wall time", () => {
+  const { entries } = reduceRpcEvents(
+    [
+      { type: "tool_execution_start", toolName: "hub", toolCallId: "c1", args: { to: "Main" } },
+      { type: "tool_execution_end", toolName: "hub", toolCallId: "c1", isError: false, result: { content: [{ type: "text", text: "delivered" }], details: {} } },
+    ],
+    { now: at },
+  );
+  expect(entries[0]).toMatchObject({ kind: "tool", tool: "hub", target: "Main", stat: "1 ms", ms: 1 });
+});
+
+// The unknown-tool case is deliberately not the same: `genericDisplay` names no stat at all,
+// so the row stays bare rather than borrowing a figure it never claimed to report.
+test("an unknown tool keeps a bare stat", () => {
+  const { entries } = reduceRpcEvents(
+    [
+      { type: "tool_execution_start", toolName: "mystery", toolCallId: "c1", args: { i: "do a thing" } },
+      { type: "tool_execution_end", toolName: "mystery", toolCallId: "c1", isError: false, result: { content: [] } },
+    ],
+    { now: at },
+  );
+  const entry = entries[0] as ToolEntry;
+  expect(entry.stat).toBeUndefined();
+  expect(entry.ms).toBe(1);
+});
+
 test("the assistant buffers survive across calls and come back emptied", () => {
   const first = reduceRpcEvents([{ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "half " } }], { now: at });
   expect(first).toMatchObject({ entries: [], textBuf: "half " });

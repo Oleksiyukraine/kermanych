@@ -637,9 +637,11 @@ export class SupervisorService implements OnModuleDestroy {
     entry.detail = patch.detail;
     // The patch only carries a target when the result improved on the one derived at call time.
     if (patch.target) entry.target = patch.target;
+    // `target` rides along too: it is the one display field the result can improve on, so
+    // omitting it left the client's copy of the row disagreeing with GET /sessions/:id/transcript.
     this.events.next({
       type: "transcript_update", sessionId: id, id: entry.id, status: entry.status as "ok" | "error",
-      stat: entry.stat, count: entry.count, ms: entry.ms, detail: entry.detail,
+      target: entry.target, stat: entry.stat, count: entry.count, ms: entry.ms, detail: entry.detail,
     });
   }
 
