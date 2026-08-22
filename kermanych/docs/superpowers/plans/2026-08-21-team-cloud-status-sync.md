@@ -71,7 +71,7 @@ Two files are deliberately split rather than merged: the drain/subscribe logic (
   - `dropOutbox(taskId: string): void`
   - `bumpOutboxAttempt(taskId: string, error: string): void` — `attempts = attempts + 1`, `last_error = error`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `apps/api/test/registry.outbox.spec.ts`:
 
@@ -148,12 +148,12 @@ test("dropOutbox removes the row and leaves the rest", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @kermanych/api exec vitest run test/registry.outbox.spec.ts`
 Expected: FAIL — `r.enqueueTaskStatus is not a function`.
 
-- [ ] **Step 3: Add the `OutboxRow` type**
+- [x] **Step 3: Add the `OutboxRow` type**
 
 In `apps/api/src/registry/registry.service.ts`, insert above `@Injectable()` (line 10):
 
@@ -164,7 +164,7 @@ In `apps/api/src/registry/registry.service.ts`, insert above `@Injectable()` (li
 export type OutboxRow = { taskId: string; status: SessionStatus; updatedAt: string; attempts: number; lastError?: string };
 ```
 
-- [ ] **Step 4: Create the table**
+- [x] **Step 4: Create the table**
 
 Append at the very end of the constructor (after the last additive migration block):
 
@@ -176,7 +176,7 @@ Append at the very end of the constructor (after the last additive migration blo
     );
 ```
 
-- [ ] **Step 5: Add the four methods**
+- [x] **Step 5: Add the four methods**
 
 After `removeSession` (today `registry.service.ts:229-231`), inside the class:
 
@@ -211,17 +211,17 @@ After `removeSession` (today `registry.service.ts:229-231`), inside the class:
   }
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `pnpm --filter @kermanych/api exec vitest run test/registry.outbox.spec.ts`
 Expected: PASS (5 tests).
 
-- [ ] **Step 7: Run the registry's other specs for regressions**
+- [x] **Step 7: Run the registry's other specs for regressions**
 
 Run: `pnpm --filter @kermanych/api exec vitest run test/registry.spec.ts test/registry.branch.spec.ts test/registry.migration.spec.ts`
 Expected: PASS — the new table is additive and touches no existing statement.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add apps/api/src/registry/registry.service.ts apps/api/test/registry.outbox.spec.ts
@@ -247,7 +247,7 @@ git commit -m "feat(api): durable status_outbox table with latest-wins enqueue"
   - The private `resolveLaunchParams(project, name, prefix, worktree, excludeId?, requestedBase?)` and `launch(session, project, opts?)` already in this file (lines 333, 370) — after Plan B their first parameter is `Project` and they read `project.localRepoPath`.
 - Produces: `SupervisorService.createSessionFromTask(taskId: string, userId: string): Promise<Session>` and the third constructor parameter `private auth: AuthService`. `apps/api/test/offline-auth.ts` exports `offlineAuth(): AuthService`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `apps/api/test/sessions.from-task.spec.ts`:
 
@@ -487,12 +487,12 @@ describe("createSessionFromTask", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @kermanych/api exec vitest run test/sessions.from-task.spec.ts`
 Expected: FAIL — `sup.createSessionFromTask is not a function` (and a TS arity complaint on the 3-arg `new SupervisorService`).
 
-- [ ] **Step 3: Add the imports and the third constructor dependency**
+- [x] **Step 3: Add the imports and the third constructor dependency**
 
 In `apps/api/src/supervisor/supervisor.service.ts`, add to the import block (after the `@kermanych/core` import that ends at line 31):
 
@@ -513,7 +513,7 @@ Replace the constructor (lines 65-68):
 
 `AuthService` is the only new dependency, and it is used by exactly one method. It is injected rather than passed per call because `createSessionFromTask` is reached from HTTP with nothing but a `userId`, and the cached-token client belongs to the process, not the request. Direction of dependency: `SupervisorService → AuthService → RegistryService`; nothing in `AuthService` knows about the supervisor, so there is no cycle.
 
-- [ ] **Step 4: Add `createSessionFromTask`**
+- [x] **Step 4: Add `createSessionFromTask`**
 
 Insert after `createSession` (which ends at line 162), before the `// Turn a backlog task into a running agent…` comment at line 164:
 
@@ -607,7 +607,7 @@ Two notes for the implementer:
 
 2. `task.kind` is intentionally NOT mapped onto `Session.kind`. The local `kind` is a row taxonomy (`agent | task | discussion | review | chat`) that decides whether a row owns a branch and a child process; a launched cloud task is always an `agent` (the registry default). The cloud's `kind` is board metadata. Mapping one onto the other would let a card create a `chat` row with a branch it must not have.
 
-- [ ] **Step 5: Create the shared offline-auth DI stub**
+- [x] **Step 5: Create the shared offline-auth DI stub**
 
 Create `apps/api/test/offline-auth.ts`:
 
@@ -630,12 +630,12 @@ export function offlineAuth(): AuthService {
 }
 ```
 
-- [ ] **Step 6: Run the new spec to verify it passes**
+- [x] **Step 6: Run the new spec to verify it passes**
 
 Run: `pnpm --filter @kermanych/api exec vitest run test/sessions.from-task.spec.ts`
 Expected: PASS (8 tests).
 
-- [ ] **Step 7: Update the 14 existing `new SupervisorService(...)` sites**
+- [x] **Step 7: Update the 14 existing `new SupervisorService(...)` sites**
 
 Every file below gets one added import line, `import { offlineAuth } from "./offline-auth";`, placed after its existing `import { RegistryService } from "../src/registry/registry.service";` line, plus the one-line construction change shown:
 
@@ -661,17 +661,17 @@ Note: Plan B renamed `supervisor.group.spec.ts`'s subject but not the file; if i
 Run: `grep -rn "new SupervisorService(" apps/api/test apps/api/src`
 Expected: 14 test call sites, all three-argument, and zero in `src` (Nest constructs it).
 
-- [ ] **Step 8: Run the whole api suite**
+- [x] **Step 8: Run the whole api suite**
 
 Run: `pnpm --filter @kermanych/api exec vitest run`
 Expected: PASS — all specs, including the 14 updated ones.
 
-- [ ] **Step 9: Typecheck**
+- [x] **Step 9: Typecheck**
 
 Run: `pnpm --filter @kermanych/api exec tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add apps/api/src/supervisor/supervisor.service.ts apps/api/test/offline-auth.ts apps/api/test/sessions.from-task.spec.ts apps/api/test/create-guards.spec.ts apps/api/test/finish.spec.ts apps/api/test/reopen.spec.ts apps/api/test/supervisor.base-branch.spec.ts apps/api/test/supervisor.branch.spec.ts apps/api/test/supervisor.chat.spec.ts apps/api/test/supervisor.discard.spec.ts apps/api/test/supervisor.group.spec.ts apps/api/test/supervisor.merge.spec.ts apps/api/test/supervisor.pr.spec.ts apps/api/test/supervisor.restart.spec.ts apps/api/test/supervisor.resume.spec.ts apps/api/test/supervisor.review.spec.ts apps/api/test/supervisor.tasks.spec.ts
@@ -689,7 +689,7 @@ git commit -m "feat(api): launch a local session from a cloud task with assignee
 - Consumes: `SupervisorService.createSessionFromTask(taskId, userId)` (Task 2); `req.user = { id: string }` set by `SupabaseAuthGuard` (Plan A); `GET /sessions` with `@Query("projectId")` and `reg.listSessions(projectId?)` (Plan B — this task does NOT edit that handler, it only verifies it).
 - Produces: `POST /api/sessions/from-task { taskId }` → `Session`; `400` with the service's message on every refusal.
 
-- [ ] **Step 1: Add the route**
+- [x] **Step 1: Add the route**
 
 In `apps/api/src/http/sessions.controller.ts`, extend the `@nestjs/common` import at line 2 with `Req`:
 
@@ -715,17 +715,17 @@ Then insert the handler after the `createChat` method (line 40):
   }
 ```
 
-- [ ] **Step 2: Verify the route order in the source**
+- [x] **Step 2: Verify the route order in the source**
 
 Run: `grep -n '@Post(\|@Get(' apps/api/src/http/sessions.controller.ts`
 Expected: `@Post("from-task")` appears BEFORE the first `":id` route. If it does not, move it.
 
-- [ ] **Step 3: Typecheck**
+- [x] **Step 3: Typecheck**
 
 Run: `pnpm --filter @kermanych/api exec tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 4: Verify against the running API**
+- [x] **Step 4: Verify against the running API**
 
 Start the API with `pnpm dev:api`. Sign in through the UI once (`pnpm dev:ui`, "Увійти через GitHub") so the local API has a cached token, then read it out of SQLite for curl:
 
@@ -744,7 +744,7 @@ curl -s -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:4317/api/sessions?pr
 
 Expected: (1) `401`; (2) `{"message":"task not found","error":"Bad Request","statusCode":400}` — a 404 would mean the literal route is shadowed; (3) `[]`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/http/sessions.controller.ts
@@ -763,7 +763,7 @@ git commit -m "feat(api): POST /sessions/from-task launches the caller's cloud t
 - Consumes: `supervisor.events$: Observable<ServerEvent>` (`supervisor.service.ts:63`); `registry.enqueueTaskStatus/listOutbox/dropOutbox/bumpOutboxAttempt` (Task 1); `AuthService.cloudClient()` and `AuthService.onToken(cb: (auth: { userId: string; accessToken: string }) => void): void` — fired at the end of a successful `setToken()` (Plan A); `pushTaskStatus(client, taskId, status, updatedAt): Promise<void>` and `taskStatusFromSession(session): TaskStatus` from `@kermanych/cloud` (Plans A/C); `ACTIVE_STATUSES` from `@kermanych/core` (`status.ts:10`).
 - Produces: `CloudSyncService implements OnModuleInit, OnModuleDestroy` with a public `drain(): Promise<void>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `apps/api/test/cloud-sync.spec.ts`:
 
@@ -982,12 +982,12 @@ describe("CloudSyncService", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @kermanych/api exec vitest run test/cloud-sync.spec.ts`
 Expected: FAIL — "Cannot find module '../src/cloud/cloud-sync.service'".
 
-- [ ] **Step 3: Implement the service**
+- [x] **Step 3: Implement the service**
 
 Create `apps/api/src/cloud/cloud-sync.service.ts`:
 
@@ -1138,17 +1138,17 @@ export class CloudSyncService implements OnModuleInit, OnModuleDestroy {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pnpm --filter @kermanych/api exec vitest run test/cloud-sync.spec.ts`
 Expected: PASS (9 tests).
 
-- [ ] **Step 5: Typecheck**
+- [x] **Step 5: Typecheck**
 
 Run: `pnpm --filter @kermanych/api exec tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/cloud/cloud-sync.service.ts apps/api/test/cloud-sync.spec.ts
@@ -1169,7 +1169,7 @@ git commit -m "feat(api): CloudSyncService mirrors session status to the cloud v
 
 **Why a REST endpoint for the outbox:** the UI must distinguish two different failures. "The cloud is unreachable from the browser" is already visible to the UI through the Realtime channel state (`useBoard().offline`). "This machine owes the cloud N status pushes" is knowable ONLY inside the local Nest process — the browser can be perfectly online while the local API's token is expired or its DNS is blocked, which is exactly the smoke scenario in Task 9. The alternative, a new `ServerEvent` variant, would mean editing `packages/core/src/types.ts` (Plan B's file), the gateway and the UI reducer to carry a counter that changes at most a few times a minute. A 3-line read of SQLite polled by the board is cheaper and touches nobody else's files.
 
-- [ ] **Step 1: Create the controller**
+- [x] **Step 1: Create the controller**
 
 Create `apps/api/src/cloud/cloud.controller.ts`:
 
@@ -1194,7 +1194,7 @@ export class CloudController {
 
 The route is intentionally NOT `@Public()`: it reports on the signed-in user's own queue and is covered by the global `SupabaseAuthGuard`.
 
-- [ ] **Step 2: Register both in `AppModule`**
+- [x] **Step 2: Register both in `AppModule`**
 
 In `apps/api/src/app.module.ts`, add the two imports next to the existing ones:
 
@@ -1222,12 +1222,12 @@ Append `CloudController` to the `controllers` array and `CloudSyncService` to th
 
 Dependency direction, stated once so nobody inverts it later: `CloudSyncService → { SupervisorService, RegistryService, AuthService }`. Nothing in `SupervisorService` knows `CloudSyncService` exists — it is a pure `events$` subscriber, like `EventsGateway`. That is what makes the mirror removable and the supervisor testable without any cloud stubs.
 
-- [ ] **Step 3: Typecheck**
+- [x] **Step 3: Typecheck**
 
 Run: `pnpm --filter @kermanych/api exec tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 4: Verify at runtime**
+- [x] **Step 4: Verify at runtime**
 
 Run `pnpm dev:api`, sign in once via the UI, then:
 
@@ -1240,12 +1240,12 @@ sqlite3 ~/.kermanych/kermanych.sqlite '.schema status_outbox'
 
 Expected: `{"pending":0}`; then `401` without the header; then the `CREATE TABLE status_outbox (...)` DDL, proving the table was created on this real database (not just `:memory:`). The API log shows no `[cloud-sync]` warnings.
 
-- [ ] **Step 5: Run the full api suite**
+- [x] **Step 5: Run the full api suite**
 
 Run: `pnpm --filter @kermanych/api exec vitest run`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/cloud/cloud.controller.ts apps/api/src/app.module.ts
@@ -1270,7 +1270,7 @@ git commit -m "feat(api): register CloudSyncService and expose GET /cloud/outbox
   - `KModal`, `KBtn` (already imported by Plan C's create/assign modals), `KField`, `KDirPicker` (kit components; `KDirPicker` emits `select` with an absolute path and keeps talking to the LOCAL API).
 - Produces: `api.createSessionFromTask(taskId: string): Promise<Session>`; a working «Запустити» that either starts a local session or walks the user through binding first.
 
-- [ ] **Step 1: Add the API client member**
+- [x] **Step 1: Add the API client member**
 
 In `apps/ui/src/lib/api.ts`, insert after `createChat` (line 97-98):
 
@@ -1281,7 +1281,7 @@ In `apps/ui/src/lib/api.ts`, insert after `createChat` (line 97-98):
 
 It goes through the shared `post` helper, so it inherits the `Authorization: Bearer` header and the 401 handling Plan A added there.
 
-- [ ] **Step 2: Replace the placeholder launch handler**
+- [x] **Step 2: Replace the placeholder launch handler**
 
 In `apps/ui/src/pages/BoardPage.vue`, replace Plan C's one-line `launch` with the real flow. Add `import { api } from 'lib/api';`, `import { useProjects } from 'stores/projects';` and `import { useRouter } from 'vue-router';` to the script's import block if they are not already there, then:
 
@@ -1367,7 +1367,7 @@ Note on the `:disabled="!isBound(task)"` binding Plan C already wrote: change it
           :title="isBound(task) ? 'Запустити локальну сесію' : 'Проєкт не звʼязано з локальною текою — вкажи її'"
 ```
 
-- [ ] **Step 3: Add the binding modal to the template**
+- [x] **Step 3: Add the binding modal to the template**
 
 At the end of `BoardPage.vue`'s template, next to Plan C's create/assign modals:
 
@@ -1409,12 +1409,12 @@ And to the `<style scoped lang="scss">` block:
 .board__bind-error { font-size: 12px; color: var(--k-danger); margin: 0; }
 ```
 
-- [ ] **Step 4: Typecheck**
+- [x] **Step 4: Typecheck**
 
 Run: `pnpm --filter @kermanych/ui exec vue-tsc --noEmit`
 Expected: no type errors.
 
-- [ ] **Step 5: Verify in the browser**
+- [x] **Step 5: Verify in the browser**
 
 Run `pnpm dev:api` and `pnpm dev:ui`, sign in, open `/#/board`.
 
@@ -1425,7 +1425,7 @@ Run `pnpm dev:api` and `pnpm dev:ui`, sign in, open `/#/board`.
 
 Expected: all of the above; no console errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/ui/src/lib/api.ts apps/ui/src/pages/BoardPage.vue
@@ -1444,7 +1444,7 @@ git commit -m "feat(ui): launch a cloud task locally, with a binding detour for 
 - Consumes: `GET /api/cloud/outbox` (Task 5); Plan C's page holds `const board = useBoard()` and `const local = useOrchestrator()`, and its `board.offline: boolean` is set from the Realtime channel state (`true` unless `channelState === 'SUBSCRIBED'`) but rendered nowhere — this task renders it; the two PRE-EXISTING helpers `useNow(intervalMs = 15_000): Ref<number>` from `apps/ui/src/composables/useNow.ts` (called with no argument here, so it ticks every 15 s — enough for a minute-granularity hint) and `relativeTime(iso: string, now: number): string` from `apps/ui/src/lib/time.ts`; `Task.updatedAt` (camelCase, mapped inside `@kermanych/cloud`).
 - Produces: `api.cloudOutbox(): Promise<{ pending: number }>`; the board's three status surfaces — cloud-channel banner, local-queue pill, per-card stale hint.
 
-- [ ] **Step 1: Add the API client member**
+- [x] **Step 1: Add the API client member**
 
 In `apps/ui/src/lib/api.ts`, insert after `createSessionFromTask` (added in Task 6):
 
@@ -1453,7 +1453,7 @@ In `apps/ui/src/lib/api.ts`, insert after `createSessionFromTask` (added in Task
     get<{ pending: number }>('/cloud/outbox'),
 ```
 
-- [ ] **Step 2: Poll the local outbox from the board**
+- [x] **Step 2: Poll the local outbox from the board**
 
 In `BoardPage.vue`'s script, below Plan C's `onMounted`/`onUnmounted` subscribe lifecycle (Vue composes multiple hooks; keeping the two concerns in separate blocks keeps them reviewable):
 
@@ -1482,7 +1482,7 @@ onUnmounted(() => {
 });
 ```
 
-- [ ] **Step 3: Add the stale rule**
+- [x] **Step 3: Add the stale rule**
 
 Also in the script:
 
@@ -1501,7 +1501,7 @@ function isStale(task: Task): boolean {
 
 Add `TaskStatus` to the existing `import type { … } from '@kermanych/cloud';` line.
 
-- [ ] **Step 4: Render the three surfaces**
+- [x] **Step 4: Render the three surfaces**
 
 At the top of the board template, above the columns:
 
@@ -1536,12 +1536,12 @@ And in the `<style scoped lang="scss">` block:
 .board__stale { font-size: 11px; color: var(--k-accent); white-space: nowrap; }
 ```
 
-- [ ] **Step 5: Typecheck**
+- [x] **Step 5: Typecheck**
 
 Run: `pnpm --filter @kermanych/ui exec vue-tsc --noEmit`
 Expected: no type errors.
 
-- [ ] **Step 6: Verify each surface in the browser**
+- [x] **Step 6: Verify each surface in the browser**
 
 Run `pnpm dev:api` + `pnpm dev:ui`, sign in, open `/#/board`.
 
@@ -1559,7 +1559,7 @@ Run `pnpm dev:api` + `pnpm dev:ui`, sign in, open `/#/board`.
 
 Expected: all three, and no console errors.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/ui/src/lib/api.ts apps/ui/src/pages/BoardPage.vue
@@ -1577,7 +1577,7 @@ git commit -m "feat(ui): cloud-offline banner, pending-outbox indicator and stal
 - Consumes: nothing at runtime. Plan A already added a "cloud prerequisites" section (env vars, `supabase start`); this task appends a separate section and edits none of Plan A's lines.
 - Produces: documentation of the task lifecycle and the offline guarantees.
 
-- [ ] **Step 1: Append the section**
+- [x] **Step 1: Append the section**
 
 At the end of `README.md`:
 
@@ -1633,12 +1633,12 @@ Local work never waits for the cloud:
   (there is no heartbeat — it is the age of the task's `updated_at`).
 ```
 
-- [ ] **Step 2: Verify it renders**
+- [x] **Step 2: Verify it renders**
 
 Run: `grep -n '^## ' README.md`
 Expected: the new `## Cloud tasks and local sessions` heading is last, and Plan A's cloud-prerequisites heading is untouched.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add README.md
@@ -1653,7 +1653,7 @@ git commit -m "docs: document the cloud task flow and offline status sync"
 
 Two participants are needed: **A** and **B**. Use two machines, or two OS accounts on one machine (two separate `$HOME`s, hence two separate `~/.kermanych/kermanych.sqlite` files and two separate Electron/browser profiles — one shared SQLite file would invalidate the whole test). Two GitHub accounts, one shared Supabase project, one shared cloud project with both users as members.
 
-- [ ] **Step 1: Bring both sides up**
+- [x] **Step 1: Bring both sides up**
 
 On each machine:
 
@@ -1673,27 +1673,27 @@ sqlite3 ~/.kermanych/kermanych.sqlite 'select user_id, github_username, expires_
 
 Expected: one row per machine, with the right GitHub username.
 
-- [ ] **Step 2: A creates a project and adds B; B binds it**
+- [x] **Step 2: A creates a project and adds B; B binds it**
 
 A: `/#/board` → create the project, add B by GitHub username in the members panel.
 B: reload `/#/board` → the project appears. B does NOT bind yet.
 
 Expected: both see the project; B's board is empty of tasks.
 
-- [ ] **Step 3: A creates and assigns a task; B sees it live**
+- [x] **Step 3: A creates and assigns a task; B sees it live**
 
 A creates a task titled `Smoke: cross-machine status` with the description `echo hello and stop`, launch params model default and prefix `chore`, and assigns it to B.
 
 Expected: B's board shows the card WITHOUT a reload (Realtime), with B's avatar and status `backlog`.
 
-- [ ] **Step 4: B launches; A watches the status walk**
+- [x] **Step 4: B launches; A watches the status walk**
 
 B presses «Запустити» → the binding modal opens → B picks a real local git repo → «Звʼязати і запустити».
 
 Expected on B: navigation to the workspace board, a new row named `Smoke: cross-machine status`, a worktree on disk (`ls ~/.kermanych/worktrees/`), and one `omp` child (`pgrep -fl 'omp --mode rpc'`).
 Expected on A, without reloading: the card moves `backlog → queued → thinking` and ends on `done`.
 
-- [ ] **Step 5: Kill B's API mid-run; A sees the stale hint**
+- [x] **Step 5: Kill B's API mid-run; A sees the stale hint**
 
 B starts a second task (assign it to B from A's side first), waits for `thinking`, then hard-kills the API so no shutdown hook can run:
 
@@ -1703,13 +1703,13 @@ pkill -9 -f 'nest start'
 
 Expected on A: the card stays on `thinking` and after 90 s shows «⚠ давно без змін». (A SIGKILL is the point of this step: a `Ctrl-C` would run `onModuleDestroy` and push `stopped` immediately — verify that too, on a third task, and confirm A's card flips to `stopped` within seconds.)
 
-- [ ] **Step 6: Restart B; the terminal status arrives**
+- [x] **Step 6: Restart B; the terminal status arrives**
 
 B: `pnpm dev:api` again.
 
 Expected: `sqlite3 ~/.kermanych/kermanych.sqlite 'select * from status_outbox'` is empty within a second or two (the boot drain ran), and A's card leaves the stale state with the real terminal status. B's session row can be resumed from the workspace board as usual.
 
-- [ ] **Step 7: Block Supabase on B; the session keeps running and the queue grows**
+- [x] **Step 7: Block Supabase on B; the session keeps running and the queue grows**
 
 ```bash
 sudo sh -c 'echo "127.0.0.1 <your-project-ref>.supabase.co" >> /etc/hosts'
@@ -1725,7 +1725,7 @@ watch -n2 "sqlite3 ~/.kermanych/kermanych.sqlite 'select task_id, status, attemp
 
 shows exactly ONE row for that task whose `status` tracks the newest state and whose `attempts` climbs. Expected on A: the card is frozen at its last delivered status.
 
-- [ ] **Step 8: Unblock; the status lands**
+- [x] **Step 8: Unblock; the status lands**
 
 ```bash
 sudo sed -i '' '/supabase.co/d' /etc/hosts   # macOS sed
@@ -1735,13 +1735,13 @@ Wait for the backoff (≤ 60 s) or restart B's API to drain at once.
 
 Expected: `status_outbox` empties, the pill disappears, and A's card jumps straight to the current status — no intermediate statuses replayed (latest-wins).
 
-- [ ] **Step 9: Assignee enforcement, from the other side**
+- [x] **Step 9: Assignee enforcement, from the other side**
 
 A presses «Запустити» on the task assigned to B.
 
 Expected: an error toast «Задача призначена іншому учаснику — запустити її може лише він.», and no session on A (`curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:4317/api/sessions | jq length` unchanged).
 
-- [ ] **Step 10: Full suites as the final gate**
+- [x] **Step 10: Full suites as the final gate**
 
 From the repo root:
 
@@ -1760,7 +1760,7 @@ pnpm --filter @kermanych/ui exec vue-tsc --noEmit
 
 Expected: no errors.
 
-- [ ] **Step 11: Clean up**
+- [x] **Step 11: Clean up**
 
 Delete the smoke sessions on B (worktrees and branches go with them), delete the smoke tasks on A, and remove any leftover `/etc/hosts` line:
 
@@ -1770,6 +1770,49 @@ ls ~/.kermanych/worktrees/
 ```
 
 Expected: `clean`, and no smoke worktrees left behind.
+
+**Verified 2026-08-22** against the local stack (Supabase `127.0.0.1:54421`), two accounts
+with injected sessions and two isolated api+UI pairs (`4417`/`5318` for A, `4418`/`5319`
+for B, one SQLite registry each). Both boards were driven through the real UI; every
+status below was read off the card, not the database.
+
+- **Steps 1-3** — one `auth_session` row per machine with the right handle; the card A
+  created and assigned appeared on B's board with no reload, B's avatar, `backlog`.
+- **Step 4** — B's «Запустити» opened the binding modal for the unbound project, then
+  launched: worktree, one `omp --mode rpc` child, branch `chore/smoke-…`. A watched
+  `backlog → queued → thinking → tool → done` live. The `queued` window is ~56 ms (the
+  worktree is built BEFORE the session is wired, so the card sits in `backlog` for the
+  slow part), which a 400 ms UI sampler can miss — the cloud row records it either way.
+- **Step 5** — `SIGKILL` mid-run: A's card stayed on `tool` and «⚠ давно без змін»
+  appeared 104 s after the last push (90 s threshold + the `useNow` tick).
+- **Step 6** — a hard kill leaves the outbox EMPTY (every push had already landed), so the
+  restart's boot drain has nothing to send and the stale card does not move by itself. It
+  cleared when B's machine spoke again: the session resumed from the workspace board and
+  pushed `thinking → done`. The boot drain was proved instead by the clean-shutdown case
+  below, which is the path that actually leaves rows behind.
+- **Step 5, clean shutdown** — `SIGTERM` wrote `stopped` to `status_outbox` (attempts 0,
+  never attempted) and exited; the next boot drained it and A's card flipped to `stopped`
+  0.4 s after that api came up.
+- **Steps 7-8** — with the cloud unreachable from B's api only (a flippable local proxy
+  instead of `/etc/hosts`, which cannot block a `127.0.0.1` stack), B's session ran,
+  prompted and answered normally; the outbox held exactly ONE row whose status tracked the
+  newest state (`done`, the `thinking → done` burst collapsed) with `attempts` climbing
+  3 → 6 on `TypeError: fetch failed` and the delay widening to the 60 s cap. B's board
+  showed the pill and NO offline banner (its browser was online — the two failures are
+  genuinely separate). On restore the row drained and A's card jumped `tool → done` with
+  no intermediate status replayed.
+- **Offline banner** — taking B's browser offline raised «Немає звʼязку з хмарою» after
+  ~28 s (Realtime's own heartbeat) and it cleared within 4 s of reconnecting.
+- **Step 9** — A (bound, non-assignee) pressing «Запустити» got exactly «Задача призначена
+  іншому учаснику — запустити її може лише він.» and created no session.
+- **Step 10** — `pnpm -r test`: core 26, cloud 48 (+10 RLS with `SUPABASE_TEST_*`), api
+  163, ui 7. Both typechecks clean.
+
+Steps that still need a human with real GitHub credentials: the GitHub OAuth sign-in
+itself (both machines), `handle_new_user` filling `github_username` from real GitHub
+metadata, adding a member BY GitHub username in the members panel, and the desktop app's
+loopback OAuth. Everything downstream of a session is identical once the JWT exists,
+which is what the injected sessions above stand in for.
 
 ---
 
