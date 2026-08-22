@@ -52,6 +52,12 @@ Supabase: Auth (GitHub OAuth) · Postgres (profiles, projects, project_members,
 
 1. GitHub OAuth sign-in (PKCE) in both the browser UI and the Electron desktop
    app; first sign-in provisions `auth.users` and, via trigger, `profiles`.
+   Sign-in is restricted to an explicit allowlist of GitHub login names
+   (`allowed_github_users`), enforced inside `handle_new_user()` so a refused
+   account never gets an `auth.users` row at all. The repository is public, so
+   this fails closed: matching is case-insensitive, a missing `user_name` is
+   refused, and an EMPTY allowlist admits nobody. The allowlist is operator data
+   — no client role holds any privilege on the table.
 2. Projects are cloud entities with `owner`/`member` roles. Any authenticated
    user may create a project (becoming owner); owners manage membership and
    project config.
@@ -136,6 +142,12 @@ create type task_status as enum
   ('backlog','queued','thinking','tool','waiting_input',
    'done','error','stopped','merged','conflict');   -- mirrors core SessionStatus
 
+-- The team gate. Operator-managed; no client role holds any privilege on it.
+create table allowed_github_users (
+  github_username text primary key,
+  added_at timestamptz not null default now(),
+  note text);
+
 create table profiles (
   id uuid primary key references auth.users on delete cascade,
   github_username text, display_name text, avatar_url text,
@@ -188,8 +200,11 @@ cascade.
 Triggers and helpers:
 
 - `handle_new_user()` — `after insert on auth.users`, `security definer`:
-  inserts `profiles` from `raw_user_meta_data` (`user_name` → `github_username`,
-  `full_name` → `display_name`, `avatar_url`).
+  refuses any `user_name` absent from `allowed_github_users` (case-insensitive;
+  a null/blank handle is refused too), then inserts `profiles` from
+  `raw_user_meta_data` (`user_name` → `github_username`, `full_name` →
+  `display_name`, `avatar_url`). Raising aborts the `auth.users` insert, so the
+  gate is the signup itself, not a later policy.
 - `handle_new_project()` — `after insert on projects`, `security definer`:
   inserts the owner's `project_members` row (`role='owner'`), so the creator is a
   member without a second round trip.
@@ -225,6 +240,17 @@ The owner is always a member, so the disjunct widens nothing.
 `revoke all on … from anon` for the four tables; every policy targets
 `authenticated`. RLS is the ONLY authorization surface — the UI's pre-checks are
 UX, not security.
+
+Nothing in that matrix restricts WHO may become authenticated — the `projects`
+INSERT cell is still "any authenticated", by design. That is exactly why the
+allowlist exists one layer earlier: since the repository is public, `revoke all
+… from anon` plus per-project policies would otherwise leave any GitHub account
+on earth free to sign in and create its own projects and tasks (isolated from
+ours by RLS, but on our backend and our quota). `handle_new_user()` decides who
+can hold an `authenticated` JWT at all; RLS decides what that JWT can reach.
+`allowed_github_users` therefore has RLS enabled with NO policies and no grants
+to `anon` or `authenticated` — only the `security definer` trigger and the
+operator (`postgres`, via psql or Studio) touch it.
 
 ## Data model — local SQLite
 
@@ -538,7 +564,9 @@ code: string }>`), wired in `electron-main.ts` via `ipcMain.handle`
   own-project tasks; non-member SELECT returns 0 rows; non-owner cannot insert
   `project_members`; non-assignee status update refused; active task
   reassign/delete refused; `handle_new_user` fills `profiles`;
-  `handle_new_project` inserts the owner membership.
+  `handle_new_project` inserts the owner membership; a GitHub handle absent from
+  `allowed_github_users` cannot become a user at all (the suite seeds the
+  allowlist for its own handles through psql on `SUPABASE_TEST_DB_URL`).
 - Manual smoke (required pre-merge): full GitHub OAuth in the browser AND in
   Electron (loopback); two machines/two accounts — A creates and assigns, B sees
   the card live, B binds the repo, B launches, A watches
@@ -561,6 +589,10 @@ code: string }>`), wired in `electron-main.ts` via `ipcMain.handle`
   it for exactly two callers — the assignee from any machine (rule 1 already) and
   the project's OWNER, `stopped` only. See README «A task stuck "in progress"».
 - No team/workspace layer above projects (flat owner/member).
+- No UI for managing the allowlist. `allowed_github_users` is edited by the
+  operator in psql or Studio (a one-line `insert`); building an admin screen for
+  it would mean granting a client role access to the table that decides who can
+  sign in at all.
 - No service-role key, and no secret VALUES, on any machine or in the cloud.
 - No transcript persistence (see D2), no new WS fan-out, no cloud-side
   scheduling or auto-assignment.
