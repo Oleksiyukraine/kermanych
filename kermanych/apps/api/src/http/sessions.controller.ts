@@ -143,6 +143,9 @@ export class SessionsController {
     return this.sup.getTranscript(id);
   }
 
+  // Deliberately unwrapped: the `try/catch → BadRequestException` the @Post siblings use would
+  // swallow the service's GoneException and turn the 410 into a 400, collapsing the UI's
+  // "output expired" branch into a generic error.
   @Get(":id/tools/:callId")
   toolDetail(@Param("id") id: string, @Param("callId") callId: string) {
     return this.sup.getToolDetail(id, callId);
