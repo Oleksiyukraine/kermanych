@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { ToolDetailCache, MAX_CALL_BYTES } from "../src/supervisor/tool-detail-cache";
+import { ToolDetailCache, MAX_CALL_BYTES, MAX_SESSION_BYTES } from "../src/supervisor/tool-detail-cache";
 
 const lines = (n: number, size = 1) => Array.from({ length: n }, (_, i) => ({ t: "ctx" as const, text: "x".repeat(size) + i }));
 
@@ -12,6 +12,8 @@ test("stores and returns lines per session and call", () => {
 });
 
 test("refuses a single payload above the per-call cap", () => {
+  expect(MAX_CALL_BYTES).toBe(256 * 1024);
+  expect(MAX_SESSION_BYTES).toBe(8 * 1024 * 1024);
   const c = new ToolDetailCache();
   c.put("s1", "huge", lines(1, MAX_CALL_BYTES + 1));
   expect(c.get("s1", "huge")).toBeUndefined();
@@ -23,7 +25,17 @@ test("evicts oldest calls once the session budget is exceeded", () => {
   c.put("s1", "b", lines(1, 200));
   c.put("s1", "c", lines(1, 200));
   expect(c.get("s1", "a")).toBeUndefined();
+  expect(c.get("s1", "b")).toHaveLength(1);
   expect(c.get("s1", "c")).toHaveLength(1);
+});
+
+test("re-caching the same call replaces its byte cost instead of adding to it", () => {
+  const c = new ToolDetailCache({ maxSessionBytes: 500 });
+  c.put("s1", "a", lines(1, 200));
+  c.put("s1", "a", lines(1, 200));
+  c.put("s1", "b", lines(1, 200));
+  expect(c.get("s1", "a")).toHaveLength(1);
+  expect(c.get("s1", "b")).toHaveLength(1);
 });
 
 test("dropSession frees everything for that session only", () => {

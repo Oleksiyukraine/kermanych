@@ -20,7 +20,7 @@ export class ToolDetailCache {
   }
 
   put(sessionId: string, callId: string, lines: ToolLine[]): void {
-    const bytes = lines.reduce((sum, l) => sum + ("text" in l ? l.text.length : 0) + 8, 0);
+    const bytes = lines.reduce((sum, l) => sum + ("text" in l ? Buffer.byteLength(l.text) : 0) + 8, 0);
     if (bytes > this.perCall) return;
     const calls = this.sessions.get(sessionId) ?? new Map<string, Slot>();
     this.sessions.set(sessionId, calls);
