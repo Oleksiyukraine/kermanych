@@ -170,8 +170,15 @@
           @promote-agent="onPromoteAgent"
           @promote-task="onPromoteTask"
         >
-          <template v-if="entries.length">
-            <KLogBlock v-for="(entry, i) in entries" :key="i" :entry="entry" :session-id="selectedSession.id" />
+          <template v-if="blocks.length">
+            <KRequestBlock
+              v-for="(block, i) in blocks"
+              :key="block.id"
+              :block="block"
+              :session-id="selectedSession.id"
+              :open="i === blocks.length - 1"
+              :expand-all="expandAll"
+            />
           </template>
           <div v-else class="ws__log-empty mono">Журнал порожній.</div>
         </KPanel>
@@ -448,6 +455,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import {
   slugify,
+  buildChatBlocks,
   branchName,
   taskNameFromText,
   type ImageInput,
@@ -459,7 +467,7 @@ import {
 import { useOrchestrator } from 'stores/orchestrator';
 import type { MessageMode } from '../lib/api';
 import KPanel from 'components/kit/KPanel.vue';
-import KLogBlock from 'components/kit/KLogBlock.vue';
+import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KTag from 'components/kit/KTag.vue';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
@@ -548,6 +556,11 @@ const entries = computed<TranscriptEntry[]>(() =>
     ? store.transcripts[store.selectedSessionId] ?? []
     : [],
 );
+
+// The log is grouped into request blocks: one collapsed summary row per finished
+// request. `expandAll` is the detail toolbar's switch for muted rows.
+const expandAll = ref(false);
+const blocks = computed(() => buildChatBlocks(entries.value));
 
 // ── Resizable chat section ────────────────────────────────────────────────
 // The detail column (KPanel = the chat) is drag-resizable via the seam on its
