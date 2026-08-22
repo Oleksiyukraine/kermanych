@@ -96,7 +96,7 @@
           @stop="onStop"
           @delete="onDelete"
         >
-          <KLogBlock v-for="(e, i) in panelLog" :key="i" :entry="e" />
+          <KLogBlock v-for="(e, i) in panelLog" :key="i" :entry="e" session-id="kit-demo" />
         </KPanel>
         <KPanel
           :session="waitingSession"
@@ -105,7 +105,7 @@
           @stop="onStop"
           @delete="onDelete"
         >
-          <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" />
+          <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" session-id="kit-demo" />
         </KPanel>
         <KPanel
           :session="stalledSession"
@@ -114,7 +114,7 @@
           @stop="onStop"
           @delete="onDelete"
         >
-          <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" />
+          <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" session-id="kit-demo" />
         </KPanel>
       </div>
       <div class="kit__caption mono">остання дія: {{ lastAction || '—' }}</div>
@@ -124,7 +124,7 @@
     <section class="kit__section">
       <div class="kit__label">06 · Блоки логу</div>
       <div class="kit__logblocks">
-        <KLogBlock v-for="(e, i) in logSamples" :key="i" :entry="e" />
+        <KLogBlock v-for="(e, i) in logSamples" :key="i" :entry="e" session-id="kit-demo" />
       </div>
     </section>
 
@@ -247,6 +247,8 @@ const focused = ref('');
 const modalOpen = ref(false);
 
 const now = new Date().toISOString();
+// Sessions carry ISO strings; transcript entries carry epoch millis.
+const nowMs = Date.now();
 function mkSession(over: Partial<Session>): Session {
   return {
     id: 's', groupId: 'g1', name: 'api-gateway', task: '',
@@ -280,23 +282,77 @@ const tableSessions: Session[] = [
 const tableSelected = ref('t1');
 const lastTableAction = ref('');
 function onTableAction(a: string): void { lastTableAction.value = a; }
+// Log fixtures use the v2 transcript shape: tool rows carry `target`/`stat` for the
+// row and a small `detail.lines` sample so the expandable card has something to show.
 const panelLog: TranscriptEntry[] = [
-  { kind: 'tool', id: '1', tool: 'Edit', status: 'ok', summary: 'src/auth/token.service.ts\n+ this.rotateShared(token);' },
-  { kind: 'tool', id: '2', tool: 'Bash', status: 'ok', summary: 'npm run test:e2e -- auth\n12 passed, 0 failed (8.4s)' },
-  { kind: 'assistant_text', text: 'Готово. Ротація токенів зведена в один запит.' },
+  {
+    kind: 'tool', id: '1', at: nowMs, tool: 'Edit', status: 'ok',
+    target: 'auth/token.service.ts', stat: '+1 −0',
+    detail: { lines: [{ t: 'add', n: '84', text: '    this.rotateShared(token);' }], totalLines: 1 },
+  },
+  {
+    kind: 'tool', id: '2', at: nowMs, tool: 'Bash', status: 'ok',
+    target: 'npm run test:e2e -- auth', stat: 'wall 8.4s',
+    detail: {
+      lines: [
+        { t: 'head', text: '$ npm run test:e2e -- auth' },
+        { t: 'ctx', text: '12 passed, 0 failed (8.4s)' },
+      ],
+      totalLines: 2,
+    },
+  },
+  { kind: 'assistant_text', id: '3', at: nowMs, text: 'Готово. Ротація токенів зведена в один запит.' },
 ];
 const waitingLog: TranscriptEntry[] = [
-  { kind: 'tool', id: '1', tool: 'Read', status: 'pending', summary: 'src/session.ts' },
-  { kind: 'assistant_text', text: 'Знайшов два місця, де зберігається сесія.' },
+  { kind: 'tool', id: '1', at: nowMs, tool: 'Read', status: 'pending', target: 'src/session.ts' },
+  { kind: 'assistant_text', id: '2', at: nowMs, text: 'Знайшов два місця, де зберігається сесія.' },
 ];
 const logSamples: TranscriptEntry[] = [
-  { kind: 'tool', id: '1', tool: 'Read', status: 'ok', summary: 'src/routes/login.tsx' },
-  { kind: 'tool', id: '2', tool: 'Edit', status: 'ok', summary: 'db/schema/users.ts\n+ lastSeenAt: timestamp("last_seen_at"),' },
-  { kind: 'tool', id: '3', tool: 'Vitest', status: 'ok', summary: '12 passed, 0 failed (8.4s)' },
-  { kind: 'tool', id: '4', tool: 'Bash', status: 'error', summary: 'exit 1 — 2 failing specs' },
-  { kind: 'assistant_thinking', text: 'Сесія зберігається у двох місцях — треба звести.' },
-  { kind: 'assistant_text', text: '## Знайшов два місця\n\nСесія зберігається у **двох** місцях — треба звести:\n\n- `session.ts` — запис у файл\n- `store.ts` — дубль у памʼяті\n\n```ts\nconst s = load();\n```' },
-  { kind: 'notice', text: 'Гілку перемкнено на feat/schema.' },
+  {
+    kind: 'tool', id: '1', at: nowMs, tool: 'Read', status: 'ok',
+    target: 'routes/login.tsx', stat: '1—40 з 212',
+    detail: {
+      lines: [
+        { t: 'ctx', n: '1', text: "import { useAuth } from '../auth';" },
+        { t: 'ctx', n: '2', text: 'export function Login() {' },
+      ],
+      totalLines: 40,
+    },
+  },
+  {
+    kind: 'tool', id: '2', at: nowMs, tool: 'Edit', status: 'ok',
+    target: 'db/schema/users.ts', stat: '+1 −1',
+    detail: {
+      lines: [
+        { t: 'del', n: '17', text: '  seenAt: timestamp("seen_at"),' },
+        { t: 'add', n: '17', text: '  lastSeenAt: timestamp("last_seen_at"),' },
+      ],
+      totalLines: 2,
+    },
+  },
+  { kind: 'tool', id: '3', at: nowMs, tool: 'Vitest', status: 'ok', target: 'auth', stat: '12 passed · 8.4s' },
+  {
+    kind: 'tool', id: '4', at: nowMs, tool: 'Bash', status: 'error',
+    target: 'pnpm test', stat: 'exit 1',
+    detail: {
+      lines: [
+        { t: 'head', text: '$ pnpm test' },
+        { t: 'ctx', text: '2 failing specs' },
+      ],
+      totalLines: 2,
+      truncatedUpstream: true,
+    },
+  },
+  {
+    kind: 'assistant_thinking', id: '5', at: nowMs, ms: 12_400, tokens: 1840,
+    text: 'Сесія зберігається у двох місцях — треба звести.',
+  },
+  { kind: 'assistant_text', id: '6', at: nowMs, text: '## Знайшов два місця\n\nСесія зберігається у **двох** місцях — треба звести:\n\n- `session.ts` — запис у файл\n- `store.ts` — дубль у памʼяті\n\n```ts\nconst s = load();\n```' },
+  { kind: 'notice', id: '7', at: nowMs, level: 'info', text: 'Гілку перемкнено на feat/schema.' },
+  { kind: 'notice', id: '8', at: nowMs, level: 'warn', text: 'Контекст заповнено на 82% — скоро потрібне стиснення.' },
+  { kind: 'notice', id: '9', at: nowMs, level: 'error', text: 'Сесію зупинено: процес завершився з кодом 1.' },
+  // `turn` is ledger data for block summaries — it renders nothing, by design.
+  { kind: 'turn', id: '10', at: nowMs, model: 'claude-opus-5', ms: 21_300 },
 ];
 const railGroups: { group: Group; active: boolean; count: number }[] = [
   { group: { id: 'g1', name: 'api-gateway', projectDir: '', createdAt: now }, active: true, count: 4 },

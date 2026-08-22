@@ -171,7 +171,7 @@
           @promote-task="onPromoteTask"
         >
           <template v-if="entries.length">
-            <KLogBlock v-for="(entry, i) in entries" :key="i" :entry="entry" />
+            <KLogBlock v-for="(entry, i) in entries" :key="i" :entry="entry" :session-id="selectedSession.id" />
           </template>
           <div v-else class="ws__log-empty mono">Журнал порожній.</div>
         </KPanel>
