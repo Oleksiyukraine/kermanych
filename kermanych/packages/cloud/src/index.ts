@@ -42,6 +42,7 @@ export {
   patchTask,
   claimTask,
   pushTaskStatus,
+  forceStopTask,
   deleteTask,
   REALTIME_IN_FILTER_MAX,
   tasksFilter,

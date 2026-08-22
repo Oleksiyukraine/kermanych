@@ -158,6 +158,27 @@ export async function pushTaskStatus(
   if (error) throw new Error(error.message);
 }
 
+// The stuck-card escape hatch. There is no heartbeat (spec Non-goals), so a status written
+// by a machine that then crashes never changes again — and tasks_guard() refuses to reassign
+// or delete an active task, which leaves the card unusable. tasks_guard() lets exactly two
+// callers through here: the assignee, from any machine, and the project's owner. Everyone
+// else gets `only the assignee can change status`.
+//
+// Deliberately NOT pushTaskStatus: no `updated_at` travels with this write. The outbox's
+// timestamp means "the moment the local session actually changed"; this is a human
+// correcting the board, so the server's now() is the honest answer, and letting the guard
+// stamp it keeps the stale hint measuring time since the last real signal.
+export async function forceStopTask(client: SupabaseClient, id: string): Promise<Task> {
+  const { data, error } = await client
+    .from("tasks")
+    .update({ status: "stopped" })
+    .eq("id", id)
+    .select(TASK_COLUMNS)
+    .single();
+  if (error) throw new Error(error.message);
+  return toTask(data as TaskRow);
+}
+
 // tasks_guard refuses a delete while old.status is active (`task is active`), which is the
 // other half of Requirement 8.
 export async function deleteTask(client: SupabaseClient, id: string): Promise<void> {

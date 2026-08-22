@@ -5,6 +5,7 @@ import type { Task, TaskChange, TaskChannelState, TaskInsert, TaskPatch } from '
 import {
   createTask as cloudCreateTask,
   deleteTask as cloudDeleteTask,
+  forceStopTask as cloudForceStopTask,
   listTasks as cloudListTasks,
   patchTask as cloudPatchTask,
   subscribeTasks as cloudSubscribeTasks,
@@ -220,6 +221,37 @@ export const useBoard = defineStore('board', () => {
     }
   }
 
+  // The stuck-card escape hatch. With no heartbeat (spec Non-goals) a status written by a
+  // machine that then crashed never changes again, and tasks_guard() refuses to reassign or
+  // delete an active task — so the card would be stuck forever. The guard lets exactly two
+  // callers force 'stopped': the assignee, from ANY machine, and the project's owner.
+  //
+  // No isActive() pre-check here, unlike assign and delete: this is the one write whose
+  // whole point is that the task IS active. Optimistic + rollback like updateTaskFields,
+  // because whether this caller is allowed is the server's answer, not the store's.
+  async function forceStop(id: string): Promise<boolean> {
+    const before = tasks.value.find((t) => t.id === id);
+    if (!before) return false;
+    upsert({ ...before, status: 'stopped' });
+    try {
+      upsert(await cloudForceStopTask(auth.client, id));
+      return true;
+    } catch (e) {
+      upsert(before);
+      // The guard's sentence names the invariant but is English and does not name the two
+      // people who CAN do this, which is the only thing the user needs. Everything else —
+      // offline, a revoked membership, a row someone already deleted — is shown verbatim.
+      const raw = e instanceof Error ? e.message : String(e);
+      if (raw.includes('only the assignee can change status')) {
+        local.notify(
+          'Позначити задачу зупиненою може лише її виконавець або власник проєкту',
+          'error',
+        );
+      } else fail(e);
+      return false;
+    }
+  }
+
   // The project set is the channel's filter, and a postgres_changes filter cannot be edited
   // in place — a project added, or membership revoked, means rebuilding the channel. Only
   // while a channel actually exists: before the board mounts there is nothing to rebuild.
@@ -256,5 +288,6 @@ export const useBoard = defineStore('board', () => {
     updateTaskFields,
     assignTask,
     deleteTask,
+    forceStop,
   };
 });

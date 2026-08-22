@@ -72,16 +72,19 @@
               <span class="board__spacer"></span>
               <KBtn variant="ghost" @click="openEdit(task)">Змінити</KBtn>
               <KBtn variant="ghost" @click="onDelete(task)">Видалити</KBtn>
+              <!-- The only way out of a card whose executing machine never came back. Shown
+                   to the two people tasks_guard() actually lets through, so nobody is
+                   offered a button that will be refused. -->
+              <KBtn
+                v-if="canForceStop(task)"
+                variant="secondary"
+                title="Задача рахується активною, але її машина, схоже, більше не звітує — познач картку зупиненою"
+                @click="openForceStop(task)"
+              >Позначити зупиненою</KBtn>
               <KBtn
                 variant="primary"
                 :disabled="launching !== null || isActiveTask(task)"
-                :title="
-                  isActiveTask(task)
-                    ? 'Задача вже виконується — зупини сесію, щоб запустити її знову'
-                    : isBound(task)
-                      ? 'Запустити локальну сесію'
-                      : 'Проєкт не звʼязано з локальною текою — вкажи її'
-                "
+                :title="launchHint(task)"
                 @click="launch(task)"
               >Запустити</KBtn>
             </footer>
@@ -162,6 +165,31 @@
         </KBtn>
       </template>
     </KModal>
+
+    <!-- STUCK TASK: say plainly what this does and, more importantly, what it does NOT do.
+         A user who reads this as «зупинити агента» would walk away believing a session on
+         another machine is dead when it may be running fine. -->
+    <KModal :model-value="!!forceStopTarget" title="Позначити задачу зупиненою" @update:model-value="closeForceStop">
+      <div class="board__force">
+        <p class="board__force-note">
+          Задача «{{ forceStopTarget?.title ?? '' }}» рахується активною зі статусом
+          «{{ forceStopTarget?.status ?? '' }}», але її машина більше не надсилає оновлень.
+          Це поверне картку в стан «зупинено», щоб задачу знову можна було запустити,
+          переасайнити або видалити.
+        </p>
+        <p class="board__force-warn">
+          Це виправляє лише дошку. Сесію на машині, до якої ви не маєте доступу, воно не
+          зупиняє — і якщо та машина ще жива, вона просто надішле свій справжній статус
+          знову, і картка повернеться в роботу.
+        </p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="closeForceStop(false)">Скасувати</KBtn>
+        <KBtn variant="primary" :disabled="forcingStop" @click="confirmForceStop">
+          Позначити зупиненою
+        </KBtn>
+      </template>
+    </KModal>
     <KDirPicker v-model="pickerOpen" :start="bindingPath" @select="bindingPath = $event" />
   </main>
 </template>
@@ -174,6 +202,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import type { ProjectMember, Task, TaskStatus } from '@kermanych/cloud';
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
+import { useAuth } from 'stores/auth';
 import { useBoard } from 'stores/board';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -189,6 +218,7 @@ import { relativeTime } from '../lib/time';
 import { api } from '../lib/api';
 import { installReconcile } from '../lib/reconcile';
 
+const auth = useAuth();
 const board = useBoard();
 const cloud = useProjects();
 const local = useOrchestrator();
@@ -388,6 +418,69 @@ function isActiveTask(task: Task): boolean {
 // binding: the LOCAL project row's localRepoPath ('' when unbound).
 function isBound(task: Task): boolean {
   return !!local.projects.find((p) => p.id === task.projectId)?.localRepoPath;
+}
+
+// Whether THIS machine is the one running the card. `taskId` is set on every session
+// launched from the board, so its absence means the active status was pushed by someone
+// else's machine — or by a machine that is no longer pushing anything at all.
+function hasLocalSession(task: Task): boolean {
+  return local.sessions.some((s) => s.taskId === task.id);
+}
+
+// The old text told everyone with a disabled button to «зупини сесію», which on any machine
+// but the executing one names a session that does not exist there — leaving the user hunting
+// for a stop button they cannot have. Say where the work actually is instead, and point at
+// the recovery control when there is one.
+function launchHint(task: Task): string {
+  if (!isActiveTask(task)) {
+    return isBound(task)
+      ? 'Запустити локальну сесію'
+      : 'Проєкт не звʼязано з локальною текою — вкажи її';
+  }
+  if (hasLocalSession(task)) {
+    return 'Задача вже виконується на цій машині — зупини сесію, щоб запустити її знову';
+  }
+  return canForceStop(task)
+    ? 'Задача виконується — можливо, на іншій машині. Якщо вона там уже не працює, натисни «Позначити зупиненою».'
+    : 'Задача виконується на машині виконавця. Зупинити її може лише виконавець або власник проєкту.';
+}
+
+// ── Stuck-task recovery ───────────────────────────────────────────────────────
+// A task's status is written only by the machine running it and there is no heartbeat (spec
+// Non-goals), so a machine that crashes leaves the card active forever — and tasks_guard()
+// then refuses to reassign or delete it. Forcing 'stopped' is the way out, and tasks_guard()
+// permits exactly two callers: the assignee (from any machine) and the project's owner.
+// This mirrors that rule so a third member is never shown a button the cloud would refuse;
+// the guard, not this predicate, is the actual gate.
+function canForceStop(task: Task): boolean {
+  if (!isActiveTask(task)) return false;
+  return (!!auth.user && task.assigneeId === auth.user.id) || cloud.isOwner(task.projectId);
+}
+
+const forceStopTarget = ref<Task | null>(null);
+const forcingStop = ref(false);
+
+function openForceStop(task: Task): void {
+  forceStopTarget.value = task;
+}
+
+// Also the modal's own update:modelValue handler, so Esc and the backdrop close it the same
+// way the cancel button does.
+function closeForceStop(open: boolean): void {
+  if (!open) forceStopTarget.value = null;
+}
+
+async function confirmForceStop(): Promise<void> {
+  const task = forceStopTarget.value;
+  if (!task || forcingStop.value) return;
+  forcingStop.value = true;
+  try {
+    // Left open on refusal: the store has already toasted why, and closing would throw the
+    // user back to a card that still looks stuck with no explanation on screen.
+    if (await board.forceStop(task.id)) forceStopTarget.value = null;
+  } finally {
+    forcingStop.value = false;
+  }
 }
 
 const launching = ref<string | null>(null);
@@ -813,6 +906,28 @@ function onDelete(task: Task): void {
   margin: 0;
   font-size: 12px;
   // The kit has no `--k-danger`; `--k-accent` is what every other refusal on this page uses.
+  color: var(--k-accent);
+}
+
+.board__force {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.board__force-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--k-text);
+}
+
+// The «what this does NOT do» half. Accented and set apart, because a user who skims past
+// it walks away believing a session on another machine is dead when it may be running fine.
+.board__force-warn {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  background: var(--k-surface2);
   color: var(--k-accent);
 }
 

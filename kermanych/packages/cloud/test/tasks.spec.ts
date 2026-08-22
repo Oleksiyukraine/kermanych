@@ -4,6 +4,7 @@ import {
   claimTask,
   createTask,
   deleteTask,
+  forceStopTask,
   getTask,
   listTasks,
   patchTask,
@@ -211,6 +212,28 @@ describe("pushTaskStatus", () => {
     await expect(pushTaskStatus(client, "t1", "done", "2026-08-21T01:00:00.000Z")).rejects.toThrow(
       /only the assignee/,
     );
+  });
+});
+
+describe("forceStopTask", () => {
+  it("sends status alone — no updated_at — and maps the row back", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null });
+
+    const t = await forceStopTask(client, "t1");
+
+    expect(queries[0]!.table).toBe("tasks");
+    expect(queries[0]!.ops[0]).toEqual(["update", { status: "stopped" }]);
+    expect(queries[0]!.ops[1]).toEqual(["eq", "id", "t1"]);
+    expect(queries[0]!.ops[3]).toEqual(["single"]);
+    expect(t.id).toBe(taskRow.id);
+  });
+
+  it("surfaces the guard refusal when the caller is neither assignee nor owner", async () => {
+    const { client } = fakeClient({
+      data: null,
+      error: { message: "only the assignee can change status" },
+    });
+    await expect(forceStopTask(client, "t1")).rejects.toThrow(/only the assignee/);
   });
 });
 
