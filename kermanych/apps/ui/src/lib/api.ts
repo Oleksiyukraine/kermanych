@@ -10,6 +10,7 @@ import type {
   Session,
   TaskDraft,
   TranscriptEntry,
+  ToolLine,
   RpcExtensionUIResponse,
 } from '@kermanych/core';
 
@@ -114,6 +115,9 @@ export const api = {
 
   loadTranscript: (id: string): Promise<TranscriptEntry[]> =>
     get<TranscriptEntry[]>(`/sessions/${id}/transcript`),
+
+  getToolDetail: (sessionId: string, callId: string): Promise<{ lines: ToolLine[]; totalLines: number }> =>
+    get<{ lines: ToolLine[]; totalLines: number }>(`/sessions/${sessionId}/tools/${encodeURIComponent(callId)}`),
 
   listDirs: (path?: string): Promise<DirListing> =>
     get<DirListing>(`/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`),

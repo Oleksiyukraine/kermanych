@@ -19,6 +19,7 @@ import type {
 import { shouldNotify } from '@kermanych/core/status';
 import { connectSocket } from '../lib/socket';
 import { api, type MessageMode } from '../lib/api';
+import { applyTranscriptUpdate } from './transcript-update';
 
 export type Toast = { id: string; message: string; kind: 'error' | 'info' };
 
@@ -100,12 +101,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     } else if (e.type === 'transcript_update') {
       const list = transcripts.value[e.sessionId];
       if (list) {
-        transcripts.value = {
-          ...transcripts.value,
-          [e.sessionId]: list.map((x) =>
-            x.kind === 'tool' && x.id === e.id ? { ...x, status: e.status } : x,
-          ),
-        };
+        const next = applyTranscriptUpdate(list, e);
+        if (next !== list) transcripts.value = { ...transcripts.value, [e.sessionId]: next };
       }
     }
   }
