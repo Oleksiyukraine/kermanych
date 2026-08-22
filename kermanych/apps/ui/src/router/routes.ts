@@ -37,7 +37,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('layouts/MainLayout.vue'),
     children: [
       { path: '', name: 'workspace', component: () => import('pages/WorkspacePage.vue'), meta: { public: false } },
-      // Plan C (cloud board) adds the /board child here.
+      { path: 'board', name: 'board', component: () => import('pages/BoardPage.vue'), meta: { public: false } },
       { path: 'kit', name: 'kit', component: () => import('pages/KitGalleryPage.vue'), meta: { public: false } },
     ],
   },
