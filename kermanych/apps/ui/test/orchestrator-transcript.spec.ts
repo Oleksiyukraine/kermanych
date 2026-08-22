@@ -22,4 +22,20 @@ describe('applyTranscriptUpdate', () => {
     const next = applyTranscriptUpdate(pending, { type: 'transcript_update', sessionId: 's1', id: 'nope', status: 'ok' });
     expect(next).toBe(pending);
   });
+
+  it('applies a zero count and ms instead of treating them as absent', () => {
+    const next = applyTranscriptUpdate(pending, {
+      type: 'transcript_update', sessionId: 's1', id: 'c1', status: 'ok',
+      stat: '0 збігів', count: 0, ms: 0,
+    });
+    expect(next[0]).toMatchObject({ status: 'ok', stat: '0 збігів', count: 0, ms: 0 });
+  });
+
+  it('keeps fields a later status-only update omits', () => {
+    const done: TranscriptEntry[] = [
+      { kind: 'tool', id: 'c1', at: 1, tool: 'edit', status: 'ok', stat: '+7 \u22125', count: 12, ms: 40 },
+    ];
+    const next = applyTranscriptUpdate(done, { type: 'transcript_update', sessionId: 's1', id: 'c1', status: 'error' });
+    expect(next[0]).toMatchObject({ status: 'error', stat: '+7 \u22125', count: 12, ms: 40 });
+  });
 });

@@ -3,8 +3,9 @@ import type { ServerEvent, TranscriptEntry } from '@kermanych/core';
 
 type Update = Extract<ServerEvent, { type: 'transcript_update' }>;
 
-// Patch the finished tool entry in place. Returns the SAME array when nothing
-// matched, so the store can skip a pointless reactive write.
+// Patch the finished tool entry copy-on-write: the matched entry and the list are
+// rebuilt, never mutated. Returns the SAME array when nothing matched, so the
+// store can skip a pointless reactive write.
 export function applyTranscriptUpdate(list: TranscriptEntry[], e: Update): TranscriptEntry[] {
   let hit = false;
   const next = list.map((x) => {
