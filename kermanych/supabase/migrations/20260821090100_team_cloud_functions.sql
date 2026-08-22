@@ -75,9 +75,23 @@ begin
     -- 1. Only the assignee moves a task's status. The self-assign case is allowed
     --    because claim + status can land in one statement, in which case the new
     --    assignee is the caller.
+    --
+    --    One exception, and exactly one: the project's OWNER may force 'stopped'.
+    --    There is no heartbeat (spec Non-goals), so a status written by a machine
+    --    that then crashes persists forever — and rules 2/3 below refuse to
+    --    reassign or delete an active task, which would leave the card permanently
+    --    stuck. The assignee can already unstick it from any machine via rule 1;
+    --    this covers the assignee being gone for good. It is deliberately the
+    --    narrowest possible escape hatch: 'stopped' only, owner only. An owner
+    --    still cannot park a task in 'thinking', 'done' or anything else.
     if new.status is distinct from old.status
        and auth.uid() is distinct from old.assignee_id
-       and auth.uid() is distinct from new.assignee_id then
+       and auth.uid() is distinct from new.assignee_id
+       and not (
+         new.status = 'stopped'::task_status
+         and exists (
+           select 1 from public.projects p
+           where p.id = old.project_id and p.owner_id = auth.uid())) then
       raise exception 'only the assignee can change status';
     end if;
     -- 2. An active task cannot be handed to someone else mid-run.

@@ -169,6 +169,31 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(error?.message).toContain("task is active");
   });
 
+  // The recovery path. The task is still 'thinking' from the reassign test above and its
+  // assignee is `member` — exactly the shape of a card whose machine crashed: there is no
+  // heartbeat, so nothing will ever move it, and the two tests above prove it can neither
+  // be reassigned nor deleted in that state.
+  it("the project owner can force a stuck active task to stopped", async () => {
+    const forced = await owner.client.from("tasks").update({ status: "stopped" }).eq("id", taskId);
+    expect(forced.error).toBeNull();
+
+    const { data } = await owner.client.from("tasks").select("status").eq("id", taskId).single();
+    expect(data?.status).toBe("stopped");
+  });
+
+  // 'stopped' and nothing else: the escape hatch must not become a way for an owner to
+  // drive someone else's task around the board.
+  it("the project owner cannot force any status other than stopped", async () => {
+    const restarted = await owner.client
+      .from("tasks")
+      .update({ status: "thinking" })
+      .eq("id", taskId);
+    expect(restarted.error?.message).toContain("only the assignee can change status");
+
+    const finished = await owner.client.from("tasks").update({ status: "done" }).eq("id", taskId);
+    expect(finished.error?.message).toContain("only the assignee can change status");
+  });
+
   it("a finished task can be deleted", async () => {
     const finished = await member.client.from("tasks").update({ status: "done" }).eq("id", taskId);
     expect(finished.error).toBeNull();
