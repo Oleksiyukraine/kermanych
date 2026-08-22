@@ -16,6 +16,11 @@ export type AuthSessionRow = {
   githubUsername?: string;
 };
 
+// A queued cloud status push. One row per task — the outbox is a latest-wins mailbox, not a
+// log: if a session goes thinking → tool → thinking while offline, only the newest status is
+// worth sending, and the cloud board has no use for the intermediate ones.
+export type OutboxRow = { taskId: string; status: SessionStatus; updatedAt: string; attempts: number; lastError?: string };
+
 @Injectable()
 export class RegistryService {
   private db: Database.Database;
@@ -128,6 +133,11 @@ export class RegistryService {
     // The first index in this schema: listSessions(projectId) filters on project_id on
     // every board render and every supervisor lookup.
     this.db.exec(`CREATE INDEX IF NOT EXISTS sessions_project_idx ON sessions (project_id)`);
+    // Durable queue of cloud status pushes. `task_id` is the PRIMARY KEY, so an UPSERT
+    // collapses a burst of changes into the newest one. No FK: the tasks live in Postgres.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS status_outbox (task_id TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT)`,
+    );
   }
 
   // v1 (2026-08-21, team cloud): `groups` becomes `projects`, its id becomes the CLOUD
@@ -305,6 +315,35 @@ export class RegistryService {
 
   removeSession(id: string): void {
     this.db.prepare(`DELETE FROM sessions WHERE id = ?`).run(id);
+  }
+
+  // Queue (or replace) the pending cloud status for a task. Resetting `attempts` is
+  // deliberate: a NEW status is a new delivery, so it must not inherit the previous
+  // status's backoff and wait a minute before its first try.
+  enqueueTaskStatus(taskId: string, status: SessionStatus, updatedAt: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO status_outbox (task_id, status, updated_at, attempts, last_error) VALUES (?,?,?,0,NULL)
+         ON CONFLICT(task_id) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at, attempts = 0, last_error = NULL`,
+      )
+      .run(taskId, status, updatedAt);
+  }
+
+  listOutbox(): OutboxRow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT task_id as taskId, status, updated_at as updatedAt, attempts, last_error as lastError FROM status_outbox ORDER BY updated_at`,
+      )
+      .all() as (Omit<OutboxRow, "lastError"> & { lastError: string | null })[];
+    return rows.map((r) => ({ ...r, lastError: r.lastError ?? undefined }));
+  }
+
+  dropOutbox(taskId: string): void {
+    this.db.prepare(`DELETE FROM status_outbox WHERE task_id = ?`).run(taskId);
+  }
+
+  bumpOutboxAttempt(taskId: string, error: string): void {
+    this.db.prepare(`UPDATE status_outbox SET attempts = attempts + 1, last_error = ? WHERE task_id = ?`).run(error, taskId);
   }
 
   getAuthSession(): AuthSessionRow | undefined {
