@@ -4,6 +4,8 @@
     :class="[`k-btn--${variant}`, { 'k-btn--disabled': disabled }]"
     :disabled="disabled"
     type="button"
+    v-tip="title"
+    :aria-label="variant === 'icon' ? title : undefined"
   >
     <slot />
   </button>
@@ -12,10 +14,16 @@
 <script setup lang="ts">
 // Modernist button. Radius 0, label flush-left, weight 800.
 // Accent is reserved for the primary action only (per design-system rules).
+//
+// `title` feeds the app tooltip (`v-tip`, src/lib/tip.ts), never the native
+// attribute — one bubble style across the whole UI. It also becomes the
+// `aria-label` for `variant="icon"` only: that variant's slot is a bare glyph,
+// while the other variants carry a visible text label that must not be shadowed.
 withDefaults(
   defineProps<{
     variant?: 'primary' | 'secondary' | 'ghost' | 'icon';
     disabled?: boolean;
+    title?: string;
   }>(),
   { variant: 'secondary', disabled: false },
 );

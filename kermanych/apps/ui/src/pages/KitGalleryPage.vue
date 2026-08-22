@@ -35,9 +35,9 @@
       </div>
     </section>
 
-    <!-- 04 — action icon buttons (dense, for table rows) -->
+    <!-- 04 — action icon buttons (dense, for icon clusters) -->
     <section class="kit__section">
-      <div class="kit__label">04 · Кнопки-дії (рядок таблиці)</div>
+      <div class="kit__label">04 · Кнопки-дії (рядок таблиці, хедер панелі)</div>
       <div class="kit__row">
         <KIconButton title="Запустити">▶</KIconButton>
         <KIconButton title="Редагувати">✎</KIconButton>
@@ -50,7 +50,7 @@
         <KIconButton active title="Превʼю активне">◼</KIconButton>
       </div>
       <div class="kit__caption mono">
-        28×28 · щільний контроль для дій у рядку таблиці (компактніший за KBtn variant="icon" 34×34). active = акцент.
+        28×28 · щільний контроль для груп глиф-дій: рядок таблиці й хедер панелі (компактніший за KBtn variant="icon" 34×34). active = акцент. Підказка — власний тултіп (v-tip), не нативний title.
       </div>
     </section>
 
@@ -317,6 +317,11 @@ const panelLog: TranscriptEntry[] = [
     },
   },
   { kind: 'assistant_text', id: '3', at: nowMs, text: 'Готово. Ротація токенів зведена в один запит.' },
+  // Two operator turns on purpose (kept from dev): the panel's my-message navigation
+  // (▲/▼) only appears above a second user message, and the gallery is where that
+  // control is documented. It now targets `.k-rb__head`, so a second request block is
+  // what makes it visible at all.
+  { kind: 'user_text', id: '4', at: nowMs, text: 'Додай тест на прострочений refresh.' },
 ];
 const waitingLog: TranscriptEntry[] = [
   { kind: 'user_text', id: '0', at: nowMs, text: 'Де саме зберігається сесія?' },

@@ -3,7 +3,8 @@
     class="k-rail"
     :class="{ 'k-rail--active': active, 'k-rail--colored': !!group.color }"
     type="button"
-    :title="group.name"
+    v-tip="group.name"
+    :aria-label="group.name"
     :aria-pressed="active"
     :style="group.color ? { '--rail-color': group.color } : undefined"
   >

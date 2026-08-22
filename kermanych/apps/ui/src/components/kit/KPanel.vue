@@ -9,64 +9,47 @@
       </div>
       <div class="k-panel__controls">
         <span class="k-panel__status mono">{{ statusLabel }}</span>
-        <button
+        <KIconButton
           v-if="session.kind === 'chat'"
-          class="k-panel__icon"
-          type="button"
           :disabled="promoting"
           :title="promoting
             ? 'Готую worktree…'
             : 'Почати імплементацію обговореного (worktree + повний доступ, цей же контекст)'"
           @click="emit('promoteAgent')"
-        >▶</button>
-        <button
+        >▶</KIconButton>
+        <KIconButton
           v-if="session.kind === 'chat'"
-          class="k-panel__icon"
-          type="button"
           title="Зберегти як задачу в беклог"
           @click="emit('promoteTask')"
-        >⊕</button>
-        <button
+        >⊕</KIconButton>
+        <KIconButton
           v-if="session.kind === 'agent'"
-          class="k-panel__icon"
-          type="button"
           title="Обговорити окрему гілку (форк розмови)"
           @click="emit('branch')"
-        >⑂</button>
-        <button
+        >⑂</KIconButton>
+        <KIconButton
           v-if="running"
-          class="k-panel__icon"
-          type="button"
           title="Зупинити"
           @click="emit('stop')"
-        >■</button>
-        <button
+        >■</KIconButton>
+        <KIconButton
           v-if="session.status !== 'merged' && session.kind === 'agent'"
-          class="k-panel__icon"
-          type="button"
           title="Завершити (merge гілки в проєкт)"
           @click="emit('finish')"
-        >✓</button>
-        <button
+        >✓</KIconButton>
+        <KIconButton
           v-if="session.status === 'merged' && session.kind === 'agent'"
-          class="k-panel__icon"
-          type="button"
           title="Відновити (підняти worktree заново, щоб продовжити)"
           @click="emit('reopen')"
-        >↻</button>
-        <button
-          class="k-panel__icon"
-          type="button"
+        >↻</KIconButton>
+        <KIconButton
           title="Відкрити в редакторі"
           @click="emit('editor')"
-        >⧉</button>
-        <span class="k-panel__icon k-panel__icon--chrome" aria-hidden="true">⊞</span>
-        <button
-          class="k-panel__icon"
-          type="button"
+        >⧉</KIconButton>
+        <KIconButton
           title="Видалити"
           @click="emit('delete')"
-        >✕</button>
+        >✕</KIconButton>
       </div>
     </header>
 
@@ -84,9 +67,9 @@
 
     <!-- my-message navigation — jump between the operator's own messages -->
     <div v-if="userMsgCount > 1" class="k-panel__nav" role="group" aria-label="Навігація по моїх повідомленнях">
-      <button type="button" class="k-panel__nav-btn" title="Попереднє моє повідомлення (Alt+↑)" @click="jumpUser(-1)">▲</button>
+      <button type="button" class="k-panel__nav-btn" v-tip="'Попереднє моє повідомлення (Alt+↑)'" aria-label="Попереднє моє повідомлення" @click="jumpUser(-1)">▲</button>
       <span class="k-panel__nav-count mono">{{ userNavLabel }}</span>
-      <button type="button" class="k-panel__nav-btn" title="Наступне моє повідомлення (Alt+↓)" @click="jumpUser(1)">▼</button>
+      <button type="button" class="k-panel__nav-btn" v-tip="'Наступне моє повідомлення (Alt+↓)'" aria-label="Наступне моє повідомлення" @click="jumpUser(1)">▼</button>
     </div>
 
     <!-- floor 2 — scrollable log -->
@@ -190,7 +173,8 @@
         <button
           type="button"
           class="k-panel__attach-btn"
-          title="Додати зображення"
+          v-tip="'Додати зображення'"
+          aria-label="Додати зображення"
           @click="fileInput?.click()"
         >📎</button>
         <span class="k-panel__prompt" aria-hidden="true">❯</span>
@@ -226,7 +210,7 @@
       type="button"
       class="k-panel__sel-task"
       :style="{ left: selBtn.x + 'px', top: selBtn.y + 'px' }"
-      title="Створити задачу з виділеного"
+      v-tip="'Створити задачу з виділеного'"
       @mousedown.prevent.stop="emitNewTask"
     >+ Задача</button>
   </section>
@@ -241,6 +225,7 @@ import KBtn from './KBtn.vue';
 import KAttachStrip from './KAttachStrip.vue';
 import KTodoLane from './KTodoLane.vue';
 import KStatusRow from './KStatusRow.vue';
+import KIconButton from './KIconButton.vue';
 import { useImageAttach } from '../../composables/useImageAttach';
 import { useNow } from '../../composables/useNow';
 
@@ -686,47 +671,6 @@ function answerCancel() {
   color: var(--k-muted);
   margin-right: 6px;
   white-space: nowrap;
-}
-
-.k-panel__icon {
-  width: 24px;
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--k-muted);
-  font-size: 13px;
-  cursor: pointer;
-  border-radius: 0;
-  transition: color 0.12s;
-
-  &:hover {
-    color: var(--k-text);
-  }
-
-  &:focus-visible {
-    outline: 1px solid var(--k-accent);
-    outline-offset: -1px;
-  }
-
-  &:disabled {
-    cursor: default;
-    opacity: 0.45;
-
-    &:hover {
-      color: var(--k-muted);
-    }
-  }
-}
-
-.k-panel__icon--chrome {
-  cursor: default;
-
-  &:hover {
-    color: var(--k-muted);
-  }
 }
 
 // floor 2 — log
