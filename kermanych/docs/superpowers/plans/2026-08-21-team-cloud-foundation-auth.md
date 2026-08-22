@@ -157,8 +157,8 @@ The generated `config.toml` ships only `[auth.external.apple]` as a template. In
 enabled = true
 # Kermanych signs in with GitHub only. Both values come from the GitHub OAuth App
 # created in Step 4; never commit them — env() substitution keeps them out of git.
-client_id = "env(SUPABASE_AUTH_GITHUB_CLIENT_ID)"
-secret = "env(SUPABASE_AUTH_GITHUB_SECRET)"
+client_id = "env(GITHUB_CLIENT_ID)"
+secret = "env(GITHUB_SECRET)"
 # Empty → GoTrue derives http://127.0.0.1:54321/auth/v1/callback locally.
 redirect_uri = ""
 ```
@@ -175,8 +175,8 @@ For the LOCAL stack — <https://github.com/settings/developers> → **New OAuth
 Generate a client secret, then export both values in the shell you will run `supabase start` from:
 
 ```bash
-export SUPABASE_AUTH_GITHUB_CLIENT_ID=Ov23li...          # from the OAuth App page
-export SUPABASE_AUTH_GITHUB_SECRET=ghs_...               # the generated client secret
+export GITHUB_CLIENT_ID=Ov23li...          # from the OAuth App page
+export GITHUB_SECRET=ghs_...               # the generated client secret
 ```
 
 For a HOSTED project, create a second OAuth App with callback `https://<project-ref>.supabase.co/auth/v1/callback`, then in the dashboard set Authentication → Providers → GitHub (client id + secret) and Authentication → URL Configuration → Site URL `http://localhost:5317` with Redirect URLs `http://localhost:5317/**` and `http://127.0.0.1:53170/callback`. The hosted project needs no `config.toml`.
@@ -3023,8 +3023,8 @@ For the local stack, export the app's credentials **before** `supabase start` �
 `supabase/config.toml` substitutes them into `[auth.external.github]`:
 
 ```bash
-export SUPABASE_AUTH_GITHUB_CLIENT_ID=Ov23li…
-export SUPABASE_AUTH_GITHUB_SECRET=ghs_…
+export GITHUB_CLIENT_ID=Ov23li…
+export GITHUB_SECRET=ghs_…
 ```
 
 For a hosted project, set the same pair under Authentication → Providers →

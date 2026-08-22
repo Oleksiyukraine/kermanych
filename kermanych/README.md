@@ -55,12 +55,13 @@ and a hosted project need one each (<https://github.com/settings/developers>):
 | local stack | `http://127.0.0.1:54421/auth/v1/callback` |
 | hosted project | `https://<project-ref>.supabase.co/auth/v1/callback` |
 
-For the local stack, export the app's credentials **before** `supabase start` —
-`supabase/config.toml` substitutes them into `[auth.external.github]`:
+For the local stack, put the app's credentials in `kermanych/.env` (copy
+`.env.example`) or export them **before** `supabase start` — `supabase/config.toml`
+substitutes them into `[auth.external.github]` under exactly these names:
 
 ```bash
-export SUPABASE_AUTH_GITHUB_CLIENT_ID=Ov23li…
-export SUPABASE_AUTH_GITHUB_SECRET=ghs_…
+export GITHUB_CLIENT_ID=Ov23li…
+export GITHUB_SECRET=ghs_…
 ```
 
 For a hosted project, set the same pair under Authentication → Providers →
@@ -90,6 +91,49 @@ VITE_SUPABASE_URL=http://127.0.0.1:54421
 VITE_SUPABASE_ANON_KEY=<anon key>
 ```
 
+`GITHUB_SECRET` is the **only** real secret in this repo, and it is never one of
+the four above. Everything else — both URLs, both anon keys and
+`GITHUB_CLIENT_ID` — is a public value.
+
+### Joining the team (new teammate, start here)
+
+```bash
+cp .env.example .env                 # only needed for LOCAL GitHub sign-in
+cp apps/ui/.env.example apps/ui/.env # public values; fill both in
+```
+
+Fill `apps/ui/.env` (and the `SUPABASE_URL` / `SUPABASE_ANON_KEY` pair for the
+API) by pasting from `supabase status` for a local stack, or from the hosted
+project's Settings → API. Those are public values — RLS is the authorization
+surface, and the anon key ships inside the browser bundle anyway.
+
+You do **not** need `GITHUB_SECRET`. The hosted project holds it in the Supabase
+dashboard; nobody has to send it to you. It only appears in `kermanych/.env` if
+you want GitHub sign-in against your OWN local stack, in which case create your
+own throwaway OAuth App (see the callback table above) — never reuse the team's.
+
+**Sign-in is allowlisted, and the allowlist starts empty.** This repository is
+public, so sign-in fails closed: `handle_new_user()` refuses any GitHub login
+name absent from `public.allowed_github_users` (case-insensitively), and an empty
+table admits nobody. Your first sign-in will fail until an operator adds you:
+
+```sql
+insert into allowed_github_users (github_username, note) values ('octocat', 'Jane, backend');
+```
+
+The table grants nothing to `anon` or `authenticated`, so it is reachable only as
+`postgres`. On the local stack:
+
+```bash
+psql postgresql://postgres:postgres@127.0.0.1:54422/postgres \
+  -c "insert into allowed_github_users (github_username, note) values ('octocat', 'Jane, backend');"
+```
+
+On the hosted project, run the same statement in the dashboard's SQL editor (or
+in Studio locally). A refused account is refused at the source: no `auth.users`
+row, no `profiles` row, and the GoTrue log carries
+`github user <handle> is not on the Kermanych team allowlist`.
+
 **Running the cloud tests.** `packages/cloud`'s unit suite needs nothing. Its
 RLS/trigger integration suite is skipped unless all three of these are set, and
 `SUPABASE_TEST_SERVICE_KEY` is a *test fixture only* — it mints throwaway users
@@ -102,6 +146,12 @@ export SUPABASE_TEST_ANON_KEY=<anon key>
 export SUPABASE_TEST_SERVICE_KEY=<service_role key>
 pnpm --filter @kermanych/cloud test
 ```
+
+It also needs `psql` on `PATH`: the users it mints have to be added to the
+allowlist first, and that table is reachable only as `postgres`. The DSN comes
+from `SUPABASE_TEST_DB_URL`, defaulting to the local
+`postgresql://postgres:postgres@127.0.0.1:54422/postgres`. The suite removes
+exactly the handles it seeded when it finishes.
 
 ## Setup & run
 
