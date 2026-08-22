@@ -145,6 +145,9 @@ pnpm workspaces (`packages/*`, `apps/*`):
 - **`packages/core`** — framework-agnostic domain logic: worktrees, the
   SQLite registry, RPC frame handling, session status. Unit-tested with
   vitest.
+- **`packages/cloud`** — the Supabase client and the typed cloud surface
+  (auth, projects, membership, tasks, Realtime) shared by the API and the UI.
+  Its RLS/trigger suite runs against a real local stack; see above.
 - **`packages/tokens`** — the design tokens (colors, spacing, type) shared by
   the UI, generated from the design system.
 - **`apps/api`** — the NestJS application: REST + WebSocket surface, session
@@ -165,3 +168,55 @@ The visual source of truth lives in [`design/`](./design/):
 
 Custom `K*` components implement this look; Quasar is used only for the
 framework, layout, build, and state plumbing.
+
+## Cloud tasks and local sessions
+
+A **task** is a card in the shared cloud board; a **session** is its execution on one
+developer's machine. The direction is always task → session.
+
+1. **Create** — any member of a project creates a task on the board (`/#/board`) with a
+   title, a description and optional launch params (model, branch prefix, platform, base
+   branch). It starts in `backlog`, which exists only in the cloud.
+2. **Assign** — the author assigns it to a member, or a member presses «Запустити» on an
+   unassigned task, which self-assigns it atomically. Only the assignee can run it; an
+   active task (`queued`, `thinking`, `tool`, `waiting_input`) can be neither reassigned
+   nor deleted.
+3. **Bind** — a cloud project has no idea where its repo lives on your disk. The first
+   «Запустити» for an unbound project asks for the local git repository and stores that
+   path locally (it never reaches the cloud).
+4. **Run** — `POST /api/sessions/from-task` creates a git worktree under
+   `~/.kermanych/worktrees/<sessionId>`, copies the project's `carryFiles` (`.env` by
+   default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
+   ordinary local session: it appears on the workspace board and you drive it there.
+5. **Status flows back** — the local API mirrors the session's coarse status
+   (`queued → thinking → tool → waiting_input → done | error | stopped | merged |
+   conflict`) to the task, and everyone's board updates live over Supabase Realtime.
+
+Nothing else leaves your machine. Transcripts, the current tool, context usage, todo
+phases and interactive prompts are local-only by design — the board shows THAT a task
+waits for input, and only its owner can answer it, on their own machine.
+
+### Offline behaviour
+
+Local work never waits for the cloud:
+
+- A session that already exists keeps running, answering, merging and finishing with no
+  network at all — the local `projects` row caches the project config, so nothing on
+  that path reads the cloud.
+- STARTING a board task is the one step that needs the cloud: Kermanych has to read the
+  task and claim it for you. Offline, «Запустити» fails with a clear error; the tasks you
+  already started are unaffected.
+- Every status change is written to a local `status_outbox` table (SQLite) before it is
+  pushed. The pusher retries with exponential backoff (~2 s, doubling to a 60 s cap) and
+  also retries immediately after a re-login, so a queue parked on an expired token
+  resumes at sign-in.
+- The outbox keeps ONE row per task: an offline burst of `thinking → tool → thinking`
+  collapses into the newest status, because the board has no use for the ones in between.
+  A delivered push retires only the exact version it sent, so a status that arrives while
+  that push is in flight survives and goes out on the next pass.
+- A clean shutdown enqueues `stopped` for every running task, so the board never hangs on
+  `thinking` after you quit Kermanych.
+- On the board, a grey banner means THIS BROWSER lost the cloud; an accent pill
+  («Статуси цієї машини ще не відправлені: N») means this machine still owes the cloud
+  pushes; «⚠ давно без змін» on a card means the assignee's machine has gone quiet
+  (there is no heartbeat — it is the age of the task's `updated_at`).
