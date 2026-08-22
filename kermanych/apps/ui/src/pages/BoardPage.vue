@@ -76,6 +76,50 @@
         Ви ще не в жодному проєкті. Створіть проєкт або попросіть колегу додати вас до свого.
       </p>
     </div>
+
+    <!-- CREATE / EDIT TASK — same launch vocabulary as the local launcher -->
+    <KModal v-model="editorOpen" :title="editingId ? 'Змінити задачу' : 'Нова задача'" width="720px">
+      <template #head-meta>
+        <span class="board__esc mono">Esc — закрити</span>
+      </template>
+
+      <div class="board__form">
+        <KSelect
+          v-if="!editingId"
+          v-model="draftProject"
+          label="Проєкт"
+          :options="projectNames"
+          placeholder="виберіть проєкт"
+        />
+        <KField v-model="draftTitle" label="Назва задачі" placeholder="що саме треба зробити" />
+        <KField
+          v-model="draftDescription"
+          label="Опис"
+          placeholder="Один абзац — далі агент поставить уточнення."
+          multiline
+          :rows="6"
+        />
+        <div class="board__form-row">
+          <KSelect v-model="draftModel" label="Модель" :options="MODEL_OPTIONS" placeholder="за замовчуванням" />
+          <KSelect v-model="draftPrefix" label="Тип" :options="PREFIX_OPTIONS" placeholder="feature" />
+          <KSelect
+            v-model="draftPlatform"
+            label="Платформа"
+            :options="PLATFORM_OPTIONS"
+            placeholder="необовʼязково"
+          />
+        </div>
+        <KField v-model="draftBranch" label="Базова гілка" placeholder="за замовчуванням проєкту" />
+        <p v-if="editorError" class="board__error" role="alert">{{ editorError }}</p>
+      </div>
+
+      <template #controls>
+        <KBtn variant="ghost" @click="editorOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" :disabled="!canSubmit" @click="submitEditor">
+          {{ editingId ? 'Зберегти' : 'Створити' }}
+        </KBtn>
+      </template>
+    </KModal>
   </main>
 </template>
 
@@ -90,6 +134,8 @@ import { useBoard } from 'stores/board';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
 import KBtn from 'components/kit/KBtn.vue';
+import KField from 'components/kit/KField.vue';
+import KModal from 'components/kit/KModal.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KTag from 'components/kit/KTag.vue';
@@ -256,22 +302,104 @@ function launch(task: Task): void {
   );
 }
 
-// ── Placeholder handlers wired by Task 6 ──────────────────────────────────────
+// ── Create / edit ─────────────────────────────────────────────────────────────
+// Same launch vocabulary as the local launcher (WorkspacePage.vue:658-661), so a task born
+// on the board and an agent started by hand offer identical choices.
+const MODEL_OPTIONS = ['opus-5', 'sonnet-4.5', 'haiku'];
+const PREFIX_OPTIONS = ['feature', 'fix', 'refactoring', 'chore'];
+const PLATFORM_OPTIONS = ['backend', 'web', 'mobile'];
+
+const editorOpen = ref(false);
+const editingId = ref<string | null>(null);
+const editorError = ref<string | null>(null);
+const draftProject = ref('');
+const draftTitle = ref('');
+const draftDescription = ref('');
+const draftModel = ref('');
+const draftPrefix = ref('');
+const draftPlatform = ref('');
+const draftBranch = ref('');
+
+// A task always needs a title; a NEW one also needs a project, because `project_id` is what
+// the tasks INSERT policy checks membership against.
+const canSubmit = computed(
+  () => !!draftTitle.value.trim() && (!!editingId.value || !!projectIdByName(draftProject.value)),
+);
+
 function openCreate(): void {
+  editingId.value = null;
+  editorError.value = null;
+  // Default to whatever the board is already filtered to — that is the project the user is
+  // looking at.
+  draftProject.value = projectFilter.value || (cloud.projects[0]?.name ?? '');
+  draftTitle.value = '';
+  draftDescription.value = '';
+  draftModel.value = '';
+  draftPrefix.value = '';
+  draftPlatform.value = '';
+  draftBranch.value = '';
   editorOpen.value = true;
 }
 
 function openEdit(task: Task): void {
   editingId.value = task.id;
+  editorError.value = null;
+  draftProject.value = projectName(task.projectId);
+  draftTitle.value = task.title;
+  draftDescription.value = task.description ?? '';
+  draftModel.value = task.model ?? '';
+  draftPrefix.value = task.prefix ?? '';
+  draftPlatform.value = task.platform ?? '';
+  draftBranch.value = task.branch ?? '';
   editorOpen.value = true;
+}
+
+async function submitEditor(): Promise<void> {
+  editorError.value = null;
+  // Blank strings are meaningful: toTaskRow() turns them into NULL, which is how a user
+  // clears a launch param they set earlier. The project is immutable after creation —
+  // moving a task between projects would move it between membership sets.
+  const fields = {
+    title: draftTitle.value.trim(),
+    description: draftDescription.value,
+    model: draftModel.value,
+    prefix: draftPrefix.value,
+    platform: draftPlatform.value,
+    branch: draftBranch.value,
+  };
+
+  // The title is the ONE field nothing downstream defends: `tasks.title` is `text not null`
+  // with no non-empty check, and patchTask sends the trimmed value as-is, so a whitespace
+  // title would persist and the card would lose its name. `canSubmit` already disables the
+  // control; this is the refusal for a submit that arrives anyway (Enter, a stale click).
+  if (!fields.title) {
+    editorError.value = 'Задача без назви — введіть назву';
+    local.notify('Задача без назви — введіть назву', 'error');
+    return;
+  }
+
+  if (editingId.value) {
+    if (!(await board.updateTaskFields(editingId.value, fields))) {
+      editorError.value = 'Хмара відмовила — подробиці в повідомленні';
+      return;
+    }
+  } else {
+    const projectId = projectIdByName(draftProject.value);
+    if (!projectId) {
+      editorError.value = 'Виберіть проєкт';
+      return;
+    }
+    if (!(await board.createTask({ projectId, ...fields }))) {
+      editorError.value = 'Не вдалося створити задачу — подробиці в повідомленні';
+      return;
+    }
+  }
+  editorOpen.value = false;
 }
 
 function onDelete(task: Task): void {
   void board.deleteTask(task.id);
 }
-
-const editorOpen = ref(false);
-const editingId = ref<string | null>(null);
 </script>
 
 <style scoped lang="scss">
@@ -467,5 +595,31 @@ const editingId = ref<string | null>(null);
   font-size: 13px;
   line-height: 1.6;
   color: var(--k-muted);
+}
+
+.board__form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.board__form-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.board__esc {
+  font-family: var(--k-font-mono);
+  font-size: 11px;
+  color: var(--k-muted);
+}
+
+.board__error {
+  margin: 0;
+  font-family: var(--k-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--k-accent);
 }
 </style>
