@@ -15,10 +15,10 @@
     </div>
 
     <template v-if="shown">
-      <template v-for="(item, i) in block.items" :key="i">
+      <template v-for="(item, i) in rows" :key="i">
         <div v-if="item.kind === 'group'" class="k-rb__group">
           <button type="button" class="k-rb__grow" :aria-expanded="opened.has(i)" @click="toggle(i)">
-            <span class="k-rb__g" :class="`k-rb__g--${gStatus(item.members)}`" role="img" :aria-label="STATUS_LABEL[gStatus(item.members)]">{{ GLYPH[gStatus(item.members)] }}</span>
+            <span class="k-rb__g" :class="`k-rb__g--${item.status}`" role="img" :aria-label="STATUS_LABEL[item.status]">{{ GLYPH[item.status] }}</span>
             <span class="k-rb__gt">{{ item.tool }}</span>
             <span class="k-rb__gtg">{{ item.members.map((m) => m.target).filter(Boolean).join(', ') }}</span>
             <span class="k-rb__gx">×{{ item.members.length }}</span>
@@ -55,10 +55,16 @@ watch(() => props.open, (v) => { open.value = v; });
 
 // The header is a button wrapping the operator's own prose, and a drag-select that ends
 // inside it fires `click` too — collapsing the block would throw away the text just
-// selected. `detail === 0` marks keyboard activation, which stays unconditional: a
-// selection elsewhere on the page must not make Enter dead.
+// selected. Only a selection touching THIS header suppresses the toggle: selecting a line
+// in a tool card is a workflow of its own here, and it must not deaden every header on the
+// page. `detail === 0` marks keyboard activation, which is never suppressed.
 function onHead(e: MouseEvent): void {
-  if (e.detail > 0 && window.getSelection()?.toString().trim()) return;
+  const sel = window.getSelection();
+  const host = e.currentTarget as HTMLElement;
+  const inHead =
+    !!sel && !sel.isCollapsed && !!sel.toString().trim() &&
+    ((!!sel.anchorNode && host.contains(sel.anchorNode)) || (!!sel.focusNode && host.contains(sel.focusNode)));
+  if (e.detail > 0 && inHead) return;
   open.value = !open.value;
 }
 
@@ -86,6 +92,12 @@ function gStatus(members: ToolEntry[]): 'pending' | 'ok' | 'error' {
   if (members.some((m) => m.status === 'pending')) return 'pending';
   return 'ok';
 }
+
+// One status per group row: the glyph, its colour class and its label all read the same
+// fold, instead of recomputing it three times per render.
+const rows = computed(() =>
+  props.block.items.map((item) => (item.kind === 'group' ? { ...item, status: gStatus(item.members) } : item)),
+);
 
 // Whole seconds below a minute, then whole minutes. A sub-second span gets a floor marker
 // instead of `0 с`, which would claim the block took no time at all.
