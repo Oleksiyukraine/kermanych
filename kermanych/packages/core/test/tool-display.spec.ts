@@ -76,3 +76,35 @@ test("clampLines cuts to the per-tool preview budget", () => {
   expect(clampLines("todo", lines)).toHaveLength(30);
   expect(clampLines("mystery", lines)).toHaveLength(8);
 });
+
+test("edit classifies omp's pre-numbered diff and counts both sides", () => {
+  const diff = [
+    " 26|let bubble: HTMLElement | null = null;",
+    "-28|let timer: ReturnType<typeof setTimeout> | undefined;",
+    "+28|// window.setTimeout so the handle is a DOM number",
+    "+30|let timer: number | undefined;",
+    "",
+    " 85|function hide(): void {",
+    "-86|  clearTimeout(timer);",
+  ].join("\n");
+  const out = toolDisplay("edit", { path: "x" }, { diff, op: "update", path: "kermanych/apps/ui/src/lib/tip.ts", firstChangedLine: 28 }, "");
+  expect(out.target).toBe("lib/tip.ts");
+  expect(out.stat).toBe("+2 \u22122");
+  expect(out.count).toBe(4);
+  expect(out.lines).toEqual([
+    { t: "ctx", n: " 26", text: "let bubble: HTMLElement | null = null;" },
+    { t: "del", n: "28", text: "let timer: ReturnType<typeof setTimeout> | undefined;" },
+    { t: "add", n: "28", text: "// window.setTimeout so the handle is a DOM number" },
+    { t: "add", n: "30", text: "let timer: number | undefined;" },
+    { t: "gap" },
+    { t: "ctx", n: " 85", text: "function hide(): void {" },
+    { t: "del", n: "86", text: "  clearTimeout(timer);" },
+  ]);
+});
+
+test("edit without a diff still names the file", () => {
+  const out = toolDisplay("edit", { path: "kermanych/apps/ui/src/css/app.scss" }, {}, "");
+  expect(out.target).toBe("css/app.scss");
+  expect(out.stat).toBe("+0 \u22120");
+  expect(out.lines).toEqual([]);
+});

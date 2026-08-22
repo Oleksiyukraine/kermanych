@@ -89,13 +89,50 @@ const globDisplay: Reducer = (args, d, content) => {
   };
 };
 
+// omp ships the diff already numbered: " 26|context", "-28|removed", "+28|added",
+// with an empty line marking a hunk boundary. Split on the first bar, never parse text.
+const editDisplay: Reducer = (args, d) => {
+  const raw = str(d["diff"]);
+  const lines: ToolLine[] = [];
+  let add = 0;
+  let del = 0;
+  for (const row of raw ? raw.split("\n") : []) {
+    if (row === "") {
+      lines.push({ t: "gap" });
+      continue;
+    }
+    const signed = row[0] === "+" || row[0] === "-";
+    const sign = signed ? row[0] : "";
+    const rest = signed ? row.slice(1) : row;
+    const bar = rest.indexOf("|");
+    const n = bar >= 0 ? rest.slice(0, bar) : undefined;
+    const text = bar >= 0 ? rest.slice(bar + 1) : rest;
+    if (sign === "+") {
+      add++;
+      lines.push({ t: "add", ...(n === undefined ? {} : { n }), text });
+    } else if (sign === "-") {
+      del++;
+      lines.push({ t: "del", ...(n === undefined ? {} : { n }), text });
+    } else {
+      lines.push({ t: "ctx", ...(n === undefined ? {} : { n }), text });
+    }
+  }
+  return {
+    target: shortPath(str(d["path"]) || str(args["path"])),
+    stat: `+${add} \u2212${del}`,
+    count: add + del,
+    lines,
+    totalLines: lines.length,
+  };
+};
+
 const genericDisplay: Reducer = (args, _d, content) => ({
   target: shortPath(str(args["path"]) || str(args["i"]), 2),
   lines: textLines(content),
   totalLines: content ? content.split("\n").length : 0,
 });
 
-const REDUCERS: Record<string, Reducer> = { read: readDisplay, write: writeDisplay, glob: globDisplay };
+const REDUCERS: Record<string, Reducer> = { read: readDisplay, write: writeDisplay, glob: globDisplay, edit: editDisplay };
 
 export function toolDisplay(tool: string, args: Args | undefined, details: Details | undefined, content: string): ToolDisplay {
   return (REDUCERS[tool] ?? genericDisplay)(args ?? {}, details ?? {}, content ?? "");
