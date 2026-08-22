@@ -17,6 +17,7 @@ import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import { useAuth } from './auth';
 import { useProjects } from './projects';
 import { useOrchestrator } from './orchestrator';
+import { installReconcile, type ReconcileOptions } from '../lib/reconcile';
 
 // The shared board's TASKS, and nothing else. Cloud projects and membership live in
 // stores/projects.ts; local sessions and the socket live in stores/orchestrator.ts. Writes
@@ -42,6 +43,15 @@ export const useBoard = defineStore('board', () => {
   // Store-local, not reactive: nothing renders it, and exposing it would let a component
   // tear the channel down behind the store's back.
   let unsubscribeChannel: (() => void) | undefined;
+  let stopReconcile: (() => void) | undefined;
+  // Remembered so a channel rebuilt by the project-set watcher keeps the settings the
+  // caller subscribed with, instead of silently reverting to the defaults.
+  let reconcileOptions: ReconcileOptions = {};
+  // Bumped by every subscribe(). A call that was superseded while it awaited load()
+  // abandons its own build instead of racing a second channel — and a second reconcile
+  // timer — into existence, which the single `unsubscribeChannel` handle could no longer
+  // tear down.
+  let generation = 0;
 
   // Sorted by createdAt so a Realtime insert lands in a stable place instead of appending
   // to whichever column happened to render last. Replace-or-append keyed by id, so the
@@ -89,10 +99,21 @@ export const useBoard = defineStore('board', () => {
   // A full refetch on every (re)subscribe is the whole staleness story: events that fired
   // while the channel was down are gone forever, so the snapshot has to be re-read rather
   // than patched. Idempotent — calling it twice rebuilds one channel, never two.
-  async function subscribe(): Promise<void> {
+  //
+  // The same refetch also runs on a schedule, because Realtime cannot deliver every change:
+  // a filtered postgres_changes binding never carries DELETE (see lib/reconcile.ts for the
+  // replica-identity reason and why `replica identity full` was rejected). Without that
+  // reconcile a card someone else deleted would sit on this board forever.
+  //
+  // `reconcile` is the injection seam for the schedule — the board has no component test
+  // harness, so a live harness passes its own document stand-in, clock and interval the
+  // way installVisibilityResync's tests do.
+  async function subscribe(reconcile: ReconcileOptions = reconcileOptions): Promise<void> {
+    const mine = ++generation;
+    reconcileOptions = reconcile;
     unsubscribe();
     await load();
-    if (!auth.user || !projectIds.value.length) return;
+    if (mine !== generation || !auth.user || !projectIds.value.length) return;
     unsubscribeChannel = cloudSubscribeTasks(
       auth.client,
       projectIds.value,
@@ -104,11 +125,14 @@ export const useBoard = defineStore('board', () => {
         channelState.value = state;
       },
     );
+    stopReconcile = installReconcile(() => void load(), reconcile);
   }
 
   function unsubscribe(): void {
     unsubscribeChannel?.();
     unsubscribeChannel = undefined;
+    stopReconcile?.();
+    stopReconcile = undefined;
     channelState.value = 'CLOSED';
   }
 
