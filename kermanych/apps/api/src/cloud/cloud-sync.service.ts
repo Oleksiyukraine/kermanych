@@ -126,7 +126,10 @@ export class CloudSyncService implements OnModuleInit, OnModuleDestroy {
     for (const row of rows) {
       try {
         await pushTaskStatus(client, row.taskId, row.status, row.updatedAt);
-        this.registry.dropOutbox(row.taskId);
+        // Retire exactly the version just delivered. Anything enqueued during the await
+        // outlives this: a `session_update` re-passes via its own `drain()`, and the
+        // shutdown `stopped` is left for the retry timer or the next boot's drain.
+        this.registry.dropOutbox(row.taskId, row.status, row.updatedAt);
       } catch (err) {
         const message = (err as Error).message;
         this.registry.bumpOutboxAttempt(row.taskId, message);

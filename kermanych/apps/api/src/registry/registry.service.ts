@@ -338,8 +338,16 @@ export class RegistryService {
     return rows.map((r) => ({ ...r, lastError: r.lastError ?? undefined }));
   }
 
-  dropOutbox(taskId: string): void {
-    this.db.prepare(`DELETE FROM status_outbox WHERE task_id = ?`).run(taskId);
+  // Retire ONE version of a task's queued status: the row the caller has just delivered,
+  // identified by its `status`/`updated_at`. A push is awaited, and a `session_update`
+  // landing during that await UPSERTs a newer status onto the same `task_id`; a delete by
+  // id alone would drop that newer status unpushed — and the pusher's edge filter, which
+  // already recorded it as sent, would never enqueue it again. Scoped this way, the
+  // superseded row simply survives and the next pass ships it.
+  dropOutbox(taskId: string, status: SessionStatus, updatedAt: string): void {
+    this.db
+      .prepare(`DELETE FROM status_outbox WHERE task_id = ? AND status = ? AND updated_at = ?`)
+      .run(taskId, status, updatedAt);
   }
 
   bumpOutboxAttempt(taskId: string, error: string): void {

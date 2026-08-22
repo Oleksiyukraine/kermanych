@@ -10,21 +10,43 @@ import type { SupervisorService } from "../src/supervisor/supervisor.service";
 // `taskStatusFromSession` is the identity map, mirroring packages/cloud/src/status.ts.
 const pushed: { taskId: string; status: string; updatedAt: string }[] = [];
 let failing = false;
+// When armed, the NEXT push parks inside the transport until the test releases it. Every
+// other test here serialises enqueues with `flush()`, so nothing can arrive mid-flight —
+// which is exactly why the "drop the row we did not push" race stayed invisible.
+let gate: { arrived: () => void; released: Promise<void> } | null = null;
 vi.mock("@kermanych/cloud", () => ({
   taskStatusFromSession: (s: { status: string }) => s.status,
   pushTaskStatus: async (_client: unknown, taskId: string, status: string, updatedAt: string) => {
+    if (gate) {
+      const g = gate;
+      gate = null;
+      g.arrived();
+      await g.released;
+    }
     if (failing) throw new Error("fetch failed");
     pushed.push({ taskId, status, updatedAt });
   },
 }));
+
+// Arm the gate; `entered` resolves once a push is in flight, `release` lets it finish.
+function holdNextPush(): { entered: Promise<void>; release: () => void } {
+  let arrived!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((r) => (arrived = () => r()));
+  const released = new Promise<void>((r) => (release = () => r()));
+  gate = { arrived, released };
+  return { entered, release };
+}
 
 import { CloudSyncService } from "../src/cloud/cloud-sync.service";
 import { RegistryService } from "../src/registry/registry.service";
 
 const NOW = "2026-08-21T10:00:00.000Z";
 
-function make(opts: { signedIn?: boolean } = {}) {
-  const registry = new RegistryService(":memory:");
+// `registry` is shared across two services only by the reboot test, which has to drain the
+// very rows the previous process left behind.
+function make(opts: { signedIn?: boolean; registry?: RegistryService } = {}) {
+  const registry = opts.registry ?? new RegistryService(":memory:");
   const events = new Subject<ServerEvent>();
   // Partial mock: CloudSyncService only ever reads `events$`. Cast once at the DI seam.
   const supervisor = { events$: events.asObservable() } as unknown as SupervisorService;
@@ -75,6 +97,7 @@ const flush = () => new Promise<void>((r) => setImmediate(r));
 beforeEach(() => {
   pushed.length = 0;
   failing = false;
+  gate = null;
 });
 
 describe("CloudSyncService", () => {
@@ -208,5 +231,52 @@ describe("CloudSyncService", () => {
       ["t1", "stopped"],
       ["t2", "stopped"],
     ]);
+  });
+
+  it("does not drop a status that was enqueued while the previous push was in flight", async () => {
+    const { registry, events } = make();
+    const hold = holdNextPush();
+
+    events.next({ type: "session_update", session: session({ status: "thinking" }) });
+    await hold.entered;
+
+    // The session finishes mid-push: the UPSERT replaces the in-flight row's status under
+    // the same `task_id`. Retiring the row by id alone would delete this one unread.
+    events.next({ type: "session_update", session: session({ status: "done" }) });
+    await flush();
+    expect(registry.listOutbox().map((r) => r.status)).toEqual(["done"]);
+
+    hold.release();
+    await flush();
+    await flush();
+
+    expect(pushed.map((p) => p.status)).toEqual(["thinking", "done"]);
+    expect(registry.listOutbox()).toEqual([]);
+  });
+
+  it("keeps the shutdown `stopped` enqueued during an in-flight push", async () => {
+    const registry = new RegistryService(":memory:");
+    const { sync, events } = make({ registry });
+    const hold = holdNextPush();
+
+    events.next({ type: "session_update", session: session({ status: "thinking" }) });
+    await hold.entered;
+
+    // Quitting while the `thinking` push is still in the air. `onModuleDestroy` only
+    // writes — the resuming pass must not retire what it never pushed.
+    sync.onModuleDestroy();
+    hold.release();
+    await flush();
+    await flush();
+
+    expect(pushed.map((p) => p.status)).toEqual(["thinking"]);
+    expect(registry.listOutbox().map((r) => [r.taskId, r.status])).toEqual([["t1", "stopped"]]);
+
+    // The next boot drains what the shutdown owed.
+    make({ registry });
+    await flush();
+
+    expect(pushed.map((p) => p.status)).toEqual(["thinking", "stopped"]);
+    expect(registry.listOutbox()).toEqual([]);
   });
 });

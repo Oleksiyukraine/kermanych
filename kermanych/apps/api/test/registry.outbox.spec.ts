@@ -62,9 +62,20 @@ test("dropOutbox removes the row and leaves the rest", () => {
   r.enqueueTaskStatus("task-1", "done", "2026-08-21T10:00:00.000Z");
   r.enqueueTaskStatus("task-2", "error", "2026-08-21T10:00:01.000Z");
 
-  r.dropOutbox("task-1");
+  r.dropOutbox("task-1", "done", "2026-08-21T10:00:00.000Z");
 
   expect(r.listOutbox().map((x) => x.taskId)).toEqual(["task-2"]);
-  r.dropOutbox("task-2");
+  r.dropOutbox("task-2", "error", "2026-08-21T10:00:01.000Z");
   expect(r.listOutbox()).toEqual([]);
+});
+
+test("dropOutbox retires only the version it was given", () => {
+  const r = new RegistryService(":memory:");
+  r.enqueueTaskStatus("task-1", "thinking", "2026-08-21T10:00:00.000Z");
+
+  // What a mid-flight `session_update` does to the row being pushed.
+  r.enqueueTaskStatus("task-1", "done", "2026-08-21T10:00:05.000Z");
+  r.dropOutbox("task-1", "thinking", "2026-08-21T10:00:00.000Z");
+
+  expect(r.listOutbox().map((x) => [x.status, x.updatedAt])).toEqual([["done", "2026-08-21T10:00:05.000Z"]]);
 });
