@@ -1,4 +1,5 @@
 export * from "./types";
+export * from "./tool-display";
 export * from "./tool-summary";
 export * from "./rpc-frames";
 export * from "./status";

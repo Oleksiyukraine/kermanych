@@ -39,12 +39,36 @@ export type ImageInput = { data: string; mimeType: string };
 
 export type ToolStatus = "pending" | "ok" | "error";
 
+// One classified line of tool detail. `n` is the source line number when the tool
+// reports one. `gap` marks an elided diff hunk boundary; `head` a file/section title.
+export type ToolLine =
+  | { t: "ctx"; n?: string; text: string }
+  | { t: "add"; n?: string; text: string }
+  | { t: "del"; n?: string; text: string }
+  | { t: "hit"; n?: string; text: string }
+  | { t: "head"; text: string }
+  | { t: "gap" };
+
+// A clamped, display-ready slice of a tool result. The full line list stays on the
+// API behind GET /sessions/:id/tools/:callId — it never rides the WebSocket.
+export type ToolDetail = {
+  lines: ToolLine[];
+  totalLines: number;
+  truncatedUpstream?: boolean;
+};
+
+export type TurnUsage = { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
+
 export type TranscriptEntry =
-  | { kind: "user_text"; text: string; images?: string[] }
-  | { kind: "assistant_text"; text: string }
-  | { kind: "assistant_thinking"; text: string }
-  | { kind: "tool"; id: string; tool: string; status: ToolStatus; summary?: string }
-  | { kind: "notice"; text: string };
+  | { kind: "user_text"; id: string; at: number; text: string; images?: string[] }
+  | { kind: "assistant_text"; id: string; at: number; text: string }
+  | { kind: "assistant_thinking"; id: string; at: number; text: string; ms?: number; tokens?: number }
+  | {
+      kind: "tool"; id: string; at: number; tool: string; status: ToolStatus;
+      intent?: string; target?: string; stat?: string; count?: number; ms?: number; detail?: ToolDetail;
+    }
+  | { kind: "notice"; id: string; at: number; level: "info" | "warn" | "error"; text: string }
+  | { kind: "turn"; id: string; at: number; model?: string; ms?: number; usage?: TurnUsage };
 
 export type RpcExtensionUIRequest = {
   type: "extension_ui_request"; id: string;
