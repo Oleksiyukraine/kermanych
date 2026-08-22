@@ -458,6 +458,13 @@ async function confirmBinding(): Promise<void> {
     bindingOpen.value = false;
     await runLaunch(task);
   } catch (e) {
+    // Same split as `runLaunch`: a dropped connection is a `TypeError` whose message is the
+    // browser's own English text, which has no business inside this modal. Everything else
+    // is the api's refusal and is shown as it came.
+    if (e instanceof TypeError) {
+      bindingError.value = 'Локальний Керманич не відповідає — перевір, чи він запущений.';
+      return;
+    }
     bindingError.value = e instanceof Error ? e.message : String(e);
   }
 }

@@ -132,7 +132,7 @@ export class CloudSyncService implements OnModuleInit, OnModuleDestroy {
         this.registry.dropOutbox(row.taskId, row.status, row.updatedAt);
       } catch (err) {
         const message = (err as Error).message;
-        this.registry.bumpOutboxAttempt(row.taskId, message);
+        this.registry.bumpOutboxAttempt(row.taskId, row.status, row.updatedAt, message);
         console.warn(`[cloud-sync] status push for task ${row.taskId} failed (attempt ${row.attempts + 1}): ${message}`);
       }
     }

@@ -32,11 +32,11 @@ test("bumpOutboxAttempt increments attempts and persists last_error", () => {
   const r = new RegistryService(":memory:");
   r.enqueueTaskStatus("task-1", "thinking", "2026-08-21T10:00:00.000Z");
 
-  r.bumpOutboxAttempt("task-1", "fetch failed");
+  r.bumpOutboxAttempt("task-1", "thinking", "2026-08-21T10:00:00.000Z", "fetch failed");
   expect(r.listOutbox()[0].attempts).toBe(1);
   expect(r.listOutbox()[0].lastError).toBe("fetch failed");
 
-  r.bumpOutboxAttempt("task-1", "not signed in");
+  r.bumpOutboxAttempt("task-1", "thinking", "2026-08-21T10:00:00.000Z", "not signed in");
   expect(r.listOutbox()[0].attempts).toBe(2);
   expect(r.listOutbox()[0].lastError).toBe("not signed in");
 });
@@ -44,7 +44,7 @@ test("bumpOutboxAttempt increments attempts and persists last_error", () => {
 test("a fresh enqueue resets the retry counter of a failing row", () => {
   const r = new RegistryService(":memory:");
   r.enqueueTaskStatus("task-1", "thinking", "2026-08-21T10:00:00.000Z");
-  r.bumpOutboxAttempt("task-1", "fetch failed");
+  r.bumpOutboxAttempt("task-1", "thinking", "2026-08-21T10:00:00.000Z", "fetch failed");
 
   r.enqueueTaskStatus("task-1", "done", "2026-08-21T10:00:30.000Z");
 
@@ -78,4 +78,23 @@ test("dropOutbox retires only the version it was given", () => {
   r.dropOutbox("task-1", "thinking", "2026-08-21T10:00:00.000Z");
 
   expect(r.listOutbox().map((x) => [x.status, x.updatedAt])).toEqual([["done", "2026-08-21T10:00:05.000Z"]]);
+});
+
+test("bumpOutboxAttempt charges only the version whose push failed", () => {
+  const r = new RegistryService(":memory:");
+  r.enqueueTaskStatus("task-1", "thinking", "2026-08-21T10:00:00.000Z");
+  r.bumpOutboxAttempt("task-1", "thinking", "2026-08-21T10:00:00.000Z", "fetch failed");
+
+  // A newer status lands while the failed push is still unwinding: it is a new delivery
+  // and must start at zero, so the late bump for the old version must not touch it.
+  r.enqueueTaskStatus("task-1", "done", "2026-08-21T10:00:05.000Z");
+  r.bumpOutboxAttempt("task-1", "thinking", "2026-08-21T10:00:00.000Z", "fetch failed");
+
+  expect(r.listOutbox()[0]).toEqual({
+    taskId: "task-1",
+    status: "done",
+    updatedAt: "2026-08-21T10:00:05.000Z",
+    attempts: 0,
+    lastError: undefined,
+  });
 });

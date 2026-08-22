@@ -350,8 +350,17 @@ export class RegistryService {
       .run(taskId, status, updatedAt);
   }
 
-  bumpOutboxAttempt(taskId: string, error: string): void {
-    this.db.prepare(`UPDATE status_outbox SET attempts = attempts + 1, last_error = ? WHERE task_id = ?`).run(error, taskId);
+  // Charge a failed delivery to the exact version that failed, for the mirror of the reason
+  // `dropOutbox` is scoped: a newer status may have UPSERTed onto this `task_id` mid-push,
+  // and `enqueueTaskStatus` deliberately reset its `attempts` to 0. Bumping by id alone
+  // would hand that fresh status a backoff it never earned, delaying a status the user is
+  // waiting on. Scoped this way, a superseded row keeps its own counter.
+  bumpOutboxAttempt(taskId: string, status: SessionStatus, updatedAt: string, error: string): void {
+    this.db
+      .prepare(
+        `UPDATE status_outbox SET attempts = attempts + 1, last_error = ? WHERE task_id = ? AND status = ? AND updated_at = ?`,
+      )
+      .run(error, taskId, status, updatedAt);
   }
 
   getAuthSession(): AuthSessionRow | undefined {
