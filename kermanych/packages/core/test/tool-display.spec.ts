@@ -26,6 +26,7 @@ test("read reports shown/total lines and numbers each line", () => {
   expect(out.stat).toBe("3/145 ln");
   expect(out.count).toBe(3);
   expect(out.truncatedUpstream).toBe(true);
+  expect(out.totalLines).toBe(3);
   expect(out.lines).toEqual([
     { t: "ctx", n: "24", text: "a" },
     { t: "ctx", n: "25", text: "b" },
@@ -36,6 +37,8 @@ test("read reports shown/total lines and numbers each line", () => {
 test("read of a whole file omits the shown/total form", () => {
   const out = toolDisplay("read", { path: "a/b/app.scss" }, { totalLines: 90, fileSize: 2987, displayContent: { text: "x", lineNumbers: [1] } }, "");
   expect(out.stat).toBe("90 ln");
+  expect(out.count).toBe(90);
+  expect(out.totalLines).toBe(1);
   expect(out.truncatedUpstream).toBeUndefined();
 });
 
@@ -63,6 +66,8 @@ test("glob reports the file count and flags upstream truncation", () => {
   const out = toolDisplay("glob", { path: "*" }, { fileCount: 196, files: ["a", "b"], truncated: true }, "");
   expect(out.stat).toBe("196 файлів ·обрізано");
   expect(out.count).toBe(196);
+  expect(out.truncatedUpstream).toBe(true);
+  expect(out.totalLines).toBe(2);
   expect(out.lines).toEqual([
     { t: "ctx", text: "a" },
     { t: "ctx", text: "b" },
@@ -145,6 +150,9 @@ test("grep with no matches degrades to an empty card, not a blank row", () => {
 test("grep flags upstream truncation in the stat", () => {
   const out = toolDisplay("grep", { pattern: "x" }, { matchCount: 900, fileCount: 40, truncated: true, fileMatches: [], displayContent: "" }, "");
   expect(out.stat).toBe("900 збігів / 40 ф ·обрізано");
+  expect(out.count).toBe(900);
+  expect(out.totalLines).toBe(0);
+  expect(out.truncatedUpstream).toBe(true);
 });
 
 test("bash reports wall time, and exit code when non-zero", () => {
@@ -185,8 +193,66 @@ test("todo renders the phase tree with checkbox glyphs and counts", () => {
   ]);
 });
 
-test("hub and eval expose their operation as the stat", () => {
-  expect(toolDisplay("hub", { op: "start" }, { op: "start" }, "").stat).toBe("start");
-  expect(toolDisplay("hub", { op: "wait" }, { op: "wait", timedOut: true }, "").stat).toBe("wait · таймаут");
-  expect(toolDisplay("eval", { language: "py" }, { language: "py", cells: 1 }, "").stat).toBe("py");
+test("hub and eval expose their operation as the stat, and name the row separately", () => {
+  const start = toolDisplay("hub", { op: "start", name: "web" }, { op: "start" }, "");
+  expect(start.stat).toBe("start");
+  expect(start.target).toBe("web");
+  const waited = toolDisplay("hub", { op: "wait", to: "Main" }, { op: "wait", timedOut: true }, "");
+  expect(waited.stat).toBe("wait · таймаут");
+  expect(waited.target).toBe("Main");
+  const ev = toolDisplay("eval", { language: "py", i: "scan deps" }, { language: "py", cells: 1 }, "");
+  expect(ev.stat).toBe("py");
+  expect(ev.target).toBe("scan deps");
+});
+
+test("clampLines keeps the trailing footer head that bash appends", () => {
+  const body = Array.from({ length: 29 }, (_, i) => ({ t: "ctx" as const, text: String(i) }));
+  const lines = [...body, { t: "head" as const, text: "wall 5 ms" }];
+  const out = clampLines("bash", lines);
+  expect(out).toHaveLength(10);
+  expect(out.at(-1)).toEqual({ t: "head", text: "wall 5 ms" });
+  expect(out[0]).toEqual({ t: "ctx", text: "0" });
+  expect(out[8]).toEqual({ t: "ctx", text: "8" });
+});
+
+test("a trailing newline in content does not add a phantom line", () => {
+  const out = toolDisplay("bash", { command: "ls" }, { wallTimeMs: 5 }, "a\nb\n");
+  expect(out.lines).toEqual([
+    { t: "head", text: "$ ls" },
+    { t: "ctx", text: "a" },
+    { t: "ctx", text: "b" },
+    { t: "head", text: "wall 5 ms" },
+  ]);
+  const plain = toolDisplay("hub", { op: "logs", name: "web" }, { op: "logs" }, "a\nb\n");
+  expect(plain.lines).toEqual([
+    { t: "ctx", text: "a" },
+    { t: "ctx", text: "b" },
+  ]);
+  expect(plain.totalLines).toBe(2);
+});
+
+test("a trailing newline in a diff does not close the card with a phantom gap", () => {
+  const out = toolDisplay("edit", { path: "a/b.ts" }, { diff: "+1|one\n" }, "");
+  expect(out.lines).toEqual([{ t: "add", n: "1", text: "one" }]);
+  expect(out.totalLines).toBe(1);
+});
+
+test("a partial read omp did not flag reports the same number in stat and count", () => {
+  const out = toolDisplay("read", { path: "a/b.ts" }, { totalLines: 145, displayContent: { text: "a\nb", lineNumbers: [1, 2] } }, "");
+  expect(out.stat).toBe("145 ln");
+  expect(out.count).toBe(145);
+  expect(out.truncatedUpstream).toBeUndefined();
+});
+
+test("an unknown tool falls back to content lines and no stat", () => {
+  const out = toolDisplay("mystery", { path: "a/b/c.ts" }, {}, "x\ny");
+  expect(out.stat).toBeUndefined();
+  expect(out.target).toBe("b/c.ts");
+  expect(out.lines).toEqual([{ t: "ctx", text: "x" }, { t: "ctx", text: "y" }]);
+  expect(out.totalLines).toBe(2);
+});
+
+test("an unknown tool keeps a prose intent whole instead of shortening it", () => {
+  const out = toolDisplay("task", { i: "Wiring api/ui/core boundaries" }, {}, "");
+  expect(out.target).toBe("Wiring api/ui/core boundaries");
 });

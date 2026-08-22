@@ -20,7 +20,10 @@ export const PREVIEW_DEFAULT = 8;
 
 export function clampLines(tool: string, lines: ToolLine[]): ToolLine[] {
   const budget = PREVIEW_LINES[tool] ?? PREVIEW_DEFAULT;
-  return lines.length <= budget ? lines : lines.slice(0, budget);
+  if (lines.length <= budget) return lines;
+  // bash appends its wall/timeout/exit footer last; a head-only slice would drop it.
+  const last = lines[lines.length - 1];
+  return last.t === "head" ? [...lines.slice(0, budget - 1), last] : lines.slice(0, budget);
 }
 
 // A 558px panel cannot hold a repo-root-relative path. Keep the last `keep`
@@ -40,7 +43,9 @@ export function humanBytes(n: number | undefined): string | undefined {
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const num = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
-const textLines = (s: string): ToolLine[] => (s ? s.split("\n").map((text) => ({ t: "ctx" as const, text })) : []);
+// A trailing newline is the normal shape of captured stdout; keeping it would add a
+// phantom empty line that eats a preview slot and inflates `totalLines`.
+const textLines = (s: string): ToolLine[] => (s ? s.replace(/\n$/, "").split("\n").map((text) => ({ t: "ctx" as const, text })) : []);
 
 type Args = Record<string, unknown>;
 type Details = Record<string, unknown>;
@@ -48,7 +53,10 @@ type Reducer = (args: Args, d: Details, content: string) => ToolDisplay;
 
 const readDisplay: Reducer = (args, d, content) => {
   const target = shortPath(str(args["path"]));
-  if (d["isDirectory"]) return { target, stat: "каталог", lines: textLines(content), totalLines: content ? content.split("\n").length : 0 };
+  if (d["isDirectory"]) {
+    const dirLines = textLines(content);
+    return { target, stat: "каталог", lines: dirLines, totalLines: dirLines.length };
+  }
   const dc = d["displayContent"] as { text?: string; lineNumbers?: number[] } | undefined;
   const total = num(d["totalLines"]);
   const nums = dc?.lineNumbers ?? [];
@@ -57,10 +65,12 @@ const readDisplay: Reducer = (args, d, content) => {
     ? body.split("\n").map((text, i) => (nums[i] === undefined ? { t: "ctx" as const, text } : { t: "ctx" as const, n: String(nums[i]), text }))
     : textLines(content);
   const shown = nums.length || lines.length;
-  // Only a partial read earns the shown/total form; a whole-file read reports the file's size in lines.
+  // Only a partial read earns the shown/total form; a whole-file read reports the file's size in
+  // lines. `count` must always be the number `stat` prints, so coalesced rows can sum it.
   const partial = d["truncation"] ? true : undefined;
-  const stat = partial && total && shown && shown < total ? `${shown}/${total} ln` : total ? `${total} ln` : humanBytes(num(d["fileSize"]));
-  return { target, stat, count: shown, lines, totalLines: lines.length, truncatedUpstream: partial };
+  const ranged = Boolean(partial && total && shown && shown < total);
+  const stat = ranged ? `${shown}/${total} ln` : total ? `${total} ln` : humanBytes(num(d["fileSize"]));
+  return { target, stat, count: ranged ? shown : total ?? shown, lines, totalLines: lines.length, truncatedUpstream: partial };
 };
 
 const writeDisplay: Reducer = (args, d) => {
@@ -79,12 +89,13 @@ const writeDisplay: Reducer = (args, d) => {
 const globDisplay: Reducer = (args, d, content) => {
   const files = (d["files"] as string[] | undefined) ?? [];
   const count = num(d["fileCount"]);
+  const lines: ToolLine[] = files.length ? files.map((text) => ({ t: "ctx" as const, text })) : textLines(content);
   return {
     target: shortPath(str(args["path"]), 1),
     stat: `${count ?? files.length} файлів${d["truncated"] ? " ·обрізано" : ""}`,
     count: count ?? files.length,
-    lines: files.length ? files.map((text) => ({ t: "ctx" as const, text })) : textLines(content),
-    totalLines: files.length || (content ? content.split("\n").length : 0),
+    lines,
+    totalLines: lines.length,
     truncatedUpstream: d["truncated"] ? true : undefined,
   };
 };
@@ -96,7 +107,7 @@ const editDisplay: Reducer = (args, d) => {
   const lines: ToolLine[] = [];
   let add = 0;
   let del = 0;
-  for (const row of raw ? raw.split("\n") : []) {
+  for (const row of raw ? raw.replace(/\n$/, "").split("\n") : []) {
     if (row === "") {
       lines.push({ t: "gap" });
       continue;
@@ -208,21 +219,22 @@ const todoDisplay: Reducer = (_args, d) => {
 
 const hubDisplay: Reducer = (args, d, content) => {
   const op = str(d["op"]) || str(args["op"]);
-  return { target: op, stat: `${op}${d["timedOut"] ? " · таймаут" : ""}`, lines: textLines(content), totalLines: content ? content.split("\n").length : 0 };
+  // The peer or process is the identity of the row; the op belongs in the stat column.
+  const who = str(args["to"]) || str(args["name"]);
+  const lines = textLines(content);
+  return { target: who, stat: `${op}${d["timedOut"] ? " · таймаут" : ""}`, lines, totalLines: lines.length };
 };
 
-const evalDisplay: Reducer = (args, d, content) => ({
-  target: str(d["language"]) || str(args["language"]),
-  stat: str(d["language"]) || str(args["language"]),
-  lines: textLines(content),
-  totalLines: content ? content.split("\n").length : 0,
-});
+const evalDisplay: Reducer = (args, d, content) => {
+  const lines = textLines(content);
+  return { target: str(args["i"]), stat: str(d["language"]) || str(args["language"]), lines, totalLines: lines.length };
+};
 
-const genericDisplay: Reducer = (args, _d, content) => ({
-  target: shortPath(str(args["path"]) || str(args["i"]), 2),
-  lines: textLines(content),
-  totalLines: content ? content.split("\n").length : 0,
-});
+const genericDisplay: Reducer = (args, _d, content) => {
+  const lines = textLines(content);
+  // `i` is prose, not a path: shortening it on "/" would butcher the intent.
+  return { target: str(args["path"]) ? shortPath(str(args["path"]), 2) : str(args["i"]), lines, totalLines: lines.length };
+};
 
 const REDUCERS: Record<string, Reducer> = {
   read: readDisplay, write: writeDisplay, glob: globDisplay, edit: editDisplay, grep: grepDisplay,
