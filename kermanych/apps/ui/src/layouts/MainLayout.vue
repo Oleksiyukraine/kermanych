@@ -315,6 +315,7 @@ import type { ProjectMember } from '@kermanych/cloud';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
+import { IS_PREVIEW } from '../lib/preview';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KStatusBar from 'components/kit/KStatusBar.vue';
 import KModal from 'components/kit/KModal.vue';
@@ -348,6 +349,10 @@ onMounted(async () => {
   // The router guard already keeps this layout signed-in-only, but on a cold start `ready`
   // may still be pending, and useProjects() needs the session for RLS to return any row.
   await auth.ready;
+  // A preview has no cloud (lib/preview.ts): skip the read entirely. Leaving `cloudSynced`
+  // false is the point — a successful-looking sync would label every seeded local row
+  // «поза хмарою», and load()'s prune would run against an empty project list.
+  if (IS_PREVIEW) return;
   // load() reads the cloud list and mirrors it into the local registry itself
   // (api.syncProjects(list, true), see stores/projects.ts) — that mirror is what keeps
   // launching possible with Supabase unreachable (Requirement 7). Do not sync again here.

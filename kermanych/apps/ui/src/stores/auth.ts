@@ -4,6 +4,7 @@ import { markRaw, ref } from 'vue';
 import type { Session as SupabaseSession, SupabaseClient } from '@supabase/supabase-js';
 import { cloudEnv, createCloudClient, type Profile } from '@kermanych/cloud';
 import { api, setAuthToken, setUnauthorizedHandler } from '../lib/api';
+import { IS_PREVIEW, PREVIEW_USER_ID } from '../lib/preview';
 import { useOrchestrator } from './orchestrator';
 
 // One Supabase client per renderer, built when this module is first imported —
@@ -98,6 +99,16 @@ export const useAuth = defineStore('auth', () => {
   async function init(): Promise<void> {
     if (initialized) return ready;
     initialized = true;
+    // A preview never signs in: its api admits every request as this demo user, and no
+    // OAuth redirect can come back to its random port (lib/preview.ts). Adopt that user
+    // and stop — the Supabase client is left untouched (no session to read, no token to
+    // hand over), and deliberately no 401 handler is installed: a preview must never
+    // bounce itself to a login screen. `profile` stays null, which is the truth here.
+    if (IS_PREVIEW) {
+      user.value = { id: PREVIEW_USER_ID };
+      resolveReady();
+      return ready;
+    }
     // Resolved here, not inside the handler, so the toast surface exists before
     // the first 401 can land. The orchestrator store holds only refs until
     // connect() is called, which AuthLayout never does.

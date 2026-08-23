@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import type { ExecutionContext } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { RegistryService } from "../src/registry/registry.service";
 import { AuthService, type CloudClientFactory } from "../src/auth/auth.service";
@@ -89,6 +89,24 @@ test("a request with no Authorization header is rejected", async () => {
   const guard = new SupabaseAuthGuard(auth, new Reflector());
   const { context } = ctx({});
   await expect(guard.canActivate(context)).rejects.toThrow("missing bearer token");
+});
+
+// A preview api (apps/api/src/preview/preview.service.ts spawns it with KERMANYCH_PREVIEW)
+// has no session to present and nothing to protect, so the guard lets the previewed ui in
+// with no Authorization header at all — that is what replaces its login screen.
+afterEach(() => vi.unstubAllEnvs());
+
+test("a preview api admits an unauthenticated request as the demo user", async () => {
+  vi.stubEnv("KERMANYCH_PREVIEW", "1");
+  const reg = new RegistryService(":memory:");
+  const auth = new AuthService(reg, factory({}));
+  const guard = new SupabaseAuthGuard(auth, new Reflector());
+  const { context, req } = ctx({});
+  await expect(guard.canActivate(context)).resolves.toBe(true);
+  expect(req.user).toEqual({ id: "preview" });
+  // No session was invented on the way in: cloud paths in a preview must keep refusing.
+  expect(auth.current()).toBeUndefined();
+  expect(reg.getAuthSession()).toBeUndefined();
 });
 
 test("an unknown token with no reachable cloud is rejected", async () => {

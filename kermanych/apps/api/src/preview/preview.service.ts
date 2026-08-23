@@ -48,6 +48,10 @@ export class PreviewService implements OnModuleDestroy {
           KERMANYCH_DB: join(tmpdir(), "kermanych-preview", `${sessionId}.sqlite`),
           // ...and seed that DB with inert demo data so the previewed UI isn't empty (seed.ts).
           KERMANYCH_SEED: "1",
+          // Nothing to sign in to and nothing to protect: this api admits every request as a
+          // demo user (auth.guard.ts), which is what lets the web half below skip the login
+          // screen. Paired with VITE_KERMANYCH_PREVIEW — never one without the other.
+          KERMANYCH_PREVIEW: "1",
         });
         procs.push(api);
         await waitPort(apiPort, 180_000, api); // includes a possible first-run build/install
@@ -56,6 +60,11 @@ export class PreviewService implements OnModuleDestroy {
       if (apiPort !== undefined) {
         webEnv.API_PORT = String(apiPort);
         webEnv.VITE_API_BASE = `http://localhost:${apiPort}/api`;
+        // The ui reads this to adopt that demo user instead of rendering /login
+        // (apps/ui/src/lib/preview.ts). Set ONLY here, inside the branch that started a
+        // preview api: with no api command the previewed web talks to the real api on
+        // 4317, which rightly still demands the real session.
+        webEnv.VITE_KERMANYCH_PREVIEW = "1";
       }
       const web = this.spawnCmd(project.previewCommand, dir, webEnv);
       procs.push(web);

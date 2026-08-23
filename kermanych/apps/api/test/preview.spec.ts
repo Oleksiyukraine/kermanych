@@ -61,6 +61,33 @@ test("full-stack: web command receives VITE_API_BASE pointing at the branch api 
   expect(apiPort).not.toBe(Number(new URL(res.url).port)); // two distinct free ports
 }, 30_000);
 
+// The login screen is the reason both halves are checked in one test: the web only skips it
+// because the api it was wired to was started auth-free. One flag without the other would
+// leave the previewed ui signed in against an api that refuses every call.
+test("full-stack: the api is started as a preview and the web is told to skip the login screen", async () => {
+  svc = new PreviewService(
+    fakeReg(
+      httpEcho("process.env.VITE_API_BASE + ' ' + process.env.VITE_KERMANYCH_PREVIEW"),
+      httpEcho("process.env.KERMANYCH_PREVIEW"),
+    ),
+  );
+  const res = await svc.start("s1");
+  if (!("url" in res)) throw new Error("expected a preview url");
+  const [apiBase, webFlag] = (await fetch(res.url).then((r) => r.text())).split(" ");
+  expect(webFlag).toBe("1");
+  expect(await fetch(apiBase!).then((r) => r.text())).toBe("1"); // the api got its half
+}, 30_000);
+
+// No api command means the previewed web talks to the REAL api on 4317, which still holds
+// the developer's session and still demands it. Skipping the login screen there would
+// strand the preview on 401s, so the flag must stay unset.
+test("web-only preview: no api of its own, so no skip-the-login flag", async () => {
+  svc = new PreviewService(fakeReg(httpEcho("String(process.env.VITE_KERMANYCH_PREVIEW)")));
+  const res = await svc.start("s1");
+  if (!("url" in res)) throw new Error("expected a preview url");
+  expect(await fetch(res.url).then((r) => r.text())).toBe("undefined");
+}, 30_000);
+
 test("returns needsCommand when the project has no preview command", async () => {
   svc = new PreviewService(fakeReg(undefined));
   expect(await svc.start("s1")).toEqual({ needsCommand: true });

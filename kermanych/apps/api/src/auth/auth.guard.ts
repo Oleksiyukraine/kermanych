@@ -23,6 +23,20 @@ export class SupabaseAuthGuard implements CanActivate {
     if (isPublic) return true;
 
     const req = context.switchToHttp().getRequest<GuardedRequest>();
+
+    // A PREVIEW api — the throwaway second api PreviewService starts for one session
+    // (preview.service.ts sets KERMANYCH_PREVIEW) — admits everything as a demo user.
+    // It listens on 127.0.0.1 only, on a temp DB seeded with inert rows, bound to no cloud
+    // project, and no OAuth round trip can reach its random port: a login screen there is
+    // one nobody can get past, guarding nothing. `AuthService.current()` stays undefined,
+    // so every cloud path in that process keeps refusing with "not signed in". The real
+    // api — standalone or hosted in Electron — never sets the variable. The ui half of the
+    // switch is apps/ui/src/lib/preview.ts.
+    if (process.env.KERMANYCH_PREVIEW === "1") {
+      req.user = { id: "preview" };
+      return true;
+    }
+
     const raw = req.headers.authorization ?? req.headers.Authorization;
     const header = Array.isArray(raw) ? raw[0] : raw;
     const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : undefined;
