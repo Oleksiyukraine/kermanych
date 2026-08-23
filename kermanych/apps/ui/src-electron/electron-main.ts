@@ -53,6 +53,12 @@ async function createWindow(apiBase: string) {
   });
 
   if (process.env.DEV) {
+    // Vite serves optimized deps as `immutable` under a `?v=<browserHash>` query that does NOT
+    // change when a linked workspace dep (@kermanych/core) is rebuilt with new content. Electron's
+    // persistent Chromium cache then serves a stale dep across restarts — a fresh core export (e.g.
+    // buildChatBlocks) reads as `undefined` and the panel throws on open. Drop the HTTP cache each
+    // dev launch so the renderer always fetches the freshly-optimized modules.
+    await mainWindow.webContents.session.clearCache();
     await mainWindow.loadURL(process.env.APP_URL);
   } else {
     await mainWindow.loadFile('index.html');

@@ -3,7 +3,7 @@
 
 import { defineConfig } from '#q-app/wrappers';
 
-export default defineConfig(() => {
+export default defineConfig((ctx) => {
   return {
     // app boot files (/src/boot) — order matters
     boot: ['tokens', 'tip'],
@@ -22,12 +22,14 @@ export default defineConfig(() => {
 
       vueRouterMode: 'hash', // 'hash' | 'history'
 
-      // @kermanych/core is a CJS workspace dep resolved to its real path OUTSIDE
-      // node_modules, so Vite treats it as raw source and never runs CJS→ESM interop;
-      // named imports (e.g. shouldNotify from /status) then fail. Both build paths need it:
-      //   • prod (rollup):  build.commonjsOptions.include converts its dist.
-      //   • dev  (esbuild): optimizeDeps.include force-prebundles it — linked workspace
-      //     deps are excluded from dep pre-bundling by default, so this is required.
+      // @kermanych/core is a CJS workspace dep consumed via its built dist. Vite prebundles it
+      // (optimizeDeps) and converts its CJS named exports (commonjsOptions). Two hazards handled:
+      //   • prod (rollup):  commonjsOptions.include converts the dist so named exports survive.
+      //   • dev  (esbuild): optimizeDeps.include prebundles it (linked workspace deps are skipped
+      //     by default), and force:true re-prebundles on every start so a rebuilt dist — e.g. after
+      //     a merge that adds an export like buildChatBlocks — is never masked by a stale optimize
+      //     cache. A stale cache lacked the new export, it resolved to undefined, and selecting a
+      //     session then threw in render, which surfaced as "clicking a session does nothing".
       extendViteConf(viteConf) {
         viteConf.build ??= {};
         viteConf.build.commonjsOptions = {
@@ -40,6 +42,8 @@ export default defineConfig(() => {
           '@kermanych/core',
           '@kermanych/core/status',
         ];
+        // Dev only: never serve a stale prebundle of the freshly-built core dist.
+        if (ctx.dev) viteConf.optimizeDeps.force = true;
       },
     },
 
