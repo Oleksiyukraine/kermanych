@@ -8,6 +8,9 @@ declare namespace NodeJS {
 
 interface ImportMetaEnv {
   readonly VITE_API_BASE?: string;
+  // Set by PreviewService on a preview web server (src/lib/preview.ts): the api it is
+  // wired to needs no session, so the app adopts a demo user instead of showing /login.
+  readonly VITE_KERMANYCH_PREVIEW?: string;
   // The cloud coordination backend — an OVERRIDE, not a requirement: with none of
   // these set, cloudEnv('ui') resolves the team's hosted project from
   // DEFAULT_CLOUD, so the app runs on a fresh clone. Set them to point at a local

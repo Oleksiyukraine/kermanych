@@ -19,6 +19,7 @@ import { useAuth } from './auth';
 import { useProjects } from './projects';
 import { useOrchestrator } from './orchestrator';
 import { installReconcile, type ReconcileOptions } from '../lib/reconcile';
+import { IS_PREVIEW } from '../lib/preview';
 
 // The shared board's TASKS, and nothing else. Cloud projects and membership live in
 // stores/projects.ts; local sessions and the socket live in stores/orchestrator.ts. Writes
@@ -81,7 +82,10 @@ export const useBoard = defineStore('board', () => {
   // Loading it here keeps every caller a one-liner instead of sequencing two stores.
   async function load(): Promise<void> {
     await auth.ready;
-    if (!auth.user) return;
+    // A preview signs itself in against a cloudless api (lib/preview.ts), so `auth.user`
+    // is set but there are no tasks to read — and cloud.load() below would prune the
+    // previewed registry against an empty project list. Nothing to load, so: nothing.
+    if (IS_PREVIEW || !auth.user) return;
     loading.value = true;
     loadError.value = null;
     try {
