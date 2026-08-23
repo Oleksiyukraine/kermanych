@@ -27,7 +27,7 @@ export {
   createProject,
   patchProject,
   listMembers,
-  addMember,
+  inviteMember,
   removeMember,
   deleteProject,
 } from "./projects";

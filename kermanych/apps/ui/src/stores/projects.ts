@@ -3,9 +3,9 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import type { CloudProject, CloudProjectPatch, ProjectMember } from '@kermanych/cloud';
 import {
-  addMember as cloudAddMember,
   createProject as cloudCreateProject,
   deleteProject as cloudDeleteProject,
+  inviteMember as cloudInviteMember,
   listMembers as cloudListMembers,
   listProjects as cloudListProjects,
   patchProject as cloudPatchProject,
@@ -74,9 +74,17 @@ export const useProjects = defineStore('projects', () => {
     return list;
   }
 
-  async function addMember(id: string, githubUsername: string): Promise<ProjectMember> {
-    const m = await cloudAddMember(auth.client, id, githubUsername);
-    members.value = { ...members.value, [id]: [...(members.value[id] ?? []), m] };
+  // Re-inviting someone already on the project succeeds (invite_project_member is
+  // idempotent), so merge by user id — appending would show them twice.
+  async function inviteMember(id: string, email: string): Promise<ProjectMember> {
+    const m = await cloudInviteMember(auth.client, id, email);
+    const current = members.value[id] ?? [];
+    members.value = {
+      ...members.value,
+      [id]: current.some((x) => x.userId === m.userId)
+        ? current.map((x) => (x.userId === m.userId ? m : x))
+        : [...current, m],
+    };
     return m;
   }
 
@@ -130,7 +138,7 @@ export const useProjects = defineStore('projects', () => {
     patch,
     remove,
     loadMembers,
-    addMember,
+    inviteMember,
     removeMember,
     isOwner,
   };

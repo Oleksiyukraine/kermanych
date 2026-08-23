@@ -60,8 +60,10 @@ Supabase: Auth (GitHub OAuth) · Postgres (profiles, projects, project_members,
    refused, and an EMPTY allowlist admits nobody. The allowlist is operator data
    — no client role holds any privilege on the table.
 2. Projects are cloud entities with `owner`/`member` roles. Any authenticated
-   user may create a project (becoming owner); owners manage membership and
-   project config.
+   user may create a project (becoming owner). Membership is by EMAIL and any
+   member may invite (`invite_project_member`, see Triggers and helpers); the
+   owner alone manages project config and removes members. An invited address
+   must already have an account — there is no pending-invitation state.
 3. Each machine binds a cloud project to a LOCAL repo path (manual, via the
    existing directory picker). Tasks are visible without a binding; launching is
    refused until it exists.
@@ -213,6 +215,20 @@ Triggers and helpers:
   `stable` — `exists (select 1 from project_members where project_id=p and
   user_id=u)`. `security definer` is REQUIRED: policies on `project_members`
   would otherwise recurse.
+- `invite_project_member(p uuid, email text) returns project_members`,
+  `security definer` (added in `20260823130000_invite_members_by_email.sql`) —
+  membership is by EMAIL, and any member of a project may invite. Because the
+  function is `security definer`, RLS does not apply inside it, so its first
+  statement IS the authorization rule: `is_project_member(p, auth.uid())`, else
+  `only a project member can invite`. It then resolves the address against
+  `auth.users` joined to `profiles` (case-insensitively; the join is what makes
+  "already uses Kermanych" a hard requirement, since only `handle_new_user()`
+  writes that row), and inserts `role='member'`, `on conflict do nothing`, so a
+  second invite for the same person reports the existing row instead of failing.
+  An address with no account is refused: `no Kermanych account for …`. The
+  resolution must live in the database — `auth.users` is unreachable for the
+  `authenticated` role, and mirroring the address into `profiles` would publish
+  every teammate's email, since `profiles_select` is `using (true)`.
 - `tasks_guard()` — `before insert or update or delete on tasks`, enforces the
   cross-row invariants RLS cannot express:
   1. `update` changing `status` requires `auth.uid() = old.assignee_id`
@@ -229,7 +245,7 @@ Triggers and helpers:
 |---|---|---|---|---|
 | `profiles` | any authenticated | trigger only (`security definer`) | own row | — |
 | `projects` | `owner_id = auth.uid() or is_project_member(id, auth.uid())` | any authenticated, `owner_id = auth.uid()` | owner | owner |
-| `project_members` | `is_project_member(project_id, auth.uid())` | project owner (+ trigger) | owner | owner |
+| `project_members` | `is_project_member(project_id, auth.uid())` | **none** — `invite_project_member()` rpc + `handle_new_project()` trigger only | owner | owner |
 | `tasks` | `is_project_member(project_id, auth.uid())` | member, `created_by = auth.uid()` | member (policy) + `tasks_guard` (invariants) | member; `tasks_guard` refuses active |
 
 The `projects` SELECT disjunct is load-bearing, not belt-and-braces:
@@ -314,7 +330,7 @@ non-UI code; consumed by both `apps/api` and `apps/ui` (mirrors how
   assignee_id is null`), `patchTask`, `pushTaskStatus(client, taskId, status,
   updatedAt)`, `subscribeTasks(client, projectIds, onChange)`.
 - `src/projects.ts` — `listProjects`, `createProject`, `patchProject`,
-  `listMembers`, `addMember`, `removeMember`.
+  `listMembers`, `inviteMember`, `removeMember`.
 - `src/status.ts` — `taskStatusFromSession(session): TaskStatus` (identity map
   today; the single seam if the vocabularies ever diverge) and
   `isTerminalTaskStatus`.
@@ -525,7 +541,7 @@ implementation depends on, with their consequences.
 - `pages/BoardPage.vue` (`/board`) — status columns, task cards (title,
   assignee avatar, status badge, stale hint from `updated_at`), create/assign
   modals, launch-params form, "Запустити" (disabled without a binding),
-  members panel for owners.
+  members panel — invite by email for every member, removal for the owner.
 - `pages/WorkspacePage.vue` — unchanged board of LOCAL sessions; its header
   gains a link to the cloud board and its rows show the task title when
   `taskId` is set.
@@ -573,12 +589,13 @@ code: string }>`), wired in `electron-main.ts` via `ipcMain.handle`
     `taskId`/`projectId` and spawns one child.
 - RLS + trigger integration (`packages/cloud/test/rls.spec.ts`, against
   `supabase start`; skipped unless `SUPABASE_TEST_URL` is set): member sees only
-  own-project tasks; non-member SELECT returns 0 rows; non-owner cannot insert
-  `project_members`; non-assignee status update refused; active task
-  reassign/delete refused; `handle_new_user` fills `profiles`;
-  `handle_new_project` inserts the owner membership; a GitHub handle absent from
-  `allowed_github_users` cannot become a user at all (the suite seeds the
-  allowlist for its own handles through psql on `SUPABASE_TEST_DB_URL`).
+  own-project tasks; non-member SELECT returns 0 rows; NOBODY (not even the
+  owner) can insert `project_members` directly; a non-member cannot call
+  `invite_project_member`; an email with no account is refused; an invite by
+  email adds the member, who then sees the project's tasks; a plain member can
+  invite; re-inviting is idempotent; non-assignee status update refused; active
+  task reassign/delete refused; `handle_new_user` fills `profiles`;
+  `handle_new_project` inserts the owner membership.
 - Manual smoke (required pre-merge): full GitHub OAuth in the browser AND in
   Electron (loopback); two machines/two accounts — A creates and assigns, B sees
   the card live, B binds the repo, B launches, A watches
