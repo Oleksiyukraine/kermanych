@@ -662,16 +662,22 @@ export class SupervisorService implements OnModuleDestroy {
   private onRpcEvent(id: string, e: RpcEvent) {
     const l = this.map.get(id);
     if (!l) return;
-    // Progress heartbeat (in-memory, every event incl. streaming deltas) — distinct from
-    // last_activity_at, which user sends also bump. The UI uses this to spot a wedged turn.
-    l.live.lastEventAt = Date.now();
-    // Any agent event counts as activity, except per-token streaming deltas
-    // (message_update) — bumping per token would mean a DB write per token.
-    if (e.type !== "message_update") {
-      try {
-        this.registry.touchSession(id);
-      } catch {
-        /* never let a bookkeeping write break the event stream */
+    // Progress heartbeat (in-memory) — distinct from last_activity_at, which user sends also
+    // bump. The UI uses this to spot a wedged turn. `response` frames are replies to the
+    // supervisor's OWN commands (chiefly the 2s get_state poll below), not agent progress:
+    // counting them is what made a wedged turn invisible — the poll kept answering, so
+    // lastEventAt never aged and the stall banner never fired. Only genuine agent events count
+    // here; refreshState keeps the heartbeat alive across long, event-quiet turns via isStreaming.
+    if (e.type !== "response") {
+      l.live.lastEventAt = Date.now();
+      // Any agent event counts as activity, except per-token streaming deltas
+      // (message_update) — bumping per token would mean a DB write per token.
+      if (e.type !== "message_update") {
+        try {
+          this.registry.touchSession(id);
+        } catch {
+          /* never let a bookkeeping write break the event stream */
+        }
       }
     }
     const before = l.state.status;
@@ -726,6 +732,19 @@ export class SupervisorService implements OnModuleDestroy {
       const st = await l.rpc.getState();
       l.live.contextPercent = st.contextUsage?.percent;
       l.live.todoPhases = st.todoPhases;
+      // isStreaming is true for the whole active turn — thinking, model streaming, AND
+      // minutes-long tool calls — and flips false only when the agent run ends. Treat it as the
+      // real progress heartbeat: a busy-but-event-quiet turn (e.g. a long subagent) stays fresh,
+      // so it never trips a false stall; a turn that ended without a terminal agent_end reaching
+      // us (a stalled provider stream) lets lastEventAt age so the UI surfaces the stall + restart.
+      if (st.isStreaming) {
+        l.live.lastEventAt = Date.now();
+        try {
+          this.registry.touchSession(id);
+        } catch {
+          /* bookkeeping only */
+        }
+      }
       if (st.sessionId || st.sessionFile)
         this.registry.updateSession(id, { ompSessionId: st.sessionId, ompSessionFile: st.sessionFile });
       this.pushUpdate(id);
