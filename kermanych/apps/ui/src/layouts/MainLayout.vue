@@ -28,6 +28,15 @@
         >
           +
         </KBtn>
+        <!-- ACCOUNT TILE — pinned to the foot of the rail (margin-top: auto). The app's
+             only way out of a session. -->
+        <KUserButton
+          class="shell__account"
+          :label="accountLabel"
+          :avatar-url="auth.profile?.avatarUrl"
+          :title="accountHint"
+          @click="accountOpen = true"
+        />
       </div>
     </q-drawer>
 
@@ -274,6 +283,26 @@
       @select="bindTo"
     />
 
+    <!-- ACCOUNT MODAL — the app's only sign-out. auth.signOut() ends the Supabase session
+         and clears the local api's token; the router's watcher on `auth.user` then replaces
+         the route with /login, so nothing here navigates. -->
+    <KModal v-model="accountOpen" title="Вийти з акаунта?">
+      <div class="shell__form">
+        <p class="shell__hint">
+          Ви увійшли як <span class="mono">{{ accountName }}</span>. Вихід закриє сеанс на цій
+          машині й поверне вас на екран входу.
+        </p>
+        <p class="shell__hint">
+          Агенти, що вже працюють, і їхні робочі дерева не зупиняються. Статуси, які не
+          встигли піти в хмару, чекають у черзі й відправляться після наступного входу.
+        </p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="accountOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" :disabled="accountBusy" @click="confirmSignOut">Вийти</KBtn>
+      </template>
+    </KModal>
+
     <!-- TOAST STACK — transient notifications (errors etc.) -->
     <KToast :toasts="store.toasts" @dismiss="store.dismissToast" />
   </q-layout>
@@ -297,6 +326,7 @@ import KColorPicker from 'components/kit/KColorPicker.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import KTag from 'components/kit/KTag.vue';
+import KUserButton from 'components/kit/KUserButton.vue';
 
 // The Kermanych app shell (design-system section 07): project rail, brand header, page
 // container, fleet status bar. Two stores back it — `store` (useOrchestrator) owns the LOCAL
@@ -749,6 +779,42 @@ async function saveEnv(): Promise<void> {
     envError.value = e instanceof Error ? e.message : String(e);
   }
 }
+
+// ACCOUNT — the rail tile and the sign-out modal name the same person: the GitHub handle
+// first (that is what the board prints beside a task), the display name next, and a short
+// user id as a last resort, so a profile GitHub sent no metadata for is still identifiable.
+const accountLabel = computed(() => {
+  const p = auth.profile;
+  return p?.githubUsername ?? p?.displayName ?? auth.user?.id.slice(0, 8) ?? '';
+});
+
+// The handle gets its `@` for display only — the tile derives its initials from the bare
+// name, so the sigil never becomes one of the two letters.
+const accountName = computed(() =>
+  auth.profile?.githubUsername ? `@${accountLabel.value}` : accountLabel.value,
+);
+
+// The tile is a bare picture, so its tooltip carries the action as well as the identity.
+const accountHint = computed(() => `${accountName.value} · вийти`);
+
+const accountOpen = ref(false);
+const accountBusy = ref(false);
+
+// signOut() ends the Supabase session and, through apply(null), drops the local api's
+// token; the router's watcher on `auth.user` performs the navigation to /login. It only
+// rejects on an unexpected fault (the sign-out's own network failure is swallowed by
+// supabase-js), and then the modal must stay open with the reason visible.
+async function confirmSignOut(): Promise<void> {
+  accountBusy.value = true;
+  try {
+    await auth.signOut();
+    accountOpen.value = false;
+  } catch (e) {
+    store.notify(`Не вдалося вийти: ${e instanceof Error ? e.message : String(e)}`, 'error');
+  } finally {
+    accountBusy.value = false;
+  }
+}
 </script>
 
 <style scoped lang="scss">
@@ -774,6 +840,11 @@ async function saveEnv(): Promise<void> {
 
 .shell__add {
   margin-top: 4px;
+}
+
+// account tile — pinned to the foot of the rail, below every project and the add button.
+.shell__account {
+  margin-top: auto;
 }
 
 // header — 2px rule below (zone separator), surface fill, flush-left brand.

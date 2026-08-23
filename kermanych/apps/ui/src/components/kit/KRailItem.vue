@@ -16,6 +16,7 @@ export type RailProject = {
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { initialsOf } from '../../lib/initials';
 
 // A project tile in the left rail (design-system section 07). Initials stand in for the
 // project, the count badge is the number of running agents, and the corner glyph is the
@@ -39,13 +40,9 @@ const STATE_GLYPH: Record<RailProject['state'], string> = {
 
 const title = computed(() => props.project.name + STATE_HINT[props.project.state]);
 
-const initials = computed(() => {
-  const words = props.project.name.trim().split(/[\s/_-]+/).filter(Boolean);
-  const [first, second] = words;
-  if (!first) return '·';
-  if (!second) return first.slice(0, 2).toUpperCase();
-  return ((first[0] ?? '') + (second[0] ?? '')).toUpperCase();
-});
+// A project stands in for its name with two letters; `·` marks the nameless row rather
+// than an empty tile.
+const initials = computed(() => initialsOf(props.project.name, '·'));
 </script>
 
 <template>
