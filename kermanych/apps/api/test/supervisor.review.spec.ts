@@ -19,6 +19,7 @@ vi.mock("../src/rpc/rpc-session", () => {
 
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
+import { offlineAuth } from "./offline-auth";
 
 function make() {
   const registry = new RegistryService(":memory:");
@@ -31,7 +32,7 @@ function make() {
     diff: vi.fn().mockResolvedValue("diff --git a/x.ts b/x.ts\n+const answer = 42;"),
   };
   // Partial mock: reviewSession only touches these worktree ops. Cast once at the DI seam.
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService);
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth());
   return { sup, registry, worktree };
 }
 
@@ -40,8 +41,8 @@ beforeEach(() => { started.length = 0; prompts.length = 0; });
 describe("reviewSession", () => {
   it("spawns an independent reviewer: review child, read-only tools, no fork", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const parent = registry.createSession({ groupId: g.id, name: "AAA", task: "Add feature X", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const parent = registry.createSession({ projectId: g.id, name: "AAA", task: "Add feature X", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(parent.id, { status: "done" });
 
     const review = await sup.reviewSession(parent.id);
@@ -58,8 +59,8 @@ describe("reviewSession", () => {
 
   it("seeds the reviewer with the original task and the branch diff, not the doer's transcript", async () => {
     const { sup, registry, worktree } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const parent = registry.createSession({ groupId: g.id, name: "AAA", task: "Add feature X", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const parent = registry.createSession({ projectId: g.id, name: "AAA", task: "Add feature X", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(parent.id, { status: "done" });
 
     await sup.reviewSession(parent.id);
@@ -73,8 +74,8 @@ describe("reviewSession", () => {
 
   it("refuses to review a non-agent session", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const parent = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const parent = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(parent.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "done" });
     const disc = await sup.branchSession(parent.id);
 
@@ -83,8 +84,8 @@ describe("reviewSession", () => {
 
   it("refuses to review when the branch has no changes", async () => {
     const { sup, registry, worktree } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const parent = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const parent = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(parent.id, { status: "done" });
     worktree.diff.mockResolvedValueOnce("   \n");
 
@@ -93,8 +94,8 @@ describe("reviewSession", () => {
 
   it("pours a review's conclusion into the parent and retires the review as merged", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const parent = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const parent = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(parent.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "done" });
 
     const review = await sup.reviewSession(parent.id);

@@ -12,12 +12,12 @@ import { join } from "node:path";
 const httpEcho = (body: string): string =>
   `node -e "const p=process.env.PORT;require('http').createServer((_,r)=>r.end(${body})).listen(p,()=>console.log('http://localhost:'+p))"`;
 
-// Minimal registry seam: one session with a temp worktree, one group with the given
+// Minimal registry seam: one session with a temp worktree, one project with the given
 // commands. Cast is a test double for the DI boundary, never read through inline.
 function fakeReg(previewCommand?: string, apiCommand?: string): RegistryService {
   const stub = {
-    listSessions: () => [{ id: "s1", groupId: "g1", worktreePath: "/tmp" }],
-    listGroups: () => [{ id: "g1", previewCommand, apiCommand }],
+    listSessions: () => [{ id: "s1", projectId: "g1", worktreePath: "/tmp" }],
+    listProjects: () => [{ id: "g1", localRepoPath: "/tmp/repo", previewCommand, apiCommand }],
   };
   return stub as unknown as RegistryService;
 }
@@ -61,16 +61,16 @@ test("full-stack: web command receives VITE_API_BASE pointing at the branch api 
   expect(apiPort).not.toBe(Number(new URL(res.url).port)); // two distinct free ports
 }, 30_000);
 
-test("returns needsCommand when the group has no preview command", async () => {
+test("returns needsCommand when the project has no preview command", async () => {
   svc = new PreviewService(fakeReg(undefined));
   expect(await svc.start("s1")).toEqual({ needsCommand: true });
 });
 
-test("in-place preview falls back to the group project dir when worktreePath is empty", async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), "kmq-prev-"));
+test("in-place preview falls back to the project's local repo path when worktreePath is empty", async () => {
+  const repoPath = mkdtempSync(join(tmpdir(), "kmq-prev-"));
   const stub = {
-    listSessions: () => [{ id: "s1", groupId: "g1", worktreePath: "", worktree: false }],
-    listGroups: () => [{ id: "g1", projectDir, previewCommand: httpEcho("'ok'") }],
+    listSessions: () => [{ id: "s1", projectId: "g1", worktreePath: "", worktree: false }],
+    listProjects: () => [{ id: "g1", localRepoPath: repoPath, previewCommand: httpEcho("'ok'") }],
   } as unknown as RegistryService;
   svc = new PreviewService(stub);
   const res = await svc.start("s1");
@@ -78,5 +78,5 @@ test("in-place preview falls back to the group project dir when worktreePath is 
   const port = Number(new URL(res.url).port);
   expect(await canConnect(port)).toBe(true);
   svc.stop("s1");
-  rmSync(projectDir, { recursive: true, force: true });
+  rmSync(repoPath, { recursive: true, force: true });
 }, 30_000);

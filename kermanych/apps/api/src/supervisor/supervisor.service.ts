@@ -19,9 +19,11 @@ import {
   branchName,
   uniqueSlug,
   worktreeDir,
+  BRANCH_PREFIXES,
+  PLATFORMS,
   type BranchPrefix,
   type StatusState,
-  type Group,
+  type Project,
   type ImageInput,
   type RpcEvent,
   type RpcExtensionUIResponse,
@@ -31,6 +33,8 @@ import {
   type ToolLine,
   type TranscriptEntry,
 } from "@kermanych/core";
+import { claimTask, getTask, listProjects, patchTask, type CloudProject } from "@kermanych/cloud";
+import { AuthService } from "../auth/auth.service";
 
 type Live = {
   rpc: RpcSession;
@@ -52,7 +56,7 @@ const CHAT_TOOLS = ["read", "grep", "glob"];
 
 // Kermanych's built-in fallback PR/commit conventions, injected only when the target repo
 // defines none of its own (no `### PR Conventions` / `### Commit Conventions` in
-// CLAUDE.md/AGENTS.md) and the group has no override. A project's own rules always win.
+// CLAUDE.md/AGENTS.md) and the project has no override. A project's own rules always win.
 const DEFAULT_PR_CONVENTIONS = [
   "- Commits: Conventional Commits — `type(scope): summary` in the imperative mood (feat, fix, chore, refactor, docs, test).",
   "- PR title: the same Conventional-Commit style, summarising the whole change.",
@@ -74,6 +78,7 @@ export class SupervisorService implements OnModuleDestroy {
   constructor(
     private registry: RegistryService,
     private worktree: WorktreeService,
+    private auth: AuthService,
   ) {}
 
   onModuleDestroy(): void {
@@ -85,7 +90,7 @@ export class SupervisorService implements OnModuleDestroy {
 
   snapshot() {
     return {
-      groups: this.registry.listGroups(),
+      projects: this.registry.listProjects(),
       sessions: this.registry.listSessions().map((s) => this.merge(s)),
     };
   }
@@ -99,42 +104,91 @@ export class SupervisorService implements OnModuleDestroy {
     if (s) this.events.next({ type: "session_update", session: this.merge(s) });
   }
 
-  async addGroup(name: string, projectDir: string, carryFiles?: string[]): Promise<Group> {
-    if (!(await this.worktree.isGitRepo(projectDir))) throw new Error("project dir is not a git repo");
-    const g = this.registry.createGroup({ name, projectDir, carryFiles });
-    this.events.next({ type: "group_update", group: g });
-    return g;
+  // Every project lookup used to be an inline registry find plus a hand-rolled
+  // throw (13 sites). These two helpers are that pair, and `boundProject` additionally
+  // enforces Requirement 3: no local execution without a local binding.
+  private project(projectId: string): Project {
+    const project = this.registry.listProjects().find((p) => p.id === projectId);
+    if (!project) throw new Error("project not found");
+    return project;
   }
-  async removeGroup(id: string): Promise<void> {
+
+  private boundProject(projectId: string): Project {
+    const project = this.project(projectId);
+    if (!project.localRepoPath) throw new Error("project not bound");
+    return project;
+  }
+
+  async removeProject(id: string): Promise<void> {
     for (const s of this.registry.listSessions(id)) await this.deleteSession(s.id);
-    this.registry.removeGroup(id);
-    this.events.next({ type: "group_removed", groupId: id });
+    this.registry.removeProject(id);
+    this.events.next({ type: "project_removed", projectId: id });
   }
-  async updateGroup(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string }): Promise<Group> {
+
+  async updateProject(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string }): Promise<Project> {
     if (patch.name !== undefined) {
       const name = patch.name.trim();
       if (!name) throw new Error("project name cannot be empty");
       patch = { ...patch, name };
     }
-    const g = this.registry.updateGroup(id, patch);
-    this.events.next({ type: "group_update", group: g });
-    return g;
+    const project = this.registry.patchProject(id, patch);
+    this.events.next({ type: "project_update", project });
+    return project;
   }
 
-  // Local branches of a project plus its current HEAD and configured default — feeds the
-  // worktree fork-base picker in the UI.
-  async projectBranches(groupId: string): Promise<{ branches: string[]; current: string; default: string | null }> {
-    const group = this.registry.listGroups().find((g) => g.id === groupId);
-    if (!group) throw new Error("group not found");
+  // This machine's manual binding (Requirement 3). Kermanych never clones: the path must
+  // already be a git repo, and each developer binds their own checkout.
+  async bindProject(id: string, localRepoPath: string): Promise<Project> {
+    const path = localRepoPath.trim();
+    if (!path) throw new Error("local repo path cannot be empty");
+    if (!(await this.worktree.isGitRepo(path))) throw new Error("local repo path is not a git repo");
+    const project = this.registry.patchProject(id, { localRepoPath: path });
+    this.events.next({ type: "project_update", project });
+    return project;
+  }
+
+  // Refresh the offline config cache from cloud reads (design D1). `prune` is opt-in and
+  // only the UI's full-list refresh passes it; even then a row that still owns local
+  // sessions survives as an orphan, because dropping it would cascade-delete a
+  // developer's worktrees over a transient RLS/network hiccup.
+  async syncProjects(cloud: CloudProject[], prune = false): Promise<Project[]> {
+    for (const c of cloud) {
+      const project = this.registry.upsertProject({
+        id: c.id,
+        name: c.name,
+        color: c.color,
+        previewCommand: c.previewCommand,
+        apiCommand: c.apiCommand,
+        carryFiles: c.carryFiles,
+        defaultBranch: c.defaultBranch,
+        conventions: c.conventions,
+      });
+      this.events.next({ type: "project_update", project });
+    }
+    if (prune) {
+      const known = new Set(cloud.map((c) => c.id));
+      for (const p of this.registry.listProjects()) {
+        if (known.has(p.id) || this.registry.listSessions(p.id).length) continue;
+        this.registry.removeProject(p.id);
+        this.events.next({ type: "project_removed", projectId: p.id });
+      }
+    }
+    return this.registry.listProjects();
+  }
+
+  // Branch list for the bound repo, used by the project-settings default-branch picker and
+  // the worktree fork-base picker in the UI.
+  async projectBranches(projectId: string): Promise<{ branches: string[]; current: string; default: string | null }> {
+    const project = this.boundProject(projectId);
     const [branches, current] = await Promise.all([
-      this.worktree.listBranches(group.projectDir),
-      this.worktree.currentBranch(group.projectDir),
+      this.worktree.listBranches(project.localRepoPath),
+      this.worktree.currentBranch(project.localRepoPath),
     ]);
-    return { branches, current, default: group.defaultBranch ?? null };
+    return { branches, current, default: project.defaultBranch ?? null };
   }
 
   async createSession(
-    groupId: string,
+    projectId: string,
     name: string,
     task: string,
     model?: string,
@@ -145,27 +199,123 @@ export class SupervisorService implements OnModuleDestroy {
     platform?: Session["platform"],
     baseBranch?: string,
   ): Promise<Session> {
-    const group = this.registry.listGroups().find((g) => g.id === groupId);
-    if (!group) throw new Error("group not found");
+    const project = this.project(projectId);
 
     // A backlog task is just a saved launch config: no branch, no worktree, no omp child.
-    // startTask turns it into a running agent later, reusing exactly these fields.
+    // startTask turns it into a running agent later, reusing exactly these fields. It is
+    // allowed on an unbound project — only launching needs the binding.
     if (asTask) {
       const session = this.registry.createSession({
-        groupId, name, task, worktreePath: "", branch: "",
+        projectId, name, task, worktreePath: "", branch: "",
         worktree, model, prefix, platform, baseBranch, status: "backlog", kind: "task",
       });
       this.pushUpdate(session.id);
       return this.merge(session);
     }
 
-    const { branch, baseBranch: resolvedBase } = await this.resolveLaunchParams(group, name, prefix, worktree, undefined, baseBranch);
-    const session = this.registry.createSession({ groupId, name, task, worktreePath: "", branch, worktree, baseBranch: resolvedBase, model, prefix, platform });
+    const { branch, baseBranch: resolvedBase } = await this.resolveLaunchParams(project, name, prefix, worktree, undefined, baseBranch);
+    const session = this.registry.createSession({ projectId, name, task, worktreePath: "", branch, worktree, baseBranch: resolvedBase, model, prefix, platform });
     try {
-      return await this.launch(session, group, { images });
+      return await this.launch(session, project, { images });
     } catch (err) {
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
+      throw err;
+    }
+  }
+
+  // Launch a CLOUD task on this machine. The cloud decides who may run a task (assignee +
+  // atomic claim) and owns the project config; SQLite owns where the repo lives locally.
+  // From `registry.createSession` onward this is byte-for-byte the ordinary launch path, so
+  // a task-born session behaves exactly like a locally created one — including offline.
+  async createSessionFromTask(taskId: string, userId: string): Promise<Session> {
+    const client = this.auth.cloudClient();
+
+    const task = await getTask(client, taskId);
+    if (!task) throw new Error("task not found");
+    if (task.assigneeId && task.assigneeId !== userId) throw new Error("task assigned to someone else");
+
+    // A second launch of a running card mints a second worktree and a second omp child
+    // bound to the same taskId; both would then mirror status for it and the board would
+    // flap between them. Two checks, because neither alone is enough: the cloud status
+    // covers a session running on ANOTHER machine, the local scan covers THIS one, whose
+    // status push may not have landed yet. Terminal and backlog cards stay launchable —
+    // retrying an errored or stopped task is the point of the board.
+    if (ACTIVE_STATUSES.includes(task.status)) throw new Error("task is already running");
+    const mine = this.registry.listSessions().some((s) => s.taskId === taskId && ACTIVE_STATUSES.includes(this.merge(s).status));
+    if (mine) throw new Error("task is already running");
+    // Did THIS call take the assignment? Only a claim we made may be rolled back below.
+    let claimed = false;
+    if (!task.assigneeId) {
+      // Atomic self-assign (`update … where assignee_id is null`). A lost race is not a DB
+      // error, it is zero updated rows — hence `undefined` rather than a throw.
+      const won = await claimTask(client, taskId, userId);
+      if (!won) throw new Error("task already claimed");
+      claimed = true;
+    }
+
+    const local = this.registry.listProjects().find((p) => p.id === task.projectId);
+    if (!local?.localRepoPath) throw new Error("project not bound");
+
+    // D1: the local row is the binding AND the offline config cache. Refresh it while we
+    // are demonstrably online, so the next launch of this project needs no network at all.
+    const cloudProject = (await listProjects(client)).find((p) => p.id === task.projectId);
+    const project = cloudProject
+      ? this.registry.patchProject(local.id, {
+          name: cloudProject.name,
+          color: cloudProject.color,
+          previewCommand: cloudProject.previewCommand,
+          apiCommand: cloudProject.apiCommand,
+          carryFiles: cloudProject.carryFiles,
+          defaultBranch: cloudProject.defaultBranch,
+          conventions: cloudProject.conventions,
+        })
+      : local;
+
+    // The board stores launch params as free text; validate them against the local
+    // vocabularies instead of casting, so a bad card cannot produce a bogus branch prefix.
+    const prefix: BranchPrefix = (BRANCH_PREFIXES as readonly string[]).includes(task.prefix ?? "")
+      ? (task.prefix as BranchPrefix)
+      : "feature";
+    const platform = (PLATFORMS as readonly string[]).includes(task.platform ?? "")
+      ? (task.platform as Session["platform"])
+      : undefined;
+
+    // Always a worktree: a cloud task must never commandeer the developer's checkout.
+    const { branch, baseBranch } = await this.resolveLaunchParams(
+      project,
+      task.title,
+      prefix,
+      true,
+      undefined,
+      task.branch ?? project.defaultBranch,
+    );
+    const session = this.registry.createSession({
+      projectId: project.id,
+      taskId: task.id,
+      name: task.title,
+      task: task.description ?? task.title,
+      worktreePath: "",
+      branch,
+      worktree: true,
+      baseBranch,
+      model: task.model,
+      prefix,
+      platform,
+    });
+    try {
+      return await this.launch(session, project);
+    } catch (err) {
+      this.registry.removeSession(session.id);
+      this.events.next({ type: "session_removed", sessionId: session.id });
+      // A launch that never started must not leave the card pinned to whoever failed to
+      // start it — nobody else could then pick it up. Release ONLY a claim we just made;
+      // a pre-existing assignment is somebody's deliberate state and stays. The cloud
+      // status is still `backlog` here, so `tasks_guard()` permits the write.
+      if (claimed)
+        await patchTask(client, taskId, { assigneeId: null }).catch((e: unknown) =>
+          console.warn(`[supervisor] could not release the claim on task ${taskId}: ${(e as Error).message}`),
+        );
       throw err;
     }
   }
@@ -181,8 +331,7 @@ export class SupervisorService implements OnModuleDestroy {
     const cur = this.registry.listSessions().find((x) => x.id === id);
     if (!cur) throw new Error("session not found");
     if (cur.kind !== "task" || cur.status !== "backlog") throw new Error("not a backlog task");
-    const group = this.registry.listGroups().find((g) => g.id === cur.groupId);
-    if (!group) throw new Error("group not found");
+    const project = this.boundProject(cur.projectId);
 
     if (overrides)
       this.registry.updateSession(id, {
@@ -196,10 +345,10 @@ export class SupervisorService implements OnModuleDestroy {
       });
     const edited = this.registry.listSessions().find((x) => x.id === id)!;
 
-    const { branch, baseBranch } = await this.resolveLaunchParams(group, edited.name, edited.prefix ?? "feature", edited.worktree, id, edited.baseBranch);
+    const { branch, baseBranch } = await this.resolveLaunchParams(project, edited.name, edited.prefix ?? "feature", edited.worktree, id, edited.baseBranch);
     const session = this.registry.updateSession(id, { status: "queued", kind: "agent", branch, baseBranch, worktreePath: "" });
     try {
-      return await this.launch(session, group, { images });
+      return await this.launch(session, project, { images });
     } catch (err) {
       this.registry.updateSession(id, { status: "backlog", kind: "task", branch: "", baseBranch: undefined, worktreePath: "" });
       this.pushUpdate(id);
@@ -229,13 +378,14 @@ export class SupervisorService implements OnModuleDestroy {
   }
 
   // Move a backlog task to another project. A backlog row is bound to its project only by
-  // group_id (no branch/worktree/omp child yet), so this is a pure re-parent — no git side effects.
-  moveTask(id: string, groupId: string): Session {
+  // project_id (no branch/worktree/omp child yet), so this is a pure re-parent — no git side
+  // effects, and the destination does not need a local binding yet.
+  moveTask(id: string, projectId: string): Session {
     const cur = this.registry.listSessions().find((x) => x.id === id);
     if (!cur) throw new Error("session not found");
     if (cur.kind !== "task" || cur.status !== "backlog") throw new Error("not a backlog task");
-    if (!this.registry.listGroups().some((g) => g.id === groupId)) throw new Error("group not found");
-    const saved = this.registry.updateSession(id, { groupId });
+    this.project(projectId);
+    const saved = this.registry.updateSession(id, { projectId });
     this.pushUpdate(id);
     return this.merge(saved);
   }
@@ -244,15 +394,14 @@ export class SupervisorService implements OnModuleDestroy {
   // tool subset. No branch, no worktree, no opening prompt — it spawns ready and the operator
   // sends the first message. It can later be promoted (forked) into a real agent, so a throwaway
   // exploration becomes real work without losing context.
-  async createChat(groupId: string): Promise<Session> {
-    const group = this.registry.listGroups().find((g) => g.id === groupId);
-    if (!group) throw new Error("group not found");
-    const n = this.registry.listSessions(groupId).filter((s) => s.kind === "chat").length + 1;
+  async createChat(projectId: string): Promise<Session> {
+    const project = this.boundProject(projectId);
+    const n = this.registry.listSessions(projectId).filter((s) => s.kind === "chat").length + 1;
     const session = this.registry.createSession({
-      groupId, name: `чат ${n}`, task: "", worktreePath: "", branch: "",
+      projectId, name: `чат ${n}`, task: "", worktreePath: "", branch: "",
       worktree: false, kind: "chat", status: "queued",
     });
-    const rpc = new RpcSession({ cwd: group.projectDir, tools: CHAT_TOOLS });
+    const rpc = new RpcSession({ cwd: project.localRepoPath, tools: CHAT_TOOLS });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await rpc.start();
@@ -284,8 +433,7 @@ export class SupervisorService implements OnModuleDestroy {
     const chat = this.registry.listSessions().find((x) => x.id === chatId);
     if (!chat) throw new Error("session not found");
     if (chat.kind !== "chat") throw new Error("not a chat session");
-    const group = this.registry.listGroups().find((g) => g.id === chat.groupId);
-    if (!group) throw new Error("group not found");
+    const project = this.boundProject(chat.projectId);
 
     let chatFile = chat.ompSessionFile;
     if (!chatFile) {
@@ -302,7 +450,7 @@ export class SupervisorService implements OnModuleDestroy {
     // Everything the launcher used to ask for is derived: the chat's opening message is the
     // task, its first line the name, and the rest are the project's defaults.
     const name = taskNameFromText(chat.task) || chat.name;
-    const { branch, baseBranch } = await this.resolveLaunchParams(group, name, "feature", true, chatId);
+    const { branch, baseBranch } = await this.resolveLaunchParams(project, name, "feature", true, chatId);
     const prompt =
       `The planning discussion above is settled — implement it now.\n\n` +
       `You are no longer read-only: you have been moved out of the project directory into a ` +
@@ -325,7 +473,7 @@ export class SupervisorService implements OnModuleDestroy {
       name, kind: "agent", worktree: true, branch, baseBranch, worktreePath: "", prefix: "feature", status: "queued",
     });
     try {
-      return await this.launch(session, group, { fork: chatFile, firstPrompt: prompt });
+      return await this.launch(session, project, { fork: chatFile, firstPrompt: prompt });
     } catch (err) {
       // Back to being a chat: the row keeps its conversation, and the next message resumes its
       // read-only omp child through doResume.
@@ -342,31 +490,34 @@ export class SupervisorService implements OnModuleDestroy {
   // (createSession) and a started backlog task (startTask). excludeId keeps a task from
   // colliding with or blocking itself.
   private async resolveLaunchParams(
-    group: Group,
+    project: Project,
     name: string,
     prefix: BranchPrefix,
     worktree: boolean,
     excludeId?: string,
     requestedBase?: string,
   ): Promise<{ branch: string; baseBranch?: string }> {
+    // Belt and braces: every caller already went through boundProject, but this is the last
+    // point before git side effects, and an unbound path ("") would resolve to the api's cwd.
+    if (!project.localRepoPath) throw new Error("project not bound");
     let baseBranch: string | undefined;
     if (!worktree) {
-      if (await this.worktree.hasUncommitted(group.projectDir))
+      if (await this.worktree.hasUncommitted(project.localRepoPath))
         throw new Error("project working tree must be clean to create an in-place (non-worktree) agent");
       // A backlog task hasn't launched, so it never occupies the single in-place slot.
       const activeInPlace = this.registry
-        .listSessions(group.id)
+        .listSessions(project.id)
         .some((s) => s.id !== excludeId && !s.worktree && s.kind !== "discussion" && s.kind !== "review" && s.status !== "merged" && s.status !== "backlog");
       if (activeInPlace)
         throw new Error("an in-place agent is already active in this project — finish or delete it first");
-      baseBranch = await this.worktree.currentBranch(group.projectDir);
+      baseBranch = await this.worktree.currentBranch(project.localRepoPath);
       if (!baseBranch) throw new Error("project has a detached HEAD — checkout a branch first");
     } else {
       // Worktree agents fork from the chosen base: explicit pick > project default > current HEAD.
-      baseBranch = requestedBase ?? group.defaultBranch ?? undefined;
+      baseBranch = requestedBase ?? project.defaultBranch ?? undefined;
     }
     const existing = new Set(
-      this.registry.listSessions(group.id).filter((s) => s.id !== excludeId).map((s) => s.branch).filter(Boolean),
+      this.registry.listSessions(project.id).filter((s) => s.id !== excludeId).map((s) => s.branch).filter(Boolean),
     );
     const branch = uniqueSlug(branchName(slugify(name), prefix), existing);
     return { branch, baseBranch };
@@ -380,10 +531,11 @@ export class SupervisorService implements OnModuleDestroy {
   // registry-row rollback (remove vs return-to-backlog).
   private async launch(
     session: Session,
-    group: Group,
+    project: Project,
     opts: { images?: ImageInput[]; fork?: string; firstPrompt?: string } = {},
   ): Promise<Session> {
     const { id, branch, worktree, baseBranch, task, model } = session;
+    if (!project.localRepoPath) throw new Error("project not bound");
     const { images, fork } = opts;
     const firstPrompt = opts.firstPrompt ?? task;
     let wtDir = "";
@@ -391,21 +543,21 @@ export class SupervisorService implements OnModuleDestroy {
     try {
       if (worktree) {
         wtDir = worktreeDir(id);
-        await this.worktree.addWorktree(group.projectDir, wtDir, branch, baseBranch);
+        await this.worktree.addWorktree(project.localRepoPath, wtDir, branch, baseBranch);
         branchCreated = true;
-        await copyCarryFiles(group.projectDir, wtDir, group.carryFiles ?? [".env"]);
+        await copyCarryFiles(project.localRepoPath, wtDir, project.carryFiles ?? [".env"]);
       } else {
-        await this.worktree.createBranchHere(group.projectDir, branch);
+        await this.worktree.createBranchHere(project.localRepoPath, branch);
         branchCreated = true;
       }
     } catch (err) {
-      if (wtDir) await this.worktree.removeWorktree(group.projectDir, wtDir).catch(() => {});
-      if (branchCreated) await this.worktree.removeBranch(group.projectDir, branch).catch(() => {});
+      if (wtDir) await this.worktree.removeWorktree(project.localRepoPath, wtDir).catch(() => {});
+      if (branchCreated) await this.worktree.removeBranch(project.localRepoPath, branch).catch(() => {});
       throw err;
     }
     const saved = worktree ? this.registry.updateSession(id, { worktreePath: wtDir }) : session;
 
-    const rpc = new RpcSession({ cwd: worktree ? wtDir : group.projectDir, model, ...(fork ? { fork } : {}) });
+    const rpc = new RpcSession({ cwd: worktree ? wtDir : project.localRepoPath, model, ...(fork ? { fork } : {}) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await rpc.start();
@@ -426,11 +578,11 @@ export class SupervisorService implements OnModuleDestroy {
       this.stopPoll(live);
       await rpc.stop().catch(() => {});
       if (worktree) {
-        await this.worktree.removeWorktree(group.projectDir, wtDir).catch(() => {});
+        await this.worktree.removeWorktree(project.localRepoPath, wtDir).catch(() => {});
       } else if (baseBranch) {
-        await this.worktree.checkout(group.projectDir, baseBranch, { force: true }).catch(() => {});
+        await this.worktree.checkout(project.localRepoPath, baseBranch, { force: true }).catch(() => {});
       }
-      await this.worktree.removeBranch(group.projectDir, branch).catch(() => {});
+      await this.worktree.removeBranch(project.localRepoPath, branch).catch(() => {});
       this.map.delete(id);
       this.toolDetails.dropSession(id);
       throw err;
@@ -445,8 +597,7 @@ export class SupervisorService implements OnModuleDestroy {
   async branchSession(parentId: string): Promise<Session> {
     const s = this.registry.listSessions().find((x) => x.id === parentId);
     if (!s) throw new Error("session not found");
-    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
-    if (!g) throw new Error("group not found");
+    const g = this.boundProject(s.projectId);
     if (s.kind !== "agent") throw new Error("can only branch an agent session");
 
     let parentFile = s.ompSessionFile;
@@ -460,9 +611,9 @@ export class SupervisorService implements OnModuleDestroy {
     if (live && (live.state.status === "thinking" || live.state.status === "tool"))
       throw new Error("wait for the agent to finish its turn before branching");
 
-    const cwd = s.worktreePath || g.projectDir;
+    const cwd = s.worktreePath || g.localRepoPath;
     const child = this.registry.createSession({
-      groupId: s.groupId,
+      projectId: s.projectId,
       name: `гілка: ${s.name}`,
       task: "",
       worktreePath: "",
@@ -501,21 +652,20 @@ export class SupervisorService implements OnModuleDestroy {
   async reviewSession(parentId: string): Promise<Session> {
     const s = this.registry.listSessions().find((x) => x.id === parentId);
     if (!s) throw new Error("session not found");
-    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
-    if (!g) throw new Error("group not found");
+    const g = this.boundProject(s.projectId);
     if (s.kind !== "agent") throw new Error("only agent sessions can be reviewed");
 
     const live = this.map.get(parentId);
     if (live && (live.state.status === "thinking" || live.state.status === "tool"))
       throw new Error("wait for the agent to finish its turn before requesting a review");
 
-    const cwd = s.worktreePath || g.projectDir;
-    const base = s.worktree ? await this.worktree.currentBranch(g.projectDir) : (s.baseBranch ?? "");
+    const cwd = s.worktreePath || g.localRepoPath;
+    const base = s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : (s.baseBranch ?? "");
     const diff = await this.worktree.diff(cwd, base);
     if (!diff.trim()) throw new Error("nothing to review — the branch has no changes yet");
 
     const child = this.registry.createSession({
-      groupId: s.groupId,
+      projectId: s.projectId,
       name: `ревізія: ${s.name}`,
       task: s.task,
       worktreePath: "",
@@ -787,9 +937,8 @@ export class SupervisorService implements OnModuleDestroy {
   async resolveConflict(id: string): Promise<{ ok: true }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
-    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
-    if (!g) throw new Error("group not found");
-    const dir = s.worktreePath || g.projectDir;
+    const g = this.boundProject(s.projectId);
+    const dir = s.worktreePath || g.localRepoPath;
     const files = await this.worktree.unmergedFiles(dir);
     if (!files.length) throw new Error("no merge conflict to resolve");
     const prompt =
@@ -812,8 +961,7 @@ export class SupervisorService implements OnModuleDestroy {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     if (s.kind !== "agent") throw new Error(`only agent sessions can open a pull request (this is a ${s.kind})`);
-    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
-    if (!g) throw new Error("group not found");
+    const g = this.project(s.projectId);
 
     const baseHint = (s.baseBranch || g.defaultBranch || "").trim();
     const fallback = (g.conventions || "").trim() || DEFAULT_PR_CONVENTIONS;
@@ -879,17 +1027,17 @@ export class SupervisorService implements OnModuleDestroy {
       // No git: the child owns no branch/worktree; its cwd is the parent's.
       if (s.ompSessionFile) await rm(s.ompSessionFile, { force: true }).catch(() => {});
     } else if (s) {
-      const g = this.registry.listGroups().find((x) => x.id === s.groupId);
-      if (g) {
+      const g = this.registry.listProjects().find((x) => x.id === s.projectId);
+      if (g?.localRepoPath) {
         if (s.worktree) {
-          if (s.worktreePath) await this.worktree.removeWorktree(g.projectDir, s.worktreePath);
-        } else if (s.baseBranch && (await this.worktree.currentBranch(g.projectDir)) === s.branch) {
+          if (s.worktreePath) await this.worktree.removeWorktree(g.localRepoPath, s.worktreePath);
+        } else if (s.baseBranch && (await this.worktree.currentBranch(g.localRepoPath)) === s.branch) {
           // Restore the project to its base branch (delete discards the session's in-progress work).
           await this.worktree
-            .checkout(g.projectDir, s.baseBranch)
-            .catch(() => this.worktree.checkout(g.projectDir, s.baseBranch!, { force: true }));
+            .checkout(g.localRepoPath, s.baseBranch)
+            .catch(() => this.worktree.checkout(g.localRepoPath, s.baseBranch!, { force: true }));
         }
-        if (s.branch) await this.worktree.removeBranch(g.projectDir, s.branch);
+        if (s.branch) await this.worktree.removeBranch(g.localRepoPath, s.branch);
       }
     }
     this.registry.removeSession(id);
@@ -913,12 +1061,11 @@ export class SupervisorService implements OnModuleDestroy {
   async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[] }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
-    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
-    if (!g) throw new Error("group not found");
+    const g = this.boundProject(s.projectId);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
-    const dir = s.worktreePath || g.projectDir;
-    const target = s.worktree ? await this.worktree.currentBranch(g.projectDir) : (s.baseBranch ?? "");
-    const ahead = target ? await this.worktree.aheadCount(g.projectDir, target, s.branch) : 0;
+    const dir = s.worktreePath || g.localRepoPath;
+    const target = s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : (s.baseBranch ?? "");
+    const ahead = target ? await this.worktree.aheadCount(g.localRepoPath, target, s.branch) : 0;
     const dirty = await this.worktree.hasUncommitted(dir);
     const conflicts = await this.worktree.unmergedFiles(dir);
     return { branch: s.branch, target, ahead, dirty, conflicts };
@@ -931,14 +1078,13 @@ export class SupervisorService implements OnModuleDestroy {
   async finishSession(id: string): Promise<{ merged: true; into: string } | { conflict: true; files: string[] }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
-    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
-    if (!g) throw new Error("group not found");
+    const g = this.boundProject(s.projectId);
     if (s.kind !== "agent")
       throw new Error(`${s.kind} branches can't be finished — merge or discard instead`);
 
     if (s.worktree) {
       if (!s.worktreePath) throw new Error("session has no worktree");
-      const target = await this.worktree.currentBranch(g.projectDir);
+      const target = await this.worktree.currentBranch(g.localRepoPath);
       if (!target) throw new Error("project repo has a detached HEAD - checkout a branch first");
       if (target === s.branch) throw new Error("project repo is on the session branch itself");
       // A prior conflict left the worktree mid-merge — it must be resolved before retrying.
@@ -946,7 +1092,7 @@ export class SupervisorService implements OnModuleDestroy {
         throw new Error("worktree has unresolved conflicts - resolve them in the editor first");
       if (await this.worktree.hasUncommitted(s.worktreePath))
         await this.worktree.commitAll(s.worktreePath, `session work: ${s.name}`);
-      const res = await this.worktree.mergeBranch(g.projectDir, s.branch, `merge session: ${s.name}`);
+      const res = await this.worktree.mergeBranch(g.localRepoPath, s.branch, `merge session: ${s.name}`);
       if (!res.ok) {
         if (!res.conflict) throw new Error(res.message); // e.g. dirty project tree
         // Pull the target into the worktree so the conflict can be resolved there.
@@ -957,38 +1103,38 @@ export class SupervisorService implements OnModuleDestroy {
       }
       const l = this.map.get(id);
       if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); this.toolDetails.dropSession(id); }
-      await this.worktree.removeWorktree(g.projectDir, s.worktreePath);
-      await this.worktree.removeBranch(g.projectDir, s.branch);
+      await this.worktree.removeWorktree(g.localRepoPath, s.worktreePath);
+      await this.worktree.removeBranch(g.localRepoPath, s.branch);
       this.registry.updateSession(id, { status: "merged", worktreePath: "" });
       this.pushUpdate(id);
       return { merged: true, into: target };
     }
 
-    // In-place: projectDir is checked out on the session branch. Merge it into base.
+    // In-place: the local repo is checked out on the session branch. Merge it into base.
     const base = s.baseBranch;
     if (!base) throw new Error("in-place session has no base branch");
-    const cur = await this.worktree.currentBranch(g.projectDir);
+    const cur = await this.worktree.currentBranch(g.localRepoPath);
     if (cur !== s.branch)
       throw new Error(`project is not on ${s.branch} (on ${cur || "detached HEAD"}) - switch to it first`);
-    if ((await this.worktree.unmergedFiles(g.projectDir)).length)
+    if ((await this.worktree.unmergedFiles(g.localRepoPath)).length)
       throw new Error("project has unresolved conflicts - resolve them first");
-    if (await this.worktree.hasUncommitted(g.projectDir))
-      await this.worktree.commitAll(g.projectDir, `session work: ${s.name}`);
+    if (await this.worktree.hasUncommitted(g.localRepoPath))
+      await this.worktree.commitAll(g.localRepoPath, `session work: ${s.name}`);
 
-    await this.worktree.checkout(g.projectDir, base);
-    const res = await this.worktree.mergeBranch(g.projectDir, s.branch, `merge session: ${s.name}`);
+    await this.worktree.checkout(g.localRepoPath, base);
+    const res = await this.worktree.mergeBranch(g.localRepoPath, s.branch, `merge session: ${s.name}`);
     if (!res.ok) {
       // Restore onto the session branch; on a content conflict leave markers there to resolve.
-      await this.worktree.checkout(g.projectDir, s.branch);
+      await this.worktree.checkout(g.localRepoPath, s.branch);
       if (!res.conflict) throw new Error(res.message);
-      await this.worktree.mergeInto(g.projectDir, base);
+      await this.worktree.mergeInto(g.localRepoPath, base);
       this.registry.updateSession(id, { status: "conflict" });
       this.pushUpdate(id);
-      return { conflict: true, files: await this.worktree.unmergedFiles(g.projectDir) };
+      return { conflict: true, files: await this.worktree.unmergedFiles(g.localRepoPath) };
     }
     const l = this.map.get(id);
     if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); this.toolDetails.dropSession(id); }
-    await this.worktree.removeBranch(g.projectDir, s.branch); // projectDir left on base
+    await this.worktree.removeBranch(g.localRepoPath, s.branch); // the local repo is left on base
     this.registry.updateSession(id, { status: "merged" });
     this.pushUpdate(id);
     return { merged: true, into: base };
@@ -1000,19 +1146,18 @@ export class SupervisorService implements OnModuleDestroy {
   async reopenSession(id: string): Promise<Session> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
-    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
-    if (!g) throw new Error("group not found");
+    const g = this.boundProject(s.projectId);
     if (s.kind !== "agent") throw new Error(`${s.kind} sessions can't be reopened`);
     if (!s.worktree) throw new Error("in-place sessions can't be reopened — create a new task");
     if (s.worktreePath) throw new Error("session already has a worktree");
     const { branch, baseBranch } = await this.resolveLaunchParams(g, s.name, s.prefix ?? "feature", true, id, s.baseBranch);
     const wtDir = worktreeDir(id);
     try {
-      await this.worktree.addWorktree(g.projectDir, wtDir, branch, baseBranch);
-      await copyCarryFiles(g.projectDir, wtDir, g.carryFiles ?? [".env"]);
+      await this.worktree.addWorktree(g.localRepoPath, wtDir, branch, baseBranch);
+      await copyCarryFiles(g.localRepoPath, wtDir, g.carryFiles ?? [".env"]);
     } catch (err) {
-      await this.worktree.removeWorktree(g.projectDir, wtDir).catch(() => {});
-      await this.worktree.removeBranch(g.projectDir, branch).catch(() => {});
+      await this.worktree.removeWorktree(g.localRepoPath, wtDir).catch(() => {});
+      await this.worktree.removeBranch(g.localRepoPath, branch).catch(() => {});
       throw err;
     }
     const next = this.registry.updateSession(id, { status: "done", branch, baseBranch, worktreePath: wtDir });
@@ -1024,9 +1169,9 @@ export class SupervisorService implements OnModuleDestroy {
   openInEditor(id: string): { ok: true } {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
-    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
-    if (!g) throw new Error("group not found");
-    const dir = s.worktreePath || g.projectDir;
+    const g = this.registry.listProjects().find((x) => x.id === s.projectId);
+    const dir = s.worktreePath || g?.localRepoPath;
+    if (!dir) throw new Error("project not bound");
     const editor = process.env.KERMANYCH_EDITOR || "code";
     const child = spawn(editor, [dir], { detached: true, stdio: "ignore" });
     child.on("error", () => {}); // editor binary missing — swallow, don't crash the api
@@ -1089,12 +1234,11 @@ export class SupervisorService implements OnModuleDestroy {
   private async doResume(id: string): Promise<Live> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
-    const g = this.registry.listGroups().find((x) => x.id === s.groupId);
-    if (!g) throw new Error("group not found");
+    const g = this.boundProject(s.projectId);
     if (s.kind === "agent" && s.worktree && !s.worktreePath)
       throw new Error("session was merged and its worktree retired — reopen it to continue");
-    const dir = s.worktreePath || g.projectDir;
-    if (s.kind === "agent" && !s.worktree && (await this.worktree.currentBranch(g.projectDir)) !== s.branch)
+    const dir = s.worktreePath || g.localRepoPath;
+    if (s.kind === "agent" && !s.worktree && (await this.worktree.currentBranch(g.localRepoPath)) !== s.branch)
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
     const rpc = new RpcSession({ cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}) });
     const live = this.wireLive(id, rpc, s.status);

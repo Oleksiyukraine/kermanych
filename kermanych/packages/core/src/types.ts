@@ -7,7 +7,11 @@ export type SessionStatus =
 export type TodoTask = { id: string; content: string; status: "pending" | "in_progress" | "completed" | string };
 export type TodoPhase = { id: string; name: string; tasks: TodoTask[] };
 
-export type Group = { id: string; name: string; projectDir: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string; createdAt: string };
+// A project is a CLOUD entity (Supabase `projects`); this shape is the LOCAL row:
+// `id` is the cloud project UUID, `localRepoPath` is THIS machine's binding ("" when
+// unbound), and the rest is an offline cache of the cloud config so launching never
+// needs the network (design D1 / Requirement 7).
+export type Project = { id: string; name: string; localRepoPath: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string; createdAt: string };
 
 export type EnvEntry = { key: string; value: string };
 export type EnvFileView = { entries: EnvEntry[]; ignored: boolean };
@@ -16,7 +20,9 @@ export type DirEntry = { name: string; isRepo: boolean };
 export type DirListing = { path: string; parent: string | null; entries: DirEntry[] };
 
 export type Session = {
-  id: string; groupId: string; name: string; task: string;
+  id: string; projectId: string; name: string; task: string;
+  // The cloud task this session executes, when it was launched from the board.
+  taskId?: string;
   worktreePath: string; branch: string;
   worktree: boolean; baseBranch?: string;
   model?: string; prefix?: BranchPrefix; platform?: Platform;
@@ -111,7 +117,7 @@ export type RpcEvent =
 
 // Server -> client WebSocket messages
 export type ServerEvent =
-  | { type: "snapshot"; groups: Group[]; sessions: Session[] }
+  | { type: "snapshot"; projects: Project[]; sessions: Session[] }
   | { type: "session_update"; session: Session }
   | { type: "transcript_append"; sessionId: string; entry: TranscriptEntry }
   | { type: "transcript_reset"; sessionId: string; entries: TranscriptEntry[] }
@@ -121,6 +127,6 @@ export type ServerEvent =
   // the client would keep the call-time value while the server's transcript shows the better
   // one. The full line list stays on the API behind GET /sessions/:id/tools/:callId.
   | { type: "transcript_update"; sessionId: string; id: string; status: "ok" | "error"; target?: string; stat?: string; count?: number; ms?: number; detail?: ToolDetail }
-  | { type: "group_update"; group: Group }
+  | { type: "project_update"; project: Project }
   | { type: "session_removed"; sessionId: string }
-  | { type: "group_removed"; groupId: string };
+  | { type: "project_removed"; projectId: string };

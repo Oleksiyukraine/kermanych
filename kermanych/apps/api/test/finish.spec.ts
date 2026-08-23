@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RegistryService } from "../src/registry/registry.service";
+import { offlineAuth } from "./offline-auth";
 import { WorktreeService } from "../src/worktree/worktree.service";
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 
@@ -27,22 +28,22 @@ beforeEach(() => {
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "base");
   reg = new RegistryService(":memory:");
-  sup = new SupervisorService(reg, wt);
+  sup = new SupervisorService(reg, wt, offlineAuth());
 });
 afterEach(() => {
   for (const d of trash) rmSync(d, { recursive: true, force: true });
 });
 
-// Seed a group + session with a real worktree branched off `dev`; `mutate` runs work
+// Seed a project + session with a real worktree branched off `dev`; `mutate` runs work
 // inside the worktree before the session row is created.
 async function seed(mutate: (wtDir: string) => void): Promise<{ id: string; wtDir: string }> {
-  const g = reg.createGroup({ name: "g", projectDir: repo });
+  const g = reg.upsertProject({ id: "p1", name: "g", localRepoPath: repo });
   const parent = mkdtempSync(join(tmpdir(), "kmq-finish-wt-"));
   trash.push(parent);
   const wtDir = join(parent, "wt"); // non-existing path — `git worktree add` creates it
   await wt.addWorktree(repo, wtDir, "kermanych/s1");
   mutate(wtDir);
-  const s = reg.createSession({ groupId: g.id, name: "task one", task: "t", worktreePath: wtDir, branch: "kermanych/s1" });
+  const s = reg.createSession({ projectId: g.id, name: "task one", task: "t", worktreePath: wtDir, branch: "kermanych/s1" });
   return { id: s.id, wtDir };
 }
 
@@ -141,11 +142,11 @@ test("finishInfo reports target branch, ahead count, and dirty flag", async () =
 
 // In-place: the session branch lives in the project repo itself (no worktree).
 async function seedInPlace(mutate: () => void): Promise<{ id: string }> {
-  const g = reg.createGroup({ name: "g", projectDir: repo });
+  const g = reg.upsertProject({ id: "p1", name: "g", localRepoPath: repo });
   await wt.createBranchHere(repo, "feature/s1"); // repo now checked out on the session branch
   mutate();
   const s = reg.createSession({
-    groupId: g.id, name: "task one", task: "t",
+    projectId: g.id, name: "task one", task: "t",
     worktreePath: "", branch: "feature/s1", worktree: false, baseBranch: "dev",
   });
   return { id: s.id };

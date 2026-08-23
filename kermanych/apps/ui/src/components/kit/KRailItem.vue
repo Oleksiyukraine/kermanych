@@ -1,37 +1,74 @@
-<template>
-  <button
-    class="k-rail"
-    :class="{ 'k-rail--active': active, 'k-rail--colored': !!group.color }"
-    type="button"
-    v-tip="group.name"
-    :aria-label="group.name"
-    :aria-pressed="active"
-    :style="group.color ? { '--rail-color': group.color } : undefined"
-  >
-    <span class="k-rail__initials mono">{{ initials }}</span>
-    <span v-if="count > 0" class="k-rail__count mono">{{ count }}</span>
-  </button>
-</template>
+<script lang="ts">
+// The rail tile's view model. MainLayout builds it by joining the CLOUD project list (what
+// exists for the whole team) with the LOCAL project rows (what this machine can actually
+// run), so the tile renders the binding state without importing either store:
+//   bound   — a local row with a localRepoPath; agents can be launched here.
+//   unbound — the project exists in the cloud, this machine has no repo for it yet.
+//   orphan  — a local row whose cloud project is gone (sync's prune kept it because it
+//             still owns sessions); its agents stay usable, nothing new should start.
+export type RailProject = {
+  id: string;
+  name: string;
+  color?: string | undefined;
+  state: 'bound' | 'unbound' | 'orphan';
+};
+</script>
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { Group } from '@kermanych/core';
 
-// A project tile in the left rail (design-system section 07). Initials stand in
-// for the group; the count badge is the number of running agents. Active tile
-// gets surface2 and a 2px accent strip on the left edge.
-const props = defineProps<{ group: Group; active?: boolean; count?: number }>();
+// A project tile in the left rail (design-system section 07). Initials stand in for the
+// project, the count badge is the number of running agents, and the corner glyph is the
+// binding state. Active tile gets surface2 and a 2px accent strip on the left edge.
+const props = defineProps<{ project: RailProject; active?: boolean; count?: number }>();
 
 const count = computed(() => props.count ?? 0);
 
+// Ukrainian copy for the two states worth naming; a bound project needs no explanation.
+const STATE_HINT: Record<RailProject['state'], string> = {
+  bound: '',
+  unbound: ' · не прив’язано',
+  orphan: ' · поза хмарою',
+};
+
+const STATE_GLYPH: Record<RailProject['state'], string> = {
+  bound: '',
+  unbound: '○',
+  orphan: '⚠',
+};
+
+const title = computed(() => props.project.name + STATE_HINT[props.project.state]);
+
 const initials = computed(() => {
-  const words = props.group.name.trim().split(/[\s/_-]+/).filter(Boolean);
+  const words = props.project.name.trim().split(/[\s/_-]+/).filter(Boolean);
   const [first, second] = words;
   if (!first) return '·';
   if (!second) return first.slice(0, 2).toUpperCase();
   return ((first[0] ?? '') + (second[0] ?? '')).toUpperCase();
 });
 </script>
+
+<template>
+  <button
+    class="k-rail"
+    :class="{
+      'k-rail--active': active,
+      'k-rail--colored': !!project.color,
+      'k-rail--unbound': project.state === 'unbound',
+      'k-rail--orphan': project.state === 'orphan',
+    }"
+    type="button"
+    :title="title"
+    :aria-pressed="active"
+    :style="project.color ? { '--rail-color': project.color } : undefined"
+  >
+    <span class="k-rail__initials mono">{{ initials }}</span>
+    <span v-if="count > 0" class="k-rail__count mono">{{ count }}</span>
+    <span v-if="project.state !== 'bound'" class="k-rail__state mono" aria-hidden="true">
+      {{ STATE_GLYPH[project.state] }}
+    </span>
+  </button>
+</template>
 
 <style scoped lang="scss">
 .k-rail {
@@ -80,6 +117,25 @@ const initials = computed(() => {
 
 .k-rail--colored::before {
   background: var(--rail-color);
+}
+
+// binding state — dashed frame while this machine has no repo, accent frame for a row the
+// cloud no longer lists.
+.k-rail--unbound {
+  border-style: dashed;
+}
+
+.k-rail--orphan {
+  border-color: var(--k-accent);
+}
+
+.k-rail__state {
+  position: absolute;
+  bottom: -1px;
+  right: 1px;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--k-muted);
 }
 
 .k-rail__initials {

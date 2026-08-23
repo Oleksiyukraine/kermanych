@@ -28,6 +28,7 @@ vi.mock("../src/rpc/rpc-session", () => {
 
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
+import { offlineAuth } from "./offline-auth";
 
 function make() {
   const registry = new RegistryService(":memory:");
@@ -35,7 +36,7 @@ function make() {
     isGitRepo: vi.fn().mockResolvedValue(true),
     currentBranch: vi.fn().mockResolvedValue("main"),
   } as unknown as WorktreeService;
-  const sup = new SupervisorService(registry, worktree);
+  const sup = new SupervisorService(registry, worktree, offlineAuth());
   return { sup, registry };
 }
 
@@ -44,8 +45,8 @@ beforeEach(() => { instances.length = 0; });
 describe("restartSession", () => {
   it("kills the running child and respawns a fresh one", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const s = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(s.id, { ompSessionFile: "/tmp/s.jsonl", status: "done" });
 
     // Bring up a live child (resume on the first send) — this is the "wedged" one.
@@ -62,8 +63,8 @@ describe("restartSession", () => {
 
   it("resumes a dormant session that has no live child", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const s = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(s.id, { ompSessionFile: "/tmp/s.jsonl", status: "done" });
 
     await sup.restartSession(s.id); // no Live yet → just spawns

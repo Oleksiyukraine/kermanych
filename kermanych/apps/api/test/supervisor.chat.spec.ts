@@ -37,6 +37,7 @@ vi.mock("../src/rpc/rpc-session", () => {
 
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
+import { offlineAuth } from "./offline-auth";
 
 function make() {
   const registry = new RegistryService(":memory:");
@@ -52,7 +53,7 @@ function make() {
     currentBranch: vi.fn().mockResolvedValue("main"),
     hasUncommitted: vi.fn().mockResolvedValue(false),
   };
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService);
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth());
   return { sup, registry, worktree };
 }
 
@@ -63,8 +64,8 @@ beforeEach(() => {
 
 // A chat that has already been talked to: a live omp child, a recorded session file, and its
 // opening message on the row — the state the "start implementing" button promotes from.
-async function discussedChat(sup: SupervisorService, groupId: string, opening: string) {
-  const chat = await sup.createChat(groupId);
+async function discussedChat(sup: SupervisorService, projectId: string, opening: string) {
+  const chat = await sup.createChat(projectId);
   await sup.sendMessage(chat.id, opening, "prompt");
   return chat;
 }
@@ -72,7 +73,7 @@ async function discussedChat(sup: SupervisorService, groupId: string, opening: s
 describe("createChat", () => {
   it("creates a read-only chat in the project dir with no git", async () => {
     const { sup, registry, worktree } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
 
     const chat = await sup.createChat(g.id);
 
@@ -89,7 +90,7 @@ describe("createChat", () => {
 describe("chat opening message", () => {
   it("is recorded on the row so a promoted agent carries a task", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await sup.createChat(g.id);
 
     await sup.sendMessage(chat.id, "Додати експорт у CSV", "prompt");
@@ -103,7 +104,7 @@ describe("chat opening message", () => {
 describe("promoteChatToAgent", () => {
   it("turns the chat row itself into a worktree agent", async () => {
     const { sup, registry, worktree } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await discussedChat(sup, g.id, "Додати експорт у CSV");
 
     const agent = await sup.promoteChatToAgent(chat.id);
@@ -118,7 +119,7 @@ describe("promoteChatToAgent", () => {
 
   it("names the agent and its branch after the chat's opening message", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await discussedChat(sup, g.id, "Додати експорт у CSV\nдеталі нижче");
 
     const agent = await sup.promoteChatToAgent(chat.id);
@@ -129,7 +130,7 @@ describe("promoteChatToAgent", () => {
 
   it("falls back to the chat's own name when nothing was asked yet", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await sup.createChat(g.id);
 
     const agent = await sup.promoteChatToAgent(chat.id);
@@ -140,7 +141,7 @@ describe("promoteChatToAgent", () => {
 
   it("continues the chat's conversation with full tools and starts implementing at once", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await discussedChat(sup, g.id, "Додати експорт у CSV");
 
     const agent = await sup.promoteChatToAgent(chat.id);
@@ -157,7 +158,7 @@ describe("promoteChatToAgent", () => {
 
   it("restores the chat when the worktree cannot be created", async () => {
     const { sup, registry, worktree } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await discussedChat(sup, g.id, "Додати експорт у CSV");
     worktree.addWorktree.mockRejectedValueOnce(new Error("worktree add failed"));
 
@@ -172,9 +173,9 @@ describe("promoteChatToAgent", () => {
 
   it("rejects promotion before the chat has an omp session", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = registry.createSession({
-      groupId: g.id, name: "чат 1", task: "", worktreePath: "", branch: "",
+      projectId: g.id, name: "чат 1", task: "", worktreePath: "", branch: "",
       worktree: false, kind: "chat",
     });
     await expect(sup.promoteChatToAgent(chat.id)).rejects.toThrow(/omp session/i);

@@ -1,0 +1,7 @@
+# Supabase CLI local artifacts — never committed.
+.branches
+.temp
+# Any locally-kept provider secret file. Secrets belong in your shell environment;
+# this line exists so an accidental drop here cannot be committed.
+.env
+.env.local

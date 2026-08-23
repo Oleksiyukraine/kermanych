@@ -1,5 +1,5 @@
 // apps/api/src/http/sessions.controller.ts
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from "@nestjs/common";
 import type { BranchPrefix, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { RegistryService } from "../registry/registry.service";
@@ -14,26 +14,40 @@ export class SessionsController {
   ) {}
 
   @Get()
-  list(@Query("groupId") groupId?: string) {
-    return this.reg.listSessions(groupId);
+  list(@Query("projectId") projectId?: string) {
+    return this.reg.listSessions(projectId);
   }
 
   @Post()
   async create(
     @Body()
-    b: { groupId: string; name: string; task: string; model?: string; images?: ImageInput[]; worktree?: boolean; prefix?: BranchPrefix; platform?: Platform; asTask?: boolean; baseBranch?: string },
+    b: { projectId: string; name: string; task: string; model?: string; images?: ImageInput[]; worktree?: boolean; prefix?: BranchPrefix; platform?: Platform; asTask?: boolean; baseBranch?: string },
   ) {
     try {
-      return await this.sup.createSession(b.groupId, b.name, b.task, b.model, b.images, b.worktree ?? true, b.prefix ?? "feature", b.asTask ?? false, b.platform, b.baseBranch);
+      return await this.sup.createSession(b.projectId, b.name, b.task, b.model, b.images, b.worktree ?? true, b.prefix ?? "feature", b.asTask ?? false, b.platform, b.baseBranch);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
   }
 
   @Post("chat")
-  async createChat(@Body() b: { groupId: string }) {
+  async createChat(@Body() b: { projectId: string }) {
     try {
-      return await this.sup.createChat(b.groupId);
+      return await this.sup.createChat(b.projectId);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  // A literal segment, so it MUST be declared above the `:id` block — Nest matches in
+  // declaration order and `:id/...` would otherwise swallow `from-task` (same reason
+  // `@Post("chat")` sits above `@Post(":id/start")`).
+  // The task id is the ONLY input: who may run it comes from the guard's cached token,
+  // never from the request body.
+  @Post("from-task")
+  async createFromTask(@Body() b: { taskId: string }, @Req() req: { user: { id: string } }) {
+    try {
+      return await this.sup.createSessionFromTask(b.taskId, req.user.id);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
@@ -75,9 +89,9 @@ export class SessionsController {
   }
 
   @Post(":id/move")
-  move(@Param("id") id: string, @Body() b: { groupId: string }) {
+  move(@Param("id") id: string, @Body() b: { projectId: string }) {
     try {
-      return this.sup.moveTask(id, b.groupId);
+      return this.sup.moveTask(id, b.projectId);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }

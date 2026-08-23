@@ -6,7 +6,7 @@ import { defineConfig } from '#q-app/wrappers';
 export default defineConfig((ctx) => {
   return {
     // app boot files (/src/boot) — order matters
-    boot: ['tokens', 'tip'],
+    boot: ['tokens', 'tip', 'supabase'],
 
     // global CSS (/src/css)
     css: ['app.scss'],
@@ -34,13 +34,14 @@ export default defineConfig((ctx) => {
         viteConf.build ??= {};
         viteConf.build.commonjsOptions = {
           ...viteConf.build.commonjsOptions,
-          include: [/node_modules/, /packages[/\\]core[/\\]dist/],
+          include: [/node_modules/, /packages[/\\]core[/\\]dist/, /packages[/\\]cloud[/\\]dist/],
         };
         viteConf.optimizeDeps ??= {};
         viteConf.optimizeDeps.include = [
           ...(viteConf.optimizeDeps.include ?? []),
           '@kermanych/core',
           '@kermanych/core/status',
+          '@kermanych/cloud',
         ];
         // Dev only: never serve a stale prebundle of the freshly-built core dist.
         if (ctx.dev) viteConf.optimizeDeps.force = true;

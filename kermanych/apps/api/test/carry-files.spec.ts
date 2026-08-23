@@ -26,7 +26,7 @@ test("copies existing files (incl. nested), skips missing", async () => {
   expect(existsSync(join(wt, ".env.local"))).toBe(false);
 });
 
-test("skips entries that escape projectDir; still copies confined files", async () => {
+test("skips entries that escape the repo path; still copies confined files", async () => {
   writeFileSync(join(proj, ".env"), "A=1\n");
   // Absolute escaping path: src=resolve(base, outside) stays OUTSIDE proj,
   // but dest=join(wt, outside) would land INSIDE wt without the guard.

@@ -31,17 +31,18 @@ export class PreviewService implements OnModuleDestroy {
     if (existing) return { url: existing.url };
     const s = this.registry.listSessions().find((x) => x.id === sessionId);
     if (!s) throw new Error("session not found");
-    const group = this.registry.listGroups().find((g) => g.id === s.groupId);
-    if (!group) throw new Error("group not found");
-    const dir = s.worktreePath || group.projectDir;
-    if (!group.previewCommand) return { needsCommand: true };
+    const project = this.registry.listProjects().find((p) => p.id === s.projectId);
+    if (!project) throw new Error("project not found");
+    const dir = s.worktreePath || project.localRepoPath;
+    if (!dir) throw new Error("project not bound");
+    if (!project.previewCommand) return { needsCommand: true };
 
     const procs: ChildProcess[] = [];
     try {
       let apiPort: number | undefined;
-      if (group.apiCommand) {
+      if (project.apiCommand) {
         apiPort = await freePort();
-        const api = this.spawnCmd(group.apiCommand, dir, {
+        const api = this.spawnCmd(project.apiCommand, dir, {
           PORT: String(apiPort),
           // Isolated DB so a Kermanych-on-Kermanych preview never shares the main registry.
           KERMANYCH_DB: join(tmpdir(), "kermanych-preview", `${sessionId}.sqlite`),
@@ -56,7 +57,7 @@ export class PreviewService implements OnModuleDestroy {
         webEnv.API_PORT = String(apiPort);
         webEnv.VITE_API_BASE = `http://localhost:${apiPort}/api`;
       }
-      const web = this.spawnCmd(group.previewCommand, dir, webEnv);
+      const web = this.spawnCmd(project.previewCommand, dir, webEnv);
       procs.push(web);
       const webPort = await discoverPort(web, 120_000);
       const url = `http://localhost:${webPort}`;

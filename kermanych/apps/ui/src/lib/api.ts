@@ -5,7 +5,7 @@ import type {
   Platform,
   DirListing,
   ImageInput,
-  Group,
+  Project,
   EnvFileView,
   Session,
   TaskDraft,
@@ -13,11 +13,33 @@ import type {
   ToolLine,
   RpcExtensionUIResponse,
 } from '@kermanych/core';
+import type { CloudProject } from '@kermanych/cloud';
 
 const BASE =
   (typeof window !== 'undefined' && window.kermanych?.apiBase) ||
   import.meta.env.VITE_API_BASE ||
   'http://localhost:4317/api';
+
+// The local API is guarded by SupabaseAuthGuard: every route except
+// POST /auth/session needs the user's Supabase access token. boot/supabase.ts
+// pushes the token in here on every auth state change, so this module never
+// imports the auth store (that would be circular: store → api → store).
+let authToken: string | undefined;
+let onUnauthorized: (() => void) | undefined;
+
+export function setAuthToken(token: string | undefined): void {
+  authToken = token;
+}
+
+export function setUnauthorizedHandler(fn: () => void): void {
+  onUnauthorized = fn;
+}
+
+function authHeaders(json: boolean): Record<string, string> {
+  const h: Record<string, string> = json ? { 'content-type': 'application/json' } : {};
+  if (authToken) h.authorization = `Bearer ${authToken}`;
+  return h;
+}
 
 export type MessageMode = 'prompt' | 'follow_up' | 'steer';
 
@@ -25,6 +47,10 @@ export type MessageMode = 'prompt' | 'follow_up' | 'steer';
 // error bodies look like { statusCode, message, error }; message may be a
 // string or an array of validation strings. Fall back to statusText.
 async function toError(r: Response): Promise<Error> {
+  // 401 means the cached token on the api no longer matches ours (expired
+  // refresh, another machine signed out, api restarted with a cleared cache).
+  // One hook, one place: every helper below funnels its failures through here.
+  if (r.status === 401) onUnauthorized?.();
   const text = await r.text();
   let message = r.statusText || `HTTP ${r.status}`;
   if (text) {
@@ -47,7 +73,7 @@ async function toError(r: Response): Promise<Error> {
 async function post<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(BASE + path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: authHeaders(true),
     body: JSON.stringify(body),
   });
   if (!r.ok) throw await toError(r);
@@ -57,7 +83,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const r = await fetch(BASE + path);
+  const r = await fetch(BASE + path, { headers: authHeaders(false) });
   if (!r.ok) throw await toError(r);
   return (await r.json()) as T;
 }
@@ -65,7 +91,25 @@ async function get<T>(path: string): Promise<T> {
 async function put<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(BASE + path, {
     method: 'PUT',
-    headers: { 'content-type': 'application/json' },
+    headers: authHeaders(true),
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw await toError(r);
+  return (await r.json()) as T;
+}
+
+// DELETE and PATCH used to be hand-rolled at five call sites, two of which never
+// checked r.ok. Two helpers instead, so the Authorization header and the 401 hook
+// cannot be forgotten at a new call site.
+async function del(path: string): Promise<void> {
+  const r = await fetch(BASE + path, { method: 'DELETE', headers: authHeaders(false) });
+  if (!r.ok) throw await toError(r);
+}
+
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(BASE + path, {
+    method: 'PATCH',
+    headers: authHeaders(true),
     body: JSON.stringify(body),
   });
   if (!r.ok) throw await toError(r);
@@ -73,16 +117,25 @@ async function put<T>(path: string, body: unknown): Promise<T> {
 }
 
 export const api = {
-  createGroup: (name: string, projectDir: string, carryFiles?: string[]): Promise<Group> =>
-    post<Group>('/groups', { name, projectDir, carryFiles }),
+  // LOCAL project rows. Creation and deletion live in the cloud (see stores/projects.ts);
+  // these routes cache cloud config and own this machine's binding.
+  listProjects: (): Promise<Project[]> => get<Project[]>('/projects'),
 
-  deleteGroup: async (id: string): Promise<void> => {
-    const r = await fetch(`${BASE}/groups/${id}`, { method: 'DELETE' });
-    if (!r.ok) throw await toError(r);
-  },
+  patchProject: (
+    id: string,
+    body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string },
+  ): Promise<Project> => patchJson<Project>(`/projects/${id}`, body),
+
+  setProjectBinding: (id: string, localRepoPath: string): Promise<Project> =>
+    put<Project>(`/projects/${id}/binding`, { localRepoPath }),
+
+  // `prune` is only safe when `projects` is the FULL cloud list; a single-project refresh
+  // must leave it false or it would sweep every other cached row.
+  syncProjects: (projects: CloudProject[], prune = false): Promise<Project[]> =>
+    post<Project[]>('/projects/sync', { projects, prune }),
 
   createSession: (
-    groupId: string,
+    projectId: string,
     name: string,
     task: string,
     model?: string,
@@ -93,10 +146,20 @@ export const api = {
     platform?: Platform,
     baseBranch?: string,
   ): Promise<Session> =>
-    post<Session>('/sessions', { groupId, name, task, model, images, worktree, prefix, platform, asTask, baseBranch }),
+    post<Session>('/sessions', { projectId, name, task, model, images, worktree, prefix, platform, asTask, baseBranch }),
 
-  createChat: (groupId: string): Promise<Session> =>
-    post<Session>('/sessions/chat', { groupId }),
+  createChat: (projectId: string): Promise<Session> =>
+    post<Session>('/sessions/chat', { projectId }),
+
+  // The user is NOT sent: the api takes it from the guard's cached token, so a board
+  // client cannot launch a task on somebody else's behalf.
+  createSessionFromTask: (taskId: string): Promise<Session> =>
+    post<Session>('/sessions/from-task', { taskId }),
+
+  // How many status pushes THIS machine still owes the cloud. Only the local process can
+  // see that, so the board polls it (see the api controller for why it is not an event).
+  cloudOutbox: (): Promise<{ pending: number }> =>
+    get<{ pending: number }>('/cloud/outbox'),
 
   promoteChat: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/promote`, {}),
@@ -110,8 +173,8 @@ export const api = {
   stopSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/stop`, {}),
 
-  deleteSession: (id: string): Promise<Response> =>
-    fetch(`${BASE}/sessions/${id}`, { method: 'DELETE' }),
+  // Was Promise<Response> with no r.ok check; now it throws like every sibling.
+  deleteSession: (id: string): Promise<void> => del(`/sessions/${id}`),
 
   loadTranscript: (id: string): Promise<TranscriptEntry[]> =>
     get<TranscriptEntry[]>(`/sessions/${id}/transcript`),
@@ -122,35 +185,21 @@ export const api = {
   listDirs: (path?: string): Promise<DirListing> =>
     get<DirListing>(`/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`),
 
-  updateGroup: async (
-    id: string,
-    patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string },
-  ): Promise<Group> => {
-    const r = await fetch(`${BASE}/groups/${id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    if (!r.ok) throw await toError(r);
-    return (await r.json()) as Group;
-  },
-
   listBranches: (id: string): Promise<{ branches: string[]; current: string; default: string | null }> =>
-    get<{ branches: string[]; current: string; default: string | null }>(`/groups/${id}/branches`),
+    get<{ branches: string[]; current: string; default: string | null }>(`/projects/${id}/branches`),
 
   getEnv: (id: string, file?: string): Promise<EnvFileView> =>
-    get<EnvFileView>(`/groups/${id}/env${file ? `?file=${encodeURIComponent(file)}` : ''}`),
+    get<EnvFileView>(`/projects/${id}/env${file ? `?file=${encodeURIComponent(file)}` : ''}`),
 
   saveEnv: (
     id: string,
-    patch: { file?: string; set?: Record<string, string>; remove?: string[] },
-  ): Promise<EnvFileView> => put<EnvFileView>(`/groups/${id}/env`, patch),
+    edits: { file?: string; set?: Record<string, string>; remove?: string[] },
+  ): Promise<EnvFileView> => put<EnvFileView>(`/projects/${id}/env`, edits),
 
   startPreview: (id: string): Promise<{ url?: string; needsCommand?: boolean }> =>
     post(`/sessions/${id}/preview`, {}),
 
-  stopPreview: (id: string): Promise<void> =>
-    fetch(`${BASE}/sessions/${id}/preview`, { method: 'DELETE' }).then(() => undefined),
+  stopPreview: (id: string): Promise<void> => del(`/sessions/${id}/preview`),
 
   finishInfo: (
     id: string,
@@ -195,17 +244,17 @@ export const api = {
   startTask: (id: string, draft: TaskDraft & { images?: ImageInput[] } = {}): Promise<Session> =>
     post<Session>(`/sessions/${id}/start`, draft),
 
-  updateTask: async (id: string, patch: TaskDraft): Promise<Session> => {
-    const r = await fetch(`${BASE}/sessions/${id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    if (!r.ok) throw await toError(r);
-    return (await r.json()) as Session;
-  },
+  updateTask: (id: string, draft: TaskDraft): Promise<Session> =>
+    patchJson<Session>(`/sessions/${id}`, draft),
 
-  moveTask: (id: string, groupId: string): Promise<Session> =>
-    post<Session>(`/sessions/${id}/move`, { groupId }),
+  moveTask: (id: string, projectId: string): Promise<Session> =>
+    post<Session>(`/sessions/${id}/move`, { projectId }),
+
+  // Token handoff to the local api. POST is @Public() on the server (the UI has
+  // no bearer to present yet); DELETE and GET are guarded like everything else.
+  authSession: (accessToken: string): Promise<{ userId: string; githubUsername?: string }> =>
+    post<{ userId: string; githubUsername?: string }>('/auth/session', { accessToken }),
+
+  clearAuthSession: (): Promise<void> => del('/auth/session'),
 
 };

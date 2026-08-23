@@ -18,6 +18,7 @@ vi.mock("../src/rpc/rpc-session", () => {
 
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
+import { offlineAuth } from "./offline-auth";
 
 function make() {
   const registry = new RegistryService(":memory:");
@@ -27,7 +28,7 @@ function make() {
     createBranchHere: vi.fn(), checkout: vi.fn(), currentBranch: vi.fn().mockResolvedValue("main"),
     hasUncommitted: vi.fn().mockResolvedValue(false),
   } as any;
-  const sup = new SupervisorService(registry, worktree);
+  const sup = new SupervisorService(registry, worktree, offlineAuth());
   return { sup, registry, worktree };
 }
 
@@ -36,9 +37,9 @@ beforeEach(() => { started.length = 0; });
 describe("branchSession", () => {
   it("forks a discussion child with parent link and no git", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     // Seed a parent that already has an omp session file.
-    const parent = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const parent = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(parent.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "done" });
 
     const child = await sup.branchSession(parent.id);
@@ -52,8 +53,8 @@ describe("branchSession", () => {
 
   it("rejects branching when the parent has no omp session file", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const parent = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "", branch: "b" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const parent = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "", branch: "b" });
     await expect(sup.branchSession(parent.id)).rejects.toThrow(/omp session/i);
   });
 });

@@ -1,9 +1,10 @@
-import { app, BrowserWindow, ipcMain, dialog, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, nativeImage, shell } from 'electron';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bootstrap } from '@kermanych/api';
 import type { INestApplication } from '@nestjs/common';
+import { closeLoopback, startLoopbackOAuth } from './oauth-loopback';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -86,6 +87,13 @@ ipcMain.on('kermanych:focus', () => {
   }
 });
 
+// The renderer builds the authorize URL (the PKCE verifier must stay in its own
+// storage) and we run the round trip: open the system browser, catch the
+// loopback redirect, hand back the code. First invoke/handle pair in the app.
+ipcMain.handle('kermanych:oauth', async (_event, authorizeUrl: string) => {
+  return await startLoopbackOAuth(authorizeUrl, (url) => shell.openExternal(url));
+});
+
 void app.whenReady().then(async () => {
   try {
     if (process.platform === 'darwin' && process.env.DEV) {
@@ -110,6 +118,9 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => app.quit());
 
 app.on('before-quit', (e) => {
+  // A half-finished OAuth round trip would otherwise keep an HTTP handle open
+  // and stop the app from quitting.
+  closeLoopback();
   if (nest) {
     e.preventDefault();
     const closing = nest;

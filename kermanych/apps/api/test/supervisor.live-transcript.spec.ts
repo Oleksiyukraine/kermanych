@@ -35,6 +35,7 @@ vi.mock("../src/rpc/rpc-session", () => {
 
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
+import { offlineAuth } from "./offline-auth";
 
 function make() {
   const registry = new RegistryService(":memory:");
@@ -48,7 +49,7 @@ function make() {
     currentBranch: vi.fn().mockResolvedValue("main"),
     hasUncommitted: vi.fn().mockResolvedValue(false),
   };
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService);
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth());
   const seen: ServerEvent[] = [];
   sup.events$.subscribe((e) => seen.push(e));
   return { sup, registry, seen };
@@ -62,7 +63,7 @@ beforeEach(() => {
 describe("live transcript", () => {
   it("turns a streamed tool call into one completed row with stat, count and clamped detail", async () => {
     const { sup, registry, seen } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await sup.createChat(g.id);
 
     emit({ type: "tool_execution_start", toolName: "read", toolCallId: "c1", args: { path: "src/lib/tip.ts" }, intent: "Reading the tip helper" });
@@ -86,7 +87,7 @@ describe("live transcript", () => {
 
   it("carries the call's arguments across frames so a bash card shows the command that ran", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await sup.createChat(g.id);
 
     // Two separate callbacks — the args are gone by the time the result lands unless the
@@ -105,7 +106,7 @@ describe("live transcript", () => {
 
   it("keeps an unlabelled call's row, cache slot and wall time in sync, and releases its maps", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await sup.createChat(g.id);
 
     // No toolCallId: the end frame's reducer mints an id that differs from the row's, so the
@@ -125,7 +126,7 @@ describe("live transcript", () => {
 
   it("records assistant text and the per-turn usage omp reports at message_end", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await sup.createChat(g.id);
 
     emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "all " } });
@@ -143,7 +144,7 @@ describe("live transcript", () => {
 
   it("normalises omp's notice levels into the transcript's own vocabulary", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await sup.createChat(g.id);
 
     // omp 17.3.8 spells a warning "warning" and never "warn"; the api's own synthetic frame
@@ -165,8 +166,8 @@ describe("live transcript", () => {
 describe("rehydrated transcript", () => {
   it("rebuilds a dormant session's rows and files their full output so they can still be expanded", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const s = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(s.id, { ompSessionFile: "/tmp/s.jsonl", status: "done" });
     history = [
       { role: "assistant", content: [{ type: "toolCall", name: "bash", arguments: { command: "seq 30" } }] },

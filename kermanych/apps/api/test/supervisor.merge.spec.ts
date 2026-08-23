@@ -21,19 +21,20 @@ vi.mock("../src/rpc/rpc-session", () => {
 
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
+import { offlineAuth } from "./offline-auth";
 
 function make() {
   const registry = new RegistryService(":memory:");
   const worktree = { currentBranch: vi.fn().mockResolvedValue("main") } as any;
-  return { sup: new SupervisorService(registry, worktree), registry };
+  return { sup: new SupervisorService(registry, worktree, offlineAuth()), registry };
 }
 beforeEach(() => { started.length = 0; prompts.length = 0; });
 
 describe("mergeDiscussion", () => {
   it("injects the summary into the parent and marks the child merged", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const parent = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const parent = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(parent.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "done" });
     await sup.branchSession(parent.id); // needs Task 4
     const child = registry.listSessions(g.id).find((x) => x.kind === "discussion")!;

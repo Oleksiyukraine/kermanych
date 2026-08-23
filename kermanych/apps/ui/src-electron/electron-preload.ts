@@ -7,4 +7,8 @@ const apiBase = arg ? arg.slice('--api-base='.length) : 'http://localhost:4317/a
 contextBridge.exposeInMainWorld('kermanych', {
   apiBase,
   focus: () => ipcRenderer.send('kermanych:focus'),
+  // Resolves { code } once the loopback listener in main catches the redirect.
+  // Its presence is how stores/auth.ts detects the desktop build.
+  startOAuth: (authorizeUrl: string): Promise<{ code: string }> =>
+    ipcRenderer.invoke('kermanych:oauth', authorizeUrl),
 });

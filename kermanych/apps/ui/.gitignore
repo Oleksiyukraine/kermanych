@@ -2,8 +2,9 @@
 .thumbs.db
 node_modules
 
-# .env files
+# .env files — real ones never, the placeholder template always.
 .env*
+!.env.example
 
 # Quasar core related directories
 .quasar

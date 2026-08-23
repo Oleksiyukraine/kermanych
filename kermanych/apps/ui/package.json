@@ -14,8 +14,10 @@
   },
   "dependencies": {
     "@kermanych/api": "workspace:*",
+    "@kermanych/cloud": "workspace:*",
     "@kermanych/core": "workspace:*",
     "@kermanych/tokens": "workspace:*",
+    "@supabase/supabase-js": "^2",
     "@quasar/extras": "^1.16.0",
     "markdown-it": "^14.1.0",
     "pinia": "^2.1.0",

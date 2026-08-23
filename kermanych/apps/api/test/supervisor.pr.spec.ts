@@ -24,12 +24,13 @@ vi.mock("../src/rpc/rpc-session", () => {
 
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
+import { offlineAuth } from "./offline-auth";
 
 function make() {
   const registry = new RegistryService(":memory:");
   const worktree = { currentBranch: vi.fn().mockResolvedValue("main") };
   // Partial mock: createPullRequest only resumes the agent — the DI seam is cast once.
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService);
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth());
   return { sup, registry };
 }
 beforeEach(() => { started.length = 0; prompts.length = 0; });
@@ -37,8 +38,8 @@ beforeEach(() => { started.length = 0; prompts.length = 0; });
 describe("createPullRequest", () => {
   it("refuses to open a PR for a non-agent session", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const parent = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const parent = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(parent.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "done" });
     const disc = await sup.branchSession(parent.id);
 
@@ -47,8 +48,8 @@ describe("createPullRequest", () => {
 
   it("tells the agent to commit, push and open a PR at the base branch, using the built-in fallback", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const s = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
     registry.updateSession(s.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "done" });
 
     await sup.createPullRequest(s.id);
@@ -61,10 +62,10 @@ describe("createPullRequest", () => {
     expect(p).toMatch(/Conventional Commits/); // Kermanych's built-in fallback conventions
   });
 
-  it("prefers the group's own convention fallback over the built-in default", async () => {
+  it("prefers the project's own convention fallback over the built-in default", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj", conventions: "HOUSE RULE: squash-merge only" });
-    const s = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj", conventions: "HOUSE RULE: squash-merge only" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
     registry.updateSession(s.id, { status: "done" });
 
     await sup.createPullRequest(s.id);

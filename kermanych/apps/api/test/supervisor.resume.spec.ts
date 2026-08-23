@@ -30,6 +30,7 @@ vi.mock("../src/rpc/rpc-session", () => {
 
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
+import { offlineAuth } from "./offline-auth";
 
 function make() {
   const registry = new RegistryService(":memory:");
@@ -39,7 +40,7 @@ function make() {
     isGitRepo: vi.fn().mockResolvedValue(true),
     currentBranch: vi.fn().mockResolvedValue("main"),
   } as unknown as WorktreeService;
-  const sup = new SupervisorService(registry, worktree);
+  const sup = new SupervisorService(registry, worktree, offlineAuth());
   return { sup, registry };
 }
 
@@ -48,8 +49,8 @@ beforeEach(() => { instances.length = 0; });
 describe("sendMessage resume-on-dead", () => {
   it("respawns a dead omp child instead of writing to its closed stdin", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const s = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(s.id, { ompSessionFile: "/tmp/s.jsonl", status: "done" });
 
     // First send: dormant (no Live) → resume spawns child #0 and delivers the message.
@@ -71,8 +72,8 @@ describe("sendMessage resume-on-dead", () => {
 
   it("reuses a live child without respawning", async () => {
     const { sup, registry } = make();
-    const g = registry.createGroup({ name: "g", projectDir: "/tmp/proj" });
-    const s = registry.createSession({ groupId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
     registry.updateSession(s.id, { ompSessionFile: "/tmp/s.jsonl", status: "done" });
 
     await sup.sendMessage(s.id, "one", "follow_up");
