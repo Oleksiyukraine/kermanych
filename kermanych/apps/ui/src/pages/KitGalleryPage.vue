@@ -142,6 +142,11 @@
           :active="r.active"
           :count="r.count"
         />
+        <KUserButton label="oleksii-motornyi" title="@oleksii-motornyi · вийти" />
+      </div>
+      <div class="kit__caption mono">
+        Плитка проєкту 44×44 · плитка акаунта 34×34 у підніжжі рейки (клік — вихід із
+        акаунта). Без картинки з GitHub — ініціали.
       </div>
       <div class="kit__statusbar-wrap">
         <KStatusBar
@@ -234,6 +239,7 @@ import KModal from 'components/kit/KModal.vue';
 import KPanel from 'components/kit/KPanel.vue';
 import KLogBlock from 'components/kit/KLogBlock.vue';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
+import KUserButton from 'components/kit/KUserButton.vue';
 import KStatusBar from 'components/kit/KStatusBar.vue';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 
