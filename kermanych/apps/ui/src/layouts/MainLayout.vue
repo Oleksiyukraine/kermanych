@@ -161,7 +161,8 @@
           label="Локальна тека цієї машини"
           disabled
         />
-        <!-- MEMBERS — cloud membership. Writes are owner-only; RLS enforces it, this is UX. -->
+        <!-- MEMBERS — cloud membership. Any member invites by email (invite_project_member);
+             removal stays owner-only. RLS and the rpc enforce both; this is UX. -->
         <div class="shell__members">
           <span class="shell__members-label">Учасники</span>
           <div v-if="membersLoading" class="shell__hint mono">Завантаження…</div>
@@ -184,20 +185,22 @@
               @click="removeMemberOf(m)"
             >✕</KBtn>
           </div>
-          <div v-if="isOwnerOfSelected" class="shell__member-add">
+          <div class="shell__member-add">
             <KField
-              v-model="memberHandle"
-              label="Додати за GitHub-логіном"
-              placeholder="octocat"
+              v-model="memberEmail"
+              label="Запросити за імейлом"
+              placeholder="colleague@example.com"
+              type="email"
             />
             <KBtn
               variant="secondary"
-              :disabled="memberHandle.trim() === '' || memberBusy"
+              :disabled="memberEmail.trim() === '' || memberBusy"
               @click="submitMember"
-            >Додати</KBtn>
+            >Запросити</KBtn>
           </div>
-          <p v-else class="shell__hint">
-            Змінювати склад учасників може лише власник проєкту.
+          <p class="shell__hint">
+            Запросити може будь-який учасник — за адресою, якою колега входить у Керманич.
+            Вилучати учасників може лише власник.
           </p>
         </div>
         <p v-if="settingsError" class="shell__error" role="alert">{{ settingsError }}</p>
@@ -542,7 +545,7 @@ const deleteError = ref<string | null>(null);
 const deleteBusy = ref(false);
 
 const membersLoading = ref(false);
-const memberHandle = ref('');
+const memberEmail = ref('');
 const memberBusy = ref(false);
 
 // `members` is keyed by project id and may be missing entirely before the first read, so the
@@ -551,9 +554,9 @@ const members = computed<ProjectMember[]>(() =>
   store.selectedProjectId ? projects.members[store.selectedProjectId] ?? [] : [],
 );
 
-// UX only. Every owner-only path (membership, project config, env-key names) is enforced by
-// the owner-scoped RLS policies; this just keeps the UI from offering a write that Postgres
-// will refuse.
+// UX only. Every owner-only path (project config, env-key names, removing a member) is
+// enforced by the owner-scoped RLS policies; this just keeps the UI from offering a write
+// that Postgres will refuse. Inviting is NOT owner-only — any member may.
 const isOwnerOfSelected = computed(
   () => !!store.selectedProjectId && projects.isOwner(store.selectedProjectId),
 );
@@ -564,30 +567,37 @@ function parseList(text: string): string[] {
   return text.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
 }
 
-// The three refusals a membership write really produces. Everything else is shown verbatim.
+// The refusals a membership write really produces. The first three come from
+// invite_project_member / the cloud client, the fourth from the owner-only DELETE policy.
+// Everything else is shown verbatim.
 function memberErrorText(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);
-  if (raw.startsWith('no Kermanych profile for @')) {
-    return 'Немає профілю з таким GitHub-логіном — попросіть колегу спершу увійти в Керманич через GitHub';
+  if (raw.includes('no Kermanych account for')) {
+    return 'Немає акаунта Керманича з такою адресою — попросіть колегу спершу увійти через GitHub';
+  }
+  if (raw.includes('not a valid email address')) {
+    return 'Це не схоже на імейл — запрошуємо за адресою, якою колега входить у Керманич';
+  }
+  if (raw.includes('only a project member can invite')) {
+    return 'Хмара відмовила: запрошувати може лише учасник проєкту';
   }
   if (raw.includes('violates row-level security policy')) {
-    return 'Хмара відмовила: керувати складом учасників може лише власник проєкту';
-  }
-  if (raw.includes('duplicate key value')) {
-    return 'Цей користувач уже в проєкті';
+    return 'Хмара відмовила: вилучати учасників може лише власник проєкту';
   }
   return raw;
 }
 
 async function submitMember(): Promise<void> {
   const id = store.selectedProjectId;
-  const handle = memberHandle.value.trim();
-  if (!id || !handle) return;
+  const email = memberEmail.value.trim();
+  if (!id || !email) return;
   memberBusy.value = true;
   try {
-    const added = await projects.addMember(id, handle);
-    memberHandle.value = '';
-    store.notify(`@${added.profile?.githubUsername ?? handle} додано до проєкту`);
+    const invited = await projects.inviteMember(id, email);
+    memberEmail.value = '';
+    // Name WHO the address resolved to: the panel lists github handles, so this is the
+    // caller's confirmation that the invite landed on the person they meant.
+    store.notify(`@${invited.profile?.githubUsername ?? email} у проєкті`);
   } catch (e) {
     store.notify(memberErrorText(e), 'error', 6000);
   } finally {
@@ -654,7 +664,7 @@ async function openSettings(): Promise<void> {
   carryFilesText.value = (cloud?.carryFiles ?? row?.carryFiles ?? ['.env']).join(', ');
   settingsBranches.value = [];
   settingsOpen.value = true;
-  memberHandle.value = '';
+  memberEmail.value = '';
   membersLoading.value = true;
   try {
     await projects.loadMembers(id);

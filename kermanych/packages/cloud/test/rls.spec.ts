@@ -20,7 +20,7 @@ const URL = process.env.SUPABASE_TEST_URL;
 const ANON = process.env.SUPABASE_TEST_ANON_KEY;
 const SERVICE = process.env.SUPABASE_TEST_SERVICE_KEY;
 
-type TestUser = { id: string; client: SupabaseClient };
+type TestUser = { id: string; email: string; client: SupabaseClient };
 
 describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
   // `describe.skipIf` still EXECUTES this callback at collection time — it only
@@ -57,7 +57,7 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     });
     const signedIn = await client.auth.signInWithPassword({ email, password });
     if (signedIn.error) throw signedIn.error;
-    return { id: created.data.user.id, client };
+    return { id: created.data.user.id, email, client };
   }
 
   beforeAll(async () => {
@@ -141,22 +141,81 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(error ? [] : data).toEqual([]);
   });
 
-  it("a non-owner cannot add a project member", async () => {
-    const { error } = await outsider.client
+  // `project_members` has NO insert policy since 20260823130000: the invite rpc is the only
+  // path in. Not even the owner may hand-write a row, so nobody can forge `role='owner'` or
+  // a `user_id` that never agreed to anything.
+  it("nobody can insert a project member directly, not even the owner", async () => {
+    const outsiderTry = await outsider.client
       .from("project_members")
       .insert({ project_id: projectId, user_id: outsider.id, role: "member" });
-    expect(error?.code).toBe("42501");
-  });
+    expect(outsiderTry.error?.code).toBe("42501");
 
-  it("the owner can add a member, who then sees the project's tasks", async () => {
-    const added = await owner.client
+    const ownerTry = await owner.client
       .from("project_members")
       .insert({ project_id: projectId, user_id: member.id, role: "member" });
-    expect(added.error).toBeNull();
+    expect(ownerTry.error?.code).toBe("42501");
+  });
+
+  it("a non-member cannot invite anyone", async () => {
+    const { error } = await outsider.client.rpc("invite_project_member", {
+      p_project_id: projectId,
+      p_email: outsider.email,
+    });
+    expect(error?.message).toContain("only a project member can invite");
+  });
+
+  it("an email with no Kermanych account is refused", async () => {
+    const { error } = await owner.client.rpc("invite_project_member", {
+      p_project_id: projectId,
+      p_email: "ghost@kermanych.test",
+    });
+    expect(error?.message).toContain("no Kermanych account");
+  });
+
+  it("an invite by email adds the member, who then sees the project's tasks", async () => {
+    // Upper-cased on purpose: auth stores the address lower-cased, and a teammate typing it
+    // from memory must still resolve.
+    const invited = await owner.client.rpc("invite_project_member", {
+      p_project_id: projectId,
+      p_email: member.email.toUpperCase(),
+    });
+    expect(invited.error).toBeNull();
+    expect(invited.data).toMatchObject({ project_id: projectId, user_id: member.id, role: "member" });
 
     const tasks = await member.client.from("tasks").select("id").eq("project_id", projectId);
     expect(tasks.error).toBeNull();
     expect(tasks.data?.map((t) => t.id)).toEqual([taskId]);
+  });
+
+  // The requirement in one test: whoever is already on the project may bring someone in.
+  // `member` was invited by the owner above and holds no ownership of anything.
+  it("a plain member can invite another member", async () => {
+    const newcomer = await makeUser("invited-by-member");
+    const { error } = await member.client.rpc("invite_project_member", {
+      p_project_id: projectId,
+      p_email: newcomer.email,
+    });
+    expect(error).toBeNull();
+
+    const projects = await newcomer.client.from("projects").select("id").eq("id", projectId);
+    expect(projects.error).toBeNull();
+    expect(projects.data?.map((p) => p.id)).toEqual([projectId]);
+  });
+
+  it("re-inviting an existing member returns the same row instead of failing", async () => {
+    const again = await owner.client.rpc("invite_project_member", {
+      p_project_id: projectId,
+      p_email: member.email,
+    });
+    expect(again.error).toBeNull();
+    expect(again.data).toMatchObject({ user_id: member.id, role: "member" });
+
+    const rows = await owner.client
+      .from("project_members")
+      .select("user_id")
+      .eq("project_id", projectId)
+      .eq("user_id", member.id);
+    expect(rows.data).toHaveLength(1);
   });
 
   it("a non-assignee cannot change a task's status", async () => {

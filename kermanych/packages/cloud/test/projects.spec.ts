@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  addMember,
   createProject,
   deleteProject,
+  inviteMember,
   listMembers,
   listProjects,
   patchProject,
@@ -16,17 +16,22 @@ type Result = { data: unknown; error: { message: string } | null };
 
 // A PostgrestBuilder is a thenable that collects chained calls; this fake has the same
 // shape, so `await client.from(t).select(c).eq(k, v).single()` resolves to the n-th queued
-// result while recording every op for assertions.
+// result while recording every op for assertions. `rpc()` shares the same queue, so a
+// function call and a table read can be asserted in the order the code makes them.
 function fakeClient(...results: Result[]) {
   const queries: Query[] = [];
+  function enqueue(table: string): { q: Query; result: Result } {
+    const q: Query = { table, ops: [] };
+    queries.push(q);
+    return { q, result: results[queries.length - 1] ?? { data: null, error: null } };
+  }
+  const thenable = (result: Result) => ({
+    then: (resolve: (v: Result) => unknown) => Promise.resolve(result).then(resolve),
+  });
   const client = {
     from(table: string) {
-      const q: Query = { table, ops: [] };
-      queries.push(q);
-      const result = results[queries.length - 1] ?? { data: null, error: null };
-      const builder: Record<string, unknown> = {
-        then: (resolve: (v: Result) => unknown) => Promise.resolve(result).then(resolve),
-      };
+      const { q, result } = enqueue(table);
+      const builder: Record<string, unknown> = { ...thenable(result) };
       for (const op of ["select", "insert", "update", "delete", "eq", "order", "single", "maybeSingle"]) {
         builder[op] = (...args: unknown[]) => {
           q.ops.push([op, ...args]);
@@ -34,6 +39,13 @@ function fakeClient(...results: Result[]) {
         };
       }
       return builder;
+    },
+    // An rpc call takes no chained ops in this package, so the argument object is the
+    // whole surface worth recording.
+    rpc(fn: string, args: unknown) {
+      const { q, result } = enqueue(`rpc:${fn}`);
+      q.ops.push(["rpc", args]);
+      return thenable(result);
     },
   } as unknown as SupabaseClient;
   return { client, queries };
@@ -142,29 +154,52 @@ describe("listMembers", () => {
   });
 });
 
-describe("addMember", () => {
-  it("resolves the github handle to a profile, strips a leading @, then inserts", async () => {
-    const { client, queries } = fakeClient({ data: profileRow, error: null }, { data: memberRow, error: null });
+describe("inviteMember", () => {
+  it("normalizes the email, invites through the rpc, then re-reads the row it returned", async () => {
+    const { client, queries } = fakeClient(
+      { data: { project_id: "p1", user_id: "u2", role: "member", added_at: "2026-08-21T01:00:00.000Z" }, error: null },
+      { data: memberRow, error: null },
+    );
 
-    const m = await addMember(client, "p1", " @octocat ");
+    const m = await inviteMember(client, "p1", "  Octo@Example.COM ");
 
-    expect(queries[0]!.table).toBe("profiles");
-    expect(queries[0]!.ops[1]).toEqual(["eq", "github_username", "octocat"]);
+    expect(queries[0]!.table).toBe("rpc:invite_project_member");
+    expect(queries[0]!.ops[0]).toEqual(["rpc", { p_project_id: "p1", p_email: "octo@example.com" }]);
+    // The invited user id comes from the rpc result, never from what the caller typed.
     expect(queries[1]!.table).toBe("project_members");
-    expect(queries[1]!.ops[0]).toEqual(["insert", { project_id: "p1", user_id: "u2", role: "member" }]);
-    expect(m.userId).toBe("u2");
+    expect(queries[1]!.ops.slice(1)).toEqual([
+      ["eq", "project_id", "p1"],
+      ["eq", "user_id", "u2"],
+      ["single"],
+    ]);
+    expect(m).toEqual({
+      projectId: "p1",
+      userId: "u2",
+      role: "member",
+      addedAt: "2026-08-21T01:00:00.000Z",
+      profile: { id: "u2", githubUsername: "octocat", displayName: "Octo Cat" },
+    });
   });
 
-  it("refuses a handle with no Kermanych profile and never inserts", async () => {
-    const { client, queries } = fakeClient({ data: null, error: null });
-    await expect(addMember(client, "p1", "ghost")).rejects.toThrow(/no Kermanych profile for @ghost/);
-    expect(queries).toHaveLength(1);
-  });
-
-  it("refuses an empty handle", async () => {
+  it("refuses a blank email before any round trip", async () => {
     const { client, queries } = fakeClient();
-    await expect(addMember(client, "p1", "  @ ")).rejects.toThrow(/github username is required/);
+    await expect(inviteMember(client, "p1", "   ")).rejects.toThrow(/email is required/);
     expect(queries).toHaveLength(0);
+  });
+
+  it("refuses a github handle typed into the email field", async () => {
+    const { client, queries } = fakeClient();
+    await expect(inviteMember(client, "p1", "@octocat")).rejects.toThrow(/not a valid email/);
+    expect(queries).toHaveLength(0);
+  });
+
+  it("surfaces the rpc refusal and never re-reads", async () => {
+    const { client, queries } = fakeClient({
+      data: null,
+      error: { message: "no Kermanych account for ghost@example.com" },
+    });
+    await expect(inviteMember(client, "p1", "ghost@example.com")).rejects.toThrow(/no Kermanych account/);
+    expect(queries).toHaveLength(1);
   });
 });
 

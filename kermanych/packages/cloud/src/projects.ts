@@ -147,19 +147,34 @@ export async function listMembers(client: SupabaseClient, projectId: string): Pr
   return (data as unknown as MemberRow[]).map(toProjectMember);
 }
 
-// Membership is by GitHub handle, because that is what a team knows about each other. The
-// handle must already have a `profiles` row, i.e. that person has signed in at least once.
-export async function addMember(client: SupabaseClient, projectId: string, githubUsername: string): Promise<ProjectMember> {
-  const handle = githubUsername.trim().replace(/^@/, "").trim();
-  if (!handle) throw new Error("github username is required");
-  const found = await client.from("profiles").select(PROFILE_COLUMNS).eq("github_username", handle).maybeSingle();
-  if (found.error) throw new Error(found.error.message);
-  const profile = found.data as ProfileRow | null;
-  if (!profile) throw new Error(`no Kermanych profile for @${handle} — ask them to sign in with GitHub first`);
+// Membership is by EMAIL: the address the person signed in with. Resolving it happens
+// entirely inside `invite_project_member` (a `security definer` rpc), for two reasons that
+// are both load-bearing:
+//   1. `auth.users.email` is unreachable for the `authenticated` role, and mirroring it
+//      into `profiles` would publish every teammate's address — `profiles_select` is
+//      `using (true)` and sign-in is open.
+//   2. `project_members` has no INSERT policy at all, so the rpc is the ONLY way a member
+//      row appears (besides handle_new_project's owner row). A client cannot forge a row
+//      with an arbitrary `user_id` or `role`.
+// The rpc refuses a caller who is not already a member of the project, and refuses an
+// email with no Kermanych account; both surface here as thrown postgres messages.
+export async function inviteMember(client: SupabaseClient, projectId: string, email: string): Promise<ProjectMember> {
+  const address = email.trim().toLowerCase();
+  if (!address) throw new Error("email is required");
+  // Deliberately loose: the authority on whether an address exists is the rpc's lookup, so
+  // this only catches the obvious typo — a github handle in the email field.
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) throw new Error(`"${address}" is not a valid email address`);
+  const invited = await client.rpc("invite_project_member", { p_project_id: projectId, p_email: address });
+  if (invited.error) throw new Error(invited.error.message);
+  const row = invited.data as { user_id: string } | null;
+  if (!row) throw new Error(`invite for ${address} returned no membership row`);
+  // Re-read for the joined profile: the rpc returns a bare project_members row, and every
+  // consumer expects the same shape listMembers() hands out.
   const { data, error } = await client
     .from("project_members")
-    .insert({ project_id: projectId, user_id: profile.id, role: "member" })
     .select(MEMBER_COLUMNS)
+    .eq("project_id", projectId)
+    .eq("user_id", row.user_id)
     .single();
   if (error) throw new Error(error.message);
   return toProjectMember(data as unknown as MemberRow);

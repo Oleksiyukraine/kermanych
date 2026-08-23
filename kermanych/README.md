@@ -52,8 +52,14 @@ terminal, no `pnpm dev:api`. (In a browser instead of the desktop window, run
 
 **Sign-in is open:** any GitHub account can sign in. The first sign-in creates
 your account and an empty, private workspace — you see only projects you own or
-are added to as a member, and nobody sees yours until you add them. There is no
-allowlist to manage.
+are invited to as a member, and nobody sees yours until you invite them. There is
+no allowlist to manage.
+
+**Membership is by email.** In a project's settings, any member can invite a
+colleague by the email address their account signed in with; the invited person
+joins as `member` immediately. There are no pending invitations: the address must
+already belong to an account, so ask a newcomer to press **Увійти через GitHub**
+once before you invite them. Removing a member stays the project owner's call.
 
 You do **not** need `GITHUB_SECRET` either. The hosted project holds the team's
 GitHub OAuth credentials in the Supabase dashboard; nobody has to send them to
