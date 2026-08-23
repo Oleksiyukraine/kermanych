@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { cloudEnv, createCloudClient } from "../src/client";
+import { DEFAULT_CLOUD, cloudEnv, createCloudClient } from "../src/client";
 
 // The URL is a literal fixture only: constructing a client opens no socket.
 const URL = "http://127.0.0.1:54421";
@@ -47,6 +47,26 @@ test("cloudEnv('ui') reads the publishable VITE_ name too", () => {
   expect(cloudEnv("ui", env)).toEqual({ url: URL, apiKey: PUBLISHABLE });
 });
 
+// Zero-config is the point: a fresh clone has no .env and no exports, and both
+// consumers still land on the team's hosted project.
+test("an empty environment resolves to the built-in team project", () => {
+  expect(cloudEnv("api", {})).toEqual(DEFAULT_CLOUD);
+  expect(cloudEnv("ui", {})).toEqual(DEFAULT_CLOUD);
+});
+
+test("a full pair overrides the built-in default", () => {
+  const env = { SUPABASE_URL: URL, SUPABASE_PUBLISHABLE_KEY: PUBLISHABLE };
+  expect(cloudEnv("api", env)).toEqual({ url: URL, apiKey: PUBLISHABLE });
+  expect(cloudEnv("api", env)).not.toEqual(DEFAULT_CLOUD);
+});
+
+// The returned object must never be the shared constant: a caller that mutates
+// its own env would poison every later resolution.
+test("the default is copied, not handed out", () => {
+  const resolved = cloudEnv("api", {});
+  expect(resolved).not.toBe(DEFAULT_CLOUD);
+});
+
 // A machine that carries both — a leftover local anon key next to a hosted
 // publishable one — must use the new key, never the stale legacy value.
 test("the publishable name wins when both spellings are set", () => {
@@ -64,12 +84,28 @@ test("the publishable name wins when both spellings are set", () => {
   expect(cloudEnv("ui", ui).apiKey).toBe(PUBLISHABLE);
 });
 
-test("cloudEnv names both accepted spellings of the missing key", () => {
-  expect(() => cloudEnv("ui", {})).toThrow(
-    "set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (or the legacy VITE_SUPABASE_ANON_KEY)",
+// Half an override is a wrong backend, not a fallback, so it fails loudly and
+// says both how to complete it and how to go back to the default.
+test("a URL without a key throws and names the key", () => {
+  expect(() => cloudEnv("api", { SUPABASE_URL: URL })).toThrow(
+    "cloud env missing: set SUPABASE_PUBLISHABLE_KEY (or the legacy SUPABASE_ANON_KEY) too, or unset SUPABASE_URL to use the built-in default",
   );
-  expect(() => cloudEnv("api", { SUPABASE_URL: "http://x" })).toThrow(
-    "set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY (or the legacy SUPABASE_ANON_KEY)",
+  expect(() => cloudEnv("ui", { VITE_SUPABASE_URL: URL })).toThrow(
+    "cloud env missing: set VITE_SUPABASE_PUBLISHABLE_KEY (or the legacy VITE_SUPABASE_ANON_KEY) too, or unset VITE_SUPABASE_URL to use the built-in default",
+  );
+});
+
+test("a key without a URL throws and names the URL, and the key name it saw", () => {
+  expect(() => cloudEnv("api", { SUPABASE_PUBLISHABLE_KEY: PUBLISHABLE })).toThrow(
+    "cloud env missing: set SUPABASE_URL too, or unset SUPABASE_PUBLISHABLE_KEY to use the built-in default",
+  );
+  // The legacy spelling is just as much "the key is set" — and the message has
+  // to name the variable actually present, or unsetting it would miss.
+  expect(() => cloudEnv("api", { SUPABASE_ANON_KEY: "legacy-anon" })).toThrow(
+    "cloud env missing: set SUPABASE_URL too, or unset SUPABASE_ANON_KEY to use the built-in default",
+  );
+  expect(() => cloudEnv("ui", { VITE_SUPABASE_ANON_KEY: "legacy-anon" })).toThrow(
+    "cloud env missing: set VITE_SUPABASE_URL too, or unset VITE_SUPABASE_ANON_KEY to use the built-in default",
   );
 });
 
@@ -101,6 +137,25 @@ test("the resolved key is the key the client sends", async () => {
   // so a non-JWT key is never presented as a session token.
   expect(sent?.get("apikey")).toBe(PUBLISHABLE);
   expect(sent?.get("Authorization")).toBe("Bearer user-jwt");
+});
+
+// The default is only useful if it survives the whole path: resolution →
+// client → request. Same late-bound fetch stub, so still no socket.
+test("the built-in default reaches the constructed client", async () => {
+  const client = createCloudClient(cloudEnv("ui", {}));
+  const real = globalThis.fetch;
+  let seen: { url: string; apikey: string | null } | undefined;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    seen = { url: String(input), apikey: new Headers(init?.headers).get("apikey") };
+    return Promise.resolve(new Response("[]", { headers: { "content-type": "application/json" } }));
+  }) as typeof fetch;
+  try {
+    await client.from("tasks").select("id");
+  } finally {
+    globalThis.fetch = real;
+  }
+  expect(seen?.url.startsWith(`${DEFAULT_CLOUD.url}/rest/v1/tasks`)).toBe(true);
+  expect(seen?.apikey).toBe(DEFAULT_CLOUD.apiKey);
 });
 
 test("createCloudClient with an accessToken pins Authorization and stores no session", () => {

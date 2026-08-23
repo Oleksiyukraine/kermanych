@@ -8,7 +8,9 @@ import { AuthService, type CloudClientFactory } from "../src/auth/auth.service";
 import { SupabaseAuthGuard } from "../src/auth/auth.guard";
 import { Public } from "../src/auth/public.decorator";
 
-// cloudEnv("api") reads these; the stub factory never dials out.
+// A full override pair, so cloudEnv("api") resolves to this fixture instead of
+// the built-in team project. The stub factory never dials out either way, but a
+// test must not carry the team's URL in it by accident.
 process.env.SUPABASE_URL = "http://127.0.0.1:54421";
 process.env.SUPABASE_ANON_KEY = "test-anon-key";
 

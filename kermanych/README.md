@@ -26,15 +26,85 @@ same time and you drive them all from one board.
 - **pnpm** (the repo pins its version via `packageManager` in
   `package.json`).
 
-## Cloud prerequisites
+## The shared board (cloud)
 
 Kermanych's task board is shared through Supabase (auth, projects, membership,
 tasks, Realtime). Execution stays local — worktrees, `omp` children and
-transcripts never leave your machine — but you need a Supabase backend to sign
-in and to see the board.
+transcripts never leave your machine — but signing in and seeing the board go
+through the team's Supabase project.
 
-**Either** a hosted project (<https://supabase.com/dashboard>) **or** a local
-stack (Docker + the [Supabase CLI](https://supabase.com/docs/guides/local-development)):
+### Start here (no configuration)
+
+```bash
+git clone <repo> && cd kermanych
+pnpm install
+pnpm dev:app          # desktop app; hosts the API in-process
+```
+
+Then press **Увійти через GitHub**. That is the whole setup: **there are no
+environment variables to set and no `.env` to create.** The team's Supabase
+project is compiled into `packages/cloud` as `DEFAULT_CLOUD`, and both the API
+and the UI fall back to it.
+
+`pnpm dev:app` starts the API **in-process**, so one shell is enough — no second
+terminal, no `pnpm dev:api`. (In a browser instead of the desktop window, run
+`pnpm dev:api` and `pnpm dev:ui` in two terminals; see [Setup & run](#setup--run).)
+
+**An operator must add you to the allowlist BEFORE your first sign-in.** Sign-in
+fails closed: `handle_new_user()` refuses any GitHub login name absent from
+`public.allowed_github_users` (case-insensitively), and an empty table admits
+nobody. Until someone runs this in the hosted project's SQL editor, your sign-in
+fails:
+
+```sql
+insert into allowed_github_users (github_username, note) values ('octocat', 'Jane, backend');
+```
+
+The table grants nothing to `anon` or `authenticated`, so it is reachable only as
+`postgres` — the dashboard's SQL editor for the hosted project, or `psql` against
+a local stack:
+
+```bash
+psql postgresql://postgres:postgres@127.0.0.1:54422/postgres \
+  -c "insert into allowed_github_users (github_username, note) values ('octocat', 'Jane, backend');"
+```
+
+A refused account is refused at the source: no `auth.users` row, no `profiles`
+row, and the error carries `github user <handle> is not on the Kermanych team
+allowlist`.
+
+You do **not** need `GITHUB_SECRET` either. The hosted project holds the team's
+GitHub OAuth credentials in the Supabase dashboard; nobody has to send them to
+you.
+
+### Why the backend is in the repository
+
+The project URL and the publishable key are **public application configuration**,
+not credentials, so they are committed:
+
+| value | classification | where it lives |
+|---|---|---|
+| project URL | public | `DEFAULT_CLOUD` in `packages/cloud/src/client.ts` |
+| `Publishable key` (`sb_publishable_…`, formerly `anon`) | public — shipped inside the browser bundle by design | same |
+| `GITHUB_CLIENT_ID` | public | Supabase dashboard (hosted), `.env` (local stack only) |
+| `GITHUB_SECRET` | **secret** — the only real one in this repo | Supabase dashboard (hosted), your own `.env` (local stack only) |
+| `Secret key` (`sb_secret_…`, formerly `service_role`) | **secret** — never used by Kermanych | the dashboard, and nowhere else |
+
+What protects the project is not the obscurity of those two values but **RLS plus
+the sign-in allowlist**, both verified against the live project: an anonymous
+read of any table is refused with `42501 permission denied`, and a GitHub account
+outside `allowed_github_users` is refused at sign-up with `P0001 github user … is
+not on the Kermanych team allowlist`. Every request runs under the user's own JWT
+and therefore under RLS. **No secret key ever belongs on a machine running
+Kermanych**, and nothing in this repo reads one.
+
+### Running against a local stack or your own project
+
+Everything below is for pointing Kermanych somewhere OTHER than the team's
+project — a local Supabase stack or your own fork. Skip it otherwise.
+
+A local stack needs Docker and the
+[Supabase CLI](https://supabase.com/docs/guides/local-development):
 
 ```bash
 supabase start        # from the repo root; prints the API URL and the local keys
@@ -48,7 +118,8 @@ not the CLI's default 543xx, so it can coexist with another Supabase project on
 the same machine. Every URL below uses those ports.
 
 **GitHub OAuth App** — GitHub allows one callback URL per app, so a local stack
-and a hosted project need one each (<https://github.com/settings/developers>):
+and a hosted project need one each (<https://github.com/settings/developers>).
+Create your OWN throwaway app; never reuse the team's:
 
 | target | Authorization callback URL |
 |---|---|
@@ -64,22 +135,14 @@ export GITHUB_CLIENT_ID=Ov23li…
 export GITHUB_SECRET=ghs_…
 ```
 
-For a hosted project, set the same pair under Authentication → Providers →
+For your own hosted project, set the same pair under Authentication → Providers →
 GitHub, and add both redirect URLs (`http://localhost:5317/**` and
 `http://127.0.0.1:53170/callback`) under Authentication → URL Configuration.
 The second one is the fixed loopback the desktop app listens on.
 
-**Two values, two consumers** — the API and the UI each need the same URL and the
-same public API key, under different names (Vite only inlines `VITE_`-prefixed
-variables). Both values are public; the API key is safe to expose because RLS is
-the authorization surface. **No secret key — `sb_secret_…`, formerly
-`service_role` — ever belongs on a machine running Kermanych.**
-
-The key itself has two accepted spellings, because Supabase renamed it. A modern
-dashboard shows a **`Publishable key`** (`sb_publishable_…`) under Project
-Settings → API keys: that IS the value formerly called `anon`, with the same
-public-by-design role. Kermanych reads both names and prefers the publishable
-one:
+**Two consumers, two spellings** — the API and the UI each need the same URL and
+the same public API key under different names, because Vite only inlines
+`VITE_`-prefixed variables:
 
 | variable | consumer | value |
 |---|---|---|
@@ -90,10 +153,25 @@ one:
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | `apps/ui` | the same publishable key |
 | `VITE_SUPABASE_ANON_KEY` | `apps/ui` | legacy name for the same value, still accepted |
 
+Export the api pair in the shell that runs `pnpm dev:api` (or `pnpm dev:app`,
+which hosts the API in-process), and put the ui pair in `apps/ui/.env` (copy
+`apps/ui/.env.example`; the real file is gitignored):
+
+```bash
+# apps/ui/.env — public values only, not committed
+VITE_SUPABASE_URL=http://127.0.0.1:54421
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_…   # or VITE_SUPABASE_ANON_KEY=<anon key>
+```
+
+**Set both halves of a pair, or neither.** With neither, the built-in default is
+used. With exactly one, startup fails on purpose rather than mixing a custom URL
+with the team's key: `cloud env missing: set SUPABASE_PUBLISHABLE_KEY (or the
+legacy SUPABASE_ANON_KEY) too, or unset SUPABASE_URL to use the built-in
+default`. Point both consumers at the same backend, or the board the UI reads
+will not be the board the API writes.
+
 Set one key name per consumer — whichever format your backend hands you. If both
-are set, the publishable one wins. With neither, startup fails with
-`cloud env missing: set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY (or the legacy
-SUPABASE_ANON_KEY)`.
+are set, the publishable one wins.
 
 **Expect both key shapes on the same machine, and do not try to unify them.** A
 hosted dashboard offers only the new format (`Publishable key` / `Secret key`).
@@ -105,72 +183,16 @@ an `eyJ…` anon JWT for one and an `sb_publishable_…` key for the other — s
 public role, two formats, neither more correct than the other. Kermanych takes
 either value under either variable name, so nothing has to be converted.
 
-Export the api pair in the shell that runs `pnpm dev:api` (or `pnpm dev:app`,
-which hosts the API in-process), and put the ui pair in `apps/ui/.env`:
+### Running the cloud tests
 
-```bash
-# apps/ui/.env — public values only, not committed
-VITE_SUPABASE_URL=http://127.0.0.1:54421
-VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_…   # or VITE_SUPABASE_ANON_KEY=<anon key>
-```
-
-The dashboard's **`Secret key`** (`sb_secret_…`) is **never used by Kermanych**.
-It must not go into any environment variable, `.env` file or shell export here —
-nothing in this repo reads it, and RLS assumes it never leaves the dashboard.
-
-`GITHUB_SECRET` is the **only** real secret in this repo, and it is never one of
-the variables above. Everything else — both URLs, both spellings of the public
-API key and `GITHUB_CLIENT_ID` — is a public value.
-
-### Joining the team (new teammate, start here)
-
-```bash
-cp .env.example .env                 # only needed for LOCAL GitHub sign-in
-cp apps/ui/.env.example apps/ui/.env # public values; fill both in
-```
-
-Fill `apps/ui/.env` (and the `SUPABASE_URL` + key pair for the API) by pasting
-from `supabase status` for a local stack, or from the hosted project's Settings →
-API keys. Those are public values — RLS is the authorization surface, and the
-publishable key ships inside the browser bundle anyway. A hosted dashboard gives
-you a `Publishable key`; a local stack gives you the legacy `anon` key; both
-names are accepted. Leave the dashboard's `Secret key` where it is.
-
-You do **not** need `GITHUB_SECRET`. The hosted project holds it in the Supabase
-dashboard; nobody has to send it to you. It only appears in `kermanych/.env` if
-you want GitHub sign-in against your OWN local stack, in which case create your
-own throwaway OAuth App (see the callback table above) — never reuse the team's.
-
-**Sign-in is allowlisted, and the allowlist starts empty.** This repository is
-public, so sign-in fails closed: `handle_new_user()` refuses any GitHub login
-name absent from `public.allowed_github_users` (case-insensitively), and an empty
-table admits nobody. Your first sign-in will fail until an operator adds you:
-
-```sql
-insert into allowed_github_users (github_username, note) values ('octocat', 'Jane, backend');
-```
-
-The table grants nothing to `anon` or `authenticated`, so it is reachable only as
-`postgres`. On the local stack:
-
-```bash
-psql postgresql://postgres:postgres@127.0.0.1:54422/postgres \
-  -c "insert into allowed_github_users (github_username, note) values ('octocat', 'Jane, backend');"
-```
-
-On the hosted project, run the same statement in the dashboard's SQL editor (or
-in Studio locally). A refused account is refused at the source: no `auth.users`
-row, no `profiles` row, and the GoTrue log carries
-`github user <handle> is not on the Kermanych team allowlist`.
-
-**Running the cloud tests.** `packages/cloud`'s unit suite needs nothing. Its
-RLS/trigger integration suite is skipped unless all three of these are set. They
-are LOCAL-STACK fixtures and keep the legacy CLI spelling on purpose — that is
-what `supabase status` labels them — and `SUPABASE_TEST_SERVICE_KEY` is a *test
-fixture only*: it mints throwaway users through the admin API on your own local
-stack, is never read by shipped code, and must never hold a hosted project's
-secret key. `SUPABASE_TEST_ANON_KEY` takes either format — the suite passes with
-the local stack's `PUBLISHABLE_KEY` in it just as it does with `ANON_KEY`:
+`packages/cloud`'s unit suite needs nothing. Its RLS/trigger integration suite is
+skipped unless all three of these are set. They are LOCAL-STACK fixtures and keep
+the legacy CLI spelling on purpose — that is what `supabase status` labels them —
+and `SUPABASE_TEST_SERVICE_KEY` is a *test fixture only*: it mints throwaway
+users through the admin API on your own local stack, is never read by shipped
+code, and must never hold a hosted project's secret key. `SUPABASE_TEST_ANON_KEY`
+takes either format — the suite passes with the local stack's `PUBLISHABLE_KEY`
+in it just as it does with `ANON_KEY`:
 
 ```bash
 supabase start && supabase db reset

@@ -33,6 +33,25 @@ const KEYS = {
   },
 } as const;
 
+// The team's hosted project, committed on purpose. Both values are PUBLIC: the
+// publishable key is compiled into the browser bundle every time the ui is
+// built, so it is already handed to anyone who opens the app — a public
+// repository changes nothing about its exposure. What protects the project is
+// RLS plus the sign-in allowlist, and both were verified against this very
+// project: an anonymous read of any of the five tables is refused with
+// `42501 permission denied`, and a GitHub account outside
+// `public.allowed_github_users` is refused at sign-up with `P0001 github user …
+// is not on the Kermanych team allowlist`. The dashboard's secret key
+// (`sb_secret_…`) is the only value that would matter, and it lives nowhere in
+// this repo or on any machine running Kermanych.
+//
+// So the variables below are not credentials to be provisioned; they exist only
+// to POINT Kermanych somewhere else — a local Supabase stack or your own fork.
+export const DEFAULT_CLOUD = {
+  url: "https://uqqdudlfizfwqfegfrlh.supabase.co",
+  apiKey: "sb_publishable_mBwB2TdiWeVvt6C9ry6C9A_Q9n0pX8X",
+} as const;
+
 export function cloudEnv(
   source: "api" | "ui",
   env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {},
@@ -41,8 +60,19 @@ export function cloudEnv(
   const url = env[keys.url];
   const [preferred, legacy] = keys.apiKeys;
   const apiKey = env[preferred] || env[legacy];
-  if (!url || !apiKey) {
-    throw new Error(`cloud env missing: set ${keys.url} and ${preferred} (or the legacy ${legacy})`);
+  if (!url && !apiKey) return { ...DEFAULT_CLOUD };
+  // Half an override is a mistake, never a fallback: pairing a custom URL with
+  // the team's key (or the reverse) points at a backend that cannot answer, and
+  // the failure would surface much later as an unexplained 401 or 42501.
+  if (!url) {
+    throw new Error(
+      `cloud env missing: set ${keys.url} too, or unset ${env[preferred] ? preferred : legacy} to use the built-in default`,
+    );
+  }
+  if (!apiKey) {
+    throw new Error(
+      `cloud env missing: set ${preferred} (or the legacy ${legacy}) too, or unset ${keys.url} to use the built-in default`,
+    );
   }
   return { url, apiKey };
 }
