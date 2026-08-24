@@ -107,16 +107,26 @@ export async function listProjects(client: SupabaseClient): Promise<CloudProject
   return (data as ProjectRow[]).map(toCloudProject);
 }
 
-export async function createProject(
-  client: SupabaseClient,
-  input: { name: string; ownerId: string; gitRemoteUrl?: string },
-): Promise<CloudProject> {
+// A new cloud project. `ownerId` must be the caller — projects_insert_own checks nothing
+// else — and every editable column may be seeded at birth, because PUBLISHING an existing
+// local project has to carry that project's config across: syncProjects() then overwrites
+// the local columns from the cloud row, so a bare-name insert would wipe the commands,
+// carry files and branch the user already had.
+//
+// `id` is why this is not just a patch with a name. Omitted, Postgres mints a fresh uuid.
+// Supplied, the insert adopts an identity that already exists on a machine: the schema
+// makes `projects.id` the same value in the cloud and in every local registry, so
+// publishing under the local id is what keeps that machine's binding, sessions and
+// worktrees attached to the project instead of stranding them on an orphan row.
+export type CloudProjectInsert = { name: string; ownerId: string; id?: string } & CloudProjectPatch;
+
+export async function createProject(client: SupabaseClient, input: CloudProjectInsert): Promise<CloudProject> {
   const name = input.name.trim();
   if (!name) throw new Error("project name is required");
   // handle_new_project() inserts the owner's project_members row, so no second round trip.
   const { data, error } = await client
     .from("projects")
-    .insert({ name, git_remote_url: input.gitRemoteUrl?.trim() || null, owner_id: input.ownerId })
+    .insert({ ...toProjectRow(input), ...(input.id ? { id: input.id } : {}), owner_id: input.ownerId })
     .select(PROJECT_COLUMNS)
     .single();
   if (error) throw new Error(error.message);

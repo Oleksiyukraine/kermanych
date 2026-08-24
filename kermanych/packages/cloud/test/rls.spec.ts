@@ -13,8 +13,10 @@
 //
 // Sign-in is open, so no handle needs pre-seeding: makeUser mints users straight
 // through the admin API — the same provisioning path GitHub OAuth drives.
+import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
+import { createProject } from "../src/projects";
 
 const URL = process.env.SUPABASE_TEST_URL;
 const ANON = process.env.SUPABASE_TEST_ANON_KEY;
@@ -120,6 +122,67 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
       .eq("project_id", projectId);
     expect(error).toBeNull();
     expect(data).toEqual([{ user_id: owner.id, role: "owner" }]);
+  });
+
+  // Publishing a project that already exists on one machine. `projects_insert_own` checks
+  // only `owner_id`, so the client may supply the id — which is the whole mechanism: the
+  // local registry's uuid becomes the cloud project's uuid, so the binding, the sessions and
+  // their worktrees stay attached instead of being stranded next to a freshly minted row.
+  // Proven through createProject(), because the payload shape is the thing under test.
+  it("createProject adopts a client-supplied id, and tasks can then be created on it", async () => {
+    const publisher = await makeUser("publisher");
+    const localId = randomUUID();
+
+    const published = await createProject(publisher.client, {
+      id: localId,
+      name: "published-from-local",
+      ownerId: publisher.id,
+      carryFiles: [".env", ".env.local"],
+      color: "#ff563c",
+      previewCommand: "pnpm dev",
+      defaultBranch: "dev",
+      conventions: "   ",
+    });
+
+    expect(published.id).toBe(localId);
+    expect(published).toMatchObject({
+      name: "published-from-local",
+      ownerId: publisher.id,
+      carryFiles: [".env", ".env.local"],
+      color: "#ff563c",
+      previewCommand: "pnpm dev",
+      defaultBranch: "dev",
+    });
+    // A blank string clears the column, so an untouched local field is absent, not "".
+    expect(published.conventions).toBeUndefined();
+
+    // The owner-membership row the trigger writes is what makes the board usable: it is the
+    // predicate tasks_insert_member checks, and «Нова задача» being grey was the absence of
+    // exactly this.
+    const members = await publisher.client
+      .from("project_members")
+      .select("user_id, role")
+      .eq("project_id", localId);
+    expect(members.data).toEqual([{ user_id: publisher.id, role: "owner" }]);
+
+    const task = await publisher.client
+      .from("tasks")
+      .insert({ project_id: localId, title: "first cloud task", created_by: publisher.id })
+      .select("id, project_id")
+      .single();
+    expect(task.error).toBeNull();
+    expect(task.data?.project_id).toBe(localId);
+  });
+
+  // Re-publishing a project whose cloud row exists but is invisible to this user (membership
+  // revoked, or a teammate published it first). The UI turns this specific refusal into
+  // «попросіть власника додати вас», so it must stay a primary-key collision and not, say, a
+  // silent no-op that would look like success.
+  it("publishing an id that already exists in the cloud is refused as a duplicate key", async () => {
+    const stranger = await makeUser("stranger");
+    await expect(
+      createProject(stranger.client, { id: projectId, name: "hijack", ownerId: stranger.id }),
+    ).rejects.toThrow(/duplicate key/);
   });
 
   it("a non-member sees zero projects and zero tasks", async () => {
