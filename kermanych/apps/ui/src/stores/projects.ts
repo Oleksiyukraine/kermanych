@@ -1,6 +1,7 @@
 // apps/ui/src/stores/projects.ts
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
+import type { Project } from '@kermanych/core';
 import type { CloudProject, CloudProjectPatch, ProjectMember } from '@kermanych/cloud';
 import {
   createProject as cloudCreateProject,
@@ -57,6 +58,41 @@ export const useProjects = defineStore('projects', () => {
     });
     projects.value = [...projects.value, created];
     // prune=false: this is one project, not the full list.
+    await api.syncProjects([created], false);
+    return created;
+  }
+
+  // Publishing a LOCAL-only project. Every project created before the team cloud existed —
+  // and every one made while Supabase was unreachable — lives in the local registry alone:
+  // the rail marks it «поза хмарою» and the board cannot hold a task for it, because a task
+  // row needs a `project_id` the tasks policies can check membership against. This is the
+  // one way out of that state, and it deliberately reuses the LOCAL id: cloud and local
+  // share one project identity (schema: `projects.id` is "ALSO the local SQLite
+  // projects.id"), so after this the machine's binding, its sessions and their worktrees
+  // belong to a project the whole team can see, with nothing re-created and nothing moved.
+  //
+  // The config travels with it because the mirror runs the other way afterwards:
+  // syncProjects() overwrites name, colour, commands, carry files, branch and conventions
+  // from the cloud row, so publishing a bare name would silently blank the local setup.
+  async function publish(local: Project): Promise<CloudProject> {
+    const userId = auth.user?.id;
+    if (!userId) throw new Error('not signed in');
+    // exactOptionalPropertyTypes: an unset field is an absent KEY, and an absent key is
+    // also what makes toProjectRow() leave that column at its Postgres default.
+    const created = await cloudCreateProject(auth.client, {
+      id: local.id,
+      name: local.name,
+      ownerId: userId,
+      carryFiles: local.carryFiles ?? ['.env'],
+      ...(local.color ? { color: local.color } : {}),
+      ...(local.previewCommand ? { previewCommand: local.previewCommand } : {}),
+      ...(local.apiCommand ? { apiCommand: local.apiCommand } : {}),
+      ...(local.defaultBranch ? { defaultBranch: local.defaultBranch } : {}),
+      ...(local.conventions ? { conventions: local.conventions } : {}),
+    });
+    projects.value = [...projects.value, created];
+    // prune=false, and upsertProject keeps a non-empty binding: the local row is updated in
+    // place, so `localRepoPath` and the sessions hanging off this id are untouched.
     await api.syncProjects([created], false);
     return created;
   }
@@ -135,6 +171,7 @@ export const useProjects = defineStore('projects', () => {
     byId,
     load,
     create,
+    publish,
     patch,
     remove,
     loadMembers,

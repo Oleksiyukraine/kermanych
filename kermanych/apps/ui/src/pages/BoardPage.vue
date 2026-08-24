@@ -1,20 +1,57 @@
 <template>
   <main class="board">
     <header class="board__head">
+      <!-- The way back. This page is reached from the workspace header and, until this
+           button existed, could only be left through the browser's Back — which the desktop
+           shell has no chrome for, so the board was a one-way door. Outside .board__title
+           on purpose: that row is baseline-aligned for the heading and its counter, while
+           the header itself bottom-aligns, which is where a control belongs. -->
+      <KBtn
+        variant="ghost"
+        title="Повернутись до локальних сесій вибраного проєкту"
+        @click="goToWorkspace"
+      >← Мої агенти</KBtn>
       <div class="board__title">
         <h1 class="board__heading">Дошка команди</h1>
         <span class="board__count mono">{{ visibleTasks.length }} задач</span>
       </div>
       <div class="board__controls">
         <KSelect v-model="projectFilter" :options="projectNames" placeholder="Усі проєкти" />
-        <KBtn variant="primary" :disabled="!cloud.projects.length" @click="openCreate">Нова задача</KBtn>
+        <!-- A task row needs a `project_id` the tasks policies can check membership
+             against, so with no cloud project there is nothing to create a task on. Say so:
+             a grey button with no explanation is what made this look broken. -->
+        <KBtn
+          variant="primary"
+          :disabled="!cloud.projects.length"
+          :title="newTaskHint"
+          @click="openCreate"
+        >Нова задача</KBtn>
       </div>
     </header>
 
     <p v-if="loadHint" class="board__hint mono">{{ loadHint }}</p>
-    <p v-if="orphanCount" class="board__hint mono">
-      Локальних проєктів поза хмарою: {{ orphanCount }} — дошка їх не показує.
-    </p>
+    <!-- The way out of «дошка порожня, а кнопка сіра». A project that lives only in this
+         machine's registry has no cloud row for a task to point at, and nothing else in the
+         app can give it one — so every project made before the team cloud (or while
+         Supabase was unreachable) used to dead-end here. -->
+    <section v-if="unpublished.length" class="board__publish">
+      <p class="board__publish-note">
+        Ці проєкти є лише на цій машині, тому дошка їх не показує. Публікація віддає проєкт
+        команді під тим самим id — прив’язана тека, сесії та їхні робочі дерева залишаються
+        на місці.
+      </p>
+      <div v-for="p in unpublished" :key="p.id" class="board__publish-row">
+        <span class="board__publish-name">{{ p.name }}</span>
+        <span class="board__publish-path mono">{{ p.localRepoPath || 'не прив’язано' }}</span>
+        <KBtn
+          variant="primary"
+          :disabled="!!publishing"
+          :title="`Створити «${p.name}» у хмарі — id, тека й сесії не змінюються`"
+          @click="publishProject(p)"
+        >{{ publishing === p.id ? 'Публікуємо…' : 'Опублікувати в хмарі' }}</KBtn>
+      </div>
+      <p v-if="publishError" class="board__error" role="alert">{{ publishError }}</p>
+    </section>
 
     <!-- Two different failures, two different lines: the browser's own channel to the cloud
          (board.offline, computed by the store) and this machine's unsent push queue. -->
@@ -97,9 +134,7 @@
 
     <div v-else class="board__blank">
       <div class="board__blank-eyebrow mono">КЕРМАНИЧ</div>
-      <p class="board__blank-text">
-        Ви ще не в жодному проєкті. Створіть проєкт або попросіть колегу додати вас до свого.
-      </p>
+      <p class="board__blank-text">{{ blankText }}</p>
     </div>
 
     <!-- CREATE / EDIT TASK — same launch vocabulary as the local launcher -->
@@ -200,6 +235,7 @@
 // on the assignee's own machine, which is why «Запустити» needs a local binding.
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import type { Project } from '@kermanych/core';
 import type { ProjectMember, Task, TaskStatus } from '@kermanych/cloud';
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import { useAuth } from 'stores/auth';
@@ -224,6 +260,12 @@ const cloud = useProjects();
 const local = useOrchestrator();
 const now = useNow();
 const router = useRouter();
+
+// Back to the LOCAL board of whatever the rail has selected. The named route, not '/', so
+// this stays the same hop the workspace's «Дошка команди» button makes in reverse.
+function goToWorkspace(): void {
+  void router.push({ name: 'workspace' });
+}
 
 // Ten task statuses, five columns: `thinking` and `tool` are one human state («агент
 // працює»), and the five end states are all «не рухається». Ten lanes would be ten
@@ -351,15 +393,73 @@ const loadHint = computed(() => {
   return '';
 });
 
-// A LOCAL project row whose cloud project is gone (membership revoked, project deleted, or
-// a transient RLS-empty read) survives as an orphan so its sessions keep working — the api
-// only prunes rows with zero sessions. The board never lists one: every card and every
-// project option comes from cloud.projects, so no cloud action can be offered on a project
-// this user no longer belongs to. The count is shown so the state is not invisible.
-const orphanCount = computed(() => {
-  const known = new Set(cloud.projects.map((p) => p.id));
-  return local.projects.filter((p) => !known.has(p.id)).length;
+// ── Local-only projects ───────────────────────────────────────────────────────
+// A LOCAL project row with no cloud project behind it. Two ways in, one way out. Either it
+// was born before the team cloud existed — the `groups`→`projects` migration renamed the
+// table and kept the local uuid, but nothing ever pushed those projects up — or its cloud
+// row is gone (membership revoked, project deleted, a transient RLS-empty read) and the row
+// survived because the api never prunes one that still owns sessions.
+//
+// The board still shows no CARD for these: every card and every project option comes from
+// cloud.projects, so no cloud action is offered on a project this user does not belong to.
+// What it offers is publishing, which is the only control in the app that turns a
+// local-only project into one the team can put tasks on.
+//
+// A FAILED cloud read is excluded, and that guard is load-bearing: `cloud.projects` is then
+// an unread list rather than an empty one, every local row would look local-only, and the
+// user would be offered a publish the cloud is going to refuse with a duplicate key —
+// reported back as «ви не його учасник», about a project they own.
+const unpublished = computed(() =>
+  cloud.offlineError ? [] : local.projects.filter((p) => !cloud.byId.has(p.id)),
+);
+
+// Why «Нова задача» is grey. `tasks.project_id` is what tasks_insert_member checks
+// membership against, so with no cloud project there is nothing to hang a task on — and
+// «no cloud project» is two different situations, only one of which the user can act on.
+const newTaskHint = computed(() => {
+  if (cloud.projects.length) return 'Створити задачу для команди';
+  return cloud.offlineError
+    ? 'Список проєктів не прочитано — хмара недоступна'
+    : 'Задача належить проєкту в хмарі, а тут його ще немає — опублікуйте локальний проєкт нижче або попросіть колегу додати вас до свого';
 });
+
+// The same three states, spelled out where the board is empty. Telling a user with two
+// local projects that they are «не в жодному проєкті» is how this page dead-ended.
+const blankText = computed(() => {
+  if (cloud.offlineError) {
+    return 'Список проєктів не прочитано — хмара недоступна. Задачі команди зʼявляться, щойно буде звʼязок; локальні сесії працюють як завжди.';
+  }
+  if (unpublished.value.length) {
+    return 'Жоден проєкт цієї машини ще не живе у хмарі — опублікуйте будь-який зі списку вище, і його задачі побачить уся команда.';
+  }
+  return 'Ви ще не в жодному проєкті. Створіть проєкт кнопкою «+» у лівій панелі або попросіть колегу додати вас до свого.';
+});
+
+const publishing = ref<string | null>(null);
+const publishError = ref<string | null>(null);
+
+async function publishProject(project: Project): Promise<void> {
+  if (publishing.value) return;
+  publishing.value = project.id;
+  publishError.value = null;
+  try {
+    await cloud.publish(project);
+    // Neither watcher that reacts to a longer project list loads MEMBERSHIP: the 0→1 case
+    // re-runs open() below, but n→n+1 only rebuilds the store's channel. The assignee
+    // picker on every card of the new project needs those rows, so read them here.
+    await loadMembers();
+    local.notify(`Проєкт «${project.name}» опубліковано — тепер тут можна створювати задачі.`);
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e);
+    // A primary-key collision is the one refusal that means something specific: the cloud
+    // row exists and this user simply cannot see it. Publishing again would never help.
+    publishError.value = /duplicate key|already exists/i.test(raw)
+      ? `Проєкт «${project.name}» уже є в хмарі, але ви не його учасник — попросіть власника додати вас.`
+      : `Не вдалося опублікувати «${project.name}»: ${raw}`;
+  } finally {
+    publishing.value = null;
+  }
+}
 
 // ── Staleness ─────────────────────────────────────────────────────────────────
 // Stale = the card claims to be working, but nothing has moved for a while. There is no
@@ -720,6 +820,52 @@ function onDelete(task: Task): void {
 
 .board__hint {
   margin: 0;
+}
+
+// The local-only projects block. Surface2 with an accent rule on the leading edge: it is an
+// action the user has to take, not one of the muted status lines above it.
+.board__publish {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--k-surface2);
+  border-left: 2px solid var(--k-accent);
+}
+
+.board__publish-note {
+  margin: 0;
+  max-width: 780px;
+  font-family: var(--k-font-ui);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--k-muted);
+}
+
+.board__publish-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.board__publish-name {
+  font-family: var(--k-font-ui);
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--k-text);
+}
+
+// The path is the disambiguator when two local rows share a name, so it must not be the
+// thing that pushes the button off the row: it shrinks first and ellipsises.
+.board__publish-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--k-font-mono);
+  font-size: 11px;
+  color: var(--k-muted);
 }
 
 .board__columns {

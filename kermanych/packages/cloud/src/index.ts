@@ -19,7 +19,7 @@ export { cloudEnv, createCloudClient } from "./client";
 
 export { TERMINAL_TASK_STATUSES, taskStatusFromSession, isTerminalTaskStatus } from "./status";
 
-export type { CloudProjectPatch } from "./projects";
+export type { CloudProjectPatch, CloudProjectInsert } from "./projects";
 export {
   toCloudProject,
   toProjectRow,

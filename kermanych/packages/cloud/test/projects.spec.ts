@@ -120,6 +120,44 @@ describe("createProject", () => {
     await expect(createProject(client, { name: "   ", ownerId: "u1" })).rejects.toThrow(/project name is required/);
     expect(queries).toHaveLength(0);
   });
+
+  // Publishing a local-only project. The id is the load-bearing part: reuse it and the
+  // machine's binding, sessions and worktrees stay attached; mint a new one and they are
+  // stranded on an orphan row.
+  it("adopts a supplied id and seeds the config columns", async () => {
+    const { client, queries } = fakeClient({ data: projectRow, error: null });
+
+    await createProject(client, {
+      id: "6d96ada8-7caf-43b2-98f0-e2d1245903e5",
+      name: "Multiagent-app",
+      ownerId: "u1",
+      carryFiles: [".env"],
+      color: "#ff563c",
+      previewCommand: "pnpm dev",
+      defaultBranch: "dev",
+      conventions: "   ",
+    });
+
+    expect(queries[0]!.ops[0]).toEqual([
+      "insert",
+      {
+        id: "6d96ada8-7caf-43b2-98f0-e2d1245903e5",
+        name: "Multiagent-app",
+        owner_id: "u1",
+        carry_files: [".env"],
+        color: "#ff563c",
+        preview_command: "pnpm dev",
+        default_branch: "dev",
+        conventions: null,
+      },
+    ]);
+  });
+
+  it("omits id so Postgres mints one when none is supplied", async () => {
+    const { client, queries } = fakeClient({ data: projectRow, error: null });
+    await createProject(client, { name: "Acme", ownerId: "u1" });
+    expect(queries[0]!.ops[0]).toEqual(["insert", { name: "Acme", owner_id: "u1" }]);
+  });
 });
 
 describe("patchProject", () => {

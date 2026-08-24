@@ -17,7 +17,7 @@
             :project="p"
             :active="p.id === store.selectedProjectId"
             :count="runningCount(p.id)"
-            @click="store.selectProject(p.id)"
+            @click="selectProject(p.id)"
           />
         </div>
         <KBtn
@@ -313,6 +313,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import type { SessionStatus, EnvFileView } from '@kermanych/core';
 import type { ProjectMember } from '@kermanych/cloud';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -339,6 +340,18 @@ import KUserButton from 'components/kit/KUserButton.vue';
 const store = useOrchestrator();
 const projects = useProjects();
 const auth = useAuth();
+const route = useRoute();
+const router = useRouter();
+
+// A rail tile means «show me this project», and the only page that shows one is the
+// workspace. Clicked from the team board it used to change the selection behind a screen
+// that never reflects it — the tile went active, nothing else moved, and the board had no
+// exit of its own. Selecting is still the primary act; the navigation only follows when the
+// current page is not the one that answers it.
+function selectProject(id: string): void {
+  store.selectProject(id);
+  if (route.name !== 'workspace') void router.push({ name: 'workspace' });
+}
 
 // True only once a cloud read has actually succeeded on this run. Until then a local row
 // absent from the (still empty) cloud list is an unread cache, not an orphan — labelling
