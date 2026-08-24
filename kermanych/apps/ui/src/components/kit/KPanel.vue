@@ -154,7 +154,8 @@
     <!-- status row — never hidden: model, context, spend, live action -->
     <KStatusRow :session="session" :cost="cost" />
 
-    <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎) -->
+    <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎), with the
+         session-level actions (rehydrate, summarise) parked on its right edge -->
     <div v-if="!isMerged" class="k-panel__composer">
       <KAttachStrip
         v-if="attachImages.length"
@@ -198,6 +199,20 @@
           class="k-panel__file"
           @change="onFilePick"
         />
+        <div class="k-panel__acts">
+          <KIconButton
+            :disabled="refreshing"
+            title="Оновити чат — підтягнути історію сесії"
+            @click="emit('refresh')"
+          >↻</KIconButton>
+          <KIconButton
+            :disabled="running"
+            :title="running
+              ? 'Агент працює — саммарі можна попросити після ходу'
+              : 'Коротке саммарі сесії'"
+            @click="emit('summary')"
+          >≡</KIconButton>
+        </div>
       </form>
     </div>
     <div v-else class="k-panel__composer k-panel__merged-note mono">
@@ -239,11 +254,14 @@ const props = withDefaults(
     // The chat is being turned into an agent right now (worktree + omp respawn): the button
     // stays down until the server answers, so a second click cannot race the first.
     promoting?: boolean;
+    // The session is being rehydrated right now (omp respawn + history reload): the composer's
+    // ↻ stays down until the server answers, so a second click cannot race the first.
+    refreshing?: boolean;
     // Accumulated spend of the whole transcript, summed by the page from the block
     // summaries; the panel only renders it.
     cost?: number;
   }>(),
-  { placeholder: 'напиши наступний крок…', promoting: false },
+  { placeholder: 'напиши наступний крок…', promoting: false, refreshing: false },
 );
 // Explicit passthrough rather than a withDefaults entry: under
 // `exactOptionalPropertyTypes` the template still sees the optional prop as
@@ -260,6 +278,8 @@ const emit = defineEmits<{
   editor: [];
   branch: [];
   restart: [];
+  refresh: [];
+  summary: [];
   newTask: [text: string];
   promoteAgent: [];
   promoteTask: [];
@@ -927,6 +947,19 @@ function answerCancel() {
   &::placeholder {
     color: var(--k-muted);
   }
+}
+
+// Session actions on the input row's right edge. Own gap (4px, the header cluster's) rather
+// than the row's 10px, so the pair reads as one cluster instead of two loose glyphs; and its
+// own alignment, because the row centres and the textarea grows to 160px — without this the
+// buttons drift to the middle of a tall draft instead of staying by the last line.
+.k-panel__acts {
+  display: flex;
+  align-items: center;
+  align-self: flex-end;
+  gap: 4px;
+  flex: none;
+  padding-bottom: 8px;
 }
 
 // floating "+ Задача" over a text selection — accent chip, fixed so it escapes

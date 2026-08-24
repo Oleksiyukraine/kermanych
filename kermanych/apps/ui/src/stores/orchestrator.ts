@@ -216,6 +216,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return entries;
   }
 
+  // Wake a dormant session and pull its history back. The server broadcasts
+  // `transcript_reset` from the resume itself, so the refetch is belt-and-braces: it also
+  // covers the already-live case, where the server has nothing new to announce.
+  async function resumeSession(id: string) {
+    await api.resumeSession(id);
+    return loadTranscript(id);
+  }
+
   async function startPreview(id: string) {
     const res = await api.startPreview(id);
     if (res.url) previews.value = { ...previews.value, [id]: res.url };
@@ -312,6 +320,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     mergeBranch,
     reopenSession,
     loadTranscript,
+    resumeSession,
     previews,
     startPreview,
     stopPreview,

@@ -177,6 +177,7 @@
             ? { placeholder: 'запитай або опиши, що потрібно зробити…', promoting: promotingId === selectedSession.id }
             : {}"
           :cost="chatCost"
+          :refreshing="refreshingId === selectedSession.id"
           @stop="onStop"
           @delete="onDelete"
           @send="onSend"
@@ -185,6 +186,8 @@
           @editor="onEditor"
           @branch="onBranch"
           @restart="onRestart"
+          @refresh="onRefreshChat"
+          @summary="onSummary"
           @reopen="onReopenSelected"
           @newTask="openTaskFromText"
           @promote-agent="onPromoteAgent"
@@ -849,6 +852,9 @@ function openLauncher(task?: Session): void {
 // conversation into it and hands the agent the implementation order. The row keeps its id, so
 // an open panel simply turns into the running agent under the operator's eyes.
 const promotingId = ref<string | null>(null);
+// Rehydration in flight for this session — the composer's ↻ stays down so a second click
+// cannot spawn a second respawn while the first is still talking to omp.
+const refreshingId = ref<string | null>(null);
 
 async function startImplementation(chat: Session): Promise<void> {
   if (promotingId.value) return;
@@ -992,19 +998,57 @@ function onRowClick(s: Session): void {
 }
 
 // ── Detail panel emits → store actions ───────────────────────────────────
+// Which omp message mode the session's next message takes. An empty session (a fresh quick
+// chat) starts its first turn with a prompt. Otherwise: a settled session gets a fresh
+// follow-up; a live one is steered mid-turn.
+function nextMode(s: Session): MessageMode {
+  const history = store.transcripts[s.id] ?? [];
+  const hasTurn = history.some((e) => e.kind === 'user_text' || e.kind === 'assistant_text');
+  return !hasTurn ? 'prompt' : s.status === 'done' ? 'follow_up' : 'steer';
+}
+
 async function onSend(text: string, images: ImageInput[]): Promise<void> {
   const s = selectedSession.value;
   if (!s) return;
-  const history = store.transcripts[s.id] ?? [];
-  const hasTurn = history.some((e) => e.kind === 'user_text' || e.kind === 'assistant_text');
-  // An empty session (a fresh quick chat) starts its first turn with a prompt. Otherwise keep the
-  // rule: a settled session gets a fresh follow-up; a live one is steered mid-turn.
-  const mode: MessageMode = !hasTurn ? 'prompt' : s.status === 'done' ? 'follow_up' : 'steer';
   try {
-    await store.sendMessage(s.id, text, mode, images);
+    await store.sendMessage(s.id, text, nextMode(s), images);
   } catch (e) {
     // A failed send (e.g. the agent's omp child died and could not be respawned) must be
     // visible, not swallowed — otherwise the chat looks silently stuck.
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+// Composer ↻ — wake a dormant session so its history comes back. After an app restart the
+// api has no omp child for the session, so the transcript endpoint can only serve a "dormant"
+// notice and every chat reads empty; this respawns the child and reloads its transcript
+// WITHOUT sending anything, which used to be the only way to trigger the same rehydration.
+async function onRefreshChat(): Promise<void> {
+  const s = selectedSession.value;
+  if (!s || refreshingId.value) return;
+  refreshingId.value = s.id;
+  try {
+    await store.resumeSession(s.id);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    refreshingId.value = null;
+  }
+}
+
+// Composer ≡ — ask the agent itself to recap, rather than stitching a digest out of the
+// transcript locally: it has the whole session in context and can say where the work stands.
+// A canned operator message, the same shape as the server-side resolve/PR prompts.
+const SUMMARY_PROMPT =
+  'Дай коротке саммарі цієї сесії: що зроблено, де ми зараз, що далі. ' +
+  'Відповідай українською, стисло. Нічого не змінюй.';
+
+async function onSummary(): Promise<void> {
+  const s = selectedSession.value;
+  if (!s) return;
+  try {
+    await store.sendMessage(s.id, SUMMARY_PROMPT, nextMode(s));
+  } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
 }
