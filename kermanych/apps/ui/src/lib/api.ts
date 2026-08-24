@@ -229,6 +229,9 @@ export const api = {
   restartSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/restart`, {}),
 
+  resumeSession: (id: string): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>(`/sessions/${id}/resume`, {}),
+
   reopenSession: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/reopen`, {}),
 

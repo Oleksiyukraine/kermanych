@@ -901,19 +901,34 @@ export class SupervisorService implements OnModuleDestroy {
     } catch {}
   }
 
-  async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
-    // A dormant session (no Live) resumes; a *dead* Live — the omp child exited, e.g. a
-    // provider outage killed it after the turn ended — must ALSO resume, not be written to.
-    // A write to a dead child's stdin raises EPIPE, which RpcSession swallows, so the message
-    // would vanish with no error and the agent would look "hung". Drop the corpse and respawn.
-    let l = this.map.get(id);
-    if (l && !l.rpc.isAlive()) {
+  // The Live to write to, respawning when there is none to write to. A dormant session (no
+  // Live) resumes; a *dead* Live — the omp child exited, e.g. a provider outage killed it
+  // after the turn ended — must ALSO resume, not be written to. A write to a dead child's
+  // stdin raises EPIPE, which RpcSession swallows, so the message would vanish with no error
+  // and the agent would look "hung". Drop the corpse and respawn.
+  private async liveOrResume(id: string): Promise<Live> {
+    const l = this.map.get(id);
+    if (l?.rpc.isAlive()) return l;
+    if (l) {
       this.stopPoll(l);
       this.map.delete(id);
       this.toolDetails.dropSession(id);
-      l = undefined;
     }
-    if (!l) l = await this.resumeSession(id);
+    return this.resumeSession(id);
+  }
+
+  // Wake a session without prompting it: the omp child respawns, switch_session reloads its
+  // saved transcript and doResume broadcasts `transcript_reset`, which is the whole point —
+  // after an app restart getTranscript() has nothing but the "dormant" notice to serve, so the
+  // chat reads empty until something rehydrates it. Deliberately NOT restartSession: this must
+  // never kill a live child, so pressing it mid-turn cannot destroy the running turn.
+  async resume(id: string): Promise<{ ok: true }> {
+    await this.liveOrResume(id);
+    return { ok: true };
+  }
+
+  async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
+    const l = await this.liveOrResume(id);
     try {
       this.registry.touchSession(id);
     } catch {

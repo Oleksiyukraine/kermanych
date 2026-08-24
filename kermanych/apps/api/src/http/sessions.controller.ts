@@ -246,6 +246,17 @@ export class SessionsController {
     }
   }
 
+  // Non-destructive counterpart to :id/restart — wakes a dormant session so its transcript
+  // rehydrates, and leaves a live one (and its running turn) alone.
+  @Post(":id/resume")
+  async resume(@Param("id") id: string) {
+    try {
+      return await this.sup.resume(id);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Post(":id/restart")
   async restart(@Param("id") id: string) {
     try {

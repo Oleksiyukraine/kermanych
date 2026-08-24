@@ -82,3 +82,43 @@ describe("sendMessage resume-on-dead", () => {
     expect(instances[0].followUps).toBe(2);
   });
 });
+
+describe("resume", () => {
+  it("rehydrates a dormant session without prompting the agent", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    registry.updateSession(s.id, { ompSessionFile: "/tmp/s.jsonl", status: "done" });
+
+    // Dormant (the state every session is in right after an app restart): the transcript
+    // endpoint can only serve the synthesised "session is dormant" notice, so the chat reads
+    // empty however often the client refetches.
+    expect(sup.getTranscript(s.id)).toEqual([
+      expect.objectContaining({ kind: "notice", id: "dormant" }),
+    ]);
+
+    expect(await sup.resume(s.id)).toEqual({ ok: true });
+
+    // A child is up and the transcript now comes from omp's own history (empty here — the fake
+    // has no messages), not from the dormant placeholder.
+    expect(instances).toHaveLength(1);
+    expect(sup.getTranscript(s.id)).toEqual([]);
+    // Waking the session must not put words in the operator's mouth: no turn was started.
+    expect(instances[0]).toMatchObject({ prompts: 0, followUps: 0, steers: 0 });
+  });
+
+  it("leaves a live session and its running turn alone", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    registry.updateSession(s.id, { ompSessionFile: "/tmp/s.jsonl", status: "done" });
+
+    await sup.sendMessage(s.id, "one", "follow_up");
+    await sup.resume(s.id);
+
+    // Unlike restartSession, resume never kills the child: same instance, turn untouched.
+    expect(instances).toHaveLength(1);
+    expect(instances[0].alive).toBe(true);
+    expect(instances[0].followUps).toBe(1);
+  });
+});
