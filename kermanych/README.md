@@ -86,6 +86,27 @@ authorization surface — every request runs under the user's own JWT. **No secr
 key ever belongs on a machine running Kermanych**, and nothing in this repo reads
 one.
 
+### Applying a migration to the team's project
+
+`supabase/migrations/**` is the schema of record, and the hosted project is NOT
+updated by merging a branch. A migration that is committed but never pushed
+leaves the shipped UI calling something that does not exist: PostgREST answers
+`PGRST202 Could not find the function … in the schema cache`, which is exactly
+how an unpushed `invite_project_member` (20260823130000) surfaced in the members
+panel — «Запросити» failed for every address. Push from a clone linked to the
+project, with the CLI logged in (`supabase login`):
+
+```bash
+supabase link --project-ref uqqdudlfizfwqfegfrlh   # once per clone
+supabase migration list --linked                   # local vs remote history
+supabase db push --linked --dry-run                # what would be applied
+supabase db push --linked
+```
+
+`db push` applies only the versions missing from the remote history table, so
+re-running it is a no-op. `db reset` is for the LOCAL stack only and never
+touches the hosted database.
+
 ### Running against a local stack or your own project
 
 Everything below is for pointing Kermanych somewhere OTHER than the team's
