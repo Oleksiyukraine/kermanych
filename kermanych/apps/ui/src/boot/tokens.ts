@@ -4,7 +4,10 @@ import { defineBoot } from '#q-app/wrappers';
 // Imported here so they are bundled into the app entry.
 import '@kermanych/tokens/fonts.css';
 import '@kermanych/tokens/tokens.css';
+import { initTheme } from 'src/lib/theme';
 
 export default defineBoot(() => {
-  // Side-effect imports above wire the base theme; nothing else to do here yet.
+  // Boot runs before the app mounts, so the stored theme is on <html> before
+  // the first paint — a light-theme user never sees the dark default flash.
+  initTheme();
 });

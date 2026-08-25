@@ -90,6 +90,15 @@
           @click="openSettings"
         >⚙</KBtn>
         </template>
+        <!-- Theme toggle. Outside the project-scoped block above — the theme is a
+             property of this screen, not of a project — and last in the cluster, so
+             it keeps its place against the right edge when $ and ⚙ come and go. The
+             glyph names the theme the click moves TO, like the sidebar's «/». -->
+        <KBtn
+          variant="icon"
+          :title="theme === 'light' ? 'Темна тема' : 'Світла тема'"
+          @click="toggleTheme"
+        >{{ theme === 'light' ? '☾' : '☀' }}</KBtn>
       </div>
     </q-header>
 
@@ -341,6 +350,7 @@ import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
 import { IS_PREVIEW } from '../lib/preview';
+import { theme, toggleTheme } from '../lib/theme';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KTopNav from 'components/kit/KTopNav.vue';
 import KNavItem from 'components/kit/KNavItem.vue';

@@ -4,7 +4,7 @@
       <div class="kit__eyebrow mono">ДИЗАЙН-СИСТЕМА · КЕРМАНИЧ</div>
       <h1 class="kit__title">UI-kit</h1>
       <p class="kit__lede">
-        Dark kit. Cool near-black surfaces, single vermilion accent, rounded cards, mono for machine text.
+        Two themes on one token set. Single vermilion accent, rounded cards, mono for machine text.
       </p>
     </header>
 

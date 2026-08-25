@@ -815,7 +815,7 @@ function answerCancel() {
   line-height: 1;
   padding: 5px 10px;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--k-shadow-pop);
 }
 .k-panel__sel-task:hover { background: var(--k-accent); color: var(--k-on-accent); }
 </style>

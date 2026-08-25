@@ -56,7 +56,7 @@ withDefaults(
 // primary — the single accent action.
 .k-btn--primary {
   background: var(--k-accent);
-  color: var(--k-canvas);
+  color: var(--k-on-accent);
   border-color: var(--k-accent);
 
   &:hover:not(.k-btn--disabled) {

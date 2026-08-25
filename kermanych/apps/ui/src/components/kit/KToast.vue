@@ -48,7 +48,7 @@ const emit = defineEmits<{ dismiss: [id: string] }>();
   font-size: 13px;
   line-height: 1.5;
   cursor: pointer;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--k-shadow-toast);
 }
 
 // error — accent rail; info — neutral rail.

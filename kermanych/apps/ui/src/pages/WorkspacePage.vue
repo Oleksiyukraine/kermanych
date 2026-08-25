@@ -1952,7 +1952,7 @@ async function submitPreviewConfig(): Promise<void> {
 }
 .ws-launcher__seg-btn--active {
   background: var(--k-accent);
-  color: var(--k-canvas);
+  color: var(--k-on-accent);
 }
 
 .ws-launcher__block {
