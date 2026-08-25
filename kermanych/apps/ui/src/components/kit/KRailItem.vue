@@ -16,6 +16,7 @@ export type RailProject = {
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { initialsOf } from '../../lib/initials';
 
 // A project row in the left sidebar. The name plus a small state dot on the right: bound
 // (a local repo here) shows green, orphan (gone from the cloud) accent, unbound none. The
@@ -29,6 +30,7 @@ const STATE_HINT: Record<RailProject['state'], string> = {
 };
 
 const title = computed(() => props.project.name + STATE_HINT[props.project.state]);
+const initials = computed(() => initialsOf(props.project.name, '#'));
 </script>
 
 <template>
@@ -39,6 +41,7 @@ const title = computed(() => props.project.name + STATE_HINT[props.project.state
     :title="title"
     :aria-pressed="active"
   >
+    <span class="k-rail__initials" aria-hidden="true">{{ initials }}</span>
     <span class="k-rail__name">{{ project.name }}</span>
     <span
       v-if="project.state !== 'unbound'"
@@ -87,6 +90,22 @@ const title = computed(() => props.project.name + STATE_HINT[props.project.state
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--k-fs-base);
+}
+
+// Compact tile shown only in the minified rail; the parent toggles it on via .shell--min.
+.k-rail__initials {
+  display: none;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--k-r);
+  background: var(--k-surface2);
+  color: var(--k-text);
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-xs);
+  font-weight: var(--k-fw-semibold);
 }
 
 // state dot — bound (green), orphan (accent); unbound shows none.

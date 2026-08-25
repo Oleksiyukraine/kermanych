@@ -1,13 +1,14 @@
 <template>
   <q-layout view="hHh Lpr lFf" class="shell">
     <!-- LEFT SIDEBAR — bucket nav + projects + folder binding + account (v3 section 07) -->
-    <q-drawer :model-value="!collapsed" side="left" :width="264" :breakpoint="0" class="shell__sidebar">
-      <div class="shell__side-inner">
+    <q-drawer model-value side="left" :width="collapsed ? 64 : 264" :breakpoint="0" class="shell__sidebar">
+      <div class="shell__side-inner" :class="{ 'shell--min': collapsed }">
         <nav class="shell__buckets">
           <KNavItem
             v-for="b in buckets"
             :key="b.key"
             :label="b.label"
+            :icon="b.icon"
             :count="bucketCounts[b.key]"
             :active="store.selectedBucket === b.key"
             @click="onBucket(b.key)"
@@ -444,10 +445,10 @@ function goView(v: string): void {
 }
 
 const buckets = [
-  { key: 'active', label: 'Активні' },
-  { key: 'tasks', label: 'Задачі' },
-  { key: 'archived', label: 'Відкладені' },
-  { key: 'history', label: 'Історія' },
+  { key: 'active', label: 'Активні', icon: '◉' },
+  { key: 'tasks', label: 'Задачі', icon: '☰' },
+  { key: 'archived', label: 'Відкладені', icon: '⤓' },
+  { key: 'history', label: 'Історія', icon: '↺' },
 ] as const;
 function onBucket(key: 'active' | 'tasks' | 'archived' | 'history'): void {
   store.setBucket(key);
@@ -912,6 +913,47 @@ async function confirmSignOut(): Promise<void> {
   gap: var(--k-sp-2);
   padding: var(--k-sp-3) var(--k-sp-2);
   height: 100%;
+}
+
+// ── Minified (Slack-style) rail — icons only, ~64px wide ─────────────────────
+// Expanded stays label-only, so the leading glyph is hidden until the rail is minified.
+.shell__side-inner:not(.shell--min) :deep(.k-nav-item__icon) {
+  display: none;
+}
+.shell__side-inner.shell--min {
+  padding: var(--k-sp-3) var(--k-sp-1);
+}
+.shell--min .shell__side-label,
+.shell--min .shell__folder,
+.shell--min .shell__account-name,
+.shell--min .shell__collapse {
+  display: none;
+}
+.shell--min .shell__user {
+  justify-content: center;
+}
+.shell--min :deep(.k-nav-item) {
+  justify-content: center;
+  gap: 0;
+  padding: var(--k-sp-2);
+}
+.shell--min :deep(.k-nav-item__label),
+.shell--min :deep(.k-count) {
+  display: none;
+}
+.shell--min :deep(.k-nav-item__icon) {
+  font-size: var(--k-fs-md);
+}
+.shell--min :deep(.k-rail) {
+  justify-content: center;
+  padding: var(--k-sp-1);
+}
+.shell--min :deep(.k-rail__name),
+.shell--min :deep(.k-rail__dot) {
+  display: none;
+}
+.shell--min :deep(.k-rail__initials) {
+  display: flex;
 }
 
 .shell__buckets {
