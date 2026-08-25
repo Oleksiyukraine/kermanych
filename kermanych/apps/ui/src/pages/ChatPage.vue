@@ -5,7 +5,7 @@
       Обери проєкт ліворуч, щоб почати чат.
     </div>
 
-    <template v-else>
+    <div v-else class="chat__card">
       <!-- header — chat title + chat→task / backlog / new-chat actions -->
       <header class="chat__head">
         <div class="chat__head-title">
@@ -89,7 +89,7 @@
           @send="onSend"
         />
       </div>
-    </template>
+    </div>
   </main>
 </template>
 
@@ -259,15 +259,25 @@ watch(
 
 <style scoped lang="scss">
 .chat {
+  height: calc(100vh - 56px);
+  overflow: hidden;
+  padding: var(--k-sp-3);
+}
+
+.chat__card {
+  height: 100%;
   display: flex;
   flex-direction: column;
-  height: 100%;
   min-height: 0;
+  background: var(--k-bg);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-r-lg);
+  overflow: hidden;
 }
 
 .chat__blank {
+  height: 100%;
   display: flex;
-  flex: 1;
   align-items: center;
   justify-content: center;
   color: var(--k-faint);
@@ -318,7 +328,7 @@ watch(
   gap: var(--k-sp-3);
   flex: none;
   padding: var(--k-sp-3) var(--k-sp-5);
-  border-bottom: 1px solid var(--k-line-strong);
+  border-bottom: 2px solid var(--k-line-strong);
 }
 
 .chat__head-title {
