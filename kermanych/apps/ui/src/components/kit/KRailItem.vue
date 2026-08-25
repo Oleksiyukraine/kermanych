@@ -78,7 +78,6 @@ const title = computed(() => props.project.name + STATE_HINT[props.project.state
 .k-rail--active {
   background: var(--k-surface2);
   color: var(--k-text);
-  border-color: var(--k-line-strong);
 }
 
 .k-rail__name {

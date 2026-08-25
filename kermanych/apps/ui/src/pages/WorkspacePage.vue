@@ -1561,6 +1561,7 @@ async function submitPreviewConfig(): Promise<void> {
 }
 
 .ws__board {
+  border: 1px solid var(--k-line);
   flex: none;
   min-width: 0;
   overflow-y: auto;

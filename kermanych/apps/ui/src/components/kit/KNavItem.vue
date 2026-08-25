@@ -55,7 +55,6 @@ const emit = defineEmits<{ click: [] }>();
 .k-nav-item--active {
   color: var(--k-text);
   background: var(--k-surface2);
-  border-color: var(--k-line-strong);
 }
 
 .k-nav-item__icon {

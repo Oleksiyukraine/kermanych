@@ -883,6 +883,7 @@ async function confirmSignOut(): Promise<void> {
 .shell__side-inner {
   background: var(--k-bg);
   border-radius: var(--k-r-lg);
+  border: 1px solid var(--k-line);
   display: flex;
   flex-direction: column;
   gap: var(--k-sp-2);
