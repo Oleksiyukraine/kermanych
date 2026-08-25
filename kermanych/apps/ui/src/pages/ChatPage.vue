@@ -6,6 +6,30 @@
     </div>
 
     <template v-else>
+      <!-- header — chat title + chat→task / backlog / new-chat actions -->
+      <header class="chat__head">
+        <div class="chat__head-title">
+          <KStatusDot v-if="chatSession" :status="chatSession.status" />
+          <span>Чат</span>
+        </div>
+        <div class="chat__head-actions">
+          <KIconButton
+            :disabled="!isBound || promoting || !chatId"
+            :title="promoting ? 'Готую worktree…' : !isBound ? BIND_HINT : 'Почати імплементацію обговореного (worktree + повний доступ)'"
+            @click="promote"
+          >▶</KIconButton>
+          <KIconButton
+            :disabled="!chatId"
+            title="Зберегти як задачу в беклог"
+            @click="toBacklog"
+          >⊕</KIconButton>
+          <KIconButton
+            :disabled="!chatId"
+            title="Новий чат (видалити поточний)"
+            @click="clearChat"
+          >✕</KIconButton>
+        </div>
+      </header>
       <!-- scrollable transcript -->
       <div ref="messagesEl" class="chat__messages">
         <template v-if="blocks.length">
@@ -58,7 +82,6 @@
 
       <!-- composer pinned to the bottom -->
       <div class="chat__composer">
-        <div class="chat__readonly mono">Лише читання</div>
         <KComposer
           v-model="draft"
           :model="chatModel"
@@ -75,7 +98,8 @@
 // It reuses the most recent chat for the selected project (or creates one), renders its
 // transcript through the shared `buildChatBlocks` grouping, and sends via the store.
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
-import { buildChatBlocks } from '@kermanych/core';
+import { useRouter } from 'vue-router';
+import { buildChatBlocks, taskNameFromText } from '@kermanych/core';
 import type { ImageInput } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { renderMarkdown } from '../lib/markdown';
@@ -84,12 +108,22 @@ import KChatMessage from 'components/kit/KChatMessage.vue';
 import KThoughtToggle from 'components/kit/KThoughtToggle.vue';
 import KToolRow from 'components/kit/KToolRow.vue';
 import KComposer from 'components/kit/KComposer.vue';
+import KStatusDot from 'components/kit/KStatusDot.vue';
+import KIconButton from 'components/kit/KIconButton.vue';
 
 const store = useOrchestrator();
 
 const draft = ref('');
 const chatId = ref<string | undefined>(undefined);
 const messagesEl = ref<HTMLElement | null>(null);
+
+const router = useRouter();
+const BIND_HINT = 'Прив’яжіть локальну теку репозиторію';
+// Promotion spins up a worktree, so it is blocked until the project is bound.
+const promoting = ref(false);
+const selectedProject = computed(() => store.projects.find((p) => p.id === store.selectedProjectId));
+const isBound = computed(() => !!selectedProject.value?.localRepoPath);
+const chatSession = computed(() => store.sessions.find((s) => s.id === chatId.value));
 // Reasoning traces start collapsed; the set tracks the ones the operator opened.
 const openThoughts = reactive(new Set<string>());
 // Guard against a double-create if the project changes mid-flight while a create is pending.
@@ -144,6 +178,65 @@ async function onSend(text: string, images: ImageInput[]): Promise<void> {
   if (!id) return;
   try {
     await store.sendMessage(id, text, 'prompt', images);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+// Promote the chat into a real task: omp gets a worktree + full tools, and we jump to the
+// workspace where the now-running agent lives.
+async function promote(): Promise<void> {
+  const id = chatId.value;
+  if (!id || promoting.value || !isBound.value) return;
+  promoting.value = true;
+  try {
+    await store.promoteChat(id);
+    store.setBucket('active');
+    store.selectSession(id);
+    void router.push({ name: 'workspace' });
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    promoting.value = false;
+  }
+}
+
+// Park the chat's opening ask as a backlog task (name from its first line); it can be
+// refined later from the workspace backlog.
+async function toBacklog(): Promise<void> {
+  const id = chatId.value;
+  const pid = store.selectedProjectId;
+  if (!id || !pid) return;
+  const seed =
+    (
+      (store.transcripts[id] ?? []).find((e) => e.kind === 'user_text') as
+        | { kind: 'user_text'; text: string }
+        | undefined
+    )?.text?.trim() ?? '';
+  if (!seed) {
+    store.notify('Порожній чат — нема що зберігати в беклог.', 'error');
+    return;
+  }
+  try {
+    await store.createSession(
+      pid, taskNameFromText(seed), seed, chatSession.value?.model, [], true, 'feature', true, undefined, undefined,
+    );
+    store.setBucket('tasks');
+    store.notify('Збережено в беклог.');
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+// Discard the current chat and start a fresh one (single chat per project).
+async function clearChat(): Promise<void> {
+  const id = chatId.value;
+  if (!id) return;
+  if (!window.confirm('Видалити поточний чат і почати новий?')) return;
+  try {
+    await store.deleteSession(id);
+    chatId.value = undefined;
+    await ensureChat();
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
@@ -218,12 +311,29 @@ watch(
   border-top: 1px solid var(--k-line-strong);
 }
 
-.chat__readonly {
-  align-self: flex-start;
-  padding: var(--k-sp-1) var(--k-sp-2);
-  border-radius: var(--k-r-sm);
-  background: var(--k-surface2);
-  color: var(--k-faint);
-  font-size: var(--k-fs-xs);
+.chat__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--k-sp-3);
+  flex: none;
+  padding: var(--k-sp-3) var(--k-sp-5);
+  border-bottom: 1px solid var(--k-line-strong);
+}
+
+.chat__head-title {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-md);
+  font-weight: var(--k-fw-semibold);
+  color: var(--k-text);
+}
+
+.chat__head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-1);
 }
 </style>

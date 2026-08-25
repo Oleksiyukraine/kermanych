@@ -15,12 +15,6 @@
             <span class="ws__bucket-count mono">{{ boardRows.length }}</span>
           </div>
           <div class="ws__board-controls">
-            <KBtn
-              variant="ghost"
-              :disabled="!isBound"
-              :title="isBound ? 'Сесія-чат без worktree' : BIND_HINT"
-              @click="onNewChat"
-            >Швидкий чат</KBtn>
             <KBtn variant="primary" @click="openLauncher()">Нова задача</KBtn>
           </div>
         </header>
@@ -75,9 +69,6 @@
           <KPanel
             class="ws__panel"
             :session="selectedSession"
-            v-bind="selectedSession.kind === 'chat'
-              ? { placeholder: 'запитай або опиши, що потрібно зробити…', promoting: promotingId === selectedSession.id }
-              : {}"
             :cost="chatCost"
             :refreshing="refreshingId === selectedSession.id"
             @stop="onStop"
@@ -92,8 +83,6 @@
             @summary="onSummary"
             @reopen="onReopenSelected"
             @newTask="openTaskFromText"
-            @promote-agent="onPromoteAgent"
-            @promote-task="onPromoteTask"
             @expand-all="onExpandAll"
           >
             <template v-if="blocks.length">
@@ -169,16 +158,7 @@
             </div>
           </dl>
           <div class="ws__actions">
-            <template v-if="selectedSession.kind === 'chat' && !showArchived">
-              <KIconButton
-                :disabled="promotingId === selectedSession.id"
-                :title="promotingId === selectedSession.id ? 'Готую worktree…' : 'Почати імплементацію обговореного (worktree + повний доступ)'"
-                @click="startImplementation(selectedSession)"
-              >▶</KIconButton>
-              <KIconButton title="Зберегти як задачу в беклог" @click="openChatToBacklog(selectedSession)">⊕</KIconButton>
-              <KIconButton title="Видалити чат" @click="onDeleteChat(selectedSession)">✕</KIconButton>
-            </template>
-            <template v-else-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
+            <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
               <KIconButton
                 v-if="selectedSession.status !== 'merged'"
                 :title="selectedSession.kind === 'review' ? 'Віддати висновок ревізора виконавцю' : 'Влити висновок у батьківського агента'"
@@ -603,7 +583,7 @@ const projectSessions = computed(() =>
 // Board order: each discussion child immediately follows its parent (a one-level
 // tree). Orphans (parent filtered out by the archived/project view) still render.
 const boardRows = computed<Session[]>(() => {
-  const all = projectSessions.value;
+  const all = projectSessions.value.filter((s) => s.kind !== 'chat');
   const parents = all.filter((s) => !s.parentSessionId);
   const out: Session[] = [];
   for (const p of parents) {
@@ -905,28 +885,9 @@ function openLauncher(task?: Session): void {
   void nextTick(() => taskInput.value?.focus());
 }
 
-// The chat matures into an agent on the spot — no launcher, nothing to fill in. The server
-// derives the name and branch from what was asked, builds the worktree, forks the very same
-// conversation into it and hands the agent the implementation order. The row keeps its id, so
-// an open panel simply turns into the running agent under the operator's eyes.
-const promotingId = ref<string | null>(null);
 // Rehydration in flight for this session — the composer's ↻ stays down so a second click
 // cannot spawn a second respawn while the first is still talking to omp.
 const refreshingId = ref<string | null>(null);
-
-async function startImplementation(chat: Session): Promise<void> {
-  if (promotingId.value) return;
-  promotingId.value = chat.id;
-  try {
-    await store.promoteChat(chat.id);
-    store.setBucket('active');
-    store.selectSession(chat.id);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    promotingId.value = null;
-  }
-}
 
 // Turn a transcript text selection into a new backlog task: prefill the launcher
 // with the selection as the task body and a name suggested from its first line,
@@ -945,29 +906,6 @@ function openTaskFromText(text: string): void {
   clearLaunchImages();
   launcherOpen.value = true;
   void nextTick(() => nameField.value?.focus());
-}
-
-// Park a quick chat's opening ask in the backlog: open the launcher pre-filled from the
-// conversation, as a fresh launch config to be started (or edited) later.
-function openChatToBacklog(chat: Session): void {
-  const history = store.transcripts[chat.id] ?? [];
-  const firstUser = history.find((e) => e.kind === 'user_text') as
-    | { kind: 'user_text'; text: string }
-    | undefined;
-  const seed = (firstUser?.text ?? '').trim();
-  editingTaskId.value = null;
-  draftName.value = taskNameFromText(seed);
-  draftTask.value = seed;
-  draftModel.value = chat.model ?? 'opus-5';
-  draftPrefix.value = 'feature';
-  draftPlatform.value = undefined;
-  draftWorktree.value = true;
-  void loadLaunchBranches(undefined);
-  nameEdited.value = true;
-  launcherError.value = null;
-  clearLaunchImages();
-  launcherOpen.value = true;
-  void nextTick(() => taskInput.value?.focus());
 }
 
 async function submitLauncher(asTask: boolean): Promise<void> {
@@ -1022,28 +960,6 @@ async function onDeleteTask(s: Session): Promise<void> {
   if (!window.confirm(`Видалити задачу «${s.name}»?`)) return;
   try {
     await store.deleteSession(s.id);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
-}
-
-async function onNewChat(): Promise<void> {
-  const projectId = store.selectedProjectId;
-  if (!projectId || !isBound.value) return;
-  try {
-    const chat = await store.createChat(projectId);
-    store.setBucket('active');
-    if (chat?.id) store.selectSession(chat.id);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
-}
-
-async function onDeleteChat(s: Session): Promise<void> {
-  if (!window.confirm(`Видалити чат «${s.name}»?`)) return;
-  try {
-    await store.deleteSession(s.id);
-    if (store.selectedSessionId === s.id) store.selectSession(undefined);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
@@ -1129,16 +1045,6 @@ async function onReview(s: Session): Promise<void> {
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
-}
-
-function onPromoteAgent(): void {
-  const s = selectedSession.value;
-  if (s) void startImplementation(s);
-}
-
-function onPromoteTask(): void {
-  const s = selectedSession.value;
-  if (s) openChatToBacklog(s);
 }
 
 function onStop(): void {

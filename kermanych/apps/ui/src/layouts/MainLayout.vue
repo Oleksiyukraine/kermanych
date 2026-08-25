@@ -427,7 +427,7 @@ function sessionsOf(projectId: string | undefined) {
 }
 
 function runningCount(projectId: string): number {
-  return sessionsOf(projectId).filter((s) => RUNNING.includes(s.status)).length;
+  return sessionsOf(projectId).filter((s) => s.kind !== 'chat' && RUNNING.includes(s.status)).length;
 }
 
 const topOptions = [
@@ -459,6 +459,7 @@ const bucketCounts = computed(() => {
   const c = { active: 0, tasks: 0, archived: 0, history: 0 };
   for (const s of store.sessions) {
     if (s.projectId !== store.selectedProjectId) continue;
+    if (s.kind === 'chat') continue;
     if (s.archived) c.archived++;
     else if (s.status === 'backlog') c.tasks++;
     else if (s.status === 'merged' || s.status === 'done' || s.status === 'stopped') c.history++;
