@@ -14,7 +14,7 @@ body,
 // the dark background must live here, global, not in the scoped layout style.
 .shell__sidebar {
   background: var(--k-canvas);
-  padding: var(--k-sp-3);
+  padding: var(--k-sp-3) 0 var(--k-sp-3) var(--k-sp-3);
   box-sizing: border-box;
 }
 
