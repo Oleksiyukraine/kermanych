@@ -65,71 +65,62 @@
     </div>
 
     <div v-if="cloud.projects.length" class="board__columns">
-      <section v-for="col in COLUMNS" :key="col.key" class="board__column">
-        <header class="board__column-head">
-          <span class="board__column-title">{{ col.label }}</span>
-          <span class="board__column-count mono">{{ byColumn[col.key]?.length ?? 0 }}</span>
-        </header>
+      <KKanbanColumn
+        v-for="col in COLUMNS"
+        :key="col.key"
+        :label="col.label"
+        :count="byColumn[col.key]?.length ?? 0"
+      >
+        <div v-for="task in byColumn[col.key]" :key="task.id" class="board__item">
+          <KKanbanCard
+            :title="task.title"
+            :branch="task.branch ?? ''"
+            :project="projectName(task.projectId)"
+            :time="relativeTime(task.updatedAt, now)"
+            :status="task.status"
+            @click="openEdit(task)"
+          />
 
-        <div class="board__column-body">
-          <article v-for="task in byColumn[col.key]" :key="task.id" class="board__card">
-            <header class="board__card-head">
-              <KStatusDot :status="task.status" />
-              <span class="board__card-title">{{ task.title }}</span>
-            </header>
+          <div class="board__card-assignee">
+            <img v-if="avatarOf(task)" :src="avatarOf(task)" class="board__avatar" alt="" />
+            <KSelect
+              :model-value="handleOfAssignee(task)"
+              :options="memberHandles(task.projectId)"
+              placeholder="не призначено"
+              :disabled="isActiveTask(task)"
+              @update:model-value="(handle: string) => onAssign(task, handle)"
+            />
+          </div>
 
-            <p v-if="task.description" class="board__card-desc">{{ task.description }}</p>
-
-            <div class="board__card-tags">
-              <KTag v-if="!projectFilter">{{ projectName(task.projectId) }}</KTag>
-              <KTag v-if="task.model">{{ task.model }}</KTag>
-              <KTag v-if="task.prefix">{{ task.prefix }}</KTag>
-              <KTag v-if="task.platform">{{ task.platform }}</KTag>
-              <KTag v-if="task.branch">⑂ {{ task.branch }}</KTag>
-            </div>
-
-            <div class="board__card-assignee">
-              <img v-if="avatarOf(task)" :src="avatarOf(task)" class="board__avatar" alt="" />
-              <KSelect
-                :model-value="handleOfAssignee(task)"
-                :options="memberHandles(task.projectId)"
-                placeholder="не призначено"
-                :disabled="isActiveTask(task)"
-                @update:model-value="(handle: string) => onAssign(task, handle)"
-              />
-            </div>
-
-            <footer class="board__card-foot">
-              <span class="board__card-age mono">оновлено {{ relativeTime(task.updatedAt, now) }}</span>
-              <span
-                v-if="isStale(task)"
-                class="board__stale"
-                :title="`Останнє оновлення ${relativeTime(task.updatedAt, now)} — машина виконавця, схоже, офлайн`"
-              >⚠ давно без змін</span>
-              <span class="board__spacer"></span>
-              <KBtn variant="ghost" @click="openEdit(task)">Змінити</KBtn>
-              <KBtn variant="ghost" @click="onDelete(task)">Видалити</KBtn>
-              <!-- The only way out of a card whose executing machine never came back. Shown
-                   to the two people tasks_guard() actually lets through, so nobody is
-                   offered a button that will be refused. -->
-              <KBtn
-                v-if="canForceStop(task)"
-                variant="secondary"
-                title="Задача рахується активною, але її машина, схоже, більше не звітує — познач картку зупиненою"
-                @click="openForceStop(task)"
-              >Позначити зупиненою</KBtn>
-              <KBtn
-                variant="primary"
-                :disabled="launching !== null || isActiveTask(task)"
-                :title="launchHint(task)"
-                @click="launch(task)"
-              >Запустити</KBtn>
-            </footer>
-          </article>
-
-          <p v-if="!byColumn[col.key]?.length" class="board__column-empty mono">—</p>
+          <footer class="board__card-foot">
+            <span
+              v-if="isStale(task)"
+              class="board__stale"
+              :title="`Останнє оновлення ${relativeTime(task.updatedAt, now)} — машина виконавця, схоже, офлайн`"
+            >⚠ давно без змін</span>
+            <span class="board__spacer"></span>
+            <KBtn variant="ghost" @click="openEdit(task)">Змінити</KBtn>
+            <KBtn variant="ghost" @click="onDelete(task)">Видалити</KBtn>
+            <!-- The only way out of a card whose executing machine never came back. Shown
+                 to the two people tasks_guard() actually lets through, so nobody is
+                 offered a button that will be refused. -->
+            <KBtn
+              v-if="canForceStop(task)"
+              variant="secondary"
+              title="Задача рахується активною, але її машина, схоже, більше не звітує — познач картку зупиненою"
+              @click="openForceStop(task)"
+            >Позначити зупиненою</KBtn>
+            <KBtn
+              variant="primary"
+              :disabled="launching !== null || isActiveTask(task)"
+              :title="launchHint(task)"
+              @click="launch(task)"
+            >Запустити</KBtn>
+          </footer>
         </div>
-      </section>
+
+        <p v-if="!byColumn[col.key]?.length" class="board__column-empty mono">—</p>
+      </KKanbanColumn>
     </div>
 
     <div v-else class="board__blank">
@@ -246,8 +237,8 @@ import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSelect from 'components/kit/KSelect.vue';
-import KStatusDot from 'components/kit/KStatusDot.vue';
-import KTag from 'components/kit/KTag.vue';
+import KKanbanCard from 'components/kit/KKanbanCard.vue';
+import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
 import { relativeTime } from '../lib/time';
@@ -803,9 +794,7 @@ function onDelete(task: Task): void {
 
 .board__count,
 .board__hint,
-.board__column-count,
-.board__column-empty,
-.board__card-age {
+.board__column-empty {
   font-family: var(--k-font-mono);
   font-size: 11px;
   color: var(--k-muted);
@@ -871,92 +860,22 @@ function onDelete(task: Task): void {
 .board__columns {
   display: grid;
   grid-template-columns: repeat(5, minmax(220px, 1fr));
-  gap: 2px;
+  gap: var(--k-sp-4);
   flex: 1;
   min-height: 0;
   overflow-x: auto;
-  background: var(--k-line);
+  padding-top: var(--k-sp-2);
+  align-content: start;
 }
 
-.board__column {
+.board__item {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  background: var(--k-bg);
-}
-
-.board__column-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 2px solid var(--k-line-strong);
-}
-
-.board__column-title {
-  font-family: var(--k-font-ui);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--k-text);
-}
-
-.board__column-count {
-  margin-left: auto;
-}
-
-.board__column-body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 2px;
-  overflow-y: auto;
+  gap: var(--k-sp-2);
 }
 
 .board__column-empty {
-  padding: 12px;
-}
-
-.board__card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--k-surface);
-  border: 1px solid var(--k-line);
-}
-
-.board__card-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.board__card-title {
-  font-family: var(--k-font-ui);
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.4;
-  color: var(--k-text);
-}
-
-.board__card-desc {
-  margin: 0;
-  font-family: var(--k-font-ui);
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--k-muted);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.board__card-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  padding: var(--k-sp-3);
 }
 
 .board__card-assignee {
