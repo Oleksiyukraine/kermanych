@@ -1,7 +1,7 @@
 <template>
   <q-layout view="hHh Lpr lFf" class="shell">
     <!-- LEFT SIDEBAR — bucket nav + projects + folder binding + account (v3 section 07) -->
-    <q-drawer model-value side="left" :width="collapsed ? 64 : 264" :breakpoint="0" class="shell__sidebar">
+    <q-drawer model-value side="left" :width="collapsed ? 76 : 264" :breakpoint="0" class="shell__sidebar">
       <div class="shell__side-inner" :class="{ 'shell--min': collapsed }">
         <nav class="shell__buckets">
           <KNavItem
@@ -53,13 +53,13 @@
             @click="accountOpen = true"
           />
           <span class="shell__account-name">{{ accountName }}</span>
-          <button
-            class="shell__collapse"
-            v-tip="'Згорнути панель'"
-            aria-label="Згорнути панель"
-            @click="collapsed = true"
-          >◫</button>
         </div>
+        <button
+          class="shell__toggle"
+          v-tip="collapsed ? 'Розгорнути панель' : 'Згорнути панель'"
+          :aria-label="collapsed ? 'Розгорнути панель' : 'Згорнути панель'"
+          @click="collapsed = !collapsed"
+        >{{ collapsed ? '»' : '«' }}</button>
       </div>
     </q-drawer>
 
@@ -76,11 +76,6 @@
         @update:model-value="goView"
       />
       <div class="shell__actions">
-        <KBtn
-          variant="icon"
-          :title="collapsed ? 'Показати панель' : 'Сховати панель'"
-          @click="collapsed = !collapsed"
-        >◫</KBtn>
         <template v-if="store.selectedProjectId">
         <KBtn
           variant="icon"
@@ -920,13 +915,9 @@ async function confirmSignOut(): Promise<void> {
 .shell__side-inner:not(.shell--min) :deep(.k-nav-item__icon) {
   display: none;
 }
-.shell__side-inner.shell--min {
-  padding: var(--k-sp-3) var(--k-sp-1);
-}
 .shell--min .shell__side-label,
 .shell--min .shell__folder,
-.shell--min .shell__account-name,
-.shell--min .shell__collapse {
+.shell--min .shell__account-name {
   display: none;
 }
 .shell--min .shell__user {
@@ -1048,18 +1039,24 @@ async function confirmSignOut(): Promise<void> {
   color: var(--k-text);
 }
 
-.shell__collapse {
+.shell__toggle {
   flex: none;
-  padding: var(--k-sp-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: var(--k-sp-2);
+  padding: var(--k-sp-2);
   background: none;
   border: none;
+  border-radius: var(--k-r);
   color: var(--k-faint);
   font-size: var(--k-fs-md);
   line-height: 1;
   cursor: pointer;
 }
 
-.shell__collapse:hover {
+.shell__toggle:hover {
+  background: var(--k-surface2);
   color: var(--k-text);
 }
 
