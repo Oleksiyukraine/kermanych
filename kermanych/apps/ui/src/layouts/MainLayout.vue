@@ -1,7 +1,7 @@
 <template>
   <q-layout view="hHh Lpr lFf" class="shell">
     <!-- LEFT SIDEBAR — bucket nav + projects + folder binding + account (v3 section 07) -->
-    <q-drawer model-value side="left" :width="264" :breakpoint="0" class="shell__sidebar">
+    <q-drawer :model-value="!collapsed" side="left" :width="264" :breakpoint="0" class="shell__sidebar">
       <div class="shell__side-inner">
         <nav class="shell__buckets">
           <KNavItem
@@ -43,13 +43,22 @@
             @click="openBinding"
           >{{ isBound ? 'Змінити теку' : 'Прив’язати теку' }}</KBtn>
         </div>
-        <KUserButton
-          class="shell__account"
-          :label="accountLabel"
-          :avatar-url="auth.profile?.avatarUrl"
-          :title="accountHint"
-          @click="accountOpen = true"
-        />
+        <div class="shell__user">
+          <KUserButton
+            class="shell__account"
+            :label="accountLabel"
+            :avatar-url="auth.profile?.avatarUrl"
+            :title="accountHint"
+            @click="accountOpen = true"
+          />
+          <span class="shell__account-name">{{ accountName }}</span>
+          <button
+            class="shell__collapse"
+            v-tip="'Згорнути панель'"
+            aria-label="Згорнути панель"
+            @click="collapsed = true"
+          >◫</button>
+        </div>
       </div>
     </q-drawer>
 
@@ -65,7 +74,13 @@
         :options="topOptions"
         @update:model-value="goView"
       />
-      <div v-if="store.selectedProjectId" class="shell__actions">
+      <div class="shell__actions">
+        <KBtn
+          variant="icon"
+          :title="collapsed ? 'Показати панель' : 'Сховати панель'"
+          @click="collapsed = !collapsed"
+        >◫</KBtn>
+        <template v-if="store.selectedProjectId">
         <KBtn
           variant="icon"
           :disabled="!isBound"
@@ -78,6 +93,7 @@
           title="Редагувати проєкт"
           @click="openSettings"
         >⚙</KBtn>
+        </template>
       </div>
     </q-header>
 
@@ -321,7 +337,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import type { SessionStatus, EnvFileView } from '@kermanych/core';
 import type { ProjectMember } from '@kermanych/cloud';
@@ -352,6 +368,12 @@ const projects = useProjects();
 const auth = useAuth();
 const route = useRoute();
 const router = useRouter();
+
+// The left sidebar collapses to give the board full width; the choice persists so a reload
+// keeps the operator's layout. breakpoint:0 means the drawer never self-closes, so this
+// model-value is the only thing that shows/hides it.
+const collapsed = ref(localStorage.getItem('kermanych.sidebar-collapsed') === '1');
+watch(collapsed, (v) => localStorage.setItem('kermanych.sidebar-collapsed', v ? '1' : '0'));
 
 // A rail tile means «show me this project», and the only page that shows one is the
 // workspace. Clicked from the team board it used to change the selection behind a screen
@@ -958,9 +980,44 @@ async function confirmSignOut(): Promise<void> {
   justify-content: center;
 }
 
-// account — pinned to the foot of the sidebar, below everything.
-.shell__account {
+// account chip — pinned to the foot of the sidebar: avatar, name, collapse toggle.
+.shell__user {
   margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+  padding-top: var(--k-sp-3);
+  border-top: 1px solid var(--k-line);
+}
+
+.shell__account {
+  flex: none;
+}
+
+.shell__account-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--k-fs-base);
+  font-weight: var(--k-fw-medium);
+  color: var(--k-text);
+}
+
+.shell__collapse {
+  flex: none;
+  padding: var(--k-sp-1);
+  background: none;
+  border: none;
+  color: var(--k-faint);
+  font-size: var(--k-fs-md);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.shell__collapse:hover {
+  color: var(--k-text);
 }
 
 // top bar — 2px rule below (zone separator), surface fill.
