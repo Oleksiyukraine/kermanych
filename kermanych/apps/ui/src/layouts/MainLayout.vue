@@ -53,13 +53,13 @@
             @click="accountOpen = true"
           />
           <span class="shell__account-name">{{ accountName }}</span>
+          <button
+            class="shell__toggle"
+            v-tip="collapsed ? 'Розгорнути панель' : 'Згорнути панель'"
+            :aria-label="collapsed ? 'Розгорнути панель' : 'Згорнути панель'"
+            @click="collapsed = !collapsed"
+          >{{ collapsed ? '»' : '«' }}</button>
         </div>
-        <button
-          class="shell__toggle"
-          v-tip="collapsed ? 'Розгорнути панель' : 'Згорнути панель'"
-          :aria-label="collapsed ? 'Розгорнути панель' : 'Згорнути панель'"
-          @click="collapsed = !collapsed"
-        >{{ collapsed ? '»' : '«' }}</button>
       </div>
     </q-drawer>
 
@@ -927,6 +927,7 @@ async function confirmSignOut(): Promise<void> {
 }
 .shell--min .shell__user {
   justify-content: center;
+  flex-direction: column;
 }
 .shell--min :deep(.k-nav-item) {
   justify-content: center;
@@ -1049,7 +1050,6 @@ async function confirmSignOut(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: var(--k-sp-2);
   padding: var(--k-sp-2);
   background: none;
   border: none;
