@@ -4,9 +4,30 @@
       <div class="kit__eyebrow mono">ДИЗАЙН-СИСТЕМА · КЕРМАНИЧ</div>
       <h1 class="kit__title">UI-kit</h1>
       <p class="kit__lede">
-        Modernist dark kit. Radius 0, single accent, flush-left labels, mono for machine text.
+        Dark kit. Cool near-black surfaces, single vermilion accent, rounded cards, mono for machine text.
       </p>
     </header>
+
+    <!-- 00 — foundations (design system) -->
+    <section class="kit__section">
+      <div class="kit__label">00 · Основи</div>
+      <div class="kit__swatches">
+        <div v-for="c in swatches" :key="c.var" class="kit__swatch">
+          <span class="kit__chip" :style="{ background: `var(${c.var})` }"></span>
+          <span class="kit__swatch-name mono">{{ c.var }}</span>
+        </div>
+      </div>
+      <div class="kit__typescale">
+        <div v-for="t in typeScale" :key="t.var" class="kit__type" :style="{ fontSize: `var(${t.var})` }">
+          {{ t.label }} <span class="mono kit__type-tag">{{ t.var }}</span>
+        </div>
+      </div>
+      <div class="kit__radii">
+        <div v-for="r in radii" :key="r.var" class="kit__radius" :style="{ borderRadius: `var(${r.var})` }">
+          <span class="mono">{{ r.var }}</span>
+        </div>
+      </div>
+    </section>
 
     <!-- 03 — agent statuses -->
     <section class="kit__section">
@@ -243,6 +264,22 @@ import KUserButton from 'components/kit/KUserButton.vue';
 import KStatusBar from 'components/kit/KStatusBar.vue';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 
+const swatches = [
+  { var: '--k-canvas' }, { var: '--k-bg' }, { var: '--k-surface' }, { var: '--k-surface2' },
+  { var: '--k-text' }, { var: '--k-muted' }, { var: '--k-faint' },
+  { var: '--k-accent' }, { var: '--k-success' }, { var: '--k-warning' }, { var: '--k-danger' },
+];
+const typeScale = [
+  { var: '--k-fs-lg', label: 'Заголовок екрана 18' },
+  { var: '--k-fs-md', label: 'Заголовок 15' },
+  { var: '--k-fs-base', label: 'Основний текст 13' },
+  { var: '--k-fs-sm', label: 'Другорядний 12' },
+  { var: '--k-fs-xs', label: 'Мета 11' },
+];
+const radii = [
+  { var: '--k-r-sm' }, { var: '--k-r' }, { var: '--k-r-lg' }, { var: '--k-r-pill' },
+];
+
 const statusSamples: { status: SessionStatus; name: string }[] = [
   { status: 'thinking', name: 'працює' },
   { status: 'waiting_input', name: 'чекає' },
@@ -415,6 +452,14 @@ function onRestart() { lastAction.value = 'restart'; }
 </script>
 
 <style scoped lang="scss">
+.kit__swatches { display: flex; flex-wrap: wrap; gap: var(--k-sp-3); }
+.kit__swatch { display: flex; flex-direction: column; gap: var(--k-sp-1); align-items: center; }
+.kit__chip { width: 56px; height: 40px; border-radius: var(--k-r); border: 1px solid var(--k-line-strong); }
+.kit__swatch-name { font-size: var(--k-fs-xs); color: var(--k-muted); }
+.kit__typescale { display: flex; flex-direction: column; gap: var(--k-sp-2); margin-top: var(--k-sp-4); color: var(--k-text); }
+.kit__type-tag { font-size: var(--k-fs-xs); color: var(--k-faint); }
+.kit__radii { display: flex; gap: var(--k-sp-3); margin-top: var(--k-sp-4); }
+.kit__radius { width: 72px; height: 48px; background: var(--k-surface); border: 1px solid var(--k-line-strong); display: flex; align-items: center; justify-content: center; font-size: var(--k-fs-xs); color: var(--k-muted); }
 .kit {
   max-width: 960px;
   margin: 0 auto;
