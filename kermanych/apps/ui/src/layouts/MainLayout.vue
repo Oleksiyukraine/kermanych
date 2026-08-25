@@ -870,11 +870,9 @@ async function confirmSignOut(): Promise<void> {
 </script>
 
 <style scoped lang="scss">
-.shell__sidebar {
-  background: var(--k-bg);
-}
 
 .shell__side-inner {
+  background: var(--k-bg);
   display: flex;
   flex-direction: column;
   gap: var(--k-sp-2);

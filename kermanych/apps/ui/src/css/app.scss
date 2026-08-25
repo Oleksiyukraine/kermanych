@@ -9,6 +9,13 @@ body,
   font-family: var(--k-font-ui);
 }
 
+// The app-shell drawer: Quasar's <q-drawer> defaults to a light aside and applies our
+// `class` to the inner .q-drawer__content (which carries no scoped [data-v] attribute), so
+// the dark background must live here, global, not in the scoped layout style.
+.shell__sidebar {
+  background: var(--k-bg);
+}
+
 
 // Machine text helper.
 .mono {
