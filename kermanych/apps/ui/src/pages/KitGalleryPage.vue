@@ -261,7 +261,7 @@
       <div class="kit__cards">
         <KSessionCard
           v-for="(c, i) in sessionCards" :key="c.branch"
-          :branch="c.branch" :title="c.title" :time="c.time"
+          :branch="c.branch" :time="c.time"
           :status="c.status" :status-line="c.statusLine" :selected="i === 0"
         />
       </div>

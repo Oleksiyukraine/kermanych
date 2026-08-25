@@ -24,7 +24,6 @@
             v-for="s in boardRows"
             :key="s.id"
             :branch="s.branch"
-            :title="s.name"
             :time="relativeTime(s.lastActivityAt, now)"
             :status="s.status"
             :status-line="activityOf(s) || statusWord(s)"
