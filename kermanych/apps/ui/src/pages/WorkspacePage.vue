@@ -1479,6 +1479,7 @@ async function submitPreviewConfig(): Promise<void> {
 .ws {
   height: calc(100vh - 56px);
   overflow: hidden;
+  padding: var(--k-sp-3);
 }
 
 // ── Blank / no-project state ──────────────────────────────────────────────
@@ -1508,10 +1509,13 @@ async function submitPreviewConfig(): Promise<void> {
 // ── Board + detail split ──────────────────────────────────────────────────
 .ws__content {
   display: flex;
-  gap: var(--k-sp-3);
+  gap: 0;
   height: 100%;
   min-height: 0;
-  padding: var(--k-sp-3);
+  background: var(--k-bg);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-r-lg);
+  overflow: hidden;
 }
 
 // While dragging the seam, force the resize cursor everywhere and kill text
@@ -1544,9 +1548,9 @@ async function submitPreviewConfig(): Promise<void> {
   top: 0;
   bottom: 0;
   left: 50%;
-  width: 2px;
+  width: 1px;
   transform: translateX(-50%);
-  background: var(--k-line-strong);
+  background: var(--k-line);
   transition: background 0.12s;
 }
 
@@ -1561,13 +1565,10 @@ async function submitPreviewConfig(): Promise<void> {
 }
 
 .ws__board {
-  border: 1px solid var(--k-line);
   flex: none;
   min-width: 0;
   overflow-y: auto;
   padding: var(--k-sp-4);
-  background: var(--k-bg);
-  border-radius: var(--k-r-lg);
 }
 
 .ws__board-head {
@@ -1617,6 +1618,7 @@ async function submitPreviewConfig(): Promise<void> {
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  padding-top: var(--k-sp-4);
 }
 
 .ws__detail-blank {
@@ -1673,6 +1675,14 @@ async function submitPreviewConfig(): Promise<void> {
 .ws__panel {
   flex: 1;
   min-height: 0;
+}
+
+// In the unified workspace card the panel is not its own box — the outer card owns the
+// border, so the transcript flows flat on the card surface instead of a box-in-a-box.
+.ws__tabpane .ws__panel {
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 
 .ws__cards {
