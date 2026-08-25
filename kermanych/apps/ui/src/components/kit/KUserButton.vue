@@ -60,7 +60,7 @@ const initials = computed(() => initialsOf(props.label, '?'));
   background: var(--k-surface2);
   color: var(--k-muted);
   cursor: pointer;
-  border-radius: 0;
+  border-radius: var(--k-r);
   transition: border-color 0.12s, color 0.12s;
 
   &:hover {

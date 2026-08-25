@@ -80,7 +80,7 @@ const initials = computed(() => initialsOf(props.project.name, '·'));
   background: transparent;
   color: var(--k-muted);
   cursor: pointer;
-  border-radius: 0;
+  border-radius: var(--k-r);
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 
   &:hover:not(.k-rail--active) {

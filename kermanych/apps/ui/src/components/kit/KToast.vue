@@ -42,7 +42,7 @@ const emit = defineEmits<{ dismiss: [id: string] }>();
   background: var(--k-surface2);
   border: 1px solid var(--k-line-strong);
   border-left-width: 3px;
-  border-radius: 0;
+  border-radius: var(--k-r-lg);
   color: var(--k-text);
   font-family: var(--k-font-ui);
   font-size: 13px;

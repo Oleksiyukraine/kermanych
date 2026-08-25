@@ -22,7 +22,7 @@ withDefaults(defineProps<{ plain?: boolean }>(), { plain: false });
   background: var(--k-surface2);
   border: 1px solid var(--k-line);
   padding: 3px 7px;
-  border-radius: 0;
+  border-radius: var(--k-r-sm);
   white-space: nowrap;
 }
 

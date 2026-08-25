@@ -157,49 +157,12 @@
     <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎), with the
          session-level actions (rehydrate, summarise) parked on its right edge -->
     <div v-if="!isMerged" class="k-panel__composer">
-      <KAttachStrip
-        v-if="attachImages.length"
-        class="k-panel__attach"
-        :images="attachImages"
-        @remove="removeImage"
-      />
-      <p v-if="attachError" class="k-panel__attach-error mono">{{ attachError }}</p>
-      <form
-        class="k-panel__input"
-        :class="{ 'k-panel__input--focused': focused }"
-        @submit.prevent="submit"
-        @drop.prevent="onImageDrop"
-        @dragover.prevent
+      <KComposer
+        v-model="draft"
+        :placeholder="placeholder"
+        @send="(text, images) => emit('send', text, images)"
       >
-        <button
-          type="button"
-          class="k-panel__attach-btn"
-          v-tip="'Додати зображення'"
-          aria-label="Додати зображення"
-          @click="fileInput?.click()"
-        >📎</button>
-        <span class="k-panel__prompt" aria-hidden="true">❯</span>
-        <textarea
-          ref="fieldEl"
-          v-model="draft"
-          class="k-panel__field mono"
-          :placeholder="placeholder"
-          rows="1"
-          @focus="focused = true"
-          @blur="focused = false"
-          @paste="onImagePaste"
-          @input="autoGrow"
-          @keydown="onComposerKeydown"
-        ></textarea>
-        <input
-          ref="fileInput"
-          type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp"
-          multiple
-          class="k-panel__file"
-          @change="onFilePick"
-        />
-        <div class="k-panel__acts">
+        <template #actions>
           <KIconButton
             :disabled="refreshing"
             title="Оновити чат — підтягнути історію сесії"
@@ -212,8 +175,8 @@
               : 'Коротке саммарі сесії'"
             @click="emit('summary')"
           >≡</KIconButton>
-        </div>
-      </form>
+        </template>
+      </KComposer>
     </div>
     <div v-else class="k-panel__composer k-panel__merged-note mono">
       Сесію влито в проєкт. Натисни «↻ Відновити» вгорі, щоб підняти worktree і продовжити.
@@ -237,11 +200,10 @@ import type { Session, RpcExtensionUIResponse, ImageInput } from '@kermanych/cor
 import KStatusDot from './KStatusDot.vue';
 import KTag from './KTag.vue';
 import KBtn from './KBtn.vue';
-import KAttachStrip from './KAttachStrip.vue';
+import KComposer from './KComposer.vue';
 import KTodoLane from './KTodoLane.vue';
 import KStatusRow from './KStatusRow.vue';
 import KIconButton from './KIconButton.vue';
-import { useImageAttach } from '../../composables/useImageAttach';
 import { useNow } from '../../composables/useNow';
 
 // The application atom (design-system section 05): three floors — header, log,
@@ -287,43 +249,7 @@ const emit = defineEmits<{
 }>();
 
 const draft = ref('');
-const focused = ref(false);
 const decisionText = ref('');
-
-// Composer textarea: grows with content up to a cap, then scrolls, so
-// Shift+Enter newlines stay visible instead of being clipped by the input row.
-const fieldEl = ref<HTMLTextAreaElement | null>(null);
-const MAX_COMPOSER_HEIGHT = 160;
-function autoGrow(): void {
-  const el = fieldEl.value;
-  if (!el) return;
-  el.style.height = 'auto';
-  el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_HEIGHT)}px`;
-}
-// Enter sends; Shift+Enter inserts a newline. Enter mid-IME-composition is
-// ignored so committing a candidate doesn't fire the message.
-function onComposerKeydown(e: KeyboardEvent): void {
-  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
-  e.preventDefault();
-  submit();
-}
-
-const {
-  images: attachImages,
-  error: attachError,
-  onPaste: onImagePaste,
-  onDrop: onImageDrop,
-  remove: removeImage,
-  clear: clearImages,
-  addFiles: addImageFiles,
-} = useImageAttach();
-const fileInput = ref<HTMLInputElement | null>(null);
-
-function onFilePick(e: Event): void {
-  const input = e.target as HTMLInputElement;
-  if (input.files) void addImageFiles(input.files);
-  input.value = '';
-}
 
 // Auto-scroll: keep the log pinned to the newest entry while the user is at the
 // bottom; if they scroll up to read history, stop following until they return.
@@ -530,15 +456,6 @@ const silentLabel = computed(() => {
   return s >= 90 ? `${Math.round(s / 60)} хв` : `${s} с`;
 });
 
-function submit() {
-  const text = draft.value.trim();
-  if (!text && !attachImages.value.length) return;
-  emit('send', text, attachImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType })));
-  draft.value = '';
-  clearImages();
-  void nextTick(autoGrow);
-}
-
 function answerConfirm(confirmed: boolean) {
   if (!req.value) return;
   emit('answer', { type: 'extension_ui_response', id: req.value.id, confirmed });
@@ -564,6 +481,8 @@ function answerCancel() {
   border: 1px solid var(--k-line-strong);
   min-height: 320px;
   position: relative;
+  border-radius: var(--k-r-lg);
+  overflow: hidden;
 }
 
 // detail toolbar — a fixed-height strip under the header; the nav stepper is pinned
@@ -735,7 +654,7 @@ function answerCancel() {
   padding: 3px 10px;
   cursor: pointer;
 }
-.k-panel__stall-btn:hover { background: var(--k-accent); color: #111; }
+.k-panel__stall-btn:hover { background: var(--k-accent); color: var(--k-on-accent); }
 
 // error — the omp child exited before finishing; full accent border reads as failure.
 .k-panel__error {
@@ -815,7 +734,7 @@ function answerCancel() {
   border: 1px solid var(--k-line-strong);
   padding: 8px 12px;
   cursor: pointer;
-  border-radius: 0;
+  border-radius: var(--k-r);
   transition: border-color 0.12s, background 0.12s;
 
   &:hover {
@@ -848,7 +767,7 @@ function answerCancel() {
   background: var(--k-bg);
   border: 1px solid var(--k-line-strong);
   padding: 8px 11px;
-  border-radius: 0;
+  border-radius: var(--k-r);
   outline: none;
 
   &::placeholder {
@@ -870,16 +789,6 @@ function answerCancel() {
   margin-top: 10px;
 }
 
-// floor 3 — input
-.k-panel__input {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 14px;
-  min-height: 44px;
-  flex: none;
-}
-
 .k-panel__composer {
   border-top: 2px solid var(--k-line-strong);
 }
@@ -888,78 +797,6 @@ function answerCancel() {
   color: var(--k-muted);
   font-size: 12.5px;
   line-height: 1.5;
-}
-
-.k-panel__attach {
-  padding: 10px 12px 0;
-}
-
-.k-panel__attach-error {
-  margin: 6px 12px 0;
-  font-size: 11px;
-  color: var(--k-accent);
-}
-
-.k-panel__attach-btn {
-  flex: none;
-  padding: 0 2px;
-  background: transparent;
-  border: none;
-  color: var(--k-muted);
-  font-size: 15px;
-  line-height: 1;
-  cursor: pointer;
-
-  &:hover {
-    color: var(--k-text);
-  }
-}
-
-.k-panel__file {
-  display: none;
-}
-
-.k-panel__prompt {
-  font-family: var(--k-font-mono);
-  font-size: 14px;
-  color: var(--k-muted);
-  transition: color 0.12s;
-}
-
-// red prompt = keyboard focus lives in this panel.
-.k-panel__input--focused .k-panel__prompt {
-  color: var(--k-accent);
-}
-
-.k-panel__field {
-  flex: 1 1 auto;
-  font-size: 12.5px;
-  color: var(--k-text);
-  background: transparent;
-  border: none;
-  outline: none;
-  padding: 0;
-  line-height: 1.5;
-  resize: none;
-  max-height: 160px;
-  overflow-y: auto;
-
-  &::placeholder {
-    color: var(--k-muted);
-  }
-}
-
-// Session actions on the input row's right edge. Own gap (4px, the header cluster's) rather
-// than the row's 10px, so the pair reads as one cluster instead of two loose glyphs; and its
-// own alignment, because the row centres and the textarea grows to 160px — without this the
-// buttons drift to the middle of a tall draft instead of staying by the last line.
-.k-panel__acts {
-  display: flex;
-  align-items: center;
-  align-self: flex-end;
-  gap: 4px;
-  flex: none;
-  padding-bottom: 8px;
 }
 
 // floating "+ Задача" over a text selection — accent chip, fixed so it escapes
@@ -980,5 +817,5 @@ function answerCancel() {
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
-.k-panel__sel-task:hover { background: var(--k-accent); color: #111; }
+.k-panel__sel-task:hover { background: var(--k-accent); color: var(--k-on-accent); }
 </style>

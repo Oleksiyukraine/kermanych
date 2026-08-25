@@ -44,7 +44,7 @@ withDefaults(
   background: transparent;
   color: var(--k-text);
   cursor: pointer;
-  border-radius: 0;
+  border-radius: var(--k-r);
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 
   &:focus-visible {
@@ -60,7 +60,7 @@ withDefaults(
   border-color: var(--k-accent);
 
   &:hover:not(.k-btn--disabled) {
-    background: #ff6a52;
+    background: var(--k-accent-hover);
   }
 }
 

@@ -51,7 +51,7 @@ withDefaults(
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
-  border-radius: 0;
+  border-radius: var(--k-r);
   transition: border-color 0.12s, color 0.12s;
 
   &:hover {

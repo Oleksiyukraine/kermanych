@@ -39,7 +39,7 @@ function onChange(e: Event) {
   margin: 0;
   border: 1px solid var(--k-line-strong);
   background: var(--k-surface);
-  border-radius: 0;
+  border-radius: var(--k-r);
   display: grid;
   place-content: center;
   cursor: pointer;

@@ -161,6 +161,7 @@ const summary = computed(() => {
 
 <style scoped lang="scss">
 .k-rb + .k-rb { margin-top: 10px; }
+.k-rb { border-radius: var(--k-r-lg); }
 .k-rb__head {
   display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 6px 0;
   background: transparent; border: none; cursor: pointer; text-align: left;

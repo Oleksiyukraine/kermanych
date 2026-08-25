@@ -60,7 +60,7 @@ const emit = defineEmits<{ remove: [index: number] }>();
   font-size: 9px;
   line-height: 1;
   cursor: pointer;
-  border-radius: 0;
+  border-radius: var(--k-r-sm);
 
   &:hover {
     border-color: var(--k-accent);

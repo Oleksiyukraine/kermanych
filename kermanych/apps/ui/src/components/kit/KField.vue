@@ -71,7 +71,7 @@ defineExpose({ focus: () => inputEl.value?.focus() });
   background: var(--k-surface);
   border: 1px solid var(--k-line-strong);
   padding: 9px 11px;
-  border-radius: 0;
+  border-radius: var(--k-r);
   outline: none;
   transition: border-color 0.12s, box-shadow 0.12s;
 

@@ -42,15 +42,15 @@ const rest = computed(() => props.totalLines - props.lines.length);
 .k-tc { margin: 2px 0 8px 17px; padding: 5px 0 5px 10px; border-left: 1px solid var(--k-line-strong); }
 .k-tc__intent { font-family: var(--k-font-ui); font-size: 12px; font-style: italic; color: var(--k-muted); }
 .k-tc__warn { font-family: var(--k-font-mono); font-size: 10.5px; color: var(--k-accent); margin-top: 3px; }
-.k-tc__body { margin-top: 5px; padding: 4px 0; background: var(--k-surface); }
+.k-tc__body { margin-top: 5px; padding: 4px 0; background: var(--k-surface); border-radius: var(--k-r); }
 .k-tc__line { display: flex; font-family: var(--k-font-mono); font-size: 11.5px; line-height: 1.5; white-space: pre; overflow: hidden; }
 .k-tc__n { flex: none; width: 34px; padding-right: 6px; text-align: right; color: var(--k-line-strong); }
 .k-tc__s { flex: none; width: 11px; text-align: center; }
 .k-tc__tx { flex: 1; overflow: hidden; text-overflow: ellipsis; color: var(--k-muted); }
-.k-tc__line--add { background: color-mix(in srgb, var(--k-diff) 9%, transparent); }
-.k-tc__line--add .k-tc__s, .k-tc__line--add .k-tc__tx { color: var(--k-diff); }
-.k-tc__line--del { background: color-mix(in srgb, var(--k-accent) 8%, transparent); }
-.k-tc__line--del .k-tc__s, .k-tc__line--del .k-tc__tx { color: var(--k-accent); }
+.k-tc__line--add { background: color-mix(in srgb, var(--k-diff-add) 9%, transparent); }
+.k-tc__line--add .k-tc__s, .k-tc__line--add .k-tc__tx { color: var(--k-diff-add); }
+.k-tc__line--del { background: color-mix(in srgb, var(--k-diff-del) 8%, transparent); }
+.k-tc__line--del .k-tc__s, .k-tc__line--del .k-tc__tx { color: var(--k-diff-del); }
 .k-tc__line--hit .k-tc__tx { color: var(--k-text); }
 .k-tc__line--hit .k-tc__s { color: var(--k-accent); }
 /* 45px = the 34px gutter (border-box, padding included) + the 11px sign cell, so a

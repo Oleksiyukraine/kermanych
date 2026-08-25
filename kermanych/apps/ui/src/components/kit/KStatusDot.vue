@@ -13,8 +13,7 @@ import type { SessionStatus } from '@kermanych/core';
 // spelled-out status (board status cell, panel header, gallery row), so a bubble
 // would only repeat the neighbouring word — in raw enum form at that.
 const props = defineProps<{ status: SessionStatus }>();
-
-type Kind = 'running' | 'waiting' | 'done' | 'cold';
+type Kind = 'running' | 'waiting' | 'done' | 'error' | 'cold';
 
 const kind = computed<Kind>(() => {
   switch (props.status) {
@@ -25,9 +24,10 @@ const kind = computed<Kind>(() => {
     case 'conflict':
       return 'waiting';
     case 'done':
-    case 'error':
     case 'merged':
       return 'done';
+    case 'error':
+      return 'error';
     case 'queued':
     case 'stopped':
     default:
@@ -43,7 +43,7 @@ const kind = computed<Kind>(() => {
   height: 7px;
   border: 1px solid var(--k-line-strong);
   background: var(--k-line-strong);
-  border-radius: 0;
+  border-radius: 50%;
   flex: none;
 }
 
@@ -54,16 +54,22 @@ const kind = computed<Kind>(() => {
   animation: k-dot-pulse 1.1s ease-in-out infinite;
 }
 
-// waiting — empty square framed in accent.
+// waiting — empty square framed in warning.
 .k-dot--waiting {
   background: transparent;
-  border-color: var(--k-accent);
+  border-color: var(--k-warning);
 }
 
-// done — grey filled square.
+// done — success green filled.
 .k-dot--done {
-  background: var(--k-line-strong);
-  border-color: var(--k-line-strong);
+  background: var(--k-success);
+  border-color: var(--k-success);
+}
+
+// error — danger red filled.
+.k-dot--error {
+  background: var(--k-danger);
+  border-color: var(--k-danger);
 }
 
 // cold — grey outline, no fill.

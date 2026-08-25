@@ -25,7 +25,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 .k-toggle {
   display: inline-flex;
   border: 1px solid var(--k-line-strong);
-  border-radius: 0;
+  border-radius: var(--k-r);
   background: var(--k-surface);
 }
 
@@ -39,7 +39,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
   color: var(--k-muted);
   border: none;
   border-right: 1px solid var(--k-line-strong);
-  border-radius: 0;
+  border-radius: var(--k-r);
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 
