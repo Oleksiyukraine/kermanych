@@ -13,7 +13,16 @@
             @click="onBucket(b.key)"
           />
         </nav>
-        <div class="shell__side-label">Проєкти</div>
+        <div class="shell__divider"></div>
+        <div class="shell__side-label shell__side-label--row">
+          <span>Проєкти</span>
+          <button
+            class="shell__label-add"
+            v-tip="'Новий проєкт у хмарі'"
+            aria-label="Новий проєкт у хмарі"
+            @click="openCreate"
+          >+</button>
+        </div>
         <div class="shell__projects">
           <KRailItem
             v-for="p in railProjects"
@@ -23,8 +32,8 @@
             :count="runningCount(p.id)"
             @click="selectProject(p.id)"
           />
-          <KBtn variant="icon" class="shell__add" title="Новий проєкт у хмарі" @click="openCreate">+</KBtn>
         </div>
+        <div v-if="store.selectedProjectId" class="shell__divider"></div>
         <div v-if="store.selectedProjectId" class="shell__folder">
           <div class="shell__side-label">Тека проєкту</div>
           <div class="shell__folder-path mono">{{ contextLabel }}</div>
@@ -917,6 +926,35 @@ async function confirmSignOut(): Promise<void> {
   font-size: var(--k-fs-xs);
   color: var(--k-faint);
   overflow-wrap: anywhere;
+}
+
+.shell__divider {
+  height: 1px;
+  background: var(--k-line);
+  margin: var(--k-sp-2) 0;
+}
+
+.shell__side-label--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.shell__label-add {
+  padding: 0 var(--k-sp-1);
+  background: none;
+  border: none;
+  color: var(--k-faint);
+  font-size: var(--k-fs-md);
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover { color: var(--k-text); }
+}
+
+.shell__folder :deep(.k-btn) {
+  width: 100%;
+  justify-content: center;
 }
 
 // account — pinned to the foot of the sidebar, below everything.

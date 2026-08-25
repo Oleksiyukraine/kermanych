@@ -43,7 +43,7 @@ const emit = defineEmits<{ click: [] }>();
   text-align: left;
   color: var(--k-muted);
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   border-radius: var(--k-r);
   cursor: pointer;
 
@@ -55,6 +55,7 @@ const emit = defineEmits<{ click: [] }>();
 .k-nav-item--active {
   color: var(--k-text);
   background: var(--k-surface2);
+  border-color: var(--k-line-strong);
 }
 
 .k-nav-item__icon {

@@ -9,18 +9,11 @@ defineProps<{ value: number }>();
 
 <style scoped lang="scss">
 .k-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  padding: 1px var(--k-sp-2);
   font-family: var(--k-font-ui);
-  font-size: var(--k-fs-xs);
+  font-size: var(--k-fs-sm);
   font-weight: var(--k-fw-medium);
   line-height: 1;
   color: var(--k-muted);
-  background: var(--k-surface2);
-  border-radius: var(--k-r-pill);
   white-space: nowrap;
 }
 </style>

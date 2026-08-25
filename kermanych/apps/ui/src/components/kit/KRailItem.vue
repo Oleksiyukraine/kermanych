@@ -56,7 +56,7 @@ const title = computed(() => props.project.name + STATE_HINT[props.project.state
   gap: var(--k-sp-2);
   width: 100%;
   padding: var(--k-sp-2);
-  border: none;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--k-muted);
   cursor: pointer;
@@ -78,6 +78,7 @@ const title = computed(() => props.project.name + STATE_HINT[props.project.state
 .k-rail--active {
   background: var(--k-surface2);
   color: var(--k-text);
+  border-color: var(--k-line-strong);
 }
 
 .k-rail__name {
