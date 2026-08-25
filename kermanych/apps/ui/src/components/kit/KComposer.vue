@@ -85,9 +85,9 @@ const props = withDefaults(
     modelValue: string;
     placeholder?: string | undefined;
     disabled?: boolean;
-    model?: string;
+    model?: string | undefined;
     worktree?: boolean;
-    tokenCount?: number;
+    tokenCount?: number | undefined;
   }>(),
   { placeholder: 'напиши наступний крок…', disabled: false, worktree: false },
 );
