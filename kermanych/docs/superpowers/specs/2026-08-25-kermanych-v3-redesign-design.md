@@ -64,9 +64,9 @@ TS surface in `index.ts`, and update `apps/ui/src/css/app.scss` +
 | token | value | role |
 |---|---|---|
 | `--k-canvas` | `#050505` | app background |
-| `--k-surface` | `#141414` | panels |
-| `--k-surface-2` | `#1c1c1c` | cards / elevated |
-| `--k-surface-3` | `#2b2b2b` | inputs / hover |
+| `--k-bg` | `#141414` | panels |
+| `--k-surface` | `#1c1c1c` | cards / elevated |
+| `--k-surface2` | `#2b2b2b` | inputs / hover |
 | `--k-line` | `rgba(255,255,255,.08)` | hairline border |
 | `--k-line-strong` | `rgba(255,255,255,.14)` | strong border |
 | `--k-text` | `#ededed` | primary text |
@@ -83,6 +83,39 @@ TS surface in `index.ts`, and update `apps/ui/src/css/app.scss` +
 
 `--k-accent` also signals *running* (matches KStatusDot's running kind and
 KPanel's active top strip).
+
+**Themes.** The sheet ships two sets: the dark values above in `:root`, and a
+light set under `:root[data-theme='light']`. `apps/ui/src/lib/theme.ts` writes
+the attribute and persists the choice (`localStorage` key `kermanych.theme`,
+default `dark`); `boot/tokens.ts` applies it before mount, so a light-theme user
+never sees the dark default flash. The toggle is the top bar's rightmost icon
+(`☀`/`☾`, naming the theme it moves to). Colours only — type, radii, spacing and
+rules are shared.
+
+| token | light value | note |
+|---|---|---|
+| `--k-canvas` | `#f6f6f7` | grey page |
+| `--k-bg` | `#fbfbfc` | panels |
+| `--k-surface` | `#ffffff` | cards |
+| `--k-surface2` | `#ebebec` | hover / selected / table head |
+| `--k-line` / `--k-line-strong` | `rgba(0,0,0,.12)` / `rgba(0,0,0,.18)` | black alpha reads weaker than white alpha |
+| `--k-text` / `--k-muted` / `--k-faint` | `#141416` / `#63636a` / `#8b8b93` | |
+| `--k-accent` / `--k-accent-hover` | `#c8351b` / `#a82a13` | retuned; hover darkens here |
+| `--k-on-accent` | `#ffffff` | |
+| `--k-success` / `--k-warning` / `--k-danger` | `#0f7a24` / `#8a5d00` / `#c0271f` | |
+| `--k-shadow-pop` / `-toast` / `-modal` | `.10` / `.14` / `.18` black alpha | dark set uses `.35` / `.5` / `.6` |
+
+Two deliberate departures from the dark set:
+
+1. **The surface ladder is not monotonic.** `canvas → bg → surface` still goes
+   recede → raise, but `--k-surface2` reads *darker* than the canvas, because
+   nothing is lighter than `#ffffff`. Read the invariant as "distance from the
+   canvas grows", not "lightness grows".
+2. **The brand accent is retuned, not reused.** `#ff563c` is 3.2:1 on white and
+   is used as TEXT in ~37 places, so the light set uses `#c8351b` (5.3:1) with a
+   white `--k-on-accent` to keep accent FILLS legible. Every light foreground
+   clears WCAG AA against `--k-surface`; `--k-faint` stays decorative at 3.4:1,
+   as it is in the dark set.
 
 **Type**
 
@@ -173,7 +206,7 @@ Left sidebar (all screens):
 - User chip (auth) at the bottom.
 
 Skipped in the sidebar: **Витрати / Токени** (no backend) and the **PRO** badge
-(no subscription tiers). Theme toggle not built.
+(no subscription tiers). The theme toggle lives in the top bar, not the sidebar.
 
 ### Агенти (three-pane)
 
@@ -223,7 +256,7 @@ the chat's nature, not a new mode.
 |---|---|
 | Витрати / Токени (sidebar) | **skip** — no backend |
 | PRO badge (user chip) | **skip** — no tiers |
-| Theme toggle (moon) | **skip** — dark-only |
+| Theme toggle | **build** — top-bar `☀`/`☾`; supersedes the original dark-only decision |
 | Історія (sidebar) | **build** — completed sessions list (`merged/done/stopped`) |
 | Зміни tab | **build** — `finishInfo` summary + changed-files list |
 | Сесія tab | **build** — metadata + actions from existing routes |
@@ -246,7 +279,7 @@ the chat's nature, not a new mode.
 
 ## Out of scope / non-goals
 
-- Sidebar costs/tokens, PRO badge, light theme + toggle.
+- Sidebar costs/tokens, PRO badge.
 - Full file-diff viewer (Зміни shows a summary + changed files only).
 - Board drag-drop status transitions.
 - New omp capabilities: reasoning/auto-edit controls are wired only if omp

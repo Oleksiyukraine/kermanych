@@ -17,9 +17,9 @@
 - Node ≥22.12 (repo README). Use `pnpm` only; never `npm`/`yarn`.
 - Keep existing token names (`--k-canvas`, `--k-bg`, `--k-surface`, `--k-surface2`, `--k-line`, `--k-line-strong`, `--k-text`, `--k-muted`, `--k-accent`, `--k-diff`, `--k-font-ui`, `--k-font-mono`) — recolor, do not rename. Add new tokens alongside.
 - Brand accent is unchanged: `#ff563c`.
-- Dark-only. No light theme, no theme toggle.
+- ~~Dark-only. No light theme, no theme toggle.~~ **Superseded:** a light theme and a top-bar toggle shipped later; see the Themes section of `specs/2026-08-25-kermanych-v3-redesign-design.md`. The constraints below describe this plan's scope as executed.
 - File contents in English (repo convention); Ukrainian only in user-facing UI copy.
-- Surface lightness order must stay canvas < bg < surface < surface2 (darkest→lightest).
+- Surface lightness order must stay canvas < bg < surface < surface2 (darkest→lightest). Holds for the dark set; the light set inverts it deliberately (see the spec's Themes section).
 
 ---
 

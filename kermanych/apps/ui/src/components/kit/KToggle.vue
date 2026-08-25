@@ -54,6 +54,6 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 
 .k-toggle__seg--active {
   background: var(--k-accent);
-  color: var(--k-canvas);
+  color: var(--k-on-accent);
 }
 </style>
