@@ -14,8 +14,6 @@
             <h1 class="ws__heading">{{ selectedProject?.name ?? 'Проєкт' }}</h1>
           </div>
           <div class="ws__board-controls">
-            <KBtn variant="ghost" title="Спільна дошка задач команди" @click="goToBoard">Дошка команди</KBtn>
-            <KToggle :options="viewOptions" v-model="viewMode" />
             <KBtn
               variant="ghost"
               :disabled="!isBound"
@@ -26,120 +24,21 @@
           </div>
         </header>
 
-        <KTable
-          v-if="projectSessions.length"
-          class="ws__table"
-          :columns="agentColumns"
-          :rows="boardRows"
-          :row-key="(s) => s.id"
-          :selected-key="store.selectedSessionId"
-          :row-class="(s) => (isRunning(s) ? 'ws__row--running' : undefined)"
-          clickable
-          @row-click="onRowClick"
-        >
-          <template #cell-status="{ row }">
-            <span class="ws__cell-status">
-              <KStatusDot :status="row.status" />
-              <span class="ws__cell-status-word mono">{{ statusWord(row) }}</span>
-            </span>
-          </template>
-          <template #cell-name="{ row }">
-            <span class="ws__cell-name" :class="{ 'ws__cell-name--child': !!row.parentSessionId }">
-              <span v-if="row.parentSessionId" class="ws__branch-connector" aria-hidden="true">└</span>
-              {{ row.name }}
-              <KTag v-if="row.taskId">☁ {{ cloudTaskTitle(row.taskId) }}</KTag>
-              <KTag v-if="row.kind === 'discussion'">discussion</KTag>
-              <KTag v-else-if="row.kind === 'task'">задача</KTag>
-              <KTag v-else-if="row.kind === 'review'">review</KTag>
-              <KTag v-else-if="row.kind === 'chat'">чат</KTag>
-              <KTag v-if="row.platform">{{ row.platform }}</KTag>
-            </span>
-          </template>
-          <template #cell-branch="{ row }">
-            <KTag v-if="row.branch">⑂ {{ row.branch }}</KTag>
-            <span v-else class="mono ws__cell-activity">—</span>
-          </template>
-          <template #cell-ctx="{ row }">
-            {{ ctxOf(row) ?? '—' }}
-          </template>
-          <template #cell-activity="{ row }">
-            <span class="ws__cell-activity mono">{{ activityOf(row) || '—' }}</span>
-          </template>
-          <template #cell-lastActivity="{ row }">
-            <span class="ws__cell-activity mono">{{ relativeTime(row.lastActivityAt, now) }}</span>
-          </template>
-          <template #cell-actions="{ row }">
-            <div class="ws__cell-actions">
-              <template v-if="row.kind === 'task'">
-                <KIconButton
-                  :disabled="!isBoundFor(row.projectId)"
-                  :title="isBoundFor(row.projectId) ? 'Запустити задачу як агента' : BIND_HINT"
-                  @click.stop="openLauncher(row)"
-                >▶</KIconButton>
-                <KIconButton title="Редагувати задачу" @click.stop="openLauncher(row)">✎</KIconButton>
-                <KIconButton title="Видалити задачу" @click.stop="onDeleteTask(row)">✕</KIconButton>
-                <KIconButton v-if="store.projects.length > 1" title="Перемістити в інший проєкт" @click.stop="openMove(row)">→</KIconButton>
-              </template>
-              <template v-else-if="row.kind === 'chat' && !showArchived">
-                <KIconButton
-                  :disabled="promotingId === row.id"
-                  :title="promotingId === row.id ? 'Готую worktree…' : 'Почати імплементацію обговореного (worktree + повний доступ)'"
-                  @click.stop="startImplementation(row)"
-                >▶</KIconButton>
-                <KIconButton title="Зберегти як задачу в беклог" @click.stop="openChatToBacklog(row)">⊕</KIconButton>
-                <KIconButton title="Видалити чат" @click.stop="onDeleteChat(row)">✕</KIconButton>
-              </template>
-              <template v-else-if="row.kind === 'discussion' || row.kind === 'review'">
-                <KIconButton
-                  v-if="row.status !== 'merged'"
-                  :title="row.kind === 'review' ? 'Віддати висновок ревізора виконавцю' : 'Влити висновок у батьківського агента'"
-                  @click.stop="openMerge(row)"
-                >⤴</KIconButton>
-                <KIconButton
-                  :title="row.kind === 'review' ? 'Викинути ревізію' : 'Викинути гілку'"
-                  @click.stop="onDiscardRow(row)"
-                >✕</KIconButton>
-              </template>
-              <template v-else-if="!showArchived">
-                <KIconButton
-                  :active="!!store.previews[row.id]"
-                  :disabled="!isBoundFor(row.projectId)"
-                  :title="
-                    !isBoundFor(row.projectId)
-                      ? BIND_HINT
-                      : store.previews[row.id]
-                        ? 'Зупинити превʼю'
-                        : 'Превʼю гілки в браузері'
-                  "
-                  @click.stop="togglePreview(row)"
-                >{{ store.previews[row.id] ? '◼' : '▶' }}</KIconButton>
-                <KIconButton
-                  v-if="canReview(row)"
-                  title="Запросити ревізора (незалежний аудит гілки)"
-                  @click.stop="onReview(row)"
-                >⚖</KIconButton>
-                <KIconButton
-                  v-if="row.status !== 'merged'"
-                  title="Завершити (merge гілки в проєкт)"
-                  @click.stop="openFinish(row)"
-                >✓</KIconButton>
-                <KIconButton
-                  v-if="row.status === 'merged'"
-                  title="Відновити (підняти worktree заново, щоб продовжити)"
-                  @click.stop="onReopen(row)"
-                >↻</KIconButton>
-                <KIconButton title="Відкласти" @click.stop="onArchive(row)">⤓</KIconButton>
-                <KIconButton title="Видалити агента" @click.stop="onDeleteAgent(row)">✕</KIconButton>
-              </template>
-              <template v-else>
-                <KIconButton title="Повернути в активні" @click.stop="onUnarchive(row)">⤒</KIconButton>
-                <KIconButton title="Видалити агента" @click.stop="onDeleteAgent(row)">✕</KIconButton>
-              </template>
-            </div>
-          </template>
-        </KTable>
+        <div v-if="boardRows.length" class="ws__cards">
+          <KSessionCard
+            v-for="s in boardRows"
+            :key="s.id"
+            :branch="s.branch"
+            :title="s.name"
+            :time="relativeTime(s.lastActivityAt, now)"
+            :status="s.status"
+            :status-line="activityOf(s) || statusWord(s)"
+            :selected="store.selectedSessionId === s.id"
+            @click="onRowClick(s)"
+          />
+        </div>
         <div v-else class="ws__empty mono">
-          {{ showArchived ? 'Немає відкладених агентів.' : showTasks ? 'Беклог порожній. Створи задачу через «Нова задача».' : 'Ще немає агентів. Запусти першого через «Нова задача».' }}
+          {{ showArchived ? 'Немає відкладених агентів.' : showTasks ? 'Беклог порожній. Створи задачу через «Нова задача».' : showHistory ? 'Історія порожня.' : 'Ще немає агентів. Запусти першого через «Нова задача».' }}
         </div>
       </section>
 
@@ -170,42 +69,162 @@
             @click="store.selectSession(undefined)"
           >✕</button>
         </div>
-        <KPanel
-          class="ws__panel"
-          :session="selectedSession"
-          v-bind="selectedSession.kind === 'chat'
-            ? { placeholder: 'запитай або опиши, що потрібно зробити…', promoting: promotingId === selectedSession.id }
-            : {}"
-          :cost="chatCost"
-          :refreshing="refreshingId === selectedSession.id"
-          @stop="onStop"
-          @delete="onDelete"
-          @send="onSend"
-          @answer="onAnswer"
-          @finish="onFinish"
-          @editor="onEditor"
-          @branch="onBranch"
-          @restart="onRestart"
-          @refresh="onRefreshChat"
-          @summary="onSummary"
-          @reopen="onReopenSelected"
-          @newTask="openTaskFromText"
-          @promote-agent="onPromoteAgent"
-          @promote-task="onPromoteTask"
-          @expand-all="onExpandAll"
-        >
-          <template v-if="blocks.length">
-            <KRequestBlock
-              v-for="(block, i) in blocks"
-              :key="selectedSession.id + ':' + block.id"
-              :block="block"
-              :session-id="selectedSession.id"
-              :open="i === blocks.length - 1"
-              :expand-all="expandAll"
-            />
+        <KTabs v-model="detailTab" :tabs="detailTabs" class="ws__detail-tabs" />
+        <div v-show="detailTab === 'log'" class="ws__tabpane ws__tabpane--log">
+          <KPanel
+            class="ws__panel"
+            :session="selectedSession"
+            v-bind="selectedSession.kind === 'chat'
+              ? { placeholder: 'запитай або опиши, що потрібно зробити…', promoting: promotingId === selectedSession.id }
+              : {}"
+            :cost="chatCost"
+            :refreshing="refreshingId === selectedSession.id"
+            @stop="onStop"
+            @delete="onDelete"
+            @send="onSend"
+            @answer="onAnswer"
+            @finish="onFinish"
+            @editor="onEditor"
+            @branch="onBranch"
+            @restart="onRestart"
+            @refresh="onRefreshChat"
+            @summary="onSummary"
+            @reopen="onReopenSelected"
+            @newTask="openTaskFromText"
+            @promote-agent="onPromoteAgent"
+            @promote-task="onPromoteTask"
+            @expand-all="onExpandAll"
+          >
+            <template v-if="blocks.length">
+              <KRequestBlock
+                v-for="(block, i) in blocks"
+                :key="selectedSession.id + ':' + block.id"
+                :block="block"
+                :session-id="selectedSession.id"
+                :open="i === blocks.length - 1"
+                :expand-all="expandAll"
+              />
+            </template>
+            <div v-else class="ws__log-empty mono">Журнал порожній.</div>
+          </KPanel>
+        </div>
+        <div v-if="detailTab === 'changes'" class="ws__tabpane ws__changes">
+          <p v-if="changesLoading" class="ws__log-empty mono">Готую…</p>
+          <p v-else-if="changesError" class="ws__error" role="alert">{{ changesError }}</p>
+          <template v-else-if="changesInfo">
+            <div class="ws__changes-summary mono">
+              <span class="ws__changes-branch">{{ changesInfo.branch }} → {{ changesInfo.target || '—' }}</span>
+              <span>{{ changesInfo.ahead }} комітів</span>
+              <span v-if="changesInfo.dirty" class="ws__changes-dirty">незакоммічені зміни</span>
+            </div>
+            <ul v-if="changesInfo.conflicts.length" class="ws__conflict mono">
+              <li class="ws__conflict-head">Конфлікти:</li>
+              <li v-for="f in changesInfo.conflicts" :key="f">{{ f }}</li>
+            </ul>
+            <ul v-if="changesInfo.files.length" class="ws__file-list">
+              <li v-for="f in changesInfo.files" :key="f.path" class="ws__file-row">
+                <span class="ws__file-path mono">{{ f.path }}</span>
+                <span class="ws__file-stat mono">
+                  <span class="ws__diff-add">+{{ f.added }}</span>
+                  <span class="ws__diff-del">−{{ f.removed }}</span>
+                </span>
+              </li>
+            </ul>
+            <p v-else class="ws__log-empty mono">Немає змінених файлів.</p>
           </template>
-          <div v-else class="ws__log-empty mono">Журнал порожній.</div>
-        </KPanel>
+        </div>
+        <div v-if="detailTab === 'session'" class="ws__tabpane ws__session">
+          <dl class="ws__meta">
+            <div class="ws__meta-row">
+              <dt class="ws__meta-label">Статус</dt>
+              <dd class="ws__meta-value">
+                <KStatusDot :status="selectedSession.status" />
+                <span class="mono">{{ statusWord(selectedSession) }}</span>
+              </dd>
+            </div>
+            <div class="ws__meta-row">
+              <dt class="ws__meta-label">Модель</dt>
+              <dd class="ws__meta-value mono">{{ selectedSession.model || '—' }}</dd>
+            </div>
+            <div class="ws__meta-row">
+              <dt class="ws__meta-label">Гілка</dt>
+              <dd class="ws__meta-value mono">{{ selectedSession.branch || '—' }}</dd>
+            </div>
+            <div class="ws__meta-row">
+              <dt class="ws__meta-label">Worktree</dt>
+              <dd class="ws__meta-value mono">{{ selectedSession.worktree ? 'так' : 'ні' }}</dd>
+            </div>
+            <div class="ws__meta-row">
+              <dt class="ws__meta-label">База</dt>
+              <dd class="ws__meta-value mono">{{ selectedSession.baseBranch || '—' }}</dd>
+            </div>
+            <div class="ws__meta-row">
+              <dt class="ws__meta-label">Контекст</dt>
+              <dd class="ws__meta-value mono">{{ ctxOf(selectedSession) ?? '—' }}</dd>
+            </div>
+            <div class="ws__meta-row">
+              <dt class="ws__meta-label">Вартість</dt>
+              <dd class="ws__meta-value mono">{{ chatCost.toFixed(2) }}</dd>
+            </div>
+          </dl>
+          <div class="ws__actions">
+            <template v-if="selectedSession.kind === 'chat' && !showArchived">
+              <KIconButton
+                :disabled="promotingId === selectedSession.id"
+                :title="promotingId === selectedSession.id ? 'Готую worktree…' : 'Почати імплементацію обговореного (worktree + повний доступ)'"
+                @click="startImplementation(selectedSession)"
+              >▶</KIconButton>
+              <KIconButton title="Зберегти як задачу в беклог" @click="openChatToBacklog(selectedSession)">⊕</KIconButton>
+              <KIconButton title="Видалити чат" @click="onDeleteChat(selectedSession)">✕</KIconButton>
+            </template>
+            <template v-else-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
+              <KIconButton
+                v-if="selectedSession.status !== 'merged'"
+                :title="selectedSession.kind === 'review' ? 'Віддати висновок ревізора виконавцю' : 'Влити висновок у батьківського агента'"
+                @click="openMerge(selectedSession)"
+              >⤴</KIconButton>
+              <KIconButton
+                :title="selectedSession.kind === 'review' ? 'Викинути ревізію' : 'Викинути гілку'"
+                @click="onDiscardRow(selectedSession)"
+              >✕</KIconButton>
+            </template>
+            <template v-else-if="!showArchived">
+              <KIconButton
+                :active="!!store.previews[selectedSession.id]"
+                :disabled="!isBoundFor(selectedSession.projectId)"
+                :title="
+                  !isBoundFor(selectedSession.projectId)
+                    ? BIND_HINT
+                    : store.previews[selectedSession.id]
+                      ? 'Зупинити превʼю'
+                      : 'Превʼю гілки в браузері'
+                "
+                @click="togglePreview(selectedSession)"
+              >{{ store.previews[selectedSession.id] ? '◼' : '▶' }}</KIconButton>
+              <KIconButton
+                v-if="canReview(selectedSession)"
+                title="Запросити ревізора (незалежний аудит гілки)"
+                @click="onReview(selectedSession)"
+              >⚖</KIconButton>
+              <KIconButton
+                v-if="selectedSession.status !== 'merged'"
+                title="Завершити (merge гілки в проєкт)"
+                @click="openFinish(selectedSession)"
+              >✓</KIconButton>
+              <KIconButton
+                v-if="selectedSession.status === 'merged'"
+                title="Відновити (підняти worktree заново, щоб продовжити)"
+                @click="onReopen(selectedSession)"
+              >↻</KIconButton>
+              <KIconButton title="Відкласти" @click="onArchive(selectedSession)">⤓</KIconButton>
+              <KIconButton title="Видалити агента" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
+            </template>
+            <template v-else>
+              <KIconButton title="Повернути в активні" @click="onUnarchive(selectedSession)">⤒</KIconButton>
+              <KIconButton title="Видалити агента" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
+            </template>
+          </div>
+        </div>
       </aside>
     </div>
 
@@ -502,13 +521,12 @@ import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/ex
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
-import KTag from 'components/kit/KTag.vue';
-import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
+import KSessionCard from 'components/kit/KSessionCard.vue';
+import KTabs from 'components/kit/KTabs.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
-import KToggle from 'components/kit/KToggle.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import type { BranchPrefix, Platform } from '@kermanych/core';
@@ -538,23 +556,13 @@ onMounted(() => {
   void board.load();
 });
 
-function cloudTaskTitle(taskId: string): string {
-  return board.tasks.find((t) => t.id === taskId)?.title ?? 'з дошки';
-}
-
-function goToBoard(): void {
-  void router.push({ name: 'board' });
-}
-
-// Board filter: "Активні" = live/finished agents; "Задачі" = the un-launched backlog;
-// "Відкладені" = archived (set aside; worktree kept). Backlog tasks (status 'backlog') never show under Активні.
-const VIEW_ACTIVE = 'Активні';
-const VIEW_TASKS = 'Задачі';
-const VIEW_ARCHIVED = 'Відкладені';
-const viewOptions = [VIEW_ACTIVE, VIEW_TASKS, VIEW_ARCHIVED];
-const viewMode = ref<string>(VIEW_ACTIVE);
-const showArchived = computed(() => viewMode.value === VIEW_ARCHIVED);
-const showTasks = computed(() => viewMode.value === VIEW_TASKS);
+// Board buckets mirror the sidebar (MainLayout.bucketCounts): archived wins, then
+// backlog → Задачі, then merged/done/stopped → Історія, everything else → Активні
+// (error/conflict count as active — they need attention). Driven by store.selectedBucket.
+const HISTORY_STATUSES: readonly SessionStatus[] = ['merged', 'done', 'stopped'];
+const showArchived = computed(() => store.selectedBucket === 'archived');
+const showTasks = computed(() => store.selectedBucket === 'tasks');
+const showHistory = computed(() => store.selectedBucket === 'history');
 // Row order for the agents table. Sessions are bucketed into status tiers and
 // sorted by creation time within each tier. Ranking by tier — not by the live
 // status — is what stops rows from jumping while agents run: every "process
@@ -577,9 +585,11 @@ const projectSessions = computed(() =>
   store.sessions
     .filter((s) => {
       if (s.projectId !== store.selectedProjectId) return false;
-      if (showArchived.value) return !!s.archived;
+      if (store.selectedBucket === 'archived') return !!s.archived;
       if (s.archived) return false;
-      return showTasks.value ? s.status === 'backlog' : s.status !== 'backlog';
+      if (store.selectedBucket === 'tasks') return s.status === 'backlog';
+      if (store.selectedBucket === 'history') return HISTORY_STATUSES.includes(s.status);
+      return s.status !== 'backlog' && !HISTORY_STATUSES.includes(s.status);
     })
     .sort((a, b) => {
       const byStatus = STATUS_RANK[a.status] - STATUS_RANK[b.status];
@@ -674,21 +684,56 @@ watch(
   { immediate: true },
 );
 
-// Columns for the agents table. `status`, `ctx`, `activity`, and `actions` are
-// rendered by scoped slots; `name`/`branch` also carry custom cells.
-const agentColumns: KTableColumn[] = [
-  { key: 'status', label: 'Статус', width: '132px' },
-  { key: 'name', label: 'Агент' },
-  { key: 'branch', label: 'Гілка', width: '170px' },
-  { key: 'ctx', label: 'Контекст', align: 'right', width: '96px', mono: true },
-  { key: 'activity', label: 'Активність' },
-  { key: 'lastActivity', label: 'Остання активність', width: '120px' },
-  { key: 'actions', label: '', align: 'right', width: '84px' },
+// ── Detail tabs (Лог / Зміни / Сесія) ─────────────────────────────────────
+// The right panel splits the session into three views. The choice is persisted
+// per session (localStorage `ws.tab.<id>`) so reopening an agent lands where the
+// operator left it; a fresh session defaults to the log.
+const detailTabs = [
+  { value: 'log', label: 'Лог' },
+  { value: 'changes', label: 'Зміни' },
+  { value: 'session', label: 'Сесія' },
 ];
+const detailTab = ref('log');
+watch(
+  () => store.selectedSessionId,
+  (id) => {
+    const saved = id ? localStorage.getItem(`ws.tab.${id}`) : null;
+    detailTab.value = saved === 'changes' || saved === 'session' ? saved : 'log';
+  },
+  { immediate: true },
+);
+watch(detailTab, (t) => {
+  const id = store.selectedSessionId;
+  if (id) localStorage.setItem(`ws.tab.${id}`, t);
+});
 
-function isRunning(s: Session): boolean {
-  return s.status === 'thinking' || s.status === 'tool';
+// ── Зміни tab (finishInfo: ahead/dirty/conflicts + changed files) ──────────
+// Loaded lazily whenever the changes tab is open for a session; a non-worktree
+// session or a git error surfaces as a message rather than throwing.
+const changesInfo = ref<Awaited<ReturnType<typeof store.finishInfo>> | null>(null);
+const changesError = ref<string | null>(null);
+const changesLoading = ref(false);
+
+async function loadChanges(id: string): Promise<void> {
+  changesInfo.value = null;
+  changesError.value = null;
+  changesLoading.value = true;
+  try {
+    changesInfo.value = await store.finishInfo(id);
+  } catch (e) {
+    changesError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    changesLoading.value = false;
+  }
 }
+
+watch(
+  [() => store.selectedSessionId, detailTab],
+  ([id, tab]) => {
+    if (tab === 'changes' && id) void loadChanges(id);
+  },
+  { immediate: true },
+);
 
 // ctx% is already 0–100 as reported by omp — render verbatim, never ×100.
 function ctxOf(s: Session): string | undefined {
@@ -861,7 +906,7 @@ async function startImplementation(chat: Session): Promise<void> {
   promotingId.value = chat.id;
   try {
     await store.promoteChat(chat.id);
-    viewMode.value = VIEW_ACTIVE;
+    store.setBucket('active');
     store.selectSession(chat.id);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
@@ -949,9 +994,9 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     clearLaunchImages();
     // Saved to the backlog → surface it under the Задачі tab; launched → jump to Активні + open its chat.
     if (asTask) {
-      viewMode.value = VIEW_TASKS;
+      store.setBucket('tasks');
     } else {
-      viewMode.value = VIEW_ACTIVE;
+      store.setBucket('active');
       if (session?.id) store.selectSession(session.id);
     }
   } catch (e) {
@@ -974,7 +1019,7 @@ async function onNewChat(): Promise<void> {
   if (!projectId || !isBound.value) return;
   try {
     const chat = await store.createChat(projectId);
-    viewMode.value = VIEW_ACTIVE;
+    store.setBucket('active');
     if (chat?.id) store.selectSession(chat.id);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
@@ -1103,7 +1148,7 @@ async function onRestart(): Promise<void> {
 async function onReopen(s: Session): Promise<void> {
   try {
     const session = await store.reopenSession(s.id);
-    viewMode.value = VIEW_ACTIVE;
+    store.setBucket('active');
     if (session?.id) store.selectSession(session.id);
     store.notify(`Сесію «${s.name}» відновлено — worktree піднято, можна продовжувати`);
   } catch (e) {
@@ -1531,51 +1576,6 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-text);
 }
 
-// ── Agents table ──────────────────────────────────────────────────────────
-.ws__cell-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.ws__cell-status-word {
-  font-size: 11px;
-  color: var(--k-muted);
-  white-space: nowrap;
-}
-
-.ws__cell-name--child { padding-left: 6px; color: var(--k-muted); }
-.ws__branch-connector { color: var(--k-accent); margin-right: 4px; }
-
-.ws__cell-name {
-  font-family: var(--k-font-ui);
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--k-text);
-}
-
-.ws__cell-activity {
-  display: inline-block;
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--k-muted);
-  vertical-align: middle;
-}
-
-.ws__cell-actions {
-  display: inline-flex;
-  gap: 4px;
-  justify-content: flex-end;
-}
-
-// running — accent strip on the row's leading edge (mirrors the card).
-.ws__table :deep(tr.ws__row--running td:first-child) {
-  box-shadow: inset 2px 0 0 0 var(--k-accent);
-}
-
 .ws__hint {
   margin: 0;
   font-size: 11px;
@@ -1643,6 +1643,120 @@ async function submitPreviewConfig(): Promise<void> {
 .ws__panel {
   flex: 1;
   min-height: 0;
+}
+
+.ws__cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-3);
+}
+
+// ── Detail tabs + panes ────────────────────────────────────────────────────
+.ws__detail-tabs {
+  flex: none;
+  padding: 0 14px;
+}
+
+.ws__tabpane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ws__changes,
+.ws__session {
+  overflow-y: auto;
+  gap: 14px;
+  padding: 16px 14px;
+}
+
+.ws__changes-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--k-muted);
+}
+.ws__changes-branch { color: var(--k-text); }
+.ws__changes-dirty { color: var(--k-accent); }
+
+.ws__conflict {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--k-accent);
+}
+.ws__conflict-head { list-style: none; margin-left: -18px; }
+
+.ws__file-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+.ws__file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--k-line);
+  font-size: 12px;
+}
+.ws__file-path {
+  color: var(--k-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws__file-stat {
+  flex: none;
+  display: inline-flex;
+  gap: 8px;
+}
+.ws__diff-add { color: var(--k-diff-add); }
+.ws__diff-del { color: var(--k-diff-del); }
+
+// ── Session metadata + actions ─────────────────────────────────────────────
+.ws__meta {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ws__meta-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ws__meta-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+}
+.ws__meta-value {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--k-text);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.ws__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--k-line);
 }
 
 .ws__log-empty {

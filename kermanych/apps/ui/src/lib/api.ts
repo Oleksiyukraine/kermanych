@@ -203,8 +203,14 @@ export const api = {
 
   finishInfo: (
     id: string,
-  ): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[] }> =>
-    get(`/sessions/${id}/finish`),
+  ): Promise<{
+    branch: string;
+    target: string;
+    ahead: number;
+    dirty: boolean;
+    conflicts: string[];
+    files: { path: string; added: number; removed: number }[];
+  }> => get(`/sessions/${id}/finish`),
 
   finish: (
     id: string,

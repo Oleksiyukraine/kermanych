@@ -1073,7 +1073,7 @@ export class SupervisorService implements OnModuleDestroy {
 
   // Preview of what "finish" will do: the target branch, how many commits land,
   // and whether the worktree has uncommitted work that would be auto-committed.
-  async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[] }> {
+  async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[]; files: { path: string; added: number; removed: number }[] }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
@@ -1083,7 +1083,8 @@ export class SupervisorService implements OnModuleDestroy {
     const ahead = target ? await this.worktree.aheadCount(g.localRepoPath, target, s.branch) : 0;
     const dirty = await this.worktree.hasUncommitted(dir);
     const conflicts = await this.worktree.unmergedFiles(dir);
-    return { branch: s.branch, target, ahead, dirty, conflicts };
+    const files = await this.worktree.changedFiles(dir, target);
+    return { branch: s.branch, target, ahead, dirty, conflicts, files };
   }
 
   // Merge the session's branch into the project's current branch, then retire the

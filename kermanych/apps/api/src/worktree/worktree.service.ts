@@ -65,6 +65,31 @@ export class WorktreeService {
     return Number.isFinite(n) ? n : 0;
   }
 
+  // Per-file line-change summary of the branch against `base` via `git diff --numstat
+  // <base>...HEAD`. Each line is `added\tremoved\tpath`; binary files report `-` counts,
+  // normalized to 0. Any failure (bad base, non-repo) degrades to an empty list.
+  async changedFiles(
+    dir: string,
+    base: string,
+  ): Promise<{ path: string; added: number; removed: number }[]> {
+    if (!base) return [];
+    const r = await git(dir, ["diff", "--numstat", `${base}...HEAD`]);
+    if (!r.ok) return [];
+    const files: { path: string; added: number; removed: number }[] = [];
+    for (const line of r.out.split("\n")) {
+      if (!line.trim()) continue;
+      const parts = line.split("\t");
+      if (parts.length < 3) continue;
+      const [added, removed, ...rest] = parts;
+      files.push({
+        path: rest.join("\t"),
+        added: added === "-" ? 0 : Number(added) || 0,
+        removed: removed === "-" ? 0 : Number(removed) || 0,
+      });
+    }
+    return files;
+  }
+
   // Merge branch into the repo's current HEAD (no-ff). On failure the merge is
   // aborted so the project tree stays clean; the result says whether it was a
   // content conflict (recoverable in the worktree) or a hard error (e.g. dirty tree).
