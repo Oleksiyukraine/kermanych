@@ -241,6 +241,61 @@
       </KTable>
       <div class="kit__caption mono">вибрано: {{ tableSelected }} · дія: {{ lastTableAction || '—' }}</div>
     </section>
+
+    <!-- v3 navigation + tabs -->
+    <section class="kit__section">
+      <div class="kit__label">05 · Навігація v3</div>
+      <div class="kit__row"><KTopNav v-model="topNav" :options="topNavOptions" /></div>
+      <div class="kit__row" style="margin-top: var(--k-sp-3)"><KTabs v-model="detailTab" :tabs="detailTabs" /></div>
+      <div class="kit__sidebar">
+        <KNavItem label="Активні" :count="3" :active="navActive === 'active'" @click="navActive = 'active'" />
+        <KNavItem label="Задачі" :count="5" :active="navActive === 'tasks'" @click="navActive = 'tasks'" />
+        <KNavItem label="Відкладені" :count="12" :active="navActive === 'archived'" @click="navActive = 'archived'" />
+        <KNavItem label="Історія" :active="navActive === 'history'" @click="navActive = 'history'" />
+      </div>
+    </section>
+
+    <!-- session cards -->
+    <section class="kit__section">
+      <div class="kit__label">06 · Картки сесій</div>
+      <div class="kit__cards">
+        <KSessionCard
+          v-for="(c, i) in sessionCards" :key="c.branch"
+          :branch="c.branch" :title="c.title" :time="c.time"
+          :status="c.status" :status-line="c.statusLine" :selected="i === 0"
+        />
+      </div>
+    </section>
+
+    <!-- kanban -->
+    <section class="kit__section">
+      <div class="kit__label">07 · Дошка (kanban)</div>
+      <div class="kit__kanban">
+        <KKanbanColumn label="Беклог" :count="2">
+          <KKanbanCard title="ротація ключів у Keychain" branch="feature/keychain-rotate" project="Backend-core" time="1 дн" status="backlog" />
+          <KKanbanCard title="скорочення шляху в топбарі" branch="chore/path-ellipsis" project="FE-kit" time="4 дн" status="backlog" />
+        </KKanbanColumn>
+        <KKanbanColumn label="В роботі" :count="1">
+          <KKanbanCard title="rate limiting на /v1/messages" branch="feature/rate-limit" project="Backend-core" time="2 хв" status="thinking" />
+        </KKanbanColumn>
+      </div>
+    </section>
+
+    <!-- chat + thought -->
+    <section class="kit__section">
+      <div class="kit__label">08 · Чат</div>
+      <KChatMessage role="user">Чому drag інколи падає не в ту клітинку?</KChatMessage>
+      <KThoughtToggle label="Думав 8с" :open="thoughtOpen" @toggle="thoughtOpen = !thoughtOpen">
+        Ціль дропа рахується проти геометрії на початку перетягування, а не поточної.
+      </KThoughtToggle>
+      <KChatMessage role="assistant">Дерево панелей ще старе на момент drop — перерахуй рамки на drag move.</KChatMessage>
+    </section>
+
+    <!-- composer -->
+    <section class="kit__section">
+      <div class="kit__label">09 · Композер</div>
+      <KComposer v-model="composerDraft" model="opus-5" :worktree="true" :token-count="31600" @send="() => {}" />
+    </section>
   </main>
 </template>
 
@@ -263,6 +318,37 @@ import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KUserButton from 'components/kit/KUserButton.vue';
 import KStatusBar from 'components/kit/KStatusBar.vue';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
+import KTopNav from 'components/kit/KTopNav.vue';
+import KNavItem from 'components/kit/KNavItem.vue';
+import KSessionCard from 'components/kit/KSessionCard.vue';
+import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
+import KKanbanCard from 'components/kit/KKanbanCard.vue';
+import KChatMessage from 'components/kit/KChatMessage.vue';
+import KThoughtToggle from 'components/kit/KThoughtToggle.vue';
+import KTabs from 'components/kit/KTabs.vue';
+import KComposer from 'components/kit/KComposer.vue';
+
+const topNav = ref('agents');
+const topNavOptions = [
+  { value: 'agents', label: 'Агенти' },
+  { value: 'board', label: 'Дошка' },
+  { value: 'chat', label: 'Чат' },
+];
+const navActive = ref('active');
+const detailTab = ref('log');
+const detailTabs = [
+  { value: 'log', label: 'Лог' },
+  { value: 'changes', label: 'Зміни' },
+  { value: 'session', label: 'Сесія' },
+];
+const composerDraft = ref('');
+const thoughtOpen = ref(false);
+const sessionCards: { branch: string; title: string; time: string; status: SessionStatus; statusLine: string }[] = [
+  { branch: 'feature/rate-limit', title: 'rate limiting на /v1/messages', time: '2 хв', status: 'thinking', statusLine: 'працює · 12 кроків' },
+  { branch: 'refactoring/session-store', title: 'обʼєднати сесії', time: '14 хв', status: 'waiting_input', statusLine: 'чекає · потрібне рішення' },
+  { branch: 'fix/remove-button', title: 'remove + button', time: '1 год', status: 'merged', statusLine: 'влито · 2 файли +41 −12' },
+  { branch: 'chore/ci-node-22', title: 'node 22 в CI', time: '1 дн', status: 'done', statusLine: 'готово · без тесту' },
+];
 
 const swatches = [
   { var: '--k-canvas' }, { var: '--k-bg' }, { var: '--k-surface' }, { var: '--k-surface2' },
@@ -452,6 +538,10 @@ function onRestart() { lastAction.value = 'restart'; }
 </script>
 
 <style scoped lang="scss">
+.kit__sidebar { display: flex; flex-direction: column; gap: var(--k-sp-1); max-width: 240px; margin-top: var(--k-sp-4); background: var(--k-surface); border: 1px solid var(--k-line); border-radius: var(--k-r-lg); padding: var(--k-sp-2); }
+.kit__cards { display: flex; flex-direction: column; gap: var(--k-sp-2); max-width: 340px; }
+.kit__kanban { display: flex; gap: var(--k-sp-3); align-items: flex-start; }
+.kit__kanban > * { flex: 1; max-width: 280px; }
 .kit__swatches { display: flex; flex-wrap: wrap; gap: var(--k-sp-3); }
 .kit__swatch { display: flex; flex-direction: column; gap: var(--k-sp-1); align-items: center; }
 .kit__chip { width: 56px; height: 40px; border-radius: var(--k-r); border: 1px solid var(--k-line-strong); }
