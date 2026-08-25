@@ -122,3 +122,21 @@ body,
 .k-log__markdown th { background: var(--k-surface2); font-weight: 700; }
 .k-log__markdown img { max-width: 100%; }
 
+// Theme reveal — the wipe driven by `toggleTheme` in src/lib/theme.ts.
+//
+// The API's default root transition is a cross-fade between the two snapshots.
+// Killing both animations leaves them stacked and static, so the only thing that
+// moves is the clip-path JS animates on the incoming one: a circle growing from
+// the toggle. Global, because these pseudo-elements belong to the root element
+// and a scoped block would never reach them.
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+// The incoming snapshot has to sit on top, or a growing clip would reveal
+// nothing but the old paint above it.
+::view-transition-old(root) { z-index: 0; }
+::view-transition-new(root) { z-index: 1; }
+

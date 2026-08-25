@@ -1,4 +1,4 @@
-import { ref, watch, type Ref } from 'vue';
+import { nextTick, ref, watch, type Ref } from 'vue';
 import type { KTheme } from '@kermanych/tokens';
 
 // The app's colour theme. `@kermanych/tokens` ships both sets in one sheet; the
@@ -58,8 +58,61 @@ export function applyTheme(value: KTheme): void {
   document.documentElement.dataset.theme = value;
 }
 
-export function toggleTheme(): void {
-  theme.value = theme.value === 'light' ? 'dark' : 'light';
+// Reveal duration. Long enough to read as a wipe across a full window, short
+// enough that the frozen snapshot below is not felt as lag.
+const REVEAL_MS = 480;
+
+/**
+ * Flip the theme, revealing the new palette under a circle that grows from
+ * `origin` — the control that was activated — to the furthest viewport corner.
+ *
+ * The View Transitions API holds the page as two stacked snapshots for the
+ * duration, so nothing is interactive while the reveal runs. That is the whole
+ * cost of the effect, and the reason it is worth it only for a full repaint.
+ */
+export function toggleTheme(origin?: DOMRect | null): void {
+  const next: KTheme = theme.value === 'light' ? 'dark' : 'light';
+
+  // Instant paths: an engine without the API, and an operator who asked for
+  // less motion — a full-screen wipe is precisely what that preference covers.
+  if (
+    typeof document === 'undefined' ||
+    !document.startViewTransition ||
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  ) {
+    theme.value = next;
+    return;
+  }
+
+  const transition = document.startViewTransition(async () => {
+    theme.value = next;
+    // `initTheme`'s watcher is pre-flush, so without awaiting the flush the
+    // browser captures the "new" snapshot before `data-theme` reaches <html>,
+    // and the reveal wipes in the OLD palette.
+    await nextTick();
+  });
+
+  void transition.ready
+    .then(() => {
+      const { innerWidth: w, innerHeight: h } = window;
+      const x = origin ? origin.left + origin.width / 2 : w / 2;
+      const y = origin ? origin.top + origin.height / 2 : h / 2;
+      // Reach for the furthest corner: any smaller radius stops short of the
+      // opposite edge and leaves a crescent of the old palette behind.
+      const radius = Math.hypot(Math.max(x, w - x), Math.max(y, h - y));
+      document.documentElement.animate(
+        { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`] },
+        {
+          duration: REVEAL_MS,
+          easing: 'ease-in-out',
+          pseudoElement: '::view-transition-new(root)',
+        },
+      );
+    })
+    .catch(() => {
+      // Skipped transition — a second toggle mid-flight, or a hidden tab. The
+      // theme itself already changed; only the animation is lost.
+    });
 }
 
 // Boot may re-run under HMR; a second watcher would double every write.

@@ -102,7 +102,7 @@
         <KBtn
           variant="icon"
           :title="theme === 'light' ? 'Темна тема' : 'Світла тема'"
-          @click="toggleTheme"
+          @click="onThemeToggle"
         >{{ theme === 'light' ? '☾' : '☀' }}</KBtn>
       </div>
     </q-header>
@@ -452,6 +452,15 @@ const topView = computed(() =>
 function goView(v: string): void {
   const name = v === 'board' ? 'board' : v === 'chat' ? 'chat' : 'workspace';
   if (route.name !== name) void router.push({ name });
+}
+
+// The theme reveal grows from the control that was activated, so the handler
+// hands its rect to `toggleTheme`. The rect — not `event.clientX` — because
+// keyboard activation reports a pointer at (0, 0), which would start the wipe
+// in the far corner instead of under the button.
+function onThemeToggle(e: MouseEvent): void {
+  const el = e.currentTarget;
+  toggleTheme(el instanceof HTMLElement ? el.getBoundingClientRect() : null);
 }
 
 const buckets = [
