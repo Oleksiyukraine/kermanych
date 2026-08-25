@@ -9,11 +9,6 @@ body,
   font-family: var(--k-font-ui);
 }
 
-// Modernist rule: radius 0 everywhere (macOS window buttons are the only
-// documented exception, handled where those controls live).
-* {
-  border-radius: 0;
-}
 
 // Machine text helper.
 .mono {
