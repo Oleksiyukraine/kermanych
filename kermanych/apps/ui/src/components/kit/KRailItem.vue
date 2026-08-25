@@ -60,10 +60,9 @@ const initials = computed(() => initialsOf(props.project.name, '·'));
     :style="project.color ? { '--rail-color': project.color } : undefined"
   >
     <span class="k-rail__initials mono">{{ initials }}</span>
+    <span class="k-rail__name">{{ project.name }}</span>
+    <span v-if="project.state !== 'bound'" class="k-rail__state mono" aria-hidden="true">{{ STATE_GLYPH[project.state] }}</span>
     <span v-if="count > 0" class="k-rail__count mono">{{ count }}</span>
-    <span v-if="project.state !== 'bound'" class="k-rail__state mono" aria-hidden="true">
-      {{ STATE_GLYPH[project.state] }}
-    </span>
   </button>
 </template>
 
@@ -72,19 +71,19 @@ const initials = computed(() => initialsOf(props.project.name, '·'));
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border: 1px solid var(--k-line);
+  gap: var(--k-sp-2);
+  width: 100%;
+  padding: var(--k-sp-1) var(--k-sp-2);
+  border: 1px solid transparent;
   background: transparent;
   color: var(--k-muted);
   cursor: pointer;
   border-radius: var(--k-r);
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
 
   &:hover:not(.k-rail--active) {
-    border-color: var(--k-line-strong);
+    background: var(--k-surface);
     color: var(--k-text);
   }
 
@@ -94,67 +93,69 @@ const initials = computed(() => initialsOf(props.project.name, '·'));
   }
 }
 
-// left strip — project color when set (always shown), else the accent when active.
 .k-rail--active {
   background: var(--k-surface2);
-  border-color: var(--k-line-strong);
   color: var(--k-text);
 }
 
-.k-rail--active::before,
-.k-rail--colored::before {
-  content: '';
-  position: absolute;
-  left: -1px;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--k-accent);
-}
-
-.k-rail--colored::before {
-  background: var(--rail-color);
-}
-
-// binding state — dashed frame while this machine has no repo, accent frame for a row the
-// cloud no longer lists.
-.k-rail--unbound {
-  border-style: dashed;
-}
-
-.k-rail--orphan {
-  border-color: var(--k-accent);
-}
-
-.k-rail__state {
-  position: absolute;
-  bottom: -1px;
-  right: 1px;
-  font-size: 9px;
-  line-height: 1;
-  color: var(--k-muted);
-}
-
+// initials chip — the project's colour when set, else a neutral surface.
 .k-rail__initials {
-  font-size: 12px;
-  font-weight: 400;
-  letter-spacing: 0.04em;
-}
-
-// count badge — accent square, top-right, machine number.
-.k-rail__count {
-  position: absolute;
-  top: -1px;
-  right: -1px;
-  min-width: 15px;
-  height: 15px;
-  padding: 0 3px;
+  flex: none;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: var(--k-fs-xs);
+  border-radius: var(--k-r-sm);
+  background: var(--k-surface2);
+  color: var(--k-muted);
+  border: 1px solid var(--k-line-strong);
+}
+
+.k-rail--colored .k-rail__initials {
+  background: var(--rail-color);
+  color: var(--k-on-accent);
+  border-color: transparent;
+}
+
+.k-rail--active .k-rail__initials {
+  color: var(--k-text);
+}
+
+.k-rail__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--k-fs-base);
+}
+
+// binding state — a muted glyph (○ no local repo here, ⚠ gone from the cloud).
+.k-rail__state {
+  flex: none;
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
+}
+
+.k-rail--orphan .k-rail__state {
+  color: var(--k-accent);
+}
+
+// count badge — running agents, accent pill.
+.k-rail__count {
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--k-fs-xs);
   line-height: 1;
-  color: var(--k-canvas);
+  color: var(--k-on-accent);
   background: var(--k-accent);
+  border-radius: var(--k-r-pill);
 }
 </style>

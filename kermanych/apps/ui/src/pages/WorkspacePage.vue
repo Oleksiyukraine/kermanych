@@ -8,10 +8,11 @@
 
     <div v-else class="ws__content" ref="contentEl" :class="{ 'ws__content--resizing': resizing }">
       <!-- BOARD — one card per session in the selected project -->
-      <section class="ws__board">
+      <section class="ws__board" :style="{ width: detailWidth + 'px' }">
         <header class="ws__board-head">
           <div class="ws__board-title">
-            <h1 class="ws__heading">{{ selectedProject?.name ?? 'Проєкт' }}</h1>
+            <span class="ws__bucket-label">{{ bucketLabel }}</span>
+            <span class="ws__bucket-count mono">{{ boardRows.length }}</span>
           </div>
           <div class="ws__board-controls">
             <KBtn
@@ -44,7 +45,6 @@
 
       <!-- RESIZER — drag the seam to widen / narrow the chat section -->
       <div
-        v-if="selectedSession"
         class="ws__resizer"
         role="separator"
         aria-orientation="vertical"
@@ -58,7 +58,8 @@
       ></div>
 
       <!-- DETAIL — the full panel for the selected session -->
-      <aside v-if="selectedSession" class="ws__detail" :style="{ width: detailWidth + 'px' }">
+      <aside class="ws__detail">
+        <template v-if="selectedSession">
         <div class="ws__detail-bar">
           <span class="ws__detail-label mono">{{ selectedSession.name }}</span>
           <button
@@ -225,6 +226,8 @@
             </template>
           </div>
         </div>
+        </template>
+        <div v-else class="ws__detail-blank mono">Виберіть сесію зі списку.</div>
       </aside>
     </div>
 
@@ -657,7 +660,7 @@ const chatCost = computed(() => blocks.value.reduce((s, b) => s + b.summary.cost
 // left edge. Width is clamped so the board keeps at least MIN_BOARD and the
 // chat at least MIN_DETAIL, then persisted across reloads.
 const MIN_DETAIL = 360;
-const MIN_BOARD = 360;
+const MIN_BOARD = 300;
 const contentEl = ref<HTMLElement | null>(null);
 const {
   width: detailWidth,
@@ -666,13 +669,23 @@ const {
   onKeydown: onResizeKeydown,
   refresh: refreshDetailWidth,
 } = useResizableWidth({
-  storageKey: 'kermanych.ws.detail-width',
-  defaultWidth: 560,
-  min: MIN_DETAIL,
-  edge: 'left',
+  storageKey: 'kermanych.ws.board-width',
+  defaultWidth: 340,
+  min: MIN_BOARD,
+  edge: 'right',
   max: () =>
-    contentEl.value ? contentEl.value.clientWidth - MIN_BOARD : Number.POSITIVE_INFINITY,
+    contentEl.value ? contentEl.value.clientWidth - MIN_DETAIL : Number.POSITIVE_INFINITY,
 });
+
+const bucketLabel = computed(() =>
+  store.selectedBucket === 'tasks'
+    ? 'Задачі'
+    : store.selectedBucket === 'archived'
+      ? 'Відкладені'
+      : store.selectedBucket === 'history'
+        ? 'Історія'
+        : 'Активні',
+);
 
 // Re-clamp once the detail column mounts (the container is measurable by then),
 // so a persisted width from a wider viewport can't overflow a narrower one.
@@ -1546,7 +1559,7 @@ async function submitPreviewConfig(): Promise<void> {
 }
 
 .ws__board {
-  flex: 1;
+  flex: none;
   min-width: 0;
   overflow-y: auto;
   padding: 22px 24px 28px;
@@ -1554,7 +1567,7 @@ async function submitPreviewConfig(): Promise<void> {
 
 .ws__board-head {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 20px;
   margin-bottom: 20px;
@@ -1566,14 +1579,17 @@ async function submitPreviewConfig(): Promise<void> {
   gap: 12px;
 }
 
-.ws__heading {
-  margin: 4px 0 0;
-  text-align: left;
+.ws__bucket-label {
   font-family: var(--k-font-ui);
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: -0.01em;
+  font-size: var(--k-fs-md);
+  font-weight: var(--k-fw-semibold);
   color: var(--k-text);
+}
+
+.ws__bucket-count {
+  margin-left: var(--k-sp-2);
+  font-size: var(--k-fs-sm);
+  color: var(--k-faint);
 }
 
 .ws__hint {
@@ -1591,11 +1607,20 @@ async function submitPreviewConfig(): Promise<void> {
 
 // ── Detail column ─────────────────────────────────────────────────────────
 .ws__detail {
-  flex: none;
+  flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+}
+
+.ws__detail-blank {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--k-faint);
+  font-size: var(--k-fs-sm);
 }
 
 .ws__detail-bar {
