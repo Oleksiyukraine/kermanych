@@ -42,6 +42,11 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   const selectedSessionId = ref<string | undefined>(undefined);
   const previews = ref<Record<string, string>>({});
   const toasts = ref<Toast[]>([]);
+  // Which Агенти bucket the sidebar shows (v3). Lives here because the sidebar (MainLayout)
+  // sets it while the filter lives in WorkspacePage. active = live agents; tasks = backlog;
+  // archived = set aside; history = merged/done/stopped.
+  const selectedBucket = ref<'active' | 'tasks' | 'archived' | 'history'>('active');
+  function setBucket(b: 'active' | 'tasks' | 'archived' | 'history'): void { selectedBucket.value = b; }
 
   let socket: Socket | undefined;
 
@@ -302,6 +307,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     transcripts,
     selectedProjectId,
     selectedSessionId,
+    selectedBucket,
+    setBucket,
     connect,
     selectProject,
     selectSession,

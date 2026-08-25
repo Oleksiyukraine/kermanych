@@ -1,16 +1,20 @@
 <template>
   <q-layout view="lHh Lpr lFf" class="shell">
-    <!-- LEFT RAIL — one tile per CLOUD project, plus any orphan local row (07) -->
-    <q-drawer
-      model-value
-      side="left"
-      :width="60"
-      :breakpoint="0"
-      bordered
-      class="shell__rail"
-    >
-      <div class="shell__rail-inner">
-        <div class="shell__rail-items">
+    <!-- LEFT SIDEBAR — bucket nav + projects + folder binding + account (v3 section 07) -->
+    <q-drawer model-value side="left" :width="240" :breakpoint="0" bordered class="shell__sidebar">
+      <div class="shell__side-inner">
+        <nav class="shell__buckets">
+          <KNavItem
+            v-for="b in buckets"
+            :key="b.key"
+            :label="b.label"
+            :count="bucketCounts[b.key]"
+            :active="store.selectedBucket === b.key"
+            @click="onBucket(b.key)"
+          />
+        </nav>
+        <div class="shell__side-label">Проєкти</div>
+        <div class="shell__projects">
           <KRailItem
             v-for="p in railProjects"
             :key="p.id"
@@ -19,17 +23,17 @@
             :count="runningCount(p.id)"
             @click="selectProject(p.id)"
           />
+          <KBtn variant="icon" class="shell__add" title="Новий проєкт у хмарі" @click="openCreate">+</KBtn>
         </div>
-        <KBtn
-          variant="icon"
-          class="shell__add"
-          title="Новий проєкт у хмарі"
-          @click="openCreate"
-        >
-          +
-        </KBtn>
-        <!-- ACCOUNT TILE — pinned to the foot of the rail (margin-top: auto). The app's
-             only way out of a session. -->
+        <div v-if="store.selectedProjectId" class="shell__folder">
+          <div class="shell__side-label">Тека проєкту</div>
+          <div class="shell__folder-path mono">{{ contextLabel }}</div>
+          <KBtn
+            variant="secondary"
+            :title="isBound ? 'Змінити локальну теку цього проєкту' : BIND_HINT"
+            @click="openBinding"
+          >{{ isBound ? 'Змінити теку' : 'Прив’язати теку' }}</KBtn>
+        </div>
         <KUserButton
           class="shell__account"
           :label="accountLabel"
@@ -40,19 +44,19 @@
       </div>
     </q-drawer>
 
-    <!-- TOP HEADER — logo + selected-project context + project actions (07) -->
+    <!-- TOP BAR — brand + segmented view nav + project actions (v3) -->
     <q-header class="shell__header">
       <div class="shell__brand">
         <span class="shell__logo">КЕРМАНИЧ</span>
         <span class="shell__ver mono">v0.1</span>
       </div>
-      <div class="shell__context mono">{{ contextLabel }}</div>
+      <KTopNav
+        class="shell__nav"
+        :model-value="topView"
+        :options="topOptions"
+        @update:model-value="goView"
+      />
       <div v-if="store.selectedProjectId" class="shell__actions">
-        <KBtn
-          variant="secondary"
-          :title="isBound ? 'Змінити локальну теку цього проєкту' : BIND_HINT"
-          @click="openBinding"
-        >{{ isBound ? 'Змінити теку' : 'Прив’язати теку' }}</KBtn>
         <KBtn
           variant="icon"
           :disabled="!isBound"
@@ -73,10 +77,6 @@
       <router-view />
     </q-page-container>
 
-    <!-- BOTTOM STATUS BAR — fleet aggregate for the selected project (07) -->
-    <q-footer class="shell__footer">
-      <KStatusBar :counts="counts" />
-    </q-footer>
 
     <!-- CREATE-PROJECT MODAL — a project is born in the CLOUD (Requirement 2: any signed-in
          user may create one and becomes its owner). The local row arrives through
@@ -321,7 +321,8 @@ import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
 import { IS_PREVIEW } from '../lib/preview';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
-import KStatusBar from 'components/kit/KStatusBar.vue';
+import KTopNav from 'components/kit/KTopNav.vue';
+import KNavItem from 'components/kit/KNavItem.vue';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
@@ -398,18 +399,41 @@ function runningCount(projectId: string): number {
   return sessionsOf(projectId).filter((s) => RUNNING.includes(s.status)).length;
 }
 
-const counts = computed(() => {
-  let running = 0;
-  let waiting = 0;
-  let done = 0;
-  let error = 0;
-  for (const s of sessionsOf(store.selectedProjectId)) {
-    if (RUNNING.includes(s.status)) running++;
-    else if (s.status === 'waiting_input') waiting++;
-    else if (s.status === 'done') done++;
-    else if (s.status === 'error') error++;
+const topOptions = [
+  { value: 'agents', label: 'Агенти' },
+  { value: 'board', label: 'Дошка' },
+  { value: 'chat', label: 'Чат' },
+];
+const topView = computed(() =>
+  route.name === 'board' ? 'board' : route.name === 'chat' ? 'chat' : 'agents',
+);
+function goView(v: string): void {
+  const name = v === 'board' ? 'board' : v === 'chat' ? 'chat' : 'workspace';
+  if (route.name !== name) void router.push({ name });
+}
+
+const buckets = [
+  { key: 'active', label: 'Активні' },
+  { key: 'tasks', label: 'Задачі' },
+  { key: 'archived', label: 'Відкладені' },
+  { key: 'history', label: 'Історія' },
+] as const;
+function onBucket(key: 'active' | 'tasks' | 'archived' | 'history'): void {
+  store.setBucket(key);
+  if (route.name !== 'workspace') void router.push({ name: 'workspace' });
+}
+// Fleet tally per sidebar bucket (replaces the old footer KStatusBar). error/conflict
+// count as Активні (needs attention) so no session falls outside a bucket.
+const bucketCounts = computed(() => {
+  const c = { active: 0, tasks: 0, archived: 0, history: 0 };
+  for (const s of store.sessions) {
+    if (s.projectId !== store.selectedProjectId) continue;
+    if (s.archived) c.archived++;
+    else if (s.status === 'backlog') c.tasks++;
+    else if (s.status === 'merged' || s.status === 'done' || s.status === 'stopped') c.history++;
+    else c.active++;
   }
-  return { running, waiting, done, error };
+  return c;
 });
 
 // The rail: the CLOUD list (what exists, for everyone) in cloud order, then every LOCAL row
@@ -846,84 +870,100 @@ async function confirmSignOut(): Promise<void> {
 </script>
 
 <style scoped lang="scss">
-.shell__rail {
+.shell__sidebar {
   background: var(--k-bg);
 }
 
-.shell__rail-inner {
+.shell__side-inner {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 0;
+  gap: var(--k-sp-2);
+  padding: var(--k-sp-3) var(--k-sp-2);
   height: 100%;
 }
 
-.shell__rail-items {
+.shell__buckets {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 8px;
+  gap: 2px;
+}
+
+.shell__side-label {
+  margin: var(--k-sp-3) var(--k-sp-1) var(--k-sp-1);
+  font-size: var(--k-fs-xs);
+  font-weight: var(--k-fw-medium);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--k-faint);
+}
+
+.shell__projects {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-1);
 }
 
 .shell__add {
-  margin-top: 4px;
+  align-self: flex-start;
+  margin-top: var(--k-sp-1);
 }
 
-// account tile — pinned to the foot of the rail, below every project and the add button.
+.shell__folder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
+}
+
+.shell__folder-path {
+  font-size: var(--k-fs-xs);
+  color: var(--k-faint);
+  overflow-wrap: anywhere;
+}
+
+// account — pinned to the foot of the sidebar, below everything.
 .shell__account {
   margin-top: auto;
 }
 
-// header — 2px rule below (zone separator), surface fill, flush-left brand.
+// top bar — 2px rule below (zone separator), surface fill.
 .shell__header {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: var(--k-sp-4);
   height: 48px;
-  padding: 0 16px;
+  padding: 0 var(--k-sp-4);
   background: var(--k-surface);
   color: var(--k-text);
-  border-bottom: 2px solid var(--k-line-strong);
+  border-bottom: var(--k-rule-strong) solid var(--k-line-strong);
 }
 
 .shell__brand {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--k-sp-2);
 }
 
 .shell__logo {
   font-family: var(--k-font-ui);
-  font-size: 15px;
+  font-size: var(--k-fs-md);
   font-weight: 800;
   letter-spacing: 0.06em;
   color: var(--k-text);
 }
 
 .shell__ver {
-  font-size: 11px;
+  font-size: var(--k-fs-xs);
   color: var(--k-muted);
 }
 
-.shell__context {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--k-muted);
+.shell__nav {
+  margin: 0 auto;
 }
 
 .shell__actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-
-.shell__footer {
-  background: transparent;
+  gap: var(--k-sp-2);
 }
 
 .shell__form {

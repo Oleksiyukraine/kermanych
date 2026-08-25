@@ -39,6 +39,7 @@ const routes: RouteRecordRaw[] = [
       { path: '', name: 'workspace', component: () => import('pages/WorkspacePage.vue'), meta: { public: false } },
       { path: 'board', name: 'board', component: () => import('pages/BoardPage.vue'), meta: { public: false } },
       { path: 'kit', name: 'kit', component: () => import('pages/KitGalleryPage.vue'), meta: { public: false } },
+      { path: 'chat', name: 'chat', component: () => import('pages/ChatPage.vue'), meta: { public: false } },
     ],
   },
 
