@@ -66,6 +66,11 @@
     <!-- TOP BAR — brand + segmented view nav + project actions (v3) -->
     <q-header class="shell__header">
       <div class="shell__brand">
+        <svg class="shell__mark" viewBox="0 0 1024 1024" aria-hidden="true">
+          <rect width="1024" height="1024" rx="200" fill="#12110f" />
+          <path d="M244 214 L344 214 L642 512 L344 810 L244 810 L244 730 L462 512 L244 294 Z" fill="#ff563c" />
+          <rect x="636" y="726" width="300" height="84" fill="#f3f2f2" />
+        </svg>
         <span class="shell__logo">КЕРМАНИЧ</span>
         <span class="shell__ver mono">v0.1</span>
       </div>
@@ -1074,8 +1079,14 @@ async function confirmSignOut(): Promise<void> {
 
 .shell__brand {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--k-sp-2);
+}
+
+.shell__mark {
+  width: 20px;
+  height: 20px;
+  flex: none;
 }
 
 .shell__logo {
