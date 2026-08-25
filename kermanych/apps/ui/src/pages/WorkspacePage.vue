@@ -21,7 +21,7 @@
               :disabled="!isBound"
               :title="isBound ? 'Сесія-чат без worktree' : BIND_HINT"
               @click="onNewChat"
-            >+ Швидкий чат</KBtn>
+            >Швидкий чат</KBtn>
             <KBtn variant="primary" @click="openLauncher()">Нова задача</KBtn>
           </div>
         </header>
