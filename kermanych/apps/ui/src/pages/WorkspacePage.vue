@@ -1477,7 +1477,7 @@ async function submitPreviewConfig(): Promise<void> {
 // Fixed header (48px) + footer (30px) are overlaid by the Quasar layout; the
 // workspace fills exactly the space between them.
 .ws {
-  height: calc(100vh - 78px);
+  height: calc(100vh - 56px);
   overflow: hidden;
 }
 
@@ -1508,8 +1508,10 @@ async function submitPreviewConfig(): Promise<void> {
 // ── Board + detail split ──────────────────────────────────────────────────
 .ws__content {
   display: flex;
+  gap: var(--k-sp-3);
   height: 100%;
   min-height: 0;
+  padding: var(--k-sp-3);
 }
 
 // While dragging the seam, force the resize cursor everywhere and kill text
@@ -1562,7 +1564,9 @@ async function submitPreviewConfig(): Promise<void> {
   flex: none;
   min-width: 0;
   overflow-y: auto;
-  padding: 22px 24px 28px;
+  padding: var(--k-sp-4);
+  background: var(--k-bg);
+  border-radius: var(--k-r-lg);
 }
 
 .ws__board-head {

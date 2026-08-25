@@ -1,7 +1,7 @@
 <template>
-  <q-layout view="lHh Lpr lFf" class="shell">
+  <q-layout view="hHh Lpr lFf" class="shell">
     <!-- LEFT SIDEBAR — bucket nav + projects + folder binding + account (v3 section 07) -->
-    <q-drawer model-value side="left" :width="240" :breakpoint="0" bordered class="shell__sidebar">
+    <q-drawer model-value side="left" :width="264" :breakpoint="0" class="shell__sidebar">
       <div class="shell__side-inner">
         <nav class="shell__buckets">
           <KNavItem
@@ -873,6 +873,7 @@ async function confirmSignOut(): Promise<void> {
 
 .shell__side-inner {
   background: var(--k-bg);
+  border-radius: var(--k-r-lg);
   display: flex;
   flex-direction: column;
   gap: var(--k-sp-2);
@@ -928,11 +929,11 @@ async function confirmSignOut(): Promise<void> {
   display: flex;
   align-items: center;
   gap: var(--k-sp-4);
-  height: 48px;
-  padding: 0 var(--k-sp-4);
-  background: var(--k-surface);
+  height: 56px;
+  padding: 0 var(--k-sp-3);
+  background: transparent;
   color: var(--k-text);
-  border-bottom: var(--k-rule-strong) solid var(--k-line-strong);
+  box-shadow: none;
 }
 
 .shell__brand {
