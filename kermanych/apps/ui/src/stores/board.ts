@@ -19,6 +19,7 @@ import { useAuth } from './auth';
 import { useProjects } from './projects';
 import { useOrchestrator } from './orchestrator';
 import { installReconcile, type ReconcileOptions } from '../lib/reconcile';
+import { useDelayedTrue } from '../composables/useDelayedTrue';
 import { IS_PREVIEW } from '../lib/preview';
 
 // The shared board's TASKS, and nothing else. Cloud projects and membership live in
@@ -33,12 +34,26 @@ export const useBoard = defineStore('board', () => {
   const tasks = ref<Task[]>([]);
   const loading = ref(false);
   const loadError = ref<string | null>(null);
-  // 'CLOSED' until a subscription actually reports otherwise, so `offline` starts true and
-  // nothing can claim the board is live before Realtime says so.
+  // The raw channel state, 'CLOSED' until a subscription reports otherwise. Nothing may
+  // read it on its own as "the board is stale" — see `offline` for why.
   const channelState = ref<TaskChannelState>('CLOSED');
-  // Anything other than a live SUBSCRIBED channel means "the board may be stale". Plan D
-  // renders this; the store only computes it.
-  const offline = computed(() => channelState.value !== 'SUBSCRIBED');
+  // True only while a channel is actually installed. subscribeTasks() is never called with
+  // no cloud project, and a cloud read that FAILED is already spelled out by `loadError`;
+  // neither is allowed to masquerade as a dead connection.
+  const watching = ref(false);
+  // Anything other than a live SUBSCRIBED channel means "the board may be stale" — but only
+  // once it lasts. Realtime answers SUBSCRIBED a few hundred ms after the channel opens,
+  // and every (re)subscribe — a board reopened, a project added, a token refreshed — passes
+  // through CLOSED first. Rendering that verbatim flashed «немає звʼязку з хмарою» onto the
+  // board for ~200 ms on every single open: long enough to be seen, far too short to be
+  // read, and untrue — subscribe() refetches the whole board BEFORE opening the channel, so
+  // nothing is stale during the handshake. So the claim waits out the grace window and
+  // clears the instant the channel answers.
+  const OFFLINE_GRACE_MS = 5_000;
+  const offline = useDelayedTrue(
+    () => watching.value && channelState.value !== 'SUBSCRIBED',
+    OFFLINE_GRACE_MS,
+  );
 
   const projectIds = computed(() => cloud.projects.map((p) => p.id));
 
@@ -130,6 +145,9 @@ export const useBoard = defineStore('board', () => {
         channelState.value = state;
       },
     );
+    // From here on a channel exists, so its state is worth reporting: the grace window
+    // starts now, not when the page mounted.
+    watching.value = true;
     stopReconcile = installReconcile(() => void load(), reconcile);
   }
 
@@ -138,6 +156,10 @@ export const useBoard = defineStore('board', () => {
     unsubscribeChannel = undefined;
     stopReconcile?.();
     stopReconcile = undefined;
+    // Leaving the board, signing out and rebuilding are not «немає звʼязку»: no channel is
+    // expected, so the grace window is cancelled rather than left ticking towards a banner
+    // the next visit would open with.
+    watching.value = false;
     channelState.value = 'CLOSED';
   }
 

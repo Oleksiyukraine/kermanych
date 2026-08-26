@@ -219,6 +219,7 @@ import KKanbanCard from 'components/kit/KKanbanCard.vue';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
+import { useDelayedTrue } from '../composables/useDelayedTrue';
 import { relativeTime } from '../lib/time';
 import { api } from '../lib/api';
 import { installReconcile } from '../lib/reconcile';
@@ -356,8 +357,14 @@ const byColumn = computed<Record<string, Task[]>>(() => {
   return out;
 });
 
+// The read itself takes ~150 ms against a warm cloud, and a hint nobody can read is just a
+// flicker in the same spot the offline banner used to blink: say «читаю» only once the wait
+// is long enough to be worth explaining. An error is not transient, so it shows at once.
+const SLOW_LOAD_MS = 500;
+const slowLoad = useDelayedTrue(() => board.loading, SLOW_LOAD_MS);
+
 const loadHint = computed(() => {
-  if (board.loading) return 'Читаю дошку…';
+  if (slowLoad.value) return 'Читаю дошку…';
   if (board.loadError) return `Хмара недоступна: ${board.loadError}`;
   return '';
 });
