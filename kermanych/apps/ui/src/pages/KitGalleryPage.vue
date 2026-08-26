@@ -247,6 +247,9 @@
       <div class="kit__label">05 · Навігація v3</div>
       <div class="kit__row"><KTopNav v-model="topNav" :options="topNavOptions" /></div>
       <div class="kit__row" style="margin-top: var(--k-sp-3)"><KTabs v-model="detailTab" :tabs="detailTabs" /></div>
+      <div class="kit__row" style="margin-top: var(--k-sp-3)">
+        <KSubNav v-model="subNav" :items="subNavItems" aria-label="Демо розділів" />
+      </div>
       <div class="kit__sidebar">
         <KNavItem label="Активні" :count="3" :active="navActive === 'active'" @click="navActive = 'active'" />
         <KNavItem label="Задачі" :count="5" :active="navActive === 'tasks'" @click="navActive = 'tasks'" />
@@ -327,6 +330,7 @@ import KKanbanCard from 'components/kit/KKanbanCard.vue';
 import KChatMessage from 'components/kit/KChatMessage.vue';
 import KThoughtToggle from 'components/kit/KThoughtToggle.vue';
 import KTabs from 'components/kit/KTabs.vue';
+import KSubNav from 'components/kit/KSubNav.vue';
 import KComposer from 'components/kit/KComposer.vue';
 
 const topNav = ref('agents');
@@ -334,6 +338,13 @@ const topNavOptions = [
   { value: 'agents', label: 'Агенти' },
   { value: 'board', label: 'Дошка' },
   { value: 'chat', label: 'Чат' },
+];
+const subNav = ref('storage');
+const subNavItems = [
+  { value: 'home', label: 'Home' },
+  { value: 'storage', label: 'Storage' },
+  { value: 'risks', label: 'Risk Registry' },
+  { value: 'releases', label: 'Release Notes' },
 ];
 const navActive = ref('active');
 const detailTab = ref('log');

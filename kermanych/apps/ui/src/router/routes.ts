@@ -1,4 +1,5 @@
 import type { RouteRecordRaw } from 'vue-router';
+import { MANAGEMENT_DEFAULT_SECTION, MANAGEMENT_SECTIONS } from '../lib/management';
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -7,6 +8,13 @@ declare module 'vue-router' {
     public?: boolean;
   }
 }
+
+// Which Менеджмент sections have a screen of their own. Labels and paths live in
+// lib/management.ts; the component belongs here, where the rest of the route
+// records keep theirs, so promoting a section is one entry in this map.
+const SECTION_PAGES: Record<string, RouteRecordRaw['component']> = {
+  'management-integrations': () => import('pages/ManagementIntegrationsPage.vue'),
+};
 
 const routes: RouteRecordRaw[] = [
   // The signed-out shell. Two records rather than one, because /login and
@@ -40,6 +48,29 @@ const routes: RouteRecordRaw[] = [
       { path: 'board', name: 'board', component: () => import('pages/BoardPage.vue'), meta: { public: false } },
       { path: 'kit', name: 'kit', component: () => import('pages/KitGalleryPage.vue'), meta: { public: false } },
       { path: 'chat', name: 'chat', component: () => import('pages/ChatPage.vue'), meta: { public: false } },
+      // Менеджмент is a nested shell: ManagementPage owns the section strip and
+      // the «pick a project» gate, one child route per section. The named parent
+      // is what the top nav matches on (route.matched in MainLayout), and the
+      // empty path redirects rather than rendering, so /management has exactly
+      // one resolution instead of two records competing for it.
+      {
+        path: 'management',
+        name: 'management',
+        component: () => import('pages/ManagementPage.vue'),
+        meta: { public: false },
+        children: [
+          { path: '', redirect: { name: MANAGEMENT_DEFAULT_SECTION } },
+          // Sections keep the shared placeholder until they earn a screen; the ones
+          // that have earned it are listed in SECTION_PAGES above.
+          ...MANAGEMENT_SECTIONS.map((s) => ({
+            path: s.path,
+            name: s.name,
+            component:
+              SECTION_PAGES[s.name] ?? (() => import('pages/ManagementSectionPage.vue')),
+            meta: { public: false },
+          })),
+        ],
+      },
     ],
   },
 
