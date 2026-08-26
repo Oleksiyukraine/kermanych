@@ -22,13 +22,15 @@
     <div class="k-statusbar__right">
       <span v-if="model" class="mono k-statusbar__tele">{{ model }}</span>
       <span v-if="tokens != null" class="mono k-statusbar__tele">{{ tokenLabel }} токенів</span>
-      <span v-if="cost != null" class="mono k-statusbar__tele">{{ costLabel }} сьогодні</span>
+      <span v-if="costLabel" class="mono k-statusbar__tele">{{ costLabel }} сьогодні</span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
+// Aliased: `tokens` is also the name of this component's prop.
+import { tokens as fmtTokens, usd } from '../../lib/format';
 
 // The window status bar (design-system section 07). Left carries the fleet
 // aggregate — only the running count is accented — right carries telemetry.
@@ -40,16 +42,8 @@ const props = defineProps<{
   cost?: number;
 }>();
 
-const tokenLabel = computed(() => {
-  const t = props.tokens ?? 0;
-  if (t >= 1000) {
-    const k = t / 1000;
-    return `${k >= 100 ? Math.round(k) : k.toFixed(1).replace(/\.0$/, '')}k`;
-  }
-  return String(t);
-});
-
-const costLabel = computed(() => `$${(props.cost ?? 0).toFixed(2)}`);
+const tokenLabel = computed(() => fmtTokens(props.tokens ?? 0));
+const costLabel = computed(() => usd(props.cost ?? 0));
 </script>
 
 <style scoped lang="scss">

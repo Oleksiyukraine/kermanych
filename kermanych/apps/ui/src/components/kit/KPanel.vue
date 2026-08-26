@@ -152,7 +152,7 @@
     <KTodoLane :phases="session.todoPhases" />
 
     <!-- status row — never hidden: model, context, spend, live action -->
-    <KStatusRow :session="session" :cost="cost" />
+    <KStatusRow :session="session" />
 
     <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎), with the
          session-level actions (rehydrate, summarise) parked on its right edge -->
@@ -219,16 +219,9 @@ const props = withDefaults(
     // The session is being rehydrated right now (omp respawn + history reload): the composer's
     // ↻ stays down until the server answers, so a second click cannot race the first.
     refreshing?: boolean;
-    // Accumulated spend of the whole transcript, summed by the page from the block
-    // summaries; the panel only renders it.
-    cost?: number;
   }>(),
   { placeholder: 'напиши наступний крок…', promoting: false, refreshing: false },
 );
-// Explicit passthrough rather than a withDefaults entry: under
-// `exactOptionalPropertyTypes` the template still sees the optional prop as
-// possibly-undefined, and KStatusRow wants a plain number.
-const cost = computed(() => props.cost ?? 0);
 
 const emit = defineEmits<{
   stop: [];

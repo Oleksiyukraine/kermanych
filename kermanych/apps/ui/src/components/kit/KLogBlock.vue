@@ -48,6 +48,7 @@ import type { TranscriptEntry } from '@kermanych/core';
 import { renderMarkdown } from '../../lib/markdown';
 import type { ExpandAllCommand } from '../../lib/expand-all';
 import { dur } from '../../lib/time';
+import { tokens } from '../../lib/format';
 import KToolRow from './KToolRow.vue';
 
 // One transcript block. Tool rows delegate to KToolRow; `turn` entries are ledger
@@ -89,7 +90,7 @@ const chip = computed(() => {
   // A zero or absent `ms` drops out entirely rather than claiming a measured span.
   const msLabel = props.entry.ms ? dur(props.entry.ms) : '';
   const tok = props.entry.tokens;
-  const tokLabel = tok === undefined ? '' : tok >= 1000 ? `${(tok / 1000).toFixed(1)}k ток` : `${tok} ток`;
+  const tokLabel = tok === undefined ? '' : `${tokens(tok)} ток`;
   // `думав` is the label, not a metric: the dot only ever separates two metrics,
   // so a missing ms or tokens leaves no dangling separator behind.
   const parts = [msLabel, tokLabel].filter(Boolean);

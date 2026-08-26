@@ -75,6 +75,7 @@ import type { ImageInput } from '@kermanych/core';
 import KAttachStrip from './KAttachStrip.vue';
 import KTag from './KTag.vue';
 import { useImageAttach } from '../../composables/useImageAttach';
+import { tokens } from '../../lib/format';
 
 // The composer atom: a mono textarea that grows with content up to a cap, plus a
 // v3 controls row (model + worktree chips, token count, accent send FAB). Attach
@@ -145,11 +146,8 @@ function onFilePick(e: Event): void {
 
 const canSend = computed(() => props.modelValue.trim().length > 0 || attachImages.value.length > 0);
 
-// Compact token readout: 12_300 → "12.3k tok", small counts stay exact.
-const tokenLabel = computed(() => {
-  const n = props.tokenCount ?? 0;
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k tok` : `${n} tok`;
-});
+// Compact token readout: 12_300 → "12.3k ток", small counts stay exact.
+const tokenLabel = computed(() => `${tokens(props.tokenCount ?? 0)} ток`);
 
 function submit(): void {
   if (props.disabled) return;

@@ -97,3 +97,21 @@ test("a fresh DB gets the v1 shape, task_id and the project index without any re
   expect(indexes).toContain("sessions_project_idx");
   db.close();
 });
+
+test("a legacy row gains the usage column, and a session's spend survives reopen and patches", () => {
+  seedLegacyDb(file);
+
+  const first = new RegistryService(file);
+  // The column is additive, so an existing agent has no figure — not a zeroed one.
+  expect(first.listSessions()[0]!.usage).toBeUndefined();
+  first.addUsage("s-legacy", { input: 5, output: 7, cacheRead: 1000, cacheWrite: 200, cost: 0.5 });
+  first.addUsage("s-legacy", { input: 3, output: 4, cacheRead: 0, cacheWrite: 0, cost: 0.25 });
+  // A whole-row patch must not touch the total: updateSession rebuilds the row from a read
+  // taken before the turn landed, and money that goes backwards is money nobody trusts.
+  first.updateSession("s-legacy", { status: "thinking" });
+
+  const reopened = new RegistryService(file);
+  const s = reopened.listSessions()[0]!;
+  expect(s.status).toBe("thinking");
+  expect(s.usage).toEqual({ input: 8, output: 11, cacheRead: 1000, cacheWrite: 200, cost: 0.75 });
+});

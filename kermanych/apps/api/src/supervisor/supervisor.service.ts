@@ -47,6 +47,9 @@ type Live = {
   // header of a call are only reducible once its end frame arrives, several calls later.
   toolStarted: Map<string, number>;
   toolArgs: Map<string, Record<string, unknown>>;
+  // Whether the "which model is this child actually running" question has been settled for
+  // this child (refreshState). One lookup per omp process, not one per two-second poll.
+  modelResolved?: boolean;
   poll?: NodeJS.Timeout;
 };
 
@@ -843,11 +846,26 @@ export class SupervisorService implements OnModuleDestroy {
     });
     l.textBuf = reduced.textBuf;
     l.thinkBuf = reduced.thinkBuf;
+    let spent = false;
     for (const entry of reduced.entries) {
       // A completion carries no new entry — it patches the pending one in place, and files its
       // full output under the id of the row it actually patched.
       if (entry.kind === "tool" && entry.status !== "pending") this.finishTool(id, entry, reduced.full.get(entry.id));
       else this.appendEntry(id, entry);
+      // A finished turn is the only frame carrying accounting; fold it into the session's
+      // lifetime total. LIVE turns only — rehydrate() replays omp's history into the
+      // transcript on every resume AND on every fork, so counting there would both double
+      // count a resumed agent and bill a discussion branch for its parent's turns. The
+      // price of that rule: agents whose turns predate this counter stay blank rather than
+      // guess, which is the same contract every other figure in the app keeps.
+      if (entry.kind === "turn" && entry.usage) {
+        try {
+          this.registry.addUsage(id, entry.usage);
+          spent = true;
+        } catch {
+          /* never let a bookkeeping write break the event stream */
+        }
+      }
     }
     // RpcEvent carries an index-signature fallback member; Extract recovers the concrete typed member.
     if (e.type === "extension_ui_request" && l.state.status === "waiting_input")
@@ -866,7 +884,7 @@ export class SupervisorService implements OnModuleDestroy {
     }
     if ((l.state.status === "thinking" || l.state.status === "tool") && !l.poll)
       l.poll = setInterval(() => this.refreshState(id), 2000);
-    if (before !== l.state.status || e.type === "tool_execution_start") this.pushUpdate(id);
+    if (before !== l.state.status || e.type === "tool_execution_start" || spent) this.pushUpdate(id);
   }
 
   private stopPoll(l: Live) {
@@ -897,6 +915,16 @@ export class SupervisorService implements OnModuleDestroy {
       }
       if (st.sessionId || st.sessionFile)
         this.registry.updateSession(id, { ompSessionId: st.sessionId, ompSessionFile: st.sessionFile });
+      // omp picks the model itself when the launch left it unset — a discussion branch, a
+      // review, a chat — and the board has to be able to name what is actually running.
+      // Settled once per child: omp is spawned with a fixed `--model`, so there is nothing
+      // to re-read on later polls. An operator's explicit choice is never overwritten; that
+      // value is the launch parameter a relaunch reuses, not a reading of the current run.
+      if (!l.modelResolved && st.model?.id) {
+        l.modelResolved = true;
+        if (!this.registry.listSessions().find((x) => x.id === id)?.model)
+          this.registry.updateSession(id, { model: st.model.id });
+      }
       this.pushUpdate(id);
     } catch {}
   }

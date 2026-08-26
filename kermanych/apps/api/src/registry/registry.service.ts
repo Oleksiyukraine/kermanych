@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
-import type { Project, Session, SessionStatus } from "@kermanych/core";
+import type { Project, Session, SessionStatus, Usage } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -20,6 +20,20 @@ export type AuthSessionRow = {
 // log: if a session goes thinking → tool → thinking while offline, only the newest status is
 // worth sending, and the cloud board has no use for the intermediate ones.
 export type OutboxRow = { taskId: string; status: SessionStatus; updatedAt: string; attempts: number; lastError?: string };
+
+// The `usage` column, back into a shape. Tolerant on purpose: a row written before the
+// column existed reads `null`, and a hand-edited or half-written blob must degrade to
+// "no figure" rather than crash the board. Absent stays absent — zeros would be a claim.
+function readUsage(raw: string | null): Usage | undefined {
+  if (!raw) return undefined;
+  try {
+    const u = JSON.parse(raw) as Partial<Usage>;
+    if (typeof u?.cost !== "number") return undefined;
+    return { input: u.input ?? 0, output: u.output ?? 0, cacheRead: u.cacheRead ?? 0, cacheWrite: u.cacheWrite ?? 0, cost: u.cost };
+  } catch {
+    return undefined;
+  }
+}
 
 @Injectable()
 export class RegistryService {
@@ -130,6 +144,13 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: the session's lifetime token/money total. One JSON blob rather
+    // than five columns — it is read whole, written whole, and never aggregated in SQL.
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN usage TEXT`);
+    } catch {
+      /* column already exists */
+    }
     // The first index in this schema: listSessions(projectId) filters on project_id on
     // every board render and every supervisor lookup.
     this.db.exec(`CREATE INDEX IF NOT EXISTS sessions_project_idx ON sessions (project_id)`);
@@ -221,18 +242,18 @@ export class RegistryService {
   }
 
   listSessions(projectId?: string): Session[] {
-    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, status, archived, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
+    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, status, archived, usage, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
     const rows = (
       projectId
         ? this.db.prepare(sql + ` WHERE project_id = ? ORDER BY created_at`).all(projectId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as (Omit<Session, "archived" | "worktree"> & { archived: number; worktree: number })[];
+    ) as (Omit<Session, "archived" | "worktree" | "usage"> & { archived: number; worktree: number; usage: string | null })[];
     // SQLite stores the flag as 0/1; hand callers a real boolean.
-    return rows.map((r) => ({ ...r, archived: r.archived !== 0, worktree: r.worktree !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined }));
+    return rows.map((r) => ({ ...r, archived: r.archived !== 0, worktree: r.worktree !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, usage: readUsage(r.usage) }));
   }
 
   createSession(
-    s: Omit<Session, "id" | "createdAt" | "status" | "worktree" | "baseBranch" | "lastActivityAt" | "kind" | "parentSessionId"> & {
+    s: Omit<Session, "id" | "createdAt" | "status" | "worktree" | "baseBranch" | "lastActivityAt" | "kind" | "parentSessionId" | "usage"> & {
       status?: SessionStatus; worktree?: boolean; baseBranch?: string;
       kind?: Session["kind"]; parentSessionId?: string;
     },
@@ -277,7 +298,9 @@ export class RegistryService {
     return row;
   }
 
-  updateSession(id: string, patch: Partial<Session>): Session {
+  // `usage` is deliberately absent from the patch type: `addUsage` is its only writer, so a
+  // whole-row UPDATE built from a stale read can never roll a session's spend backwards.
+  updateSession(id: string, patch: Partial<Omit<Session, "usage">>): Session {
     const cur = this.listSessions().find((s) => s.id === id);
     if (!cur) throw new Error("session not found");
     const next = { ...cur, ...patch };
@@ -311,6 +334,24 @@ export class RegistryService {
   // because it runs on the high-frequency agent-event path.
   touchSession(id: string): void {
     this.db.prepare(`UPDATE sessions SET last_activity_at = ? WHERE id = ?`).run(new Date().toISOString(), id);
+  }
+
+  // Fold one turn's accounting into the session's lifetime total and hand back the new total.
+  // A targeted read-modify-write on the one column (like touchSession, this runs on the
+  // agent-event path), and the ONLY writer of `usage` — see updateSession.
+  addUsage(id: string, u: Usage): Usage {
+    const row = this.db.prepare(`SELECT usage FROM sessions WHERE id = ?`).get(id) as { usage: string | null } | undefined;
+    if (!row) throw new Error("session not found");
+    const cur = readUsage(row.usage);
+    const next: Usage = {
+      input: (cur?.input ?? 0) + u.input,
+      output: (cur?.output ?? 0) + u.output,
+      cacheRead: (cur?.cacheRead ?? 0) + u.cacheRead,
+      cacheWrite: (cur?.cacheWrite ?? 0) + u.cacheWrite,
+      cost: (cur?.cost ?? 0) + u.cost,
+    };
+    this.db.prepare(`UPDATE sessions SET usage = ? WHERE id = ?`).run(JSON.stringify(next), id);
+    return next;
   }
 
   removeSession(id: string): void {
