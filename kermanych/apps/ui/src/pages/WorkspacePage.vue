@@ -1750,7 +1750,7 @@ async function submitPreviewConfig(): Promise<void> {
   background: var(--k-surface);
   border: 1px solid var(--k-line-strong);
   padding: 9px 11px;
-  border-radius: 0;
+  border-radius: var(--k-r);
   outline: none;
   resize: vertical;
   transition: border-color 0.12s, box-shadow 0.12s;
@@ -1857,6 +1857,7 @@ async function submitPreviewConfig(): Promise<void> {
   background: var(--k-surface);
   border: none;
   border-left: 2px solid var(--k-accent);
+  border-radius: var(--k-r);
   color: var(--k-text);
   font-family: var(--k-font-mono);
   font-size: 13.5px;
@@ -1882,6 +1883,7 @@ async function submitPreviewConfig(): Promise<void> {
   padding: 6px 10px;
   background: transparent;
   border: 1px solid var(--k-line);
+  border-radius: var(--k-r);
   color: var(--k-muted);
   font-size: 12px;
   cursor: pointer;
@@ -1903,6 +1905,7 @@ async function submitPreviewConfig(): Promise<void> {
   width: 100%;
   background: var(--k-bg);
   border: 1px solid var(--k-line);
+  border-radius: var(--k-r);
   color: var(--k-text);
   font-family: var(--k-font-mono);
   font-size: 13px;
@@ -1926,6 +1929,7 @@ async function submitPreviewConfig(): Promise<void> {
 .ws-launcher__branch {
   background: var(--k-bg);
   border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
   padding: 10px 12px;
   font-family: var(--k-font-mono);
   font-weight: 500;
@@ -1940,6 +1944,8 @@ async function submitPreviewConfig(): Promise<void> {
   gap: 2px;
   background: var(--k-line-strong);
   border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  overflow: hidden;
 }
 .ws-launcher__seg--grid2 {
   display: grid;
@@ -2037,7 +2043,7 @@ async function submitPreviewConfig(): Promise<void> {
   background: var(--k-surface);
   border: 1px solid var(--k-line-strong);
   padding: 11px 13px;
-  border-radius: 0;
+  border-radius: var(--k-r);
   cursor: pointer;
   transition: border-color 0.12s, color 0.12s;
 }

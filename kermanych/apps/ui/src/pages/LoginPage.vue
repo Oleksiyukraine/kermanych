@@ -59,7 +59,7 @@ async function signIn(): Promise<void> {
   padding: 32px;
   background: var(--k-surface);
   border: 1px solid var(--k-line-strong);
-  border-radius: 0;
+  border-radius: var(--k-r-lg);
 }
 
 .login__brand {
