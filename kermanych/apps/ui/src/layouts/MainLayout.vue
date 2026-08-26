@@ -34,16 +34,6 @@
             @click="selectProject(p.id)"
           />
         </div>
-        <div v-if="store.selectedProjectId" class="shell__divider"></div>
-        <div v-if="store.selectedProjectId" class="shell__folder">
-          <div class="shell__side-label">Тека проєкту</div>
-          <div class="shell__folder-path mono">{{ contextLabel }}</div>
-          <KBtn
-            variant="secondary"
-            :title="isBound ? 'Змінити локальну теку цього проєкту' : BIND_HINT"
-            @click="openBinding"
-          >{{ isBound ? 'Змінити теку' : 'Прив’язати теку' }}</KBtn>
-        </div>
         <div class="shell__user">
           <KUserButton
             class="shell__account"
@@ -130,6 +120,17 @@
         aria-label="Push"
         @click="gitSync('push')"
       >↑ Push</button>
+      <span class="shell__foot-spacer"></span>
+      <button
+        v-if="store.selectedProjectId"
+        type="button"
+        class="shell__foot-btn shell__foot-folder"
+        v-tip="isBound ? contextLabel : BIND_HINT"
+        :aria-label="isBound ? 'Змінити теку' : 'Прив’язати теку'"
+        @click="openBinding"
+      >
+        <span class="shell__foot-folder-path mono">{{ contextLabel }}</span>
+      </button>
     </q-footer>
 
 
@@ -979,7 +980,6 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   display: none;
 }
 .shell--min .shell__side-label,
-.shell--min .shell__folder,
 .shell--min .shell__account-name {
   display: none;
 }
@@ -1037,18 +1037,6 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   margin-top: var(--k-sp-1);
 }
 
-.shell__folder {
-  display: flex;
-  flex-direction: column;
-  gap: var(--k-sp-2);
-}
-
-.shell__folder-path {
-  font-size: var(--k-fs-xs);
-  color: var(--k-faint);
-  overflow-wrap: anywhere;
-}
-
 .shell__divider {
   height: 1px;
   background: var(--k-line);
@@ -1071,11 +1059,6 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   cursor: pointer;
 
   &:hover { color: var(--k-text); }
-}
-
-.shell__folder :deep(.k-btn) {
-  width: 100%;
-  justify-content: center;
 }
 
 // account chip — pinned to the foot of the sidebar: avatar, name, collapse toggle.
@@ -1317,5 +1300,25 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
 .shell__foot-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.shell__foot-spacer {
+  flex: 1;
+}
+
+// The project folder, VS Code-style on the right edge: click to (re)bind. min-width:0 lets
+// the path ellipsise instead of pushing the footer wider than the window.
+.shell__foot-folder {
+  max-width: 46%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.shell__foot-folder-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--k-faint);
 }
 </style>
