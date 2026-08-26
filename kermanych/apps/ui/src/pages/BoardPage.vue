@@ -1,16 +1,6 @@
 <template>
   <main class="board">
     <header class="board__head">
-      <!-- The way back. This page is reached from the workspace header and, until this
-           button existed, could only be left through the browser's Back — which the desktop
-           shell has no chrome for, so the board was a one-way door. Outside .board__title
-           on purpose: that row is baseline-aligned for the heading and its counter, while
-           the header itself bottom-aligns, which is where a control belongs. -->
-      <KBtn
-        variant="ghost"
-        title="Повернутись до локальних сесій вибраного проєкту"
-        @click="goToWorkspace"
-      >← Мої агенти</KBtn>
       <div class="board__title">
         <h1 class="board__heading">Дошка команди</h1>
         <span class="board__count mono">{{ visibleTasks.length }} задач</span>
@@ -71,53 +61,16 @@
         :label="col.label"
         :count="byColumn[col.key]?.length ?? 0"
       >
-        <div v-for="task in byColumn[col.key]" :key="task.id" class="board__item">
-          <KKanbanCard
-            :title="task.title"
-            :branch="task.branch ?? ''"
-            :project="projectName(task.projectId)"
-            :time="relativeTime(task.updatedAt, now)"
-            :status="task.status"
-            @click="openEdit(task)"
-          />
-
-          <div class="board__card-assignee">
-            <img v-if="avatarOf(task)" :src="avatarOf(task)" class="board__avatar" alt="" />
-            <KSelect
-              :model-value="handleOfAssignee(task)"
-              :options="memberHandles(task.projectId)"
-              placeholder="не призначено"
-              :disabled="isActiveTask(task)"
-              @update:model-value="(handle: string) => onAssign(task, handle)"
-            />
-          </div>
-
-          <footer class="board__card-foot">
-            <span
-              v-if="isStale(task)"
-              class="board__stale"
-              :title="`Останнє оновлення ${relativeTime(task.updatedAt, now)} — машина виконавця, схоже, офлайн`"
-            >⚠ давно без змін</span>
-            <span class="board__spacer"></span>
-            <KBtn variant="ghost" @click="openEdit(task)">Змінити</KBtn>
-            <KBtn variant="ghost" @click="onDelete(task)">Видалити</KBtn>
-            <!-- The only way out of a card whose executing machine never came back. Shown
-                 to the two people tasks_guard() actually lets through, so nobody is
-                 offered a button that will be refused. -->
-            <KBtn
-              v-if="canForceStop(task)"
-              variant="secondary"
-              title="Задача рахується активною, але її машина, схоже, більше не звітує — познач картку зупиненою"
-              @click="openForceStop(task)"
-            >Позначити зупиненою</KBtn>
-            <KBtn
-              variant="primary"
-              :disabled="launching !== null || isActiveTask(task)"
-              :title="launchHint(task)"
-              @click="launch(task)"
-            >Запустити</KBtn>
-          </footer>
-        </div>
+        <KKanbanCard
+          v-for="task in byColumn[col.key]"
+          :key="task.id"
+          :title="task.title"
+          :branch="task.branch ?? ''"
+          :project="projectName(task.projectId)"
+          :time="relativeTime(task.updatedAt, now)"
+          :status="task.status"
+          @click="openEdit(task)"
+        />
 
         <p v-if="!byColumn[col.key]?.length" class="board__column-empty mono">—</p>
       </KKanbanColumn>
@@ -161,14 +114,39 @@
           />
         </div>
         <KField v-model="draftBranch" label="Базова гілка" placeholder="за замовчуванням проєкту" />
+        <div v-if="editingTask" class="board__assign">
+          <img v-if="avatarOf(editingTask)" :src="avatarOf(editingTask)" class="board__avatar" alt="" />
+          <KSelect
+            label="Виконавець"
+            :model-value="handleOfAssignee(editingTask)"
+            :options="memberHandles(editingTask.projectId)"
+            placeholder="не призначено"
+            :disabled="isActiveTask(editingTask)"
+            @update:model-value="(h: string) => onAssign(editingTask!, h)"
+          />
+        </div>
+        <p v-if="editingTask && isStale(editingTask)" class="board__stale-note mono" role="alert">
+          ⚠ Давно без змін — машина виконавця, схоже, офлайн.
+        </p>
         <p v-if="editorError" class="board__error" role="alert">{{ editorError }}</p>
       </div>
 
       <template #controls>
+        <KBtn v-if="editingTask" variant="ghost" @click="onDelete(editingTask); editorOpen = false">Видалити</KBtn>
+        <KBtn
+          v-if="editingTask && canForceStop(editingTask)"
+          variant="ghost"
+          @click="editorOpen = false; openForceStop(editingTask)"
+        >Позначити зупиненою</KBtn>
         <KBtn variant="ghost" @click="editorOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" :disabled="!canSubmit" @click="submitEditor">
-          {{ editingId ? 'Зберегти' : 'Створити' }}
-        </KBtn>
+        <KBtn
+          v-if="editingTask"
+          variant="secondary"
+          :disabled="launching !== null || isActiveTask(editingTask)"
+          :title="launchHint(editingTask)"
+          @click="editorOpen = false; launch(editingTask)"
+        >Запустити</KBtn>
+        <KBtn variant="primary" :disabled="!canSubmit" @click="submitEditor">{{ editingId ? 'Зберегти' : 'Створити' }}</KBtn>
       </template>
     </KModal>
 
@@ -670,6 +648,9 @@ const PLATFORM_OPTIONS = ['backend', 'web', 'mobile'];
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 const editorError = ref<string | null>(null);
+const editingTask = computed(() =>
+  editingId.value ? board.tasks.find((t) => t.id === editingId.value) : undefined,
+);
 const draftProject = ref('');
 const draftTitle = ref('');
 const draftDescription = ref('');
@@ -767,7 +748,7 @@ function onDelete(task: Task): void {
   gap: 12px;
   height: 100%;
   min-height: 0;
-  padding: 20px 24px;
+  padding: var(--k-sp-3);
   background: var(--k-canvas);
 }
 
@@ -860,28 +841,27 @@ function onDelete(task: Task): void {
 .board__columns {
   display: grid;
   grid-template-columns: repeat(5, minmax(220px, 1fr));
+  grid-auto-rows: 1fr;
   gap: var(--k-sp-4);
   flex: 1;
   min-height: 0;
   overflow-x: auto;
-  padding-top: var(--k-sp-2);
-  align-content: start;
 }
 
-.board__item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--k-sp-2);
-}
 
 .board__column-empty {
   padding: var(--k-sp-3);
 }
 
-.board__card-assignee {
+.board__assign {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--k-sp-2);
+}
+
+.board__stale-note {
+  font-size: 11.5px;
+  color: var(--k-warning);
 }
 
 .board__avatar {
@@ -889,18 +869,6 @@ function onDelete(task: Task): void {
   height: 18px;
   border: 1px solid var(--k-line-strong);
   object-fit: cover;
-}
-
-.board__card-foot {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-top: 8px;
-  border-top: 1px solid var(--k-line);
-}
-
-.board__spacer {
-  flex: 1;
 }
 
 .board__blank {
