@@ -266,6 +266,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.finishInfo(id);
   }
 
+  function fileDiff(id: string, path: string) {
+    return api.fileDiff(id, path);
+  }
+
   async function finishSession(id: string) {
     const res = await api.finish(id);
     // preview is stopped server-side on finish; drop its local url too.
@@ -348,6 +352,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     getEnv,
     saveEnv,
     finishInfo,
+    fileDiff,
     finishSession,
     createPr,
     archiveSession,

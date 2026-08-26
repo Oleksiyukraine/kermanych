@@ -301,6 +301,23 @@
       <div class="kit__label">09 · Композер</div>
       <KComposer v-model="composerDraft" model="opus-5" :worktree="true" :token-count="31600" @send="() => {}" />
     </section>
+
+    <!-- file diff -->
+    <section class="kit__section">
+      <div class="kit__label">10 · Diff файлу</div>
+      <KDiffView
+        v-if="diffOpen"
+        path="src/pages/grano/fields/field-overview.component.vue"
+        :diff="diffSample"
+        @close="diffOpen = false"
+      />
+      <KBtn v-else variant="secondary" @click="diffOpen = true">Показати diff</KBtn>
+      <div class="kit__caption mono">
+        Клік на файлі в секції «Зміни» розкриває цей блок: оригінал ліворуч, версія агента
+        праворуч. Рядки в парі (mod) стоять один проти одного, одностороння правка лишає
+        протилежну колонку затемненою.
+      </div>
+    </section>
   </main>
 </template>
 
@@ -333,6 +350,8 @@ import KThoughtToggle from 'components/kit/KThoughtToggle.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KSubNav from 'components/kit/KSubNav.vue';
 import KComposer from 'components/kit/KComposer.vue';
+import KDiffView from 'components/kit/KDiffView.vue';
+import type { FileDiff } from '../lib/api';
 
 const topNav = ref('agents');
 const topNavOptions = [
@@ -355,6 +374,25 @@ const detailTabs = [
   { value: 'session', label: 'Сесія' },
 ];
 const composerDraft = ref('');
+const diffOpen = ref(true);
+// Every row shape at once: context, a paired replacement, a one-sided addition and a
+// one-sided removal — the four cases the two columns have to keep aligned.
+const diffSample: FileDiff = {
+  hunks: [
+    {
+      header: '@@ -14,7 +14,8 @@ function statusWord(s: Session)',
+      rows: [
+        { kind: 'ctx', old: { no: 14, text: '  switch (s.status) {' }, new: { no: 14, text: '  switch (s.status) {' } },
+        { kind: 'mod', old: { no: 15, text: "    case 'tool': return 'працює';" }, new: { no: 15, text: "    case 'tool': return 'виконує';" } },
+        { kind: 'add', old: null, new: { no: 16, text: "    case 'queued': return 'у черзі';" } },
+        { kind: 'del', old: { no: 16, text: '    // TODO: решта статусів' }, new: null },
+        { kind: 'ctx', old: { no: 17, text: '  }' }, new: { no: 17, text: '  }' } },
+      ],
+    },
+  ],
+  binary: false,
+  truncated: false,
+};
 const thoughtOpen = ref(false);
 // The last row deliberately carries neither model nor usage: an agent whose turns were
 // never counted drops the accounting line rather than printing a zero.

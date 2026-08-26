@@ -5,6 +5,7 @@ import { rm } from "node:fs/promises";
 import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService, type ChangedFile } from "../worktree/worktree.service";
+import type { SplitDiff } from "../worktree/split-diff";
 import { RpcSession } from "../rpc/rpc-session";
 import { messagesToTranscript } from "./messages-to-transcript";
 import { reduceRpcEvents } from "./transcript-reducer";
@@ -1124,6 +1125,18 @@ export class SupervisorService implements OnModuleDestroy {
     const conflicts = await this.worktree.unmergedFiles(dir);
     const files = await this.worktree.changedFiles(dir, target);
     return { branch: s.branch, target, ahead, dirty, conflicts, files };
+  }
+
+  // The Зміни tab opens one of the files `finishInfo` listed. Same worktree and same fork
+  // point, so the summary and the diff can never disagree about what the session changed.
+  async fileDiff(id: string, path: string): Promise<SplitDiff> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    const g = this.boundProject(s.projectId);
+    if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
+    const dir = s.worktreePath || g.localRepoPath;
+    const target = s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : (s.baseBranch ?? "");
+    return this.worktree.fileDiff(dir, target, path);
   }
 
   // Merge the session's branch into the project's current branch, then retire the

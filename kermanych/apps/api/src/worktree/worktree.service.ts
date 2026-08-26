@@ -3,6 +3,7 @@ import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { addedFileDiff, splitDiff, type SplitDiff } from "./split-diff";
 
 export type ChangedFile = { path: string; added: number; removed: number };
 
@@ -18,6 +19,10 @@ const MAX_COUNT_BYTES = 4 * 1024 * 1024;
 // as itself instead of "\321\204...".
 const RAW_PATHS = ["-c", "core.quotePath=false"];
 
+// A pathspec that comes back from the UI is a literal file name: without this git would
+// read `*`, `[` or a leading `:` in a name as a glob or as pathspec magic.
+const LITERAL_PATHS = ["--literal-pathspecs"];
+
 function git(cwd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
   const { promise, resolve } = Promise.withResolvers<{ ok: boolean; out: string }>();
   const p = spawn("git", ["-C", cwd, ...args]);
@@ -25,6 +30,20 @@ function git(cwd: string, args: string[]): Promise<{ ok: boolean; out: string }>
   p.stdout.on("data", (b: Buffer) => chunks.push(b));
   p.stderr.on("data", (b: Buffer) => chunks.push(b));
   p.on("error", (e) => resolve({ ok: false, out: String(e) }));
+  p.on("close", (code) => resolve({ ok: code === 0, out: Buffer.concat(chunks).toString("utf8") }));
+  return promise;
+}
+
+// Like `git`, but stdout only. A diff is content: a stray warning on stderr merged into
+// the patch would be parsed as part of the file. stderr is still drained, or a chatty
+// command would block on a full pipe.
+function gitStdout(cwd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
+  const { promise, resolve } = Promise.withResolvers<{ ok: boolean; out: string }>();
+  const p = spawn("git", ["-C", cwd, ...args]);
+  const chunks: Buffer[] = [];
+  p.stdout.on("data", (b: Buffer) => chunks.push(b));
+  p.stderr.resume();
+  p.on("error", () => resolve({ ok: false, out: "" }));
   p.on("close", (code) => resolve({ ok: code === 0, out: Buffer.concat(chunks).toString("utf8") }));
   return promise;
 }
@@ -113,7 +132,10 @@ export class WorktreeService {
     const mergeBase = (forkPoint.ok && forkPoint.out.trim()) || "HEAD";
     const files: ChangedFile[] = [];
 
-    const tracked = await git(dir, [...RAW_PATHS, "diff", "--numstat", mergeBase]);
+    // `--no-renames` keeps every listed path a real path: a rename is reported as a delete
+    // plus an add instead of git's `src/{old => new}.ts` shorthand, which names no file the
+    // operator could open.
+    const tracked = await git(dir, [...RAW_PATHS, "diff", "--numstat", "--no-renames", mergeBase]);
     if (tracked.ok) {
       for (const line of tracked.out.split("\n")) {
         if (files.length >= MAX_CHANGED_FILES) return files;
@@ -141,6 +163,66 @@ export class WorktreeService {
       }
     }
     return files;
+  }
+
+  // One changed file as side-by-side rows, for the Зміни tab. Same right-hand side as
+  // `changedFiles` — the working tree against the fork point — so the agent's committed and
+  // uncommitted edits to that file show up in one view. An untracked file has no blob to
+  // diff against and is read from disk instead.
+  async fileDiff(dir: string, base: string, path: string): Promise<SplitDiff> {
+    // The listed path travelled to the UI and comes back verbatim when the operator opens
+    // that file, so it is re-checked here before reaching git or the filesystem:
+    // worktree-relative only, no absolute path and no `..` hop out of the session's tree.
+    const rel = path.trim();
+    if (!rel || rel.startsWith("/") || /^[a-zA-Z]:/.test(rel) || rel.split(/[\\/]/).includes("..")) {
+      throw new Error("invalid path");
+    }
+
+    const forkPoint = await git(dir, ["merge-base", "HEAD", base || "HEAD"]);
+    const mergeBase = (forkPoint.ok && forkPoint.out.trim()) || "HEAD";
+    // `--no-ext-diff` keeps a user's configured difftool out of the pipe.
+    const patch = await gitStdout(dir, [
+      ...RAW_PATHS,
+      ...LITERAL_PATHS,
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--no-renames",
+      mergeBase,
+      "--",
+      rel,
+    ]);
+    const diff = patch.ok ? splitDiff(patch.out) : { hunks: [], binary: false, truncated: false };
+    if (diff.hunks.length || diff.binary) return diff;
+
+    // git had nothing to say. An untracked file has no blob on either side, so git omits it
+    // from a diff entirely and its own content IS the diff; a tracked path that produced no
+    // hunks is genuinely unchanged. `ls-files` tells the two apart, and only here — asking
+    // it first would miss a file `git rm`/`git mv` took out of the index, which git diffs
+    // perfectly well as a deletion.
+    const listed = await git(dir, [...RAW_PATHS, ...LITERAL_PATHS, "ls-files", "--", rel]);
+    return listed.out.trim() ? diff : this.untrackedDiff(join(dir, rel));
+  }
+
+  // Every line of a never-added file is an addition. Binary or oversized content reports a
+  // flag rather than a body, the same way the listing counts it as 0 added lines; so does a
+  // path that vanished between the listing and the click.
+  private async untrackedDiff(file: string): Promise<SplitDiff> {
+    try {
+      const st = await stat(file);
+      if (st.isFile() && st.size > MAX_COUNT_BYTES) {
+        return { hunks: [], binary: false, truncated: true };
+      }
+      if (st.isFile() && st.size > 0) {
+        const buf = await readFile(file);
+        return buf.subarray(0, BINARY_SNIFF_BYTES).includes(0)
+          ? { hunks: [], binary: true, truncated: false }
+          : addedFileDiff(buf.toString("utf8"));
+      }
+    } catch {
+      // unreadable, or gone since the listing — nothing to show
+    }
+    return { hunks: [], binary: false, truncated: false };
   }
 
   // Merge branch into the repo's current HEAD (no-ff). On failure the merge is
