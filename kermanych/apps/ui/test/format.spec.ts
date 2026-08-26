@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { tokens, usageTokens, usd } from '../src/lib/format';
+import { percent, planWindow, tokens, usageTokens, usd } from '../src/lib/format';
 
 describe('tokens', () => {
   it('keeps small counts exact', () => {
@@ -44,6 +44,47 @@ describe('usd', () => {
     expect(usd(0.005)).toBe('$0.01');
     expect(usd(3.183)).toBe('$3.18');
     expect(usd(12)).toBe('$12.00');
+  });
+});
+
+// The plan figures under the account name. Unlike `usd`, a zero here is a real statement —
+// the provider says the window is untouched — but a spent tenth of a percent must not be
+// rounded down into that same zero.
+describe('percent', () => {
+  it('keeps an untouched window at 0%', () => {
+    expect(percent(0)).toBe('0%');
+  });
+
+  it('marks sub-percent spend as under a percent', () => {
+    expect(percent(0.4)).toBe('<1%');
+    expect(percent(0.999)).toBe('<1%');
+  });
+
+  it('rounds to whole percent from one up', () => {
+    expect(percent(1)).toBe('1%');
+    expect(percent(57.4)).toBe('57%');
+    expect(percent(99.6)).toBe('100%');
+  });
+});
+
+// Window ids come from the provider, so the shape is parsed rather than enumerated: a
+// window Kermanych has never seen still renders instead of blanking the row.
+describe('planWindow', () => {
+  it('shortens the hour/day/week windows providers actually meter', () => {
+    expect(planWindow('5h')).toBe('5г');
+    expect(planWindow('7d')).toBe('7д');
+    expect(planWindow('30d')).toBe('30д');
+    expect(planWindow('2w')).toBe('2тиж');
+  });
+
+  it('names the monthly bucket', () => {
+    expect(planWindow('monthly')).toBe('міс');
+    expect(planWindow('month')).toBe('міс');
+  });
+
+  it('falls back to the provider id it cannot parse', () => {
+    expect(planWindow('primary')).toBe('primary');
+    expect(planWindow('')).toBe('');
   });
 });
 

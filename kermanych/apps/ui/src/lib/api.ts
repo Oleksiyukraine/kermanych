@@ -8,6 +8,7 @@ import type {
   Project,
   EnvFileView,
   Session,
+  SubscriptionUsage,
   TaskDraft,
   TranscriptEntry,
   ToolLine,
@@ -160,6 +161,11 @@ export const api = {
   // see that, so the board polls it (see the api controller for why it is not an event).
   cloudOutbox: (): Promise<{ pending: number }> =>
     get<{ pending: number }>('/cloud/outbox'),
+
+  // What the provider plan behind this machine's agents has left (percent of each rolling
+  // rate-limit window). Local-only, like the outbox above: only this process can ask omp.
+  subscriptionUsage: (): Promise<SubscriptionUsage> =>
+    get<SubscriptionUsage>('/usage/subscription'),
 
   promoteChat: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/promote`, {}),
