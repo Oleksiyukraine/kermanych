@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
-import { WorktreeService } from "../worktree/worktree.service";
+import { WorktreeService, type ChangedFile } from "../worktree/worktree.service";
 import { RpcSession } from "../rpc/rpc-session";
 import { messagesToTranscript } from "./messages-to-transcript";
 import { reduceRpcEvents } from "./transcript-reducer";
@@ -1112,7 +1112,7 @@ export class SupervisorService implements OnModuleDestroy {
 
   // Preview of what "finish" will do: the target branch, how many commits land,
   // and whether the worktree has uncommitted work that would be auto-committed.
-  async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[]; files: { path: string; added: number; removed: number }[] }> {
+  async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[]; files: ChangedFile[] }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);

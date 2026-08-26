@@ -140,6 +140,26 @@ test("finishInfo reports target branch, ahead count, and dirty flag", async () =
   });
 });
 
+// The Зміни tab renders `files`, and an agent is normally mid-flight: it has committed
+// nothing yet, or only part of its work. All three shapes of work must be listed.
+test("finishInfo lists committed, uncommitted and untracked work as changed files", async () => {
+  const { id } = await seed((d) => {
+    writeFileSync(join(d, "a.txt"), "1\n");
+    git(d, "add", "-A");
+    git(d, "commit", "-q", "-m", "c1"); // committed
+    writeFileSync(join(d, "file.txt"), "base\nextra\n"); // tracked, edited, not committed
+    writeFileSync(join(d, "b.txt"), "2\n3\n"); // brand new, never added
+  });
+
+  const { files } = await sup.finishInfo(id);
+
+  expect([...files].sort((x, y) => x.path.localeCompare(y.path))).toEqual([
+    { path: "a.txt", added: 1, removed: 0 },
+    { path: "b.txt", added: 2, removed: 0 },
+    { path: "file.txt", added: 1, removed: 0 },
+  ]);
+});
+
 // In-place: the session branch lives in the project repo itself (no worktree).
 async function seedInPlace(mutate: () => void): Promise<{ id: string }> {
   const g = reg.upsertProject({ id: "p1", name: "g", localRepoPath: repo });

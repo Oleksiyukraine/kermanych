@@ -71,6 +71,32 @@ export type ToolDetail = {
 // (`turn` entries below) and — summed on `Session` — what the whole agent consumed.
 export type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
 
+// What the agent's PLAN has left, as the provider itself reports it. `Usage` above counts
+// what Kermanych's own sessions spent; this is the other half of the same question — the
+// subscription's rolling rate-limit windows (Anthropic: 5h and 7d), which also move when the
+// same account is used outside Kermanych. Providers meter these in percent of the window's
+// quota, never in tokens, so `usedPercent` is the figure and there is no token count to show.
+export type UsageWindow = {
+  // The provider's own window id (`5h`, `7d`, `monthly`) — the UI derives its short label
+  // from this, so a window Kermanych has never heard of still renders.
+  id: string;
+  // The provider's label for the window, e.g. "5 Hour". Carried for the tooltip.
+  label: string;
+  usedPercent: number;
+  // Absent when the provider states no reset instant for the window.
+  resetsAt?: string;
+};
+
+// One provider's plan, aggregated over every account authenticated for it: with several
+// accounts `usedPercent` is their mean, which is what "how much of my capacity is gone"
+// means when omp balances turns across them.
+export type ProviderUsage = { provider: string; accounts: number; windows: UsageWindow[] };
+
+// The whole answer for this machine. `providers` is empty when nothing can be reported —
+// no omp on PATH, no authenticated plan, a provider that meters nothing — and the UI shows
+// no figure at all rather than a zero it cannot stand behind.
+export type SubscriptionUsage = { fetchedAt: string; providers: ProviderUsage[] };
+
 export type TranscriptEntry =
   | { kind: "user_text"; id: string; at: number; text: string; images?: string[] }
   | { kind: "assistant_text"; id: string; at: number; text: string }

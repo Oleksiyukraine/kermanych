@@ -42,7 +42,29 @@
             :title="accountHint"
             @click="accountOpen = true"
           />
-          <span class="shell__account-name">{{ accountName }}</span>
+          <!-- Name and plan spend stack, so the name rides up and the windows sit under it.
+               One row per authenticated provider (in practice one), each window a percent of
+               its rolling quota — the only unit providers meter plans in. -->
+          <div class="shell__account-meta">
+            <span class="shell__account-name">{{ accountName }}</span>
+            <div
+              v-for="p in planLines"
+              :key="p.provider"
+              v-tip="p.hint"
+              class="shell__account-plan mono"
+            >
+              <span v-if="planLines.length > 1" class="shell__plan-provider">{{ p.provider }}</span>
+              <span
+                v-for="w in p.windows"
+                :key="w.id"
+                class="shell__plan-window"
+                :class="{
+                  'shell__plan-window--warn': w.used >= 80 && w.used < 95,
+                  'shell__plan-window--hot': w.used >= 95,
+                }"
+              >{{ w.short }} {{ w.percent }}</span>
+            </div>
+          </div>
           <button
             class="shell__toggle"
             v-tip="collapsed ? 'Розгорнути панель' : 'Згорнути панель'"
@@ -378,6 +400,10 @@ import { useAuth } from 'stores/auth';
 import { IS_PREVIEW } from '../lib/preview';
 import { MANAGEMENT_DEFAULT_SECTION } from '../lib/management';
 import { theme, toggleTheme } from '../lib/theme';
+import { percent, planWindow } from '../lib/format';
+import { until } from '../lib/time';
+import { useNow } from '../composables/useNow';
+import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KTopNav from 'components/kit/KTopNav.vue';
 import KNavItem from 'components/kit/KNavItem.vue';
@@ -940,8 +966,44 @@ const accountName = computed(() =>
   auth.profile?.githubUsername ? `@${accountLabel.value}` : accountLabel.value,
 );
 
-// The tile is a bare picture, so its tooltip carries the action as well as the identity.
-const accountHint = computed(() => `${accountName.value} · вийти`);
+// PLAN SPEND — what the provider subscription behind this machine's agents has left. The
+// figure is a percent of a rolling window (`5h`, `7d`), because that is the only unit
+// providers meter a plan in; there is no token count to show and none is invented.
+const planUsage = useSubscriptionUsage();
+const planNow = useNow(30_000);
+
+const planLines = computed(() =>
+  (planUsage.value?.providers ?? []).map((p) => ({
+    provider: p.provider,
+    windows: p.windows.map((w) => ({
+      id: w.id,
+      short: planWindow(w.id),
+      percent: percent(w.usedPercent),
+      used: w.usedPercent,
+    })),
+    // The detail the compact row drops: the provider's own window names, the countdown to
+    // each reset, and — when omp balances across several accounts — that the figure is their
+    // mean rather than one account's.
+    hint: [
+      p.provider[0]!.toUpperCase() + p.provider.slice(1),
+      ...(p.accounts > 1 ? [`${p.accounts} акаунти, у середньому`] : []),
+      ...p.windows.map(
+        (w) =>
+          `${w.label}: ${percent(w.usedPercent)}` +
+          (w.resetsAt ? ` — оновиться за ${until(w.resetsAt, planNow.value)}` : ''),
+      ),
+    ].join(' · '),
+  })),
+);
+
+// The collapsed rail hides the row, and the tile is a bare picture either way — so its
+// tooltip carries the identity, the same figures in short form, and the action.
+const accountHint = computed(() => {
+  const spend = planLines.value
+    .flatMap((p) => p.windows.map((w) => `${w.short} ${w.percent}`))
+    .join(' · ');
+  return [accountName.value, ...(spend ? [spend] : []), 'вийти'].join(' · ');
+});
 
 const accountOpen = ref(false);
 const accountBusy = ref(false);
@@ -1000,8 +1062,10 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
 .shell__side-inner:not(.shell--min) :deep(.k-nav-item__icon) {
   display: none;
 }
+// A 76px rail has room for the tile and nothing else; the account tooltip carries the name
+// and the plan figures while the sidebar is minified.
 .shell--min .shell__side-label,
-.shell--min .shell__account-name {
+.shell--min .shell__account-meta {
   display: none;
 }
 .shell--min .shell__user {
@@ -1082,7 +1146,7 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   &:hover { color: var(--k-text); }
 }
 
-// account chip — pinned to the foot of the sidebar: avatar, name, collapse toggle.
+// account chip — pinned to the foot of the sidebar: avatar, name over plan spend, toggle.
 .shell__user {
   margin-top: auto;
   display: flex;
@@ -1096,8 +1160,17 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   flex: none;
 }
 
-.shell__account-name {
+// The name-over-spend column. It owns the row's free width, so the name keeps its ellipsis
+// while the plan figures below it stay on one line.
+.shell__account-meta {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-1);
+}
+
+.shell__account-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1105,6 +1178,37 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   font-size: var(--k-fs-base);
   font-weight: var(--k-fw-medium);
   color: var(--k-text);
+}
+
+.shell__account-plan {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-1);
+  font-size: var(--k-fs-xs);
+  line-height: 1;
+  color: var(--k-muted);
+  cursor: default;
+}
+
+// A `·` between windows, from CSS so the markup carries figures only.
+.shell__plan-window + .shell__plan-window::before {
+  content: '·';
+  margin-right: var(--k-sp-1);
+  color: var(--k-faint);
+}
+
+// A nearly-spent window is the difference between "agents run tonight" and "they don't",
+// so it leaves the muted register — status tokens, never the single accent.
+.shell__plan-window--warn {
+  color: var(--k-warning);
+}
+
+.shell__plan-window--hot {
+  color: var(--k-danger);
+}
+
+.shell__plan-provider {
+  color: var(--k-faint);
 }
 
 .shell__toggle {
