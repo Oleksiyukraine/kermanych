@@ -30,6 +30,15 @@ test("seedDemo populates an empty registry across every status, both modes, and 
   // The archived filter has content, and an in-place (non-worktree) row exists.
   expect(sessions.some((s) => s.archived)).toBe(true);
   expect(sessions.some((s) => !s.worktree)).toBe(true);
+
+  // The board's accounting line needs both cases on screen: rows that were counted, and at
+  // least one that never was — a seed where every row has a figure would hide the absent
+  // case that real registries are full of.
+  expect(sessions.filter((s) => s.usage).length).toBeGreaterThan(1);
+  expect(sessions.some((s) => !s.usage)).toBe(true);
+  expect(sessions.every((s) => !s.usage || s.usage.cost > 0)).toBe(true);
+  // …and a model to name, since that is the other half of the line.
+  expect(sessions.every((s) => !!s.model)).toBe(true);
 });
 
 test("seedDemo is idempotent — a populated registry is left untouched", () => {

@@ -31,6 +31,10 @@ export type Session = {
   ompSessionId?: string; ompSessionFile?: string;
   status: SessionStatus; currentTool?: string; error?: string;
   todoPhases?: TodoPhase[]; contextPercent?: number; lastEventAt?: number;
+  // Lifetime accounting: every assistant turn this session ran, summed. Persisted by the
+  // api, so a dormant or finished agent still states what it spent. Absent means "never
+  // counted" — a zeroed shape would claim a free agent.
+  usage?: Usage;
   pendingUiRequest?: RpcExtensionUIRequest; archived?: boolean; createdAt: string;
   lastActivityAt: string;
 };
@@ -63,7 +67,9 @@ export type ToolDetail = {
   truncatedUpstream?: boolean;
 };
 
-export type TurnUsage = { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
+// Token + money accounting, one shape at two scales: what a single assistant turn consumed
+// (`turn` entries below) and — summed on `Session` — what the whole agent consumed.
+export type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
 
 export type TranscriptEntry =
   | { kind: "user_text"; id: string; at: number; text: string; images?: string[] }
@@ -74,7 +80,7 @@ export type TranscriptEntry =
       intent?: string; target?: string; stat?: string; count?: number; ms?: number; detail?: ToolDetail;
     }
   | { kind: "notice"; id: string; at: number; level: "info" | "warn" | "error"; text: string }
-  | { kind: "turn"; id: string; at: number; model?: string; ms?: number; usage?: TurnUsage };
+  | { kind: "turn"; id: string; at: number; model?: string; ms?: number; usage?: Usage };
 
 export type RpcExtensionUIRequest = {
   type: "extension_ui_request"; id: string;

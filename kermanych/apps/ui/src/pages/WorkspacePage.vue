@@ -27,6 +27,8 @@
             :time="relativeTime(s.lastActivityAt, now)"
             :status="s.status"
             :status-line="activityOf(s) || statusWord(s)"
+            :model="s.model"
+            :usage="s.usage"
             :selected="store.selectedSessionId === s.id"
             @click="onRowClick(s)"
           />
@@ -68,7 +70,6 @@
           <KPanel
             class="ws__panel"
             :session="selectedSession"
-            :cost="chatCost"
             :refreshing="refreshingId === selectedSession.id"
             @stop="onStop"
             @delete="onDelete"
@@ -152,8 +153,12 @@
               <dd class="ws__meta-value mono">{{ ctxOf(selectedSession) ?? '—' }}</dd>
             </div>
             <div class="ws__meta-row">
+              <dt class="ws__meta-label">Токени</dt>
+              <dd class="ws__meta-value mono">{{ tokenTotal ?? '—' }}</dd>
+            </div>
+            <div class="ws__meta-row">
               <dt class="ws__meta-label">Вартість</dt>
-              <dd class="ws__meta-value mono">{{ chatCost.toFixed(2) }}</dd>
+              <dd class="ws__meta-value mono">{{ costLabel || '—' }}</dd>
             </div>
           </dl>
           <div class="ws__actions">
@@ -515,6 +520,7 @@ import type { BranchPrefix, Platform } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useNow } from '../composables/useNow';
 import { relativeTime } from '../lib/time';
+import { tokens, usageTokens, usd } from '../lib/format';
 import { useResizableWidth } from '../composables/useResizableWidth';
 
 // The Workspace screen (design-system section 07): the board of session cards
@@ -630,9 +636,15 @@ function onExpandAll(on: boolean): void {
 // of the session the operator just opened. The command is per-session state: reset it.
 watch(() => store.selectedSessionId, () => { expandAll.value = EXPAND_ALL_NONE; });
 const blocks = computed(() => buildChatBlocks(entries.value));
-// Accumulated spend of the whole transcript, for the panel's status row. A computed
-// rather than an inline template reduce, so it is not re-summed on every re-render.
-const chatCost = computed(() => blocks.value.reduce((s, b) => s + b.summary.cost, 0));
+// The «Сесія» tab's accounting, read off the session row the api keeps rather than summed
+// out of the loaded transcript: a forked branch's transcript opens with its parent's turns,
+// which it never paid for, and a transcript is only loaded for the session on screen. Both
+// figures are absent — not zero — until the agent has taken a turn the api counted.
+const tokenTotal = computed(() => {
+  const u = selectedSession.value?.usage;
+  return u ? `${tokens(usageTokens(u))} ток` : undefined;
+});
+const costLabel = computed(() => usd(selectedSession.value?.usage?.cost ?? 0));
 
 // ── Resizable chat section ────────────────────────────────────────────────
 // The detail column (KPanel = the chat) is drag-resizable via the seam on its

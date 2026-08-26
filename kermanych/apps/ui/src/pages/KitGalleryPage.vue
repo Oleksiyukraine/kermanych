@@ -263,6 +263,7 @@
           v-for="(c, i) in sessionCards" :key="c.branch"
           :branch="c.branch" :time="c.time"
           :status="c.status" :status-line="c.statusLine" :selected="i === 0"
+          :model="c.model" :usage="c.usage"
         />
       </div>
     </section>
@@ -302,7 +303,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import type {
-  SessionStatus, Session, TranscriptEntry, RpcExtensionUIResponse,
+  SessionStatus, Session, TranscriptEntry, RpcExtensionUIResponse, Usage,
 } from '@kermanych/core';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import KBtn from 'components/kit/KBtn.vue';
@@ -343,10 +344,12 @@ const detailTabs = [
 ];
 const composerDraft = ref('');
 const thoughtOpen = ref(false);
-const sessionCards: { branch: string; title: string; time: string; status: SessionStatus; statusLine: string }[] = [
-  { branch: 'feature/rate-limit', title: 'rate limiting на /v1/messages', time: '2 хв', status: 'thinking', statusLine: 'працює · 12 кроків' },
-  { branch: 'refactoring/session-store', title: 'обʼєднати сесії', time: '14 хв', status: 'waiting_input', statusLine: 'чекає · потрібне рішення' },
-  { branch: 'fix/remove-button', title: 'remove + button', time: '1 год', status: 'merged', statusLine: 'влито · 2 файли +41 −12' },
+// The last row deliberately carries neither model nor usage: an agent whose turns were
+// never counted drops the accounting line rather than printing a zero.
+const sessionCards: { branch: string; title: string; time: string; status: SessionStatus; statusLine: string; model?: string; usage?: Usage }[] = [
+  { branch: 'feature/rate-limit', title: 'rate limiting на /v1/messages', time: '2 хв', status: 'thinking', statusLine: 'працює · 12 кроків', model: 'opus-5', usage: { input: 18_400, output: 9_200, cacheRead: 1_240_000, cacheWrite: 62_000, cost: 3.18 } },
+  { branch: 'refactoring/session-store', title: 'обʼєднати сесії', time: '14 хв', status: 'waiting_input', statusLine: 'чекає · потрібне рішення', model: 'sonnet-4.5', usage: { input: 2_100, output: 640, cacheRead: 31_000, cacheWrite: 4_800, cost: 0.004 } },
+  { branch: 'fix/remove-button', title: 'remove + button', time: '1 год', status: 'merged', statusLine: 'влито · 2 файли +41 −12', model: 'haiku', usage: { input: 900, output: 310, cacheRead: 0, cacheWrite: 0, cost: 0.02 } },
   { branch: 'chore/ci-node-22', title: 'node 22 в CI', time: '1 дн', status: 'done', statusLine: 'готово · без тесту' },
 ];
 
@@ -388,7 +391,7 @@ function mkSession(over: Partial<Session>): Session {
     worktreePath: '', worktree: true, branch: 'main', kind: 'agent', status: 'thinking', createdAt: now, lastActivityAt: now, ...over,
   };
 }
-const runningSession = mkSession({ id: 's1', status: 'thinking', branch: 'main' });
+const runningSession = mkSession({ id: 's1', status: 'thinking', branch: 'main', model: 'opus-5', contextPercent: 42, usage: { input: 18_400, output: 9_200, cacheRead: 1_240_000, cacheWrite: 62_000, cost: 3.18 } });
 const stalledSession = mkSession({ id: 's3', status: 'thinking', branch: 'feat/wedged', lastEventAt: Date.now() - 90_000 });
 const waitingSession = mkSession({
   id: 's2', status: 'waiting_input', branch: 'feat/schema',

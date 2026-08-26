@@ -12,12 +12,13 @@
 import { computed } from 'vue';
 import type { Session } from '@kermanych/core';
 import { dur } from '../../lib/time';
+import { usd } from '../../lib/format';
 import { useNow } from '../../composables/useNow';
 
 // The one row that never disappears: model, context budget, accumulated spend and — on
 // the right — what the agent is doing right now. Every figure here is either true or
 // absent; a rounded-down zero would be a claim the project does not let this row make.
-const props = defineProps<{ session: Session; cost: number }>();
+const props = defineProps<{ session: Session }>();
 
 const now = useNow(1000);
 
@@ -33,8 +34,9 @@ const metrics = computed(() => {
     // or nothing, with no `?? 0` anywhere — so it keeps `0%`; flooring that too would be
     // the mirror-image lie, hiding a true zero behind a `<`. Do not "tidy" this guard.
     pc == null ? '' : pc > 0 && pc < 0.5 ? '<1%' : `${pc.toFixed(0)}%`,
-    // Sub-cent spend is real spend: rounding it to `$0.00` would assert the chat was free.
-    props.cost >= 0.005 ? `$${props.cost.toFixed(2)}` : props.cost ? '<$0.01' : '',
+    // The session's own lifetime spend, as the api counted it — not a sum over the loaded
+    // transcript, which for a forked branch opens with turns its parent paid for.
+    usd(props.session.usage?.cost ?? 0),
   ].filter(Boolean).join(' · ');
 });
 

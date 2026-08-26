@@ -56,6 +56,7 @@ import KLogBlock from './KLogBlock.vue';
 import KToolRow from './KToolRow.vue';
 import type { ExpandAllCommand } from '../../lib/expand-all';
 import { dur } from '../../lib/time';
+import { usd } from '../../lib/format';
 
 const props = defineProps<{ block: ChatBlock; sessionId: string; open: boolean; expandAll: ExpandAllCommand }>();
 
@@ -153,8 +154,7 @@ const summary = computed(() => {
     // Reasoning under a second is latency, not a pause: `summary.thinkMs` sums even the
     // sub-threshold entries that render no chip, and they do not earn one of five slots.
     s.thinkMs >= 1000 ? `роздуми ${dur(s.thinkMs)}` : '',
-    // Sub-cent spend is real spend: rounding it to `$0.00` would assert the turn was free.
-    s.cost >= 0.005 ? `$${s.cost.toFixed(2)}` : s.cost ? '<$0.01' : '',
+    usd(s.cost),
   ].filter(Boolean).join(' · ');
 });
 </script>
