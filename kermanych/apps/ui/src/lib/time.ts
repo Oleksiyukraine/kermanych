@@ -25,3 +25,24 @@ export function dur(ms: number): string {
   const s = Math.round(ms / 1000);
   return s < 60 ? `${s} с` : `${Math.round(s / 60)} хв`;
 }
+
+// The wait until a future instant — the mirror of relativeTime, same abbreviations, same
+// "caller owns the ticking" contract. Two units, because a plan window that resets in
+// `1 дн 8 год` is a different plan from one resetting in `1 дн`, while seconds are noise at
+// this scale. A past instant reads `зараз`: the reset has landed, the figure just has not
+// been re-read yet.
+export function until(iso: string, nowMs: number): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '—';
+  const delta = then - nowMs;
+  if (delta < MIN) return 'зараз';
+  if (delta < HOUR) return `${Math.floor(delta / MIN)} хв`;
+  if (delta < DAY) {
+    const h = Math.floor(delta / HOUR);
+    const m = Math.floor((delta % HOUR) / MIN);
+    return m === 0 ? `${h} год` : `${h} год ${m} хв`;
+  }
+  const d = Math.floor(delta / DAY);
+  const h = Math.floor((delta % DAY) / HOUR);
+  return h === 0 ? `${d} дн` : `${d} дн ${h} год`;
+}

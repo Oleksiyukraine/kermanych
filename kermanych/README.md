@@ -306,8 +306,9 @@ developer's machine. The direction is always task → session.
    conflict`) to the task, and everyone's board updates live over Supabase Realtime.
 
 Nothing else leaves your machine. Transcripts, the current tool, context usage, todo
-phases and interactive prompts are local-only by design — the board shows THAT a task
-waits for input, and only its owner can answer it, on their own machine.
+phases, interactive prompts and the provider-plan spend under the account name (read from
+`omp usage` on this machine, never mirrored) are local-only by design — the board shows
+THAT a task waits for input, and only its owner can answer it, on their own machine.
 
 ### Offline behaviour
 
