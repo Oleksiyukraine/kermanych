@@ -166,8 +166,9 @@
         <KUserButton label="oleksii-motornyi" title="@oleksii-motornyi · вийти" />
       </div>
       <div class="kit__caption mono">
-        Плитка проєкту 44×44 · плитка акаунта 34×34 у підніжжі рейки (клік — вихід із
-        акаунта). Без картинки з GitHub — ініціали.
+        Праворуч від проєкту — лічильник запущених агентів: зелена пігулка з числом, а коли
+        не працює жоден — червона крапка без числа. Плитка акаунта у підніжжі рейки (клік —
+        вихід із акаунта). Без картинки з GitHub — ініціали.
       </div>
       <div class="kit__statusbar-wrap">
         <KStatusBar
@@ -522,7 +523,7 @@ const logSamples: TranscriptEntry[] = [
   { kind: 'turn', id: '10', at: nowMs, model: 'claude-opus-5', ms: 21_300 },
 ];
 const railProjects: { project: RailProject; active: boolean; count: number }[] = [
-  { project: { id: 'p1', name: 'api-gateway', state: 'bound' }, active: true, count: 4 },
+  { project: { id: 'p1', name: 'api-gateway', state: 'bound' }, active: true, count: 12 },
   { project: { id: 'p2', name: 'web client', state: 'unbound' }, active: false, count: 0 },
   { project: { id: 'p3', name: 'billing', state: 'orphan' }, active: false, count: 1 },
 ];

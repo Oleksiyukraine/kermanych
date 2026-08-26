@@ -18,10 +18,15 @@ export type RailProject = {
 import { computed } from 'vue';
 import { initialsOf } from '../../lib/initials';
 
-// A project row in the left sidebar. The name plus a small state dot on the right: bound
-// (a local repo here) shows green, orphan (gone from the cloud) accent, unbound none. The
-// active row gets a subtle surface highlight — no colour fill, no initials chip.
-const props = defineProps<{ project: RailProject; active?: boolean; count?: number }>();
+// A project row in the left sidebar. The name plus the running-agent badge on the right: a
+// green pill carrying the count while agents work, a bare red dot when none does. Binding
+// state stays in the tooltip — one indicator cannot carry two meanings, and "is anything
+// running here" is the question the rail gets scanned for. The active row gets a subtle
+// surface highlight — no colour fill, no initials chip.
+const props = withDefaults(
+  defineProps<{ project: RailProject; active?: boolean; count?: number }>(),
+  { count: 0 },
+);
 
 const STATE_HINT: Record<RailProject['state'], string> = {
   bound: '',
@@ -29,8 +34,21 @@ const STATE_HINT: Record<RailProject['state'], string> = {
   orphan: ' · поза хмарою',
 };
 
-const title = computed(() => props.project.name + STATE_HINT[props.project.state]);
+// The badge is aria-hidden (a bare digit reads as noise), so the count travels to assistive
+// tech through the button's label instead. Count-agnostic phrasing — «запущено агентів: 3»
+// — because Ukrainian would otherwise need three plural forms for one tooltip.
+const title = computed(
+  () =>
+    props.project.name +
+    STATE_HINT[props.project.state] +
+    (props.count > 0 ? ` · запущено агентів: ${props.count}` : ' · немає запущених агентів'),
+);
 const initials = computed(() => initialsOf(props.project.name, '#'));
+
+// The badge's text, and by its emptiness the badge's shape: a digit while agents run,
+// nothing when the pill collapses into the bare idle dot. Resolved here rather than in the
+// template because `withDefaults` only narrows `count` away from `undefined` on this side.
+const badge = computed(() => (props.count > 0 ? String(props.count) : ''));
 </script>
 
 <template>
@@ -39,16 +57,16 @@ const initials = computed(() => initialsOf(props.project.name, '#'));
     :class="{ 'k-rail--active': active }"
     type="button"
     :title="title"
+    :aria-label="title"
     :aria-pressed="active"
   >
     <span class="k-rail__initials" aria-hidden="true">{{ initials }}</span>
     <span class="k-rail__name">{{ project.name }}</span>
     <span
-      v-if="project.state !== 'unbound'"
-      class="k-rail__dot"
-      :class="{ 'k-rail__dot--orphan': project.state === 'orphan' }"
+      class="k-rail__agents"
+      :class="{ 'k-rail__agents--idle': !badge }"
       aria-hidden="true"
-    ></span>
+    >{{ badge }}</span>
   </button>
 </template>
 
@@ -108,16 +126,33 @@ const initials = computed(() => initialsOf(props.project.name, '#'));
   font-weight: var(--k-fw-semibold);
 }
 
-// state dot — bound (green), orphan (accent); unbound shows none.
-.k-rail__dot {
+// Running-agent badge — a green pill around the count. `--k-on-accent` is the token for
+// text on a saturated fill and flips with the theme, so the digits stay legible on both
+// the bright dark-theme green and the dark light-theme one. One digit lands on the 16px
+// min-width (a circle); two or more grow the pill sideways.
+.k-rail__agents {
+  display: inline-flex;
   flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 var(--k-sp-1);
+  border-radius: var(--k-r-pill);
   background: var(--k-success);
+  color: var(--k-on-accent);
+  font-family: var(--k-font-mono);
+  font-size: var(--k-fs-xs);
+  font-weight: var(--k-fw-semibold);
+  line-height: 1;
 }
 
-.k-rail__dot--orphan {
-  background: var(--k-accent);
+// Nothing running — the badge collapses to a bare red dot; there is no number to show.
+.k-rail__agents--idle {
+  min-width: 0;
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  background: var(--k-danger);
 }
 </style>
