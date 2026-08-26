@@ -1068,7 +1068,7 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   padding: var(--k-sp-1);
 }
 .shell--min :deep(.k-rail__name),
-.shell--min :deep(.k-rail__dot) {
+.shell--min :deep(.k-rail__agents) {
   display: none;
 }
 .shell--min :deep(.k-rail__initials) {
