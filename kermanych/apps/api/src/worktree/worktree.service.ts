@@ -1,6 +1,22 @@
 // apps/api/src/worktree/worktree.service.ts
 import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";
+import { readFile, stat } from "node:fs/promises";
+import { join } from "node:path";
+
+export type ChangedFile = { path: string; added: number; removed: number };
+
+// Upper bound on a changed-files listing: the Зміни tab is a summary, and an agent that
+// touched thousands of paths must not turn one tab open into an unbounded walk.
+const MAX_CHANGED_FILES = 500;
+
+// Head slice git itself inspects when deciding whether a blob is binary.
+const BINARY_SNIFF_BYTES = 8000;
+const MAX_COUNT_BYTES = 4 * 1024 * 1024;
+
+// Keep git from octal-escaping non-ASCII paths, so a Cyrillic filename reaches the UI
+// as itself instead of "\321\204...".
+const RAW_PATHS = ["-c", "core.quotePath=false"];
 
 function git(cwd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
   const { promise, resolve } = Promise.withResolvers<{ ok: boolean; out: string }>();
@@ -11,6 +27,24 @@ function git(cwd: string, args: string[]): Promise<{ ok: boolean; out: string }>
   p.on("error", (e) => resolve({ ok: false, out: String(e) }));
   p.on("close", (code) => resolve({ ok: code === 0, out: Buffer.concat(chunks).toString("utf8") }));
   return promise;
+}
+
+// A never-added file has no blob to diff against, so its added-line count is measured
+// here the way numstat would: `\n`-terminated lines, with a final unterminated line
+// still counting as one. A NUL byte in the head marks the file binary (0, git's "-");
+// unreadable or oversized files also report 0 rather than sinking the whole listing.
+async function addedLines(file: string): Promise<number> {
+  try {
+    const st = await stat(file);
+    if (!st.isFile() || st.size === 0 || st.size > MAX_COUNT_BYTES) return 0;
+    const buf = await readFile(file);
+    if (buf.subarray(0, BINARY_SNIFF_BYTES).includes(0)) return 0;
+    let lines = 0;
+    for (let i = buf.indexOf(10); i !== -1; i = buf.indexOf(10, i + 1)) lines++;
+    return buf[buf.length - 1] === 10 ? lines : lines + 1;
+  } catch {
+    return 0;
+  }
 }
 
 @Injectable()
@@ -65,27 +99,46 @@ export class WorktreeService {
     return Number.isFinite(n) ? n : 0;
   }
 
-  // Per-file line-change summary of the branch against `base` via `git diff --numstat
-  // <base>...HEAD`. Each line is `added\tremoved\tpath`; binary files report `-` counts,
-  // normalized to 0. Any failure (bad base, non-repo) degrades to an empty list.
-  async changedFiles(
-    dir: string,
-    base: string,
-  ): Promise<{ path: string; added: number; removed: number }[]> {
-    if (!base) return [];
-    const r = await git(dir, ["diff", "--numstat", `${base}...HEAD`]);
-    if (!r.ok) return [];
-    const files: { path: string; added: number; removed: number }[] = [];
-    for (const line of r.out.split("\n")) {
-      if (!line.trim()) continue;
-      const parts = line.split("\t");
-      if (parts.length < 3) continue;
-      const [added, removed, ...rest] = parts;
-      files.push({
-        path: rest.join("\t"),
-        added: added === "-" ? 0 : Number(added) || 0,
-        removed: removed === "-" ? 0 : Number(removed) || 0,
-      });
+  // Everything the session has produced since it forked off `base`: commits on the
+  // branch, staged and unstaged edits, and files never added to the index. An agent
+  // is normally mid-flight with nothing committed yet, so diffing `base...HEAD` would
+  // report an empty session; the working tree is the right-hand side instead, taken
+  // against the merge-base (like `diff()`) so commits that landed on `base` afterwards
+  // don't leak in. Untracked paths are collected separately because git omits them
+  // from a diff entirely. Any git failure degrades to what was gathered so far.
+  async changedFiles(dir: string, base: string): Promise<ChangedFile[]> {
+    // On a vanished or unrelated `base` the fork point is unknowable; fall back to HEAD,
+    // which still reports the uncommitted half rather than an error string used as a ref.
+    const forkPoint = await git(dir, ["merge-base", "HEAD", base || "HEAD"]);
+    const mergeBase = (forkPoint.ok && forkPoint.out.trim()) || "HEAD";
+    const files: ChangedFile[] = [];
+
+    const tracked = await git(dir, [...RAW_PATHS, "diff", "--numstat", mergeBase]);
+    if (tracked.ok) {
+      for (const line of tracked.out.split("\n")) {
+        if (files.length >= MAX_CHANGED_FILES) return files;
+        const parts = line.split("\t");
+        if (parts.length < 3) continue;
+        const path = parts.slice(2).join("\t");
+        if (!path) continue;
+        // Binary files report "-" for both counts; anything unparseable counts as 0.
+        const added = Number(parts[0]);
+        const removed = Number(parts[1]);
+        files.push({
+          path,
+          added: added > 0 ? added : 0,
+          removed: removed > 0 ? removed : 0,
+        });
+      }
+    }
+
+    const untracked = await git(dir, [...RAW_PATHS, "ls-files", "--others", "--exclude-standard"]);
+    if (untracked.ok) {
+      for (const path of untracked.out.split("\n")) {
+        if (files.length >= MAX_CHANGED_FILES) return files;
+        if (!path) continue;
+        files.push({ path, added: await addedLines(join(dir, path)), removed: 0 });
+      }
     }
     return files;
   }
