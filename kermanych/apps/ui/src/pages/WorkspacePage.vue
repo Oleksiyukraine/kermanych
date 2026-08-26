@@ -1395,7 +1395,7 @@ async function submitPreviewConfig(): Promise<void> {
 // Fixed header (48px) + footer (30px) are overlaid by the Quasar layout; the
 // workspace fills exactly the space between them.
 .ws {
-  height: calc(100vh - 56px);
+  height: calc(100vh - 82px);
   overflow: hidden;
   padding: var(--k-sp-3);
 }

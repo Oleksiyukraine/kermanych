@@ -145,4 +145,16 @@ export class WorktreeService {
   async isIgnored(dir: string, path: string): Promise<boolean> {
     return (await git(dir, ["check-ignore", "-q", "--", path])).ok;
   }
+
+  // Sync the project's current branch with its upstream. Both return git's own output so the
+  // footer can surface "Already up to date", a diverged-branch refusal, or a missing upstream
+  // verbatim. `--ff-only` keeps pull non-destructive: a diverged branch is reported, never
+  // silently merged.
+  async pull(repoDir: string): Promise<{ ok: boolean; out: string }> {
+    return git(repoDir, ["pull", "--ff-only"]);
+  }
+
+  async push(repoDir: string): Promise<{ ok: boolean; out: string }> {
+    return git(repoDir, ["push"]);
+  }
 }

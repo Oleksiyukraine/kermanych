@@ -190,6 +190,17 @@ export class SupervisorService implements OnModuleDestroy {
     return { branches, current, default: project.defaultBranch ?? null };
   }
 
+  // Footer git sync for the bound project's current branch. Returns git's { ok, out } as-is
+  // (a failed pull/push is not an exception — the UI shows the output either way); an unbound
+  // project throws via boundProject and surfaces as a 400.
+  async projectPull(projectId: string): Promise<{ ok: boolean; out: string }> {
+    return this.worktree.pull(this.boundProject(projectId).localRepoPath);
+  }
+
+  async projectPush(projectId: string): Promise<{ ok: boolean; out: string }> {
+    return this.worktree.push(this.boundProject(projectId).localRepoPath);
+  }
+
   async createSession(
     projectId: string,
     name: string,

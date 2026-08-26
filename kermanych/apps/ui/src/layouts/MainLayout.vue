@@ -1,5 +1,5 @@
 <template>
-  <q-layout view="hHh Lpr lFf" class="shell">
+  <q-layout view="hHh Lpr fFf" class="shell">
     <!-- LEFT SIDEBAR — bucket nav + projects + folder binding + account (v3 section 07) -->
     <q-drawer model-value side="left" :width="collapsed ? 76 : 264" :breakpoint="0" class="shell__sidebar">
       <div class="shell__side-inner" :class="{ 'shell--min': collapsed }">
@@ -111,6 +111,26 @@
     <q-page-container>
       <router-view />
     </q-page-container>
+
+    <!-- STATUS BAR — a VS Code-style footer; for now just git sync for the selected repo. -->
+    <q-footer class="shell__footer">
+      <button
+        type="button"
+        class="shell__foot-btn"
+        :disabled="!isBound || syncing"
+        v-tip="isBound ? 'git pull (--ff-only) поточної гілки репозиторію проєкту' : BIND_HINT"
+        aria-label="Pull"
+        @click="gitSync('pull')"
+      >↓ Pull</button>
+      <button
+        type="button"
+        class="shell__foot-btn"
+        :disabled="!isBound || syncing"
+        v-tip="isBound ? 'git push поточної гілки' : BIND_HINT"
+        aria-label="Push"
+        @click="gitSync('push')"
+      >↑ Push</button>
+    </q-footer>
 
 
     <!-- CREATE-PROJECT MODAL — a project is born in the CLOUD (Requirement 2: any signed-in
@@ -919,6 +939,25 @@ async function confirmSignOut(): Promise<void> {
     accountBusy.value = false;
   }
 }
+
+// Footer git sync for the selected project's bound repo. `syncing` gates both buttons so a
+// double-click cannot fire two operations; git's own output (or refusal) surfaces as a toast.
+const syncing = ref(false);
+async function gitSync(kind: 'pull' | 'push'): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id || !isBound.value || syncing.value) return;
+  syncing.value = true;
+  const label = kind === 'pull' ? 'Pull' : 'Push';
+  try {
+    const r = kind === 'pull' ? await store.pullProject(id) : await store.pushProject(id);
+    if (r.ok) store.notify(`${label}: ${r.out.trim() || 'готово'}`);
+    else store.notify(`${label}: ${r.out.trim() || 'не вдалося'}`, 'error', 7000);
+  } catch (e) {
+    store.notify(`${label}: ${e instanceof Error ? e.message : String(e)}`, 'error', 7000);
+  } finally {
+    syncing.value = false;
+  }
+}
 </script>
 
 <style scoped lang="scss">
@@ -1242,5 +1281,41 @@ async function confirmSignOut(): Promise<void> {
 
 .shell__danger {
   margin-right: auto; // destructive action sits apart, on the left of the footer
+}
+
+// STATUS BAR — VS Code-style footer. Full-width via the layout view "…lFf"; a thin top rule
+// and compact ghost buttons, disabled until a bound project gives git a target.
+.shell__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-1);
+  height: 26px;
+  padding: 0 var(--k-sp-2);
+  background: var(--k-bg);
+  border-top: 1px solid var(--k-line-strong);
+}
+
+.shell__foot-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 var(--k-sp-2);
+  background: none;
+  border: none;
+  border-radius: var(--k-r);
+  color: var(--k-muted);
+  font-family: var(--k-font-mono);
+  font-size: var(--k-fs-xs);
+  cursor: pointer;
+}
+
+.shell__foot-btn:hover:not(:disabled) {
+  background: var(--k-surface2);
+  color: var(--k-text);
+}
+
+.shell__foot-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 </style>

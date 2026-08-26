@@ -188,6 +188,12 @@ export const api = {
   listBranches: (id: string): Promise<{ branches: string[]; current: string; default: string | null }> =>
     get<{ branches: string[]; current: string; default: string | null }>(`/projects/${id}/branches`),
 
+  pullProject: (id: string): Promise<{ ok: boolean; out: string }> =>
+    post<{ ok: boolean; out: string }>(`/projects/${id}/pull`, {}),
+
+  pushProject: (id: string): Promise<{ ok: boolean; out: string }> =>
+    post<{ ok: boolean; out: string }>(`/projects/${id}/push`, {}),
+
   getEnv: (id: string, file?: string): Promise<EnvFileView> =>
     get<EnvFileView>(`/projects/${id}/env${file ? `?file=${encodeURIComponent(file)}` : ''}`),
 

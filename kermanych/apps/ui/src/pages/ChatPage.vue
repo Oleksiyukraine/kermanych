@@ -259,7 +259,7 @@ watch(
 
 <style scoped lang="scss">
 .chat {
-  height: calc(100vh - 56px);
+  height: calc(100vh - 82px);
   overflow: hidden;
   padding: var(--k-sp-3);
 }
