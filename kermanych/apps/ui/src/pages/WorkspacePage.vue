@@ -488,7 +488,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   slugify,
   buildChatBlocks,
@@ -713,32 +713,62 @@ watch(detailTab, (t) => {
 });
 
 // ── Зміни tab (finishInfo: ahead/dirty/conflicts + changed files) ──────────
-// Loaded lazily whenever the changes tab is open for a session; a non-worktree
-// session or a git error surfaces as a message rather than throwing.
+// Loaded when the tab opens for a session, then refreshed while the agent works: the
+// listing covers uncommitted work, so it goes stale on every edit the agent makes. A
+// non-worktree session or a git error surfaces as a message rather than throwing.
 const changesInfo = ref<Awaited<ReturnType<typeof store.finishInfo>> | null>(null);
 const changesError = ref<string | null>(null);
 const changesLoading = ref(false);
+// Orders overlapping loads: a reply that lands after a newer request is discarded.
+let changesRun = 0;
 
-async function loadChanges(id: string): Promise<void> {
-  changesInfo.value = null;
-  changesError.value = null;
-  changesLoading.value = true;
+// `reset` separates opening the tab (blank + spinner) from refreshing it in place,
+// where clearing first would flash the pane empty on every agent event.
+async function loadChanges(id: string, reset: boolean): Promise<void> {
+  const run = ++changesRun;
+  if (reset) {
+    changesInfo.value = null;
+    changesError.value = null;
+    changesLoading.value = true;
+  }
   try {
-    changesInfo.value = await store.finishInfo(id);
+    const info = await store.finishInfo(id);
+    if (run !== changesRun) return;
+    changesInfo.value = info;
+    changesError.value = null;
   } catch (e) {
+    if (run !== changesRun) return;
     changesError.value = e instanceof Error ? e.message : String(e);
   } finally {
-    changesLoading.value = false;
+    if (run === changesRun) changesLoading.value = false;
   }
 }
 
 watch(
   [() => store.selectedSessionId, detailTab],
   ([id, tab]) => {
-    if (tab === 'changes' && id) void loadChanges(id);
+    if (tab === 'changes' && id) void loadChanges(id, true);
   },
   { immediate: true },
 );
+
+// A working agent bumps lastActivityAt once per tool call; coalesce a burst of those
+// into one trailing git read so the open tab tracks the worktree without hammering
+// the api.
+const CHANGES_REFRESH_MS = 2500;
+let changesTimer: ReturnType<typeof setTimeout> | undefined;
+watch(
+  () => selectedSession.value?.lastActivityAt,
+  () => {
+    if (detailTab.value !== 'changes' || changesTimer) return;
+    changesTimer = setTimeout(() => {
+      changesTimer = undefined;
+      const id = store.selectedSessionId;
+      if (detailTab.value === 'changes' && id) void loadChanges(id, false);
+    }, CHANGES_REFRESH_MS);
+  },
+);
+onBeforeUnmount(() => clearTimeout(changesTimer));
 
 // ctx% is already 0–100 as reported by omp — render verbatim, never ×100.
 function ctxOf(s: Session): string | undefined {
