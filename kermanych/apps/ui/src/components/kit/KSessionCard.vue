@@ -6,7 +6,10 @@
     @click="$emit('click')"
   >
     <div class="k-session-card__top">
-      <span class="k-session-card__branch">{{ branch }}</span>
+      <span
+        class="k-session-card__label"
+        :class="branch ? 'k-session-card__label--branch' : 'k-session-card__label--title'"
+      >{{ branch || title }}</span>
       <span class="k-session-card__time">{{ time }}</span>
     </div>
     <div class="k-session-card__status">
@@ -34,6 +37,7 @@ import { tokens, usageTokens, usd } from '../../lib/format';
 const props = withDefaults(
   defineProps<{
     branch: string;
+    title?: string;
     time: string;
     status: SessionStatus;
     statusLine?: string;
@@ -92,13 +96,22 @@ const spend = computed(() => {
   gap: var(--k-sp-2);
 }
 
-.k-session-card__branch {
-  font-family: var(--k-font-mono);
-  font-size: var(--k-fs-xs);
-  color: var(--k-faint);
+.k-session-card__label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.k-session-card__label--branch {
+  font-family: var(--k-font-mono);
+  font-size: var(--k-fs-xs);
+  color: var(--k-faint);
+}
+
+.k-session-card__label--title {
+  font-size: var(--k-fs-base);
+  color: var(--k-text);
 }
 
 .k-session-card__time {
