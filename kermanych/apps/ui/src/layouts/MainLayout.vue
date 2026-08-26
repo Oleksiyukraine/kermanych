@@ -398,6 +398,7 @@ import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
 import { IS_PREVIEW } from '../lib/preview';
+import { MANAGEMENT_DEFAULT_SECTION } from '../lib/management';
 import { theme, toggleTheme } from '../lib/theme';
 import { percent, planWindow } from '../lib/format';
 import { until } from '../lib/time';
@@ -433,14 +434,19 @@ const router = useRouter();
 const collapsed = ref(localStorage.getItem('kermanych.sidebar-collapsed') === '1');
 watch(collapsed, (v) => localStorage.setItem('kermanych.sidebar-collapsed', v ? '1' : '0'));
 
-// A rail tile means «show me this project», and the only page that shows one is the
-// workspace. Clicked from the team board it used to change the selection behind a screen
-// that never reflects it — the tile went active, nothing else moved, and the board had no
-// exit of its own. Selecting is still the primary act; the navigation only follows when the
-// current page is not the one that answers it.
+// A rail tile means «show me this project». Clicked from a screen that does not show one it
+// used to change the selection behind the operator's back — the tile went active, nothing
+// else moved, and the team board had no exit of its own. Selecting is still the primary act;
+// the navigation only follows when the current page is not the one that answers it. The
+// project-scoped screens (workspace, and every Менеджмент section, whose parent record is
+// matched here) keep their place, so switching projects while reading one stays put.
+const PROJECT_SCOPED_VIEWS: readonly string[] = ['workspace', 'management'];
 function selectProject(id: string): void {
   store.selectProject(id);
-  if (route.name !== 'workspace') void router.push({ name: 'workspace' });
+  const scoped = route.matched.some(
+    (r) => typeof r.name === 'string' && PROJECT_SCOPED_VIEWS.includes(r.name),
+  );
+  if (!scoped) void router.push({ name: 'workspace' });
 }
 
 // True only once a cloud read has actually succeeded on this run. Until then a local row
@@ -488,16 +494,31 @@ function runningCount(projectId: string): number {
   return sessionsOf(projectId).filter((s) => s.kind !== 'chat' && RUNNING.includes(s.status)).length;
 }
 
-const topOptions = [
-  { value: 'agents', label: 'Агенти' },
-  { value: 'board', label: 'Дошка' },
-  { value: 'chat', label: 'Чат' },
-];
-const topView = computed(() =>
-  route.name === 'board' ? 'board' : route.name === 'chat' ? 'chat' : 'agents',
+// Segmented view nav. One table drives the labels, the active segment and the
+// push target, so a new view is one row here plus its route record. `section` is
+// the record the URL must match — for the nested Менеджмент tab that is the
+// PARENT, so all five of its sections light the same segment; `route` is the name
+// the click pushes, which for Менеджмент is its default section (a named parent
+// with children would render the shell with an empty body).
+const VIEWS = [
+  { value: 'agents', label: 'Агенти', route: 'workspace', section: 'workspace' },
+  { value: 'board', label: 'Дошка', route: 'board', section: 'board' },
+  { value: 'chat', label: 'Чат', route: 'chat', section: 'chat' },
+  {
+    value: 'management',
+    label: 'Менеджмент',
+    route: MANAGEMENT_DEFAULT_SECTION,
+    section: 'management',
+  },
+] as const;
+const topOptions = VIEWS.map((v) => ({ value: v.value, label: v.label }));
+// Anything outside the table (e.g. /kit) reads as the default view.
+const topView = computed(
+  () =>
+    VIEWS.find((v) => route.matched.some((r) => r.name === v.section))?.value ?? 'agents',
 );
 function goView(v: string): void {
-  const name = v === 'board' ? 'board' : v === 'chat' ? 'chat' : 'workspace';
+  const name = VIEWS.find((x) => x.value === v)?.route ?? 'workspace';
   if (route.name !== name) void router.push({ name });
 }
 
