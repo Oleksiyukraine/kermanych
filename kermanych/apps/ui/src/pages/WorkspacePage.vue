@@ -113,12 +113,29 @@
               <li v-for="f in changesInfo.conflicts" :key="f">{{ f }}</li>
             </ul>
             <ul v-if="changesInfo.files.length" class="ws__file-list">
-              <li v-for="f in changesInfo.files" :key="f.path" class="ws__file-row">
-                <span class="ws__file-path mono">{{ f.path }}</span>
-                <span class="ws__file-stat mono">
-                  <span class="ws__diff-add">+{{ f.added }}</span>
-                  <span class="ws__diff-del">−{{ f.removed }}</span>
-                </span>
+              <li v-for="f in changesInfo.files" :key="f.path" class="ws__file-item">
+                <button
+                  type="button"
+                  class="ws__file-row"
+                  :class="{ 'ws__file-row--open': openFile === f.path }"
+                  :aria-expanded="openFile === f.path"
+                  @click="toggleFile(f.path)"
+                >
+                  <span class="ws__file-path mono">{{ f.path }}</span>
+                  <span class="ws__file-stat mono">
+                    <span class="ws__diff-add">+{{ f.added }}</span>
+                    <span class="ws__diff-del">−{{ f.removed }}</span>
+                  </span>
+                </button>
+                <KDiffView
+                  v-if="openFile === f.path"
+                  class="ws__file-diff"
+                  :path="f.path"
+                  :diff="fileDiff"
+                  :loading="fileDiffLoading"
+                  :error="fileDiffError"
+                  @close="closeFile"
+                />
               </li>
             </ul>
             <p v-else class="ws__log-empty mono">Немає змінених файлів.</p>
@@ -504,13 +521,14 @@ import { useOrchestrator } from 'stores/orchestrator';
 import { useBoard } from 'stores/board';
 import { useRouter } from 'vue-router';
 import { useProjects } from 'stores/projects';
-import type { MessageMode } from '../lib/api';
+import type { FileDiff, MessageMode } from '../lib/api';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
 import KTabs from 'components/kit/KTabs.vue';
+import KDiffView from 'components/kit/KDiffView.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
@@ -722,6 +740,54 @@ const changesLoading = ref(false);
 // Orders overlapping loads: a reply that lands after a newer request is discarded.
 let changesRun = 0;
 
+// One file's diff, opened by clicking its row above. The request is ordered the same way
+// the listing is: a reply that lands after a newer click, a session switch or a collapse
+// is dropped. `reset` separates opening a file (spinner) from re-reading the one already
+// open, where blanking first would flash the pane on every refresh below.
+const openFile = ref<string | null>(null);
+const fileDiff = ref<FileDiff | null>(null);
+const fileDiffError = ref<string | null>(null);
+const fileDiffLoading = ref(false);
+let fileDiffRun = 0;
+
+async function loadFileDiff(id: string, path: string, reset: boolean): Promise<void> {
+  const run = ++fileDiffRun;
+  if (reset) {
+    fileDiff.value = null;
+    fileDiffError.value = null;
+    fileDiffLoading.value = true;
+  }
+  try {
+    const d = await store.fileDiff(id, path);
+    if (run !== fileDiffRun) return;
+    fileDiff.value = d;
+    fileDiffError.value = null;
+  } catch (e) {
+    if (run !== fileDiffRun) return;
+    fileDiffError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    if (run === fileDiffRun) fileDiffLoading.value = false;
+  }
+}
+
+// Bumping the run counter is what makes a collapse final: an in-flight reply for the file
+// just closed would otherwise land in the pane the operator dismissed.
+function closeFile(): void {
+  openFile.value = null;
+  fileDiffLoading.value = false;
+  fileDiffRun++;
+}
+
+function toggleFile(path: string): void {
+  const id = store.selectedSessionId;
+  if (!id || openFile.value === path) {
+    closeFile();
+    return;
+  }
+  openFile.value = path;
+  void loadFileDiff(id, path, true);
+}
+
 // `reset` separates opening the tab (blank + spinner) from refreshing it in place,
 // where clearing first would flash the pane empty on every agent event.
 async function loadChanges(id: string, reset: boolean): Promise<void> {
@@ -736,6 +802,11 @@ async function loadChanges(id: string, reset: boolean): Promise<void> {
     if (run !== changesRun) return;
     changesInfo.value = info;
     changesError.value = null;
+    // The open file tracks the same refresh as the listing: the agent is still editing it.
+    // It can also drop out of the listing entirely (an edit reverted), and then there is no
+    // diff left to show.
+    if (openFile.value && !info.files.some((f) => f.path === openFile.value)) closeFile();
+    else if (openFile.value) void loadFileDiff(id, openFile.value, false);
   } catch (e) {
     if (run !== changesRun) return;
     changesError.value = e instanceof Error ? e.message : String(e);
@@ -747,6 +818,8 @@ async function loadChanges(id: string, reset: boolean): Promise<void> {
 watch(
   [() => store.selectedSessionId, detailTab],
   ([id, tab]) => {
+    // Another session (or a trip through another tab) invalidates whatever file was open.
+    closeFile();
     if (tab === 'changes' && id) void loadChanges(id, true);
   },
   { immediate: true },
@@ -1687,15 +1760,35 @@ async function submitPreviewConfig(): Promise<void> {
   display: flex;
   flex-direction: column;
 }
+.ws__file-item {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--k-line);
+}
+// A row is the control that opens the file's diff, so it is a button — focus and Enter
+// come with it — stripped back to the plain list row it looks like.
 .ws__file-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  width: 100%;
   padding: 5px 0;
-  border-bottom: 1px solid var(--k-line);
+  border: none;
+  background: transparent;
   font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover .ws__file-path { color: var(--k-accent); }
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: -1px;
+  }
 }
+.ws__file-row--open .ws__file-path { color: var(--k-accent); }
+.ws__file-diff { margin: 0 0 8px; }
 .ws__file-path {
   color: var(--k-text);
   overflow: hidden;

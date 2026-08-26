@@ -117,6 +117,18 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
   return (await r.json()) as T;
 }
 
+// One changed file, already paired into side-by-side rows by the api (see
+// apps/api/src/worktree/split-diff.ts). A row fills the original column, the changed
+// column, or both — that is what keeps the two columns aligned line for line.
+export type DiffCell = { no: number; text: string };
+export type DiffRow = {
+  kind: 'ctx' | 'add' | 'del' | 'mod';
+  old: DiffCell | null;
+  new: DiffCell | null;
+};
+export type DiffHunk = { header: string; rows: DiffRow[] };
+export type FileDiff = { hunks: DiffHunk[]; binary: boolean; truncated: boolean };
+
 export const api = {
   // LOCAL project rows. Creation and deletion live in the cloud (see stores/projects.ts);
   // these routes cache cloud config and own this machine's binding.
@@ -223,6 +235,9 @@ export const api = {
     conflicts: string[];
     files: { path: string; added: number; removed: number }[];
   }> => get(`/sessions/${id}/finish`),
+
+  fileDiff: (id: string, path: string): Promise<FileDiff> =>
+    get<FileDiff>(`/sessions/${id}/diff?path=${encodeURIComponent(path)}`),
 
   finish: (
     id: string,

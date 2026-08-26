@@ -189,6 +189,16 @@ export class SessionsController {
     }
   }
 
+  // A read, so GET; the path rides in the query, where its slashes need no route gymnastics.
+  @Get(":id/diff")
+  async fileDiff(@Param("id") id: string, @Query("path") path?: string) {
+    try {
+      return await this.sup.fileDiff(id, path ?? "");
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Post(":id/finish")
   async finish(@Param("id") id: string) {
     try {
