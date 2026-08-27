@@ -6,8 +6,8 @@ import type { SkillsService } from "../src/skills/skills.service";
 
 // The subset of RpcSession options this file asserts on, plus the supervisor's own event
 // callback: the two halves of the skill wiring — what the child is launched with, and how the
-// rows it reports are labelled. Every other supervisor spec constructs the service with three
-// arguments, so `this.skills` is undefined there and neither half is reachable.
+// rows it reports are labelled. The other supervisor specs pass `stubSkills()`, whose empty
+// view exercises neither half.
 type SpawnOpts = { cwd: string; tools?: string[]; configPath?: string };
 const started: SpawnOpts[] = [];
 let emit: (e: RpcEvent) => void = () => {};
@@ -166,5 +166,43 @@ describe("the materialised view labels the session's skill rows", () => {
     expect(row).toMatchObject({ tool: "skill", status: "ok", target: "unknown-skill" });
     expect(row!.stat).toBeUndefined();
     expect(row!.intent).toBeUndefined();
+  });
+
+  it("omits the materialised path on a stale launch, keeping the repository's real one", async () => {
+    const { sup, project } = make(
+      skillsStub(async () => ({
+        configPath: "/tmp/p1.config.yml",
+        stale: true,
+        view: [
+          { name: "kermanych-session", description: "d", source: "default" },
+          {
+            name: "probe-beta",
+            description: "d",
+            source: "default",
+            shadowedByRepo: "/tmp/proj/.claude/skills/probe-beta/SKILL.md",
+          },
+        ],
+      })),
+    );
+    const chat = await sup.createChat(project.id);
+
+    for (const [id, name] of [["c1", "kermanych-session"], ["c2", "probe-beta"]]) {
+      emit({ type: "tool_execution_start", toolName: "read", toolCallId: id, args: { path: `skill://${name}` } });
+      emit({
+        type: "tool_execution_end", toolName: "read", toolCallId: id, isError: false,
+        result: { content: [{ type: "text", text: "body" }] },
+      });
+    }
+
+    const rows = sup
+      .getTranscript(chat.id)
+      .filter((e): e is Extract<TranscriptEntry, { kind: "tool" }> => e.kind === "tool");
+    // A degraded materialise may not have written the file, and a link to a path that is not
+    // there is worse than no link. A shadowed row's repository path came from a scan that
+    // found the file, so it survives.
+    expect(rows.map((r) => [r.id, r.stat, r.intent])).toEqual([
+      ["c1", "бібліотека", undefined],
+      ["c2", "репо", "/tmp/proj/.claude/skills/probe-beta/SKILL.md"],
+    ]);
   });
 });

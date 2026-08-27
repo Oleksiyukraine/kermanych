@@ -9,7 +9,7 @@ import { WorktreeService, type ChangedFile } from "../worktree/worktree.service"
 import type { SplitDiff } from "../worktree/split-diff";
 import { RpcSession } from "../rpc/rpc-session";
 import { messagesToTranscript } from "./messages-to-transcript";
-import { reduceRpcEvents, toolRowMatches, type SkillSource } from "./transcript-reducer";
+import { reduceRpcEvents, toolRowMatches, type SkillLabel, type SkillSource } from "./transcript-reducer";
 import { ToolDetailCache } from "./tool-detail-cache";
 import { SkillsService, skillsRoot } from "../skills/skills.service";
 import { copyCarryFiles } from "../env/carry-files";
@@ -79,7 +79,7 @@ export class SupervisorService implements OnModuleDestroy {
   private toolDetails = new ToolDetailCache();
   // name -> the badge a skill row shows. Written at launch from the materialised view,
   // read by the transcript reducers; dropped with the session.
-  private skillLabels = new Map<string, Map<string, { stat: string; intent: string }>>();
+  private skillLabels = new Map<string, Map<string, SkillLabel>>();
   private lastStamp = 0;
   private events = new Subject<ServerEvent>();
   events$: Observable<ServerEvent> = this.events.asObservable();
@@ -95,17 +95,19 @@ export class SupervisorService implements OnModuleDestroy {
   // Never throws: a library failure must degrade to "no library", never to a failed launch.
   private async ompSkills(projectId: string, cwd: string, sessionId: string): Promise<string | undefined> {
     try {
-      const { configPath, view } = await this.skills.materialize(projectId, cwd);
-      const labels = new Map<string, { stat: string; intent: string }>();
+      const { configPath, view, stale } = await this.skills.materialize(projectId, cwd);
+      const labels = new Map<string, SkillLabel>();
       for (const v of view) {
         // A shadowed name means the agent will read the REPOSITORY's file, so the badge
         // says so and points at it.
         if (v.shadowedByRepo) labels.set(v.name, { stat: "репо", intent: v.shadowedByRepo });
-        else
-          labels.set(v.name, {
-            stat: v.source === "default" ? "бібліотека" : "проєкт",
-            intent: join(skillsRoot(), projectId, v.name, "SKILL.md"),
-          });
+        else {
+          const stat = v.source === "default" ? "бібліотека" : "проєкт";
+          // A degraded materialise may not have written this name's SKILL.md, and a link to a
+          // file that is not there is worse than no link. The shadowed rows above keep theirs:
+          // a repository path came from a scan that found the file.
+          labels.set(v.name, stale ? { stat } : { stat, intent: join(skillsRoot(), projectId, v.name, "SKILL.md") });
+        }
       }
       this.skillLabels.set(sessionId, labels);
       return configPath;
