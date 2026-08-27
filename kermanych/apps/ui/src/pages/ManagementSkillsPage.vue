@@ -203,6 +203,11 @@ watch(
     // body read still in flight is invalidated.
     editorOpen.value = false;
     resetDraft();
+    // The previous project's rows must not stay on screen under the new project's name for the
+    // length of the reload: every row action pins the LIVE prop, so a click in that window
+    // would write the old project's data into the new one. The empty-state line is gated on
+    // `!error && !loading`, so nothing misleading renders while the read is in flight.
+    rows.value = [];
     void load();
   },
   { immediate: true },
@@ -282,7 +287,10 @@ async function save(): Promise<void> {
       body: draftBody.value,
       enabled: draftEnabled.value,
     });
-    editorOpen.value = false;
+    // «Скасувати» is clickable while the upsert is in flight, so this draft may already have
+    // been replaced by a fresh one. Closing then would fire the `editorOpen` watcher and wipe
+    // that new draft — so only the draft that started this save may close the editor.
+    if (token === draftToken) editorOpen.value = false;
     await load();
   } catch (e) {
     if (token !== draftToken) return;
