@@ -71,11 +71,13 @@
         <button type="button" class="sk__btn" @click="editorOpen = false">Скасувати</button>
         <!-- Saving while the stored body has not been read would write the empty draft over
              it, so the editor is not savable until that read lands — and stays unsavable if
-             it failed, with the reason on the form's error line. -->
+             it failed, with the reason on the form's error line. `canWrite` is checked here
+             too, like every list action: the modal must never be the one surface where a
+             non-owner's write reaches postgrest only to be refused there. -->
         <button
           type="button"
           class="sk__btn sk__btn--primary"
-          :disabled="saving || bodyPending"
+          :disabled="saving || bodyPending || !canWrite"
           @click="save"
         >Зберегти</button>
       </template>
@@ -88,7 +90,7 @@
 // whether the bound checkout already defines a skill of the same name) and writes rows
 // straight to Supabase, where RLS enforces owner-only edits — the same split the .env editor
 // uses for values-vs-names.
-import { computed, onMounted, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { DEFAULT_SKILLS, SKILL_NAME_RE, type SkillView } from '@kermanych/core';
 import { deleteProjectSkill, listProjectSkills, upsertProjectSkill, type ProjectSkill } from '@kermanych/cloud';
 import { api } from '../lib/api';
@@ -125,6 +127,11 @@ const draftEnabled = ref(true);
 // The stored body is fetched when an existing skill is opened; until it arrives (or if the
 // fetch failed) the draft body is NOT the skill's text and must not be written back.
 const bodyPending = ref(false);
+// Which draft the refs above currently hold. A body read is asynchronous, so it captures this
+// number before its await and drops its result if the number has moved on — otherwise a read
+// started for one skill (or one project) would land in whatever draft the operator opened
+// next, making it savable with another skill's body under a different name.
+let draftToken = 0;
 
 const canWrite = computed(() => projects.isOwner(props.projectId));
 
@@ -153,61 +160,110 @@ function tombstones(stored: readonly ProjectSkill[]): Row[] {
 }
 
 async function load(): Promise<void> {
+  // Pinned for the whole read: the prop can change mid-flight (see the watcher below), which
+  // also means two loads can overlap. A load that finishes after the project moved on drops
+  // its result — the list must never show a library the header does not name.
+  const projectId = props.projectId;
   error.value = '';
   loading.value = true;
   try {
     // Both reads, together: the resolved view is what the session gets, the cloud rows are
     // the only place a switched-off default is still recorded.
     const [view, stored] = await Promise.all([
-      api.projectSkills(props.projectId),
-      listProjectSkills(auth.client, [props.projectId]),
+      api.projectSkills(projectId),
+      listProjectSkills(auth.client, [projectId]),
     ]);
+    if (projectId !== props.projectId) return;
     rows.value = [...view, ...tombstones(stored)];
   } catch (e) {
+    if (projectId !== props.projectId) return;
     // The endpoint refuses rather than degrade to the defaults, so a failed read must not
     // leave a list on screen either: what is shown would not be this project's library.
     rows.value = [];
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    loading.value = false;
+    if (projectId === props.projectId) loading.value = false;
   }
 }
-onMounted(load);
 
-function create(): void {
+// `projectId` is a LIVE prop, not a mount-time constant: the Менеджмент shell renders its
+// sections with no `:key` (ManagementPage.vue) and the rail deliberately does not navigate on
+// a Менеджмент route (MainLayout.vue), so picking another project swaps the prop under a
+// component that stays mounted. Reading once on mount would leave the PREVIOUS project's
+// library on screen under the new project's name, and every action would then write the old
+// project's data into the new one. Re-read on every change, and close the editor with it: a
+// modal left open across the switch would save its draft into a project it was never opened
+// for.
+watch(
+  () => props.projectId,
+  () => {
+    // Synchronously, not by way of the `editorOpen` watcher below (which is pre-flush): the
+    // instant the project changes, the modal is shut AND the draft is emptied, so there is no
+    // tick in which a live draft could be saved into a project it was not opened for, and any
+    // body read still in flight is invalidated.
+    editorOpen.value = false;
+    resetDraft();
+    void load();
+  },
+  { immediate: true },
+);
+
+// Empties the draft and invalidates any body read still in flight, returning the new token
+// for the caller that is about to start one. Every close goes through the watcher below —
+// «Скасувати», a successful save, the backdrop and Esc (KModal closes itself), and the project
+// switch above — so there is no call site left to forget.
+function resetDraft(): number {
+  draftToken += 1;
   editing.value = false;
   draftName.value = '';
   draftDescription.value = '';
   draftBody.value = '';
-  bodyPending.value = false;
   draftEnabled.value = true;
+  bodyPending.value = false;
   formError.value = '';
+  return draftToken;
+}
+watch(editorOpen, (open) => {
+  if (!open) resetDraft();
+});
+
+function create(): void {
+  resetDraft();
   editorOpen.value = true;
 }
 
 async function edit(row: Row): Promise<void> {
+  const token = resetDraft();
   editing.value = true;
   draftName.value = row.name;
   draftDescription.value = row.description;
-  draftBody.value = '';
-  draftEnabled.value = true;
   bodyPending.value = true;
-  formError.value = '';
   editorOpen.value = true;
   // A default has no row yet: its body comes from the library constant, so the editor opens
   // on the cloud row when one exists and on an empty body when it does not. A default that
   // is being edited into a project row is enabled by definition — it is in the view.
+  const projectId = props.projectId;
   try {
-    const stored = (await listProjectSkills(auth.client, [props.projectId])).find((s) => s.name === row.name);
+    const stored = (await listProjectSkills(auth.client, [projectId])).find((s) => s.name === row.name);
+    // The operator cancelled, opened another skill, or switched project while this was in
+    // flight: the refs now belong to a different draft, and both the body and the error
+    // below would be someone else's.
+    if (token !== draftToken) return;
     draftBody.value = stored?.body ?? '';
     draftEnabled.value = stored?.enabled ?? true;
     bodyPending.value = false;
   } catch (e) {
+    if (token !== draftToken) return;
     formError.value = e instanceof Error ? e.message : String(e);
   }
 }
 
 async function save(): Promise<void> {
+  // Pinned with the draft token: the write must target the project whose library the operator
+  // was looking at when the button was pressed, and a message from this attempt must not be
+  // painted onto a draft that has since been replaced.
+  const projectId = props.projectId;
+  const token = draftToken;
   formError.value = '';
   if (!SKILL_NAME_RE.test(draftName.value)) {
     formError.value = 'Імʼя: лише малі латинські літери, цифри та дефіс (до 64 символів).';
@@ -220,7 +276,7 @@ async function save(): Promise<void> {
   saving.value = true;
   try {
     await upsertProjectSkill(auth.client, {
-      projectId: props.projectId,
+      projectId,
       name: draftName.value,
       description: draftDescription.value,
       body: draftBody.value,
@@ -229,6 +285,7 @@ async function save(): Promise<void> {
     editorOpen.value = false;
     await load();
   } catch (e) {
+    if (token !== draftToken) return;
     formError.value = e instanceof Error ? e.message : String(e);
   } finally {
     saving.value = false;
@@ -245,10 +302,15 @@ async function save(): Promise<void> {
 // already-gone row. Nothing is dropped from the list here: the endpoint is re-read, so what
 // the screen shows is what the library resolves to.
 async function dropRow(name: string): Promise<void> {
+  // Pinned like every other write on this page: the row belonged to the project on screen
+  // when the button was pressed, and a failure of this attempt is not news about a project
+  // the operator has since switched to.
+  const projectId = props.projectId;
   error.value = '';
   try {
-    await deleteProjectSkill(auth.client, props.projectId, name);
+    await deleteProjectSkill(auth.client, projectId, name);
   } catch (e) {
+    if (projectId !== props.projectId) return;
     error.value = e instanceof Error ? e.message : String(e);
     return;
   }
@@ -259,16 +321,18 @@ async function dropRow(name: string): Promise<void> {
 async function disable(name: string): Promise<void> {
   const def = rows.value.find((r) => r.name === name);
   if (!def) return;
+  const projectId = props.projectId;
   error.value = '';
   try {
     await upsertProjectSkill(auth.client, {
-      projectId: props.projectId,
+      projectId,
       name,
       description: def.description,
       body: '',
       enabled: false,
     });
   } catch (e) {
+    if (projectId !== props.projectId) return;
     error.value = e instanceof Error ? e.message : String(e);
     return;
   }
