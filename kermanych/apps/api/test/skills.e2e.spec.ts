@@ -1,0 +1,66 @@
+// kermanych/apps/api/test/skills.e2e.spec.ts
+// Env-gated, like packages/cloud's RLS suite: needs a working `omp` on PATH.
+// KERMANYCH_E2E_OMP=1 pnpm --filter @kermanych/api exec vitest run test/skills.e2e.spec.ts
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ProjectSkill } from "@kermanych/cloud";
+import { RpcSession } from "../src/rpc/rpc-session";
+import { SkillsService } from "../src/skills/skills.service";
+
+const gated = process.env.KERMANYCH_E2E_OMP === "1";
+
+describe.skipIf(!gated)("skill library reaches a real omp child", () => {
+  let repo: string;
+  let home: string;
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), "kmq-e2e-repo-"));
+    home = mkdtempSync(join(tmpdir(), "kmq-e2e-home-"));
+    process.env.KERMANYCH_SKILLS_HOME = home;
+  });
+  afterEach(() => {
+    delete process.env.KERMANYCH_SKILLS_HOME;
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const row = (name: string, description: string): ProjectSkill => ({
+    projectId: "p1", name, description, body: "body", enabled: true, updatedAt: "t",
+  });
+
+  async function systemPrompt(configPath: string, cwd: string): Promise<string> {
+    const rpc = new RpcSession({ cwd, configPath });
+    rpc.onExit(() => {});
+    await rpc.start();
+    try {
+      const state = (await rpc.getState()) as { systemPrompt?: string[] };
+      return (state.systemPrompt ?? []).join("\n");
+    } finally {
+      await rpc.stop();
+    }
+  }
+
+  test("library skills appear in the system prompt", async () => {
+    const svc = new SkillsService({ cloudClient: () => ({}) } as never);
+    svc.readRows = async () => [row("probe-alpha", "PROBE ALPHA from the library")];
+    const { configPath } = await svc.materialize("p1", repo);
+    const sp = await systemPrompt(configPath, repo);
+    expect(sp).toContain("probe-alpha");
+    expect(sp).toContain("PROBE ALPHA from the library");
+  }, 120_000);
+
+  test("a repository skill of the same name wins", async () => {
+    mkdirSync(join(repo, ".claude/skills/probe-alpha"), { recursive: true });
+    writeFileSync(
+      join(repo, ".claude/skills/probe-alpha/SKILL.md"),
+      "---\nname: probe-alpha\ndescription: PROBE ALPHA from the repository\n---\nrepo body\n",
+    );
+    const svc = new SkillsService({ cloudClient: () => ({}) } as never);
+    svc.readRows = async () => [row("probe-alpha", "PROBE ALPHA from the library")];
+    const { configPath } = await svc.materialize("p1", repo);
+    const sp = await systemPrompt(configPath, repo);
+    expect(sp).toContain("PROBE ALPHA from the repository");
+    expect(sp).not.toContain("PROBE ALPHA from the library");
+  }, 120_000);
+});

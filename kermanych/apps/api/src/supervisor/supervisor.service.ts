@@ -2,14 +2,16 @@
 import { GoneException, Injectable, type OnModuleDestroy } from "@nestjs/common";
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService, type ChangedFile } from "../worktree/worktree.service";
 import type { SplitDiff } from "../worktree/split-diff";
 import { RpcSession } from "../rpc/rpc-session";
 import { messagesToTranscript } from "./messages-to-transcript";
-import { reduceRpcEvents, toolRowMatches } from "./transcript-reducer";
+import { reduceRpcEvents, toolRowMatches, type SkillSource } from "./transcript-reducer";
 import { ToolDetailCache } from "./tool-detail-cache";
+import { SkillsService, skillsRoot } from "../skills/skills.service";
 import { copyCarryFiles } from "../env/carry-files";
 import {
   INITIAL_STATUS,
@@ -75,6 +77,9 @@ export class SupervisorService implements OnModuleDestroy {
   // One cache for every session, live or dormant: GET /sessions/:id/tools/:callId must
   // still serve a session whose omp child has already been torn down.
   private toolDetails = new ToolDetailCache();
+  // name -> the badge a skill row shows. Written at launch from the materialised view,
+  // read by the transcript reducers; dropped with the session.
+  private skillLabels = new Map<string, Map<string, { stat: string; intent: string }>>();
   private lastStamp = 0;
   private events = new Subject<ServerEvent>();
   events$: Observable<ServerEvent> = this.events.asObservable();
@@ -83,7 +88,33 @@ export class SupervisorService implements OnModuleDestroy {
     private registry: RegistryService,
     private worktree: WorktreeService,
     private auth: AuthService,
+    private skills: SkillsService,
   ) {}
+
+  // Lay out the project's skill library for one child and remember how to label its rows.
+  // Never throws: a library failure must degrade to "no library", never to a failed launch.
+  private async ompSkills(projectId: string, cwd: string, sessionId: string): Promise<string | undefined> {
+    try {
+      const { configPath, view } = await this.skills.materialize(projectId, cwd);
+      const labels = new Map<string, { stat: string; intent: string }>();
+      for (const v of view) {
+        // A shadowed name means the agent will read the REPOSITORY's file, so the badge
+        // says so and points at it.
+        if (v.shadowedByRepo) labels.set(v.name, { stat: "репо", intent: v.shadowedByRepo });
+        else
+          labels.set(v.name, {
+            stat: v.source === "default" ? "бібліотека" : "проєкт",
+            intent: join(skillsRoot(), projectId, v.name, "SKILL.md"),
+          });
+      }
+      this.skillLabels.set(sessionId, labels);
+      return configPath;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private skillSource = (sessionId: string): SkillSource => (name) => this.skillLabels.get(sessionId)?.get(name);
 
   onModuleDestroy(): void {
     for (const live of this.map.values()) {
@@ -416,7 +447,8 @@ export class SupervisorService implements OnModuleDestroy {
       projectId, name: `чат ${n}`, task: "", worktreePath: "", branch: "",
       worktree: false, kind: "chat", status: "queued",
     });
-    const rpc = new RpcSession({ cwd: project.localRepoPath, tools: CHAT_TOOLS });
+    const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
+    const rpc = new RpcSession({ cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}) });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await rpc.start();
@@ -431,6 +463,7 @@ export class SupervisorService implements OnModuleDestroy {
       await rpc.stop().catch(() => {});
       this.map.delete(session.id);
       this.toolDetails.dropSession(session.id);
+      this.skillLabels.delete(session.id);
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
       throw err;
@@ -483,6 +516,7 @@ export class SupervisorService implements OnModuleDestroy {
       await live.rpc.stop().catch(() => {});
       this.map.delete(chatId);
       this.toolDetails.dropSession(chatId);
+      this.skillLabels.delete(chatId);
     }
     const session = this.registry.updateSession(chatId, {
       name, kind: "agent", worktree: true, branch, baseBranch, worktreePath: "", prefix: "feature", status: "queued",
@@ -572,7 +606,9 @@ export class SupervisorService implements OnModuleDestroy {
     }
     const saved = worktree ? this.registry.updateSession(id, { worktreePath: wtDir }) : session;
 
-    const rpc = new RpcSession({ cwd: worktree ? wtDir : project.localRepoPath, model, ...(fork ? { fork } : {}) });
+    const cwd = worktree ? wtDir : project.localRepoPath;
+    const configPath = await this.ompSkills(project.id, cwd, id);
+    const rpc = new RpcSession({ cwd, model, ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await rpc.start();
@@ -600,6 +636,7 @@ export class SupervisorService implements OnModuleDestroy {
       await this.worktree.removeBranch(project.localRepoPath, branch).catch(() => {});
       this.map.delete(id);
       this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
       throw err;
     }
     this.pushUpdate(id);
@@ -638,7 +675,8 @@ export class SupervisorService implements OnModuleDestroy {
       parentSessionId: parentId,
     });
 
-    const rpc = new RpcSession({ cwd, fork: parentFile, noTools: true });
+    const configPath = await this.ompSkills(s.projectId, cwd, child.id);
+    const rpc = new RpcSession({ cwd, fork: parentFile, noTools: true, ...(configPath ? { configPath } : {}) });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
@@ -652,6 +690,7 @@ export class SupervisorService implements OnModuleDestroy {
       await rpc.stop().catch(() => {});
       this.map.delete(child.id);
       this.toolDetails.dropSession(child.id);
+      this.skillLabels.delete(child.id);
       this.registry.removeSession(child.id);
       this.events.next({ type: "session_removed", sessionId: child.id });
       throw err;
@@ -702,7 +741,8 @@ export class SupervisorService implements OnModuleDestroy {
       `but you are read-only — do NOT modify anything or run commands. Finish with a clear ` +
       `verdict (APPROVE or NEEDS CHANGES) and a prioritized list of findings.`;
 
-    const rpc = new RpcSession({ cwd, tools: ["read", "grep", "glob"] });
+    const configPath = await this.ompSkills(s.projectId, cwd, child.id);
+    const rpc = new RpcSession({ cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}) });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
@@ -713,6 +753,7 @@ export class SupervisorService implements OnModuleDestroy {
       await rpc.stop().catch(() => {});
       this.map.delete(child.id);
       this.toolDetails.dropSession(child.id);
+      this.skillLabels.delete(child.id);
       this.registry.removeSession(child.id);
       this.events.next({ type: "session_removed", sessionId: child.id });
       throw err;
@@ -752,6 +793,7 @@ export class SupervisorService implements OnModuleDestroy {
       await live.rpc.stop();
       this.map.delete(childId);
       this.toolDetails.dropSession(childId);
+      this.skillLabels.delete(childId);
     }
     this.registry.updateSession(childId, { status: "merged" });
     this.pushUpdate(childId);
@@ -768,7 +810,7 @@ export class SupervisorService implements OnModuleDestroy {
   // came with it, so a row opened after a reload can still expand through
   // GET /sessions/:id/tools/:callId instead of 410-ing.
   private rehydrate(l: Live, id: string, messages: unknown[]) {
-    const { entries, full } = messagesToTranscript(messages);
+    const { entries, full } = messagesToTranscript(messages, { skillSource: this.skillSource(id) });
     l.transcript = entries;
     for (const [callId, lines] of full) this.toolDetails.put(id, callId, lines);
   }
@@ -858,6 +900,7 @@ export class SupervisorService implements OnModuleDestroy {
       thinkBuf: l.thinkBuf,
       startedAt: l.toolStarted,
       pendingArgs: l.toolArgs,
+      skillSource: this.skillSource(id),
     });
     l.textBuf = reduced.textBuf;
     l.thinkBuf = reduced.thinkBuf;
@@ -956,6 +999,7 @@ export class SupervisorService implements OnModuleDestroy {
       this.stopPoll(l);
       this.map.delete(id);
       this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
     }
     return this.resumeSession(id);
   }
@@ -1063,6 +1107,7 @@ export class SupervisorService implements OnModuleDestroy {
       await l.rpc.stop().catch(() => {});
       this.map.delete(id);
       this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
     }
     await this.resumeSession(id);
     return { ok: true };
@@ -1080,6 +1125,7 @@ export class SupervisorService implements OnModuleDestroy {
       await l.rpc.stop();
       this.map.delete(id);
       this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
     }
     if (s && s.kind !== "agent") {
       // No git: the child owns no branch/worktree; its cwd is the parent's.
@@ -1173,7 +1219,7 @@ export class SupervisorService implements OnModuleDestroy {
         return { conflict: true, files: await this.worktree.unmergedFiles(s.worktreePath) };
       }
       const l = this.map.get(id);
-      if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); this.toolDetails.dropSession(id); }
+      if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); this.toolDetails.dropSession(id); this.skillLabels.delete(id); }
       await this.worktree.removeWorktree(g.localRepoPath, s.worktreePath);
       await this.worktree.removeBranch(g.localRepoPath, s.branch);
       this.registry.updateSession(id, { status: "merged", worktreePath: "" });
@@ -1204,7 +1250,7 @@ export class SupervisorService implements OnModuleDestroy {
       return { conflict: true, files: await this.worktree.unmergedFiles(g.localRepoPath) };
     }
     const l = this.map.get(id);
-    if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); this.toolDetails.dropSession(id); }
+    if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); this.toolDetails.dropSession(id); this.skillLabels.delete(id); }
     await this.worktree.removeBranch(g.localRepoPath, s.branch); // the local repo is left on base
     this.registry.updateSession(id, { status: "merged" });
     this.pushUpdate(id);
@@ -1311,7 +1357,8 @@ export class SupervisorService implements OnModuleDestroy {
     const dir = s.worktreePath || g.localRepoPath;
     if (s.kind === "agent" && !s.worktree && (await this.worktree.currentBranch(g.localRepoPath)) !== s.branch)
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
-    const rpc = new RpcSession({ cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}) });
+    const configPath = await this.ompSkills(s.projectId, dir, id);
+    const rpc = new RpcSession({ cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(configPath ? { configPath } : {}) });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await rpc.start();
@@ -1324,6 +1371,7 @@ export class SupervisorService implements OnModuleDestroy {
       await rpc.stop().catch(() => {});
       this.map.delete(id);
       this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
       this.registry.updateSession(id, { status: "error" });
       this.pushUpdate(id);
       throw err;
