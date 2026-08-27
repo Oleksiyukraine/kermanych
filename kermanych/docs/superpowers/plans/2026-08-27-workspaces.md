@@ -319,16 +319,19 @@ grant execute on function public.invite_workspace_member(uuid, text) to authenti
 alter table public.workspaces        enable row level security;
 alter table public.workspace_members enable row level security;
 
--- Supabase's default privileges grant new public tables to anon, so this revoke is
--- load-bearing.
+-- Defensive: config.toml leaves auto_expose_new_tables unset, so nothing is granted to
+-- anon implicitly — this revoke is what survives someone turning it back on.
 revoke all on table public.workspaces        from anon;
 revoke all on table public.workspace_members from anon;
 
--- No INSERT grant on workspace_members: no policy will ever permit a client insert,
--- and a missing grant denies one layer earlier than a missing policy. The rpc and
--- the trigger are `security definer`, so they need no grant here.
+-- workspace_members gets NEITHER insert NOR update: no policy will ever permit either,
+-- and a missing grant denies one layer earlier than a missing policy. A membership row
+-- is created by the rpc or the trigger and destroyed by the owner — nothing in this
+-- design ever edits one, and an owner-scoped UPDATE that pinned neither user_id nor
+-- role would have let an owner forge role='owner' or a user_id that never consented.
+-- Both functions are `security definer`, so they need no grant here.
 grant select, insert, update, delete on table public.workspaces        to authenticated;
-grant select,         update, delete on table public.workspace_members to authenticated;
+grant select,                delete on table public.workspace_members to authenticated;
 
 -- `owner_id = auth.uid() or` is not redundancy: INSERT … RETURNING evaluates the
 -- SELECT policy for the returned row BEFORE the AFTER-INSERT trigger has created the
@@ -355,15 +358,6 @@ create policy workspaces_delete_owner on public.workspaces
 create policy workspace_members_select_member on public.workspace_members
   for select to authenticated
   using (public.is_workspace_member(workspace_id, auth.uid()));
-
-create policy workspace_members_update_owner on public.workspace_members
-  for update to authenticated
-  using (exists (
-    select 1 from public.workspaces w
-    where w.id = workspace_id and w.owner_id = auth.uid()))
-  with check (exists (
-    select 1 from public.workspaces w
-    where w.id = workspace_id and w.owner_id = auth.uid()));
 
 create policy workspace_members_delete_owner on public.workspace_members
   for delete to authenticated

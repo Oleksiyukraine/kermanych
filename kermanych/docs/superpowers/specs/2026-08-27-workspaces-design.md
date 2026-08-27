@@ -285,10 +285,17 @@ can be removed. `tasks.assignee_id` / `tasks.created_by` stay `on delete set nul
 ## RLS policies
 
 `workspaces` and `workspace_members` get RLS, the `anon` revoke, and the narrowest
-grants. `workspace_members` deliberately gets **no INSERT grant at all** — no
-policy will ever permit a client insert, and the RLS file's own rule is that "a
-missing grant denies one layer earlier". (`project_members` held a redundant
-INSERT grant; this does not reproduce it.)
+grants. `workspace_members` deliberately gets **neither an INSERT nor an UPDATE
+grant** — no policy will ever permit either, and the RLS file's own rule is that "a
+missing grant denies one layer earlier". (`project_members` held a redundant INSERT
+grant and an owner UPDATE policy; this reproduces neither.)
+
+Dropping UPDATE is what makes the invariant below actually true. A membership row is
+created by the rpc or the creation trigger and destroyed by the owner — nothing in
+this design ever edits one, because there is no role-change and no
+ownership-transfer feature. An owner-scoped UPDATE policy that pinned neither
+`user_id` nor `role` would have let a workspace owner forge `role='owner'`, or a
+`user_id` that never consented, straight past the rpc.
 
 ```sql
 alter table public.workspaces        enable row level security;
@@ -298,13 +305,13 @@ revoke all on table public.workspaces        from anon;
 revoke all on table public.workspace_members from anon;
 
 grant select, insert, update, delete on table public.workspaces        to authenticated;
-grant select,         update, delete on table public.workspace_members to authenticated;
+grant select,                delete on table public.workspace_members to authenticated;
 ```
 
 | table | select | insert | update | delete |
 |---|---|---|---|---|
 | `workspaces` | `owner_id = auth.uid() or is_workspace_member(id, auth.uid())` | any authenticated, `owner_id = auth.uid()` | owner | owner (FK-blocked while it holds projects) |
-| `workspace_members` | `is_workspace_member(workspace_id, auth.uid())` | **none** — `invite_workspace_member()` rpc + `on_workspace_created` trigger only | owner | owner |
+| `workspace_members` | `is_workspace_member(workspace_id, auth.uid())` | **none** — `invite_workspace_member()` rpc + `on_workspace_created` trigger only | **none** — no grant, no policy; a membership row is never edited | owner |
 | `projects` | `is_workspace_member(workspace_id, auth.uid())` | member of the target workspace | member of both old and new workspace | workspace owner |
 | `tasks` | unchanged (`is_project_member(project_id, auth.uid())`) | unchanged | unchanged | unchanged |
 
