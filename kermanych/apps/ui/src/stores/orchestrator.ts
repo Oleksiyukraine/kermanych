@@ -39,6 +39,11 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   const sessions = ref<Session[]>([]);
   const transcripts = ref<Record<string, TranscriptEntry[]>>({});
   const selectedProjectId = ref<string | undefined>(undefined);
+  const selectedWorkspaceId = ref<string | undefined>(undefined);
+  // projectId -> workspaceId, pushed in by useProjects.load(). This store must NOT
+  // import useProjects — that store already depends on this one for notify() and the
+  // registry sync — so the map travels one way, downwards.
+  const projectWorkspace = ref<Record<string, string>>({});
   const selectedSessionId = ref<string | undefined>(undefined);
   const previews = ref<Record<string, string>>({});
   const toasts = ref<Toast[]>([]);
@@ -67,6 +72,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       // fall back to the "nothing selected" shell so the header/board don't dangle.
       if (selectedProjectId.value === e.projectId) {
         selectedProjectId.value = undefined;
+        selectedWorkspaceId.value = undefined;
         selectedSessionId.value = undefined;
       }
     } else if (e.type === 'session_update') {
@@ -120,8 +126,27 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     socket = connectSocket(reduce);
   }
 
+  function setProjectWorkspaces(map: Record<string, string>): void {
+    projectWorkspace.value = map;
+  }
+
+  // Scope = a workspace. Clears the project so every project-scoped screen falls back
+  // to its "nothing selected" shell instead of showing a stale project.
+  function selectWorkspace(id: string): void {
+    selectedWorkspaceId.value = id;
+    selectedProjectId.value = undefined;
+    selectedSessionId.value = undefined;
+  }
+
+  // Scope = a project, which ALWAYS carries its own workspace: both rows highlight in
+  // the tree, and the board's scope stays the group while «Проєкти» narrows it.
+  // One argument on purpose — the notification handler above has only a projectId, and
+  // an optional workspace argument would let it highlight a group that does not
+  // contain this project. A local-only project has no cloud row, so the map has no
+  // entry and the workspace clears, which is the honest answer.
   function selectProject(id: string): void {
     selectedProjectId.value = id;
+    selectedWorkspaceId.value = projectWorkspace.value[id];
     selectedSessionId.value = undefined;
   }
 
@@ -319,6 +344,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     transcripts,
     selectedProjectId,
     selectedSessionId,
+    selectedWorkspaceId,
+    projectWorkspace,
+    setProjectWorkspaces,
+    selectWorkspace,
     selectedBucket,
     setBucket,
     connect,
