@@ -1,5 +1,5 @@
 import type { ToolLine, TranscriptEntry } from "@kermanych/core";
-import { applyToolResult, hasTurnMeta, joinResultText, pendingToolEntry, turnEntry, type TurnMeta } from "./transcript-reducer";
+import { applyToolResult, hasTurnMeta, joinResultText, pendingToolEntry, turnEntry, type SkillSource, type TurnMeta } from "./transcript-reducer";
 
 // Shape of omp's converted history messages (get_messages / get_messages_page) we map from.
 export type OmpPart = {
@@ -36,7 +36,7 @@ export type Rehydrated = { entries: TranscriptEntry[]; full: Map<string, ToolLin
 // predates those ids — a real assistant message issues two to four parallel calls, so the
 // id is what keeps each row's own stat, count and clamped detail. Reasoning parts
 // ({ type:"thinking" }) map to assistant_thinking and render as a collapsed block.
-export function messagesToTranscript(messages: unknown[]): Rehydrated {
+export function messagesToTranscript(messages: unknown[], opts?: { skillSource?: SkillSource }): Rehydrated {
   const entries: TranscriptEntry[] = [];
   const full = new Map<string, ToolLine[]>();
   let seq = 0;
@@ -74,7 +74,7 @@ export function messagesToTranscript(messages: unknown[]): Rehydrated {
           const id = `h${++seq}`;
           if (p.arguments) pendingArgs.set(id, p.arguments);
           if (p.id) rowByCallId.set(p.id, id);
-          entries.push(pendingToolEntry(id, at, p.name ?? "?", p.arguments, p.intent));
+          entries.push(pendingToolEntry(id, at, p.name ?? "?", p.arguments, p.intent, opts?.skillSource));
         }
       }
       // A no-op when omp's converted history carries no accounting — better a missing footer
@@ -86,7 +86,13 @@ export function messagesToTranscript(messages: unknown[]): Rehydrated {
       // FIFO by tool name is only the fallback, for history that predates the ids.
       const found =
         (rowId === undefined ? undefined : entries.find((x) => x.kind === "tool" && x.id === rowId)) ??
-        entries.find((x) => x.kind === "tool" && x.status === "pending" && x.tool === tool);
+        entries.find(
+          (x) =>
+            x.kind === "tool" &&
+            x.status === "pending" &&
+            // `read` in the history message may have been renamed to `skill` on the row.
+            (x.tool === tool || (tool === "read" && x.tool === "skill")),
+        );
       // An unmatched result (history paged mid-call) still earns its own completed row.
       const entry = found?.kind === "tool" ? found : pendingToolEntry(`h${++seq}`, at, tool, undefined);
       const args = pendingArgs.get(entry.id);

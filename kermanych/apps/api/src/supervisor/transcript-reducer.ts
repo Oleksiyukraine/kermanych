@@ -41,6 +41,9 @@ export type ReduceOpts = {
   // them on the result, yet reducers need them there too — `$ <command>` in a bash card is
   // the whole point of opening it.
   pendingArgs?: Map<string, Record<string, unknown>>;
+  // Resolves a skill name to its source badge. Injected by the supervisor from the
+  // materialised library, so this module stays pure.
+  skillSource?: SkillSource;
 };
 
 export type Reduced = { entries: TranscriptEntry[]; full: Map<string, ToolLine[]>; textBuf: string; thinkBuf: string };
@@ -52,16 +55,45 @@ export function joinResultText(content: { type?: string; text?: string }[] | und
   return (content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
 }
 
+// The source badge for a skill row: `stat` shows collapsed (KToolRow renders tool/target/stat
+// on the closed row), `intent` only when the row is expanded, so the badge belongs in `stat`
+// and the file path in `intent`.
+export type SkillLabel = { stat?: string; intent?: string };
+export type SkillSource = (name: string) => SkillLabel | undefined;
+
+// omp has no dedicated tool for skills: a skill is used by reading `skill://<name>`. The
+// transcript renames that row so it reads as a skill and never coalesces with file reads
+// (COALESCE_TOOLS covers `read`). Returns undefined for anything that is not a skill read.
+export function skillNameFromArgs(args: Record<string, unknown> | undefined): string | undefined {
+  const p = args?.["path"];
+  if (typeof p !== "string" || !p.startsWith("skill://")) return undefined;
+  const name = p.slice("skill://".length);
+  return name || undefined;
+}
+
 // The call side of a tool row. Deriving the target here is what makes it deterministic:
 // it never depends on what the result happened to report.
-export function pendingToolEntry(id: string, at: number, tool: string, args: Record<string, unknown> | undefined, intent?: string): ToolEntry {
+export function pendingToolEntry(
+  id: string,
+  at: number,
+  tool: string,
+  args: Record<string, unknown> | undefined,
+  intent?: string,
+  skillSource?: SkillSource,
+): ToolEntry {
+  // The rename lives HERE, not at the call sites, because both the live stream and the
+  // rehydration path build rows through this function: parity depends on one rule.
+  const skill = tool === "read" ? skillNameFromArgs(args) : undefined;
+  const effective = skill ? "skill" : tool;
+  const label = skill ? skillSource?.(skill) : undefined;
   // No recorded arguments means there is nothing to derive a target from. Asking the
   // display reducers with an empty object would invent one — grep answers "//" — and that
   // would later clobber the good target on a row whose start frame we did see.
-  const target = args ? toolDisplay(tool, args, undefined, "").target : undefined;
+  const target = args ? toolDisplay(effective, args, undefined, "").target : undefined;
   return {
-    kind: "tool", id, at, tool, status: "pending",
-    ...(intent === undefined ? {} : { intent }),
+    kind: "tool", id, at, tool: effective, status: "pending",
+    ...((label?.intent ?? intent) === undefined ? {} : { intent: (label?.intent ?? intent) as string }),
+    ...(label?.stat ? { stat: label.stat } : {}),
     ...(target ? { target } : {}),
   };
 }
@@ -147,7 +179,7 @@ export function reduceRpcEvents(events: RpcEvent[], opts?: ReduceOpts): Reduced 
       const id = ev.toolCallId ?? `t${at}`;
       startedAt.set(id, at);
       if (ev.args) pendingArgs.set(id, ev.args);
-      entries.push(pendingToolEntry(id, at, ev.toolName ?? "?", ev.args, ev.intent));
+      entries.push(pendingToolEntry(id, at, ev.toolName ?? "?", ev.args, ev.intent, opts?.skillSource));
       continue;
     }
     if (e.type === "tool_execution_end") {
@@ -160,7 +192,13 @@ export function reduceRpcEvents(events: RpcEvent[], opts?: ReduceOpts): Reduced 
       // and let the caller patch its own copy of the row.
       const found =
         (ev.toolCallId ? entries.find((x) => x.kind === "tool" && x.id === ev.toolCallId) : undefined) ??
-        entries.find((x) => x.kind === "tool" && x.status === "pending" && x.tool === tool);
+        entries.find(
+          (x) =>
+            x.kind === "tool" &&
+            x.status === "pending" &&
+            // `read` on the wire may have been renamed to `skill` on the row.
+            (x.tool === tool || (tool === "read" && x.tool === "skill")),
+        );
       const entry: ToolEntry =
         found?.kind === "tool" ? found : pendingToolEntry(ev.toolCallId ?? `t${at}`, at, tool, undefined);
       const started = startedAt.get(entry.id);
