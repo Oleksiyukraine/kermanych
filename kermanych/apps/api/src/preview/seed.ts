@@ -8,9 +8,10 @@ import type { SessionStatus, Usage } from "@kermanych/core";
 // empty and there's nothing to eyeball. seedDemo fills the registry with INERT rows —
 // no git, no omp, no cloud: projects carry no previewCommand, point at an unreachable
 // localRepoPath and use synthetic UUIDs that exist on no Supabase project — covering
-// every status plus the archived filter so the board, status dots, branch tags and
-// project switcher all render. Idempotent: it only touches an empty registry, so a
-// persistent preview DB never accumulates duplicates.
+// every status, the archived filter and the discussion/review branches that hang off an
+// agent, so the board, status dots, branch tags, fork elbows and the project switcher all
+// render. Idempotent: it only touches an empty registry, so a persistent preview DB never
+// accumulates duplicates.
 type Demo = {
   name: string;
   branch: string;
@@ -21,6 +22,17 @@ type Demo = {
   model?: string;
   // Lifetime accounting, as the supervisor would have counted it. Omitted on purpose for
   // one row: an agent whose turns were never counted must render no figure at all.
+  usage?: Usage;
+  // Branches forked off this agent's conversation, as branchSession/reviewSession make
+  // them: no worktree, no branch of their own, and a name carrying the parent's. Seeded so
+  // the board's one-level tree — the fork cards and their elbow — has something to draw.
+  forks?: Fork[];
+};
+
+type Fork = {
+  kind: "discussion" | "review";
+  status: SessionStatus;
+  model?: string;
   usage?: Usage;
 };
 
@@ -46,6 +58,21 @@ export function seedDemo(registry: RegistryService): void {
     });
     if (d.archived) registry.updateSession(s.id, { archived: true });
     if (d.usage) registry.addUsage(s.id, d.usage);
+    for (const f of d.forks ?? []) {
+      const child = registry.createSession({
+        projectId,
+        name: `${f.kind === "review" ? "ревізія" : "гілка"}: ${d.name}`,
+        task: f.kind === "review" ? d.name : "",
+        worktreePath: "",
+        branch: "",
+        worktree: false,
+        status: f.status,
+        kind: f.kind,
+        parentSessionId: s.id,
+        model: f.model,
+      });
+      if (f.usage) registry.addUsage(child.id, f.usage);
+    }
   };
 
   // Acme Web covers all nine statuses, both isolation modes, and one archived row.
@@ -53,8 +80,8 @@ export function seedDemo(registry: RegistryService): void {
     { name: "Оновити залежності", branch: "chore/deps", status: "queued", model: "haiku" },
     { name: "Додати онбординг", branch: "feature/onboarding", status: "thinking", model: "opus-5", usage: { input: 18_400, output: 9_200, cacheRead: 1_240_000, cacheWrite: 62_000, cost: 3.18 } },
     { name: "Виправити CSP на iframe", branch: "fix/csp-iframe", status: "tool", model: "sonnet-4.5", usage: { input: 6_100, output: 3_400, cacheRead: 214_000, cacheWrite: 18_000, cost: 0.62 } },
-    { name: "Рефактор стора", branch: "refactoring/store", status: "waiting_input", model: "opus-5", usage: { input: 9_800, output: 4_100, cacheRead: 480_000, cacheWrite: 27_000, cost: 1.41 } },
-    { name: "Темна тема", branch: "feature/dark-theme", status: "done", model: "sonnet-4.5", usage: { input: 3_200, output: 1_900, cacheRead: 96_000, cacheWrite: 8_400, cost: 0.28 } },
+    { name: "Рефактор стора", branch: "refactoring/store", status: "waiting_input", model: "opus-5", usage: { input: 9_800, output: 4_100, cacheRead: 480_000, cacheWrite: 27_000, cost: 1.41 }, forks: [{ kind: "discussion", status: "done", model: "opus-5", usage: { input: 2_100, output: 1_300, cacheRead: 88_000, cacheWrite: 0, cost: 0.21 } }] },
+    { name: "Темна тема", branch: "feature/dark-theme", status: "done", model: "sonnet-4.5", usage: { input: 3_200, output: 1_900, cacheRead: 96_000, cacheWrite: 8_400, cost: 0.28 }, forks: [{ kind: "discussion", status: "thinking", model: "haiku", usage: { input: 410, output: 180, cacheRead: 6_200, cacheWrite: 0, cost: 0.004 } }, { kind: "review", status: "done", model: "opus-5", usage: { input: 7_400, output: 2_900, cacheRead: 132_000, cacheWrite: 9_600, cost: 0.88 } }] },
     { name: "Кеш API", branch: "feature/api-cache", status: "error", model: "haiku", usage: { input: 740, output: 210, cacheRead: 12_000, cacheWrite: 0, cost: 0.003 } },
     { name: "Хотфікс продакшена", branch: "fix/prod-hotfix", status: "stopped", worktree: false, baseBranch: "main", model: "sonnet-4.5", usage: { input: 1_100, output: 520, cacheRead: 34_000, cacheWrite: 2_100, cost: 0.11 } },
     { name: "Міграція БД", branch: "feature/db-migration", status: "conflict", model: "opus-5", usage: { input: 12_600, output: 5_800, cacheRead: 720_000, cacheWrite: 41_000, cost: 2.07 } },

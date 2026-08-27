@@ -18,7 +18,7 @@ test("seedDemo populates an empty registry across every status, both modes, and 
   expect(ids.size).toBe(2);
   expect(reg.listSessions().every((s) => ids.has(s.projectId))).toBe(true);
   const sessions = reg.listSessions();
-  expect(sessions.length).toBe(12);
+  expect(sessions.length).toBe(15);
 
   // Every SessionStatus the board can render is present, so no status dot is left untested.
   const ALL: SessionStatus[] = [
@@ -30,6 +30,20 @@ test("seedDemo populates an empty registry across every status, both modes, and 
   // The archived filter has content, and an in-place (non-worktree) row exists.
   expect(sessions.some((s) => s.archived)).toBe(true);
   expect(sessions.some((s) => !s.worktree)).toBe(true);
+
+  // The board draws a one-level tree, so the seed has to contain one: branches forked off a
+  // parent (both kinds), including an agent with more than one — the case where the fork
+  // cards have to read as one bracket rather than a chain hanging off each other.
+  const forks = sessions.filter((s) => s.parentSessionId);
+  expect(forks.length).toBe(3);
+  expect(new Set(forks.map((s) => s.kind))).toEqual(new Set(["discussion", "review"]));
+  expect(forks.every((s) => !s.worktree && !s.branch)).toBe(true);
+  const perParent = new Map<string, number>();
+  for (const f of forks) perParent.set(f.parentSessionId!, (perParent.get(f.parentSessionId!) ?? 0) + 1);
+  expect(Math.max(...perParent.values())).toBe(2);
+  // Every fork hangs off a seeded AGENT — never off another fork or a row that is not there.
+  const agents = new Set(sessions.filter((s) => s.kind === "agent").map((s) => s.id));
+  expect(forks.every((f) => agents.has(f.parentSessionId!))).toBe(true);
 
   // The board's accounting line needs both cases on screen: rows that were counted, and at
   // least one that never was — a seed where every row has a figure would hide the absent

@@ -1,28 +1,36 @@
 <template>
-  <button
-    type="button"
-    class="k-session-card"
-    :class="{ 'k-session-card--selected': selected }"
-    @click="$emit('click')"
+  <div
+    class="k-session-card-host"
+    :class="{
+      'k-session-card-host--fork': fork,
+      'k-session-card-host--fork-lit': fork && selected,
+    }"
   >
-    <div class="k-session-card__top">
-      <span
-        class="k-session-card__label"
-        :class="branch ? 'k-session-card__label--branch' : 'k-session-card__label--title'"
-      >{{ branch || title }}</span>
-      <span class="k-session-card__time">{{ time }}</span>
-    </div>
-    <div class="k-session-card__status">
-      <KStatusDot :status="status" />
-      <span v-if="statusLine" class="k-session-card__status-line">{{ statusLine }}</span>
-    </div>
-    <!-- what is running and what it has cost — absent whenever we know neither -->
-    <div v-if="model || spend" class="k-session-card__meta mono">
-      <span v-if="model" class="k-session-card__model">{{ model }}</span>
-      <span v-if="model && spend">·</span>
-      <span v-if="spend" class="k-session-card__spend">{{ spend }}</span>
-    </div>
-  </button>
+    <button
+      type="button"
+      class="k-session-card"
+      :class="{ 'k-session-card--selected': selected }"
+      @click="$emit('click')"
+    >
+      <div class="k-session-card__top">
+        <span
+          class="k-session-card__label"
+          :class="branch ? 'k-session-card__label--branch' : 'k-session-card__label--title'"
+        >{{ branch || title }}</span>
+        <span class="k-session-card__time">{{ time }}</span>
+      </div>
+      <div class="k-session-card__status">
+        <KStatusDot :status="status" />
+        <span v-if="statusLine" class="k-session-card__status-line">{{ statusLine }}</span>
+      </div>
+      <!-- what is running and what it has cost — absent whenever we know neither -->
+      <div v-if="model || spend" class="k-session-card__meta mono">
+        <span v-if="model" class="k-session-card__model">{{ model }}</span>
+        <span v-if="model && spend">·</span>
+        <span v-if="spend" class="k-session-card__spend">{{ spend }}</span>
+      </div>
+    </button>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -34,6 +42,13 @@ import { tokens, usageTokens, usd } from '../../lib/format';
 // Session summary card: branch + time header, a status row pairing the status dot with a
 // short status line, and the accounting line — which model is running and what it has
 // consumed. Selected / hover lift the card with a subtle surface fill.
+//
+// `fork` marks the card as a BRANCH of the card above it — a discussion or review session
+// forked off a parent agent's conversation. It is not decoration: the fork is a child in a
+// one-level tree, and without the elbow the list would show it as one more independent
+// agent that merely happens to sit there. The list is expected to keep a fork directly
+// under its parent, alone with its siblings in one container, and to leave `--k-fork-gap`
+// (default `--k-sp-2`) as the vertical gap between them — the spine crosses exactly that.
 const props = withDefaults(
   defineProps<{
     branch: string;
@@ -46,8 +61,9 @@ const props = withDefaults(
     usage?: Usage | undefined;
     model?: string | undefined;
     selected?: boolean;
+    fork?: boolean;
   }>(),
-  { selected: false },
+  { selected: false, fork: false },
 );
 
 defineEmits<{ click: [] }>();
@@ -87,6 +103,65 @@ const spend = computed(() => {
 
 .k-session-card--selected {
   background: var(--k-surface2);
+}
+
+// ── Fork (a branch of the card above) ─────────────────────────────────────────────────
+// The elbow is drawn by the host, not the card: it has to cross the gap the list leaves
+// between the two cards, which the card's own box cannot reach.
+.k-session-card-host {
+  position: relative;
+}
+
+.k-session-card-host--fork {
+  // Where the elbow meets the card: the label row's centre — the card's own top padding
+  // plus half of the 12px label's line box.
+  --k-fork-elbow: 21px;
+  --k-fork-trunk: 7px;
+  padding-left: 18px;
+
+  &::before,
+  &::after {
+    content: '';
+    position: absolute;
+    background: var(--k-line-strong);
+  }
+
+  // The spine: starts in the gap above (at the parent card's bottom edge) and drops to
+  // the elbow.
+  &::before {
+    left: var(--k-fork-trunk);
+    top: calc(-1 * var(--k-fork-gap, var(--k-sp-2)));
+    width: 1px;
+    height: calc(var(--k-fork-gap, var(--k-sp-2)) + var(--k-fork-elbow));
+  }
+
+  // The stub into the card.
+  &::after {
+    left: var(--k-fork-trunk);
+    top: var(--k-fork-elbow);
+    width: calc(18px - var(--k-fork-trunk));
+    height: 1px;
+  }
+}
+
+// Every fork but the last runs its spine on to the next sibling, so several branches of
+// one agent read as one bracket instead of a chain hanging off each other.
+.k-session-card-host--fork:not(:last-child)::before {
+  height: calc(100% + var(--k-fork-gap, var(--k-sp-2)));
+}
+
+// While the fork is the open session, its tie to the parent is what the operator is
+// looking for: light it.
+.k-session-card-host--fork-lit::before,
+.k-session-card-host--fork-lit::after {
+  background: var(--k-accent);
+}
+
+// A fork carries no branch, so it shows its name — which must not outshout the parent's
+// own label above it.
+.k-session-card-host--fork .k-session-card__label--title {
+  font-size: var(--k-fs-sm);
+  color: var(--k-muted);
 }
 
 .k-session-card__top {
