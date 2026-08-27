@@ -5,3 +5,6 @@ dist/
 # Local secrets (Supabase CLI env() substitution reads kermanych/.env). Never committed.
 .env
 .env.local
+
+# one-off migration rehearsal output (kermanych/scripts/verify-workspace-migration.ts)
+.kermanych-migration-rehearsal.json
