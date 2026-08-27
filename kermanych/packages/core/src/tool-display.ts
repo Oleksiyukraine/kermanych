@@ -242,14 +242,21 @@ const evalDisplay: Reducer = (args, d, content) => {
   return { target: str(args["i"]), ...(language ? { stat: language } : {}), lines, totalLines: lines.length };
 };
 
-// `skill://<name>[/<sub-path>]` — the name IS the row's identity, so it is never put through
-// shortPath: that keeps the last two segments and would render a skill read as a file read
-// of `/<name>`, losing the scheme. No `stat` is produced here on purpose; the transcript
-// fills it with the source badge (бібліотека / проєкт / репо).
-const skillDisplay: Reducer = (args, _d, content) => {
+// `skill://<name>[/<sub-path>]` — the name IS the row's identity. The generic fallback would
+// leave the whole `skill://…` string as the target, so the row reads as a raw URI instead of a
+// named skill and coalesces with file reads; strip the scheme here and keep the rest whole —
+// the name is never shortened. No `stat` is produced on purpose; the transcript fills it with
+// the source badge (бібліотека / проєкт / репо). `truncation` still means the upstream body was
+// cut, exactly as in `readDisplay`, so the row must carry the note.
+const skillDisplay: Reducer = (args, d, content) => {
   const target = str(args["path"]).replace(/^skill:\/\//, "");
   const lines = textLines(content);
-  return { ...(target ? { target } : {}), lines, totalLines: lines.length };
+  return {
+    ...(target ? { target } : {}),
+    lines,
+    totalLines: lines.length,
+    ...(d["truncation"] ? { truncatedUpstream: true } : {}),
+  };
 };
 
 const genericDisplay: Reducer = (args, _d, content) => {

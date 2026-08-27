@@ -310,3 +310,10 @@ test("read still shortens ordinary paths (guard against reusing the skill reduce
 test("skill rows are never coalesced with file reads", () => {
   expect((COALESCE_TOOLS as readonly string[]).includes("skill")).toBe(false);
 });
+
+// A truncated skill body must render the «віддано обрізаним» note, exactly as a truncated
+// read does: the details payload is the same, only the tool name differs.
+test("a skill row keeps the upstream truncation flag", () => {
+  expect(toolDisplay("skill", { path: "skill://x" }, { truncation: true }, "body").truncatedUpstream).toBe(true);
+  expect(toolDisplay("skill", { path: "skill://x" }, {}, "body").truncatedUpstream).toBeUndefined();
+});

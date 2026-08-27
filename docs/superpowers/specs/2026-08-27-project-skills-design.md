@@ -110,10 +110,10 @@ A skill is used by reading `skill://<name>` with the `read` tool. The reducer
 already receives call arguments (`apps/api/src/supervisor/transcript-reducer.ts:57-67`,
 `pendingToolEntry`), so the signal is present — but it is unusable as-is:
 `readDisplay` (`packages/core/src/tool-display.ts:56-57`) sets
-`target = shortPath(args.path)`, and `shortPath` (`:33-39`) keeps the last two
-path segments, so `skill://opening-a-pr` renders as an ordinary file read of
-`/opening-a-pr`, with the scheme gone; adjacent `read` rows also coalesce and sum
-their counts (`:6-8`).
+`target = shortPath(args.path)`, and `shortPath` (`:33-39`) splits off a `:from-to`
+range before shortening, so it leaves the full `skill://opening-a-pr` URI as the
+target: the row is indistinguishable from a file read and coalesces with reads
+(`COALESCE_TOOLS` covers `read`), summing their counts (`:6-8`).
 
 ## 3. Design
 
