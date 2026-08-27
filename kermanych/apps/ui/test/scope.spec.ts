@@ -35,10 +35,14 @@ function task(id: string, projectId: string, over: Partial<Task> = {}): Task {
 }
 
 describe('groupProjectsByWorkspace', () => {
-  it('keeps workspace order and puts each project under its own group', () => {
+  // The names deliberately run COUNTER to the ids — 'ZZZ' before 'AAA', and the projects
+  // named in reverse of their insertion order — so that cloud order and alphabetical order
+  // disagree. Tidying them back into ascending order would silently stop this test from
+  // catching a friendly `sort((a, b) => a.name.localeCompare(b.name))` added to the sidebar.
+  it('keeps cloud order, not alphabetical order, for groups and for projects inside one', () => {
     const groups = groupProjectsByWorkspace(
-      [ws('w1', 'AAA'), ws('w2', 'BBB')],
-      [proj('p1', 'w2'), proj('p2', 'w1'), proj('p3', 'w1')],
+      [ws('w1', 'ZZZ'), ws('w2', 'AAA')],
+      [proj('p1', 'w2', 'MMM'), proj('p2', 'w1', 'YYY'), proj('p3', 'w1', 'BBB')],
     );
     expect(groups.map((g) => g.workspace.id)).toEqual(['w1', 'w2']);
     expect(groups[0]!.projects.map((p) => p.id)).toEqual(['p2', 'p3']);
@@ -73,6 +77,9 @@ describe('scopedProjectIds', () => {
 
   it('returns every project when nothing is selected', () => {
     expect(scopedProjectIds({}, projects)).toEqual(['p1', 'p2', 'p3']);
+    // '' means "no filter" everywhere in this UI, so it must widen to every project
+    // rather than narrow to none — the same convention filterTasks is tested for below.
+    expect(scopedProjectIds({ workspaceId: '' }, projects)).toEqual(['p1', 'p2', 'p3']);
   });
 
   it('narrows to the selected workspace', () => {

@@ -50,6 +50,7 @@ export function scopedProjectIds(scope: ScopeInput, cloudProjects: CloudProject[
   return cloudProjects.filter((p) => p.workspaceId === scope.workspaceId).map((p) => p.id);
 }
 
+// The three filters INTERSECT: scope, then project, then assignee.
 export function filterTasks(tasks: Task[], filters: TaskFilters): Task[] {
   const inScope = new Set(filters.scopedProjectIds);
   const project = filters.projectFilter || undefined;
@@ -57,6 +58,9 @@ export function filterTasks(tasks: Task[], filters: TaskFilters): Task[] {
   return tasks.filter((t) => {
     if (!inScope.has(t.projectId)) return false;
     if (project && t.projectId !== project) return false;
+    // This branch must stay BELOW the project filter. It returns rather than falls
+    // through, so hoisting it would let «Не призначено» ignore the chosen project and
+    // show unassigned tasks from the whole scope.
     if (assignee === UNASSIGNED) return !t.assigneeId;
     if (assignee && t.assigneeId !== assignee) return false;
     return true;
