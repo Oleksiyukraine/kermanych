@@ -114,7 +114,7 @@ function bind(registry: RegistryService, localRepoPath = "/tmp/proj"): void {
     carryFiles: [".env", ".env.local"],
     envKeys: ["GITHUB_TOKEN"],
     defaultBranch: "main",
-    ownerId: OTHER,
+    workspaceId: "00000000-0000-4000-8000-000000000ws1",
     createdAt: NOW,
   });
 }

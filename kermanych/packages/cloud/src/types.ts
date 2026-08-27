@@ -33,7 +33,9 @@ export type CloudProject = {
   carryFiles: string[];
   envKeys: string[]; // key NAMES only — values never leave the bound repo's .env
   color?: string;
-  ownerId: string;
+  // The group that owns this project AND supplies its member list. `not null` in
+  // Postgres: there are no workspace-less projects in the cloud.
+  workspaceId: string;
   createdAt: string;
 };
 

@@ -15,6 +15,8 @@
 // through the admin API — the same provisioning path GitHub OAuth drives.
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
+import { createProject, listProjects, patchProject } from "../src/projects";
+import { listMembers } from "../src/workspaces";
 
 const URL = process.env.SUPABASE_TEST_URL;
 const ANON = process.env.SUPABASE_TEST_ANON_KEY;
@@ -599,5 +601,27 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
       .eq("workspace_id", workspaceId)
       .eq("user_id", member.id);
     expect(gone.data).toEqual([]);
+  });
+
+  // The one place the TypeScript column contract meets the real database. Everything
+  // else in packages/cloud is unit-tested against a hand-rolled fake, so a typo in
+  // PROJECT_COLUMNS, MEMBER_COLUMNS or a mapper would otherwise ship green — there is no
+  // generated Database type to catch it.
+  it("the typed project and member surfaces round-trip against the real schema", async () => {
+    const created = await createProject(owner.client, { name: "typed-surface", workspaceId });
+    expect(created.workspaceId).toBe(workspaceId);
+    expect(created).not.toHaveProperty("ownerId");
+    expect(created.carryFiles).toEqual([".env"]);
+
+    const listed = (await listProjects(owner.client)).find((p) => p.id === created.id);
+    expect(listed?.workspaceId).toBe(workspaceId);
+
+    const moved = await patchProject(owner.client, created.id, { name: "typed-surface-2" });
+    expect(moved.name).toBe("typed-surface-2");
+
+    // Exercises MEMBER_COLUMNS and its profiles(...) embed, which no other test issues.
+    const roster = await listMembers(owner.client, workspaceId);
+    expect(roster.some((m) => m.userId === owner.id && m.role === "owner")).toBe(true);
+    expect(roster.every((m) => m.workspaceId === workspaceId)).toBe(true);
   });
 });
