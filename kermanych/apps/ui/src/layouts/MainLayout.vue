@@ -16,24 +16,66 @@
         </nav>
         <div class="shell__divider"></div>
         <div class="shell__side-label shell__side-label--row">
-          <span>Проєкти</span>
+          <span>Воркспейси</span>
           <button
             class="shell__label-add"
-            v-tip="'Новий проєкт у хмарі'"
-            aria-label="Новий проєкт у хмарі"
-            @click="openCreate"
+            v-tip="'Новий воркспейс'"
+            aria-label="Новий воркспейс"
+            @click="openCreateWorkspace"
           >+</button>
         </div>
-        <div class="shell__projects">
-          <KRailItem
-            v-for="p in railProjects"
-            :key="p.id"
-            :project="p"
-            :active="p.id === store.selectedProjectId"
-            :count="runningCount(p.id)"
-            @click="selectProject(p.id)"
-          />
-        </div>
+        <!-- The tree. Real nested lists rather than a flat run of rows plus role="tree":
+             a tree role promises arrow-key navigation this sidebar does not implement,
+             while a <ul> inside a <li> states the one fact a screen reader is missing —
+             that these projects BELONG to the workspace announced just before them.
+             The inner list is named after its workspace, because a bare «list, 3 items»
+             does not say whose. KWorkspaceRow's chevron cannot carry aria-controls
+             (fallthrough attributes land on the row's root element, not on the button),
+             so the containment is what supplies the relationship. -->
+        <ul class="shell__projects">
+          <li v-for="group in tree" :key="group.workspace.id" class="shell__group">
+            <KWorkspaceRow
+              :workspace="group.workspace"
+              :active="store.selectedWorkspaceId === group.workspace.id && !store.selectedProjectId"
+              :expanded="isExpanded(group.workspace.id)"
+              :count="workspaceRunningCount(group)"
+              @select="selectWorkspace(group.workspace.id)"
+              @toggle="toggleWorkspace(group.workspace.id)"
+              @add-project="openCreateProject(group.workspace.id)"
+            />
+            <ul
+              v-if="isExpanded(group.workspace.id)"
+              class="shell__group-items"
+              :aria-label="`Проєкти воркспейсу «${group.workspace.name}»`"
+            >
+              <li v-for="p in railProjectsOf(group)" :key="p.id">
+                <KRailItem
+                  :project="p"
+                  indent
+                  :active="p.id === store.selectedProjectId"
+                  :count="runningCount(p.id)"
+                  @click="selectProject(p.id)"
+                />
+              </li>
+            </ul>
+          </li>
+          <li v-if="localOnlyProjects.length" class="shell__group">
+            <div id="shell-local-only" class="shell__side-label shell__side-label--sub">
+              <span>Лише на цій машині</span>
+            </div>
+            <ul class="shell__group-items" aria-labelledby="shell-local-only">
+              <li v-for="p in localOnlyProjects" :key="p.id">
+                <KRailItem
+                  :project="p"
+                  indent
+                  :active="p.id === store.selectedProjectId"
+                  :count="runningCount(p.id)"
+                  @click="selectProject(p.id)"
+                />
+              </li>
+            </ul>
+          </li>
+        </ul>
         <div class="shell__user">
           <KUserButton
             class="shell__account"
@@ -156,10 +198,39 @@
     </q-footer>
 
 
+    <!-- CREATE-WORKSPACE MODAL — the sidebar's two «+» buttons create different things, so
+         they get two modals. A workspace is the group AND the team: membership hangs off it,
+         which is what the hint below says out loud. -->
+    <KModal v-model="createWorkspaceOpen" title="Новий воркспейс">
+      <div class="shell__form">
+        <KField v-model="createWorkspaceName" label="Назва" placeholder="AAA" />
+        <p class="shell__hint">
+          Воркспейс групує проєкти й тримає склад команди: одне запрошення відкриває
+          доступ до всіх його проєктів.
+        </p>
+        <p v-if="createError" class="shell__error" role="alert">{{ createError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="createWorkspaceOpen = false">Скасувати</KBtn>
+        <KBtn
+          variant="primary"
+          :disabled="!canCreateWorkspace || createBusy"
+          @click="submitCreateWorkspace"
+        >
+          {{ createBusy ? 'Створюємо…' : 'Створити' }}
+        </KBtn>
+      </template>
+    </KModal>
+
     <!-- CREATE-PROJECT MODAL — a project is born in the CLOUD (Requirement 2: any signed-in
-         user may create one and becomes its owner). The local row arrives through
+         user may create one and becomes its owner) INSIDE a known workspace, which is why the
+         open state is that workspace's id rather than a boolean. The local row arrives through
          POST /api/projects/sync and starts out UNBOUND — no directory picker here. -->
-    <KModal v-model="createOpen" title="Новий проєкт у хмарі">
+    <KModal
+      :model-value="createProjectFor !== undefined"
+      :title="`Новий проєкт у «${projects.workspaceById.get(createProjectFor ?? '')?.name ?? ''}»`"
+      @update:model-value="createProjectFor = undefined"
+    >
       <div class="shell__form">
         <KField v-model="createName" label="Назва" placeholder="my-project" />
         <KField
@@ -174,9 +245,9 @@
         <p v-if="createError" class="shell__error" role="alert">{{ createError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="createOpen = false">Скасувати</KBtn>
+        <KBtn variant="ghost" @click="createProjectFor = undefined">Скасувати</KBtn>
         <KBtn variant="primary" :disabled="!canCreate || createBusy" @click="submitCreate">
-          Створити
+          {{ createBusy ? 'Створюємо…' : 'Створити' }}
         </KBtn>
       </template>
     </KModal>
@@ -398,6 +469,7 @@ import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
 import { IS_PREVIEW } from '../lib/preview';
+import type { WorkspaceGroup } from '../lib/scope';
 import { MANAGEMENT_DEFAULT_SECTION } from '../lib/management';
 import { theme, toggleTheme } from '../lib/theme';
 import { percent, planWindow } from '../lib/format';
@@ -405,6 +477,7 @@ import { until } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
+import KWorkspaceRow from 'components/kit/KWorkspaceRow.vue';
 import KTopNav from 'components/kit/KTopNav.vue';
 import KNavItem from 'components/kit/KNavItem.vue';
 import KModal from 'components/kit/KModal.vue';
@@ -434,19 +507,41 @@ const router = useRouter();
 const collapsed = ref(localStorage.getItem('kermanych.sidebar-collapsed') === '1');
 watch(collapsed, (v) => localStorage.setItem('kermanych.sidebar-collapsed', v ? '1' : '0'));
 
-// A rail tile means «show me this project». Clicked from a screen that does not show one it
-// used to change the selection behind the operator's back — the tile went active, nothing
-// else moved, and the team board had no exit of its own. Selecting is still the primary act;
-// the navigation only follows when the current page is not the one that answers it. The
-// project-scoped screens (Агенти, and every Менеджмент section, whose parent record is
-// matched here) keep their place, so switching projects while reading one stays put.
-const PROJECT_SCOPED_VIEWS: readonly string[] = ['agents', 'management'];
+// Which workspace groups are FOLDED. Stored as a list of ids because a Set does not
+// survive JSON, and stored at all because a fold the reload undoes is not a fold. Absent
+// from the list means expanded, so a workspace created on another machine — or one this
+// user has just been invited to — arrives open rather than silently hidden.
+const COLLAPSED_KEY = 'kermanych.workspace-collapsed';
+const collapsedWorkspaces = ref<string[]>(
+  (() => {
+    try {
+      const raw = localStorage.getItem(COLLAPSED_KEY);
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch {
+      // A corrupt entry is not worth a blank sidebar; the next toggle overwrites it.
+      return [];
+    }
+  })(),
+);
+function isExpanded(id: string): boolean {
+  return !collapsedWorkspaces.value.includes(id);
+}
+function toggleWorkspace(id: string): void {
+  collapsedWorkspaces.value = isExpanded(id)
+    ? [...collapsedWorkspaces.value, id]
+    : collapsedWorkspaces.value.filter((x) => x !== id);
+  localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsedWorkspaces.value));
+}
+
+// A sidebar click changes SCOPE and never navigates (Requirement 5). It used to push
+// /agents from any non-project-scoped view, which meant the team board threw the operator
+// out the moment they touched the tree; both the board and Агенти read the scope, so there
+// is nothing left for a navigation to fix.
 function selectProject(id: string): void {
   store.selectProject(id);
-  const scoped = route.matched.some(
-    (r) => typeof r.name === 'string' && PROJECT_SCOPED_VIEWS.includes(r.name),
-  );
-  if (!scoped) void router.push({ name: 'agents' });
+}
+function selectWorkspace(id: string): void {
+  store.selectWorkspace(id);
 }
 
 // True only once a cloud read has actually succeeded on this run. Until then a local row
@@ -556,34 +651,52 @@ const bucketCounts = computed(() => {
   return c;
 });
 
-// The rail: the CLOUD list (what exists, for everyone) in cloud order, then every LOCAL row
-// the cloud list does not contain. Those trailing rows matter — sync's prune deliberately
-// keeps a row that still owns sessions, and agents you cannot select are agents you cannot
-// stop. A cloud project with no local row at all (the mount-time sync failed) shows as
-// unbound, which is exactly what it is: nothing on this machine can run it yet.
-const railProjects = computed<RailProject[]>(() => {
-  const local = new Map(store.projects.map((p) => [p.id, p]));
-  const out: RailProject[] = [];
-  for (const c of projects.projects) {
-    const row = local.get(c.id);
-    local.delete(c.id);
-    out.push({
+// The tree: cloud workspaces, each with its own cloud projects, in cloud order.
+// `groupProjectsByWorkspace` DROPS a project whose workspace is not in the list — RLS
+// decides which workspaces this user can read, and inventing a group for one they cannot
+// would render a name that does not exist. Such a project is simply not shown.
+const tree = computed(() => projects.projectsByWorkspace);
+
+// One group's projects as rail tiles: the CLOUD row (the name and colour the whole team
+// sees) joined with THIS machine's local row (the binding). Same join the flat rail did,
+// one group at a time. A cloud project with no local row at all — the mount-time sync
+// failed — reads as unbound, which is exactly what it is: nothing here can run it yet.
+function railProjectsOf(group: WorkspaceGroup): RailProject[] {
+  return group.projects.map((c) => {
+    const row = localById.value.get(c.id);
+    return {
       id: c.id,
       name: c.name,
       color: c.color ?? row?.color,
       state: row?.localRepoPath ? 'bound' : 'unbound',
-    });
-  }
-  for (const row of local.values()) {
-    out.push({
+    };
+  });
+}
+
+const localById = computed(() => new Map(store.projects.map((p) => [p.id, p])));
+
+// Local rows with no cloud project: made before the team cloud existed, or while Supabase
+// was unreachable. They have no workspace, so they get their own bucket instead of being
+// hidden by a tree that has no group for them — sync's prune deliberately keeps a row that
+// still owns sessions, and agents you cannot select are agents you cannot stop. The board's
+// «Опублікувати в хмарі» is how such a row gets a workspace.
+const localOnlyProjects = computed<RailProject[]>(() => {
+  const cloudIds = new Set(projects.projects.map((p) => p.id));
+  return store.projects
+    .filter((row) => !cloudIds.has(row.id))
+    .map((row) => ({
       id: row.id,
       name: row.name,
       color: row.color,
       state: cloudSynced.value ? 'orphan' : row.localRepoPath ? 'bound' : 'unbound',
-    });
-  }
-  return out;
+    }));
 });
+
+// The group header's badge: what is running anywhere inside it, so a folded workspace
+// still says whether it needs attention.
+function workspaceRunningCount(group: WorkspaceGroup): number {
+  return group.projects.reduce((n, p) => n + runningCount(p.id), 0);
+}
 
 // The LOCAL row carries this machine's binding and the offline config cache; the CLOUD
 // project is the source of truth for config. Same id, two lookups.
@@ -647,40 +760,74 @@ const contextLabel = computed(() => {
   return `${selectedName.value} · ${selectedProject.value?.localRepoPath || 'не прив’язано'}`;
 });
 
-// Create-in-the-cloud modal. No directory field: creating a project and binding a repo are
-// different acts on different machines (Requirement 3).
-const createOpen = ref(false);
+// Two create modals, because the sidebar's two «+» buttons create different things. The
+// project one is keyed by the workspace it will create INSIDE — an id rather than a
+// boolean, since «new project» is not a question that can be asked without a group — and
+// `createError` / `createBusy` are shared: only one of the two can be open at a time.
+//
+// Neither has a directory field: creating a project and binding a repo are different acts
+// on different machines (Requirement 3).
+const createWorkspaceOpen = ref(false);
+const createWorkspaceName = ref('');
+const createProjectFor = ref<string | undefined>(undefined);
 const createName = ref('');
 const createRemote = ref('');
 const createError = ref<string | null>(null);
 const createBusy = ref(false);
+
+const canCreateWorkspace = computed(() => createWorkspaceName.value.trim() !== '');
 const canCreate = computed(() => createName.value.trim() !== '');
 
-function openCreate(): void {
+function openCreateWorkspace(): void {
+  createWorkspaceName.value = '';
+  createError.value = null;
+  createBusy.value = false;
+  createWorkspaceOpen.value = true;
+}
+
+function openCreateProject(workspaceId: string): void {
   createName.value = '';
   createRemote.value = '';
   createError.value = null;
   createBusy.value = false;
-  createOpen.value = true;
+  createProjectFor.value = workspaceId;
+}
+
+async function submitCreateWorkspace(): Promise<void> {
+  if (!canCreateWorkspace.value) return;
+  createError.value = null;
+  createBusy.value = true;
+  try {
+    const created = await projects.createWorkspace(createWorkspaceName.value.trim());
+    createWorkspaceOpen.value = false;
+    // Scope moves to the new group, so the next «+» on its row is the obvious next step.
+    store.selectWorkspace(created.id);
+    store.notify(`Воркспейс «${created.name}» створено`);
+  } catch (e) {
+    createError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    createBusy.value = false;
+  }
 }
 
 async function submitCreate(): Promise<void> {
-  if (!canCreate.value) return;
+  const workspaceId = createProjectFor.value;
+  if (!workspaceId || !canCreate.value) return;
   createError.value = null;
   createBusy.value = true;
   try {
     const remote = createRemote.value.trim();
-    // create() inserts under the user's JWT (handle_new_project adds the owner membership)
-    // and mirrors the one new project into the local registry, so its tile appears without a
-    // second full sync.
-    const created = await projects.create(createName.value.trim(), remote || undefined);
-    createOpen.value = false;
+    // create() inserts under the user's JWT (projects_insert_member checks membership of
+    // the destination workspace) and mirrors the one new project into the local registry,
+    // so its tile appears under this group without a second full sync.
+    const created = await projects.create(workspaceId, createName.value.trim(), remote || undefined);
+    createProjectFor.value = undefined;
     store.selectProject(created.id);
     store.notify(`Проєкт «${created.name}» створено у хмарі`);
   } catch (e) {
     // Keep the modal open. The two real refusals are `not signed in` (the session expired
-    // between the router guard and this click) and a postgrest/RLS or network failure; both
-    // are fixable without retyping the name.
+    // between the router guard and this click) and an RLS refusal on a workspace this user
+    // has just lost access to; both are fixable without retyping the name.
     createError.value = e instanceof Error ? e.message : String(e);
   } finally {
     createBusy.value = false;
@@ -1095,6 +1242,23 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
 .shell--min :deep(.k-rail__initials) {
   display: flex;
 }
+// The tree collapses to the icon strip like the rail always did: the workspace row keeps
+// its colour dot as the group's marker and drops the name, the chevron and the «+» — a
+// 76px column has no room for three controls, and the group cannot be folded or added to
+// from a strip that cannot show which group it is.
+.shell--min :deep(.k-ws__name),
+.shell--min :deep(.k-ws__count),
+.shell--min :deep(.k-ws__chevron),
+.shell--min :deep(.k-ws__add) {
+  display: none;
+}
+.shell--min :deep(.k-ws__body) {
+  justify-content: center;
+}
+.shell--min :deep(.k-rail--indent) {
+  margin-left: 0;
+  width: 100%;
+}
 
 .shell__buckets {
   display: flex;
@@ -1111,7 +1275,20 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   color: var(--k-faint);
 }
 
-.shell__projects {
+// Both levels are real <ul>s now (the grouping semantics), so both need the list chrome
+// reset — markers, indent, margins — before the flex column that actually lays them out.
+.shell__projects,
+.shell__group-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+// A group is the header plus its children; the gap between GROUPS is the parent list's.
+.shell__group {
   display: flex;
   flex-direction: column;
   gap: var(--k-sp-1);
@@ -1132,6 +1309,13 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+// The local-only bucket's heading. It sits INSIDE the tree rather than above it, so it is
+// quieter than «Воркспейси» and closer to what it labels.
+.shell__side-label--sub {
+  margin-top: 10px;
+  opacity: 0.75;
 }
 
 .shell__label-add {
