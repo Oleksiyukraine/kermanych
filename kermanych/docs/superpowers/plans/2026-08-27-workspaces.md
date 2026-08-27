@@ -463,17 +463,23 @@ Append inside the same `describe`:
       .single();
     if (foreign.error) throw foreign.error;
 
-    // Member of the source only: WITH CHECK refuses the destination. A refused
-    // UPDATE matches zero rows, so `.select().single()` reports PGRST116.
+    // The two refusals are NOT the same error, and this is verified Postgres 17
+    // behaviour, not a guess: WITH CHECK is evaluated against the NEW row and
+    // RAISES on violation, while USING simply does not match the OLD row.
+    //
+    // Member of the source only -> the destination fails WITH CHECK -> 42501
+    // "new row violates row-level security policy for table \"projects\"".
     const pushOut = await member.client
       .from("projects")
       .update({ workspace_id: foreign.data.id })
       .eq("id", projectId)
       .select("id")
       .single();
-    expect(pushOut.error?.code).toBe("PGRST116");
+    expect(pushOut.error?.code).toBe("42501");
+    expect(pushOut.error?.message).toMatch(/violates row-level security policy/);
 
-    // Non-member of the source: USING refuses it before WITH CHECK is reached.
+    // Non-member of the source -> USING never matches the row, so zero rows come
+    // back WITHOUT a Postgres error and `.single()` reports PGRST116.
     const pullOut = await outsider.client
       .from("projects")
       .update({ workspace_id: foreign.data.id })
@@ -1588,7 +1594,8 @@ git add packages/cloud/src/types.ts packages/cloud/src/projects.ts packages/clou
 git commit -m "feat(cloud)!: CloudProject carries workspaceId instead of ownerId
 
 Moving a project is patchProject(id, { workspaceId }) - no dedicated mutation,
-and an RLS-refused move surfaces as PGRST116 rather than a silent no-op.
+and an RLS-refused move throws rather than silently doing nothing: 42501 when the
+destination fails WITH CHECK, PGRST116 when USING never matched the source.
 
 apps/api/src is untouched: syncProjects copies a field whitelist that never
 included ownerId. Only its test fixtures move."
@@ -1599,6 +1606,13 @@ included ownerId. Only its test fixtures move."
 ### Task 6: Free the name `workspace` — rename the local-sessions route to `agents`
 
 Mechanical cutover, done before the feature work so `workspace` means the cloud entity everywhere. The UI already labels this view «Агенти» (`MainLayout.vue:504`); only the route name and filename were out of step.
+
+> **Execution order:** run this task **immediately after Task 3, before Task 4.** Its
+> gate is a clean `ui typecheck`, and that is only achievable while the UI still
+> compiles — Task 5 removes `CloudProject.ownerId`, which `stores/projects.ts` reads
+> until Task 8 repairs it. Nothing in this task depends on the cloud package, so
+> moving it earlier costs nothing. Task numbering is unchanged; only the dispatch
+> order differs.
 
 **Files:**
 - Rename: `kermanych/apps/ui/src/pages/WorkspacePage.vue` → `kermanych/apps/ui/src/pages/AgentsPage.vue`
@@ -1930,8 +1944,13 @@ export function canDropProject(
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `pnpm --filter @kermanych/ui test -- scope && pnpm --filter @kermanych/ui typecheck`
-Expected: PASS, no type errors.
+Run: `pnpm --filter @kermanych/ui test -- scope`
+Expected: PASS.
+
+Do **not** run `pnpm --filter @kermanych/ui typecheck` here. `vue-tsc` checks the whole
+app, and `stores/projects.ts` still reads the `CloudProject.ownerId` that Task 5 removed
+— that store is repaired in Task 8, which owns the whole-project typecheck gate. A
+failing typecheck at this point says nothing about `scope.ts`, whose own suite just passed.
 
 - [ ] **Step 5: Commit**
 
@@ -2180,8 +2199,9 @@ Replace `create` (lines 50-63) with the workspace-scoped version, and add the wo
 
   // Moving a project between workspaces. No dedicated cloud call: it is a patch of
   // workspace_id, and projects_update_member (USING on the old row, WITH CHECK on the
-  // new) is what requires membership of BOTH groups. A refused move matches zero rows,
-  // so patchProject's .single() surfaces PGRST116 and this throws — the caller rolls back.
+  // new) is what requires membership of BOTH groups. A refused move always throws,
+  // in one of two ways: 42501 when the DESTINATION fails WITH CHECK, PGRST116 when
+  // USING never matched the SOURCE. The caller rolls back on either.
   async function moveProject(projectId: string, workspaceId: string): Promise<CloudProject> {
     return patch(projectId, { workspaceId });
   }
@@ -2307,6 +2327,7 @@ following tasks."
 - Modify: `kermanych/apps/ui/src/components/kit/KSelect.vue`
 - Modify: `kermanych/apps/ui/src/components/kit/KRailItem.vue`
 - Create: `kermanych/apps/ui/src/components/kit/KWorkspaceRow.vue`
+- Modify: `kermanych/apps/ui/src/pages/KitGalleryPage.vue` (gallery entry for the new component)
 
 **Interfaces:**
 - Consumes: nothing.
@@ -3120,11 +3141,12 @@ async function onDrop(workspaceId: string): Promise<void> {
     store.notify(`«${name}» перенесено у «${projects.workspaceById.get(workspaceId)?.name ?? ''}»`);
   } catch (e) {
     // projects_update_member refuses a move into a workspace the user does not belong
-    // to by matching zero rows, which patchProject surfaces as PGRST116. Say what
-    // actually happened rather than echoing a postgrest code.
+    // to with 42501 (WITH CHECK is evaluated against the new row and raises), and a
+    // source it cannot see with zero rows -> PGRST116. Both mean the same thing to
+    // the user, so say that rather than echoing either code.
     const raw = e instanceof Error ? e.message : String(e);
     store.notify(
-      /PGRST116|0 rows/.test(raw)
+      /42501|violates row-level security|PGRST116/.test(raw)
         ? 'Хмара відмовила: переносити проєкт можна лише між воркспейсами, у яких ви учасник'
         : raw,
       'error',
@@ -3187,7 +3209,8 @@ Hand-rolled HTML5 DnD. The dragged id is component state, not dataTransfer,
 because getData() is unreadable during dragover. Project settings gains a
 Воркспейс select as the non-mouse path and for collapsed destinations.
 
-An RLS-refused move (PGRST116) is reported as what it is and the tree refetches."
+A refused move (42501 from WITH CHECK, or PGRST116 from USING) is reported in
+plain words and the tree refetches."
 ```
 
 ---

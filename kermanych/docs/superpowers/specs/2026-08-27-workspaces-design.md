@@ -396,9 +396,11 @@ below), not in the registry.
   swaps `ownerId` for `workspaceId`; `CloudProjectPatch` gains `workspaceId`. The
   three membership functions leave this file.
 - **No `moveProject()`.** Moving is `patchProject(id, { workspaceId })`. A refusal
-  is visible for free: `patchProject` ends in `.select().single()`, so an
-  RLS-blocked move matches zero rows and surfaces as `PGRST116` rather than a
-  silent no-op.
+  is visible for free, and the two refusals differ — verified on Postgres 17:
+  pushing a project into a workspace you do not belong to violates WITH CHECK and
+  raises `42501 new row violates row-level security policy`, while pulling one out
+  of a workspace you are not in fails USING, which matches zero rows and surfaces
+  through `.single()` as `PGRST116`. Both throw; neither is a silent no-op.
 - `listProjects(client)` keeps taking no scope argument; RLS scopes it and the UI
   groups by `workspaceId`.
 - `src/index.ts`: every new symbol re-exported **explicitly**. `export *` is
