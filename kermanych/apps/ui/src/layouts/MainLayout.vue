@@ -38,7 +38,7 @@
               :workspace="group.workspace"
               :active="store.selectedWorkspaceId === group.workspace.id && !store.selectedProjectId"
               :expanded="isExpanded(group.workspace.id)"
-              :count="workspaceRunningCount(group)"
+              :count="workspaceRunningCount(group.workspace.id)"
               @select="selectWorkspace(group.workspace.id)"
               @toggle="toggleWorkspace(group.workspace.id)"
               @add-project="openCreateProject(group.workspace.id)"
@@ -48,7 +48,7 @@
               class="shell__group-items"
               :aria-label="`Проєкти воркспейсу «${group.workspace.name}»`"
             >
-              <li v-for="p in railProjectsByWorkspace.get(group.workspace.id) ?? []" :key="p.id">
+              <li v-for="p in sidebarProjects.byWorkspace.get(group.workspace.id) ?? []" :key="p.id">
                 <KRailItem
                   :project="p"
                   indent
@@ -59,12 +59,12 @@
               </li>
             </ul>
           </li>
-          <li v-if="localOnlyProjects.length" class="shell__group">
+          <li v-if="sidebarProjects.ungrouped.length" class="shell__group">
             <div id="shell-local-only" class="shell__side-label shell__side-label--sub">
               <span>{{ localOnlyLabel }}</span>
             </div>
             <ul class="shell__group-items" aria-labelledby="shell-local-only">
-              <li v-for="p in localOnlyProjects" :key="p.id">
+              <li v-for="p in sidebarProjects.ungrouped" :key="p.id">
                 <KRailItem
                   :project="p"
                   indent
@@ -469,7 +469,6 @@ import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
 import { IS_PREVIEW } from '../lib/preview';
-import type { WorkspaceGroup } from '../lib/scope';
 import { MANAGEMENT_DEFAULT_SECTION } from '../lib/management';
 import { theme, toggleTheme } from '../lib/theme';
 import { percent, planWindow } from '../lib/format';
@@ -710,67 +709,98 @@ const tree = computed(() => projects.projectsByWorkspace);
 
 const localById = computed(() => new Map(store.projects.map((p) => [p.id, p])));
 
-// Every group's projects as rail tiles: the CLOUD row (the name and colour the whole team
-// sees) joined with THIS machine's local row (the binding). Same join the flat rail did, one
-// group at a time. A cloud project with no local row at all — the mount-time sync failed —
-// reads as unbound, which is exactly what it is: nothing here can run it yet.
+// The tree's CONTENTS, both halves from one pass: which rail tiles hang under which
+// workspace, and which have no group at all. One computed rather than two, because the two
+// halves partition the same set — a project in a group AND in the bucket would render
+// twice, a project in neither would be an agent nobody can select.
 //
-// A computed keyed by workspace id, not a function: built per render it would mint fresh
-// RailProject objects every time, and every KRailItem would see a new prop identity and
-// re-render on each socket session event even though nothing about it changed.
-const railProjectsByWorkspace = computed(() => {
+// ONLINE the cloud list is the truth about what exists and where it lives, joined with THIS
+// machine's local row for the binding. A cloud project with no local row at all — the
+// mount-time sync failed — reads as unbound, which is exactly what it is: nothing here can
+// run it yet. The complement, a local row absent from the cloud list, is an orphan.
+//
+// OFFLINE — a cold start still loading, a read degraded into offlineError, or a preview with
+// no cloud at all — the tree is rebuilt from the LOCAL rows placed through the cached
+// projectId → workspaceId map (stores/projects.ts writes it beside the cached workspaces for
+// exactly this). Without that placement the sidebar collapsed to a flat bucket under four
+// empty groups, which is the offline collapse the cache exists to prevent. A row the map has
+// no entry for goes to the bucket, NOT into a guessed group: same rule
+// groupProjectsByWorkspace follows for a workspace RLS did not return — a group we cannot
+// name is a group we must not draw. `has` rather than a bare lookup for the same reason;
+// the store already drops map entries pointing outside the cached list, and this keeps that
+// true if it ever stops.
+//
+// A computed, not a function: built per render it would mint fresh RailProject objects every
+// time and every KRailItem would see a new prop identity on each socket session event.
+const sidebarProjects = computed(() => {
   const byWorkspace = new Map<string, RailProject[]>();
-  for (const group of tree.value) {
-    byWorkspace.set(
-      group.workspace.id,
-      group.projects.map((c) => {
+  for (const group of tree.value) byWorkspace.set(group.workspace.id, []);
+  const ungrouped: RailProject[] = [];
+
+  if (cloudSynced.value) {
+    for (const group of tree.value) {
+      const tiles = byWorkspace.get(group.workspace.id);
+      for (const c of group.projects) {
         const row = localById.value.get(c.id);
-        return {
+        tiles?.push({
           id: c.id,
           name: c.name,
           color: c.color ?? row?.color,
           state: row?.localRepoPath ? 'bound' : 'unbound',
-        };
-      }),
-    );
+        });
+      }
+    }
+    const cloudIds = new Set(projects.projects.map((p) => p.id));
+    for (const row of store.projects) {
+      if (cloudIds.has(row.id)) continue;
+      ungrouped.push({ id: row.id, name: row.name, color: row.color, state: 'orphan' });
+    }
+  } else {
+    for (const row of store.projects) {
+      // Name and colour come off the local row, which the last successful sync mirrored
+      // from the cloud — the same values the online tree would show.
+      const tile: RailProject = {
+        id: row.id,
+        name: row.name,
+        color: row.color,
+        state: row.localRepoPath ? 'bound' : 'unbound',
+      };
+      const workspaceId = store.projectWorkspace[row.id];
+      if (workspaceId !== undefined && byWorkspace.has(workspaceId)) {
+        byWorkspace.get(workspaceId)?.push(tile);
+      } else {
+        ungrouped.push(tile);
+      }
+    }
   }
-  return byWorkspace;
+
+  return { byWorkspace, ungrouped };
 });
 
-// Local rows the cloud list does not contain: made before the team cloud existed, or while
-// Supabase was unreachable. They have no workspace to nest under, so they get their own
-// bucket instead of being hidden by a tree that has no group for them — sync's prune
-// deliberately keeps a row that still owns sessions, and agents you cannot select are agents
-// you cannot stop. The board's «Опублікувати в хмарі» is how such a row gets a workspace.
-const localOnlyProjects = computed<RailProject[]>(() => {
-  const cloudIds = new Set(projects.projects.map((p) => p.id));
-  return store.projects
-    .filter((row) => !cloudIds.has(row.id))
-    .map((row) => ({
-      id: row.id,
-      name: row.name,
-      color: row.color,
-      state: cloudSynced.value ? 'orphan' : row.localRepoPath ? 'bound' : 'unbound',
-    }));
-});
-
-// The bucket's heading is a CLAIM about where a project lives, and «лише на цій машині» is
-// only true once a cloud read has actually SUCCEEDED. Until then — a cold start still
-// loading, a read degraded into offlineError, or a preview with no cloud at all — every
-// project lands in this bucket, because the tree cache persists the workspaces and the
-// projectId → workspaceId map but deliberately never the projects themselves. Asserting
-// there that the team's whole project list exists nowhere but this laptop is a falsehood,
-// and offline is a first-class requirement here, not an edge case. So the heading falls back
-// to the one thing that is true in all three states: these are rows from the local registry.
-// The tile states already draw the same distinction — `orphan` only when cloudSynced.
+// The bucket's heading is a CLAIM, and the claim is not the same one in both states.
+//
+// ONLINE it is precise: these rows are absent from a cloud list we successfully read, so
+// this machine really is the only place they exist — made before the team cloud, or while
+// Supabase was unreachable. The board's «Опублікувати в хмарі» is how such a row gets a
+// workspace. They are kept rather than hidden because sync's prune deliberately keeps a row
+// that still owns sessions, and agents you cannot select are agents you cannot stop.
+//
+// OFFLINE it is weaker and must say so. We have not read any cloud list, so the only true
+// statement about these rows is that we do not know their group — the cache has no entry for
+// them. «Лише на цій машині» there would assert something we have not checked, which on a
+// cold offline start used to be said about the team's entire project list. The tile states
+// draw the same line: `orphan` only when cloudSynced.
 const localOnlyLabel = computed(() =>
-  cloudSynced.value ? 'Лише на цій машині' : 'Локальні проєкти',
+  cloudSynced.value ? 'Лише на цій машині' : 'Воркспейс невідомий',
 );
 
-// The group header's badge: what is running anywhere inside it, so a folded workspace
-// still says whether it needs attention.
-function workspaceRunningCount(group: WorkspaceGroup): number {
-  return group.projects.reduce((n, p) => n + runningCount(p.id), 0);
+// The group header's badge: what is running anywhere inside it, so a folded workspace still
+// says whether it needs attention. Off the rail tiles rather than the cloud group, or the
+// badge would read zero for every offline group whose tiles came from the cached map.
+function workspaceRunningCount(workspaceId: string): number {
+  let n = 0;
+  for (const p of sidebarProjects.value.byWorkspace.get(workspaceId) ?? []) n += runningCount(p.id);
+  return n;
 }
 
 // The LOCAL row carries this machine's binding and the offline config cache; the CLOUD
