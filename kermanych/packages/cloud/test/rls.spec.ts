@@ -36,6 +36,7 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
   let member: TestUser;
   let outsider: TestUser;
   let projectId: string;
+  let workspaceId: string;
   let taskId: string;
 
   async function makeUser(tag: string): Promise<TestUser> {
@@ -70,6 +71,14 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     owner = await makeUser("owner");
     member = await makeUser("member");
     outsider = await makeUser("outsider");
+
+    const workspace = await owner.client
+      .from("workspaces")
+      .insert({ name: "rls-ws", owner_id: owner.id })
+      .select()
+      .single();
+    if (workspace.error) throw workspace.error;
+    workspaceId = workspace.data.id as string;
 
     const project = await owner.client
       .from("projects")
@@ -344,5 +353,96 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
 
     const { error } = await owner.client.from("tasks").delete().eq("id", taskId);
     expect(error).toBeNull();
+  });
+
+  // handle_new_workspace() is the mirror of the retired handle_new_project(): the
+  // creator is owner AND first member in one round trip.
+  it("handle_new_workspace inserts the owner's membership row", async () => {
+    const { data, error } = await owner.client
+      .from("workspace_members")
+      .select("workspace_id, user_id, role")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", owner.id)
+      .single();
+    expect(error).toBeNull();
+    expect(data?.role).toBe("owner");
+  });
+
+  // The `owner_id = auth.uid() or` disjunct in workspaces_select_member is
+  // load-bearing: INSERT … RETURNING evaluates the SELECT policy for the new row
+  // BEFORE the AFTER-INSERT trigger has written the membership row.
+  it("createWorkspace().select() returns the row it just inserted", async () => {
+    const fresh = await owner.client
+      .from("workspaces")
+      .insert({ name: "returning-check", owner_id: owner.id })
+      .select("id, name")
+      .single();
+    expect(fresh.error).toBeNull();
+    expect(fresh.data?.name).toBe("returning-check");
+  });
+
+  it("a non-member sees no workspaces", async () => {
+    const { data, error } = await outsider.client
+      .from("workspaces")
+      .select("id")
+      .eq("id", workspaceId);
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+  });
+
+  // No INSERT policy AND no INSERT grant: the rpc and the trigger are the only
+  // writers, so nobody can forge a row with role='owner' or a user_id that never
+  // agreed to anything.
+  it("nobody can insert a workspace member directly, not even the owner", async () => {
+    const ownerTry = await owner.client
+      .from("workspace_members")
+      .insert({ workspace_id: workspaceId, user_id: member.id, role: "member" });
+    expect(ownerTry.error?.code).toBe("42501");
+
+    const outsiderTry = await outsider.client
+      .from("workspace_members")
+      .insert({ workspace_id: workspaceId, user_id: outsider.id, role: "member" });
+    expect(outsiderTry.error?.code).toBe("42501");
+  });
+
+  it("invite_workspace_member refuses an email with no account", async () => {
+    const { error } = await owner.client.rpc("invite_workspace_member", {
+      p_workspace_id: workspaceId,
+      p_email: "nobody@kermanych.test",
+    });
+    expect(error?.message).toMatch(/no Kermanych account/);
+  });
+
+  it("invite_workspace_member refuses a plain member and accepts the owner", async () => {
+    const added = await owner.client.rpc("invite_workspace_member", {
+      p_workspace_id: workspaceId,
+      p_email: member.email,
+    });
+    expect(added.error).toBeNull();
+    expect((added.data as { user_id: string }).user_id).toBe(member.id);
+
+    // Requirement 2: inviting is OWNER-only here, unlike the project-level rule it
+    // replaces — one invitation now opens every project in the workspace.
+    const memberTry = await member.client.rpc("invite_workspace_member", {
+      p_workspace_id: workspaceId,
+      p_email: outsider.email,
+    });
+    expect(memberTry.error?.message).toMatch(/only the workspace owner can invite/);
+  });
+
+  it("re-inviting the same person is an idempotent no-op", async () => {
+    const again = await owner.client.rpc("invite_workspace_member", {
+      p_workspace_id: workspaceId,
+      p_email: member.email,
+    });
+    expect(again.error).toBeNull();
+    expect((again.data as { user_id: string }).user_id).toBe(member.id);
+
+    const { data } = await owner.client
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", member.id);
+    expect(data).toHaveLength(1);
   });
 });
