@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createProject } from "../src/projects";
+import { listProjectSkills, upsertProjectSkill } from "../src/skills";
 
 const URL = process.env.SUPABASE_TEST_URL;
 const ANON = process.env.SUPABASE_TEST_ANON_KEY;
@@ -344,5 +345,70 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
 
     const { error } = await owner.client.from("tasks").delete().eq("id", taskId);
     expect(error).toBeNull();
+  });
+
+  // ── project_skills ──────────────────────────────────────────────────────────
+  // Project-level cloud config, so the policy matrix is the projects one: members read,
+  // the owner writes. `member` was invited above, `outsider` never was.
+  it("the project owner can insert a skill, and the trigger stamps updated_by", async () => {
+    const skill = await upsertProjectSkill(owner.client, {
+      projectId,
+      name: "opening-a-pr",
+      description: "  how this team opens a pull request  ",
+      body: "Squash, then request a review.",
+    });
+
+    expect(skill).toMatchObject({
+      projectId,
+      name: "opening-a-pr",
+      // upsertProjectSkill trims: the editor's trailing whitespace must not become part of
+      // the description omp reads.
+      description: "how this team opens a pull request",
+      body: "Squash, then request a review.",
+      enabled: true,
+    });
+    // project_skills_touch() owns both audit columns, so the writer cannot be forged and an
+    // edit cannot be backdated.
+    expect(skill.updatedBy).toBe(owner.id);
+    expect(Date.parse(skill.updatedAt)).not.toBeNaN();
+  });
+
+  it("a member reads the project's skills", async () => {
+    const skills = await listProjectSkills(member.client, [projectId]);
+    expect(skills.map((s) => s.name)).toEqual(["opening-a-pr"]);
+    expect(skills[0]?.body).toBe("Squash, then request a review.");
+  });
+
+  // Read-only for members: the library configures every session the whole team launches, so
+  // only the owner edits it.
+  it("a member cannot write a skill", async () => {
+    await expect(
+      upsertProjectSkill(member.client, {
+        projectId,
+        name: "member-written",
+        description: "should never land",
+        body: "nope",
+      }),
+    ).rejects.toThrow(/row-level security/);
+
+    const stillOne = await listProjectSkills(owner.client, [projectId]);
+    expect(stillOne.map((s) => s.name)).toEqual(["opening-a-pr"]);
+  });
+
+  it("a member cannot delete a skill", async () => {
+    const { error } = await member.client
+      .from("project_skills")
+      .delete()
+      .eq("project_id", projectId)
+      .eq("name", "opening-a-pr");
+    // A refused DELETE is filtered by the USING clause rather than raising, so the proof is
+    // that the row survived.
+    expect(error).toBeNull();
+    const survived = await listProjectSkills(owner.client, [projectId]);
+    expect(survived.map((s) => s.name)).toEqual(["opening-a-pr"]);
+  });
+
+  it("a non-member sees zero skills", async () => {
+    expect(await listProjectSkills(outsider.client, [projectId])).toEqual([]);
   });
 });

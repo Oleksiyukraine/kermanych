@@ -79,3 +79,23 @@ export type TaskPatch = {
   kind?: string;
   branch?: string;
 };
+
+// A per-project skill (the Kermanych UI's library). `enabled: false` on a row whose name
+// matches one of Kermanych's DEFAULT_SKILLS is how a project turns that default off.
+export type ProjectSkill = {
+  projectId: string;
+  name: string;
+  description: string;
+  body: string;
+  enabled: boolean;
+  updatedAt: string;
+  updatedBy?: string;
+};
+
+export type ProjectSkillInsert = {
+  projectId: string;
+  name: string;
+  description: string;
+  body: string;
+  enabled?: boolean;
+};
