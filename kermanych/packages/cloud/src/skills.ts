@@ -70,15 +70,23 @@ export async function upsertProjectSkill(
   return toProjectSkill(data as SkillRow);
 }
 
+// A DELETE the owner-only USING clause filters out matches zero rows and reports NO error,
+// so a member's refusal and an already-gone skill would both look like success — while an
+// unauthorized upsert raises 42501. `.select()` closes that asymmetry: the deleted rows come
+// back, and an empty set is the refusal the editor must not treat as a dropped row.
 export async function deleteProjectSkill(
   client: SupabaseClient,
   projectId: string,
   name: string,
 ): Promise<void> {
-  const { error } = await client
+  const { data, error } = await client
     .from("project_skills")
     .delete()
     .eq("project_id", projectId)
-    .eq("name", name);
+    .eq("name", name)
+    .select(SKILL_COLUMNS);
   if (error) throw new Error(error.message);
+  if (!data || data.length === 0) {
+    throw new Error(`skill "${name}" was not deleted: the delete was refused or the skill is already gone`);
+  }
 }

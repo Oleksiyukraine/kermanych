@@ -6,7 +6,10 @@ create table public.project_skills (
   -- Also a directory name under ~/.kermanych/skills/<projectId>/, hence the strict pattern.
   name        text not null check (name ~ '^[a-z0-9][a-z0-9-]{0,63}$'),
   -- omp drops a custom-directory skill that has no description, so an empty one is invalid.
-  description text not null check (length(btrim(description)) > 0),
+  -- Single-argument btrim strips spaces ONLY: a lone tab or newline would pass and still be
+  -- blank, so the character set is spelled out. The module's .trim() covers the app path;
+  -- this covers psql, a direct PostgREST call and any later server-side writer.
+  description text not null check (length(btrim(description, E' \t\r\n')) > 0),
   body        text not null,
   enabled     boolean not null default true,
   updated_at  timestamptz not null default now(),

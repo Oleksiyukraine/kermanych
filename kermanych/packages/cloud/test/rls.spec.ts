@@ -17,7 +17,7 @@ import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createProject } from "../src/projects";
-import { listProjectSkills, upsertProjectSkill } from "../src/skills";
+import { deleteProjectSkill, listProjectSkills, upsertProjectSkill } from "../src/skills";
 
 const URL = process.env.SUPABASE_TEST_URL;
 const ANON = process.env.SUPABASE_TEST_ANON_KEY;
@@ -395,20 +395,24 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(stillOne.map((s) => s.name)).toEqual(["opening-a-pr"]);
   });
 
-  it("a member cannot delete a skill", async () => {
-    const { error } = await member.client
-      .from("project_skills")
-      .delete()
-      .eq("project_id", projectId)
-      .eq("name", "opening-a-pr");
-    // A refused DELETE is filtered by the USING clause rather than raising, so the proof is
-    // that the row survived.
-    expect(error).toBeNull();
+  it("a non-member sees zero skills", async () => {
+    expect(await listProjectSkills(outsider.client, [projectId])).toEqual([]);
+  });
+
+  // Postgres does not raise on a DELETE the USING clause filters out — it matches zero rows
+  // and reports success. deleteProjectSkill turns that empty result into a throw, so the
+  // refusal reaches the editor instead of looking like a dropped row.
+  it("a member's delete is refused and surfaces as a throw", async () => {
+    await expect(deleteProjectSkill(member.client, projectId, "opening-a-pr")).rejects.toThrow(
+      /was not deleted/,
+    );
+
     const survived = await listProjectSkills(owner.client, [projectId]);
     expect(survived.map((s) => s.name)).toEqual(["opening-a-pr"]);
   });
 
-  it("a non-member sees zero skills", async () => {
-    expect(await listProjectSkills(outsider.client, [projectId])).toEqual([]);
+  it("the owner's delete removes the skill", async () => {
+    await expect(deleteProjectSkill(owner.client, projectId, "opening-a-pr")).resolves.toBeUndefined();
+    expect(await listProjectSkills(owner.client, [projectId])).toEqual([]);
   });
 });
