@@ -14,6 +14,14 @@ export type Profile = {
   avatarUrl?: string;
 };
 
+export type Workspace = {
+  id: string;
+  name: string;
+  color?: string;
+  ownerId: string;
+  createdAt: string;
+};
+
 export type CloudProject = {
   id: string;
   name: string;
@@ -31,6 +39,14 @@ export type CloudProject = {
 
 export type ProjectMember = {
   projectId: string;
+  userId: string;
+  role: "owner" | "member";
+  addedAt: string;
+  profile?: Profile; // joined when the caller asks for it
+};
+
+export type WorkspaceMember = {
+  workspaceId: string;
   userId: string;
   role: "owner" | "member";
   addedAt: string;

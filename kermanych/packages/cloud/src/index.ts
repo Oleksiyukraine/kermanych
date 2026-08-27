@@ -7,6 +7,8 @@
 export type {
   TaskStatus,
   Profile,
+  Workspace,
+  WorkspaceMember,
   CloudProject,
   ProjectMember,
   Task,
@@ -26,11 +28,21 @@ export {
   listProjects,
   createProject,
   patchProject,
+  deleteProject,
+} from "./projects";
+
+export type { CloudWorkspacePatch, CloudWorkspaceInsert } from "./workspaces";
+export {
+  toWorkspace,
+  toWorkspaceRow,
+  listWorkspaces,
+  createWorkspace,
+  patchWorkspace,
+  deleteWorkspace,
   listMembers,
   inviteMember,
   removeMember,
-  deleteProject,
-} from "./projects";
+} from "./workspaces";
 
 export type { TaskChange, TaskChannelState } from "./tasks";
 export {
