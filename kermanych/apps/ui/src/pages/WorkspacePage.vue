@@ -12,27 +12,30 @@
         <header class="ws__board-head">
           <div class="ws__board-title">
             <span class="ws__bucket-label">{{ bucketLabel }}</span>
-            <span class="ws__bucket-count mono">{{ boardRows.length }}</span>
+            <span class="ws__bucket-count mono">{{ boardCount }}</span>
           </div>
           <div class="ws__board-controls">
             <KBtn variant="primary" @click="openLauncher()">Нова задача</KBtn>
           </div>
         </header>
 
-        <div v-if="boardRows.length" class="ws__cards">
-          <KSessionCard
-            v-for="s in boardRows"
-            :key="s.id"
-            :branch="s.branch"
-            :title="s.name"
-            :time="relativeTime(s.lastActivityAt, now)"
-            :status="s.status"
-            :status-line="activityOf(s) || statusWord(s)"
-            :model="s.model"
-            :usage="s.usage"
-            :selected="store.selectedSessionId === s.id"
-            @click="onRowClick(s)"
-          />
+        <div v-if="boardCount" class="ws__cards">
+          <div v-for="g in boardGroups" :key="g[0]!.id" class="ws__group">
+            <KSessionCard
+              v-for="(s, i) in g"
+              :key="s.id"
+              :fork="i > 0"
+              :branch="s.branch"
+              :title="s.name"
+              :time="relativeTime(s.lastActivityAt, now)"
+              :status="s.status"
+              :status-line="activityOf(s) || statusWord(s)"
+              :model="s.model"
+              :usage="s.usage"
+              :selected="store.selectedSessionId === s.id"
+              @click="onRowClick(s)"
+            />
+          </div>
         </div>
         <div v-else class="ws__empty mono">
           {{ showArchived ? 'Немає відкладених агентів.' : showTasks ? 'Беклог порожній. Створи задачу через «Нова задача».' : showHistory ? 'Історія порожня.' : 'Ще немає агентів. Запусти першого через «Нова задача».' }}
@@ -57,7 +60,25 @@
       <aside class="ws__detail">
         <template v-if="selectedSession">
         <div class="ws__detail-bar">
-          <span class="ws__detail-label mono">{{ selectedSession.name }}</span>
+          <div class="ws__detail-path">
+            <!-- A branch names the agent it was forked off, and opens it. -->
+            <template v-if="parentOfSelected">
+              <button
+                type="button"
+                class="ws__detail-parent"
+                v-tip="'Відкрити батьківського агента'"
+                :aria-label="`Відкрити батьківського агента: ${parentOfSelected.name}`"
+                @click="store.selectSession(parentOfSelected.id)"
+              >
+                <span class="ws__detail-parent-mark" aria-hidden="true">↑</span>
+                <span class="ws__detail-parent-name mono">
+                  {{ parentOfSelected.branch || parentOfSelected.name }}
+                </span>
+              </button>
+              <span class="ws__detail-sep mono" aria-hidden="true">/</span>
+            </template>
+            <span class="ws__detail-label mono">{{ selectedSession.name }}</span>
+          </div>
           <button
             type="button"
             class="ws__close"
@@ -523,6 +544,7 @@ import { useRouter } from 'vue-router';
 import { useProjects } from 'stores/projects';
 import type { FileDiff, MessageMode } from '../lib/api';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
+import { bucketOf } from '../lib/buckets';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
@@ -563,10 +585,9 @@ onMounted(() => {
   void board.load();
 });
 
-// Board buckets mirror the sidebar (MainLayout.bucketCounts): archived wins, then
-// backlog → Задачі, then merged/done/stopped → Історія, everything else → Активні
-// (error/conflict count as active — they need attention). Driven by store.selectedBucket.
-const HISTORY_STATUSES: readonly SessionStatus[] = ['merged', 'done', 'stopped'];
+// Board buckets mirror the sidebar (MainLayout.bucketCounts) because both ask the same
+// function — lib/buckets.ts — which also keeps a fork in its parent's bucket rather than
+// its own. Driven by store.selectedBucket.
 const showArchived = computed(() => store.selectedBucket === 'archived');
 const showTasks = computed(() => store.selectedBucket === 'tasks');
 const showHistory = computed(() => store.selectedBucket === 'history');
@@ -588,35 +609,56 @@ const STATUS_RANK: Record<SessionStatus, number> = {
   stopped: 2,
   merged: 3,
 };
+const sessionById = computed(() => {
+  const byId = new Map<string, Session>();
+  for (const s of store.sessions) byId.set(s.id, s);
+  return byId;
+});
 const projectSessions = computed(() =>
   store.sessions
-    .filter((s) => {
-      if (s.projectId !== store.selectedProjectId) return false;
-      if (store.selectedBucket === 'archived') return !!s.archived;
-      if (s.archived) return false;
-      if (store.selectedBucket === 'tasks') return s.status === 'backlog';
-      if (store.selectedBucket === 'history') return HISTORY_STATUSES.includes(s.status);
-      return s.status !== 'backlog' && !HISTORY_STATUSES.includes(s.status);
-    })
+    .filter(
+      (s) =>
+        s.projectId === store.selectedProjectId &&
+        s.kind !== 'chat' &&
+        bucketOf(s, (id) => sessionById.value.get(id)) === store.selectedBucket,
+    )
     .sort((a, b) => {
       const byStatus = STATUS_RANK[a.status] - STATUS_RANK[b.status];
       return byStatus !== 0 ? byStatus : a.createdAt.localeCompare(b.createdAt);
     }),
 );
 
-// Board order: each discussion child immediately follows its parent (a one-level
-// tree). Orphans (parent filtered out by the archived/project view) still render.
-const boardRows = computed<Session[]>(() => {
-  const all = projectSessions.value.filter((s) => s.kind !== 'chat');
-  const parents = all.filter((s) => !s.parentSessionId);
-  const out: Session[] = [];
-  for (const p of parents) {
-    out.push(p);
-    for (const c of all.filter((s) => s.parentSessionId === p.id)) out.push(c);
+// Board shape: a one-level tree. A group opens with an agent and continues with the
+// discussion/review branches forked off its conversation, which the cards then draw as its
+// forks (KSessionCard `fork`). A child whose parent is filtered out of this view (archived,
+// another bucket) is not adopted by whatever card precedes it: it forms its own group and
+// renders as a plain row, which is what it is here.
+const boardGroups = computed<Session[][]>(() => {
+  const all = projectSessions.value;
+  const forksOf = new Map<string, Session[]>();
+  for (const s of all) {
+    if (!s.parentSessionId) continue;
+    const kin = forksOf.get(s.parentSessionId);
+    if (kin) kin.push(s);
+    else forksOf.set(s.parentSessionId, [s]);
   }
-  for (const s of all) if (!out.includes(s)) out.push(s);
-  return out;
+  // Siblings sit in creation order, not status order: a branch settling mid-look must not
+  // reshuffle the forks of the agent the operator is reading.
+  for (const kin of forksOf.values()) kin.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const groups: Session[][] = [];
+  const grouped = new Set<string>();
+  for (const p of all) {
+    if (p.parentSessionId) continue;
+    const group = [p, ...(forksOf.get(p.id) ?? [])];
+    for (const s of group) grouped.add(s.id);
+    groups.push(group);
+  }
+  for (const s of all) if (!grouped.has(s.id)) groups.push([s]);
+  return groups;
 });
+const boardCount = computed(() =>
+  boardGroups.value.reduce((n, g) => n + g.length, 0),
+);
 const selectedProject = computed(() =>
   store.projects.find((p) => p.id === store.selectedProjectId),
 );
@@ -634,6 +676,14 @@ function isBoundFor(projectId: string): boolean {
 }
 const selectedSession = computed(() =>
   store.sessions.find((s) => s.id === store.selectedSessionId),
+);
+// The agent this session was forked off, when it is a branch. Read from the whole session
+// list, not the board: a branch stays open while its parent sits in another bucket, and the
+// way back up the tree has to work from there too — the board's elbow may be off screen.
+const parentOfSelected = computed<Session | undefined>(() =>
+  selectedSession.value?.parentSessionId
+    ? store.sessions.find((s) => s.id === selectedSession.value?.parentSessionId)
+    : undefined,
 );
 const entries = computed<TranscriptEntry[]>(() =>
   store.selectedSessionId
@@ -1663,6 +1713,58 @@ async function submitPreviewConfig(): Promise<void> {
   flex: none;
 }
 
+// The bar's left half: for a branch, the parent it hangs off, then this session's own name.
+.ws__detail-path {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+  min-width: 0;
+}
+
+// The way back up to the agent this branch was forked off.
+.ws__detail-parent {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  // Shrinks only under real pressure — a bar with room to spare shows the whole branch.
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--k-faint);
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--k-accent);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 2px;
+  }
+}
+
+.ws__detail-parent-mark {
+  flex: none;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.ws__detail-parent-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws__detail-sep {
+  flex: none;
+  font-size: 12px;
+  color: var(--k-faint);
+}
+
 .ws__detail-label {
   font-size: 12px;
   color: var(--k-muted);
@@ -1710,6 +1812,15 @@ async function submitPreviewConfig(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: var(--k-sp-3);
+}
+
+// One agent and the branches forked off it. The gap is the one a fork's elbow is drawn to
+// cross (`--k-fork-gap` in KSessionCard, which defaults to exactly this): keep them equal
+// or the spine will fall short of the parent card above.
+.ws__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
 }
 
 // ── Detail tabs + panes ────────────────────────────────────────────────────

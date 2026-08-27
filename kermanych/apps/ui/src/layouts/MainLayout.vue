@@ -402,6 +402,7 @@ import { MANAGEMENT_DEFAULT_SECTION } from '../lib/management';
 import { theme, toggleTheme } from '../lib/theme';
 import { percent, planWindow } from '../lib/format';
 import { until } from '../lib/time';
+import { bucketOf } from '../lib/buckets';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
@@ -541,17 +542,16 @@ function onBucket(key: 'active' | 'tasks' | 'archived' | 'history'): void {
   store.setBucket(key);
   if (route.name !== 'workspace') void router.push({ name: 'workspace' });
 }
-// Fleet tally per sidebar bucket (replaces the old footer KStatusBar). error/conflict
-// count as Активні (needs attention) so no session falls outside a bucket.
+// Fleet tally per sidebar bucket (replaces the old footer KStatusBar). The rule lives in
+// lib/buckets.ts — the board filters its cards with the same call, so the number here is
+// the number of cards the bucket opens on, forks included.
 const bucketCounts = computed(() => {
   const c = { active: 0, tasks: 0, archived: 0, history: 0 };
+  const byId = new Map(store.sessions.map((s) => [s.id, s]));
   for (const s of store.sessions) {
     if (s.projectId !== store.selectedProjectId) continue;
     if (s.kind === 'chat') continue;
-    if (s.archived) c.archived++;
-    else if (s.status === 'backlog') c.tasks++;
-    else if (s.status === 'merged' || s.status === 'done' || s.status === 'stopped') c.history++;
-    else c.active++;
+    c[bucketOf(s, (id) => byId.get(id))]++;
   }
   return c;
 });

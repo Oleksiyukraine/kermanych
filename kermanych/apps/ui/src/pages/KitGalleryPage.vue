@@ -270,6 +270,29 @@
           :model="c.model" :usage="c.usage"
         />
       </div>
+
+      <!-- A FORK — a discussion/review branch of the card above it. It has to read as that
+           agent's child rather than one more agent that happens to sit there, so it is
+           indented and tied back by an elbow; the last fork ends the spine, the ones before
+           it carry it on. The container leaves the gap the spine is drawn to cross. -->
+      <div class="kit__cards kit__group">
+        <KSessionCard
+          branch="feature/dark-theme" time="6 хв" status="waiting_input"
+          status-line="чекає · потрібне рішення" model="opus-5"
+          :usage="{ input: 9800, output: 4100, cacheRead: 480000, cacheWrite: 27000, cost: 1.41 }"
+        />
+        <KSessionCard
+          fork branch="" title="гілка: темна тема" time="2 хв" status="thinking"
+          status-line="обговорює · без інструментів" model="haiku"
+          :usage="{ input: 410, output: 180, cacheRead: 6200, cacheWrite: 0, cost: 0.004 }"
+        />
+        <KSessionCard
+          fork branch="" title="ревізія: темна тема" time="1 хв" status="done"
+          status-line="готово · APPROVE" model="opus-5" selected
+          :usage="{ input: 7400, output: 2900, cacheRead: 132000, cacheWrite: 9600, cost: 0.88 }"
+        />
+      </div>
+      <div class="kit__caption mono">форк: гілка та ревізія під батьківським агентом</div>
     </section>
 
     <!-- kanban -->
@@ -593,6 +616,7 @@ function onRestart() { lastAction.value = 'restart'; }
 <style scoped lang="scss">
 .kit__sidebar { display: flex; flex-direction: column; gap: var(--k-sp-1); max-width: 240px; margin-top: var(--k-sp-4); background: var(--k-surface); border: 1px solid var(--k-line); border-radius: var(--k-r-lg); padding: var(--k-sp-2); }
 .kit__cards { display: flex; flex-direction: column; gap: var(--k-sp-2); max-width: 340px; }
+.kit__group { margin-top: var(--k-sp-4); }
 .kit__kanban { display: flex; gap: var(--k-sp-3); align-items: flex-start; }
 .kit__kanban > * { flex: 1; max-width: 280px; }
 .kit__swatches { display: flex; flex-wrap: wrap; gap: var(--k-sp-3); }
