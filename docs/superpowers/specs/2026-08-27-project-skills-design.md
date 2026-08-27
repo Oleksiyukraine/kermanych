@@ -78,6 +78,17 @@ The third row is why §3.3 exists: `omp` documents custom directories as
 overriding same-named provider skills (`omp://skills.md`), so "Kermanych must not
 overwrite the project's rules" has to be enforced by Kermanych, not assumed.
 
+What the probes did **not** cover: whether a `skills.customDirectories` entry a
+*lower* config layer already declares survives the overlay. It does not — `--config`
+is `omp`'s highest-precedence layer and array-typed settings are **replaced**
+wholesale by a higher layer, never appended, so an overlay naming only Kermanych's
+directory erases both the operator's `~/.omp/agent/config.yml` entries and the
+target repository's own `<cwd>/.omp/config.yml` ones. §3.4 therefore reads the
+effective value with `omp config get skills.customDirectories` **in the session
+cwd** and emits the union with Kermanych's directory **last** (among custom
+directories the first same-named skill wins, so appending preserves every other
+layer's precedence); if that read fails, no overlay is written at all.
+
 Two further constraints from `omp`'s discovery rules that shape the design:
 
 - **`description` is mandatory** for custom-directory skills
@@ -176,7 +187,7 @@ would buy nothing.
 
 ### 3.2 Defaults shipped by Kermanych
 
-Defaults live in `packages/core/src/skills-defaults.ts` as exported constants
+Defaults live in `packages/core/src/skills.ts` as exported constants
 (`DEFAULT_SKILLS: SkillDef[]`, where `SkillDef = { name, description, body }`),
 **not** as `.md` asset files: `pnpm build:app` packages compiled JS, not
 arbitrary asset directories, and the UI must render the same text without a
@@ -229,8 +240,13 @@ silent in either direction.
 New `apps/api/src/skills/skills.service.ts`:
 
 ```ts
-materialize(project: Project, cwd: string): Promise<{ configPath: string; view: SkillView[] }>
+materialize(projectId: string, cwd: string): Promise<{ configPath?: string; view: SkillView[]; stale?: boolean }>
 ```
+
+`configPath` is optional because a launch must never be blocked by the library:
+it is set only once the overlay write succeeded, and `stale` means "what is on
+disk may not reflect the cloud" (a failed cloud read, a failed repo scan, an
+unreadable `skills.customDirectories`, or a filesystem failure).
 
 - Resolves the set (§3.3), re-validating each `name` against
   `/^[a-z0-9][a-z0-9-]{0,63}$/` before touching the filesystem.
@@ -245,16 +261,29 @@ materialize(project: Project, cwd: string): Promise<{ configPath: string; view: 
   ```yaml
   skills:
     customDirectories:
-      - /Users/<user>/.kermanych/skills/<projectId>
+      - "/Users/<user>/some/dir/a lower layer already declared"
+      - "/Users/<user>/.kermanych/skills/<projectId>"
   ```
+
+  Every path is emitted as a **quoted** scalar (`JSON.stringify`, valid YAML —
+  the same technique `renderSkillFile` uses for descriptions): the paths derive
+  from `homedir()`, which Kermanych does not control, and in a plain scalar a
+  ` #` opens a comment and a `: ` a mapping. A malformed overlay is a hard `omp`
+  startup error, the one outcome "never block a launch" forbids. The list is the
+  union with the effective lower-layer value (§2.2), Kermanych's directory last.
 
 - Returns `view` — one entry per resolved skill with
   `{ name, description, source: "default" | "project", shadowedByRepo?: string }`
   — which is both the UI's list (§3.6) and the source badge in the transcript
   (§3.5).
-- **Offline:** if the cloud read fails, the previously materialized directory is
-  reused untouched (it *is* the offline cache; no SQLite mirror is added) and the
-  session still launches with `--config`.
+- **Offline:** if the cloud read fails, nothing is pruned and the previously
+  materialized directory is reused (it *is* the offline cache; no SQLite mirror is
+  added), with only names *missing* from disk written, so a richer cached library is
+  never demoted. When there is **no** existing directory — a fresh install, a
+  signed-out or offline first launch, or a machine before the `project_skills`
+  migration — `DEFAULT_SKILLS` are still written: they are compile-time constants
+  needing neither network nor sign-in, and suppressing them would hand `omp` an
+  empty directory. Either way the session launches with `--config` and `stale: true`.
 
 `RpcSession` gains one option, `configPath?: string`, appended as
 `--config <path>` after `--cwd` (`rpc-session.ts:47-53`). The supervisor calls
@@ -311,7 +340,7 @@ settings modal (`MainLayout.vue:184-296`), which is already at its limit:
 - `packages/cloud/src/skills.ts` provides `listProjectSkills(client, projectIds)`
   (batched `project_id=in.(…)`, following `tasks.ts:66-78`),
   `upsertProjectSkill`, `deleteProjectSkill`, plus `ProjectSkill` /
-  `ProjectSkillInsert` / `ProjectSkillPatch` types — all re-exported from
+  `ProjectSkillInsert` types — all re-exported from
   `packages/cloud/src/index.ts`.
 
 ## 4. Isolation / boundaries
@@ -351,8 +380,14 @@ settings modal (`MainLayout.vue:184-296`), which is already at its limit:
 - Name validation: `../evil`, absolute paths and uppercase are rejected before
   any `mkdir`.
 - Overlay: exact YAML content and the sibling path.
-- Offline: a failing cloud read keeps the existing directory and still returns a
-  config path.
+- Offline: a failing cloud read keeps the existing directory (nothing pruned,
+  nothing demoted) and still returns a config path; with **no** existing
+  directory it writes `DEFAULT_SKILLS` — which need no cloud — and still returns
+  a config path, so a fresh, signed-out or offline machine never launches against
+  an empty directory.
+- Lower config layers: an unreadable effective `skills.customDirectories` writes
+  no overlay at all (`configPath` absent, `stale: true`) rather than one that
+  would replace it; a readable one is extended, Kermanych's directory last.
 - Transcript labels: a skill read routed through the supervisor yields a row with
   `stat` = «бібліотека» for a default and «проєкт» for a project row, and
   `intent` = the absolute path of the materialized `SKILL.md`.
@@ -365,6 +400,10 @@ settings modal (`MainLayout.vue:184-296`), which is already at its limit:
 - Add a repo skill with the same name as a library skill; assert the description
   in `systemPrompt` is the repository's. This is the test that would have caught
   the silent override of §2.2.
+- Point a **lower** config layer (`<cwd>/.omp/config.yml`) at a second skills
+  directory, materialize, spawn with the overlay; assert BOTH that directory's
+  skill and a library skill appear in `systemPrompt`. This is the test that would
+  have caught the wholesale array replacement of §2.2.
 
 **Manual smoke (`pnpm dev:app`):** author a skill in Менеджмент → launch a
 session whose task matches its description → the agent reads it → the collapsed
