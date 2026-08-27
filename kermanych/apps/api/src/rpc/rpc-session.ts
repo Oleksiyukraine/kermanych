@@ -36,7 +36,7 @@ export class RpcSession {
   // transcript work exists to remove, so the count is kept and each loss is announced.
   droppedFrames = 0;
   private seq = 0;
-  constructor(private opts: { cwd: string; model?: string; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; commandTimeoutMs?: number }) {}
+  constructor(private opts: { cwd: string; model?: string; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; commandTimeoutMs?: number; configPath?: string }) {}
 
   onEvent(cb: (e: RpcEvent) => void) { this.eventCbs.push(cb); }
   onExit(cb: (code: number | null, reason: string) => void) { this.exitCbs.push(cb); }
@@ -45,6 +45,9 @@ export class RpcSession {
 
   async start(): Promise<void> {
     const argv = ["omp", "--mode", "rpc", "--cwd", this.opts.cwd];
+    // The project's skill-library overlay (skills.customDirectories). Launch-time only:
+    // no RPC command can add skills to a running child.
+    if (this.opts.configPath) argv.push("--config", this.opts.configPath);
     if (this.opts.model) argv.push("--model", this.opts.model);
     if (this.opts.fork) argv.push("--fork", this.opts.fork);
     if (this.opts.noTools) argv.push("--no-tools");

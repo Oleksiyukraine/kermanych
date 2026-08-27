@@ -192,6 +192,13 @@
               <dd class="ws__meta-value mono">{{ ctxOf(selectedSession) ?? '—' }}</dd>
             </div>
             <div class="ws__meta-row">
+              <dt
+                class="ws__meta-label"
+                title="Скіли з усього завантаженого транскрипту цієї сесії — разом із турами, перебраними від батька, якщо гілку відгалужено. Скіл, узятий субагентом, тут не видно."
+              >Скіли</dt>
+              <dd class="ws__meta-value mono">{{ usedSkills.join(', ') || '—' }}</dd>
+            </div>
+            <div class="ws__meta-row">
               <dt class="ws__meta-label">Токени</dt>
               <dd class="ws__meta-value mono">{{ tokenTotal ?? '—' }}</dd>
             </div>
@@ -532,6 +539,7 @@ import {
   buildChatBlocks,
   branchName,
   taskNameFromText,
+  skillsUsed,
   type ImageInput,
   type Session,
   type SessionStatus,
@@ -690,6 +698,10 @@ const entries = computed<TranscriptEntry[]>(() =>
     ? store.transcripts[store.selectedSessionId] ?? []
     : [],
 );
+
+// Which library skills this session took, read straight off the transcript rows the
+// reducer already produced — the «Сесія» tab needs no state of its own for it.
+const usedSkills = computed(() => skillsUsed(entries.value));
 
 // The log is grouped into request blocks: one collapsed summary row per finished
 // request. The detail toolbar drives the whole block — muted rows, coalesced groups,

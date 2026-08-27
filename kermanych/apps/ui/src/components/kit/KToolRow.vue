@@ -2,7 +2,7 @@
   <div>
     <button type="button" class="k-tr" :aria-expanded="open" @click="toggle">
       <span class="k-tr__g" :class="`k-tr__g--${entry.status}`" role="img" :aria-label="statusLabel">{{ glyph }}</span>
-      <span class="k-tr__t">{{ entry.tool }}</span>
+      <span class="k-tr__t" :class="{ 'k-tr__t--skill': entry.tool === 'skill' }">{{ entry.tool }}</span>
       <span class="k-tr__tg">{{ entry.target ?? '' }}</span>
       <span class="k-tr__st">{{ entry.stat ?? '' }}</span>
       <span class="k-tr__ch" aria-hidden="true">{{ open ? '⌄' : '›' }}</span>
@@ -115,6 +115,9 @@ async function loadFull(): Promise<void> {
    characters at 12.5px mono, covering the builtin toolset up to `ast_edit`; the
    ellipsis is the backstop for longer outliers like `web_search`. */
 .k-tr__t { flex: none; width: 60px; overflow: hidden; text-overflow: ellipsis; color: var(--k-text); }
+/* A skill row is the agent choosing from the library — worth finding at a glance among
+   dozens of file reads. */
+.k-tr__t--skill { color: var(--k-accent); }
 .k-tr__tg { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 /* Capped so the stat ellipsises instead of starving the target, which is the only
    shrinkable cell, at the panel's 360px minimum. */

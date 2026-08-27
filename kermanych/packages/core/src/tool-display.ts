@@ -242,6 +242,23 @@ const evalDisplay: Reducer = (args, d, content) => {
   return { target: str(args["i"]), ...(language ? { stat: language } : {}), lines, totalLines: lines.length };
 };
 
+// `skill://<name>[/<sub-path>]` — the name IS the row's identity. The generic fallback would
+// leave the whole `skill://…` string as the target, so the row reads as a raw URI instead of a
+// named skill and coalesces with file reads; strip the scheme here and keep the rest whole —
+// the name is never shortened. No `stat` is produced on purpose; the transcript fills it with
+// the source badge (бібліотека / проєкт / репо). `truncation` still means the upstream body was
+// cut, exactly as in `readDisplay`, so the row must carry the note.
+const skillDisplay: Reducer = (args, d, content) => {
+  const target = str(args["path"]).replace(/^skill:\/\//, "");
+  const lines = textLines(content);
+  return {
+    ...(target ? { target } : {}),
+    lines,
+    totalLines: lines.length,
+    ...(d["truncation"] ? { truncatedUpstream: true } : {}),
+  };
+};
+
 const genericDisplay: Reducer = (args, _d, content) => {
   const lines = textLines(content);
   // `i` is prose, not a path: shortening it on "/" would butcher the intent.
@@ -250,7 +267,7 @@ const genericDisplay: Reducer = (args, _d, content) => {
 
 const REDUCERS: Record<string, Reducer> = {
   read: readDisplay, write: writeDisplay, glob: globDisplay, edit: editDisplay, grep: grepDisplay,
-  bash: bashDisplay, todo: todoDisplay, hub: hubDisplay, eval: evalDisplay,
+  bash: bashDisplay, todo: todoDisplay, hub: hubDisplay, eval: evalDisplay, skill: skillDisplay,
 };
 
 export function toolDisplay(tool: string, args: Args | undefined, details: Details | undefined, content: string): ToolDisplay {

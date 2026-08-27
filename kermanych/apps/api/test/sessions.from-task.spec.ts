@@ -56,6 +56,7 @@ vi.mock("@kermanych/cloud", () => ({
 
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
+import { stubSkills } from "./skills-stub";
 
 const USER = "11111111-1111-1111-1111-111111111111";
 const OTHER = "22222222-2222-2222-2222-222222222222";
@@ -80,7 +81,7 @@ function make() {
     current: () => ({ userId: USER, accessToken: "token" }),
     cloudClient: () => ({}),
   } as unknown as AuthService;
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth);
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, stubSkills());
   return { sup, registry, worktree };
 }
 

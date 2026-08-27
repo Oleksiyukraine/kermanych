@@ -12,6 +12,8 @@ export type {
   Task,
   TaskInsert,
   TaskPatch,
+  ProjectSkill,
+  ProjectSkillInsert,
 } from "./types";
 
 export type { SupabaseClient, CloudEnv, CloudClientOptions } from "./client";
@@ -48,3 +50,10 @@ export {
   tasksFilter,
   subscribeTasks,
 } from "./tasks";
+
+export {
+  toProjectSkill,
+  listProjectSkills,
+  upsertProjectSkill,
+  deleteProjectSkill,
+} from "./skills";

@@ -100,8 +100,9 @@ test("a bash failure agrees on the command header, status, stat and clamped deta
       { now, startedAt, pendingArgs },
     ).entries,
   );
-  // R2: the end frame patch carries no target of its own, so it cannot clobber the call-time one.
-  expect(patch.target).toBeUndefined();
+  // R2: the end frame patch derives its target from the very args retained for the call, so
+  // it can only ever restate the call-time one — `finishTool` applying it clobbers nothing.
+  expect(patch.target).toBe(opened.target);
 
   // Compose the row the way `finishTool` does — this is what the operator actually sees.
   const composed: ToolEntry = { ...opened, status: patch.status, stat: patch.stat, count: patch.count, ms: patch.ms, detail: patch.detail };

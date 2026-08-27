@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import { toolDisplay, clampLines, shortPath, humanBytes } from "../src/tool-display";
+import { COALESCE_TOOLS } from "../src/chat-blocks";
 
 test("shortPath keeps the last segments and preserves a line range", () => {
   expect(shortPath("kermanych/apps/ui/src/components/kit/KPanel.vue")).toBe("kit/KPanel.vue");
@@ -285,4 +286,34 @@ test("an unknown tool falls back to content lines and no stat", () => {
 test("an unknown tool keeps a prose intent whole instead of shortening it", () => {
   const out = toolDisplay("task", { i: "Wiring api/ui/core boundaries" }, {}, "");
   expect(out.target).toBe("Wiring api/ui/core boundaries");
+});
+
+test("skill rows keep the full skill name and never mangle the scheme", () => {
+  const d = toolDisplay("skill", { path: "skill://kermanych-pull-request" }, {}, "# body\nline\n");
+  expect(d.target).toBe("kermanych-pull-request");
+  expect(d.lines.map((l) => l.text)).toEqual(["# body", "line"]);
+  // No stat of its own: the transcript puts the SOURCE badge in `stat`, and
+  // applyToolResult only overwrites it when the reducer names one.
+  expect(d.stat).toBeUndefined();
+});
+
+test("a skill sub-resource read keeps the sub-path on the target", () => {
+  expect(toolDisplay("skill", { path: "skill://pdf/references/tables.md" }, {}, "").target).toBe(
+    "pdf/references/tables.md",
+  );
+});
+
+test("read still shortens ordinary paths (guard against reusing the skill reducer)", () => {
+  expect(toolDisplay("read", { path: "/a/b/c/d.ts" }, {}, "").target).toBe("c/d.ts");
+});
+
+test("skill rows are never coalesced with file reads", () => {
+  expect((COALESCE_TOOLS as readonly string[]).includes("skill")).toBe(false);
+});
+
+// A truncated skill body must render the «віддано обрізаним» note, exactly as a truncated
+// read does: the details payload is the same, only the tool name differs.
+test("a skill row keeps the upstream truncation flag", () => {
+  expect(toolDisplay("skill", { path: "skill://x" }, { truncation: true }, "body").truncatedUpstream).toBe(true);
+  expect(toolDisplay("skill", { path: "skill://x" }, {}, "body").truncatedUpstream).toBeUndefined();
 });

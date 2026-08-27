@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RegistryService } from "../src/registry/registry.service";
 import { offlineAuth } from "./offline-auth";
+import { stubSkills } from "./skills-stub";
 import { WorktreeService } from "../src/worktree/worktree.service";
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { addedFileDiff, splitDiff } from "../src/worktree/split-diff";
@@ -32,7 +33,7 @@ beforeEach(() => {
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "base");
   reg = new RegistryService(":memory:");
-  sup = new SupervisorService(reg, wt, offlineAuth());
+  sup = new SupervisorService(reg, wt, offlineAuth(), stubSkills());
 });
 afterEach(() => {
   for (const d of trash) rmSync(d, { recursive: true, force: true });
