@@ -25,6 +25,9 @@ export function isSkillName(v: string): boolean {
 // a description is dropped at discovery. The description is emitted as a JSON string, which
 // is valid YAML and survives colons, quotes and newlines without hand-rolled escaping.
 export function renderSkillFile(s: SkillDef): string {
+  // The name is a plain YAML scalar, so an unvalidated one could close the frontmatter and
+  // inject keys (e.g. `alwaysApply`). Both callers must go through this guard.
+  if (!isSkillName(s.name)) throw new Error(`invalid skill name: ${s.name}`);
   return `---\nname: ${s.name}\ndescription: ${JSON.stringify(s.description)}\n---\n\n${s.body.replace(/\s+$/, "")}\n`;
 }
 
