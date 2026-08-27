@@ -38,6 +38,7 @@ test("every shipped default is discoverable by omp", () => {
 
 test("skillsUsed lists unique skills in order of first use", () => {
   const entries = [
+    { kind: "user_text", id: "0", at: 0, text: "read skill://not-a-row" },
     { kind: "tool", id: "1", at: 1, tool: "read", status: "ok", target: "src/a.ts" },
     { kind: "tool", id: "2", at: 2, tool: "skill", status: "ok", target: "kermanych-session" },
     { kind: "tool", id: "3", at: 3, tool: "skill", status: "ok", target: "kermanych-pull-request" },
