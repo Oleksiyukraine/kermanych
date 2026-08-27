@@ -16,6 +16,7 @@ import { AuthService } from "./auth/auth.service";
 import { SupabaseAuthGuard } from "./auth/auth.guard";
 import { CloudController } from "./cloud/cloud.controller";
 import { CloudSyncService } from "./cloud/cloud-sync.service";
+import { SkillsService } from "./skills/skills.service";
 
 @Module({
   controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController],
@@ -23,6 +24,7 @@ import { CloudSyncService } from "./cloud/cloud-sync.service";
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
     AuthService,
+    SkillsService,
     // Dependency direction, stated once: CloudSyncService → { SupervisorService,
     // RegistryService, AuthService }. The supervisor never knows the mirror exists — it is
     // a pure `events$` subscriber, like EventsGateway.
