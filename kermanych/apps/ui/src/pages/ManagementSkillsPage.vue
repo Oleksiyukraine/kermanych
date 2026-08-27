@@ -10,7 +10,7 @@
     <p v-if="error" class="sk__error mono">{{ error }}</p>
 
     <ul v-if="rows.length" class="sk__list">
-      <li v-for="row in rows" :key="row.name" class="sk__row">
+      <li v-for="row in rows" :key="row.name" class="sk__row" :class="{ 'sk__row--off': row.off }">
         <div class="sk__head">
           <span class="sk__name mono">{{ row.name }}</span>
           <span class="sk__badge" :class="`sk__badge--${badgeKind(row)}`">{{ badgeLabel(row) }}</span>
@@ -18,17 +18,28 @@
         <p class="sk__desc">{{ row.description }}</p>
         <p v-if="row.shadowedByRepo" class="sk__shadow mono">{{ row.shadowedByRepo }}</p>
         <div class="sk__actions">
-          <button type="button" class="sk__btn" :disabled="!canWrite" @click="edit(row)">Редагувати</button>
+          <!-- A tombstone offers exactly one action: switching the default back on. Editing
+               the body of a skill the session does not get would be theatre. -->
           <button
-            v-if="row.source === 'project'"
+            v-if="row.off"
             type="button"
             class="sk__btn"
             :disabled="!canWrite"
-            @click="remove(row.name)"
-          >Видалити</button>
-          <button v-else type="button" class="sk__btn" :disabled="!canWrite" @click="disable(row.name)">
-            Вимкнути
-          </button>
+            @click="dropRow(row.name)"
+          >Увімкнути</button>
+          <template v-else>
+            <button type="button" class="sk__btn" :disabled="!canWrite" @click="edit(row)">Редагувати</button>
+            <button
+              v-if="row.source === 'project'"
+              type="button"
+              class="sk__btn"
+              :disabled="!canWrite"
+              @click="dropRow(row.name)"
+            >Видалити</button>
+            <button v-else type="button" class="sk__btn" :disabled="!canWrite" @click="disable(row.name)">
+              Вимкнути
+            </button>
+          </template>
         </div>
       </li>
     </ul>
@@ -78,8 +89,8 @@
 // straight to Supabase, where RLS enforces owner-only edits — the same split the .env editor
 // uses for values-vs-names.
 import { computed, onMounted, ref } from 'vue';
-import { SKILL_NAME_RE, type SkillView } from '@kermanych/core';
-import { deleteProjectSkill, listProjectSkills, upsertProjectSkill } from '@kermanych/cloud';
+import { DEFAULT_SKILLS, SKILL_NAME_RE, type SkillView } from '@kermanych/core';
+import { deleteProjectSkill, listProjectSkills, upsertProjectSkill, type ProjectSkill } from '@kermanych/cloud';
 import { api } from '../lib/api';
 import { useAuth } from '../stores/auth';
 import { useProjects } from '../stores/projects';
@@ -88,9 +99,15 @@ import KField from '../components/kit/KField.vue';
 
 const props = defineProps<{ projectId: string; projectName: string }>();
 
+// What the list renders. The endpoint answers "what the session gets", which by design does
+// NOT include a Kermanych default this project switched off — so those rows are added here,
+// from the project's own cloud rows, marked `off`. The endpoint's type stays untouched: a
+// disabled skill is not part of a session's library and has no place in `SkillView`.
+type Row = SkillView & { off?: boolean };
+
 const auth = useAuth();
 const projects = useProjects();
-const rows = ref<SkillView[]>([]);
+const rows = ref<Row[]>([]);
 const error = ref('');
 const loading = ref(true);
 const editorOpen = ref(false);
@@ -111,19 +128,41 @@ const bodyPending = ref(false);
 
 const canWrite = computed(() => projects.isOwner(props.projectId));
 
-function badgeKind(row: SkillView): string {
+function badgeKind(row: Row): string {
+  if (row.off) return 'off';
   return row.shadowedByRepo ? 'repo' : row.source;
 }
-function badgeLabel(row: SkillView): string {
+function badgeLabel(row: Row): string {
+  if (row.off) return 'вимкнено';
   if (row.shadowedByRepo) return 'перекрито репо';
   return row.source === 'default' ? 'дефолт' : 'проєкт';
+}
+
+// A row with `enabled: false` whose name is one of Kermanych's own defaults is a TOMBSTONE:
+// it exists only to keep that default out of the library. The description comes from the
+// default itself, so the screen still says what the switched-off skill does. A disabled row
+// under any other name is not shown — it suppresses nothing, so there is nothing to switch.
+function tombstones(stored: readonly ProjectSkill[]): Row[] {
+  const off: Row[] = [];
+  for (const row of stored) {
+    if (row.enabled) continue;
+    const def = DEFAULT_SKILLS.find((d) => d.name === row.name);
+    if (def) off.push({ name: def.name, description: def.description, source: 'default', off: true });
+  }
+  return off;
 }
 
 async function load(): Promise<void> {
   error.value = '';
   loading.value = true;
   try {
-    rows.value = await api.projectSkills(props.projectId);
+    // Both reads, together: the resolved view is what the session gets, the cloud rows are
+    // the only place a switched-off default is still recorded.
+    const [view, stored] = await Promise.all([
+      api.projectSkills(props.projectId),
+      listProjectSkills(auth.client, [props.projectId]),
+    ]);
+    rows.value = [...view, ...tombstones(stored)];
   } catch (e) {
     // The endpoint refuses rather than degrade to the defaults, so a failed read must not
     // leave a list on screen either: what is shown would not be this project's library.
@@ -146,7 +185,7 @@ function create(): void {
   editorOpen.value = true;
 }
 
-async function edit(row: SkillView): Promise<void> {
+async function edit(row: Row): Promise<void> {
   editing.value = true;
   draftName.value = row.name;
   draftDescription.value = row.description;
@@ -196,10 +235,16 @@ async function save(): Promise<void> {
   }
 }
 
+// Both list actions that delete the project's row for a name. What differs is only what the
+// row MEANS: «Видалити» drops a skill the project added, while «Увімкнути» drops the
+// `enabled: false` tombstone of a Kermanych default — which makes that default reappear from
+// DEFAULT_SKILLS with its original text, so the body the tombstone never carried is never
+// needed to switch it back on.
+//
 // `deleteProjectSkill` throws when the delete removed nothing — an RLS refusal or an
-// already-gone skill. Nothing is dropped from the list here: the endpoint is re-read, so
-// what the screen shows is what the library resolves to.
-async function remove(name: string): Promise<void> {
+// already-gone row. Nothing is dropped from the list here: the endpoint is re-read, so what
+// the screen shows is what the library resolves to.
+async function dropRow(name: string): Promise<void> {
   error.value = '';
   try {
     await deleteProjectSkill(auth.client, props.projectId, name);
@@ -236,10 +281,15 @@ async function disable(name: string): Promise<void> {
 .sk__lead-project { color: var(--k-text); }
 .sk__list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
 .sk__row { padding: 10px 12px; background: var(--k-surface); border: 1px solid var(--k-line); border-radius: var(--k-r); }
+/* A switched-off default: dashed border and a dimmed name, so it reads as a slot the
+   project emptied rather than a skill the session has. Its «Увімкнути» stays full strength. */
+.sk__row--off { border-style: dashed; background: transparent; }
+.sk__row--off .sk__name, .sk__row--off .sk__desc { color: var(--k-muted); }
 .sk__head { display: flex; align-items: center; gap: 8px; }
 .sk__name { font-size: 12.5px; }
 .sk__badge { font-size: 10.5px; padding: 1px 6px; border: 1px solid var(--k-line-strong); border-radius: var(--k-r); color: var(--k-muted); }
 .sk__badge--repo { color: var(--k-accent); border-color: var(--k-accent); }
+.sk__badge--off { border-style: dashed; }
 .sk__desc { margin: 6px 0 0; font-size: 12.5px; }
 .sk__shadow { margin: 4px 0 0; font-size: 11px; color: var(--k-muted); }
 .sk__actions { display: flex; gap: 6px; margin-top: 8px; }
