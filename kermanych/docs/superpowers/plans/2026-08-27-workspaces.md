@@ -22,6 +22,7 @@
 - TypeScript runs with `exactOptionalPropertyTypes`: an unset optional field is an **absent key**, never `undefined`.
 - UI copy is inline Ukrainian; identifiers and comments are English. There is no i18n layer — do not add one.
 - `apps/ui` has **no component tests** (no `@vue/test-utils`, no jsdom). `apps/ui/test/*.spec.ts` are pure unit tests over `src/lib/**` with hand-rolled fakes. Logic that needs coverage goes into `src/lib/`.
+- **Verify every `var(--k-*)` name against `packages/tokens/src/tokens.css` before using it.** CSS custom properties fail SILENTLY: an unknown token yields no value, no warning, and a clean typecheck, so a wrong name ships as a missing background or default-grey text that only a human eye catches. Task 9's review found this plan quoting two names that do not exist — `--k-surface-2` and `--k-text-dim`, whose real spellings are `--k-surface2` and `--k-muted`. Those three occurrences are corrected, but treat any token name in this plan as unverified until you have grepped it.
 - RLS integration tests are gated `describe.skipIf(!URL || !ANON || !SERVICE)` on `SUPABASE_TEST_URL` / `SUPABASE_TEST_ANON_KEY` / `SUPABASE_TEST_SERVICE_KEY`, and clients MUST be built in `beforeAll` — `skipIf` still executes the describe callback, and `createClient("")` throws.
 - The service-role key is used ONLY by `admin.auth.admin.createUser` in tests. It never appears in shipped code.
 - `apps/api/src`, `packages/core/src` and `apps/api/src/registry/registry.service.ts` are **not to be modified**. Only `apps/api/test/sessions.from-task.spec.ts` fixtures change.
@@ -2511,7 +2512,7 @@ const title = computed(
 }
 
 .k-ws--active {
-  background: var(--k-surface-2);
+  background: var(--k-surface2);
 }
 
 /* The drop affordance has to read at a glance mid-drag, so it is a border, not a
@@ -2524,7 +2525,7 @@ const title = computed(
 .k-ws__add {
   background: none;
   border: none;
-  color: var(--k-text-dim);
+  color: var(--k-muted);
   cursor: pointer;
   font-size: 12px;
   line-height: 1;
@@ -2578,7 +2579,7 @@ const title = computed(
 
 .k-ws__count {
   font-size: 11px;
-  color: var(--k-text-dim);
+  color: var(--k-muted);
 }
 </style>
 ```
