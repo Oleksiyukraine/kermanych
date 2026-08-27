@@ -13,6 +13,7 @@ vi.mock("../src/rpc/rpc-session", () => {
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
 import { offlineAuth } from "./offline-auth";
+import { stubSkills } from "./skills-stub";
 
 function make() {
   const registry = new RegistryService(":memory:");
@@ -20,7 +21,7 @@ function make() {
     removeWorktree: vi.fn(), removeBranch: vi.fn(), checkout: vi.fn(),
     currentBranch: vi.fn().mockResolvedValue("main"),
   } as any;
-  return { sup: new SupervisorService(registry, worktree, offlineAuth()), registry, worktree };
+  return { sup: new SupervisorService(registry, worktree, offlineAuth(), stubSkills()), registry, worktree };
 }
 beforeEach(() => { started.length = 0; });
 

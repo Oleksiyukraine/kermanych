@@ -22,11 +22,12 @@ vi.mock("../src/rpc/rpc-session", () => {
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
 import { offlineAuth } from "./offline-auth";
+import { stubSkills } from "./skills-stub";
 
 function make() {
   const registry = new RegistryService(":memory:");
   const worktree = { currentBranch: vi.fn().mockResolvedValue("main") } as any;
-  return { sup: new SupervisorService(registry, worktree, offlineAuth()), registry };
+  return { sup: new SupervisorService(registry, worktree, offlineAuth(), stubSkills()), registry };
 }
 beforeEach(() => { started.length = 0; prompts.length = 0; });
 
