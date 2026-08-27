@@ -1,6 +1,8 @@
 // Skill-library primitives shared by the API (materialiser) and the UI (editor).
 // Pure data and serialisation: no fs, no cloud, no omp process knowledge.
 
+import type { TranscriptEntry } from "./types";
+
 export type SkillDef = { name: string; description: string; body: string };
 
 // What the UI lists and what the transcript labels a row with. `shadowedByRepo` is the
@@ -100,3 +102,16 @@ export const DEFAULT_SKILLS: readonly SkillDef[] = [
     ].join("\n"),
   },
 ];
+
+// Which skills a session actually pulled in, in order of first use. Derived from the
+// transcript, so it needs no extra state anywhere: a `skill` row's target is the skill name,
+// with an optional sub-resource path after the first slash.
+export function skillsUsed(entries: readonly TranscriptEntry[]): string[] {
+  const seen: string[] = [];
+  for (const e of entries) {
+    if (e.kind !== "tool" || e.tool !== "skill" || !e.target) continue;
+    const name = e.target.split("/")[0]!;
+    if (!seen.includes(name)) seen.push(name);
+  }
+  return seen;
+}
