@@ -48,7 +48,7 @@
               class="shell__group-items"
               :aria-label="`Проєкти воркспейсу «${group.workspace.name}»`"
             >
-              <li v-for="p in railProjectsOf(group)" :key="p.id">
+              <li v-for="p in railProjectsByWorkspace.get(group.workspace.id) ?? []" :key="p.id">
                 <KRailItem
                   :project="p"
                   indent
@@ -61,7 +61,7 @@
           </li>
           <li v-if="localOnlyProjects.length" class="shell__group">
             <div id="shell-local-only" class="shell__side-label shell__side-label--sub">
-              <span>Лише на цій машині</span>
+              <span>{{ localOnlyLabel }}</span>
             </div>
             <ul class="shell__group-items" aria-labelledby="shell-local-only">
               <li v-for="p in localOnlyProjects" :key="p.id">
@@ -511,27 +511,67 @@ watch(collapsed, (v) => localStorage.setItem('kermanych.sidebar-collapsed', v ? 
 // survive JSON, and stored at all because a fold the reload undoes is not a fold. Absent
 // from the list means expanded, so a workspace created on another machine — or one this
 // user has just been invited to — arrives open rather than silently hidden.
+//
+// The payload is VALIDATED, not cast. `raw ? JSON.parse(raw) : []` catches a throw but not
+// valid JSON of the wrong shape: the literal string `null` is truthy and parses to `null`,
+// as do `true`, `42` and `{}`, and `.includes()` on any of them throws a TypeError inside
+// the render function of the layout that wraps every authenticated route — a whiteout no
+// in-app action can clear. stores/projects.ts:52-79 validates its sibling key the same way.
 const COLLAPSED_KEY = 'kermanych.workspace-collapsed';
 const collapsedWorkspaces = ref<string[]>(
   (() => {
     try {
       const raw = localStorage.getItem(COLLAPSED_KEY);
-      return raw ? (JSON.parse(raw) as string[]) : [];
+      const parsed: unknown = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
     } catch {
       // A corrupt entry is not worth a blank sidebar; the next toggle overwrites it.
       return [];
     }
   })(),
 );
-function isExpanded(id: string): boolean {
-  return !collapsedWorkspaces.value.includes(id);
+
+function isFolded(id: string): boolean {
+  return collapsedWorkspaces.value.includes(id);
 }
-function toggleWorkspace(id: string): void {
-  collapsedWorkspaces.value = isExpanded(id)
-    ? [...collapsedWorkspaces.value, id]
-    : collapsedWorkspaces.value.filter((x) => x !== id);
+
+// The 76px rail ignores the folds. It hides the chevron — there is no room for three
+// controls in that column — so a group folded at full width would sit there with no
+// affordance to open it and its projects would be unreachable until the sidebar is widened.
+// The rail's job is a dense list of everything, not a navigable tree.
+function isExpanded(id: string): boolean {
+  return collapsed.value || !isFolded(id);
+}
+
+// The ONE place the folded set is written, so the toggle and the selection watcher below
+// cannot drift into two persistence paths. The no-op guard matters: the watcher fires on
+// every project selection, and without it each one would rewrite localStorage.
+function setExpanded(id: string, expanded: boolean): void {
+  if (expanded === !isFolded(id)) return;
+  collapsedWorkspaces.value = expanded
+    ? collapsedWorkspaces.value.filter((x) => x !== id)
+    : [...collapsedWorkspaces.value, id];
   localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsedWorkspaces.value));
 }
+
+function toggleWorkspace(id: string): void {
+  setExpanded(id, isFolded(id));
+}
+
+// A project can be selected from OUTSIDE the sidebar — the create-project flow below, or
+// the notification jump in stores/orchestrator.ts:99 — and a selection landing inside a
+// folded group renders nowhere: the highlight moves to a row the operator cannot see, and
+// the workspace row loses its own highlight at the same time. That is exactly the
+// "selection moves behind the operator's back" failure the navigation removal was meant to
+// end, so any selection unfolds its own group, whoever caused it. A local-only project has
+// no cloud row and therefore no group to unfold, which is why the lookup can miss.
+watch(
+  () => store.selectedProjectId,
+  (id) => {
+    const workspaceId = id ? projects.byId.get(id)?.workspaceId : undefined;
+    if (workspaceId) setExpanded(workspaceId, true);
+  },
+);
 
 // A sidebar click changes SCOPE and never navigates (Requirement 5). It used to push
 // /agents from any non-project-scoped view, which meant the team board threw the operator
@@ -581,12 +621,23 @@ onMounted(async () => {
 // on an interactive UI request; done is terminal-success.
 const RUNNING: readonly SessionStatus[] = ['queued', 'thinking', 'tool'];
 
-function sessionsOf(projectId: string | undefined) {
-  return store.sessions.filter((s) => s.projectId === projectId && !s.archived);
-}
+// Running agents per project, in ONE pass over the sessions. Both the project tiles and the
+// group badges read it, and it has to be a computed rather than a function because the tree
+// asks for a count per project on EVERY MainLayout render — every socket session event, plus
+// the 30-second useNow tick behind the account plan lines — and a filter-per-project there
+// is O(projects × sessions) against a registry that already carries 69 sessions on one
+// project. `sessionsOf` is gone with it: this was its only caller.
+const runningCountById = computed(() => {
+  const counts = new Map<string, number>();
+  for (const s of store.sessions) {
+    if (s.archived || s.kind === 'chat' || !RUNNING.includes(s.status)) continue;
+    counts.set(s.projectId, (counts.get(s.projectId) ?? 0) + 1);
+  }
+  return counts;
+});
 
 function runningCount(projectId: string): number {
-  return sessionsOf(projectId).filter((s) => s.kind !== 'chat' && RUNNING.includes(s.status)).length;
+  return runningCountById.value.get(projectId) ?? 0;
 }
 
 // Segmented view nav. One table drives the labels, the active segment and the
@@ -657,29 +708,40 @@ const bucketCounts = computed(() => {
 // would render a name that does not exist. Such a project is simply not shown.
 const tree = computed(() => projects.projectsByWorkspace);
 
-// One group's projects as rail tiles: the CLOUD row (the name and colour the whole team
-// sees) joined with THIS machine's local row (the binding). Same join the flat rail did,
-// one group at a time. A cloud project with no local row at all — the mount-time sync
-// failed — reads as unbound, which is exactly what it is: nothing here can run it yet.
-function railProjectsOf(group: WorkspaceGroup): RailProject[] {
-  return group.projects.map((c) => {
-    const row = localById.value.get(c.id);
-    return {
-      id: c.id,
-      name: c.name,
-      color: c.color ?? row?.color,
-      state: row?.localRepoPath ? 'bound' : 'unbound',
-    };
-  });
-}
-
 const localById = computed(() => new Map(store.projects.map((p) => [p.id, p])));
 
-// Local rows with no cloud project: made before the team cloud existed, or while Supabase
-// was unreachable. They have no workspace, so they get their own bucket instead of being
-// hidden by a tree that has no group for them — sync's prune deliberately keeps a row that
-// still owns sessions, and agents you cannot select are agents you cannot stop. The board's
-// «Опублікувати в хмарі» is how such a row gets a workspace.
+// Every group's projects as rail tiles: the CLOUD row (the name and colour the whole team
+// sees) joined with THIS machine's local row (the binding). Same join the flat rail did, one
+// group at a time. A cloud project with no local row at all — the mount-time sync failed —
+// reads as unbound, which is exactly what it is: nothing here can run it yet.
+//
+// A computed keyed by workspace id, not a function: built per render it would mint fresh
+// RailProject objects every time, and every KRailItem would see a new prop identity and
+// re-render on each socket session event even though nothing about it changed.
+const railProjectsByWorkspace = computed(() => {
+  const byWorkspace = new Map<string, RailProject[]>();
+  for (const group of tree.value) {
+    byWorkspace.set(
+      group.workspace.id,
+      group.projects.map((c) => {
+        const row = localById.value.get(c.id);
+        return {
+          id: c.id,
+          name: c.name,
+          color: c.color ?? row?.color,
+          state: row?.localRepoPath ? 'bound' : 'unbound',
+        };
+      }),
+    );
+  }
+  return byWorkspace;
+});
+
+// Local rows the cloud list does not contain: made before the team cloud existed, or while
+// Supabase was unreachable. They have no workspace to nest under, so they get their own
+// bucket instead of being hidden by a tree that has no group for them — sync's prune
+// deliberately keeps a row that still owns sessions, and agents you cannot select are agents
+// you cannot stop. The board's «Опублікувати в хмарі» is how such a row gets a workspace.
 const localOnlyProjects = computed<RailProject[]>(() => {
   const cloudIds = new Set(projects.projects.map((p) => p.id));
   return store.projects
@@ -691,6 +753,19 @@ const localOnlyProjects = computed<RailProject[]>(() => {
       state: cloudSynced.value ? 'orphan' : row.localRepoPath ? 'bound' : 'unbound',
     }));
 });
+
+// The bucket's heading is a CLAIM about where a project lives, and «лише на цій машині» is
+// only true once a cloud read has actually SUCCEEDED. Until then — a cold start still
+// loading, a read degraded into offlineError, or a preview with no cloud at all — every
+// project lands in this bucket, because the tree cache persists the workspaces and the
+// projectId → workspaceId map but deliberately never the projects themselves. Asserting
+// there that the team's whole project list exists nowhere but this laptop is a falsehood,
+// and offline is a first-class requirement here, not an edge case. So the heading falls back
+// to the one thing that is true in all three states: these are rows from the local registry.
+// The tile states already draw the same distinction — `orphan` only when cloudSynced.
+const localOnlyLabel = computed(() =>
+  cloudSynced.value ? 'Лише на цій машині' : 'Локальні проєкти',
+);
 
 // The group header's badge: what is running anywhere inside it, so a folded workspace
 // still says whether it needs attention.
@@ -1245,7 +1320,9 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
 // The tree collapses to the icon strip like the rail always did: the workspace row keeps
 // its colour dot as the group's marker and drops the name, the chevron and the «+» — a
 // 76px column has no room for three controls, and the group cannot be folded or added to
-// from a strip that cannot show which group it is.
+// from a strip that cannot show which group it is. Because the chevron goes, isExpanded()
+// ignores the folded set while `shell--min` is on: hiding the only control that unfolds a
+// group while still honouring the fold would leave its projects unreachable.
 .shell--min :deep(.k-ws__name),
 .shell--min :deep(.k-ws__count),
 .shell--min :deep(.k-ws__chevron),
