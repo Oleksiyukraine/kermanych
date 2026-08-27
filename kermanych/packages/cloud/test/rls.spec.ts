@@ -413,13 +413,26 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(error?.message).toMatch(/no Kermanych account/);
   });
 
+  it("invite_workspace_member refuses a blank address before looking anything up", async () => {
+    const { error } = await owner.client.rpc("invite_workspace_member", {
+      p_workspace_id: workspaceId,
+      p_email: "   ",
+    });
+    expect(error?.message).toMatch(/email is required/);
+  });
+
   it("invite_workspace_member refuses a plain member and accepts the owner", async () => {
     const added = await owner.client.rpc("invite_workspace_member", {
       p_workspace_id: workspaceId,
       p_email: member.email,
     });
     expect(added.error).toBeNull();
-    expect((added.data as { user_id: string }).user_id).toBe(member.id);
+    // Guarded rather than cast through, mirroring inviteMember() in src/projects.ts: if
+    // the rpc's `do nothing` re-select fallback ever regressed to null, this fails with
+    // a readable assertion instead of a TypeError.
+    const addedRow = added.data as { user_id: string } | null;
+    expect(addedRow).not.toBeNull();
+    expect(addedRow?.user_id).toBe(member.id);
 
     // Requirement 2: inviting is OWNER-only here, unlike the project-level rule it
     // replaces — one invitation now opens every project in the workspace.
@@ -430,13 +443,49 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(memberTry.error?.message).toMatch(/only the workspace owner can invite/);
   });
 
+  // Requirement 2's actual payload, and the only test that exercises the
+  // `is_workspace_member` disjunct of workspaces_select_member: the owner path
+  // short-circuits on owner_id, so without this the disjunct is dead code as far as
+  // the suite knows.
+  it("an invited member reads the workspace and its roster; an outsider reads neither", async () => {
+    const seen = await member.client.from("workspaces").select("id").eq("id", workspaceId);
+    expect(seen.error).toBeNull();
+    expect(seen.data).toHaveLength(1);
+
+    const roster = await member.client
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", workspaceId);
+    expect(roster.error).toBeNull();
+    expect((roster.data ?? []).map((r) => r.user_id).sort()).toEqual([member.id, owner.id].sort());
+
+    const denied = await outsider.client
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", workspaceId);
+    expect(denied.error).toBeNull();
+    expect(denied.data).toEqual([]);
+  });
+
   it("re-inviting the same person is an idempotent no-op", async () => {
+    // The "already a member" precondition is established here rather than inherited
+    // from the test above, so this holds under `.only` and under reordering: the
+    // composite primary key makes a duplicate row impossible, so the proof is that a
+    // SECOND invite still succeeds and reports the existing row instead of raising.
+    const first = await owner.client.rpc("invite_workspace_member", {
+      p_workspace_id: workspaceId,
+      p_email: member.email,
+    });
+    expect(first.error).toBeNull();
+
     const again = await owner.client.rpc("invite_workspace_member", {
       p_workspace_id: workspaceId,
       p_email: member.email,
     });
     expect(again.error).toBeNull();
-    expect((again.data as { user_id: string }).user_id).toBe(member.id);
+    const againRow = again.data as { user_id: string } | null;
+    expect(againRow).not.toBeNull();
+    expect(againRow?.user_id).toBe(member.id);
 
     const { data } = await owner.client
       .from("workspace_members")
@@ -444,5 +493,42 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
       .eq("workspace_id", workspaceId)
       .eq("user_id", member.id);
     expect(data).toHaveLength(1);
+  });
+
+  it("workspaces_insert_own refuses a forged owner_id", async () => {
+    const forged = await member.client
+      .from("workspaces")
+      .insert({ name: "forged", owner_id: owner.id })
+      .select("id")
+      .single();
+    expect(forged.error?.code).toBe("42501");
+  });
+
+  // Removal is the owner's; a plain member's delete matches zero rows and does not error.
+  // Last among the tests that involve `member`, because it ends with `member` removed.
+  it("only the owner removes a member", async () => {
+    await member.client
+      .from("workspace_members")
+      .delete()
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", member.id);
+    const still = await owner.client
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", member.id);
+    expect(still.data).toHaveLength(1);
+
+    await owner.client
+      .from("workspace_members")
+      .delete()
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", member.id);
+    const gone = await owner.client
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", member.id);
+    expect(gone.data).toEqual([]);
   });
 });
