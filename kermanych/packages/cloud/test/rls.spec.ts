@@ -296,48 +296,6 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(emptyGone.data).toEqual([]);
   });
 
-  // tasks_guard's single escape hatch now resolves the WORKSPACE owner.
-  it("force-stop is the workspace owner's, not a plain member's", async () => {
-    const stuck = await owner.client
-      .from("tasks")
-      .insert({ project_id: projectId, title: "stuck", created_by: owner.id, assignee_id: outsider.id })
-      .select("id")
-      .single();
-    if (stuck.error) throw stuck.error;
-    await owner.client.from("tasks").update({ status: "thinking" }).eq("id", stuck.data.id);
-
-    const memberTry = await member.client
-      .from("tasks")
-      .update({ status: "stopped" })
-      .eq("id", stuck.data.id);
-    expect(memberTry.error?.message).toMatch(/only the assignee can change status/);
-
-    const ownerForce = await owner.client
-      .from("tasks")
-      .update({ status: "stopped" })
-      .eq("id", stuck.data.id)
-      .select("status")
-      .single();
-    expect(ownerForce.error).toBeNull();
-    expect(ownerForce.data?.status).toBe("stopped");
-  });
-
-  it("the workspace owner may force only 'stopped', nothing else", async () => {
-    const other = await owner.client
-      .from("tasks")
-      .insert({ project_id: projectId, title: "not yours", created_by: owner.id, assignee_id: outsider.id })
-      .select("id")
-      .single();
-    if (other.error) throw other.error;
-    await owner.client.from("tasks").update({ status: "thinking" }).eq("id", other.data.id);
-
-    const ownerTry = await owner.client
-      .from("tasks")
-      .update({ status: "done" })
-      .eq("id", other.data.id);
-    expect(ownerTry.error?.message).toMatch(/only the assignee can change status/);
-  });
-
   it("a non-assignee cannot change a task's status", async () => {
     const assigned = await owner.client
       .from("tasks")
@@ -374,7 +332,11 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
   // assignee is `member` — exactly the shape of a card whose machine crashed: there is no
   // heartbeat, so nothing will ever move it, and the two tests above prove it can neither
   // be reassigned nor deleted in that state.
-  it("the project owner can force a stuck active task to stopped", async () => {
+  //
+  // What Task 2 changed here: the hatch resolves the owner through
+  // projects.workspace_id -> workspaces.owner_id instead of projects.owner_id, because a
+  // project no longer has an owner of its own. `owner` holds the workspace.
+  it("the workspace owner can force a stuck active task to stopped", async () => {
     const forced = await owner.client.from("tasks").update({ status: "stopped" }).eq("id", taskId);
     expect(forced.error).toBeNull();
 
@@ -384,7 +346,7 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
 
   // 'stopped' and nothing else: the escape hatch must not become a way for an owner to
   // drive someone else's task around the board.
-  it("the project owner cannot force any status other than stopped", async () => {
+  it("the workspace owner cannot force any status other than stopped", async () => {
     const restarted = await owner.client
       .from("tasks")
       .update({ status: "thinking" })
@@ -393,6 +355,32 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
 
     const finished = await owner.client.from("tasks").update({ status: "done" }).eq("id", taskId);
     expect(finished.error?.message).toContain("only the assignee can change status");
+  });
+
+  // The hatch is the workspace OWNER's, not any member's. Roles are inverted here on
+  // purpose: `owner` is the assignee, so they may legitimately start the task, which
+  // leaves `member` as a workspace member who is neither assignee nor owner — the exact
+  // actor tasks_guard must refuse.
+  it("a plain workspace member cannot force-stop someone else's active task", async () => {
+    const theirs = await owner.client
+      .from("tasks")
+      .insert({ project_id: projectId, title: "owned by owner", created_by: owner.id, assignee_id: owner.id })
+      .select("id")
+      .single();
+    if (theirs.error) throw theirs.error;
+
+    const started = await owner.client.from("tasks").update({ status: "thinking" }).eq("id", theirs.data.id);
+    expect(started.error).toBeNull();
+
+    const memberTry = await member.client
+      .from("tasks")
+      .update({ status: "stopped" })
+      .eq("id", theirs.data.id);
+    expect(memberTry.error?.message).toMatch(/only the assignee can change status/);
+
+    // Leave nothing active behind: the assignee stops their own task.
+    const cleared = await owner.client.from("tasks").update({ status: "stopped" }).eq("id", theirs.data.id);
+    expect(cleared.error).toBeNull();
   });
 
   it("a finished task can be deleted", async () => {
