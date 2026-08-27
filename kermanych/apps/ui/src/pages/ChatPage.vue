@@ -184,7 +184,7 @@ async function onSend(text: string, images: ImageInput[]): Promise<void> {
 }
 
 // Promote the chat into a real task: omp gets a worktree + full tools, and we jump to the
-// workspace where the now-running agent lives.
+// Агенти view where the now-running agent lives.
 async function promote(): Promise<void> {
   const id = chatId.value;
   if (!id || promoting.value || !isBound.value) return;
@@ -193,7 +193,7 @@ async function promote(): Promise<void> {
     await store.promoteChat(id);
     store.setBucket('active');
     store.selectSession(id);
-    void router.push({ name: 'workspace' });
+    void router.push({ name: 'agents' });
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   } finally {
@@ -202,7 +202,7 @@ async function promote(): Promise<void> {
 }
 
 // Park the chat's opening ask as a backlog task (name from its first line); it can be
-// refined later from the workspace backlog.
+// refined later from the Агенти backlog.
 async function toBacklog(): Promise<void> {
   const id = chatId.value;
   const pid = store.selectedProjectId;

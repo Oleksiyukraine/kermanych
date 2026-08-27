@@ -47,7 +47,7 @@ export default defineRouter(({ store }) => {
             // back to /auth/callback, and Electron sitting on /login while
             // exchangeCodeForSession resolved in place.
             if (at === 'login' || at === 'auth-callback') {
-              void Router.replace({ name: 'workspace' });
+              void Router.replace({ name: 'agents' });
             }
             return;
           }
@@ -63,7 +63,7 @@ export default defineRouter(({ store }) => {
     // persisted session landing straight on /auth/callback, where no `user`
     // transition happens for the watcher to see.
     if (auth.user && (to.name === 'login' || to.name === 'auth-callback')) {
-      return { name: 'workspace' };
+      return { name: 'agents' };
     }
     return true;
   });

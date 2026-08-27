@@ -29,7 +29,7 @@
 
     <!-- The selection IS the access rule: every section reports on one project, so
          with none chosen there is nothing to report on. Same invitation the
-         workspace shows, rather than five sections each repeating it. -->
+         Агенти view shows, rather than five sections each repeating it. -->
     <div v-if="!projectId" class="mgmt__blank">
       <div class="mgmt__blank-eyebrow mono">КЕРМАНИЧ</div>
       <p class="mgmt__blank-text">
@@ -351,7 +351,7 @@ const projectColor = computed(() => {
   }
 }
 
-// ── Blank / no-project state — mirrors WorkspacePage's invitation ────────────
+// ── Blank / no-project state — mirrors AgentsPage's invitation ───────────────
 .mgmt__blank {
   flex: 1;
   display: flex;

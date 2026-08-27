@@ -107,7 +107,7 @@ export const useBoard = defineStore('board', () => {
       if (!cloud.projects.length) await cloud.load();
       tasks.value = await cloudListTasks(auth.client, projectIds.value);
     } catch (e) {
-      // Deliberately NOT a toast: load() also runs from the workspace page on every app
+      // Deliberately NOT a toast: load() also runs from the Агенти page on every app
       // open, and an unreachable Supabase must not greet the user with a popup. BoardPage
       // renders loadError inline instead.
       loadError.value = e instanceof Error ? e.message : String(e);

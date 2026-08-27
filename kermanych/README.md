@@ -300,7 +300,7 @@ developer's machine. The direction is always task → session.
 4. **Run** — `POST /api/sessions/from-task` creates a git worktree under
    `~/.kermanych/worktrees/<sessionId>`, copies the project's `carryFiles` (`.env` by
    default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
-   ordinary local session: it appears on the workspace board and you drive it there.
+   ordinary local session: it appears on the Агенти board and you drive it there.
 5. **Status flows back** — the local API mirrors the session's coarse status
    (`queued → thinking → tool → waiting_input → done | error | stopped | merged |
    conflict`) to the task, and everyone's board updates live over Supabase Realtime.

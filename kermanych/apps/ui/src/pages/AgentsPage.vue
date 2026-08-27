@@ -542,7 +542,7 @@ import { relativeTime } from '../lib/time';
 import { tokens, usageTokens, usd } from '../lib/format';
 import { useResizableWidth } from '../composables/useResizableWidth';
 
-// The Workspace screen (design-system section 07): the board of session cards
+// The Агенти screen (design-system section 07): the board of session cards
 // for the selected project + the full panel for the selected session, plus the
 // new-agent launcher. All mutations go through the Pinia store.
 const store = useOrchestrator();
@@ -1496,7 +1496,7 @@ async function submitPreviewConfig(): Promise<void> {
 
 <style scoped lang="scss">
 // Fixed header (48px) + footer (30px) are overlaid by the Quasar layout; the
-// workspace fills exactly the space between them.
+// Агенти screen fills exactly the space between them.
 .ws {
   height: calc(100vh - 82px);
   overflow: hidden;
@@ -1698,7 +1698,7 @@ async function submitPreviewConfig(): Promise<void> {
   min-height: 0;
 }
 
-// In the unified workspace card the panel is not its own box — the outer card owns the
+// In the unified session card the panel is not its own box — the outer card owns the
 // border, so the transcript flows flat on the card surface instead of a box-in-a-box.
 .ws__tabpane .ws__panel {
   border: none;

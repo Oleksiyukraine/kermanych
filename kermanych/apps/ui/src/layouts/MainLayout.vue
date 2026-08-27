@@ -438,15 +438,15 @@ watch(collapsed, (v) => localStorage.setItem('kermanych.sidebar-collapsed', v ? 
 // used to change the selection behind the operator's back — the tile went active, nothing
 // else moved, and the team board had no exit of its own. Selecting is still the primary act;
 // the navigation only follows when the current page is not the one that answers it. The
-// project-scoped screens (workspace, and every Менеджмент section, whose parent record is
+// project-scoped screens (Агенти, and every Менеджмент section, whose parent record is
 // matched here) keep their place, so switching projects while reading one stays put.
-const PROJECT_SCOPED_VIEWS: readonly string[] = ['workspace', 'management'];
+const PROJECT_SCOPED_VIEWS: readonly string[] = ['agents', 'management'];
 function selectProject(id: string): void {
   store.selectProject(id);
   const scoped = route.matched.some(
     (r) => typeof r.name === 'string' && PROJECT_SCOPED_VIEWS.includes(r.name),
   );
-  if (!scoped) void router.push({ name: 'workspace' });
+  if (!scoped) void router.push({ name: 'agents' });
 }
 
 // True only once a cloud read has actually succeeded on this run. Until then a local row
@@ -501,7 +501,7 @@ function runningCount(projectId: string): number {
 // the click pushes, which for Менеджмент is its default section (a named parent
 // with children would render the shell with an empty body).
 const VIEWS = [
-  { value: 'agents', label: 'Агенти', route: 'workspace', section: 'workspace' },
+  { value: 'agents', label: 'Агенти', route: 'agents', section: 'agents' },
   { value: 'board', label: 'Дошка', route: 'board', section: 'board' },
   { value: 'chat', label: 'Чат', route: 'chat', section: 'chat' },
   {
@@ -518,7 +518,7 @@ const topView = computed(
     VIEWS.find((v) => route.matched.some((r) => r.name === v.section))?.value ?? 'agents',
 );
 function goView(v: string): void {
-  const name = VIEWS.find((x) => x.value === v)?.route ?? 'workspace';
+  const name = VIEWS.find((x) => x.value === v)?.route ?? 'agents';
   if (route.name !== name) void router.push({ name });
 }
 
@@ -539,7 +539,7 @@ const buckets = [
 ] as const;
 function onBucket(key: 'active' | 'tasks' | 'archived' | 'history'): void {
   store.setBucket(key);
-  if (route.name !== 'workspace') void router.push({ name: 'workspace' });
+  if (route.name !== 'agents') void router.push({ name: 'agents' });
 }
 // Fleet tally per sidebar bucket (replaces the old footer KStatusBar). error/conflict
 // count as Активні (needs attention) so no session falls outside a bucket.

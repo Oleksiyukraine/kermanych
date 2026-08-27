@@ -200,7 +200,7 @@
 
 <script setup lang="ts">
 // The shared cloud board (design deviation D6): a NEW page with status columns, kept apart
-// from WorkspacePage's LOCAL session table. Cards are cloud tasks; execution still happens
+// from AgentsPage's LOCAL session table. Cards are cloud tasks; execution still happens
 // on the assignee's own machine, which is why «Запустити» needs a local binding.
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
@@ -232,9 +232,9 @@ const now = useNow();
 const router = useRouter();
 
 // Back to the LOCAL board of whatever the rail has selected. The named route, not '/', so
-// this stays the same hop the workspace's «Дошка команди» button makes in reverse.
-function goToWorkspace(): void {
-  void router.push({ name: 'workspace' });
+// this stays the same hop the Агенти view's «Дошка команди» button makes in reverse.
+function goToAgents(): void {
+  void router.push({ name: 'agents' });
 }
 
 // Ten task statuses, five columns: `thinking` and `tool` are one human state («агент
@@ -251,7 +251,7 @@ const COLUMNS: Column[] = [
 
 // subscribe() refetches then opens the channel; leaving the page closes it, so Realtime
 // traffic is scoped to the screen that shows it. The task list survives in the store, which
-// is what lets WorkspacePage name a session's task without subscribing.
+// is what lets AgentsPage name a session's task without subscribing.
 //
 // The FIRST subscribe is the page's job. The store's project-set watcher deliberately only
 // REBUILDS a channel that already exists ("before the board mounts there is nothing to
@@ -594,7 +594,7 @@ async function runLaunch(task: Task): Promise<void> {
   try {
     const session = await api.createSessionFromTask(task.id);
     local.notify(`Сесію «${session.name}» запущено на цій машині.`, 'info');
-    // The local session lives on the workspace board, so go where the work is.
+    // The local session lives on the Агенти board, so go where the work is.
     await router.push('/');
   } catch (e) {
     // `fetch` itself rejects with a TypeError; every refusal from the api arrives as a
@@ -646,7 +646,7 @@ async function confirmBinding(): Promise<void> {
 }
 
 // ── Create / edit ─────────────────────────────────────────────────────────────
-// Same launch vocabulary as the local launcher (WorkspacePage.vue:658-661), so a task born
+// Same launch vocabulary as the local launcher (AgentsPage.vue:658-661), so a task born
 // on the board and an agent started by hand offer identical choices.
 const MODEL_OPTIONS = ['opus-5', 'sonnet-4.5', 'haiku'];
 const PREFIX_OPTIONS = ['feature', 'fix', 'refactoring', 'chore'];
