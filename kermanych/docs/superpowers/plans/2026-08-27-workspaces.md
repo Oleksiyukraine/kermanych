@@ -3574,7 +3574,34 @@ git add README.md docs/superpowers/specs/2026-08-21-team-cloud-design.md
 git commit -m "docs: workspaces in the README; retire the superseded non-goal"
 ```
 
-- [ ] **Step 7: Push the migration to the team's project**
+- [ ] **Step 7: Pre-push gate — prove the backfill's one visibility exception is absent**
+
+Task 2's review found the single state in which the backfill *widens* visibility, contrary
+to Requirement 9. For a project whose `owner_id` has **no** `project_members` row, the
+owner today sees the project (the old `projects_select_member` carried an
+`owner_id = auth.uid()` disjunct) but **not** its tasks, and cannot repair that, because
+`invite_project_member` requires the caller to already be a member. After the migration
+`handle_new_workspace` seats that owner, so `is_project_member` turns true and the tasks
+become visible to them.
+
+It is bounded to a project's own owner and it arguably repairs a broken state — but this
+migration runs once against real data, so measure instead of assuming. Against the hosted
+project, BEFORE pushing:
+
+```sql
+select count(*) from projects p
+ where not exists (
+   select 1 from project_members m
+    where m.project_id = p.id and m.user_id = p.owner_id);
+```
+
+Zero rules the case out entirely and you push with Requirement 9 intact. Non-zero means
+each such project's owner is about to gain visibility of its tasks: list them
+(`select id, name, owner_id from projects p where not exists (…)`), decide per project
+whether that is repair or leak, and record the decision before pushing. Do not push on an
+unexamined non-zero result.
+
+- [ ] **Step 8: Push the migration to the team's project**
 
 **This is the coordinated cutover — the breakage window is real.** The migration drops `projects.owner_id`, which every not-yet-updated client still selects in `PROJECT_COLUMNS`; those clients will fail on the project list and the board until they pull. Announce first, then:
 
