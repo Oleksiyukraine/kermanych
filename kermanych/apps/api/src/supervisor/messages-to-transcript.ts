@@ -1,5 +1,5 @@
 import type { ToolLine, TranscriptEntry } from "@kermanych/core";
-import { applyToolResult, hasTurnMeta, joinResultText, pendingToolEntry, turnEntry, type SkillSource, type TurnMeta } from "./transcript-reducer";
+import { applyToolResult, hasTurnMeta, joinResultText, pendingToolEntry, toolRowMatches, turnEntry, type SkillSource, type TurnMeta } from "./transcript-reducer";
 
 // Shape of omp's converted history messages (get_messages / get_messages_page) we map from.
 export type OmpPart = {
@@ -86,13 +86,7 @@ export function messagesToTranscript(messages: unknown[], opts?: { skillSource?:
       // FIFO by tool name is only the fallback, for history that predates the ids.
       const found =
         (rowId === undefined ? undefined : entries.find((x) => x.kind === "tool" && x.id === rowId)) ??
-        entries.find(
-          (x) =>
-            x.kind === "tool" &&
-            x.status === "pending" &&
-            // `read` in the history message may have been renamed to `skill` on the row.
-            (x.tool === tool || (tool === "read" && x.tool === "skill")),
-        );
+        entries.find((x) => x.kind === "tool" && x.status === "pending" && toolRowMatches(x.tool, tool));
       // An unmatched result (history paged mid-call) still earns its own completed row.
       const entry = found?.kind === "tool" ? found : pendingToolEntry(`h${++seq}`, at, tool, undefined);
       const args = pendingArgs.get(entry.id);

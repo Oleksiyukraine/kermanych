@@ -67,8 +67,19 @@ export type SkillSource = (name: string) => SkillLabel | undefined;
 export function skillNameFromArgs(args: Record<string, unknown> | undefined): string | undefined {
   const p = args?.["path"];
   if (typeof p !== "string" || !p.startsWith("skill://")) return undefined;
-  const name = p.slice("skill://".length);
+  // `skill://<name>/<sub-path>` is still a read of `<name>`: only the first segment is the
+  // library key, while the full remainder stays the row's target (core's `skillDisplay`
+  // owns that), so a sub-resource read resolves the same badge as the skill itself.
+  const name = p.slice("skill://".length).split("/")[0];
   return name || undefined;
+}
+
+// Whether a pending row belongs to the tool named on the wire. The one rule three places
+// need — the live reducer, the rehydration path and the service's `finishTool` — because a
+// `read` on the wire may have been renamed to `skill` on the row, and a frame with no
+// toolCallId leaves the tool name as the only thing left to match on.
+export function toolRowMatches(rowTool: string, wireTool: string): boolean {
+  return rowTool === wireTool || (wireTool === "read" && rowTool === "skill");
 }
 
 // The call side of a tool row. Deriving the target here is what makes it deterministic:
@@ -187,20 +198,27 @@ export function reduceRpcEvents(events: RpcEvent[], opts?: ReduceOpts): Reduced 
       const tool = ev.toolName ?? "?";
       const at = stamp();
       // Match by exact toolCallId when omp provides one, else the oldest pending entry of
-      // the same tool name (FIFO — correct for interchangeable parallel calls). Nothing
-      // pending means the start frame landed in an earlier call: emit a completed entry
-      // and let the caller patch its own copy of the row.
+      // the same tool name (FIFO — correct for interchangeable parallel calls).
       const found =
         (ev.toolCallId ? entries.find((x) => x.kind === "tool" && x.id === ev.toolCallId) : undefined) ??
-        entries.find(
-          (x) =>
-            x.kind === "tool" &&
-            x.status === "pending" &&
-            // `read` on the wire may have been renamed to `skill` on the row.
-            (x.tool === tool || (tool === "read" && x.tool === "skill")),
-        );
+        entries.find((x) => x.kind === "tool" && x.status === "pending" && toolRowMatches(x.tool, tool));
+      // Nothing pending means the start frame landed in an earlier call — the live service
+      // reduces one event per call, so that is the normal case, not the exception: emit a
+      // completed entry and let the caller patch its own copy of the row. The start frame's
+      // args are still retained under its id, and they are what makes the rename — and
+      // therefore the display reducer — the same on both frames. A start frame we truly
+      // never saw leaves the map empty, so the "empty args invent a target" guard still holds.
       const entry: ToolEntry =
-        found?.kind === "tool" ? found : pendingToolEntry(ev.toolCallId ?? `t${at}`, at, tool, undefined);
+        found?.kind === "tool"
+          ? found
+          : pendingToolEntry(
+              ev.toolCallId ?? `t${at}`,
+              at,
+              tool,
+              ev.toolCallId ? pendingArgs.get(ev.toolCallId) : undefined,
+              undefined,
+              opts?.skillSource,
+            );
       const started = startedAt.get(entry.id);
       if (started !== undefined) {
         entry.ms = at - started;

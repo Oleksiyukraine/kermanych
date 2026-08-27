@@ -69,3 +69,45 @@ test("an unknown skill name yields a row without a badge rather than throwing", 
   expect(row).toMatchObject({ tool: "skill", target: "not-in-library" });
   expect((row as { stat?: string }).stat).toBeUndefined();
 });
+
+test("a sub-resource read resolves the skill's badge and keeps the sub-path as the target", () => {
+  const { entries } = reduceRpcEvents(events("skill://kermanych-session/reference.md"), { skillSource });
+  expect(entries.find((e) => e.kind === "tool")).toMatchObject({
+    tool: "skill",
+    target: "kermanych-session/reference.md",
+    stat: "бібліотека",
+  });
+});
+
+// The live supervisor reduces ONE event per call, carrying the tool maps between them, so the
+// end frame never sees the start frame's entry — the shape the five tests above cannot expose.
+test("a skill row stays a skill row when the two frames arrive in separate reduce calls", () => {
+  const opts = {
+    startedAt: new Map<string, number>(),
+    pendingArgs: new Map<string, Record<string, unknown>>(),
+    skillSource,
+  };
+  const [start, end] = events("skill://kermanych-session");
+  const body = Array.from({ length: 9 }, (_, i) => `l${i + 1}`).join("\n");
+  reduceRpcEvents([start!], opts);
+  // `displayContent` is what readDisplay numbers its lines from: a patch reduced as `read`
+  // would carry "1"/"2" numbers, a "2/40 ln" stat and a 10-line budget instead.
+  const endWithBody = {
+    ...end,
+    result: { content: [{ type: "text", text: body }], details: { displayContent: { text: "a\nb", lineNumbers: [1, 2] }, totalLines: 40 } },
+  } as unknown as RpcEvent;
+  const patch = reduceRpcEvents([endWithBody], opts).entries.find((e) => e.kind === "tool");
+  expect(patch).toMatchObject({
+    tool: "skill",
+    target: "kermanych-session",
+    stat: "бібліотека",
+    intent: "/Users/u/.kermanych/skills/p1/kermanych-session/SKILL.md",
+    status: "ok",
+  });
+  const detail = (patch as { detail?: { lines: { n?: string; text: string }[]; totalLines: number } }).detail;
+  // skillDisplay's own shape: unnumbered lines off the result body, clamped at the default 8.
+  expect(detail?.totalLines).toBe(9);
+  expect(detail?.lines).toHaveLength(8);
+  expect(detail?.lines.every((l) => l.n === undefined)).toBe(true);
+  expect(detail?.lines[0]).toEqual({ t: "ctx", text: "l1" });
+});

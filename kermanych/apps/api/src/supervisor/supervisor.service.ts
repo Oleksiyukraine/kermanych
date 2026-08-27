@@ -8,7 +8,7 @@ import { WorktreeService, type ChangedFile } from "../worktree/worktree.service"
 import type { SplitDiff } from "../worktree/split-diff";
 import { RpcSession } from "../rpc/rpc-session";
 import { messagesToTranscript } from "./messages-to-transcript";
-import { reduceRpcEvents } from "./transcript-reducer";
+import { reduceRpcEvents, toolRowMatches } from "./transcript-reducer";
 import { ToolDetailCache } from "./tool-detail-cache";
 import { copyCarryFiles } from "../env/carry-files";
 import {
@@ -776,12 +776,15 @@ export class SupervisorService implements OnModuleDestroy {
   // Complete a pending tool row in place from the reduced patch and notify clients.
   // Match by exact toolCallId when omp provides one, else the oldest pending
   // entry of the same tool name (FIFO — correct for interchangeable parallel calls).
+  // `toolRowMatches` is the shared rule: the patch's tool name comes off the wire, where a
+  // skill row still reads `read`, and for a frame with no toolCallId the id clause cannot
+  // match at all — the reducer minted the patch id from the end stamp, the row from the start.
   private finishTool(id: string, patch: Extract<TranscriptEntry, { kind: "tool" }>, lines?: ToolLine[]) {
     const l = this.map.get(id);
     if (!l) return;
     const entry =
       l.transcript.find((x) => x.kind === "tool" && x.id === patch.id) ??
-      l.transcript.find((x) => x.kind === "tool" && x.status === "pending" && x.tool === patch.tool);
+      l.transcript.find((x) => x.kind === "tool" && x.status === "pending" && toolRowMatches(x.tool, patch.tool));
     // The call is over either way: release its streaming state under both ids, since a frame
     // with no toolCallId makes the reducer mint one that differs from the row's.
     l.toolStarted.delete(patch.id);

@@ -124,6 +124,41 @@ describe("live transcript", () => {
     expect(live.toolArgs.size).toBe(0);
   });
 
+  it("completes a labelled skill row through the skill reducer, not the read one", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const chat = await sup.createChat(g.id);
+
+    // One event per callback is how the service drives the reducer, so the end frame has to
+    // rebuild the row from the args retained for `c1` or it reduces the skill read as a file read.
+    emit({ type: "tool_execution_start", toolName: "read", toolCallId: "c1", args: { path: "skill://kermanych-session" } });
+    emit({
+      type: "tool_execution_end", toolName: "read", toolCallId: "c1", isError: false,
+      result: { content: [{ type: "text", text: "one\ntwo" }], details: { displayContent: { text: "one\ntwo", lineNumbers: [1, 2] }, totalLines: 40 } },
+    });
+
+    const row = sup.getTranscript(chat.id).find((e): e is Extract<TranscriptEntry, { kind: "tool" }> => e.kind === "tool");
+    // readDisplay would have numbered the lines and stamped a "2/40 ln" stat.
+    expect(row).toMatchObject({ id: "c1", tool: "skill", status: "ok", target: "kermanych-session" });
+    expect(row!.stat).toBeUndefined();
+    expect(row!.detail).toEqual({ lines: [{ t: "ctx", text: "one" }, { t: "ctx", text: "two" }], totalLines: 2 });
+  });
+
+  it("completes an unlabelled skill row instead of leaving it pending forever", async () => {
+    const { sup, registry, seen } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const chat = await sup.createChat(g.id);
+
+    // No toolCallId: the patch's id cannot match the row's and its tool name still reads
+    // `read` off the wire, so only the shared row-matching rule can pair the two.
+    emit({ type: "tool_execution_start", toolName: "read", args: { path: "skill://kermanych-session" } });
+    emit({ type: "tool_execution_end", toolName: "read", isError: false, result: { content: [{ type: "text", text: "x\ny" }] } });
+
+    const row = sup.getTranscript(chat.id).find((e): e is Extract<TranscriptEntry, { kind: "tool" }> => e.kind === "tool");
+    expect(row).toMatchObject({ tool: "skill", status: "ok", target: "kermanych-session" });
+    expect(seen.find((e) => e.type === "transcript_update")).toMatchObject({ id: row!.id, status: "ok" });
+  });
+
   it("records assistant text and the per-turn usage omp reports at message_end", async () => {
     const { sup, registry } = make();
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
