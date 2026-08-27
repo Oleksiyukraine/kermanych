@@ -68,11 +68,13 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     } else if (e.type === 'project_removed') {
       projects.value = projects.value.filter((p) => p.id !== e.projectId);
       sessions.value = sessions.value.filter((x) => x.projectId !== e.projectId);
-      // The selected project just vanished (pruned here or deleted in the cloud) —
-      // fall back to the "nothing selected" shell so the header/board don't dangle.
+      // The selected project just vanished (pruned here or deleted in the cloud) — fall
+      // back to its WORKSPACE scope, not to nothing: an undefined workspace makes
+      // scopedProjectIds() return every project id, so clearing it here would swap the
+      // board from this group's tasks to every group's. selectWorkspace() models exactly
+      // this state (group highlighted, no project) on purpose.
       if (selectedProjectId.value === e.projectId) {
         selectedProjectId.value = undefined;
-        selectedWorkspaceId.value = undefined;
         selectedSessionId.value = undefined;
       }
     } else if (e.type === 'session_update') {
@@ -128,11 +130,21 @@ export const useOrchestrator = defineStore('orchestrator', () => {
 
   function setProjectWorkspaces(map: Record<string, string>): void {
     projectWorkspace.value = map;
+    // The invariant is "a selected project carries its own workspace", so a map that
+    // arrives or changes after the click has to re-resolve it — otherwise a move, a
+    // refresh, or a cold start that resolves after the first click leaves the scope
+    // pointing at the wrong group, or at none, which silently widens the board to every
+    // workspace. Guarded on the project: selectWorkspace()'s deliberately project-less
+    // selection must stay untouched.
+    if (selectedProjectId.value) selectedWorkspaceId.value = map[selectedProjectId.value];
   }
 
   // Scope = a workspace. Clears the project so every project-scoped screen falls back
-  // to its "nothing selected" shell instead of showing a stale project.
-  function selectWorkspace(id: string): void {
+  // to its "nothing selected" shell instead of showing a stale project. Optional id —
+  // same shape as selectSession() below — because a deleted workspace has to leave the
+  // scope empty, and there is no other writer: store state is only ever mutated through
+  // these actions.
+  function selectWorkspace(id?: string): void {
     selectedWorkspaceId.value = id;
     selectedProjectId.value = undefined;
     selectedSessionId.value = undefined;

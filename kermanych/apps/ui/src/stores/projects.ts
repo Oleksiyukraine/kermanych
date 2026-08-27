@@ -57,8 +57,15 @@ export const useProjects = defineStore('projects', () => {
       // anything this build wrote, so every field is checked before it reaches the tree.
       const cached = JSON.parse(raw) as Partial<TreeCache>;
       if (!Array.isArray(cached.workspaces)) return;
+      // `ownerId` is checked with the rest because isWorkspaceOwner() reads it straight
+      // off these rows: a version-skewed payload would otherwise decide which admin
+      // affordances render until the first load().
       const list = cached.workspaces.filter(
-        (w) => !!w && typeof w.id === 'string' && typeof w.name === 'string',
+        (w) =>
+          !!w &&
+          typeof w.id === 'string' &&
+          typeof w.name === 'string' &&
+          typeof w.ownerId === 'string',
       );
       workspaces.value = list;
       // A map entry pointing at a workspace this cache does not hold would let
@@ -77,7 +84,15 @@ export const useProjects = defineStore('projects', () => {
   function writeTreeCache(): void {
     const cache: TreeCache = {
       workspaces: workspaces.value,
-      projectWorkspace: projectWorkspaceMap(projects.value),
+      // Rebuilt from the projects we hold — except when we hold none, where the map
+      // already in the orchestrator is kept instead. A workspace-only mutation
+      // (create/patch/removeWorkspace) can run before the first successful load(), and
+      // rebuilding from an empty list there would overwrite a good cached map with {}:
+      // the next cold start would then have cached workspaces and no way to place local
+      // project rows into them, which is the offline grouping this cache exists for.
+      projectWorkspace: projects.value.length
+        ? projectWorkspaceMap(projects.value)
+        : local.projectWorkspace,
     };
     try {
       localStorage.setItem(TREE_CACHE_KEY, JSON.stringify(cache));
@@ -146,14 +161,22 @@ export const useProjects = defineStore('projects', () => {
       throw new Error('спершу перенесіть або видаліть проєкти цього воркспейсу');
     }
     await cloudDeleteWorkspace(auth.client, id);
-    const before = workspaces.value.length;
+    // By ID, not by list length: cloudListWorkspaces returns the whole RLS-scoped set,
+    // which a teammate can change between our last load() and this call, and a count
+    // would then read a successful delete as refused (or the reverse). remove() below
+    // does the same thing the same way.
     workspaces.value = await cloudListWorkspaces(auth.client);
-    if (workspaces.value.length === before) {
+    if (workspaces.value.some((w) => w.id === id)) {
       throw new Error('хмара відмовила: видалити воркспейс може лише власник');
     }
     const rest = { ...members.value };
     delete rest[id];
     members.value = rest;
+    // Normally reached from this workspace's own settings, so the selection is usually
+    // the id just deleted: left in place it highlights nothing and scopes the board to a
+    // row that no longer exists. Guarded on identity — deleting some OTHER group must
+    // not drop the current scope.
+    if (local.selectedWorkspaceId === id) local.selectWorkspace();
     writeTreeCache();
   }
 
