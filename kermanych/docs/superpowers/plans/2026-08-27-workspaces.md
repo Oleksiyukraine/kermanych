@@ -3213,10 +3213,20 @@ plain words and the tree refetches."
 
 **Files:**
 - Modify: `kermanych/apps/ui/src/pages/BoardPage.vue` — header (8-19), `projectFilter` / `visibleTasks` / `byColumn` (336-360), the publish section (27-44) and `publishProject`, the create/edit modal project pickers, `memberHandles` (651-667)
+- Modify: `kermanych/packages/cloud/src/types.ts` — delete the now-unused `ProjectMember` type
+- Modify: `kermanych/packages/cloud/src/index.ts` — drop `ProjectMember` from the `./types` re-export block
 
 **Interfaces:**
 - Consumes: `scopedProjectIds`, `filterTasks`, `UNASSIGNED` (Task 7); `useProjects.workspaces/members/loadMembers` (Task 8); `KSelect` option objects (Task 9).
-- Produces: an id-keyed «Проєкти» filter, an «Виконавці» filter, and a scope heading.
+- Produces: an id-keyed «Проєкти» filter, an «Виконавці» filter, and a scope heading. Also retires `ProjectMember` from `@kermanych/cloud`.
+
+> **This task owns the last consumer of `ProjectMember`, so it retires the type.** Task 4
+> added `WorkspaceMember` beside it rather than replacing it, because `projects.ts` still
+> imported it; Task 5 then dropped that import. The remaining consumers are
+> `MainLayout.vue` (Task 11) and `BoardPage.vue` — this file. Once the `memberHandles`
+> rewrite below is done, nothing references it, so delete the type and its barrel export
+> here and confirm with `grep -rn "ProjectMember" kermanych/` that only historical docs
+> under `docs/superpowers/` still mention it.
 
 - [ ] **Step 1: Replace the single filter with two**
 
