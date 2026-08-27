@@ -38,6 +38,14 @@ export {
 } from "./worktree-names";
 export { PLATFORMS, type Platform } from "./platform";
 export {
+  DEFAULT_SKILLS,
+  SKILL_NAME_RE,
+  isSkillName,
+  renderSkillFile,
+  type SkillDef,
+  type SkillView,
+} from "./skills";
+export {
   buildChatBlocks,
   THINK_MIN_MS,
   COALESCE_TOOLS,
