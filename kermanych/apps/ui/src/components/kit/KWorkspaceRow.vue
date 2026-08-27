@@ -42,6 +42,11 @@ const title = computed(
 // because `withDefaults` only narrows `count` away from `undefined` on this side.
 const badge = computed(() => (props.count > 0 ? String(props.count) : ''));
 
+// Each glyph control gets ONE string that is both its visible tip and its accessible name —
+// the house rule KIconButton and MainLayout's «+» already follow. Diverging the two fails
+// WCAG 2.5.3 Label in Name: a voice-control user speaks what they can see, and a name that
+// does not contain it cannot be reached.
+//
 // Names are quoted because they are arbitrary text spliced into a Ukrainian sentence:
 // «Новий проєкт у Особисте» is ungrammatical, «Новий проєкт у «Особисте»» is not.
 const toggleLabel = computed(() =>
@@ -79,7 +84,7 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
     <button
       class="k-ws__add"
       type="button"
-      v-tip="'Новий проєкт у цьому воркспейсі'"
+      v-tip="addLabel"
       :aria-label="addLabel"
       @click.stop="emit('add-project')"
     >+</button>
@@ -94,6 +99,14 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
   font-family: var(--k-font-ui);
   border-radius: var(--k-r);
   border: 1px solid transparent;
+  transition: background 0.12s;
+
+  // The row is the tree's primary target, so it answers the pointer like KRailItem does.
+  // Skipped while active: the hover tint and the active tint are neighbours on the surface
+  // ladder, and swapping one for the other reads as the selection moving.
+  &:hover:not(.k-ws--active) {
+    background: var(--k-surface);
+  }
 }
 
 .k-ws--active {
@@ -106,16 +119,27 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
   border-color: var(--k-accent);
 }
 
+// Glyph-only controls, so they take the house 28x28 box from KIconButton rather than a
+// padding guess: 28 clears the 24x24 minimum of WCAG 2.5.8 and matches every other icon
+// control in the app. Borderless, because a rule around each of these would fence the row
+// into three visible boxes.
 .k-ws__chevron,
 .k-ws__add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   background: none;
   border: none;
   color: var(--k-muted);
   cursor: pointer;
   font-size: var(--k-fs-sm);
   line-height: 1;
-  padding: var(--k-sp-1) 4px;
   border-radius: var(--k-r);
+  transition: color 0.12s, opacity 0.12s;
 
   &:hover {
     color: var(--k-text);
@@ -150,7 +174,8 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
   color: var(--k-text);
   cursor: pointer;
   font-size: var(--k-fs-base);
-  padding: 7px 2px;
+  min-height: 28px;
+  padding: var(--k-sp-1) 2px;
   text-align: left;
   border-radius: var(--k-r);
 

@@ -126,11 +126,17 @@ function onDragStart(e: DragEvent): void {
   color: var(--k-text);
 }
 
-// Nested under a workspace row: the name lines up past the row's chevron, so the tree
-// reads as a tree. A literal rather than a spacing token because it is measured against
-// the chevron's box, not against the 8pt rhythm.
+// Nested under a workspace row: the child's name starts where the PARENT's name starts, so
+// the tree reads as a tree instead of hanging its children out to the left. Both offsets are
+// measured from the same edge and both include a 1px border, so they cancel:
+//
+//   parent .k-ws__name = 28 chevron + 2 row gap + 2 body padding + 8 dot + 8 dot gap = 48
+//   child  .k-rail__name = padding-left                                              = 48
+//
+// A literal rather than a spacing token because it tracks KWorkspaceRow's internals, not the
+// 8pt rhythm — change the chevron box or the dot there and this has to move with it.
 .k-rail--indent {
-  padding-left: 26px;
+  padding-left: 48px;
 }
 
 .k-rail__name {
