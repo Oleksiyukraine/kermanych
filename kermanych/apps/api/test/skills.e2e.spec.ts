@@ -77,4 +77,34 @@ describe.skipIf(!gated)("skill library reaches a real omp child", () => {
     expect(sp).not.toContain("PROBE ALPHA from the library");
     expect(sp).toContain("PROBE GAMMA from the library");
   }, 120_000);
+
+  test("a skills directory a LOWER config layer declares survives the overlay", async () => {
+    // omp REPLACES array-typed settings from a higher layer wholesale, and `--config` is the
+    // highest layer there is. So an overlay naming only Kermanych's directory would erase this
+    // one — the target repository's own declaration — silently. The project-level
+    // `<cwd>/.omp/config.yml` is the cheapest lower layer to stand one up in.
+    const theirs = mkdtempSync(join(tmpdir(), "kmq-e2e-theirs-"));
+    try {
+      mkdirSync(join(theirs, "probe-delta"), { recursive: true });
+      writeFileSync(
+        join(theirs, "probe-delta/SKILL.md"),
+        "---\nname: probe-delta\ndescription: PROBE DELTA from the repository's own directory\n---\ntheir body\n",
+      );
+      mkdirSync(join(repo, ".omp"), { recursive: true });
+      writeFileSync(
+        join(repo, ".omp/config.yml"),
+        `skills:\n  customDirectories:\n    - ${JSON.stringify(theirs)}\n`,
+      );
+
+      const svc = new SkillsService({ cloudClient: () => ({}) } as never);
+      svc.readRows = async () => [row("probe-epsilon", "PROBE EPSILON from the library")];
+      const { configPath } = await svc.materialize("p1", repo);
+      if (!configPath) throw new Error("materialize wrote no overlay");
+      const sp = await systemPrompt(configPath, repo);
+      expect(sp).toContain("PROBE DELTA from the repository's own directory");
+      expect(sp).toContain("PROBE EPSILON from the library");
+    } finally {
+      rmSync(theirs, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

@@ -3,6 +3,7 @@
 //   repository skills  >  project_skills rows  >  Kermanych's DEFAULT_SKILLS
 // The materialised directory doubles as the offline cache — there is no SQLite mirror.
 import { Injectable } from "@nestjs/common";
+import { spawn } from "node:child_process";
 import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { homedir } from "node:os";
@@ -104,15 +105,102 @@ function assertProjectId(projectId: string): void {
   if (!isSkillName(projectId)) throw new Error(`invalid project id: ${projectId}`);
 }
 
+// `omp config get` answers in well under a second (it reads config files, no network), so
+// this is a wedged process, not a slow one. It bounds a LAUNCH: nothing here may hang one.
+const CONFIG_TIMEOUT_MS = 5_000;
+// A list of directories is a few hundred bytes. Past this it is a broken omp streaming at
+// us, and the truncated buffer simply fails to parse — which is handled.
+const CONFIG_MAX_BYTES = 1 << 16;
+
+// The EFFECTIVE `skills.customDirectories` for a session cwd, or `undefined` when it could
+// not be read. Kermanych hands its overlay to omp as `--config`, the highest-precedence
+// layer, and omp REPLACES array-typed settings wholesale instead of appending: an overlay
+// naming only Kermanych's directory silently erases both the operator's own
+// `~/.omp/agent/config.yml` entries and whatever the target repository declares in
+// `<cwd>/.omp/config.yml` — the latter being exactly the "the repository always wins"
+// constraint, one config layer up from the six directory conventions REPO_SKILL_DIRS guards.
+// The read therefore runs IN the session cwd, so the project-level layer is part of the
+// answer. Never rejects: an unreadable value means "do not write a replacing overlay".
+function readOmpCustomDirectories(cwd: string): Promise<string[] | undefined> {
+  const { promise, resolve } = Promise.withResolvers<string[] | undefined>();
+  let settled = false;
+  const finish = (value: string[] | undefined): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    resolve(value);
+  };
+  // An unbound project has no repo path; reading in the api's OWN cwd would pick up the
+  // Kermanych checkout's project config, so fall back to the home layer instead.
+  const child = spawn("omp", ["config", "get", "skills.customDirectories"], {
+    cwd: cwd || homedir(),
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  const timer = setTimeout(() => {
+    child.kill("SIGKILL");
+    finish(undefined);
+  }, CONFIG_TIMEOUT_MS);
+  const chunks: Buffer[] = [];
+  let size = 0;
+  child.stdout.on("data", (b: Buffer) => {
+    if (size >= CONFIG_MAX_BYTES) return;
+    size += b.length;
+    chunks.push(b);
+  });
+  // No omp on PATH, or a cwd that no longer exists.
+  child.on("error", () => finish(undefined));
+  child.on("close", (code) => {
+    if (code !== 0) return finish(undefined);
+    try {
+      const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      // A shape we do not understand is a value we cannot preserve, so it is a read failure
+      // rather than something to overwrite.
+      if (!Array.isArray(parsed) || parsed.some((d) => typeof d !== "string")) return finish(undefined);
+      finish(parsed as string[]);
+    } catch {
+      finish(undefined);
+    }
+  });
+  return promise;
+}
+
+// Kermanych's directory goes LAST: among custom directories the FIRST same-named skill wins,
+// so appending preserves the precedence of every directory the operator and the repository
+// already declared. Paths are quoted — `dir` derives from homedir(), which Kermanych does not
+// control, and in a YAML plain scalar a ` #` opens a comment and a `: ` a mapping. A malformed
+// overlay is a HARD omp startup error, the one outcome "never block a launch" forbids.
+// JSON strings are valid YAML, the same technique renderSkillFile uses for descriptions.
+function renderOverlay(dirs: readonly string[]): string {
+  const lines = dirs.map((d) => `    - ${JSON.stringify(d)}`);
+  return `skills:\n  customDirectories:\n${lines.join("\n")}\n`;
+}
+
+// Whether a name already has a materialised SKILL.md. Only ENOENT/ENOTDIR mean "no";
+// any other errno is a real failure and belongs to the caller's degradation path.
+async function hasSkillFile(dir: string, name: string): Promise<boolean> {
+  try {
+    await stat(join(dir, name, "SKILL.md"));
+    return true;
+  } catch (err) {
+    if (isMissingPath(err)) return false;
+    throw err;
+  }
+}
+
+// `stale` means "the library on disk may not reflect the cloud": a failed cloud read, a failed
+// repo scan, an unreadable `skills.customDirectories`, or a filesystem failure. It is never a
+// reason to refuse a launch. `configPath` is set only once the overlay write succeeded.
 export type Materialized = { configPath?: string; view: SkillView[]; stale?: boolean };
 
 @Injectable()
 export class SkillsService {
   constructor(private auth: AuthService) {}
 
-  // Seam for tests: the cloud read is the one part a unit test cannot perform.
+  // Seams for tests: the cloud read and the `omp` child are the two parts a unit test
+  // cannot perform.
   readRows = async (projectId: string): Promise<ProjectSkill[]> =>
     listProjectSkills(this.auth.cloudClient(), [projectId]);
+  readCustomDirs = (cwd: string): Promise<string[] | undefined> => readOmpCustomDirectories(cwd);
 
   // Read-only: what the UI lists. Never writes, so a settings screen cannot mutate a
   // session's library as a side effect of being opened. Errors propagate on purpose: a
@@ -130,31 +218,36 @@ export class SkillsService {
     }));
   }
 
-  // Never blocks a launch: every filesystem or cloud failure degrades to `stale: true` with
-  // whatever is already on disk. `configPath` is absent when the overlay was not written —
-  // passing omp a --config that does not exist would break the session outright.
+  // Never blocks a launch: every filesystem, cloud or config failure degrades to
+  // `stale: true` with whatever is already on disk. `configPath` is absent when the overlay
+  // was not written — passing omp a --config that does not exist would break the session.
   async materialize(projectId: string, cwd: string): Promise<Materialized> {
     assertProjectId(projectId);
     const dir = join(skillsRoot(), projectId);
     const overlay = join(skillsRoot(), `${projectId}.config.yml`);
 
-    // Both reads happen before any write. `stale` means "the inputs are not trustworthy
-    // enough to rewrite the library", and in that state the directory the last good launch
-    // wrote IS the cache: nothing is rewritten and, above all, nothing is pruned.
+    // Both reads happen before any write, and the two degradations are tracked apart because
+    // they forbid different things. A failed REPO SCAN leaves no trustworthy shadow map, so
+    // writing could duplicate a name the repository already owns: nothing is written. A failed
+    // CLOUD READ only narrows the resolved set to DEFAULT_SKILLS, which are compile-time
+    // constants needing neither network nor sign-in — those must still land, or a fresh,
+    // offline or signed-out machine launches against an empty directory. Neither may prune:
+    // in both states the directory the last good launch wrote IS the cache.
     let repo = new Map<string, string>();
-    let stale = false;
+    let repoFailed = false;
+    let cloudFailed = false;
     try {
       repo = await repoSkillNames(cwd);
     } catch {
-      // Without the shadow map, writing would risk a duplicate of a repository skill.
-      stale = true;
+      repoFailed = true;
     }
     let rows: ProjectSkill[] = [];
     try {
       rows = await this.readRows(projectId);
     } catch {
-      stale = true; // offline or signed out
+      cloudFailed = true; // offline or signed out
     }
+    let stale = repoFailed || cloudFailed;
 
     const resolved = resolveSkills(rows);
     const view: SkillView[] = resolved.map(({ def, source }) => ({
@@ -167,21 +260,39 @@ export class SkillsService {
     let configPath: string | undefined;
     try {
       await mkdir(dir, { recursive: true });
-      // The overlay is a SIBLING of the scanned directory, never inside it.
-      await writeFile(overlay, `skills:\n  customDirectories:\n    - ${dir}\n`, "utf8");
-      configPath = overlay;
-      if (!stale) {
+      const inherited = await this.readCustomDirs(cwd);
+      if (inherited === undefined) {
+        // An overlay written blind would REPLACE the operator's and the repository's own
+        // directories. Losing the library for this launch is strictly better than erasing
+        // them, and a missing config path is already a tolerated state.
+        stale = true;
+      } else {
+        // The overlay is a SIBLING of the scanned directory, never inside it. A prior entry for
+        // Kermanych's own directory is dropped rather than kept in place, so the appended copy
+        // is the only one and our directory can never outrank a directory someone else declared.
+        const dirs = [...new Set(inherited.filter((d) => d !== dir)), dir];
+        await writeFile(overlay, renderOverlay(dirs), "utf8");
+        configPath = overlay;
+      }
+      if (!repoFailed) {
         const keep = new Set<string>();
         for (const { def } of resolved) {
           if (repo.has(def.name)) continue; // the repository's own skill wins the name
           keep.add(def.name);
+          // With no cloud, `resolved` is just the defaults: rewriting a name already on disk
+          // would demote a project's own skill to the default that shares its name.
+          if (cloudFailed && (await hasSkillFile(dir, def.name))) continue;
           await mkdir(join(dir, def.name), { recursive: true });
           await writeFile(join(dir, def.name, "SKILL.md"), renderSkillFile(def), "utf8");
         }
         // Runs only after every write succeeded, so a half-written library is never pruned
-        // against. Removed AND newly repo-shadowed names both disappear here.
-        for (const e of await readEntries(dir)) {
-          if (e.isDirectory() && !keep.has(e.name)) await rm(join(dir, e.name), { recursive: true, force: true });
+        // against. Removed AND newly repo-shadowed names both disappear here. Skipped when the
+        // cloud failed: `resolved` is then not the real library, and pruning against it would
+        // delete every cached project skill.
+        if (!cloudFailed) {
+          for (const e of await readEntries(dir)) {
+            if (e.isDirectory() && !keep.has(e.name)) await rm(join(dir, e.name), { recursive: true, force: true });
+          }
         }
       }
     } catch {

@@ -21,8 +21,15 @@ const row = (p: Partial<ProjectSkill> & { name: string }): ProjectSkill => ({
 });
 
 // The auth stub stands in for the cloud read: no network in unit tests. Every test then
-// replaces `readRows`, which is the seam that read goes through.
-const service = () => new SkillsService({ cloudClient: () => ({}) } as never);
+// replaces `readRows`, which is the seam that read goes through. `readCustomDirs` is the
+// second seam — it spawns a real `omp` to read the effective `skills.customDirectories` — and
+// defaults to "the operator declared none" so these tests stay hermetic; the merge itself is
+// pinned below and end-to-end in skills.e2e.spec.ts.
+const service = () => {
+  const svc = new SkillsService({ cloudClient: () => ({}) } as never);
+  svc.readCustomDirs = async () => [];
+  return svc;
+};
 
 let repo: string;
 let home: string;
@@ -123,7 +130,9 @@ test("materialize writes the library, the overlay, and skips a repo-shadowed ski
   expect(stale).toBeUndefined();
   expect(readdirSync(dir).sort()).toEqual(["extra", "kermanych-pull-request"]);
   expect(readFileSync(join(dir, "extra", "SKILL.md"), "utf8")).toContain('description: "e"');
-  expect(readFileSync(configPath!, "utf8")).toBe(`skills:\n  customDirectories:\n    - ${dir}\n`);
+  expect(readFileSync(configPath!, "utf8")).toBe(
+    `skills:\n  customDirectories:\n    - ${JSON.stringify(dir)}\n`,
+  );
   expect(view.find((v) => v.name === "kermanych-session")?.shadowedByRepo).toBe(
     join(repo, ".claude/skills/kermanych-session/SKILL.md"),
   );
@@ -163,6 +172,68 @@ test("an unreachable cloud keeps the last materialised library and reports it as
   expect(existsSync(join(home, "skills", "p1", "cached"))).toBe(true);
   expect(existsSync(configPath!)).toBe(true);
   expect(stale).toBe(true);
+});
+
+test("a first-ever materialise with no cloud still lands Kermanych's own defaults", async () => {
+  const svc = service();
+  svc.readRows = async () => {
+    throw new Error("offline");
+  };
+  // DEFAULT_SKILLS are compile-time constants: no cloud, no network, no sign-in. Suppressing
+  // them because the cloud was unreachable would hand omp an EMPTY directory — the state of
+  // every signed-out or offline launch on a fresh install.
+  const { configPath, stale } = await svc.materialize("p1", repo);
+  expect(stale).toBe(true);
+  expect(readdirSync(join(home, "skills", "p1")).sort()).toEqual(DEFAULT_SKILLS.map((d) => d.name).sort());
+  expect(existsSync(configPath!)).toBe(true);
+});
+
+test("a cloud failure writes nothing over a richer cached library", async () => {
+  const overridden = DEFAULT_SKILLS[0]!.name;
+  const svc = service();
+  svc.readRows = async () => [
+    row({ name: "cached", description: "cached desc" }),
+    row({ name: overridden, description: "the project's own take", body: "mine" }),
+  ];
+  await svc.materialize("p1", repo);
+
+  svc.readRows = async () => {
+    throw new Error("offline");
+  };
+  await svc.materialize("p1", repo);
+  const dir = join(home, "skills", "p1");
+  // The project's skills survive (no prune) AND the default of the same name does not
+  // overwrite the project's version.
+  expect(existsSync(join(dir, "cached", "SKILL.md"))).toBe(true);
+  expect(readFileSync(join(dir, overridden, "SKILL.md"), "utf8")).toContain("the project's own take");
+});
+
+test("the overlay EXTENDS the directories omp already resolves, Kermanych's last", async () => {
+  const dir = join(home, "skills", "p1");
+  const svc = service();
+  svc.readRows = async () => [];
+  // Duplicates collapse, and Kermanych's own directory goes last: among custom directories the
+  // first same-named skill wins, so appending preserves every other layer's precedence.
+  svc.readCustomDirs = async () => ["/tmp/op # one", dir, "/tmp/two: b"];
+
+  const { configPath } = await svc.materialize("p1", repo);
+  expect(readFileSync(configPath!, "utf8")).toBe(
+    `skills:\n  customDirectories:\n    - "/tmp/op # one"\n    - "/tmp/two: b"\n    - ${JSON.stringify(dir)}\n`,
+  );
+});
+
+test("an unreadable customDirectories writes no overlay rather than replacing it", async () => {
+  const svc = service();
+  svc.readRows = async () => [row({ name: "extra" })];
+  svc.readCustomDirs = async () => undefined;
+
+  const { configPath, stale } = await svc.materialize("p1", repo);
+  // Losing the library for one launch beats erasing the operator's own skill directories.
+  expect(configPath).toBeUndefined();
+  expect(stale).toBe(true);
+  expect(existsSync(join(home, "skills", "p1.config.yml"))).toBe(false);
+  // The library is still laid out, so the next launch that CAN read the config finds it warm.
+  expect(existsSync(join(home, "skills", "p1", "extra", "SKILL.md"))).toBe(true);
 });
 
 test("view surfaces a cloud failure instead of presenting the defaults as the library", async () => {
