@@ -3228,6 +3228,22 @@ plain words and the tree refetches."
 > here and confirm with `grep -rn "ProjectMember" kermanych/` that only historical docs
 > under `docs/superpowers/` still mention it.
 
+> **Also close the last silent scope widening, found by Task 8's review.** A LOCAL-ONLY
+> project has no cloud row and therefore no entry in the `projectId → workspaceId` map, so
+> selecting one leaves `selectedWorkspaceId` undefined — and `scopedProjectIds` reads an
+> undefined workspace as "no scope" and returns EVERY project id. The board would then show
+> every workspace's tasks because the user clicked a project that has none, which is exactly
+> backwards. Empty plus the «Опублікувати в хмарі» prompt this page already renders is the
+> honest answer.
+>
+> Fix it in `src/lib/scope.ts` rather than in this component, since that is where the rule
+> belongs and where it can be tested. `scopedProjectIds` gains a third case, in this order:
+> a set `workspaceId` scopes to that workspace; otherwise a set `projectId` — a project that
+> resolves to no visible workspace — scopes to nothing, `[]`; otherwise, no selection at all,
+> every project. Add a test for the middle case to `apps/ui/test/scope.spec.ts` and mind that
+> `AgentsPage.vue` is unaffected: it short-circuits on `selectedProjectId` before consulting
+> the scope, so a local-only project still lists its own local sessions there.
+
 - [ ] **Step 1: Replace the single filter with two**
 
 Template, lines 8-19:
