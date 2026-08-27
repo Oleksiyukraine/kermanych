@@ -173,7 +173,17 @@ create policy workspace_members_delete_owner on public.workspace_members
   for delete to authenticated
   using (exists (
     select 1 from public.workspaces w
-    where w.id = workspace_id and w.owner_id = auth.uid()));
+    where w.id = workspace_id and w.owner_id = auth.uid()
+      -- …but never the owner's OWN seat. handle_new_workspace seats the owner at
+      -- creation and nothing can ever seat them again: the table has no INSERT grant,
+      -- and invite_workspace_member would return them as 'member'. Several things in
+      -- this schema assume the owner is always a member — most sharply
+      -- projects_select_member, which drops its `owner_id = auth.uid() or` disjunct on
+      -- exactly that assumption, and tasks_guard's `security invoker` hatch, which reads
+      -- public.projects as the caller. This clause is what makes the assumption TRUE
+      -- rather than merely usual; without it an owner could lock themselves out of their
+      -- own workspace's projects with no way back.
+      and workspace_members.user_id <> w.owner_id));
 
 -- ── projects gain their parent ────────────────────────────────────────────────
 -- `on delete restrict`, NOT cascade: deleting a workspace must not silently take
@@ -203,11 +213,15 @@ create index projects_workspace_idx on public.projects (workspace_id);
 -- workspace's owner row with `added_at = now()`. This clause restores the role and the
 -- ORIGINAL join date from project_members — the only place that history exists before
 -- the table is dropped below, so `do nothing` would destroy every owner's join date
--- irreversibly. It cannot change anyone's role: handle_new_project() is the sole writer
--- of an 'owner' row and invite_project_member() only ever inserts 'member', so
--- excluded.role always matches what the trigger wrote. An owner with no
--- project_members row at all (an anomaly the old schema permits) simply keeps the
--- migration timestamp — there is no earlier date to restore.
+-- irreversibly. `set role = excluded.role` copies whatever project_members SAYS, which
+-- is the right migration semantics: this statement's job is to carry the state that
+-- exists across, not the state someone assumed. It is not a no-op either —
+-- members_update_owner survived 20260823130000 (which dropped only
+-- members_insert_owner) and `update` on project_members is still granted to
+-- authenticated, so a project owner could have rewritten a role, and whatever they
+-- wrote is what should come across. An owner with no project_members row at all (an
+-- anomaly the old schema permits) has nothing to restore and keeps the migration
+-- timestamp — there is no earlier date to use.
 insert into public.workspace_members (workspace_id, user_id, role, added_at)
   select pm.project_id, pm.user_id, pm.role, pm.added_at from public.project_members pm
   on conflict (workspace_id, user_id) do update
@@ -238,6 +252,14 @@ $$;
 -- server-owned updated_at) are reproduced verbatim from
 -- 20260821090100_team_cloud_functions.sql. Redefined BEFORE projects.owner_id is
 -- dropped, for the same dependency-tracking reason as above.
+--
+-- Still deliberately NOT `security definer`: it must see auth.uid() of the actual
+-- caller. Restated rather than assumed, because a `create or replace` that merely
+-- FORGOT `security definer` would look identical to this one, so this line is the only
+-- thing separating the choice from a bug. The consequence is that the hatch's
+-- sub-select reads public.projects under the CALLER's own RLS, which resolves only
+-- because the owner is always a member of their own workspace — the invariant
+-- workspace_members_delete_owner enforces above.
 create or replace function public.tasks_guard()
 returns trigger
 language plpgsql
@@ -246,6 +268,19 @@ declare
   active_statuses task_status[] := array['queued','thinking','tool','waiting_input']::task_status[];
 begin
   if tg_op = 'UPDATE' then
+    -- 1. Only the assignee moves a task's status. The self-assign case is allowed
+    --    because claim + status can land in one statement, in which case the new
+    --    assignee is the caller.
+    --
+    --    One exception, and exactly one: the WORKSPACE's owner may force 'stopped'.
+    --    There is no heartbeat (spec Non-goals), so a status written by a machine that
+    --    then crashes persists forever — and rules 2/3 below refuse to reassign or
+    --    delete an active task, which would leave the card permanently stuck. The
+    --    assignee can already unstick it from any machine via rule 1; this covers the
+    --    assignee being gone for good. It is deliberately the narrowest possible escape
+    --    hatch: 'stopped' only, owner only — an owner still cannot park a task in
+    --    'thinking', 'done' or anything else. The ONLY change from the project-level
+    --    version is where ownership is read: projects.workspace_id -> workspaces.owner_id.
     if new.status is distinct from old.status
        and auth.uid() is distinct from old.assignee_id
        and auth.uid() is distinct from new.assignee_id
@@ -257,15 +292,18 @@ begin
            where p.id = old.project_id and w.owner_id = auth.uid())) then
       raise exception 'only the assignee can change status';
     end if;
+    -- 2. An active task cannot be handed to someone else mid-run.
     if new.assignee_id is distinct from old.assignee_id
        and old.status = any (active_statuses) then
       raise exception 'task is active';
     end if;
+    -- 3. updated_at is server-owned; the UI reads its age for the stale hint.
     new.updated_at := now();
     return new;
   end if;
 
   if tg_op = 'DELETE' then
+    -- 2 (delete half). Stop the board first, then delete the card.
     if old.status = any (active_statuses) then
       raise exception 'task is active';
     end if;

@@ -82,11 +82,25 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     // project-level invite test that used to grant this access is gone with
     // invite_project_member, and the workspace-level one runs after the task tests
     // that need `member` to reach the board.
+    //
+    // Upper-cased on purpose, and the only upper-cased address in the file: auth stores
+    // it lower-cased, so `lower(u.email) = norm` inside the rpc is what makes a teammate
+    // typing a colleague's address from memory resolve. Being the FIRST invite, this is
+    // also the one call site that reaches the rpc's `returning * into membership` branch
+    // — every later one finds the row already there and exercises the `do nothing`
+    // re-select fallback instead — so the returned row is checked here, not just the
+    // error.
     const seatedMember = await owner.client.rpc("invite_workspace_member", {
       p_workspace_id: workspaceId,
-      p_email: member.email,
+      p_email: member.email.toUpperCase(),
     });
     if (seatedMember.error) throw seatedMember.error;
+    const seatedRow = seatedMember.data as { user_id: string; role: string } | null;
+    if (seatedRow?.user_id !== member.id || seatedRow.role !== "member") {
+      throw new Error(
+        `invite_workspace_member seated ${JSON.stringify(seatedRow)}, expected ${member.id} as 'member'`,
+      );
+    }
 
     const project = await owner.client
       .from("projects")
@@ -162,9 +176,15 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(projects.error).toBeNull();
     expect(projects.data).toEqual([]);
 
-    const tasks = await outsider.client.from("tasks").select("id").eq("project_id", projectId);
-    expect(tasks.error).toBeNull();
-    expect(tasks.data).toEqual([]);
+    // Keyed both ways deliberately: `project_id` proves the whole card wall is invisible,
+    // and `id` proves that knowing a task's id is not a way around that.
+    const byProject = await outsider.client.from("tasks").select("id").eq("project_id", projectId);
+    expect(byProject.error).toBeNull();
+    expect(byProject.data).toEqual([]);
+
+    const byId = await outsider.client.from("tasks").select("id").eq("id", taskId);
+    expect(byId.error).toBeNull();
+    expect(byId.data).toEqual([]);
   });
 
   it("the anon key with no session sees nothing", async () => {
@@ -186,13 +206,6 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     const tasks = await member.client.from("tasks").select("id").eq("id", taskId);
     expect(tasks.error).toBeNull();
     expect(tasks.data).toHaveLength(1);
-  });
-
-  it("a non-member sees no projects and no tasks", async () => {
-    const projects = await outsider.client.from("projects").select("id").eq("id", projectId);
-    expect(projects.data).toEqual([]);
-    const tasks = await outsider.client.from("tasks").select("id").eq("id", taskId);
-    expect(tasks.data).toEqual([]);
   });
 
   // USING sees the OLD row and WITH CHECK the NEW one, so one update policy demands
@@ -538,6 +551,26 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
       .select("id")
       .single();
     expect(forged.error?.code).toBe("42501");
+  });
+
+  // Several things assume the owner is always a member, so the owner's seat is the one
+  // row their own delete policy must refuse. There is no way back if it goes: no INSERT
+  // grant, and the invite rpc would re-seat them as 'member'. The other half of the
+  // policy — that the owner CAN unseat someone else — is the test immediately below.
+  it("the owner cannot delete their own seat", async () => {
+    await owner.client
+      .from("workspace_members")
+      .delete()
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", owner.id);
+    const still = await owner.client
+      .from("workspace_members")
+      .select("role")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", owner.id)
+      .single();
+    expect(still.error).toBeNull();
+    expect(still.data?.role).toBe("owner");
   });
 
   // Removal is the owner's; a plain member's delete matches zero rows and does not error.
