@@ -5,6 +5,7 @@ import { ProjectsController } from "./http/projects.controller";
 import { SessionsController } from "./http/sessions.controller";
 import { FsController } from "./http/fs.controller";
 import { UsageController } from "./http/usage.controller";
+import { SkillsController } from "./http/skills.controller";
 import { RegistryService } from "./registry/registry.service";
 import { WorktreeService } from "./worktree/worktree.service";
 import { SupervisorService } from "./supervisor/supervisor.service";
@@ -19,7 +20,7 @@ import { CloudSyncService } from "./cloud/cloud-sync.service";
 import { SkillsService } from "./skills/skills.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,

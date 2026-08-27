@@ -9,6 +9,7 @@ import type {
   EnvFileView,
   Session,
   SubscriptionUsage,
+  SkillView,
   TaskDraft,
   TranscriptEntry,
   ToolLine,
@@ -138,6 +139,11 @@ export const api = {
     id: string,
     body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string },
   ): Promise<Project> => patchJson<Project>(`/projects/${id}`, body),
+
+  // The resolved library (defaults + project rows, minus anything the repo already defines).
+  // A read, and only a read: skill rows are written straight to Supabase by the editor,
+  // because RLS — not this loopback api — is what makes them owner-only.
+  projectSkills: (id: string): Promise<SkillView[]> => get<SkillView[]>(`/projects/${id}/skills`),
 
   setProjectBinding: (id: string, localRepoPath: string): Promise<Project> =>
     put<Project>(`/projects/${id}/binding`, { localRepoPath }),
