@@ -104,7 +104,20 @@
         <KField v-model="branch" label="Гілка" placeholder="feat/auth" />
         <KField v-model="focused" label="У фокусі" placeholder="click to focus" />
       </div>
-      <div class="kit__caption mono">branch={{ branch }}</div>
+      <div class="kit__row kit__row--fields">
+        <KSelect v-model="galleryBranch" label="Гілка (рядки)" :options="galleryBranches" />
+        <KSelect
+          v-model="galleryWorkspace"
+          label="Воркспейс (пари value/label)"
+          :options="galleryWorkspaceOptions"
+          placeholder="Усі воркспейси"
+        />
+      </div>
+      <div class="kit__caption mono">
+        branch={{ branch }} · select(рядки)={{ galleryBranch }} · select(пари)={{ galleryWorkspace || '—' }}
+        — праворуч у списку видно назву, а модель тримає id: фільтр за назвою ламається,
+        щойно зʼявиться другий воркспейс із такою самою назвою.
+      </div>
     </section>
 
     <!-- 05 — agent panels -->
@@ -169,6 +182,41 @@
         Праворуч від проєкту — лічильник запущених агентів: зелена пігулка з числом, а коли
         не працює жоден — червона крапка без числа. Плитка акаунта у підніжжі рейки (клік —
         вихід із акаунта). Без картинки з GitHub — ініціали.
+      </div>
+      <div class="kit__ws-tree">
+        <template v-for="w in galleryWorkspaces" :key="w.id">
+          <KWorkspaceRow
+            :workspace="w"
+            :active="w.id === wsActive"
+            :expanded="wsExpanded.includes(w.id)"
+            :count="w.count"
+            :drop-target="w.id === wsDropTarget"
+            @select="onWsSelect(w.id)"
+            @toggle="onWsToggle(w.id)"
+            @add-project="lastAction = `add-project: ${w.id}`"
+            @dragover.prevent="wsDropTarget = w.id"
+            @dragleave="wsDropTarget = wsDropTarget === w.id ? '' : wsDropTarget"
+            @drop.prevent="onWsDrop(w.id)"
+          />
+          <KRailItem
+            v-for="r in railProjects.filter((p) => p.workspaceId === w.id)"
+            v-show="wsExpanded.includes(w.id)"
+            :key="r.project.id"
+            :project="r.project"
+            :active="r.project.id === wsDragged"
+            :count="r.count"
+            indent
+            draggable
+            @dragstart="wsDragged = $event"
+            @dragend="wsDragged = ''"
+          />
+        </template>
+      </div>
+      <div class="kit__caption mono">
+        Три зони кліку в рядку воркспейса: шеврон лише згортає (скоуп не чіпає), «+» (видно
+        на наведення) створює проєкт усередині, решта рядка вмикає скоуп. Проєкти всередині
+        — з відступом і перетягуванням: тягніть на інший воркспейс, і той обведеться
+        акцентом. остання дія: {{ lastAction || '—' }}
       </div>
       <div class="kit__statusbar-wrap">
         <KStatusBar
@@ -337,6 +385,8 @@ import KModal from 'components/kit/KModal.vue';
 import KPanel from 'components/kit/KPanel.vue';
 import KLogBlock from 'components/kit/KLogBlock.vue';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
+import KWorkspaceRow from 'components/kit/KWorkspaceRow.vue';
+import KSelect from 'components/kit/KSelect.vue';
 import KUserButton from 'components/kit/KUserButton.vue';
 import KStatusBar from 'components/kit/KStatusBar.vue';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
@@ -571,11 +621,45 @@ const logSamples: TranscriptEntry[] = [
   // `turn` is ledger data for block summaries — it renders nothing, by design.
   { kind: 'turn', id: '10', at: nowMs, model: 'claude-opus-5', ms: 21_300 },
 ];
-const railProjects: { project: RailProject; active: boolean; count: number }[] = [
-  { project: { id: 'p1', name: 'api-gateway', state: 'bound' }, active: true, count: 12 },
-  { project: { id: 'p2', name: 'web client', state: 'unbound' }, active: false, count: 0 },
-  { project: { id: 'p3', name: 'billing', state: 'orphan' }, active: false, count: 1 },
+const railProjects: { project: RailProject; active: boolean; count: number; workspaceId: string }[] = [
+  { project: { id: 'p1', name: 'api-gateway', state: 'bound' }, active: true, count: 12, workspaceId: 'w1' },
+  { project: { id: 'p2', name: 'web client', state: 'unbound' }, active: false, count: 0, workspaceId: 'w1' },
+  { project: { id: 'p3', name: 'billing', state: 'orphan' }, active: false, count: 1, workspaceId: 'w2' },
 ];
+
+// One coloured, one not, so both dot states show. The ids are what KSelect's pair form
+// carries below — a filter keyed by the NAME breaks the day a second «Особисте» appears.
+const galleryWorkspaces = [
+  { id: 'w1', name: 'Керманич', color: '#ff563c', count: 12 },
+  { id: 'w2', name: 'Особисте', count: 1 },
+];
+const wsActive = ref('w1');
+const wsExpanded = ref(['w1', 'w2']);
+const wsDropTarget = ref('');
+// The dragged id lives here rather than in dataTransfer because `getData()` is unreadable
+// during `dragover` — exactly the reason KRailItem emits the id from `dragstart`.
+const wsDragged = ref('');
+
+function onWsSelect(id: string) {
+  wsActive.value = id;
+  lastAction.value = `select: ${id}`;
+}
+function onWsToggle(id: string) {
+  wsExpanded.value = wsExpanded.value.includes(id)
+    ? wsExpanded.value.filter((x) => x !== id)
+    : [...wsExpanded.value, id];
+  lastAction.value = `toggle: ${id}`;
+}
+function onWsDrop(id: string) {
+  lastAction.value = wsDragged.value ? `drop: ${wsDragged.value} -> ${id}` : `drop: ${id}`;
+  wsDropTarget.value = '';
+  wsDragged.value = '';
+}
+
+const galleryBranches = ['main', 'develop', 'feat/schema'];
+const galleryBranch = ref('main');
+const galleryWorkspaceOptions = galleryWorkspaces.map((w) => ({ value: w.id, label: w.name }));
+const galleryWorkspace = ref('');
 const lastAction = ref('');
 // The gallery panels carry the real detail toolbar, so it drives a real command here too
 // — a showcase with a dead button showcases the wrong thing.
@@ -710,6 +794,16 @@ function onRestart() { lastAction.value = 'restart'; }
   flex-direction: column;
   gap: 6px;
   width: 44px;
+}
+
+// The workspace tree is drawn at the sidebar's real expanded width — .kit__rail above is
+// the 44px minified rail, and a group header collapsed to that is unreadable.
+.kit__ws-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 240px;
+  margin-top: 20px;
 }
 
 .kit__statusbar-wrap {

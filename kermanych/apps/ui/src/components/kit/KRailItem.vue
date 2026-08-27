@@ -24,9 +24,20 @@ import { initialsOf } from '../../lib/initials';
 // running here" is the question the rail gets scanned for. The active row gets a subtle
 // surface highlight — no colour fill, no initials chip.
 const props = withDefaults(
-  defineProps<{ project: RailProject; active?: boolean; count?: number }>(),
-  { count: 0 },
+  defineProps<{
+    project: RailProject;
+    active?: boolean;
+    count?: number;
+    // Nested under a workspace row in the tree.
+    indent?: boolean;
+    // Draggable so it can be moved to another workspace. Off by default: a local-only
+    // project has no cloud row and therefore nowhere to move to.
+    draggable?: boolean;
+  }>(),
+  { count: 0, indent: false, draggable: false },
 );
+
+const emit = defineEmits<{ dragstart: [id: string]; dragend: [] }>();
 
 const STATE_HINT: Record<RailProject['state'], string> = {
   bound: '',
@@ -49,16 +60,30 @@ const initials = computed(() => initialsOf(props.project.name, '#'));
 // nothing when the pill collapses into the bare idle dot. Resolved here rather than in the
 // template because `withDefaults` only narrows `count` away from `undefined` on this side.
 const badge = computed(() => (props.count > 0 ? String(props.count) : ''));
+
+// `setData` is what makes this a standards-conformant drag, but the DROP cannot read it
+// back: under the protected-mode rules `getData()` returns '' during `dragover`, which
+// exposes the types and nothing else. So the id also travels up through `dragstart` and
+// the consumer keeps it in component state.
+function onDragStart(e: DragEvent): void {
+  if (!props.draggable) return;
+  e.dataTransfer?.setData('application/x-kermanych-project', props.project.id);
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+  emit('dragstart', props.project.id);
+}
 </script>
 
 <template>
   <button
     class="k-rail"
-    :class="{ 'k-rail--active': active }"
+    :class="{ 'k-rail--active': active, 'k-rail--indent': indent }"
     type="button"
     :title="title"
     :aria-label="title"
     :aria-pressed="active"
+    :draggable="draggable"
+    @dragstart="onDragStart"
+    @dragend="emit('dragend')"
   >
     <span class="k-rail__initials" aria-hidden="true">{{ initials }}</span>
     <span class="k-rail__name">{{ project.name }}</span>
@@ -99,6 +124,13 @@ const badge = computed(() => (props.count > 0 ? String(props.count) : ''));
 .k-rail--active {
   background: var(--k-surface2);
   color: var(--k-text);
+}
+
+// Nested under a workspace row: the name lines up past the row's chevron, so the tree
+// reads as a tree. A literal rather than a spacing token because it is measured against
+// the chevron's box, not against the 8pt rhythm.
+.k-rail--indent {
+  padding-left: 26px;
 }
 
 .k-rail__name {
