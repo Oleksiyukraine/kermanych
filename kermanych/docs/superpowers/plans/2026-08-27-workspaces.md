@@ -3562,8 +3562,15 @@ Expected: all green.
 
 - [ ] **Step 4: Confirm the untouched-layer claim**
 
-Run: `git diff --stat main -- apps/api/src packages/core/src`
+Run: `git diff --stat $(git merge-base dev HEAD) -- apps/api/src packages/core/src`
 Expected: **no output**. If anything appears there, the design was violated — stop and reconcile with the spec before merging.
+
+The base branch is `dev`; this repository has no `main`, so a bare `main` in that command
+fails with `unknown revision` rather than reporting a clean gate. Note the path list is
+`apps/api/src` and `packages/core/src` deliberately — NOT `apps/api`, because typed
+`CloudProject` fixtures under `apps/api/test/` do change (`sessions.from-task.spec.ts` and
+`supervisor.project.spec.ts`), and that is expected: the claim is that no api or core
+SOURCE file needs to know a workspace exists.
 
 - [ ] **Step 5: Two-account manual smoke**
 
