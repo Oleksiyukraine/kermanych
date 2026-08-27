@@ -174,3 +174,143 @@ create policy workspace_members_delete_owner on public.workspace_members
   using (exists (
     select 1 from public.workspaces w
     where w.id = workspace_id and w.owner_id = auth.uid()));
+
+-- ── projects gain their parent ────────────────────────────────────────────────
+-- `on delete restrict`, NOT cascade: deleting a workspace must not silently take
+-- its projects and every task on them with it. The refusal is legible, which is the
+-- same choice projects.owner_id already made for account deletion.
+alter table public.projects
+  add column workspace_id uuid references public.workspaces(id) on delete restrict;
+
+-- 1:1 backfill. The workspace INHERITS the project's id: project names may
+-- duplicate, so matching by name is unsafe, and id reuse removes every mapping
+-- ambiguity without a temporary column. Reusing an id across tables is already an
+-- idiom here — publish() hands a local project's id to its new cloud row.
+--
+-- Because each project becomes its own workspace carrying its own former member
+-- list, visibility after this migration is IDENTICAL to visibility before it.
+-- Merging projects into one workspace is then a deliberate act by the team, done
+-- with drag-and-drop — never a side effect of deploying this.
+insert into public.workspaces (id, name, color, owner_id, created_at)
+  select p.id, p.name, p.color, p.owner_id, p.created_at from public.projects p;
+
+update public.projects set workspace_id = id;
+alter table public.projects alter column workspace_id set not null;
+create index projects_workspace_idx on public.projects (workspace_id);
+
+-- Membership copies across. `do update` rather than `do nothing`: on_workspace_created
+-- was created ABOVE, so the insert into workspaces already wrote each backfilled
+-- workspace's owner row with `added_at = now()`. This clause restores the role and the
+-- ORIGINAL join date from project_members — the only place that history exists before
+-- the table is dropped below, so `do nothing` would destroy every owner's join date
+-- irreversibly. It cannot change anyone's role: handle_new_project() is the sole writer
+-- of an 'owner' row and invite_project_member() only ever inserts 'member', so
+-- excluded.role always matches what the trigger wrote. An owner with no
+-- project_members row at all (an anomaly the old schema permits) simply keeps the
+-- migration timestamp — there is no earlier date to restore.
+insert into public.workspace_members (workspace_id, user_id, role, added_at)
+  select pm.project_id, pm.user_id, pm.role, pm.added_at from public.project_members pm
+  on conflict (workspace_id, user_id) do update
+    set role = excluded.role, added_at = excluded.added_at;
+
+-- ── the wrapper ───────────────────────────────────────────────────────────────
+-- Redefined, same name and signature, so the four tasks_* policies stay TEXTUALLY
+-- UNCHANGED. Their question — "may this user reach this project?" — is still
+-- exactly right; only the derivation moved up a level. Redefined BEFORE
+-- project_members is dropped: function bodies are not dependency-tracked, so a
+-- stale body would fail at runtime instead of here.
+create or replace function public.is_project_member(p uuid, u uuid)
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.projects pr
+    join public.workspace_members m on m.workspace_id = pr.workspace_id
+    where pr.id = p and m.user_id = u);
+$$;
+
+-- ── tasks_guard: the force-stop hatch follows ownership upwards ───────────────
+-- Only the owner clause changes. Rules 2 and 3 (no reassign/delete while active,
+-- server-owned updated_at) are reproduced verbatim from
+-- 20260821090100_team_cloud_functions.sql. Redefined BEFORE projects.owner_id is
+-- dropped, for the same dependency-tracking reason as above.
+create or replace function public.tasks_guard()
+returns trigger
+language plpgsql
+as $$
+declare
+  active_statuses task_status[] := array['queued','thinking','tool','waiting_input']::task_status[];
+begin
+  if tg_op = 'UPDATE' then
+    if new.status is distinct from old.status
+       and auth.uid() is distinct from old.assignee_id
+       and auth.uid() is distinct from new.assignee_id
+       and not (
+         new.status = 'stopped'::task_status
+         and exists (
+           select 1 from public.projects p
+           join public.workspaces w on w.id = p.workspace_id
+           where p.id = old.project_id and w.owner_id = auth.uid())) then
+      raise exception 'only the assignee can change status';
+    end if;
+    if new.assignee_id is distinct from old.assignee_id
+       and old.status = any (active_statuses) then
+      raise exception 'task is active';
+    end if;
+    new.updated_at := now();
+    return new;
+  end if;
+
+  if tg_op = 'DELETE' then
+    if old.status = any (active_statuses) then
+      raise exception 'task is active';
+    end if;
+    return old;
+  end if;
+
+  return new;
+end;
+$$;
+
+-- ── projects policies ─────────────────────────────────────────────────────────
+drop policy projects_select_member on public.projects;
+drop policy projects_insert_own    on public.projects;
+drop policy projects_update_owner  on public.projects;
+drop policy projects_delete_owner  on public.projects;
+
+-- The `owner_id = auth.uid() or` disjunct the old version needed is GONE, and this
+-- is not an oversight: the inserter is already a member of the target workspace, so
+-- the SELECT policy passes for INSERT … RETURNING without help.
+create policy projects_select_member on public.projects
+  for select to authenticated
+  using (public.is_workspace_member(workspace_id, auth.uid()));
+
+create policy projects_insert_member on public.projects
+  for insert to authenticated
+  with check (public.is_workspace_member(workspace_id, auth.uid()));
+
+-- One policy, two guarantees: USING is evaluated against the OLD row and WITH CHECK
+-- against the NEW one, so moving a project needs membership of BOTH the source and
+-- the destination workspace. Neither taking a project out of someone else's
+-- workspace nor pushing one into it is expressible.
+create policy projects_update_member on public.projects
+  for update to authenticated
+  using (public.is_workspace_member(workspace_id, auth.uid()))
+  with check (public.is_workspace_member(workspace_id, auth.uid()));
+
+create policy projects_delete_owner on public.projects
+  for delete to authenticated
+  using (exists (
+    select 1 from public.workspaces w
+    where w.id = workspace_id and w.owner_id = auth.uid()));
+
+-- ── retire the project level of membership ────────────────────────────────────
+drop trigger on_project_created on public.projects;
+drop function public.handle_new_project();
+drop function public.invite_project_member(uuid, text);
+drop table public.project_members;          -- takes members_* policies with it
+alter table public.projects drop column owner_id;
