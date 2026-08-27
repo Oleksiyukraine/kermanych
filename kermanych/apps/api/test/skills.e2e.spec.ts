@@ -45,6 +45,9 @@ describe.skipIf(!gated)("skill library reaches a real omp child", () => {
     const svc = new SkillsService({ cloudClient: () => ({}) } as never);
     svc.readRows = async () => [row("probe-alpha", "PROBE ALPHA from the library")];
     const { configPath } = await svc.materialize("p1", repo);
+    // `configPath` is optional: absent means the overlay was never written, which is a
+    // failure of this test's premise rather than something to hand omp as undefined.
+    if (!configPath) throw new Error("materialize wrote no overlay");
     const sp = await systemPrompt(configPath, repo);
     expect(sp).toContain("probe-alpha");
     expect(sp).toContain("PROBE ALPHA from the library");
@@ -59,6 +62,9 @@ describe.skipIf(!gated)("skill library reaches a real omp child", () => {
     const svc = new SkillsService({ cloudClient: () => ({}) } as never);
     svc.readRows = async () => [row("probe-alpha", "PROBE ALPHA from the library")];
     const { configPath } = await svc.materialize("p1", repo);
+    // `configPath` is optional: absent means the overlay was never written, which is a
+    // failure of this test's premise rather than something to hand omp as undefined.
+    if (!configPath) throw new Error("materialize wrote no overlay");
     const sp = await systemPrompt(configPath, repo);
     expect(sp).toContain("PROBE ALPHA from the repository");
     expect(sp).not.toContain("PROBE ALPHA from the library");
