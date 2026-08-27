@@ -60,7 +60,14 @@ describe.skipIf(!gated)("skill library reaches a real omp child", () => {
       "---\nname: probe-alpha\ndescription: PROBE ALPHA from the repository\n---\nrepo body\n",
     );
     const svc = new SkillsService({ cloudClient: () => ({}) } as never);
-    svc.readRows = async () => [row("probe-alpha", "PROBE ALPHA from the library")];
+    // probe-gamma is the control: it is NOT shadowed, so it can only reach the prompt through
+    // the overlay. Without it, both assertions below would hold even with --config removed —
+    // omp discovers `.claude/skills` natively from cwd — and the case would pin Task 5's
+    // shadow suppression instead of this task's launch wiring.
+    svc.readRows = async () => [
+      row("probe-alpha", "PROBE ALPHA from the library"),
+      row("probe-gamma", "PROBE GAMMA from the library"),
+    ];
     const { configPath } = await svc.materialize("p1", repo);
     // `configPath` is optional: absent means the overlay was never written, which is a
     // failure of this test's premise rather than something to hand omp as undefined.
@@ -68,5 +75,6 @@ describe.skipIf(!gated)("skill library reaches a real omp child", () => {
     const sp = await systemPrompt(configPath, repo);
     expect(sp).toContain("PROBE ALPHA from the repository");
     expect(sp).not.toContain("PROBE ALPHA from the library");
+    expect(sp).toContain("PROBE GAMMA from the library");
   }, 120_000);
 });

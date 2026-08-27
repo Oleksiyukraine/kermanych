@@ -27,22 +27,30 @@ function argvEchoOmp(out: string): string {
   return p;
 }
 
+// The other flags are carried on purpose: with only --mode/--cwd present the expected argv
+// would be identical wherever the --config push sits, so the position would not be pinned at
+// all. --model and --tools straddle it, so moving the push changes the array.
 test("configPath becomes --config right after --cwd", async () => {
   const out = join(dir, "argv.json");
-  const rpc = new RpcSession({ cwd: dir, ompPath: argvEchoOmp(out), configPath: "/tmp/p1.config.yml" });
+  const rpc = new RpcSession({
+    cwd: dir, ompPath: argvEchoOmp(out), configPath: "/tmp/p1.config.yml", model: "m", tools: ["read"],
+  });
   rpc.onExit(() => {});
   await rpc.start();
   await rpc.stop();
   expect(JSON.parse(readFileSync(out, "utf8"))).toEqual([
-    "--mode", "rpc", "--cwd", dir, "--config", "/tmp/p1.config.yml",
+    "--mode", "rpc", "--cwd", dir, "--config", "/tmp/p1.config.yml", "--model", "m", "--tools", "read",
   ]);
 });
 
 test("no configPath means no --config", async () => {
   const out = join(dir, "argv2.json");
-  const rpc = new RpcSession({ cwd: dir, ompPath: argvEchoOmp(out) });
+  const rpc = new RpcSession({ cwd: dir, ompPath: argvEchoOmp(out), model: "m", tools: ["read"] });
   rpc.onExit(() => {});
   await rpc.start();
   await rpc.stop();
-  expect(JSON.parse(readFileSync(out, "utf8"))).toEqual(["--mode", "rpc", "--cwd", dir]);
+  // The remaining flags close up: nothing is left behind where --config would have been.
+  expect(JSON.parse(readFileSync(out, "utf8"))).toEqual([
+    "--mode", "rpc", "--cwd", dir, "--model", "m", "--tools", "read",
+  ]);
 });

@@ -109,7 +109,11 @@ export class SupervisorService implements OnModuleDestroy {
       }
       this.skillLabels.set(sessionId, labels);
       return configPath;
-    } catch {
+    } catch (err) {
+      // The launch goes ahead without a library either way, but silence here would hide a
+      // programming error (a missing dependency) as readily as an expected degradation
+      // (offline cloud, invalid project id, EACCES on the skills root).
+      console.warn(`[supervisor] no skill library for session ${sessionId}: ${(err as Error).message}`);
       return undefined;
     }
   }
