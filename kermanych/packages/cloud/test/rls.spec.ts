@@ -621,7 +621,16 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
 
     // Exercises MEMBER_COLUMNS and its profiles(...) embed, which no other test issues.
     const roster = await listMembers(owner.client, workspaceId);
-    expect(roster.some((m) => m.userId === owner.id && m.role === "owner")).toBe(true);
     expect(roster.every((m) => m.workspaceId === workspaceId)).toBe(true);
+
+    // `profile` is the ONLY field that comes from the profiles(...) embed in
+    // MEMBER_COLUMNS. Without this assertion a dropped or misspelled embed leaves it
+    // undefined and every other assertion here still passes — which is the exact gap
+    // this test exists to close. makeUser mints user_metadata.user_name as
+    // `owner-<stamp>` and handle_new_user() copies it into profiles.github_username, so
+    // the value is guaranteed non-empty.
+    const ownerSeat = roster.find((m) => m.userId === owner.id);
+    expect(ownerSeat?.role).toBe("owner");
+    expect(ownerSeat?.profile?.githubUsername).toMatch(/^owner-/);
   });
 });

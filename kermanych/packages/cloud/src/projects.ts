@@ -61,6 +61,9 @@ export function toCloudProject(row: ProjectRow): CloudProject {
 export function toProjectRow(patch: CloudProjectPatch): Record<string, unknown> {
   const row: Record<string, unknown> = {};
   if (patch.name !== undefined) row.name = patch.name.trim();
+  // The one exception to the rule above: a uuid, not user-typed text, so there is nothing
+  // to trim — and `workspace_id` is `not null`, so clearing it to NULL is a write Postgres
+  // must refuse rather than a way to say "no workspace".
   if (patch.workspaceId !== undefined) row.workspace_id = patch.workspaceId;
   if (patch.gitRemoteUrl !== undefined) row.git_remote_url = patch.gitRemoteUrl.trim() || null;
   if (patch.conventions !== undefined) row.conventions = patch.conventions.trim() || null;
