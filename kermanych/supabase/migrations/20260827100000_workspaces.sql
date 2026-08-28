@@ -346,6 +346,46 @@ create policy projects_delete_owner on public.projects
     select 1 from public.workspaces w
     where w.id = workspace_id and w.owner_id = auth.uid()));
 
+-- ── project_skills policies ───────────────────────────────────────────────────
+-- project_skills (20260827090000) predates this migration and keyed its policies on
+-- projects.owner_id — the column dropped below. Same rewrite the projects_* policies
+-- just took, so the two stay in step: read = any workspace member (is_project_member,
+-- redefined above), write = the workspace owner. Dropped before the owner_id drop
+-- because they depend on it; recreated here so they never reference it again.
+drop policy project_skills_select_member on public.project_skills;
+drop policy project_skills_insert_owner  on public.project_skills;
+drop policy project_skills_update_owner  on public.project_skills;
+drop policy project_skills_delete_owner  on public.project_skills;
+
+create policy project_skills_select_member on public.project_skills
+  for select to authenticated
+  using (public.is_project_member(project_id, auth.uid()));
+
+create policy project_skills_insert_owner on public.project_skills
+  for insert to authenticated
+  with check (exists (
+    select 1 from public.projects p
+    join public.workspaces w on w.id = p.workspace_id
+    where p.id = project_id and w.owner_id = auth.uid()));
+
+create policy project_skills_update_owner on public.project_skills
+  for update to authenticated
+  using (exists (
+    select 1 from public.projects p
+    join public.workspaces w on w.id = p.workspace_id
+    where p.id = project_id and w.owner_id = auth.uid()))
+  with check (exists (
+    select 1 from public.projects p
+    join public.workspaces w on w.id = p.workspace_id
+    where p.id = project_id and w.owner_id = auth.uid()));
+
+create policy project_skills_delete_owner on public.project_skills
+  for delete to authenticated
+  using (exists (
+    select 1 from public.projects p
+    join public.workspaces w on w.id = p.workspace_id
+    where p.id = project_id and w.owner_id = auth.uid()));
+
 -- ── retire the project level of membership ────────────────────────────────────
 drop trigger on_project_created on public.projects;
 drop function public.handle_new_project();
