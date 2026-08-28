@@ -364,8 +364,14 @@ async function loadMembers(): Promise<void> {
 }
 
 // A workspace that arrives after mount — created from the sidebar, or first seen by a
-// retried load — has no roster yet, and nothing else would read it before a reload.
-watch(() => cloud.workspaces.length, () => void loadMembers());
+// retried load — has no roster yet, and `loadMembers()` skips one it already holds, so this
+// watcher is the only thing that can trigger that first read.
+//
+// Keyed on the joined IDS, not the count: `removeWorkspace` re-reads the whole RLS-scoped
+// list, so deleting one group while a teammate adds you to another leaves the length
+// identical and the new group's members would render as raw uuids until a reload. Same
+// pattern stores/board.ts uses for the project set.
+watch(() => cloud.workspaces.map((w) => w.id).join(','), () => void loadMembers());
 
 // ── Scope and filters ─────────────────────────────────────────────────────────
 // Scope comes from the sidebar: a workspace narrows to its projects, nothing selected
@@ -447,17 +453,31 @@ const byColumn = computed<Record<string, Task[]>>(() => {
 // in «Проєкти». A manual change afterwards is not clobbered, because only a NEW sidebar
 // selection fires this — and a workspace click clears the project, which clears the
 // filter, which is exactly the widening the user just asked for.
+//
+// `immediate: true` is what makes the ordinary path work at all. A sidebar project click
+// deliberately does not navigate (Requirement 5), `<router-view>` has no `<keep-alive>`, and
+// `agents` is the default route — so «pick a project, then press Дошка» MOUNTS this page
+// after the selection was made, and a change-only watcher never fires for it.
 watch(
   () => local.selectedProjectId,
   (id) => {
     projectFilter.value = id ?? '';
   },
+  { immediate: true },
 );
 
 // A filter naming a project outside the new scope would silently empty the board. This
 // covers what the watcher above cannot see: a project MOVED to another workspace, and a
 // cloud list that only arrives after the click.
+//
+// Gated on `listRead` because `scoped` is `[]` both when the filter is out of scope and
+// when no list has been read YET — the store's own flag for that distinction. Without it,
+// a reload straight onto the board sets the filter from the selection at mount and this
+// watcher eats it in the same flush, with nothing left to re-apply it once the list lands.
+// Same rule as the assignee filter below: validating against an asynchronously-loaded list
+// is only sound once you know the list arrived.
 watch(scoped, (ids) => {
+  if (!cloud.listRead) return;
   if (projectFilter.value && !ids.includes(projectFilter.value)) projectFilter.value = '';
 });
 
@@ -467,8 +487,14 @@ watch(scoped, (ids) => {
 // group is a deliberate act, and resetting a person filter on it is not a surprise.
 // Selecting a project inside the current workspace leaves it alone, so the two filters
 // still compose.
+//
+// UNASSIGNED is exempt, and that is not a special case but the rule read literally: it is
+// a constant belonging to no roster, offered unconditionally, and filterTasks resolves it
+// without consulting membership — so no roster load can invalidate it. Clearing it would
+// break the composition this task exists for, since `undefined → W` is exactly what a
+// project click produces on the unscoped board the app opens with.
 watch(() => local.selectedWorkspaceId, () => {
-  assigneeFilter.value = '';
+  if (assigneeFilter.value !== UNASSIGNED) assigneeFilter.value = '';
 });
 
 // The read itself takes ~150 ms against a warm cloud, and a hint nobody can read is just a
@@ -505,12 +531,18 @@ const unpublished = computed(() =>
 
 // A local-only project SELECTED in the sidebar scopes the board to nothing (lib/scope.ts),
 // so every column is empty and the count reads 0 — a state indistinguishable from breakage
-// unless it says what it is. Derived from `unpublished`, which already carries both the
-// "no cloud row" test and the offline guard: with the cloud unread the honest message is
-// the offline one above, not this.
+// unless it says what it is. Derived from `unpublished`, which already carries the
+// "no cloud row" test and the FAILED-read guard.
+//
+// `listRead` on top of that, because `unpublished`'s guard is `offlineError`, which is null
+// while the FIRST read is still in flight — every local row looks local-only in that window.
+// The publish section merely flashed there; this line would instead assert something
+// specific and false, that a published project lives only on this machine, beside a board
+// legitimately reading 0 задач. A hint that names a thing is held to a higher standard than
+// a control that merely appears, because the user can act on it.
 const localOnlyHint = computed(() => {
   const id = local.selectedProjectId;
-  if (!id || local.selectedWorkspaceId) return '';
+  if (!id || local.selectedWorkspaceId || !cloud.listRead) return '';
   const row = unpublished.value.find((p) => p.id === id);
   return row
     ? `Проєкт «${row.name}» живе лише на цій машині, тому задач у хмарі в нього немає — опублікуйте його нижче.`
