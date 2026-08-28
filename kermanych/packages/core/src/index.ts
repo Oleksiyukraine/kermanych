@@ -38,8 +38,10 @@ export {
 } from "./worktree-names";
 export { PLATFORMS, type Platform } from "./platform";
 export {
+  ASSIGNED_BLOCK_HEADER,
   DEFAULT_SKILLS,
   SKILL_NAME_RE,
+  assignedBlock,
   isSkillName,
   renderSkillFile,
   skillsUsed,

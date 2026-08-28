@@ -115,3 +115,23 @@ export function skillsUsed(entries: readonly TranscriptEntry[]): string[] {
   }
   return seen;
 }
+
+/**
+ * The header of the block an agent's instruction carries for its assigned skills.
+ *
+ * The second sentence IS the de-duplication mechanism. The library may still advertise the
+ * same skill — an already-running session's skill set is fixed when its process starts, so
+ * there is no flag to filter it — and re-reading it would spend context on text the agent
+ * already has in front of it.
+ */
+export const ASSIGNED_BLOCK_HEADER =
+  "## Скіли, призначені цій ролі\nНаведені повністю — не читай їх повторно через `skill://`.";
+
+// Appended to a rendered instruction, so it opens with its own blank line: the caller
+// concatenates and never has to know the shape. An empty assignment adds NOTHING — a bare
+// heading would tell the agent to look for skills that are not there.
+export function assignedBlock(defs: readonly SkillDef[]): string {
+  if (defs.length === 0) return "";
+  const bodies = defs.map((d) => `### ${d.name}\n${d.body.trim()}`).join("\n\n");
+  return `\n\n${ASSIGNED_BLOCK_HEADER}\n\n${bodies}`;
+}

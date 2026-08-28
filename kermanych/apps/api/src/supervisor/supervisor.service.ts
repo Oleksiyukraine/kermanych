@@ -113,6 +113,20 @@ export class SupervisorService implements OnModuleDestroy {
     }
   }
 
+  // The block one agent's assigned skills add to its instruction — the ONE way any of the
+  // four instruction sites gets it. Never throws, for the same reason as ompSkills: the
+  // service degrades on its own for a library reason (offline cloud, unreadable repository
+  // file) and throws for a caller error (an invalid project id), and neither may cost an
+  // agent its run. An empty string appends nothing.
+  private async assignedBlockFor(projectId: string, agentId: string, cwd: string): Promise<string> {
+    try {
+      return (await this.skills.assignedFor(projectId, agentId, cwd)).block;
+    } catch (err) {
+      console.warn(`[supervisor] no assigned skills for ${agentId}: ${(err as Error).message}`);
+      return "";
+    }
+  }
+
   private skillSource = (sessionId: string): SkillSource => (name) => this.skillLabels.get(sessionId)?.get(name);
 
   onModuleDestroy(): void {
@@ -494,7 +508,8 @@ export class SupervisorService implements OnModuleDestroy {
     // task, its first line the name, and the rest are the project's defaults.
     const name = taskNameFromText(chat.task) || chat.name;
     const { branch, baseBranch } = await this.resolveLaunchParams(project, name, "feature", true, chatId);
-    const prompt = renderInstruction(agentById("promote")!, { branch });
+    const block = await this.assignedBlockFor(chat.projectId, "promote", project.localRepoPath);
+    const prompt = renderInstruction(agentById("promote")!, { branch }) + block;
 
     // The read-only child must die before the worktree one takes over this row's event stream.
     if (live) {
@@ -715,9 +730,9 @@ export class SupervisorService implements OnModuleDestroy {
       parentSessionId: parentId,
     });
 
-    const prompt = renderInstruction(agentById("review")!, {
-      task: s.task, base, branch: s.branch, diff,
-    });
+    const block = await this.assignedBlockFor(s.projectId, "review", cwd);
+    const prompt =
+      renderInstruction(agentById("review")!, { task: s.task, base, branch: s.branch, diff }) + block;
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const rpc = new RpcSession({ cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}) });
@@ -1021,9 +1036,9 @@ export class SupervisorService implements OnModuleDestroy {
     const dir = s.worktreePath || g.localRepoPath;
     const files = await this.worktree.unmergedFiles(dir);
     if (!files.length) throw new Error("no merge conflict to resolve");
-    const prompt = renderInstruction(agentById("resolve-conflict")!, {
-      files: files.map((f) => `- ${f}`).join("\n"),
-    });
+    const block = await this.assignedBlockFor(s.projectId, "resolve-conflict", dir);
+    const prompt =
+      renderInstruction(agentById("resolve-conflict")!, { files: files.map((f) => `- ${f}`).join("\n") }) + block;
     await this.sendMessage(id, prompt, "prompt");
     return { ok: true };
   }
@@ -1044,11 +1059,13 @@ export class SupervisorService implements OnModuleDestroy {
       ? `Target the PR at \`${baseHint}\`, unless the repo's PR conventions dictate a different base.`
       : `Target the PR at the repository's default branch, unless the repo's PR conventions dictate otherwise.`;
 
-    const prompt = renderInstruction(agentById("pull-request")!, {
-      branch: s.branch,
-      conventions: (g.conventions || "").trim() || PR_CONVENTIONS_FALLBACK,
-      baseLine,
-    });
+    const block = await this.assignedBlockFor(s.projectId, "pull-request", s.worktreePath || g.localRepoPath);
+    const prompt =
+      renderInstruction(agentById("pull-request")!, {
+        branch: s.branch,
+        conventions: (g.conventions || "").trim() || PR_CONVENTIONS_FALLBACK,
+        baseLine,
+      }) + block;
 
     await this.sendMessage(id, prompt, "prompt");
     return { ok: true };

@@ -4,12 +4,19 @@
 // The materialised directory doubles as the offline cache — there is no SQLite mirror.
 import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";
-import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_SKILLS, isSkillName, renderSkillFile, type SkillDef, type SkillView } from "@kermanych/core";
-import { listProjectSkills, type ProjectSkill } from "@kermanych/cloud";
+import {
+  assignedBlock,
+  DEFAULT_SKILLS,
+  isSkillName,
+  renderSkillFile,
+  type SkillDef,
+  type SkillView,
+} from "@kermanych/core";
+import { listAgentSkills, listProjectSkills, type AgentSkill, type ProjectSkill } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 
 // Every project-level skill directory omp itself discovers in the session cwd. One level
@@ -187,6 +194,34 @@ async function hasSkillFile(dir: string, name: string): Promise<boolean> {
   }
 }
 
+// A repository's own SKILL.md as a def, so an assigned name the repository owns is delivered
+// with the REPOSITORY's text. The body is what the agent is given, so the frontmatter is
+// stripped rather than parsed: a one-line `description:` is picked up for the UI's label
+// (renderSkillFile writes exactly that, as a JSON string), and any richer YAML scalar simply
+// leaves the label empty rather than pulling a YAML parser into the launch path.
+// `undefined` on any read failure — the caller turns that into a `missing` entry, because a
+// repository file that cannot be read must not crash a launch.
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/;
+async function readRepoSkill(path: string, name: string): Promise<SkillDef | undefined> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch {
+    return undefined;
+  }
+  const m = FRONTMATTER_RE.exec(text);
+  const body = m ? text.slice(m[0].length) : text;
+  let description = /^description:[ \t]*(.*)$/m.exec(m?.[1] ?? "")?.[1]?.trim() ?? "";
+  if (description.startsWith('"')) {
+    try {
+      description = JSON.parse(description) as string;
+    } catch {
+      // Not a JSON string after all — the raw text is a better label than nothing.
+    }
+  }
+  return { name, description, body };
+}
+
 // `stale` means "the library on disk may not reflect the cloud": a failed cloud read, a failed
 // repo scan, an unreadable `skills.customDirectories`, or a filesystem failure. It is never a
 // reason to refuse a launch. `configPath` is set only once the overlay write succeeded.
@@ -201,6 +236,84 @@ export class SkillsService {
   readRows = async (projectId: string): Promise<ProjectSkill[]> =>
     listProjectSkills(this.auth.cloudClient(), [projectId]);
   readCustomDirs = (cwd: string): Promise<string[] | undefined> => readOmpCustomDirectories(cwd);
+  readAssignments = async (projectId: string): Promise<AgentSkill[]> =>
+    listAgentSkills(this.auth.cloudClient(), [projectId]);
+
+  // What one agent's instruction carries for the skills assigned to it: the block to append,
+  // the view the UI labels the rows with, and the names that resolved to nothing. Never
+  // throws for a library reason — an agent that cannot read its assignments still runs with
+  // its own instruction.
+  async assignedFor(
+    projectId: string,
+    agentId: string,
+    cwd: string,
+  ): Promise<{ block: string; view: SkillView[]; missing: string[] }> {
+    assertProjectId(projectId);
+    let rows: AgentSkill[];
+    try {
+      rows = (await this.readAssignments(projectId)).filter((r) => r.agentId === agentId);
+    } catch {
+      return { block: "", view: [], missing: [] }; // offline or signed out
+    }
+    // The operator's own order, with the name as the tiebreak so two rows that were never
+    // reordered still read the same way on every launch.
+    rows.sort((a, b) => a.position - b.position || a.skillName.localeCompare(b.skillName));
+    return this.assignedForNames(
+      projectId,
+      rows.map((r) => r.skillName),
+      cwd,
+    );
+  }
+
+  // The resolution half, given names in the order they must appear. Shared with the trigger
+  // path, which materialises the same bodies from a different source: precedence has exactly
+  // one answer, and it lives here. Degrades rather than throws for the same reason as above.
+  async assignedForNames(
+    projectId: string,
+    names: readonly string[],
+    cwd: string,
+  ): Promise<{ block: string; view: SkillView[]; missing: string[] }> {
+    assertProjectId(projectId);
+    // A failed CLOUD read only narrows the library to DEFAULT_SKILLS, which need neither
+    // network nor sign-in, so an assigned default is still delivered. A failed REPO SCAN is
+    // different: with no trustworthy shadow map, delivering the library's text could hand the
+    // agent a body the repository has overridden, and "the repository always wins" outranks
+    // delivering anything at all. Same degradation as an unreachable cloud, one layer up.
+    const [library, repo] = await Promise.all([
+      this.readRows(projectId).catch(() => [] as ProjectSkill[]),
+      repoSkillNames(cwd).catch(() => undefined),
+    ]);
+    if (!repo) return { block: "", view: [], missing: [] };
+    const resolved = new Map(resolveSkills(library).map((r) => [r.def.name, r]));
+    const defs: SkillDef[] = [];
+    const view: SkillView[] = [];
+    const missing: string[] = [];
+    const seen = new Set<string>();
+    for (const name of names) {
+      if (seen.has(name)) continue; // a name delivered twice would just spend context twice
+      seen.add(name);
+      const hit = resolved.get(name);
+      const repoPath = repo.get(name);
+      if (!hit && !repoPath) {
+        missing.push(name);
+        continue;
+      }
+      // The repository's own file wins the name, so its text is what the agent must be given.
+      const def = repoPath ? await readRepoSkill(repoPath, name) : hit!.def;
+      if (!def) {
+        missing.push(name);
+        continue;
+      }
+      defs.push(def);
+      view.push({
+        name: def.name,
+        description: def.description,
+        source: hit?.source ?? "project",
+        ...(repoPath ? { shadowedByRepo: repoPath } : {}),
+      });
+    }
+    return { block: assignedBlock(defs), view, missing };
+  }
 
   // Read-only: what the UI lists. Never writes, so a settings screen cannot mutate a
   // session's library as a side effect of being opened. Errors propagate on purpose: a
