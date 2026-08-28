@@ -47,6 +47,14 @@ export {
   type SkillView,
 } from "./skills";
 export {
+  AGENTS,
+  PR_CONVENTIONS_FALLBACK,
+  agentById,
+  renderInstruction,
+  type AgentDef,
+  type AgentKind,
+} from "./agents";
+export {
   buildChatBlocks,
   THINK_MIN_MS,
   COALESCE_TOOLS,
