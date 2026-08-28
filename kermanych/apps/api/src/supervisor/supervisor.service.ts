@@ -14,6 +14,9 @@ import { ToolDetailCache } from "./tool-detail-cache";
 import { SkillsService, skillsRoot } from "../skills/skills.service";
 import { copyCarryFiles } from "../env/carry-files";
 import {
+  PR_CONVENTIONS_FALLBACK,
+  agentById,
+  renderInstruction,
   INITIAL_STATUS,
   reduceStatus,
   ACTIVE_STATUSES,
@@ -59,16 +62,6 @@ type Live = {
 // Chat sessions run omp with a read-only tool subset: they explore and plan in the project
 // dir without ever mutating it (git-free). Promotion to an agent later grants the full toolset.
 const CHAT_TOOLS = ["read", "grep", "glob"];
-
-// Kermanych's built-in fallback PR/commit conventions, injected only when the target repo
-// defines none of its own (no `### PR Conventions` / `### Commit Conventions` in
-// CLAUDE.md/AGENTS.md) and the project has no override. A project's own rules always win.
-const DEFAULT_PR_CONVENTIONS = [
-  "- Commits: Conventional Commits — `type(scope): summary` in the imperative mood (feat, fix, chore, refactor, docs, test).",
-  "- PR title: the same Conventional-Commit style, summarising the whole change.",
-  "- PR body: a `## Summary` section (what changed and why) and a `## Testing` section (commands run / how it was verified).",
-  "- Keep the PR scoped to this branch's work; do not fold in unrelated changes.",
-].join("\n");
 
 @Injectable()
 export class SupervisorService implements OnModuleDestroy {
@@ -501,16 +494,7 @@ export class SupervisorService implements OnModuleDestroy {
     // task, its first line the name, and the rest are the project's defaults.
     const name = taskNameFromText(chat.task) || chat.name;
     const { branch, baseBranch } = await this.resolveLaunchParams(project, name, "feature", true, chatId);
-    const prompt =
-      `The planning discussion above is settled — implement it now.\n\n` +
-      `You are no longer read-only: you have been moved out of the project directory into a ` +
-      `dedicated git worktree on branch \`${branch}\`, with the full toolset. Everything agreed ` +
-      `above is the specification — do not re-open it and do not re-ask what was already ` +
-      `answered.\n\n` +
-      `Implement it end to end: follow the repo's existing conventions and patterns, leave no ` +
-      `stubs or TODOs behind, and commit your work on this branch. Where the discussion left ` +
-      `something ambiguous, take the most reasonable reading, say which one you took, and keep ` +
-      `going — stop only for a genuinely blocking question.`;
+    const prompt = renderInstruction(agentById("promote")!, { branch });
 
     // The read-only child must die before the worktree one takes over this row's event stream.
     if (live) {
@@ -731,17 +715,9 @@ export class SupervisorService implements OnModuleDestroy {
       parentSessionId: parentId,
     });
 
-    const prompt =
-      `You are an INDEPENDENT code reviewer. You did NOT do this work and have no prior ` +
-      `context — audit ONLY the task and the diff below, with fresh eyes.\n\n` +
-      `## Original task\n${s.task}\n\n` +
-      `## Diff (base \`${base}\` → branch \`${s.branch}\`)\n` +
-      "```diff\n" + diff + "\n```\n\n" +
-      `Perform a FULL audit: does the change satisfy the task; are any requirements missed ` +
-      `or only partly done; are there bugs, edge cases, or security issues; are tests present ` +
-      `and meaningful; is the code sound? You may read any file in the worktree for context, ` +
-      `but you are read-only — do NOT modify anything or run commands. Finish with a clear ` +
-      `verdict (APPROVE or NEEDS CHANGES) and a prioritized list of findings.`;
+    const prompt = renderInstruction(agentById("review")!, {
+      task: s.task, base, branch: s.branch, diff,
+    });
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const rpc = new RpcSession({ cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}) });
@@ -1045,13 +1021,9 @@ export class SupervisorService implements OnModuleDestroy {
     const dir = s.worktreePath || g.localRepoPath;
     const files = await this.worktree.unmergedFiles(dir);
     if (!files.length) throw new Error("no merge conflict to resolve");
-    const prompt =
-      `A git merge is in progress in this worktree with conflicts in:\n` +
-      files.map((f) => `- ${f}`).join("\n") +
-      `\n\nResolve every conflict: edit each file, remove the conflict markers ` +
-      `(<<<<<<<, =======, >>>>>>>), and combine BOTH sides so nothing is lost — keep this ` +
-      `branch's changes AND the changes merged in from the base branch. When all conflicts ` +
-      `are resolved, run \`git add -A && git commit --no-edit\` to complete the merge. Do only this.`;
+    const prompt = renderInstruction(agentById("resolve-conflict")!, {
+      files: files.map((f) => `- ${f}`).join("\n"),
+    });
     await this.sendMessage(id, prompt, "prompt");
     return { ok: true };
   }
@@ -1068,21 +1040,15 @@ export class SupervisorService implements OnModuleDestroy {
     const g = this.project(s.projectId);
 
     const baseHint = (s.baseBranch || g.defaultBranch || "").trim();
-    const fallback = (g.conventions || "").trim() || DEFAULT_PR_CONVENTIONS;
     const baseLine = baseHint
       ? `Target the PR at \`${baseHint}\`, unless the repo's PR conventions dictate a different base.`
       : `Target the PR at the repository's default branch, unless the repo's PR conventions dictate otherwise.`;
 
-    const prompt =
-      `Open a pull request for this session's branch \`${s.branch}\`.\n\n` +
-      `Follow the repository's own \`### PR Conventions\` and \`### Commit Conventions\` from its ` +
-      `CLAUDE.md / AGENTS.md if they exist. If the repo defines none, follow these defaults instead:\n` +
-      `${fallback}\n\n` +
-      `Steps:\n` +
-      `1. Commit any uncommitted work, following the commit conventions.\n` +
-      `2. Push \`${s.branch}\` to \`origin\` (set the upstream).\n` +
-      `3. Open the PR with \`gh pr create\`. ${baseLine}\n` +
-      `Reply with the PR URL when done. Do only this.`;
+    const prompt = renderInstruction(agentById("pull-request")!, {
+      branch: s.branch,
+      conventions: (g.conventions || "").trim() || PR_CONVENTIONS_FALLBACK,
+      baseLine,
+    });
 
     await this.sendMessage(id, prompt, "prompt");
     return { ok: true };
