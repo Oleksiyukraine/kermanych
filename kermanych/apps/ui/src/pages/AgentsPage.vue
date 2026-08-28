@@ -567,10 +567,10 @@ import { useResizableWidth } from '../composables/useResizableWidth';
 // in scope — one project, or every project of a workspace — plus the full panel for the
 // selected session and the new-agent launcher. All mutations go through the Pinia store.
 const store = useOrchestrator();
-// Two things come from here: previewCommand/apiCommand are CLOUD config (owner-only), so
-// that write goes to Supabase and mirrors itself into the local row — a local-only edit
-// would not survive the next sync — and the cloud project list, which is the authority on
-// which projects a selected workspace holds (see `scopedIds`).
+// Two things come from here: previewCommand/apiCommand are CLOUD config that any workspace
+// member may edit, so that write goes to Supabase and mirrors itself into the local row —
+// a local-only edit would not survive the next sync — and the cloud project list, which is
+// the authority on which projects a selected workspace holds (see `scopedIds`).
 const projects = useProjects();
 
 const now = useNow();
@@ -1625,12 +1625,26 @@ function openPreviewConfig(s: Session, forceDefaults = false): void {
 async function submitPreviewConfig(): Promise<void> {
   const s = previewCfgSession.value;
   if (!s) return;
-  // previewCommand/apiCommand are owner-only cloud config (projects_update_owner). RLS is the
-  // real gate, but a non-owner UPDATE matches zero rows and postgrest reports it as "Cannot
-  // coerce the result to a single JSON object" — unreadable. Refuse here in Ukrainian instead,
-  // and keep the modal open so the entered commands are not lost.
-  if (!projects.isOwner(s.projectId)) {
-    store.notify('Налаштування проєкту може змінювати лише власник', 'error');
+  // previewCommand/apiCommand are CLOUD config, so the write needs a cloud row — and per
+  // the approved role matrix ANY workspace member may make it: `projects_update_member`
+  // (20260827100000_workspaces.sql:338) replaced the owner-only policy this gate used to
+  // cite. Membership needs no separate check, because the cloud list is RLS-scoped: a
+  // project with a row in `projects.byId` is one whose workspace this user belongs to.
+  // Same predicate as the settings modal's `isInCloud` (MainLayout.vue:1419).
+  //
+  // The pre-check itself stays. RLS is the real gate, but a refused UPDATE matches zero
+  // rows and postgrest reports it as "Cannot coerce the result to a single JSON object" —
+  // unreadable. Refuse here in Ukrainian instead, and keep the modal open so the entered
+  // commands are not lost. The two false states are not the same sentence, for the same
+  // reason MainLayout's `noCloudRowHint` splits them: a claim about where a project lives
+  // must never outrun what we actually checked.
+  if (!projects.byId.has(s.projectId)) {
+    store.notify(
+      projects.listRead
+        ? 'Цей проєкт існує лише на цій машині, тому команди прев’ю нікуди зберігати. Опублікуйте його в хмарі на дошці.'
+        : 'Хмара ще не відповіла, тому команди прев’ю зберігати нікуди. Спробуйте ще раз, коли зв’язок з’явиться.',
+      'error',
+    );
     return;
   }
   const win = window.open('', '_blank');
