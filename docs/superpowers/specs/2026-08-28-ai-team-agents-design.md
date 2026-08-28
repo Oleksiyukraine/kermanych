@@ -88,11 +88,15 @@ The session's used-skills summary lives in `AgentsPage.vue` (`:214`, `:830`).
 
 ### 2.5 Verified `omp` levers, and one that does not exist
 
-- `--skills <globs>` — comma-separated glob filter over **all** discovered
-  skills; `--no-skills` disables discovery entirely. Both confirmed in
-  `omp --help` on this machine.
-- `--append-system-prompt <text|file>` — appends to the system prompt. Held in
-  reserve, not used by this design.
+- `--skills <globs>` / `--no-skills` — a glob filter over all discovered skills,
+  and a full disable. Both confirmed in `omp --help` on this machine. **Held in
+  reserve, deliberately unused** — see §3.4: a launch-time flag is available at
+  two of the four instruction sites and not at the other two, and buying a hard
+  de-duplication for half the agents at the price of two different delivery
+  behaviours is the wrong trade.
+- `--append-system-prompt <text|file>` — appends to the system prompt. Also held
+  in reserve: it would deliver the same guarantee invisibly, which costs the
+  operator the audit trail the transcript gives for free.
 - **`alwaysApply` on a skill is not a usable guarantee.** It belongs to the
   *rules* pipeline, a different capability: always-apply injection ("full content
   injected into system prompt") applies to rules discovered from `rules/*.md`
@@ -117,11 +121,11 @@ The session's used-skills summary lives in `AgentsPage.vue` (`:214`, `:830`).
 | `finish` | Завершити | `automation` | absent |
 | `summary` | Саммарі | `automation` | absent |
 
-`kind` is not decoration: it is exactly the distinction §3.4 turns on. `session`
-starts a new `omp` child (so its launch flags are ours to set), `procedure` sends
-a message to a child that is already running (so they are not), `automation`
-involves no model at all. `promote` counts as `session` because
-`promoteChatToAgent` forks a child through `launch`.
+`kind` describes the agent for the catalogue — `session` starts its own `omp`
+child, `procedure` sends a message to a child that is already running,
+`automation` involves no model at all. It is a label, **not** a switch: §3.4
+delivers an assigned skill identically regardless of it. `promote` counts as
+`session` because `promoteChatToAgent` forks a child through `launch`.
 
 The four templates move out of `supervisor.service.ts` into this file and the
 supervisor imports them, so the text the catalogue displays and the text the
@@ -175,43 +179,47 @@ library already owns (repository > project row > default). Four consequences:
    — «зламане призначення», shown with the agent — not a database error and not
    a silent drop.
 
-### 3.4 What an assignment does at run time — and where it cannot
+### 3.4 One delivery contract, at every site
 
-Two of the four instruction-bearing agents **start a new `omp` child**, and two
-**talk to a child that is already running**. That difference decides how much of
-the mechanism is available, and the spec states it rather than promising uniform
-behaviour:
-
-| agent | starts a child? | delivery of the assigned text | advertised-set control |
-| --- | --- | --- | --- |
-| `review` | yes — a fresh child (`reviewSession` `:708`) | its own opening prompt | **available** |
-| `promote` | yes — a forked child (`promoteChatToAgent` `:527` calls `launch` with `firstPrompt`) | that `firstPrompt` | **available** |
-| `pull-request` | no — `sendMessage` into the live session (`:1064`) | the message | **not available** |
-| `resolve-conflict` | no — `sendMessage` into the live session (`:1041`) | the message | **not available** |
-
-For the two that start a child:
+**The invariant:** an assigned skill is delivered as a labelled block inside the
+agent's own instruction. One code path, one text shape, one sentence in the
+explainer — at all four instruction-bearing sites, regardless of `kind`.
 
 ```
-assigned   = resolve(assigned names, in position order)   → a labelled block appended
-                                                            to that agent's instruction
-advertised = (library names ∪ repository names) \ assigned names
-             → --skills <advertised>        when non-empty
-             → --no-skills                  when empty
+assigned = resolve(assigned names, in position order)
+         → «Скіли, призначені цій ролі (наведено повністю — не читай їх
+            повторно через skill://):» + bodies, appended to the instruction
 ```
 
-Both inputs exist: `library names` is the resolved view, `repository names` is
-the shadow scan. Excluding the assigned names from the advertised set is what
-stops the model from reading the same text twice — once from the prompt it cannot
-miss, once from `skill://`.
+The block header carries the de-duplication instruction, and that is the whole
+de-duplication mechanism: uniform, soft, and identical for a fresh child and for
+a running session.
 
-For the two that do not, `--skills` is unavailable **by construction**: skills,
-tools and the system prompt are fixed when the process starts, and `omp`'s RPC
-surface has no command that changes them afterwards. The assigned text still
-arrives guaranteed, in the message; what is lost is only the de-duplication, so
-the model *may* also read the same skill from the library it was launched with.
-The cost is a few kilobytes of context on one turn, and the alternative — killing
-and relaunching a working session to change a flag — is far worse. This is
-recorded as a known asymmetry, not a defect to fix later.
+**Why not the launch-time flag.** `--skills` would give a hard guarantee that the
+library never re-advertises an assigned skill, but only where Kermanych starts the
+process: `review` (`reviewSession` `:708`) and `promote` (`promoteChatToAgent`
+`:527`, which forks through `launch`) are launches, while `pull-request` (`:1064`)
+and `resolve-conflict` (`:1041`) send a message into a session that is already
+running — and skills, tools and the system prompt are fixed when a child starts.
+Taking the flag would buy hard de-duplication for half the agents at the price of
+two different delivery behaviours, two branches in the code and a two-clause
+sentence in the explainer. The design refuses that trade: the flag stays in
+reserve (§2.5), and if measurement ever shows the duplicate reads cost real
+context, it can be added for the two launch sites without changing this contract.
+
+**Why the process shapes stay as they are.** Each of the four is shaped by what it
+needs, and unifying the shapes would cost quality rather than buy it. `review`
+is a fresh child *by design* — its instruction opens «You did NOT do this work».
+`promote` forks the chat so the settled discussion carries into the
+implementation. `pull-request` and `resolve-conflict` run inside the session that
+did the work because that session remembers **why** it wrote what it wrote: a PR
+body describing "what changed and why", and a conflict resolution that keeps the
+intent of both sides, are exactly what a fresh child cannot reconstruct from a
+diff. That memory is durable, not incidental — `sendMessage` revives a dormant
+session and rehydrates its history — and a fresh child in a mid-merge worktree
+would additionally put a second writer into a tree that today has exactly one.
+Turning those two into their own children is a separate change to those flows,
+not a consequence of this feature; this contract would survive it unchanged.
 
 Because an assigned skill is guaranteed by construction, the session's «Скіли»
 field lists it statically as «від ролі»; the transcript's `skill` row keeps
@@ -271,10 +279,8 @@ of assignment, not of the skill. Four sentences, in this order:
    видно окремим рядком `skill`.
 2. Скіл, призначений ролі, вклеюється в інструкцію запуску — агент не може його
    не побачити.
-3. Той самий скіл може бути і в бібліотеці, і призначеним. Для Ревізора й
-   Промоутера призначений скіл не дублюється в бібліотеці їхньої сесії, тож текст
-   не читається двічі; для Провізора й Вирішувача конфліктів — може, бо їхня
-   сесія вже запущена й набір скілів у ній уже зафіксований.
+3. Той самий скіл може бути і в бібліотеці, і призначеним: у блоці призначення він
+   наведений повністю, і агенту сказано не читати його вдруге з бібліотеки.
 4. Призначений текст оплачується контекстом на кожному ході — тримай його
    коротким.
 
@@ -290,11 +296,11 @@ long assigned skill is a legitimate choice with a visible price.
 - **`packages/core`** — `AgentDef`, `AGENTS`, the four templates. Pure data; no
   I/O, no cloud, no `omp` knowledge. Imported by both the supervisor and the UI.
 - **`packages/cloud`** — the `project_agent_skills` typed surface only.
-- **`SkillsService` (api)** — gains assignment resolution and the advertised-set
-  arithmetic. It remains the only component that decides precedence or touches
-  the filesystem.
+- **`SkillsService` (api)** — gains assignment resolution and the block builder.
+  It remains the only component that decides precedence or touches the
+  filesystem.
 - **`SupervisorService`** — appends the resolved block at all four instruction
-  sites, and passes `--skills` at the two that start a child. It gains no
+  sites through one helper. It sets no skill-related launch flags and gains no
   resolution logic.
 - **UI** — three panels; no resolution logic, no second source of truth for the
   instruction texts.
@@ -309,17 +315,16 @@ holes (a guard against the extraction silently dropping one).
 **Unit (`apps/api`):** assignment resolution — order by `position` then name; a
 default assignable with no cloud row; a project override replacing a default's
 body; a repository-defined name winning and being reported as such; a dangling
-name surfaced rather than dropped. Advertised-set arithmetic — assigned names
-excluded, repository names retained, empty set producing `--no-skills`. And the
-asymmetry itself: a `session`-kind agent's launch carries `--skills`, while a
-`procedure`-kind agent's message carries the assigned block and changes no flags
-(the test exists so a later refactor cannot quietly start killing live sessions
-to re-flag them).
+name surfaced rather than dropped. The delivery contract — one helper produces the
+labelled block, its header carries the "do not re-read via `skill://`" clause, and
+all four sites call that same helper (the test names the four call sites, so a
+later edit cannot quietly give one of them its own text shape).
 
-**Integration (`apps/api`, real `omp` child, `KERMANYCH_E2E_OMP=1`):** with one
-skill assigned to `review` and one left unassigned in the library, the launched
-child's system prompt lists the unassigned skill and **not** the assigned one,
-and the assigned text appears in the opening instruction.
+**Integration (`apps/api`, real `omp` child, `KERMANYCH_E2E_OMP=1`):** a skill
+assigned to `review` appears verbatim in the child's opening instruction; the
+library's own advertisement in the system prompt is unchanged by the assignment
+(the contract deliberately does not filter it); and no skill-related flag appears
+in the child's argv.
 
 **RLS (`packages/cloud`, env-gated):** a member reads assignments; a member's
 write is refused; the workspace owner's write succeeds; `updated_by` is stamped
@@ -349,6 +354,12 @@ the skill listed as «від ролі»; Проєкт → Бібліотека �
 - **Translating or paraphrasing the instructions** in the catalogue.
 - **Editing the system agents' instructions.** Read-only in this iteration;
   assignment is the only project-level lever.
-- **`--append-system-prompt`** as the delivery channel; held in reserve.
+- **Any skill-related launch flag.** Neither `--skills` nor `--no-skills` nor
+  `--append-system-prompt` is used: one delivery contract (§3.4) beats a harder
+  guarantee that only half the agents could have. All three stay available if
+  measurement later justifies one.
+- **Unifying the four process shapes.** Turning `pull-request` and
+  `resolve-conflict` into their own children is a change to those flows, weighed
+  and declined in §3.4; the delivery contract does not depend on it either way.
 - **Enforcing a context budget.** Sizes and a warning are shown; nothing is
   blocked.
