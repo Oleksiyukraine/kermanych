@@ -273,7 +273,8 @@ const COLUMNS: Column[] = [
 
 // subscribe() refetches then opens the channel; leaving the page closes it, so Realtime
 // traffic is scoped to the screen that shows it. This page is the ONLY reader of the board
-// store — Агенти shows local sessions and asks the cloud nothing.
+// store — Агенти reads the cloud PROJECT list and writes project config, but never the
+// task list, so it needs neither this store nor the channel.
 //
 // The FIRST subscribe is the page's job. The store's project-set watcher deliberately only
 // REBUILDS a channel that already exists ("before the board mounts there is nothing to
@@ -480,16 +481,28 @@ watch(
 // covers what the watcher above cannot see: a project MOVED to another workspace, and a
 // cloud list that only arrives after the click.
 //
+// `immediate: true`, matching the pre-select above, because the two must agree AT MOUNT.
+// A LOCAL-ONLY project scopes to `[]` by design (lib/scope.ts), so `projectOptions` is
+// empty while the pre-select has already written the project's uuid into `projectFilter` —
+// and KSelect deliberately keeps a value it was never offered, which renders a bare
+// 36-character uuid where a project name belongs. Deferring this to the first CHANGE of
+// `scoped` leaves that on screen until something else moves.
+//
 // Gated on `listRead` because `scoped` is `[]` both when the filter is out of scope and
-// when no list has been read YET — the store's own flag for that distinction. Without it,
-// a reload straight onto the board sets the filter from the selection at mount and this
-// watcher eats it in the same flush, with nothing left to re-apply it once the list lands.
+// when no list has been read YET — the store's own flag for that distinction. That gate is
+// also what makes running at mount safe: with a warm store a local-only selection clears
+// and a real cloud project survives because `scoped` contains it, while an unread list
+// returns early and leaves the pre-select standing until the list lands.
 // Same rule as the assignee filter below: validating against an asynchronously-loaded list
 // is only sound once you know the list arrived.
-watch(scoped, (ids) => {
-  if (!cloud.listRead) return;
-  if (projectFilter.value && !ids.includes(projectFilter.value)) projectFilter.value = '';
-});
+watch(
+  scoped,
+  (ids) => {
+    if (!cloud.listRead) return;
+    if (projectFilter.value && !ids.includes(projectFilter.value)) projectFilter.value = '';
+  },
+  { immediate: true },
+);
 
 // The assignee filter is CLEARED on a workspace change rather than validated against the
 // new roster: that roster loads asynchronously, so a validity check would drop a person
