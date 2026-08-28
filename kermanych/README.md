@@ -28,9 +28,9 @@ same time and you drive them all from one board.
 
 ## The shared board (cloud)
 
-Kermanych's task board is shared through Supabase (auth, projects, membership,
-tasks, Realtime). Execution stays local — worktrees, `omp` children and
-transcripts never leave your machine — but signing in and seeing the board go
+Kermanych's task board is shared through Supabase (auth, workspaces, projects,
+membership, tasks, Realtime). Execution stays local — worktrees, `omp` children
+and transcripts never leave your machine — but signing in and seeing the board go
 through the team's Supabase project.
 
 ### Start here (no configuration)
@@ -50,20 +50,60 @@ and the UI fall back to it.
 terminal, no `pnpm dev:api`. (In a browser instead of the desktop window, run
 `pnpm dev:api` and `pnpm dev:ui` in two terminals; see [Setup & run](#setup--run).)
 
-**Sign-in is open:** any GitHub account can sign in. The first sign-in creates
-your account and an empty, private workspace — you see only projects you own or
-are invited to as a member, and nobody sees yours until you invite them. There is
-no allowlist to manage.
-
-**Membership is by email.** In a project's settings, any member can invite a
-colleague by the email address their account signed in with; the invited person
-joins as `member` immediately. There are no pending invitations: the address must
-already belong to an account, so ask a newcomer to press **Увійти через GitHub**
-once before you invite them. Removing a member stays the project owner's call.
-
 You do **not** need `GITHUB_SECRET` either. The hosted project holds the team's
 GitHub OAuth credentials in the Supabase dashboard; nobody has to send them to
 you.
+
+**Sign-in is open:** any GitHub account can sign in and there is no allowlist to
+manage. What a new account is *not* given is content — it owns no workspace and
+sees nothing at all until it creates one or is invited to one.
+
+### Workspaces, projects and tasks
+
+Three levels, and the first one is the newest:
+
+```
+workspace ──► project ──► task ──► session
+```
+
+- A **workspace** groups the projects of one product — `back-end`, `admin`,
+  `mobile` — and holds its team. Membership lives here and nowhere else.
+- A **project** is one git repository. It belongs to exactly one workspace and
+  has no owner of its own.
+- A **task** is a card on the shared board. Running one creates a **session** —
+  a git worktree plus one `omp` child — on the machine of whoever runs it; see
+  [Cloud tasks and local sessions](#cloud-tasks-and-local-sessions).
+
+Press **+** beside «Воркспейси» in the sidebar to create your first workspace,
+then **+** on its row to create projects inside it.
+
+**Membership is per workspace.** In a workspace's settings its owner invites a
+colleague by the email address their account signed in with, and that one
+invitation opens every project in the workspace. There are no pending
+invitations: the address must already belong to an account, so ask a newcomer to
+press **Увійти через GitHub** once before inviting them. Removing a member is the
+owner's call too.
+
+| action | who |
+|---|---|
+| create a workspace | anyone signed in — you become its owner |
+| rename or delete a workspace; invite or remove a member | the workspace owner |
+| create a project, edit its config, work the board | any workspace member |
+| delete a project | the workspace owner |
+| force a stuck task to `stopped` | its assignee, or the workspace owner |
+| move a project to another workspace | a member of **both** |
+
+Nothing disappears by cascade: a workspace that still holds projects cannot be
+deleted at all. Move a project by dragging it onto another workspace's row in the
+sidebar, or — without a mouse — by picking the new workspace in the project's
+settings. Both paths require membership of the source *and* the destination, and
+it is the database that enforces that, not the UI.
+
+**Clicking in the sidebar never navigates; it sets the scope.** A workspace scopes
+the board to the tasks of every project it holds. A project scopes it the same way
+but arrives with the «Проєкти» filter already set to that project. The board's
+other filter, «Виконавці», narrows by assignee and offers «Не призначено» for
+unclaimed cards.
 
 ### Why the backend is in the repository
 
@@ -80,9 +120,10 @@ not credentials, so they are committed:
 
 What protects the project is not the obscurity of those two values but **RLS**,
 verified against the live project: an anonymous read of any table is refused with
-`42501 permission denied`, and per-project policies isolate each user to the
-projects they own or are a member of. Sign-in is open, so RLS is the sole
-authorization surface — every request runs under the user's own JWT. **No secret
+`42501 permission denied`, and the policies isolate each user to the workspaces
+they are a member of — and so to the projects and tasks inside them. Sign-in is
+open, so RLS is the sole authorization surface — every request runs under the
+user's own JWT. **No secret
 key ever belongs on a machine running Kermanych**, and nothing in this repo reads
 one.
 
@@ -92,9 +133,10 @@ one.
 updated by merging a branch. A migration that is committed but never pushed
 leaves the shipped UI calling something that does not exist: PostgREST answers
 `PGRST202 Could not find the function … in the schema cache`, which is exactly
-how an unpushed `invite_project_member` (20260823130000) surfaced in the members
-panel — «Запросити» failed for every address. Push from a clone linked to the
-project, with the CLI logged in (`supabase login`):
+how an unpushed `invite_project_member` (20260823130000, since retired in favour
+of `invite_workspace_member`) surfaced in the members panel — «Запросити» failed
+for every address. Push from a clone linked to the project, with the CLI logged
+in (`supabase login`):
 
 ```bash
 supabase link --project-ref uqqdudlfizfwqfegfrlh   # once per clone
@@ -106,6 +148,11 @@ supabase db push --linked
 `db push` applies only the versions missing from the remote history table, so
 re-running it is a no-op. `db reset` is for the LOCAL stack only and never
 touches the hosted database.
+
+A migration that only *adds* is safe to push whenever. One that drops a column the
+shipped client still selects needs a window and an announcement:
+`20260827100000_workspaces.sql` is one of those, and
+[`docs/cutover-workspaces.md`](./docs/cutover-workspaces.md) is its runbook.
 
 ### Running against a local stack or your own project
 
@@ -258,9 +305,9 @@ pnpm workspaces (`packages/*`, `apps/*`):
 - **`packages/core`** — framework-agnostic domain logic: worktrees, the
   SQLite registry, RPC frame handling, session status. Unit-tested with
   vitest.
-- **`packages/cloud`** — the Supabase client and the typed cloud surface
-  (auth, projects, membership, tasks, Realtime) shared by the API and the UI.
-  Its RLS/trigger suite runs against a real local stack; see above.
+- **`packages/cloud`** — the Supabase client and the typed cloud surface (auth,
+  workspaces, projects, membership, tasks, Realtime) shared by the API and the
+  UI. Its RLS/trigger suite runs against a real local stack; see above.
 - **`packages/tokens`** — the design tokens (colors, spacing, type) shared by
   the UI, generated from the design system.
 - **`apps/api`** — the NestJS application: REST + WebSocket surface, session
@@ -287,9 +334,10 @@ framework, layout, build, and state plumbing.
 A **task** is a card in the shared cloud board; a **session** is its execution on one
 developer's machine. The direction is always task → session.
 
-1. **Create** — any member of a project creates a task on the board (`/#/board`) with a
-   title, a description and optional launch params (model, branch prefix, platform, base
-   branch). It starts in `backlog`, which exists only in the cloud.
+1. **Create** — any member of the project's workspace creates a task on the board
+   (`/#/board`) with a title, a description and optional launch params (model,
+   branch prefix, platform, base branch). It starts in `backlog`, which exists
+   only in the cloud.
 2. **Assign** — the author assigns it to a member, or a member presses «Запустити» on an
    unassigned task, which self-assigns it atomically. Only the assignee can run it; an
    active task (`queued`, `thinking`, `tool`, `waiting_input`) can be neither reassigned
@@ -308,7 +356,8 @@ developer's machine. The direction is always task → session.
 Nothing else leaves your machine. Transcripts, the current tool, context usage, todo
 phases, interactive prompts and the provider-plan spend under the account name (read from
 `omp usage` on this machine, never mirrored) are local-only by design — the board shows
-THAT a task waits for input, and only its owner can answer it, on their own machine.
+THAT a task waits for input, and only the person running it can answer, on their own
+machine.
 
 ### Offline behaviour
 
@@ -340,8 +389,9 @@ Local work never waits for the cloud:
 A task's status is written only by the machine running it, and there is no heartbeat by
 design — so a machine that crashes (rather than quitting cleanly) leaves its card active
 forever, and an active task cannot be reassigned or deleted. Two people can free it with
-«Позначити зупиненою» on the card: the **assignee**, from any machine, and the **project
-owner**, for when the assignee is gone for good; the database refuses everyone else, and
-refuses even the owner any status other than `stopped`. It only corrects the board — it
+«Позначити зупиненою» on the card: the **assignee**, from any machine, and the
+**workspace owner**, for when the assignee is gone for good; the database refuses
+everyone else, and refuses even the owner any status other than `stopped`. It only
+corrects the board — it
 cannot stop a session on a machine you do not control, and if that machine is still alive
 it will simply push its real status again.
