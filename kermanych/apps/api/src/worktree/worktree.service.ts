@@ -281,15 +281,12 @@ export class WorktreeService {
     return (await git(dir, ["check-ignore", "-q", "--", path])).ok;
   }
 
-  // Sync the project's current branch with its upstream. Both return git's own output so the
-  // footer can surface "Already up to date", a diverged-branch refusal, or a missing upstream
-  // verbatim. `--ff-only` keeps pull non-destructive: a diverged branch is reported, never
-  // silently merged.
+  // Fast-forward the project's current branch from its upstream. Returns git's own output so
+  // the footer can surface "Already up to date", a diverged-branch refusal, or a missing
+  // upstream verbatim. `--ff-only` keeps it non-destructive: a diverged branch is reported,
+  // never silently merged. There is no push counterpart — pushing goes through the merge/PR
+  // flow, which knows which branch it is publishing.
   async pull(repoDir: string): Promise<{ ok: boolean; out: string }> {
     return git(repoDir, ["pull", "--ff-only"]);
-  }
-
-  async push(repoDir: string): Promise<{ ok: boolean; out: string }> {
-    return git(repoDir, ["push"]);
   }
 }

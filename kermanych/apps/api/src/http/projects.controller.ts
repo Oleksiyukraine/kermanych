@@ -71,15 +71,6 @@ export class ProjectsController {
     }
   }
 
-  @Post(":id/push")
-  async push(@Param("id") id: string) {
-    try {
-      return await this.sup.projectPush(id);
-    } catch (err) {
-      throw new BadRequestException((err as Error).message);
-    }
-  }
-
   @Get(":id/env")
   async getEnv(@Param("id") id: string, @Query("file") file?: string) {
     const p = this.reg.listProjects().find((x) => x.id === id);

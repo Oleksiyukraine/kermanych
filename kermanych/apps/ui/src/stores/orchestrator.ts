@@ -287,10 +287,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.pullProject(id);
   }
 
-  function pushProject(id: string) {
-    return api.pushProject(id);
-  }
-
   function getEnv(id: string, file?: string) {
     return api.getEnv(id, file);
   }
@@ -389,7 +385,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     syncProjects,
     listBranches,
     pullProject,
-    pushProject,
     getEnv,
     saveEnv,
     finishInfo,

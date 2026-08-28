@@ -215,9 +215,6 @@ export const api = {
   pullProject: (id: string): Promise<{ ok: boolean; out: string }> =>
     post<{ ok: boolean; out: string }>(`/projects/${id}/pull`, {}),
 
-  pushProject: (id: string): Promise<{ ok: boolean; out: string }> =>
-    post<{ ok: boolean; out: string }>(`/projects/${id}/push`, {}),
-
   getEnv: (id: string, file?: string): Promise<EnvFileView> =>
     get<EnvFileView>(`/projects/${id}/env${file ? `?file=${encodeURIComponent(file)}` : ''}`),
 
