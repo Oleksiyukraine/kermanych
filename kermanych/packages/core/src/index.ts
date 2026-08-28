@@ -45,6 +45,7 @@ export {
   isSkillName,
   renderSkillFile,
   skillsUsed,
+  type ProjectSkillsPayload,
   type SkillDef,
   type SkillView,
 } from "./skills";

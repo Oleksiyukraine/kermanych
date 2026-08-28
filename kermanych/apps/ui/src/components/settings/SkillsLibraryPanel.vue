@@ -174,13 +174,15 @@ async function load(): Promise<void> {
   loading.value = true;
   try {
     // Both reads, together: the resolved view is what the session gets, the cloud rows are
-    // the only place a switched-off default is still recorded.
-    const [view, stored] = await Promise.all([
+    // the only place a switched-off default is still recorded. The payload's `repo` half is
+    // deliberately ignored here — a name only the repository defines is not in this
+    // project's library, and listing it would invite an edit that cannot take effect.
+    const [library, stored] = await Promise.all([
       api.projectSkills(projectId),
       listProjectSkills(auth.client, [projectId]),
     ]);
     if (projectId !== props.projectId) return;
-    rows.value = [...view, ...tombstones(stored)];
+    rows.value = [...library.view, ...tombstones(stored)];
   } catch (e) {
     if (projectId !== props.projectId) return;
     // The endpoint refuses rather than degrade to the defaults, so a failed read must not

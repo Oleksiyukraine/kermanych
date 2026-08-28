@@ -13,6 +13,7 @@ import {
   DEFAULT_SKILLS,
   isSkillName,
   renderSkillFile,
+  type ProjectSkillsPayload,
   type SkillDef,
   type SkillView,
 } from "@kermanych/core";
@@ -371,16 +372,25 @@ export class SkillsService {
   // session's library as a side effect of being opened. Errors propagate on purpose: a
   // settings screen that showed the defaults after a failed read would tell the user their
   // project skills are gone, when what failed was the read.
-  async view(projectId: string, cwd: string): Promise<SkillView[]> {
+  //
+  // The repository scan is returned ALONGSIDE the library rather than folded into it. The
+  // repository is not the library: a name it alone defines has no row and no default, so it
+  // has no place in a list of the project's skills — but it IS deliverable, because
+  // `assignedForNames` reads the repository's file for it. A caller that has to tell
+  // "assigned to something that no longer exists" from "assigned to something the
+  // repository provides" cannot do it from `view` alone, and every caller that only wants
+  // the library simply ignores `repo`.
+  async view(projectId: string, cwd: string): Promise<ProjectSkillsPayload> {
     assertProjectId(projectId);
     const rows = await this.readRows(projectId);
     const repo = await repoSkillNames(cwd);
-    return resolveSkills(rows).map(({ def, source }) => ({
+    const view = resolveSkills(rows).map(({ def, source }) => ({
       name: def.name,
       description: def.description,
       source,
       ...(repo.has(def.name) ? { shadowedByRepo: repo.get(def.name)! } : {}),
     }));
+    return { view, repo: Object.fromEntries(repo) };
   }
 
   // Never blocks a launch: every filesystem, cloud or config failure degrades to

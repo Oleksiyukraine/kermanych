@@ -43,14 +43,23 @@
           <span class="as__badge" :class="`as__badge--${row.agent.kind}`">
             {{ agentKindLabel(row.agent.kind) }}
           </span>
+          <!-- `≥` and not the plain figure when a body's size is unknown: a name the
+               repository alone defines is pasted in full, and this process cannot open that
+               file. A lower bound is the honest reading; counting it as zero would tell the
+               operator the block is smaller than it is. -->
           <span
             class="as__bytes mono"
             :class="{ 'as__bytes--warn': row.bytes > ASSIGNED_BYTES_WARN }"
-          >{{ size(row.bytes) }}</span>
+          >{{ row.unmeasured.length ? '≥ ' : '' }}{{ size(row.bytes) }}</span>
         </div>
 
         <p v-if="row.bytes > ASSIGNED_BYTES_WARN" class="as__warn">
           Блок великий: ці байти йдуть у кожен хід цієї ролі, не лише в перший.
+        </p>
+        <p v-if="row.unmeasured.length" class="as__unmeasured">
+          Розмір не порахований для
+          <span class="mono">{{ row.unmeasured.join(', ') }}</span>
+          — цей текст лежить у репозиторії, і Керманич його не читає з цього екрана.
         </p>
 
         <ul v-if="row.skills.length" class="as__skills">
@@ -65,7 +74,7 @@
             <!-- A dangling assignment: the row exists in the cloud and the launcher still
                  reads it, so it is shown with the one action that fixes it. -->
             <span v-if="s.broken" class="as__skill-note">
-              Скіла з таким імʼям у бібліотеці немає — роль не отримає нічого.
+              Скіла з таким імʼям немає ні в бібліотеці, ні в репозиторії — роль не отримає нічого.
             </span>
             <span v-else-if="s.shadowedByRepo" class="as__shadow mono">{{ s.shadowedByRepo }}</span>
             <button
@@ -132,6 +141,10 @@ const projects = useProjects();
 const view = ref<SkillView[]>([]);
 const assignments = ref<AgentSkill[]>([]);
 const bodyBytes = ref<Record<string, number>>({});
+// The names the bound checkout's own skill directories define, keyed to the file that owns
+// each. NOT part of the library and never offered in the select — but a name in here is
+// deliverable, so the merge needs it to tell a dangling assignment from a repository one.
+const repo = ref<Record<string, string>>({});
 // `error` carries BOTH failures — a refused read and a refused write — because both are one
 // line of the same postgrest message to the operator. `loaded` is what separates them for
 // the list: a failed READ has nothing trustworthy to show, while a refused WRITE leaves the
@@ -157,7 +170,7 @@ const canWrite = computed(() => projects.isOwner(props.projectId));
 // reach the launcher as `missing`, so offering it would be offering to create a broken row.
 const board = computed(() => {
   const names = view.value.map((v) => v.name);
-  return assignmentRows(AGENTS, assignments.value, view.value, bodyBytes.value).map((row) => {
+  return assignmentRows(AGENTS, assignments.value, view.value, bodyBytes.value, repo.value).map((row) => {
     const taken = new Set(row.skills.map((s) => s.name));
     return {
       ...row,
@@ -209,15 +222,16 @@ async function load(): Promise<void> {
   const projectId = props.projectId;
   error.value = '';
   try {
-    const [resolved, stored, rows] = await Promise.all([
+    const [library, stored, rows] = await Promise.all([
       api.projectSkills(projectId),
       listProjectSkills(auth.client, [projectId]),
       listAgentSkills(auth.client, [projectId]),
     ]);
     if (projectId !== props.projectId) return;
-    view.value = resolved;
+    view.value = library.view;
+    repo.value = library.repo;
     assignments.value = rows;
-    bodyBytes.value = measure(resolved, stored);
+    bodyBytes.value = measure(library.view, stored);
     loaded.value = true;
   } catch (e) {
     if (projectId !== props.projectId) return;
@@ -226,6 +240,7 @@ async function load(): Promise<void> {
     // about the failure. `loaded` goes back to false with it — that, and not the emptiness
     // of the data, is what takes the list off screen.
     view.value = [];
+    repo.value = {};
     assignments.value = [];
     bodyBytes.value = {};
     loaded.value = false;
@@ -245,6 +260,7 @@ watch(
     view.value = [];
     assignments.value = [];
     bodyBytes.value = {};
+    repo.value = {};
     loaded.value = false;
     void load();
   },
@@ -341,6 +357,9 @@ function onPick(agentId: string, e: Event): void {
 .as__bytes { margin-left: auto; font-size: 11px; color: var(--k-faint); }
 .as__bytes--warn { color: var(--k-danger); }
 .as__warn { margin: 6px 0 0; font-size: 11.5px; color: var(--k-danger); }
+/* Muted, not danger: an unknown size is a limit of this screen, not something wrong with
+   the assignment — the skill is delivered either way. */
+.as__unmeasured { margin: 6px 0 0; font-size: 11.5px; color: var(--k-muted); }
 .as__skills { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
 .as__skill { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 /* The remove button is pushed to the right edge, so every «Прибрати» in an agent's list

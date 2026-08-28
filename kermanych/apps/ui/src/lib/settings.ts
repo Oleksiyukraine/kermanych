@@ -189,11 +189,15 @@ export function agentKindLabel(kind: AgentKind): string {
  * One row of the assignment board: an agent, what this project gave it, and what that
  * costs. `skills` is display data only — the merge below is the sole producer, and the
  * panel adds nothing to it.
+ *
+ * `bytes` is a LOWER BOUND whenever `unmeasured` is non-empty: those names are delivered
+ * from a file in the repository, whose size this process cannot see.
  */
 export interface AssignmentRow {
   agent: AgentDef;
   skills: AssignedSkill[];
   bytes: number;
+  unmeasured: string[];
 }
 
 /** One assigned skill as the board shows it. A `broken` entry carries nothing else. */
@@ -205,17 +209,24 @@ export interface AssignedSkill {
 }
 
 /**
- * THE BOARD: a pure merge of three reads — the agent registry, the project's assignments
- * and the RESOLVED library view.
+ * THE BOARD: a pure merge of four reads — the agent registry, the project's assignments,
+ * the RESOLVED library view, and the names the bound repository itself defines.
  *
  * Only instruction-bearing agents get a row. An `automation` agent involves no model at
  * all, so there is no text for an assigned skill to be pasted into; offering the operator
  * a slot there would promise a delivery that cannot happen.
  *
- * A name the view does not carry comes back `broken` rather than absent. The alternative —
- * dropping it — hides a live row of `project_agent_skills` that the launcher still reads
- * (SkillsService.assignedForNames reports it as `missing`), so the operator would have no
- * surface on which to see the dangling assignment, let alone remove it.
+ * BROKEN MEANS ABSENT FROM BOTH LISTS, never from `view` alone. The library and the
+ * repository are different places, and the resolver reads either of them for an assigned
+ * name (SkillsService.assignedForNames: `if (!hit && !repoPath) missing`). A name the
+ * repository alone defines is therefore delivered in full on every launch — calling it
+ * «немає скіла» would tell the operator to remove a working assignment, and they would.
+ * The reachable path is short: assign a repo-shadowed name, then delete its project row in
+ * the library pane. The row leaves `view`; the repository still owns the name.
+ *
+ * A name in neither list is still `broken` rather than dropped: that row of
+ * `project_agent_skills` is live, the launcher reports it as `missing`, and the board is
+ * the only surface on which the operator can see it and take it off.
  *
  * `bodyBytes` is keyed by skill name because the byte cost is a property of the LIBRARY,
  * not of the assignment: the same skill on two agents is paid for twice, once per launch.
@@ -225,6 +236,7 @@ export function assignmentRows(
   assignments: readonly AgentSkill[],
   view: readonly SkillView[],
   bodyBytes: Readonly<Record<string, number>>,
+  repo: Readonly<Record<string, string>>,
 ): AssignmentRow[] {
   const byName = new Map(view.map((v) => [v.name, v]));
   return agents
@@ -235,9 +247,20 @@ export function assignmentRows(
       const mine = assignments
         .filter((r) => r.agentId === agent.id)
         .sort((a, b) => a.position - b.position || a.skillName.localeCompare(b.skillName));
+      const unmeasured: string[] = [];
+      let bytes = 0;
       const skills = mine.map<AssignedSkill>((r) => {
         const hit = byName.get(r.skillName);
-        if (!hit) return { name: r.skillName, broken: true };
+        const repoPath = repo[r.skillName];
+        // A broken name contributes no bytes and counts as measured: there is no body to
+        // pay for, so the total stays an honest figure rather than an open question.
+        if (!hit && !repoPath) return { name: r.skillName, broken: true };
+        if (Object.hasOwn(bodyBytes, r.skillName)) bytes += bodyBytes[r.skillName]!;
+        else unmeasured.push(r.skillName);
+        // Repository-only: there is no library entry to describe it, and `source` would be
+        // a guess. The badge reads `shadowedByRepo` first, so the path alone is enough to
+        // label it «перекрито репо» — which is exactly what it is.
+        if (!hit) return { name: r.skillName, shadowedByRepo: repoPath! };
         return {
           name: hit.name,
           source: hit.source,
@@ -247,10 +270,7 @@ export function assignmentRows(
           ...(hit.shadowedByRepo ? { shadowedByRepo: hit.shadowedByRepo } : {}),
         };
       });
-      // A broken name contributes 0: there is no body to pay for. That keeps the total an
-      // honest estimate of what the launch would actually paste.
-      const bytes = mine.reduce((sum, r) => sum + (bodyBytes[r.skillName] ?? 0), 0);
-      return { agent, skills, bytes };
+      return { agent, skills, bytes, unmeasured };
     });
 }
 

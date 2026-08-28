@@ -14,6 +14,23 @@ export type SkillView = {
   shadowedByRepo?: string;
 };
 
+/**
+ * What `GET /projects/:id/skills` answers: the resolved library, and the names the bound
+ * checkout's own skill directories define, keyed by name to the absolute path of the file
+ * that owns them.
+ *
+ * The two lists are NOT interchangeable and neither subsumes the other. `view` is the
+ * LIBRARY — Kermanych's defaults plus the project's rows, with `shadowedByRepo` set on the
+ * names the repository also defines. `repo` is the REPOSITORY, and it holds names the
+ * library has never heard of. A name in `repo` alone is still deliverable: the resolver
+ * reads the repository's file for it (SkillsService.assignedForNames), so a consumer that
+ * treats absence from `view` as "no such skill" would be wrong about it.
+ */
+export type ProjectSkillsPayload = {
+  view: SkillView[];
+  repo: Record<string, string>;
+};
+
 // A skill name is also a directory name under ~/.kermanych/skills/<projectId>/, so this
 // pattern is a security boundary rather than cosmetics: no separators, no dots, no
 // traversal. The `check` constraint on project_skills.name is the same expression.
