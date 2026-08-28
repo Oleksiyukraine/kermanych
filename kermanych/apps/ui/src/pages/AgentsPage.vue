@@ -526,7 +526,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import {
   slugify,
   buildChatBlocks,
@@ -539,7 +539,6 @@ import {
   type RpcExtensionUIResponse,
 } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
-import { useBoard } from 'stores/board';
 import { useRouter } from 'vue-router';
 import { useProjects } from 'stores/projects';
 import type { FileDiff, MessageMode } from '../lib/api';
@@ -576,16 +575,7 @@ const projects = useProjects();
 
 const now = useNow();
 
-const board = useBoard();
 const router = useRouter();
-
-// Sessions launched from the shared board carry `taskId`; naming the cloud task next to the
-// local row is what ties the two boards together. load() — not subscribe() — on purpose:
-// Realtime belongs to /board, this page only needs the titles, and load() swallows an
-// unreachable cloud into board.loadError instead of toasting on every app open.
-onMounted(() => {
-  void board.load();
-});
 
 // Board buckets mirror the sidebar (MainLayout.bucketCounts): archived wins, then
 // backlog → Задачі, then merged/done/stopped → Історія, everything else → Активні

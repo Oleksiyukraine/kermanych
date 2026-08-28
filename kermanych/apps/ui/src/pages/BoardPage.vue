@@ -272,8 +272,8 @@ const COLUMNS: Column[] = [
 ];
 
 // subscribe() refetches then opens the channel; leaving the page closes it, so Realtime
-// traffic is scoped to the screen that shows it. The task list survives in the store, which
-// is what lets AgentsPage name a session's task without subscribing.
+// traffic is scoped to the screen that shows it. This page is the ONLY reader of the board
+// store — Агенти shows local sessions and asks the cloud nothing.
 //
 // The FIRST subscribe is the page's job. The store's project-set watcher deliberately only
 // REBUILDS a channel that already exists ("before the board mounts there is nothing to
