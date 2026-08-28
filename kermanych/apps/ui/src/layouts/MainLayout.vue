@@ -16,24 +16,86 @@
         </nav>
         <div class="shell__divider"></div>
         <div class="shell__side-label shell__side-label--row">
-          <span>Проєкти</span>
+          <span>Воркспейси</span>
           <button
             class="shell__label-add"
-            v-tip="'Новий проєкт у хмарі'"
-            aria-label="Новий проєкт у хмарі"
-            @click="openCreate"
+            v-tip="'Новий воркспейс'"
+            aria-label="Новий воркспейс"
+            @click="openCreateWorkspace"
           >+</button>
         </div>
-        <div class="shell__projects">
-          <KRailItem
-            v-for="p in railProjects"
-            :key="p.id"
-            :project="p"
-            :active="p.id === store.selectedProjectId"
-            :count="runningCount(p.id)"
-            @click="selectProject(p.id)"
-          />
-        </div>
+        <!-- The tree. Real nested lists rather than a flat run of rows plus role="tree":
+             a tree role promises arrow-key navigation this sidebar does not implement,
+             while a <ul> inside a <li> states the one fact a screen reader is missing —
+             that these projects BELONG to the workspace announced just before them.
+             The inner list is named after its workspace, because a bare «list, 3 items»
+             does not say whose. KWorkspaceRow's chevron cannot carry aria-controls
+             (fallthrough attributes land on the row's root element, not on the button),
+             so the containment is what supplies the relationship. -->
+        <ul class="shell__projects">
+          <!-- The drop target is the whole GROUP, not just its header row. Groups are
+               expanded by default, so an open workspace's projects occupy most of what the
+               user reads as «that workspace» and the thin header is the smaller part of it;
+               a release onto the obvious half must not silently do nothing. Bound on the
+               <li> rather than on KWorkspaceRow so the header and the list are ONE target
+               and one `relatedTarget` boundary — crossing from the row into its own project
+               list is then not a leave at all, which is the same child-boundary problem the
+               guard already solves for the row's chevron. The highlight cannot smear: only
+               KWorkspaceRow styles `dropTarget`, so it renders on the header alone. -->
+          <li
+            v-for="group in tree"
+            :key="group.workspace.id"
+            class="shell__group"
+            @dragover="onDragOver($event, group.workspace.id)"
+            @dragleave="onDragLeave($event, group.workspace.id)"
+            @drop.prevent="onDrop(group.workspace.id)"
+          >
+            <KWorkspaceRow
+              :workspace="group.workspace"
+              :active="store.selectedWorkspaceId === group.workspace.id && !store.selectedProjectId"
+              :expanded="isExpanded(group.workspace.id)"
+              :count="workspaceRunningCount(group.workspace.id)"
+              :drop-target="dropTargetId === group.workspace.id"
+              @select="selectWorkspace(group.workspace.id)"
+              @toggle="toggleWorkspace(group.workspace.id)"
+              @add-project="openCreateProject(group.workspace.id)"
+            />
+            <ul
+              v-if="isExpanded(group.workspace.id)"
+              class="shell__group-items"
+              :aria-label="`Проєкти воркспейсу «${group.workspace.name}»`"
+            >
+              <li v-for="p in sidebarProjects.byWorkspace.get(group.workspace.id) ?? []" :key="p.id">
+                <KRailItem
+                  :project="p"
+                  indent
+                  :active="p.id === store.selectedProjectId"
+                  :count="runningCount(p.id)"
+                  :draggable="hasCloudList"
+                  @click="selectProject(p.id)"
+                  @dragstart="draggingProjectId = $event"
+                  @dragend="onDragEnd"
+                />
+              </li>
+            </ul>
+          </li>
+          <li v-if="sidebarProjects.ungrouped.length" class="shell__group">
+            <div id="shell-local-only" class="shell__side-label shell__side-label--sub">
+              <span>{{ localOnlyLabel }}</span>
+            </div>
+            <ul class="shell__group-items" aria-labelledby="shell-local-only">
+              <li v-for="p in sidebarProjects.ungrouped" :key="p.id">
+                <KRailItem
+                  :project="p"
+                  indent
+                  :active="p.id === store.selectedProjectId"
+                  :count="runningCount(p.id)"
+                  @click="selectProject(p.id)"
+                />
+              </li>
+            </ul>
+          </li>
+        </ul>
         <div class="shell__user">
           <KUserButton
             class="shell__account"
@@ -93,6 +155,23 @@
         @update:model-value="goView"
       />
       <div class="shell__actions">
+        <!-- CURRENT WORKSPACE, and the way into its settings. A named chip rather than a
+             second ⚙ beside the project's: two identical gears in one cluster name
+             neither, and this one also supplies what the header never said — which group
+             the screen is scoped to. The sidebar's workspace row takes no fourth control
+             by design, so this is where the group's own settings live.
+
+             The chip's one cost over the brief's icon gear is the accessible name, which
+             `workspaceChipLabel` pays explicitly — see its comment. -->
+        <KBtn
+          v-if="scopedWorkspace"
+          variant="ghost"
+          :title="workspaceChipLabel"
+          :aria-label="workspaceChipLabel"
+          @click="openWorkspaceSettings(scopedWorkspace.id)"
+        >
+          <span class="shell__ws-name">{{ scopedWorkspace.name }}</span>
+        </KBtn>
         <template v-if="store.selectedProjectId">
         <KBtn
           variant="icon"
@@ -156,10 +235,134 @@
     </q-footer>
 
 
+    <!-- CREATE-WORKSPACE MODAL — the sidebar's two «+» buttons create different things, so
+         they get two modals. A workspace is the group AND the team: membership hangs off it,
+         which is what the hint below says out loud. -->
+    <KModal v-model="createWorkspaceOpen" title="Новий воркспейс">
+      <div class="shell__form">
+        <KField v-model="createWorkspaceName" label="Назва" placeholder="AAA" />
+        <p class="shell__hint">
+          Воркспейс групує проєкти й тримає склад команди: одне запрошення відкриває
+          доступ до всіх його проєктів.
+        </p>
+        <p v-if="createError" class="shell__error" role="alert">{{ createError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="createWorkspaceOpen = false">Скасувати</KBtn>
+        <KBtn
+          variant="primary"
+          :disabled="!canCreateWorkspace || createBusy"
+          @click="submitCreateWorkspace"
+        >
+          {{ createBusy ? 'Створюємо…' : 'Створити' }}
+        </KBtn>
+      </template>
+    </KModal>
+
+    <!-- WORKSPACE-SETTINGS MODAL — the group's name, its colour and its TEAM. Membership
+         lives here and not on the project because one invitation now opens EVERY project
+         in the group; that is also why inviting and removing are owner-only while the
+         project config below is open to any member (the approved role matrix). A plain
+         member therefore gets the roster read-only rather than a button the rpc refuses.
+
+         Every affordance here is decided by `workspaces.owner_id`, never by
+         `workspace_members.role` — see isWorkspaceOwnerSeat() for why that column cannot
+         be trusted to decide anything. -->
+    <KModal v-model="workspaceSettingsOpen" :title="`Воркспейс · ${workspaceSettingsName}`">
+      <div class="shell__form">
+        <KField
+          v-model="wsNameEdit"
+          label="Назва воркспейсу"
+          placeholder="AAA"
+          :disabled="!isOwnerOfWorkspace"
+        />
+        <KColorPicker
+          v-model="wsColorEdit"
+          label="Колір воркспейсу"
+          :class="{ 'shell__readonly': !isOwnerOfWorkspace }"
+        />
+        <div class="shell__members">
+          <span class="shell__members-label">Учасники</span>
+          <div v-if="membersLoading" class="shell__hint mono">Завантаження…</div>
+          <div v-for="m in workspaceMembers" :key="m.userId" class="shell__member">
+            <img
+              v-if="m.profile?.avatarUrl"
+              class="shell__member-avatar"
+              :src="m.profile.avatarUrl"
+              :alt="m.profile.githubUsername ?? ''"
+            />
+            <span v-else class="shell__member-avatar shell__member-avatar--blank mono">?</span>
+            <span class="shell__member-name mono">
+              @{{ m.profile?.githubUsername ?? m.profile?.displayName ?? m.userId.slice(0, 8) }}
+            </span>
+            <KTag>{{ isWorkspaceOwnerSeat(m.userId) ? 'власник' : 'учасник' }}</KTag>
+            <KBtn
+              v-if="isOwnerOfWorkspace && !isWorkspaceOwnerSeat(m.userId)"
+              variant="ghost"
+              title="Вилучити з воркспейсу"
+              @click="removeMemberOf(m)"
+            >✕</KBtn>
+          </div>
+          <template v-if="isOwnerOfWorkspace">
+            <div class="shell__member-add">
+              <KField
+                v-model="memberEmail"
+                label="Запросити за імейлом"
+                placeholder="colleague@example.com"
+                type="email"
+              />
+              <KBtn
+                variant="secondary"
+                :disabled="memberEmail.trim() === '' || memberBusy"
+                @click="submitMember"
+              >{{ memberBusy ? 'Запрошуємо…' : 'Запросити' }}</KBtn>
+            </div>
+            <p class="shell__hint">
+              Запрошуємо за адресою, якою колега входить у Керманич. Він одразу бачить усі
+              проєкти цього воркспейсу — окремо запрошувати в кожен не потрібно.
+            </p>
+          </template>
+          <p v-else class="shell__hint">
+            Склад воркспейсу змінює його власник. Одне запрошення відкриває доступ до всіх
+            проєктів воркспейсу, тому воно й належить власнику.
+          </p>
+        </div>
+        <!-- Why the refusal is VISIBLE text and not the delete button's tooltip: a
+             disabled <button> dispatches no mouseenter and takes no focus, so v-tip on it
+             never shows — the reason has to live where it can be read. -->
+        <p v-if="isOwnerOfWorkspace && workspaceHasProjects" class="shell__hint">
+          Видалити воркспейс можна лише порожнім: спершу перенесіть або видаліть його
+          проєкти.
+        </p>
+        <p v-if="wsError" class="shell__error" role="alert">{{ wsError }}</p>
+      </div>
+      <template #controls>
+        <KBtn
+          v-if="isOwnerOfWorkspace"
+          variant="ghost"
+          class="shell__danger"
+          :disabled="workspaceHasProjects"
+          title="Видалити воркспейс — назавжди й для всієї команди"
+          @click="deleteWorkspace"
+        >Видалити воркспейс</KBtn>
+        <KBtn variant="ghost" @click="workspaceSettingsOpen = false">Скасувати</KBtn>
+        <KBtn
+          variant="primary"
+          :disabled="!isOwnerOfWorkspace"
+          @click="saveWorkspace"
+        >Зберегти</KBtn>
+      </template>
+    </KModal>
+
     <!-- CREATE-PROJECT MODAL — a project is born in the CLOUD (Requirement 2: any signed-in
-         user may create one and becomes its owner). The local row arrives through
+         user may create one and becomes its owner) INSIDE a known workspace, which is why the
+         open state is that workspace's id rather than a boolean. The local row arrives through
          POST /api/projects/sync and starts out UNBOUND — no directory picker here. -->
-    <KModal v-model="createOpen" title="Новий проєкт у хмарі">
+    <KModal
+      :model-value="createProjectFor !== undefined"
+      :title="`Новий проєкт у «${projects.workspaceById.get(createProjectFor ?? '')?.name ?? ''}»`"
+      @update:model-value="createProjectFor = undefined"
+    >
       <div class="shell__form">
         <KField v-model="createName" label="Назва" placeholder="my-project" />
         <KField
@@ -174,34 +377,37 @@
         <p v-if="createError" class="shell__error" role="alert">{{ createError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="createOpen = false">Скасувати</KBtn>
+        <KBtn variant="ghost" @click="createProjectFor = undefined">Скасувати</KBtn>
         <KBtn variant="primary" :disabled="!canCreate || createBusy" @click="submitCreate">
-          Створити
+          {{ createBusy ? 'Створюємо…' : 'Створити' }}
         </KBtn>
       </template>
     </KModal>
 
     <!-- PROJECT-SETTINGS MODAL — CLOUD config (name, colour, conventions, commands, carry
          files) plus this machine's read-only binding. Config writes go to Supabase and are
-         mirrored into the local row; they are owner-only (design D1, Requirement 2). -->
+         mirrored into the local row, and ANY workspace member may make them: per the role
+         matrix config is shared work, not administration, and projects_update_member is
+         what allows it. Exactly one control here stays owner-only — «Видалити проєкт».
+         Membership is no longer on this modal; it moved up to the workspace. -->
     <KModal v-model="settingsOpen" :title="`Редагувати проєкт · ${selectedName}`">
       <div class="shell__form">
-        <KField
-          v-model="nameEdit"
-          label="Назва проєкту"
-          placeholder="my-project"
-          :disabled="!isOwnerOfSelected"
+        <KField v-model="nameEdit" label="Назва проєкту" placeholder="my-project" />
+        <!-- The non-mouse path to a move, and the only path to a COLLAPSED destination —
+             a folded workspace renders no row, so it has no drop target at all. Same
+             write as the drag: a patch of workspace_id. -->
+        <KSelect
+          v-model="workspaceEdit"
+          label="Воркспейс"
+          :options="workspaceOptions"
+          :disabled="!isInCloud"
         />
-        <KColorPicker
-          v-model="colorEdit"
-          label="Колір проєкту"
-          :class="{ 'shell__readonly': !isOwnerOfSelected }"
-        />
+        <KColorPicker v-model="colorEdit" label="Колір проєкту" />
         <KSelect
           v-model="defaultBranchEdit"
           label="Гілка за замовчуванням"
           :options="settingsBranches"
-          :disabled="!isBound || !isOwnerOfSelected"
+          :disabled="!isBound"
           placeholder="— поточна гілка репозиторію —"
         />
         <KField
@@ -210,77 +416,33 @@
           placeholder="Порожнє — Керманич підставить власні дефолти"
           multiline
           :rows="6"
-          :disabled="!isOwnerOfSelected"
         />
         <KField
           v-model="previewCommandEdit"
           label="Команда превʼю (веб)"
           placeholder="pnpm dev --port $PORT"
-          :disabled="!isOwnerOfSelected"
         />
         <KField
           v-model="apiCommandEdit"
           label="Команда превʼю (API, необовʼязково)"
           placeholder="pnpm dev:api"
-          :disabled="!isOwnerOfSelected"
         />
         <KField
           v-model="carryFilesText"
           label="Файли для сесії (через кому)"
           placeholder=".env"
-          :disabled="!isOwnerOfSelected"
         />
-        <p v-if="!isOwnerOfSelected" class="shell__hint">
-          Налаштування проєкту спільні для команди — змінювати їх може лише власник.
-          Прив’язка теки й «Змінні середовища» — ваші, для цієї машини, і залишаються доступними.
-        </p>
         <KField
           :model-value="selectedProject?.localRepoPath || 'не прив’язано'"
           label="Локальна тека цієї машини"
           disabled
         />
-        <!-- MEMBERS — cloud membership. Any member invites by email (invite_project_member);
-             removal stays owner-only. RLS and the rpc enforce both; this is UX. -->
-        <div class="shell__members">
-          <span class="shell__members-label">Учасники</span>
-          <div v-if="membersLoading" class="shell__hint mono">Завантаження…</div>
-          <div v-for="m in members" :key="m.userId" class="shell__member">
-            <img
-              v-if="m.profile?.avatarUrl"
-              class="shell__member-avatar"
-              :src="m.profile.avatarUrl"
-              :alt="m.profile.githubUsername ?? ''"
-            />
-            <span v-else class="shell__member-avatar shell__member-avatar--blank mono">?</span>
-            <span class="shell__member-name mono">
-              @{{ m.profile?.githubUsername ?? m.userId.slice(0, 8) }}
-            </span>
-            <KTag>{{ m.role === 'owner' ? 'власник' : 'учасник' }}</KTag>
-            <KBtn
-              v-if="isOwnerOfSelected && m.role !== 'owner'"
-              variant="ghost"
-              title="Вилучити з проєкту"
-              @click="removeMemberOf(m)"
-            >✕</KBtn>
-          </div>
-          <div class="shell__member-add">
-            <KField
-              v-model="memberEmail"
-              label="Запросити за імейлом"
-              placeholder="colleague@example.com"
-              type="email"
-            />
-            <KBtn
-              variant="secondary"
-              :disabled="memberEmail.trim() === '' || memberBusy"
-              @click="submitMember"
-            >Запросити</KBtn>
-          </div>
-          <p class="shell__hint">
-            Запросити може будь-який учасник — за адресою, якою колега входить у Керманич.
-            Вилучати учасників може лише власник.
-          </p>
-        </div>
+        <!-- CLOUD config needs a cloud row, and a «поза хмарою» local one has none. Save
+             used to be inert for such a project BY ACCIDENT, through the owner gate that
+             is now gone (see `isInCloud`), so the state gets its own gate and its own way
+             out. The binding above and the `.env` VALUES stay available: those are this
+             machine's business, and they always worked for an unpublished project. -->
+        <p v-if="!isInCloud" class="shell__hint">{{ noCloudRowHint }}</p>
         <p v-if="settingsError" class="shell__error" role="alert">{{ settingsError }}</p>
       </div>
       <template #controls>
@@ -291,7 +453,7 @@
           @click="openDelete"
         >Видалити проєкт</KBtn>
         <KBtn variant="ghost" @click="settingsOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" :disabled="!isOwnerOfSelected" @click="saveSettings">Зберегти</KBtn>
+        <KBtn variant="primary" :disabled="!isInCloud" @click="saveSettings">Зберегти</KBtn>
       </template>
     </KModal>
 
@@ -337,16 +499,19 @@
           </p>
         </div>
         <KField
-          v-if="isOwnerOfSelected"
+          v-if="isInCloud"
           v-model="envKeysText"
           label="Обовʼязкові ключі — лише ІМЕНА (через кому або з нового рядка)"
           placeholder="GITHUB_TOKEN, DATABASE_URL"
           multiline
           :rows="3"
         />
+        <!-- No cloud row, no list of names to keep in it. The VALUES editor above is
+             untouched: it writes this machine's file and never needed the cloud. -->
+        <p v-else class="shell__hint">{{ noCloudKeysHint }}</p>
         <p class="shell__hint">
-          У хмарі зберігаються лише імена ключів. Значення живуть у `.env` цієї машини й нікуди
-          не передаються.
+          Значення живуть у `.env` цієї машини й нікуди не передаються: у хмарі Керманич
+          тримає лише ІМЕНА ключів.
         </p>
         <p v-if="envError" class="shell__error" role="alert">{{ envError }}</p>
       </div>
@@ -393,19 +558,20 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import type { SessionStatus, EnvFileView } from '@kermanych/core';
-import type { ProjectMember } from '@kermanych/cloud';
+import type { WorkspaceMember } from '@kermanych/cloud';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
 import { IS_PREVIEW } from '../lib/preview';
 import { MANAGEMENT_DEFAULT_SECTION } from '../lib/management';
+import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
 import { theme, toggleTheme } from '../lib/theme';
 import { percent, planWindow } from '../lib/format';
 import { until } from '../lib/time';
-import { bucketOf } from '../lib/buckets';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
+import KWorkspaceRow from 'components/kit/KWorkspaceRow.vue';
 import KTopNav from 'components/kit/KTopNav.vue';
 import KNavItem from 'components/kit/KNavItem.vue';
 import KModal from 'components/kit/KModal.vue';
@@ -435,25 +601,113 @@ const router = useRouter();
 const collapsed = ref(localStorage.getItem('kermanych.sidebar-collapsed') === '1');
 watch(collapsed, (v) => localStorage.setItem('kermanych.sidebar-collapsed', v ? '1' : '0'));
 
-// A rail tile means «show me this project». Clicked from a screen that does not show one it
-// used to change the selection behind the operator's back — the tile went active, nothing
-// else moved, and the team board had no exit of its own. Selecting is still the primary act;
-// the navigation only follows when the current page is not the one that answers it. The
-// project-scoped screens (workspace, and every Менеджмент section, whose parent record is
-// matched here) keep their place, so switching projects while reading one stays put.
-const PROJECT_SCOPED_VIEWS: readonly string[] = ['workspace', 'management'];
-function selectProject(id: string): void {
-  store.selectProject(id);
-  const scoped = route.matched.some(
-    (r) => typeof r.name === 'string' && PROJECT_SCOPED_VIEWS.includes(r.name),
-  );
-  if (!scoped) void router.push({ name: 'workspace' });
+// Which workspace groups are FOLDED. Stored as a list of ids because a Set does not
+// survive JSON, and stored at all because a fold the reload undoes is not a fold. Absent
+// from the list means expanded, so a workspace created on another machine — or one this
+// user has just been invited to — arrives open rather than silently hidden.
+//
+// The payload is VALIDATED, not cast. `raw ? JSON.parse(raw) : []` catches a throw but not
+// valid JSON of the wrong shape: the literal string `null` is truthy and parses to `null`,
+// as do `true`, `42` and `{}`, and `.includes()` on any of them throws a TypeError inside
+// the render function of the layout that wraps every authenticated route — a whiteout no
+// in-app action can clear. stores/projects.ts:52-79 validates its sibling key the same way.
+const COLLAPSED_KEY = 'kermanych.workspace-collapsed';
+const collapsedWorkspaces = ref<string[]>(
+  (() => {
+    try {
+      const raw = localStorage.getItem(COLLAPSED_KEY);
+      const parsed: unknown = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      // A corrupt entry is not worth a blank sidebar; the next toggle overwrites it.
+      return [];
+    }
+  })(),
+);
+
+function isFolded(id: string): boolean {
+  return collapsedWorkspaces.value.includes(id);
 }
 
-// True only once a cloud read has actually succeeded on this run. Until then a local row
-// absent from the (still empty) cloud list is an unread cache, not an orphan — labelling
-// every project «поза хмарою» on a cold or offline boot would be a lie.
-const cloudSynced = ref(false);
+// The 76px rail ignores the folds. It hides the chevron — there is no room for three
+// controls in that column — so a group folded at full width would sit there with no
+// affordance to open it and its projects would be unreachable until the sidebar is widened.
+// The rail's job is a dense list of everything, not a navigable tree.
+function isExpanded(id: string): boolean {
+  return collapsed.value || !isFolded(id);
+}
+
+// The ONE place the folded set is written, so the toggle and the selection watcher below
+// cannot drift into two persistence paths. The no-op guard matters: the watcher fires on
+// every project selection, and without it each one would rewrite localStorage.
+function setExpanded(id: string, expanded: boolean): void {
+  if (expanded === !isFolded(id)) return;
+  collapsedWorkspaces.value = expanded
+    ? collapsedWorkspaces.value.filter((x) => x !== id)
+    : [...collapsedWorkspaces.value, id];
+  localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsedWorkspaces.value));
+}
+
+function toggleWorkspace(id: string): void {
+  setExpanded(id, isFolded(id));
+}
+
+// WHICH GROUP OWNS A PROJECT — the one resolver, used by the watcher below and by the tree's
+// offline placement. Two lookups with different sources is how the bug beneath this comment
+// comes back: the watcher used to read `projects.byId` alone, which is empty whenever the
+// cloud read failed. That was harmless while offline rows sat in a fold-less bucket, and
+// became a live failure the moment they moved into real, foldable, persisted groups.
+//
+// Cloud list first, because it is authoritative when present; the cached map second, because
+// it is what remains when the read failed and it is what the offline tree renders from. The
+// online tree agrees with the first branch by construction, not by convention:
+// groupProjectsByWorkspace places a project by the same `workspaceId` field this reads off
+// the same object.
+function workspaceOf(projectId: string): string | undefined {
+  return projects.byId.get(projectId)?.workspaceId ?? store.projectWorkspace[projectId];
+}
+
+// A project can be selected from OUTSIDE the sidebar — the create-project flow below, or the
+// notification jump in stores/orchestrator.ts:99, which fires when a local agent finishes and
+// keeps firing with Supabase down, because local work never blocks on the cloud. A selection
+// landing inside a folded group renders nowhere: the highlight moves to a row the operator
+// cannot see, and the workspace row loses its own highlight at the same time, since `:active`
+// requires no project to be selected. That is exactly the "selection moves behind the
+// operator's back" failure the navigation removal was meant to end, so any selection unfolds
+// its own group, whoever caused it. The lookup still misses for a project with no group on
+// either side — a local-only row — which has no group to unfold.
+watch(
+  () => store.selectedProjectId,
+  (id) => {
+    const workspaceId = id ? workspaceOf(id) : undefined;
+    if (workspaceId) setExpanded(workspaceId, true);
+  },
+);
+
+// A sidebar click changes SCOPE and never navigates (Requirement 5). It used to push
+// /agents from any non-project-scoped view, which meant the team board threw the operator
+// out the moment they touched the tree; both the board and Агенти read the scope, so there
+// is nothing left for a navigation to fix.
+function selectProject(id: string): void {
+  store.selectProject(id);
+}
+function selectWorkspace(id: string): void {
+  store.selectWorkspace(id);
+}
+
+// DO WE HOLD AN AUTHORITATIVE CLOUD PROJECT LIST? Everything in the sidebar that could state
+// a falsehood about where a project lives asks this, and only this: which source the tree is
+// built from, whether a missing local row is an orphan, and what the bucket's heading claims.
+// One signal for all three, because three answers to one question is how they drift apart.
+//
+// The signal belongs to the STORE (`listRead`, stores/projects.ts) because it is a fact about
+// what the cloud answered, and every local approximation of it was wrong in a real state.
+// `projects.projects.length > 0` is satisfied by create()/publish() appending, so one create
+// while Supabase recovered would have claimed a one-project cloud list and called seven
+// unchecked projects «поза хмарою». A local flag set in onMounted is false for a read that
+// resolves later — `remove()` re-reads at :1007 and a refused move re-reads at :1540 —
+// leaving an authoritative list in hand and unusable.
+const hasCloudList = computed(() => projects.listRead);
 
 onMounted(async () => {
   // Socket first: the snapshot, and the project_update events the sync inside load() emits,
@@ -462,9 +716,9 @@ onMounted(async () => {
   // The router guard already keeps this layout signed-in-only, but on a cold start `ready`
   // may still be pending, and useProjects() needs the session for RLS to return any row.
   await auth.ready;
-  // A preview has no cloud (lib/preview.ts): skip the read entirely. Leaving `cloudSynced`
-  // false is the point — a successful-looking sync would label every seeded local row
-  // «поза хмарою», and load()'s prune would run against an empty project list.
+  // A preview has no cloud (lib/preview.ts): skip the read entirely. Never calling load() is
+  // the point — it leaves `listRead` false, so no seeded local row is labelled «поза хмарою»
+  // on the strength of a list nobody read, and load()'s prune never runs against one.
   if (IS_PREVIEW) return;
   // load() reads the cloud list and mirrors it into the local registry itself
   // (api.syncProjects(list, true), see stores/projects.ts) — that mirror is what keeps
@@ -478,21 +732,30 @@ onMounted(async () => {
       'error',
       6000,
     );
-    return;
   }
-  cloudSynced.value = true;
 });
 
 // A session is "running" while it is queued or actively working; waiting means it is blocking
 // on an interactive UI request; done is terminal-success.
 const RUNNING: readonly SessionStatus[] = ['queued', 'thinking', 'tool'];
 
-function sessionsOf(projectId: string | undefined) {
-  return store.sessions.filter((s) => s.projectId === projectId && !s.archived);
-}
+// Running agents per project, in ONE pass over the sessions. Both the project tiles and the
+// group badges read it, and it has to be a computed rather than a function because the tree
+// asks for a count per project on EVERY MainLayout render — every socket session event, plus
+// the 30-second useNow tick behind the account plan lines — and a filter-per-project there
+// is O(projects × sessions) against a registry that already carries 69 sessions on one
+// project. `sessionsOf` is gone with it: this was its only caller.
+const runningCountById = computed(() => {
+  const counts = new Map<string, number>();
+  for (const s of store.sessions) {
+    if (s.archived || s.kind === 'chat' || !RUNNING.includes(s.status)) continue;
+    counts.set(s.projectId, (counts.get(s.projectId) ?? 0) + 1);
+  }
+  return counts;
+});
 
 function runningCount(projectId: string): number {
-  return sessionsOf(projectId).filter((s) => s.kind !== 'chat' && RUNNING.includes(s.status)).length;
+  return runningCountById.value.get(projectId) ?? 0;
 }
 
 // Segmented view nav. One table drives the labels, the active segment and the
@@ -502,7 +765,7 @@ function runningCount(projectId: string): number {
 // the click pushes, which for Менеджмент is its default section (a named parent
 // with children would render the shell with an empty body).
 const VIEWS = [
-  { value: 'agents', label: 'Агенти', route: 'workspace', section: 'workspace' },
+  { value: 'agents', label: 'Агенти', route: 'agents', section: 'agents' },
   { value: 'board', label: 'Дошка', route: 'board', section: 'board' },
   { value: 'chat', label: 'Чат', route: 'chat', section: 'chat' },
   {
@@ -519,7 +782,7 @@ const topView = computed(
     VIEWS.find((v) => route.matched.some((r) => r.name === v.section))?.value ?? 'agents',
 );
 function goView(v: string): void {
-  const name = VIEWS.find((x) => x.value === v)?.route ?? 'workspace';
+  const name = VIEWS.find((x) => x.value === v)?.route ?? 'agents';
   if (route.name !== name) void router.push({ name });
 }
 
@@ -540,50 +803,210 @@ const buckets = [
 ] as const;
 function onBucket(key: 'active' | 'tasks' | 'archived' | 'history'): void {
   store.setBucket(key);
-  if (route.name !== 'workspace') void router.push({ name: 'workspace' });
+  if (route.name !== 'agents') void router.push({ name: 'agents' });
 }
-// Fleet tally per sidebar bucket (replaces the old footer KStatusBar). The rule lives in
-// lib/buckets.ts — the board filters its cards with the same call, so the number here is
-// the number of cards the bucket opens on, forks included.
+// Fleet tally per sidebar bucket (replaces the old footer KStatusBar). error/conflict
+// count as Активні (needs attention) so no session falls outside a bucket.
+//
+// Scoped by ASKING the Агенти page's predicate, not by re-deriving it. It used to test
+// `s.projectId !== store.selectedProjectId`, which was true while a workspace-only selection
+// rendered a blank page and became a falsehood the moment that page started listing a whole
+// workspace: every session was skipped and the rail printed «Активні 0 / Задачі 0» two
+// columns from a header counting real cards. «Задачі 0» is the costly one — an operator
+// scanning the rail concludes the workspace has no backlog and never opens it. One answer in
+// one place is the only version of this that stays true.
 const bucketCounts = computed(() => {
+  const inScope = new Set(
+    sessionScopedProjectIds(
+      { workspaceId: store.selectedWorkspaceId, projectId: store.selectedProjectId },
+      { projects: projects.projects, listRead: projects.listRead },
+      store.projectWorkspace,
+    ),
+  );
   const c = { active: 0, tasks: 0, archived: 0, history: 0 };
-  const byId = new Map(store.sessions.map((s) => [s.id, s]));
   for (const s of store.sessions) {
-    if (s.projectId !== store.selectedProjectId) continue;
+    if (!inScope.has(s.projectId)) continue;
     if (s.kind === 'chat') continue;
-    c[bucketOf(s, (id) => byId.get(id))]++;
+    if (s.archived) c.archived++;
+    else if (s.status === 'backlog') c.tasks++;
+    else if (s.status === 'merged' || s.status === 'done' || s.status === 'stopped') c.history++;
+    else c.active++;
   }
   return c;
 });
 
-// The rail: the CLOUD list (what exists, for everyone) in cloud order, then every LOCAL row
-// the cloud list does not contain. Those trailing rows matter — sync's prune deliberately
-// keeps a row that still owns sessions, and agents you cannot select are agents you cannot
-// stop. A cloud project with no local row at all (the mount-time sync failed) shows as
-// unbound, which is exactly what it is: nothing on this machine can run it yet.
-const railProjects = computed<RailProject[]>(() => {
-  const local = new Map(store.projects.map((p) => [p.id, p]));
-  const out: RailProject[] = [];
-  for (const c of projects.projects) {
-    const row = local.get(c.id);
-    local.delete(c.id);
-    out.push({
-      id: c.id,
-      name: c.name,
-      color: c.color ?? row?.color,
-      state: row?.localRepoPath ? 'bound' : 'unbound',
-    });
+// The tree: cloud workspaces, each with its own cloud projects, in cloud order.
+// `groupProjectsByWorkspace` DROPS a project whose workspace is not in the list — RLS
+// decides which workspaces this user can read, and inventing a group for one they cannot
+// would render a name that does not exist. Such a project is simply not shown.
+const tree = computed(() => projects.projectsByWorkspace);
+
+const localById = computed(() => new Map(store.projects.map((p) => [p.id, p])));
+
+// The tree's CONTENTS, both halves from one pass: which rail tiles hang under which
+// workspace, and which have no group at all. One computed rather than two, because the two
+// halves partition the same set — a project in a group AND in the bucket would render
+// twice, a project in neither would be an agent nobody can select.
+//
+// ONLINE the cloud list is the truth about what exists and where it lives, joined with THIS
+// machine's local row for the binding. A cloud project with no local row at all — the
+// mount-time sync failed — reads as unbound, which is exactly what it is: nothing here can
+// run it yet. The complement, a local row absent from the cloud list, is an orphan.
+//
+// OFFLINE — a cold start still loading, a read degraded into offlineError, or a preview with
+// no cloud at all — the tree is rebuilt from the LOCAL rows placed through the cached
+// projectId → workspaceId map (stores/projects.ts writes it beside the cached workspaces for
+// exactly this). Without that placement the sidebar collapsed to a flat bucket under four
+// empty groups, which is the offline collapse the cache exists to prevent. A row the map has
+// no entry for goes to the bucket, NOT into a guessed group: same rule
+// groupProjectsByWorkspace follows for a workspace RLS did not return — a group we cannot
+// name is a group we must not draw. `has` rather than a bare lookup for the same reason;
+// the store already drops map entries pointing outside the cached list, and this keeps that
+// true if it ever stops.
+//
+// A computed, not a function: built per render it would mint fresh RailProject objects every
+// time and every KRailItem would see a new prop identity on each socket session event.
+const sidebarProjects = computed(() => {
+  const byWorkspace = new Map<string, RailProject[]>();
+  for (const group of tree.value) byWorkspace.set(group.workspace.id, []);
+  const ungrouped: RailProject[] = [];
+
+  if (hasCloudList.value) {
+    for (const group of tree.value) {
+      const tiles = byWorkspace.get(group.workspace.id);
+      for (const c of group.projects) {
+        const row = localById.value.get(c.id);
+        tiles?.push({
+          id: c.id,
+          name: c.name,
+          color: c.color ?? row?.color,
+          state: row?.localRepoPath ? 'bound' : 'unbound',
+        });
+      }
+    }
+    const cloudIds = new Set(projects.projects.map((p) => p.id));
+    for (const row of store.projects) {
+      if (cloudIds.has(row.id)) continue;
+      ungrouped.push({ id: row.id, name: row.name, color: row.color, state: 'orphan' });
+    }
+  } else {
+    for (const row of store.projects) {
+      // Name and colour come off the local row, which the last successful sync mirrored
+      // from the cloud — the same values the online tree would show.
+      const tile: RailProject = {
+        id: row.id,
+        name: row.name,
+        color: row.color,
+        state: row.localRepoPath ? 'bound' : 'unbound',
+      };
+      const workspaceId = workspaceOf(row.id);
+      if (workspaceId !== undefined && byWorkspace.has(workspaceId)) {
+        byWorkspace.get(workspaceId)?.push(tile);
+      } else {
+        ungrouped.push(tile);
+      }
+    }
   }
-  for (const row of local.values()) {
-    out.push({
-      id: row.id,
-      name: row.name,
-      color: row.color,
-      state: cloudSynced.value ? 'orphan' : row.localRepoPath ? 'bound' : 'unbound',
-    });
-  }
-  return out;
+
+  return { byWorkspace, ungrouped };
 });
+
+// The bucket's heading is a CLAIM, and the claim is not the same one in both states. It turns
+// on `hasCloudList`, the same signal the branch above does — the two must agree or the
+// heading describes a bucket that was filled by different rules.
+//
+// WITH a cloud list it is precise: these rows are absent from a list we actually read, so
+// this machine really is the only place they exist — made before the team cloud, or while
+// Supabase was unreachable. The board's «Опублікувати в хмарі» is how such a row gets a
+// workspace. They are kept rather than hidden because sync's prune deliberately keeps a row
+// that still owns sessions, and agents you cannot select are agents you cannot stop.
+//
+// WITHOUT one it must be weaker. We have read no cloud list, so the only true statement about
+// these rows is that we do not know their group: the cached map has no entry for them.
+// «Лише на цій машині» there asserts something unchecked — on a cold offline start it used to
+// say it about the team's entire project list.
+const localOnlyLabel = computed(() =>
+  hasCloudList.value ? 'Лише на цій машині' : 'Воркспейс невідомий',
+);
+
+// The group header's badge: what is running anywhere inside it, so a folded workspace still
+// says whether it needs attention. Off the rail tiles rather than the cloud group, or the
+// badge would read zero for every offline group whose tiles came from the cached map.
+function workspaceRunningCount(workspaceId: string): number {
+  let n = 0;
+  for (const p of sidebarProjects.value.byWorkspace.get(workspaceId) ?? []) n += runningCount(p.id);
+  return n;
+}
+
+// DRAG A PROJECT INTO ANOTHER WORKSPACE — hand-rolled HTML5 DnD. It is one gesture, and a
+// drag-and-drop library would bring its own reactivity model along for it.
+//
+// The dragged id lives HERE, not in dataTransfer: getData() is unreadable during
+// `dragover` (under the protected-mode rules the event exposes only the TYPES), so a
+// drop-validity decision taken from dataTransfer would always read an empty payload and
+// light up every row. KRailItem still calls setData — that is what makes this a
+// standards-conformant drag — and emits the id for this pair of refs.
+const draggingProjectId = ref<string | undefined>(undefined);
+const dropTargetId = ref<string | undefined>(undefined);
+
+// preventDefault ONLY for a valid destination. That one call is both what permits the drop
+// and what turns the cursor from «no» into «move», so cancelling unconditionally would
+// accept a release onto the project's OWN workspace and then quietly do nothing — a
+// gesture that looks like it worked. An invalid row keeps the browser's refusal cursor.
+function onDragOver(e: DragEvent, workspaceId: string): void {
+  if (!canDropProject(draggingProjectId.value, workspaceId, projects.projects)) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  dropTargetId.value = workspaceId;
+}
+
+// `dragleave` BUBBLES, and the row has three children: crossing from its chevron into its
+// body arrives here as a leave of the row ITSELF and would clear the border until the next
+// `dragover` repainted it — a flicker directly under the cursor. relatedTarget is the
+// element being ENTERED, so one still inside the row means the pointer never left.
+//
+// Chosen over a dragenter/dragleave counter because a counter is state that has to be
+// zeroed by hand on drop and on dragend, and any missed reset leaves a row that can no
+// longer clear its own border for the rest of the session. This check holds no state.
+// relatedTarget is null when the drag leaves the window entirely, which correctly clears.
+function onDragLeave(e: DragEvent, workspaceId: string): void {
+  const row = e.currentTarget;
+  const entering = e.relatedTarget;
+  if (row instanceof Node && entering instanceof Node && row.contains(entering)) return;
+  if (dropTargetId.value === workspaceId) dropTargetId.value = undefined;
+}
+
+function onDragEnd(): void {
+  draggingProjectId.value = undefined;
+  dropTargetId.value = undefined;
+}
+
+async function onDrop(workspaceId: string): Promise<void> {
+  const projectId = draggingProjectId.value;
+  // Cleared before the validity check and before the await, not after: once a drop has
+  // been handled the source's `dragend` is not something to rely on, and the accent
+  // border must not outlive the gesture that drew it.
+  onDragEnd();
+  if (!projectId || !canDropProject(projectId, workspaceId, projects.projects)) return;
+  const name = projects.byId.get(projectId)?.name ?? projectId;
+  const target = projects.workspaceById.get(workspaceId)?.name ?? '';
+  try {
+    await projects.moveProject(projectId, workspaceId);
+    store.notify(`«${name}» перенесено у «${target}»`);
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e);
+    // 6000 like every other full-sentence refusal here (the bind error, both member
+    // errors): MOVE_REFUSAL is a 76-character sentence, and it is the one message a user
+    // reads mid-gesture, with their attention on the pointer rather than on the corner of
+    // the screen. notify's 4000 default is for confirmations, which are short.
+    store.notify(isMoveRefusal(raw) ? MOVE_REFUSAL : raw, 'error', 6000);
+    // Nothing optimistic to undo — patch() throws before it touches projects.value. The
+    // refetch is about the other direction: a refusal means the server's idea of this
+    // tree differs from ours, and re-reading is how the tree stops lying. load() degrades
+    // into offlineError rather than throwing, so this cannot reject.
+    await projects.load();
+  }
+}
 
 // The LOCAL row carries this machine's binding and the offline config cache; the CLOUD
 // project is the source of truth for config. Same id, two lookups.
@@ -647,43 +1070,309 @@ const contextLabel = computed(() => {
   return `${selectedName.value} · ${selectedProject.value?.localRepoPath || 'не прив’язано'}`;
 });
 
-// Create-in-the-cloud modal. No directory field: creating a project and binding a repo are
-// different acts on different machines (Requirement 3).
-const createOpen = ref(false);
+// Two create modals, because the sidebar's two «+» buttons create different things. The
+// project one is keyed by the workspace it will create INSIDE — an id rather than a
+// boolean, since «new project» is not a question that can be asked without a group — and
+// `createError` / `createBusy` are shared: only one of the two can be open at a time.
+//
+// Neither has a directory field: creating a project and binding a repo are different acts
+// on different machines (Requirement 3).
+const createWorkspaceOpen = ref(false);
+const createWorkspaceName = ref('');
+const createProjectFor = ref<string | undefined>(undefined);
 const createName = ref('');
 const createRemote = ref('');
 const createError = ref<string | null>(null);
 const createBusy = ref(false);
+
+const canCreateWorkspace = computed(() => createWorkspaceName.value.trim() !== '');
 const canCreate = computed(() => createName.value.trim() !== '');
 
-function openCreate(): void {
+function openCreateWorkspace(): void {
+  createWorkspaceName.value = '';
+  createError.value = null;
+  createBusy.value = false;
+  createWorkspaceOpen.value = true;
+}
+
+function openCreateProject(workspaceId: string): void {
   createName.value = '';
   createRemote.value = '';
   createError.value = null;
   createBusy.value = false;
-  createOpen.value = true;
+  createProjectFor.value = workspaceId;
+}
+
+async function submitCreateWorkspace(): Promise<void> {
+  if (!canCreateWorkspace.value) return;
+  createError.value = null;
+  createBusy.value = true;
+  try {
+    const created = await projects.createWorkspace(createWorkspaceName.value.trim());
+    createWorkspaceOpen.value = false;
+    // Scope moves to the new group, so the next «+» on its row is the obvious next step.
+    store.selectWorkspace(created.id);
+    store.notify(`Воркспейс «${created.name}» створено`);
+  } catch (e) {
+    createError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    createBusy.value = false;
+  }
 }
 
 async function submitCreate(): Promise<void> {
-  if (!canCreate.value) return;
+  const workspaceId = createProjectFor.value;
+  if (!workspaceId || !canCreate.value) return;
   createError.value = null;
   createBusy.value = true;
   try {
     const remote = createRemote.value.trim();
-    // create() inserts under the user's JWT (handle_new_project adds the owner membership)
-    // and mirrors the one new project into the local registry, so its tile appears without a
-    // second full sync.
-    const created = await projects.create(createName.value.trim(), remote || undefined);
-    createOpen.value = false;
+    // create() inserts under the user's JWT (projects_insert_member checks membership of
+    // the destination workspace) and mirrors the one new project into the local registry,
+    // so its tile appears under this group without a second full sync.
+    const created = await projects.create(workspaceId, createName.value.trim(), remote || undefined);
+    createProjectFor.value = undefined;
     store.selectProject(created.id);
     store.notify(`Проєкт «${created.name}» створено у хмарі`);
   } catch (e) {
     // Keep the modal open. The two real refusals are `not signed in` (the session expired
-    // between the router guard and this click) and a postgrest/RLS or network failure; both
-    // are fixable without retyping the name.
+    // between the router guard and this click) and an RLS refusal on a workspace this user
+    // has just lost access to; both are fixable without retyping the name.
     createError.value = e instanceof Error ? e.message : String(e);
   } finally {
     createBusy.value = false;
+  }
+}
+
+// PostgREST's "zero rows through .single()" refusal, in BOTH of its spellings. Every
+// owner-only policy in this schema refuses a write by matching zero rows rather than by
+// raising, and the cloud client throws `new Error(error.message)` and drops `error.code`,
+// so the TEXT is all a caller gets. PostgREST ≤11 said «JSON object requested, multiple (or
+// no) rows returned»; this server says «Cannot coerce the result to a single JSON object» —
+// AgentsPage.vue:1470-1473 records that first-hand, and packages/cloud/test/rls.spec.ts:246
+// asserts the CODE precisely because the message is version-dependent. Testing one spelling
+// leaves the branch dead against the other server and puts raw English in a Ukrainian
+// modal, so this MUST keep both. Every place that maps this refusal uses it.
+const NO_ROWS = /rows returned|coerce the result/;
+
+// A refused MOVE has TWO shapes, and they come from opposite ends of one policy.
+// projects_update_member evaluates USING against the OLD row and WITH CHECK against the
+// NEW one, so: a destination workspace the user does not belong to fails WITH CHECK and
+// Postgres RAISES `42501 new row violates row-level security policy`, while a SOURCE they
+// cannot see fails USING, matches zero rows, and surfaces through .single() as PGRST116 —
+// i.e. as NO_ROWS above. To the operator both are the same sentence, so say it instead of
+// echoing either code. Only a move can produce 42501 here; every other write in this
+// layout is refused the zero-rows way.
+function isMoveRefusal(raw: string): boolean {
+  return /42501|row-level security/.test(raw) || NO_ROWS.test(raw);
+}
+
+const MOVE_REFUSAL =
+  'Хмара відмовила: переносити проєкт можна лише між воркспейсами, у яких ви учасник';
+
+// WORKSPACE SETTINGS — the group's name, colour and TEAM, reached from the header chip.
+// Membership hangs off the workspace rather than the project because one invitation opens
+// every project in the group; that is also why inviting and removing are OWNER-only here
+// while project config is open to any member (the approved role matrix). All of this is
+// UX: invite_workspace_member refuses a non-owner in its first statement, and
+// workspace_members_delete_owner refuses one by matching zero rows.
+const workspaceSettingsOpen = ref(false);
+const workspaceSettingsId = ref<string | undefined>(undefined);
+const wsNameEdit = ref('');
+const wsColorEdit = ref('');
+const wsError = ref<string | null>(null);
+const membersLoading = ref(false);
+const memberEmail = ref('');
+const memberBusy = ref(false);
+
+// Off the same map the sidebar renders from, so a rename here and the row there cannot
+// disagree — and so an offline open still shows a name, since that map is cache-backed.
+const workspaceSettings = computed(() =>
+  workspaceSettingsId.value ? projects.workspaceById.get(workspaceSettingsId.value) : undefined,
+);
+const workspaceSettingsName = computed(() => workspaceSettings.value?.name ?? '');
+
+// Keyed by WORKSPACE id, and missing entirely before the first read — the `?? []` is
+// load-bearing (noUncheckedIndexedAccess is on).
+const workspaceMembers = computed<WorkspaceMember[]>(() =>
+  workspaceSettingsId.value ? projects.members[workspaceSettingsId.value] ?? [] : [],
+);
+
+const isOwnerOfWorkspace = computed(
+  () => !!workspaceSettingsId.value && projects.isWorkspaceOwner(workspaceSettingsId.value),
+);
+
+// WHICH SEAT IS THE OWNER'S — read off `workspaces.owner_id`, never off
+// `workspace_members.role`. No policy and no security-definer function consults that
+// column: it is descriptive metadata, and the workspaces migration copied across whatever
+// project_members SAID (`set role = excluded.role`), so a backfilled owner whose project
+// role had been rewritten arrives here as 'member'. Deciding from it would badge the owner
+// «учасник» and offer a remove button that workspace_members_delete_owner refuses by
+// matching zero rows — a control that silently does nothing.
+function isWorkspaceOwnerSeat(userId: string): boolean {
+  return !!workspaceSettings.value && workspaceSettings.value.ownerId === userId;
+}
+
+// The FK from projects.workspace_id is `on delete restrict`, so a group still holding
+// projects cannot go. Read off the same array useProjects.removeWorkspace pre-checks, so
+// the button and the store agree about when the delete is possible at all.
+const workspaceHasProjects = computed(() =>
+  projects.projects.some((p) => p.workspaceId === workspaceSettingsId.value),
+);
+
+// The workspace in SCOPE, which is what the header chip opens. Set both by a workspace row
+// click and by selecting a project (orchestrator.selectProject resolves the group), so the
+// chip is there whenever anything in the tree is selected. Undefined for a workspace the
+// cloud list no longer holds — access revoked mid-session — and the chip then disappears
+// rather than opening a modal about a group we cannot name.
+const scopedWorkspace = computed(() =>
+  store.selectedWorkspaceId ? projects.workspaceById.get(store.selectedWorkspaceId) : undefined,
+);
+
+// The chip's tooltip AND its accessible name, one string so they cannot drift. KBtn sets
+// `aria-label` only for `variant="icon"`, and `title` feeds `v-tip`, which lib/tip.ts
+// states is purely presentational and never referenced by the accessibility tree — so a
+// ghost chip's accessible name is its slot text alone, a button called «Бета» that never
+// says it opens anything. The leading «Воркспейс «Бета»» also keeps the visible label
+// inside the accessible name (WCAG 2.5.3 Label in Name), which a voice-control user needs.
+// The VISIBLE text stays the bare name; that is the point of the chip.
+const workspaceChipLabel = computed(
+  () => `Воркспейс «${scopedWorkspace.value?.name ?? ''}»: склад команди й налаштування`,
+);
+
+async function openWorkspaceSettings(id: string): Promise<void> {
+  workspaceSettingsId.value = id;
+  const ws = projects.workspaceById.get(id);
+  wsNameEdit.value = ws?.name ?? '';
+  wsColorEdit.value = ws?.color ?? '';
+  wsError.value = null;
+  memberEmail.value = '';
+  workspaceSettingsOpen.value = true;
+  membersLoading.value = true;
+  try {
+    await projects.loadMembers(id);
+  } catch (e) {
+    // Non-fatal: the roster stays empty and says why, and the name and colour still save.
+    wsError.value = `Не вдалось прочитати учасників: ${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    membersLoading.value = false;
+  }
+}
+
+async function saveWorkspace(): Promise<void> {
+  const id = workspaceSettingsId.value;
+  if (!id) return;
+  wsError.value = null;
+  const name = wsNameEdit.value.trim();
+  if (!name) {
+    wsError.value = 'Назва воркспейсу не може бути порожньою';
+    return;
+  }
+  try {
+    // patchWorkspace replaces the row in the store list and rewrites the tree cache, so
+    // the sidebar row picks the new name and colour up on its own.
+    await projects.patchWorkspace(id, { name, color: wsColorEdit.value });
+    workspaceSettingsOpen.value = false;
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e);
+    // workspaces_update_owner refuses a non-owner by matching zero rows, which surfaces as
+    // NO_ROWS rather than as anything mentioning RLS — so name the real reason. Reachable
+    // despite the disabled Save: ownership can change between the load that drew this
+    // modal and the click.
+    wsError.value = NO_ROWS.test(raw)
+      ? 'Хмара відмовила: змінювати воркспейс може лише його власник'
+      : raw;
+  }
+}
+
+async function deleteWorkspace(): Promise<void> {
+  const id = workspaceSettingsId.value;
+  if (!id) return;
+  const name = workspaceSettingsName.value;
+  if (!window.confirm(`Видалити воркспейс «${name}»? Це не відкотити.`)) return;
+  wsError.value = null;
+  try {
+    // removeWorkspace confirms the delete with a re-read and clears the scope when it was
+    // this group's, so nothing here navigates.
+    await projects.removeWorkspace(id);
+    workspaceSettingsOpen.value = false;
+    store.notify(`Воркспейс «${name}» видалено`);
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e);
+    // ONE of the two refusals arrives already translated: the non-owner delete, which
+    // removeWorkspace detects by re-reading. The other is a courtesy at best —
+    // removeWorkspace's «спершу перенесіть…» pre-check and `workspaceHasProjects` both read
+    // the last cloud list THIS session read, so a project a teammate added since then is
+    // invisible to both: the button renders enabled, the explanatory hint is absent, the
+    // owner is walked through the irreversible confirm, and the `on delete restrict` FK is
+    // what says no — in English. Translate it here. The database is the authority; the
+    // pre-check only saves a round trip when it happens to know.
+    wsError.value = raw.includes('violates foreign key constraint')
+      ? 'Хмара відмовила: у цьому воркспейсі ще є проєкти — спершу перенесіть або видаліть їх'
+      : raw;
+  }
+}
+
+// The refusals a workspace membership write really produces. The first two come from
+// inviteMember / the cloud client, the third from invite_workspace_member's own owner
+// check. Removal needs no branch: a DELETE the policy refuses matches zero rows WITHOUT
+// an error, which removeMemberOf catches by re-reading instead.
+function memberErrorText(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  if (raw.includes('no Kermanych account for')) {
+    return 'Немає акаунта Керманича з такою адресою — попросіть колегу спершу увійти через GitHub';
+  }
+  if (raw.includes('not a valid email address')) {
+    return 'Це не схоже на імейл — запрошуємо за адресою, якою колега входить у Керманич';
+  }
+  if (raw.includes('only the workspace owner can invite')) {
+    return 'Хмара відмовила: запрошувати до воркспейсу може лише його власник';
+  }
+  return raw;
+}
+
+async function submitMember(): Promise<void> {
+  const id = workspaceSettingsId.value;
+  const email = memberEmail.value.trim();
+  if (!id || !email) return;
+  memberBusy.value = true;
+  try {
+    const invited = await projects.inviteMember(id, email);
+    memberEmail.value = '';
+    // Name WHO the address resolved to: the roster lists github handles, so this is the
+    // caller's confirmation that the invite landed on the person they meant.
+    store.notify(
+      `@${invited.profile?.githubUsername ?? email} у воркспейсі «${workspaceSettingsName.value}»`,
+    );
+  } catch (e) {
+    store.notify(memberErrorText(e), 'error', 6000);
+  } finally {
+    memberBusy.value = false;
+  }
+}
+
+async function removeMemberOf(m: WorkspaceMember): Promise<void> {
+  const id = workspaceSettingsId.value;
+  if (!id) return;
+  const who = m.profile?.githubUsername ?? m.userId;
+  if (!window.confirm(`Вилучити @${who} з воркспейсу «${workspaceSettingsName.value}»?`)) return;
+  try {
+    await projects.removeMember(id, m.userId);
+    // A DELETE the owner-only policy refuses does NOT error — it matches zero rows, while
+    // the store has already dropped the row locally. Re-read so the roster cannot show a
+    // removal that never happened.
+    const after = await projects.loadMembers(id);
+    if (after.some((x) => x.userId === m.userId)) {
+      store.notify(
+        'Хмара відмовила: керувати складом воркспейсу може лише його власник',
+        'error',
+        6000,
+      );
+      return;
+    }
+    store.notify(`@${who} вилучено з воркспейсу — разом з усіма його проєктами`);
+  } catch (e) {
+    store.notify(memberErrorText(e), 'error', 6000);
   }
 }
 
@@ -696,91 +1385,63 @@ const conventionsEdit = ref('');
 const previewCommandEdit = ref('');
 const apiCommandEdit = ref('');
 const settingsBranches = ref<string[]>([]);
+// {value,label}, never bare names: two workspaces may legitimately share one, and a
+// name-keyed select would move the project into whichever matched first.
+const workspaceEdit = ref('');
+const workspaceOptions = computed(() =>
+  projects.workspaces.map((w) => ({ value: w.id, label: w.name })),
+);
 
 const deleteOpen = ref(false);
 const deleteError = ref<string | null>(null);
 const deleteBusy = ref(false);
 
-const membersLoading = ref(false);
-const memberEmail = ref('');
-const memberBusy = ref(false);
-
-// `members` is keyed by project id and may be missing entirely before the first read, so the
-// `?? []` is load-bearing (noUncheckedIndexedAccess is on).
-const members = computed<ProjectMember[]>(() =>
-  store.selectedProjectId ? projects.members[store.selectedProjectId] ?? [] : [],
-);
-
-// UX only. Every owner-only path (project config, env-key names, removing a member) is
-// enforced by the owner-scoped RLS policies; this just keeps the UI from offering a write
-// that Postgres will refuse. Inviting is NOT owner-only — any member may.
+// UX only, and now for exactly ONE control: «Видалити проєкт». Per the approved role
+// matrix any workspace member edits project config — name, colour, default branch,
+// conventions, both preview commands, carry files and the env key NAMES — and
+// projects_update_member is what permits it. Deleting stays owner-only
+// (projects_delete_owner), and the answer resolves through the project's WORKSPACE:
+// ownership lives there now, not on the project row.
 const isOwnerOfSelected = computed(
   () => !!store.selectedProjectId && projects.isOwner(store.selectedProjectId),
+);
+
+// IS THE SELECTED PROJECT IN THE CLOUD AT ALL? A «поза хмарою» local row — created before
+// the team cloud existed, or while Supabase was unreachable — is selectable: the sidebar
+// renders it in the local-only bucket and the header gear opens this modal for it.
+// `isOwnerOfSelected` used to make Save inert for such a row BY ACCIDENT, since it resolves
+// through `byId`, which is built from the cloud list and holds no entry for one. Dropping
+// the owner gate dropped that accident with it, so the state needs a gate of its own —
+// otherwise Save fires a patch whose `.eq('id', id) … single()` matches no row, and the
+// operator reads a Postgres coercion string. Only the CLOUD-writing controls are gated:
+// «Опублікувати в хмарі» on the board is the way out, and the folder binding and the `.env`
+// VALUES are this machine's business and have always worked without a cloud row.
+const isInCloud = computed(
+  () => !!store.selectedProjectId && projects.byId.has(store.selectedProjectId),
+);
+
+// The hint behind that disabled Save has to name the RIGHT reason, because `isInCloud` is
+// false in TWO states that are not the same sentence: a project we KNOW is local-only (a
+// cloud list was read and it is not in it), and a cloud list we have not read yet or failed
+// to read. `hasCloudList` separates them — the same signal, for the same reason, that the
+// sidebar's own bucket label turns on: a claim about where a project lives must never
+// outrun what we actually checked. Only the first state has a way out to offer.
+const noCloudRowHint = computed(() =>
+  hasCloudList.value
+    ? 'Цей проєкт існує лише на цій машині, тому спільні налаштування нікуди зберігати. Опублікуйте його в хмарі на дошці — прив’язка теки й «Змінні середовища» доступні й без цього.'
+    : 'Хмара ще не відповіла, тому спільні налаштування зберігати нікуди. Прив’язка теки й «Змінні середовища» — ваші, для цієї машини, і працюють без неї.',
+);
+
+const noCloudKeysHint = computed(() =>
+  hasCloudList.value
+    ? 'Перелік обовʼязкових ключів живе у хмарі, а цей проєкт існує лише на цій машині.'
+    : 'Перелік обовʼязкових ключів живе у хмарі, а зв’язку з нею ще немає.',
 );
 
 // Both separators are accepted, but only the multiline env-keys textarea can actually receive
 // a newline; the single-line carry-files input strips them, so its label promises commas only.
 function parseList(text: string): string[] {
   return text.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
-}
-
-// The refusals a membership write really produces. The first three come from
-// invite_project_member / the cloud client, the fourth from the owner-only DELETE policy.
-// Everything else is shown verbatim.
-function memberErrorText(e: unknown): string {
-  const raw = e instanceof Error ? e.message : String(e);
-  if (raw.includes('no Kermanych account for')) {
-    return 'Немає акаунта Керманича з такою адресою — попросіть колегу спершу увійти через GitHub';
-  }
-  if (raw.includes('not a valid email address')) {
-    return 'Це не схоже на імейл — запрошуємо за адресою, якою колега входить у Керманич';
-  }
-  if (raw.includes('only a project member can invite')) {
-    return 'Хмара відмовила: запрошувати може лише учасник проєкту';
-  }
-  if (raw.includes('violates row-level security policy')) {
-    return 'Хмара відмовила: вилучати учасників може лише власник проєкту';
-  }
-  return raw;
-}
-
-async function submitMember(): Promise<void> {
-  const id = store.selectedProjectId;
-  const email = memberEmail.value.trim();
-  if (!id || !email) return;
-  memberBusy.value = true;
-  try {
-    const invited = await projects.inviteMember(id, email);
-    memberEmail.value = '';
-    // Name WHO the address resolved to: the panel lists github handles, so this is the
-    // caller's confirmation that the invite landed on the person they meant.
-    store.notify(`@${invited.profile?.githubUsername ?? email} у проєкті`);
-  } catch (e) {
-    store.notify(memberErrorText(e), 'error', 6000);
-  } finally {
-    memberBusy.value = false;
-  }
-}
-
-async function removeMemberOf(m: ProjectMember): Promise<void> {
-  const id = store.selectedProjectId;
-  if (!id) return;
-  const who = m.profile?.githubUsername ?? m.userId;
-  if (!window.confirm(`Вилучити @${who} з проєкту «${selectedName.value}»?`)) return;
-  try {
-    await projects.removeMember(id, m.userId);
-    // A DELETE the owner-only policy refuses does NOT error — it matches zero rows, while the
-    // store has already dropped the row locally. Re-read so the panel cannot show a removal
-    // that never happened.
-    const after = await projects.loadMembers(id);
-    if (after.some((x) => x.userId === m.userId)) {
-      store.notify('Хмара відмовила: керувати складом учасників може лише власник проєкту', 'error', 6000);
-      return;
-    }
-    store.notify(`@${who} вилучено з проєкту`);
-  } catch (e) {
-    store.notify(memberErrorText(e), 'error', 6000);
-  }
 }
 
 const envOpen = ref(false);
@@ -811,6 +1472,7 @@ async function openSettings(): Promise<void> {
   const row = selectedProject.value;
   settingsError.value = null;
   nameEdit.value = cloud?.name ?? row?.name ?? '';
+  workspaceEdit.value = cloud?.workspaceId ?? '';
   colorEdit.value = cloud?.color ?? row?.color ?? '';
   defaultBranchEdit.value = cloud?.defaultBranch ?? row?.defaultBranch ?? '';
   conventionsEdit.value = cloud?.conventions ?? row?.conventions ?? '';
@@ -821,16 +1483,6 @@ async function openSettings(): Promise<void> {
   carryFilesText.value = (cloud?.carryFiles ?? row?.carryFiles ?? ['.env']).join(', ');
   settingsBranches.value = [];
   settingsOpen.value = true;
-  memberEmail.value = '';
-  membersLoading.value = true;
-  try {
-    await projects.loadMembers(id);
-  } catch (e) {
-    // Non-fatal: the panel stays empty and says why. Config editing still works.
-    store.notify(`Не вдалось прочитати учасників: ${e instanceof Error ? e.message : String(e)}`, 'error');
-  } finally {
-    membersLoading.value = false;
-  }
   // GET /projects/:id/branches answers `project not bound` without a binding, so do not ask.
   if (!isBound.value) return;
   try {
@@ -849,11 +1501,11 @@ async function saveSettings(): Promise<void> {
     settingsError.value = 'Назва проєкту не може бути порожньою';
     return;
   }
-  if (!isOwnerOfSelected.value) {
-    settingsError.value = 'Змінювати налаштування проєкту може лише власник';
-    return;
-  }
   const carryFiles = parseList(carryFilesText.value);
+  // Sent only when it CHANGED. Re-sending the current workspace_id would pass WITH CHECK
+  // anyway, but it would also make every unrelated config save depend on the move policy —
+  // and it is what tells the catch below which refusal to expect.
+  const moved = !!workspaceEdit.value && workspaceEdit.value !== selectedCloud.value?.workspaceId;
   try {
     // CLOUD first (design D1: it is the source of truth for config), and patch() then mirrors
     // the returned row into the local registry via api.syncProjects([updated], false) — so the
@@ -868,12 +1520,36 @@ async function saveSettings(): Promise<void> {
       apiCommand: apiCommandEdit.value,
       // Never store an empty carry list: the launch path would copy nothing into the worktree.
       carryFiles: carryFiles.length ? carryFiles : ['.env'],
+      ...(moved ? { workspaceId: workspaceEdit.value } : {}),
     });
     settingsOpen.value = false;
   } catch (e) {
-    // We believed this write was allowed, so the raw message is the useful part: an expired
-    // session, an unreachable cloud, or ownership that changed under us.
-    settingsError.value = `Хмара відмовила у записі: ${e instanceof Error ? e.message : String(e)}`;
+    const raw = e instanceof Error ? e.message : String(e);
+    // We believed this write was allowed, so the raw message is usually the useful part: an
+    // expired session, or an unreachable cloud. The one exception is membership lost under
+    // us, which projects_update_member refuses by matching zero rows — postgrest's wording,
+    // not RLS's, and nothing an operator can act on.
+    //
+    // A save that also MOVES has a second refusal on top of that: the destination fails
+    // WITH CHECK and raises 42501, which no other write on this modal can produce and which
+    // the «ви більше не учасник» wording would misname. Same sentence as the drag's.
+    if (moved && isMoveRefusal(raw)) {
+      settingsError.value = MOVE_REFUSAL;
+      // The write was refused, so nothing moved; re-read so the tree cannot keep showing
+      // a membership the server has already taken away.
+      await projects.load();
+      // That refetch has just removed the destination from `workspaceOptions` — in the
+      // 42501 case it is a workspace this user does not belong to — while `workspaceEdit`
+      // still holds its uuid. KSelect deliberately keeps a value it was never offered so a
+      // stale selection still renders, which here would put a bare uuid beside a Ukrainian
+      // refusal and let a second Save re-attempt the same doomed move. KSelect is doing its
+      // job; the caller owes it the truth afterwards.
+      workspaceEdit.value = selectedCloud.value?.workspaceId ?? '';
+    } else if (NO_ROWS.test(raw)) {
+      settingsError.value = 'Хмара відмовила: ви більше не учасник воркспейсу цього проєкту';
+    } else {
+      settingsError.value = `Хмара відмовила у записі: ${raw}`;
+    }
   }
 }
 
@@ -939,16 +1615,26 @@ async function saveEnv(): Promise<void> {
     if (edits && (Object.keys(edits.set).length || edits.remove.length)) {
       await store.saveEnv(id, edits);
     }
-    // NAMES: the cloud checklist, owner-only. Sent only when the owner actually changed it, so
-    // a member saving values never attempts a project write it cannot make.
-    if (isOwnerOfSelected.value) {
+    // NAMES: cloud config, and any workspace member may edit it now (the role matrix).
+    // Skipped entirely for a project that is not in the cloud — there is no row to patch,
+    // and attempting one would throw AFTER the local values above had landed, leaving a
+    // half-applied save behind a modal that will not close. The field is hidden in that
+    // state for the same reason. Otherwise sent only when the list actually changed: an
+    // unchanged list is a project write worth not making.
+    if (isInCloud.value) {
       const next = parseList(envKeysText.value);
       const current = selectedCloud.value?.envKeys ?? [];
       if (next.join('\n') !== current.join('\n')) await projects.patch(id, { envKeys: next });
     }
     envOpen.value = false;
   } catch (e) {
-    envError.value = e instanceof Error ? e.message : String(e);
+    const raw = e instanceof Error ? e.message : String(e);
+    // The local VALUES are written first, so a refusal from the key-names patch leaves them
+    // saved while the modal stays open. Say which half landed rather than let the operator
+    // guess — that ambiguity is the whole cost of the ordering.
+    envError.value = NO_ROWS.test(raw)
+      ? 'Значення збережено на цій машині, але перелік ключів у хмарі — ні: ви більше не учасник воркспейсу цього проєкту'
+      : raw;
   }
 }
 
@@ -1095,6 +1781,25 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
 .shell--min :deep(.k-rail__initials) {
   display: flex;
 }
+// The tree collapses to the icon strip like the rail always did: the workspace row keeps
+// its colour dot as the group's marker and drops the name, the chevron and the «+» — a
+// 76px column has no room for three controls, and the group cannot be folded or added to
+// from a strip that cannot show which group it is. Because the chevron goes, isExpanded()
+// ignores the folded set while `shell--min` is on: hiding the only control that unfolds a
+// group while still honouring the fold would leave its projects unreachable.
+.shell--min :deep(.k-ws__name),
+.shell--min :deep(.k-ws__count),
+.shell--min :deep(.k-ws__chevron),
+.shell--min :deep(.k-ws__add) {
+  display: none;
+}
+.shell--min :deep(.k-ws__body) {
+  justify-content: center;
+}
+.shell--min :deep(.k-rail--indent) {
+  margin-left: 0;
+  width: 100%;
+}
 
 .shell__buckets {
   display: flex;
@@ -1111,7 +1816,20 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   color: var(--k-faint);
 }
 
-.shell__projects {
+// Both levels are real <ul>s now (the grouping semantics), so both need the list chrome
+// reset — markers, indent, margins — before the flex column that actually lays them out.
+.shell__projects,
+.shell__group-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+// A group is the header plus its children; the gap between GROUPS is the parent list's.
+.shell__group {
   display: flex;
   flex-direction: column;
   gap: var(--k-sp-1);
@@ -1132,6 +1850,13 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+// The local-only bucket's heading. It sits INSIDE the tree rather than above it, so it is
+// quieter than «Воркспейси» and closer to what it labels.
+.shell__side-label--sub {
+  margin-top: 10px;
+  opacity: 0.75;
 }
 
 .shell__label-add {
@@ -1276,6 +2001,16 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
+}
+
+// The header cluster is fixed in practice; an arbitrary workspace name is not. The
+// ellipsis sits on a span rather than on the button because KBtn is an inline-flex
+// container and text-overflow does not apply to an anonymous flex item.
+.shell__ws-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .shell__form {

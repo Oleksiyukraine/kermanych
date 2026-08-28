@@ -40,7 +40,8 @@ function make() {
 function cloudProject(id: string, over: Partial<CloudProject> = {}): CloudProject {
   return {
     id, name: `cloud ${id}`, carryFiles: [".env"], envKeys: [],
-    ownerId: "owner-1", createdAt: "2026-08-21T00:00:00.000Z", ...over,
+    workspaceId: "00000000-0000-4000-8000-000000000ws1",
+    createdAt: "2026-08-21T00:00:00.000Z", ...over,
   };
 }
 

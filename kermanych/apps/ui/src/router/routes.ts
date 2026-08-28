@@ -30,7 +30,7 @@ const routes: RouteRecordRaw[] = [
 
   // Where the browser OAuth redirect lands (redirectTo in stores/auth.ts) and
   // where the desktop flow is parked while exchangeCodeForSession runs. It only
-  // waits: the `auth.user` watcher in router/index.ts moves on to the workspace
+  // waits: the `auth.user` watcher in router/index.ts moves on to the Агенти view
   // the moment the session exists.
   {
     path: '/auth/callback',
@@ -45,7 +45,7 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     component: () => import('layouts/MainLayout.vue'),
     children: [
-      { path: '', name: 'workspace', component: () => import('pages/WorkspacePage.vue'), meta: { public: false } },
+      { path: '', name: 'agents', component: () => import('pages/AgentsPage.vue'), meta: { public: false } },
       { path: 'board', name: 'board', component: () => import('pages/BoardPage.vue'), meta: { public: false } },
       { path: 'kit', name: 'kit', component: () => import('pages/KitGalleryPage.vue'), meta: { public: false } },
       { path: 'chat', name: 'chat', component: () => import('pages/ChatPage.vue'), meta: { public: false } },

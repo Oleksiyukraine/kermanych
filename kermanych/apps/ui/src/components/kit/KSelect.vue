@@ -8,10 +8,17 @@
       @change="onChange"
     >
       <option v-if="placeholder !== undefined" value="">{{ placeholder }}</option>
-      <option v-for="opt in mergedOptions" :key="opt" :value="opt">{{ opt }}</option>
+      <option v-for="opt in mergedOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
     </select>
   </label>
 </template>
+
+<script lang="ts">
+// An option is either a bare string (label === value) or a {value,label} pair. The pair
+// form exists because a filter keyed by NAME breaks on duplicates, and duplicate names —
+// two workspaces called «Робота», two projects called «api» — are entirely plausible.
+export type KSelectOption = { value: string; label: string };
+</script>
 
 <script setup lang="ts">
 import { computed } from 'vue';
@@ -21,16 +28,25 @@ import { computed } from 'vue';
 const props = defineProps<{
   label?: string;
   modelValue?: string;
-  options: string[];
+  options: string[] | KSelectOption[];
   placeholder?: string;
   disabled?: boolean;
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 
-const mergedOptions = computed(() => {
+const normalized = computed<KSelectOption[]>(() =>
+  props.options.map((o) => (typeof o === 'string' ? { value: o, label: o } : o)),
+);
+
+// A value the caller never offered still gets an option of its own — a membership that has
+// not loaded yet, a workspace someone else just deleted. Without it the <select> would fall
+// back to its first entry and silently rewrite the model. The label is the raw value: there
+// is nothing better to show for an id nobody can resolve.
+const mergedOptions = computed<KSelectOption[]>(() => {
   const v = props.modelValue;
-  return v && !props.options.includes(v) ? [v, ...props.options] : props.options;
+  if (!v || normalized.value.some((o) => o.value === v)) return normalized.value;
+  return [{ value: v, label: v }, ...normalized.value];
 });
 
 function onChange(e: Event) {

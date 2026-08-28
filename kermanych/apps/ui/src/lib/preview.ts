@@ -5,7 +5,7 @@
 // api next to it (apps/api/src/preview/preview.service.ts).
 //
 // That api admits every request as a demo user, so the preview signs itself in: it renders
-// the workspace instead of a login screen nobody could get past anyway (the GitHub OAuth
+// the Агенти view instead of a login screen nobody could get past anyway (the GitHub OAuth
 // redirect points at the real app, never at this run's random port). It also has no cloud —
 // a temp DB seeded with inert rows, bound to no Supabase project — so the cloud reads that
 // normally run on open are skipped rather than left to fail against the team's backend.

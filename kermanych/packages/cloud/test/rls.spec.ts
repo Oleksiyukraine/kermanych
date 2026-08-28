@@ -13,11 +13,11 @@
 //
 // Sign-in is open, so no handle needs pre-seeding: makeUser mints users straight
 // through the admin API — the same provisioning path GitHub OAuth drives.
-import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
-import { createProject } from "../src/projects";
+import { createProject, listProjects, patchProject } from "../src/projects";
 import { deleteProjectSkill, listProjectSkills, upsertProjectSkill } from "../src/skills";
+import { listMembers } from "../src/workspaces";
 
 const URL = process.env.SUPABASE_TEST_URL;
 const ANON = process.env.SUPABASE_TEST_ANON_KEY;
@@ -37,6 +37,7 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
   let member: TestUser;
   let outsider: TestUser;
   let projectId: string;
+  let workspaceId: string;
   let taskId: string;
 
   async function makeUser(tag: string): Promise<TestUser> {
@@ -72,9 +73,41 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     member = await makeUser("member");
     outsider = await makeUser("outsider");
 
+    const workspace = await owner.client
+      .from("workspaces")
+      .insert({ name: "rls-ws", owner_id: owner.id })
+      .select()
+      .single();
+    if (workspace.error) throw workspace.error;
+    workspaceId = workspace.data.id as string;
+
+    // `member` joins the workspace in the fixture rather than in a test: the
+    // project-level invite test that used to grant this access is gone with
+    // invite_project_member, and the workspace-level one runs after the task tests
+    // that need `member` to reach the board.
+    //
+    // Upper-cased on purpose, and the only upper-cased address in the file: auth stores
+    // it lower-cased, so `lower(u.email) = norm` inside the rpc is what makes a teammate
+    // typing a colleague's address from memory resolve. Being the FIRST invite, this is
+    // also the one call site that reaches the rpc's `returning * into membership` branch
+    // — every later one finds the row already there and exercises the `do nothing`
+    // re-select fallback instead — so the returned row is checked here, not just the
+    // error.
+    const seatedMember = await owner.client.rpc("invite_workspace_member", {
+      p_workspace_id: workspaceId,
+      p_email: member.email.toUpperCase(),
+    });
+    if (seatedMember.error) throw seatedMember.error;
+    const seatedRow = seatedMember.data as { user_id: string; role: string } | null;
+    if (seatedRow?.user_id !== member.id || seatedRow.role !== "member") {
+      throw new Error(
+        `invite_workspace_member seated ${JSON.stringify(seatedRow)}, expected ${member.id} as 'member'`,
+      );
+    }
+
     const project = await owner.client
       .from("projects")
-      .insert({ name: "rls-suite", owner_id: owner.id })
+      .insert({ name: "rls-suite", workspace_id: workspaceId })
       .select()
       .single();
     if (project.error) throw project.error;
@@ -116,74 +149,29 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(data?.github_username).toMatch(/^newcomer-/);
   });
 
-  it("handle_new_project inserts the creator as owner-member", async () => {
-    const { data, error } = await owner.client
-      .from("project_members")
-      .select("user_id, role")
-      .eq("project_id", projectId);
-    expect(error).toBeNull();
-    expect(data).toEqual([{ user_id: owner.id, role: "owner" }]);
-  });
-
-  // Publishing a project that already exists on one machine. `projects_insert_own` checks
-  // only `owner_id`, so the client may supply the id — which is the whole mechanism: the
-  // local registry's uuid becomes the cloud project's uuid, so the binding, the sessions and
-  // their worktrees stay attached instead of being stranded next to a freshly minted row.
-  // Proven through createProject(), because the payload shape is the thing under test.
-  it("createProject adopts a client-supplied id, and tasks can then be created on it", async () => {
-    const publisher = await makeUser("publisher");
-    const localId = randomUUID();
-
-    const published = await createProject(publisher.client, {
-      id: localId,
-      name: "published-from-local",
-      ownerId: publisher.id,
-      carryFiles: [".env", ".env.local"],
-      color: "#ff563c",
-      previewCommand: "pnpm dev",
-      defaultBranch: "dev",
-      conventions: "   ",
-    });
-
-    expect(published.id).toBe(localId);
-    expect(published).toMatchObject({
-      name: "published-from-local",
-      ownerId: publisher.id,
-      carryFiles: [".env", ".env.local"],
-      color: "#ff563c",
-      previewCommand: "pnpm dev",
-      defaultBranch: "dev",
-    });
-    // A blank string clears the column, so an untouched local field is absent, not "".
-    expect(published.conventions).toBeUndefined();
-
-    // The owner-membership row the trigger writes is what makes the board usable: it is the
-    // predicate tasks_insert_member checks, and «Нова задача» being grey was the absence of
-    // exactly this.
-    const members = await publisher.client
-      .from("project_members")
-      .select("user_id, role")
-      .eq("project_id", localId);
-    expect(members.data).toEqual([{ user_id: publisher.id, role: "owner" }]);
-
-    const task = await publisher.client
-      .from("tasks")
-      .insert({ project_id: localId, title: "first cloud task", created_by: publisher.id })
-      .select("id, project_id")
-      .single();
-    expect(task.error).toBeNull();
-    expect(task.data?.project_id).toBe(localId);
-  });
-
   // Re-publishing a project whose cloud row exists but is invisible to this user (membership
   // revoked, or a teammate published it first). The UI turns this specific refusal into
   // «попросіть власника додати вас», so it must stay a primary-key collision and not, say, a
   // silent no-op that would look like success.
   it("publishing an id that already exists in the cloud is refused as a duplicate key", async () => {
     const stranger = await makeUser("stranger");
-    await expect(
-      createProject(stranger.client, { id: projectId, name: "hijack", ownerId: stranger.id }),
-    ).rejects.toThrow(/duplicate key/);
+    const strangerWs = await stranger.client
+      .from("workspaces")
+      .insert({ name: "stranger-ws", owner_id: stranger.id })
+      .select("id")
+      .single();
+    if (strangerWs.error) throw strangerWs.error;
+
+    // A direct insert, not createProject(): the payload builder is TypeScript's concern,
+    // while the property under test — the database refusing a duplicate project id — is
+    // the database's alone. WITH CHECK is evaluated before the index insert, so a
+    // workspace the stranger genuinely owns is what lets the collision be the answer.
+    const hijack = await stranger.client
+      .from("projects")
+      .insert({ id: projectId, name: "hijack", workspace_id: strangerWs.data.id })
+      .select("id")
+      .single();
+    expect(hijack.error?.message).toMatch(/duplicate key/);
   });
 
   it("a non-member sees zero projects and zero tasks", async () => {
@@ -191,9 +179,15 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(projects.error).toBeNull();
     expect(projects.data).toEqual([]);
 
-    const tasks = await outsider.client.from("tasks").select("id").eq("project_id", projectId);
-    expect(tasks.error).toBeNull();
-    expect(tasks.data).toEqual([]);
+    // Keyed both ways deliberately: `project_id` proves the whole card wall is invisible,
+    // and `id` proves that knowing a task's id is not a way around that.
+    const byProject = await outsider.client.from("tasks").select("id").eq("project_id", projectId);
+    expect(byProject.error).toBeNull();
+    expect(byProject.data).toEqual([]);
+
+    const byId = await outsider.client.from("tasks").select("id").eq("id", taskId);
+    expect(byId.error).toBeNull();
+    expect(byId.data).toEqual([]);
   });
 
   it("the anon key with no session sees nothing", async () => {
@@ -205,81 +199,117 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(error ? [] : data).toEqual([]);
   });
 
-  // `project_members` has NO insert policy since 20260823130000: the invite rpc is the only
-  // path in. Not even the owner may hand-write a row, so nobody can forge `role='owner'` or
-  // a `user_id` that never agreed to anything.
-  it("nobody can insert a project member directly, not even the owner", async () => {
-    const outsiderTry = await outsider.client
-      .from("project_members")
-      .insert({ project_id: projectId, user_id: outsider.id, role: "member" });
-    expect(outsiderTry.error?.code).toBe("42501");
-
-    const ownerTry = await owner.client
-      .from("project_members")
-      .insert({ project_id: projectId, user_id: member.id, role: "member" });
-    expect(ownerTry.error?.code).toBe("42501");
-  });
-
-  it("a non-member cannot invite anyone", async () => {
-    const { error } = await outsider.client.rpc("invite_project_member", {
-      p_project_id: projectId,
-      p_email: outsider.email,
-    });
-    expect(error?.message).toContain("only a project member can invite");
-  });
-
-  it("an email with no Kermanych account is refused", async () => {
-    const { error } = await owner.client.rpc("invite_project_member", {
-      p_project_id: projectId,
-      p_email: "ghost@kermanych.test",
-    });
-    expect(error?.message).toContain("no Kermanych account");
-  });
-
-  it("an invite by email adds the member, who then sees the project's tasks", async () => {
-    // Upper-cased on purpose: auth stores the address lower-cased, and a teammate typing it
-    // from memory must still resolve.
-    const invited = await owner.client.rpc("invite_project_member", {
-      p_project_id: projectId,
-      p_email: member.email.toUpperCase(),
-    });
-    expect(invited.error).toBeNull();
-    expect(invited.data).toMatchObject({ project_id: projectId, user_id: member.id, role: "member" });
-
-    const tasks = await member.client.from("tasks").select("id").eq("project_id", projectId);
-    expect(tasks.error).toBeNull();
-    expect(tasks.data?.map((t) => t.id)).toEqual([taskId]);
-  });
-
-  // The requirement in one test: whoever is already on the project may bring someone in.
-  // `member` was invited by the owner above and holds no ownership of anything.
-  it("a plain member can invite another member", async () => {
-    const newcomer = await makeUser("invited-by-member");
-    const { error } = await member.client.rpc("invite_project_member", {
-      p_project_id: projectId,
-      p_email: newcomer.email,
-    });
-    expect(error).toBeNull();
-
-    const projects = await newcomer.client.from("projects").select("id").eq("id", projectId);
+  // The whole point of the wrapper: a workspace member reaches a project they were
+  // never a "project member" of, because that concept no longer exists.
+  it("a workspace member sees the workspace's projects and their tasks", async () => {
+    const projects = await member.client.from("projects").select("id").eq("id", projectId);
     expect(projects.error).toBeNull();
-    expect(projects.data?.map((p) => p.id)).toEqual([projectId]);
+    expect(projects.data).toHaveLength(1);
+
+    const tasks = await member.client.from("tasks").select("id").eq("id", taskId);
+    expect(tasks.error).toBeNull();
+    expect(tasks.data).toHaveLength(1);
   });
 
-  it("re-inviting an existing member returns the same row instead of failing", async () => {
-    const again = await owner.client.rpc("invite_project_member", {
-      p_project_id: projectId,
+  // USING sees the OLD row and WITH CHECK the NEW one, so one update policy demands
+  // membership of BOTH workspaces. No rpc needed.
+  it("moving a project requires membership of the source AND the destination", async () => {
+    const foreign = await outsider.client
+      .from("workspaces")
+      .insert({ name: "foreign-ws", owner_id: outsider.id })
+      .select("id")
+      .single();
+    if (foreign.error) throw foreign.error;
+
+    // The two refusals are NOT the same error, and this is verified Postgres 17
+    // behaviour, not a guess: WITH CHECK is evaluated against the NEW row and
+    // RAISES on violation, while USING simply does not match the OLD row.
+    //
+    // Member of the source only -> the destination fails WITH CHECK -> 42501
+    // "new row violates row-level security policy for table \"projects\"".
+    const pushOut = await member.client
+      .from("projects")
+      .update({ workspace_id: foreign.data.id })
+      .eq("id", projectId)
+      .select("id")
+      .single();
+    expect(pushOut.error?.code).toBe("42501");
+    expect(pushOut.error?.message).toMatch(/violates row-level security policy/);
+
+    // Non-member of the source -> USING never matches the row, so zero rows come
+    // back WITHOUT a Postgres error and `.single()` reports PGRST116.
+    const pullOut = await outsider.client
+      .from("projects")
+      .update({ workspace_id: foreign.data.id })
+      .eq("id", projectId)
+      .select("id")
+      .single();
+    expect(pullOut.error?.code).toBe("PGRST116");
+
+    // Owner invites the outsider to a shared destination, then the move lands.
+    const shared = await owner.client
+      .from("workspaces")
+      .insert({ name: "shared-ws", owner_id: owner.id })
+      .select("id")
+      .single();
+    if (shared.error) throw shared.error;
+    const invited = await owner.client.rpc("invite_workspace_member", {
+      p_workspace_id: shared.data.id,
       p_email: member.email,
     });
-    expect(again.error).toBeNull();
-    expect(again.data).toMatchObject({ user_id: member.id, role: "member" });
+    expect(invited.error).toBeNull();
 
-    const rows = await owner.client
-      .from("project_members")
-      .select("user_id")
-      .eq("project_id", projectId)
-      .eq("user_id", member.id);
-    expect(rows.data).toHaveLength(1);
+    const moved = await member.client
+      .from("projects")
+      .update({ workspace_id: shared.data.id })
+      .eq("id", projectId)
+      .select("workspace_id")
+      .single();
+    expect(moved.error).toBeNull();
+    expect(moved.data?.workspace_id).toBe(shared.data.id);
+
+    // Put it back so later tests keep their fixture.
+    const back = await owner.client
+      .from("projects")
+      .update({ workspace_id: workspaceId })
+      .eq("id", projectId)
+      .select("workspace_id")
+      .single();
+    expect(back.error).toBeNull();
+  });
+
+  it("only the workspace owner may delete a project", async () => {
+    const doomed = await member.client
+      .from("projects")
+      .insert({ name: "doomed", workspace_id: workspaceId })
+      .select("id")
+      .single();
+    if (doomed.error) throw doomed.error;
+
+    // A refused DELETE matches zero rows WITHOUT an error, so confirm by re-reading.
+    await member.client.from("projects").delete().eq("id", doomed.data.id);
+    const survived = await owner.client.from("projects").select("id").eq("id", doomed.data.id);
+    expect(survived.data).toHaveLength(1);
+
+    await owner.client.from("projects").delete().eq("id", doomed.data.id);
+    const gone = await owner.client.from("projects").select("id").eq("id", doomed.data.id);
+    expect(gone.data).toEqual([]);
+  });
+
+  it("a workspace holding projects cannot be deleted", async () => {
+    await owner.client.from("workspaces").delete().eq("id", workspaceId);
+    const survived = await owner.client.from("workspaces").select("id").eq("id", workspaceId);
+    expect(survived.data).toHaveLength(1);
+
+    const empty = await owner.client
+      .from("workspaces")
+      .insert({ name: "empty-ws", owner_id: owner.id })
+      .select("id")
+      .single();
+    if (empty.error) throw empty.error;
+    await owner.client.from("workspaces").delete().eq("id", empty.data.id);
+    const emptyGone = await owner.client.from("workspaces").select("id").eq("id", empty.data.id);
+    expect(emptyGone.data).toEqual([]);
   });
 
   it("a non-assignee cannot change a task's status", async () => {
@@ -318,7 +348,11 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
   // assignee is `member` — exactly the shape of a card whose machine crashed: there is no
   // heartbeat, so nothing will ever move it, and the two tests above prove it can neither
   // be reassigned nor deleted in that state.
-  it("the project owner can force a stuck active task to stopped", async () => {
+  //
+  // What Task 2 changed here: the hatch resolves the owner through
+  // projects.workspace_id -> workspaces.owner_id instead of projects.owner_id, because a
+  // project no longer has an owner of its own. `owner` holds the workspace.
+  it("the workspace owner can force a stuck active task to stopped", async () => {
     const forced = await owner.client.from("tasks").update({ status: "stopped" }).eq("id", taskId);
     expect(forced.error).toBeNull();
 
@@ -328,7 +362,7 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
 
   // 'stopped' and nothing else: the escape hatch must not become a way for an owner to
   // drive someone else's task around the board.
-  it("the project owner cannot force any status other than stopped", async () => {
+  it("the workspace owner cannot force any status other than stopped", async () => {
     const restarted = await owner.client
       .from("tasks")
       .update({ status: "thinking" })
@@ -337,6 +371,32 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
 
     const finished = await owner.client.from("tasks").update({ status: "done" }).eq("id", taskId);
     expect(finished.error?.message).toContain("only the assignee can change status");
+  });
+
+  // The hatch is the workspace OWNER's, not any member's. Roles are inverted here on
+  // purpose: `owner` is the assignee, so they may legitimately start the task, which
+  // leaves `member` as a workspace member who is neither assignee nor owner — the exact
+  // actor tasks_guard must refuse.
+  it("a plain workspace member cannot force-stop someone else's active task", async () => {
+    const theirs = await owner.client
+      .from("tasks")
+      .insert({ project_id: projectId, title: "owned by owner", created_by: owner.id, assignee_id: owner.id })
+      .select("id")
+      .single();
+    if (theirs.error) throw theirs.error;
+
+    const started = await owner.client.from("tasks").update({ status: "thinking" }).eq("id", theirs.data.id);
+    expect(started.error).toBeNull();
+
+    const memberTry = await member.client
+      .from("tasks")
+      .update({ status: "stopped" })
+      .eq("id", theirs.data.id);
+    expect(memberTry.error?.message).toMatch(/only the assignee can change status/);
+
+    // Leave nothing active behind: the assignee stops their own task.
+    const cleared = await owner.client.from("tasks").update({ status: "stopped" }).eq("id", theirs.data.id);
+    expect(cleared.error).toBeNull();
   });
 
   it("a finished task can be deleted", async () => {
@@ -414,5 +474,233 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
   it("the owner's delete removes the skill", async () => {
     await expect(deleteProjectSkill(owner.client, projectId, "opening-a-pr")).resolves.toBeUndefined();
     expect(await listProjectSkills(owner.client, [projectId])).toEqual([]);
+  });
+
+  // handle_new_workspace() is the mirror of the retired handle_new_project(): the
+  // creator is owner AND first member in one round trip.
+  it("handle_new_workspace inserts the owner's membership row", async () => {
+    const { data, error } = await owner.client
+      .from("workspace_members")
+      .select("workspace_id, user_id, role")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", owner.id)
+      .single();
+    expect(error).toBeNull();
+    expect(data?.role).toBe("owner");
+  });
+
+  // The `owner_id = auth.uid() or` disjunct in workspaces_select_member is
+  // load-bearing: INSERT … RETURNING evaluates the SELECT policy for the new row
+  // BEFORE the AFTER-INSERT trigger has written the membership row.
+  it("createWorkspace().select() returns the row it just inserted", async () => {
+    const fresh = await owner.client
+      .from("workspaces")
+      .insert({ name: "returning-check", owner_id: owner.id })
+      .select("id, name")
+      .single();
+    expect(fresh.error).toBeNull();
+    expect(fresh.data?.name).toBe("returning-check");
+  });
+
+  it("a non-member sees no workspaces", async () => {
+    const { data, error } = await outsider.client
+      .from("workspaces")
+      .select("id")
+      .eq("id", workspaceId);
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+  });
+
+  // No INSERT policy AND no INSERT grant: the rpc and the trigger are the only
+  // writers, so nobody can forge a row with role='owner' or a user_id that never
+  // agreed to anything.
+  it("nobody can insert a workspace member directly, not even the owner", async () => {
+    const ownerTry = await owner.client
+      .from("workspace_members")
+      .insert({ workspace_id: workspaceId, user_id: member.id, role: "member" });
+    expect(ownerTry.error?.code).toBe("42501");
+
+    const outsiderTry = await outsider.client
+      .from("workspace_members")
+      .insert({ workspace_id: workspaceId, user_id: outsider.id, role: "member" });
+    expect(outsiderTry.error?.code).toBe("42501");
+  });
+
+  it("invite_workspace_member refuses an email with no account", async () => {
+    const { error } = await owner.client.rpc("invite_workspace_member", {
+      p_workspace_id: workspaceId,
+      p_email: "nobody@kermanych.test",
+    });
+    expect(error?.message).toMatch(/no Kermanych account/);
+  });
+
+  it("invite_workspace_member refuses a blank address before looking anything up", async () => {
+    const { error } = await owner.client.rpc("invite_workspace_member", {
+      p_workspace_id: workspaceId,
+      p_email: "   ",
+    });
+    expect(error?.message).toMatch(/email is required/);
+  });
+
+  it("invite_workspace_member refuses a plain member and accepts the owner", async () => {
+    const added = await owner.client.rpc("invite_workspace_member", {
+      p_workspace_id: workspaceId,
+      p_email: member.email,
+    });
+    expect(added.error).toBeNull();
+    // Guarded rather than cast through, mirroring inviteMember() in src/projects.ts: if
+    // the rpc's `do nothing` re-select fallback ever regressed to null, this fails with
+    // a readable assertion instead of a TypeError.
+    const addedRow = added.data as { user_id: string } | null;
+    expect(addedRow).not.toBeNull();
+    expect(addedRow?.user_id).toBe(member.id);
+
+    // Requirement 2: inviting is OWNER-only here, unlike the project-level rule it
+    // replaces — one invitation now opens every project in the workspace.
+    const memberTry = await member.client.rpc("invite_workspace_member", {
+      p_workspace_id: workspaceId,
+      p_email: outsider.email,
+    });
+    expect(memberTry.error?.message).toMatch(/only the workspace owner can invite/);
+  });
+
+  // Requirement 2's actual payload, and the only test that exercises the
+  // `is_workspace_member` disjunct of workspaces_select_member: the owner path
+  // short-circuits on owner_id, so without this the disjunct is dead code as far as
+  // the suite knows.
+  it("an invited member reads the workspace and its roster; an outsider reads neither", async () => {
+    const seen = await member.client.from("workspaces").select("id").eq("id", workspaceId);
+    expect(seen.error).toBeNull();
+    expect(seen.data).toHaveLength(1);
+
+    const roster = await member.client
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", workspaceId);
+    expect(roster.error).toBeNull();
+    expect((roster.data ?? []).map((r) => r.user_id).sort()).toEqual([member.id, owner.id].sort());
+
+    const denied = await outsider.client
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", workspaceId);
+    expect(denied.error).toBeNull();
+    expect(denied.data).toEqual([]);
+  });
+
+  it("re-inviting the same person is an idempotent no-op", async () => {
+    // The "already a member" precondition is established here rather than inherited
+    // from the test above, so this holds under `.only` and under reordering: the
+    // composite primary key makes a duplicate row impossible, so the proof is that a
+    // SECOND invite still succeeds and reports the existing row instead of raising.
+    const first = await owner.client.rpc("invite_workspace_member", {
+      p_workspace_id: workspaceId,
+      p_email: member.email,
+    });
+    expect(first.error).toBeNull();
+
+    const again = await owner.client.rpc("invite_workspace_member", {
+      p_workspace_id: workspaceId,
+      p_email: member.email,
+    });
+    expect(again.error).toBeNull();
+    const againRow = again.data as { user_id: string } | null;
+    expect(againRow).not.toBeNull();
+    expect(againRow?.user_id).toBe(member.id);
+
+    const { data } = await owner.client
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", member.id);
+    expect(data).toHaveLength(1);
+  });
+
+  it("workspaces_insert_own refuses a forged owner_id", async () => {
+    const forged = await member.client
+      .from("workspaces")
+      .insert({ name: "forged", owner_id: owner.id })
+      .select("id")
+      .single();
+    expect(forged.error?.code).toBe("42501");
+  });
+
+  // Several things assume the owner is always a member, so the owner's seat is the one
+  // row their own delete policy must refuse. There is no way back if it goes: no INSERT
+  // grant, and the invite rpc would re-seat them as 'member'. The other half of the
+  // policy — that the owner CAN unseat someone else — is the test immediately below.
+  it("the owner cannot delete their own seat", async () => {
+    await owner.client
+      .from("workspace_members")
+      .delete()
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", owner.id);
+    const still = await owner.client
+      .from("workspace_members")
+      .select("role")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", owner.id)
+      .single();
+    expect(still.error).toBeNull();
+    expect(still.data?.role).toBe("owner");
+  });
+
+  // Removal is the owner's; a plain member's delete matches zero rows and does not error.
+  // Last among the tests that involve `member`, because it ends with `member` removed.
+  it("only the owner removes a member", async () => {
+    await member.client
+      .from("workspace_members")
+      .delete()
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", member.id);
+    const still = await owner.client
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", member.id);
+    expect(still.data).toHaveLength(1);
+
+    await owner.client
+      .from("workspace_members")
+      .delete()
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", member.id);
+    const gone = await owner.client
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", member.id);
+    expect(gone.data).toEqual([]);
+  });
+
+  // The one place the TypeScript column contract meets the real database. Everything
+  // else in packages/cloud is unit-tested against a hand-rolled fake, so a typo in
+  // PROJECT_COLUMNS, MEMBER_COLUMNS or a mapper would otherwise ship green — there is no
+  // generated Database type to catch it.
+  it("the typed project and member surfaces round-trip against the real schema", async () => {
+    const created = await createProject(owner.client, { name: "typed-surface", workspaceId });
+    expect(created.workspaceId).toBe(workspaceId);
+    expect(created).not.toHaveProperty("ownerId");
+    expect(created.carryFiles).toEqual([".env"]);
+
+    const listed = (await listProjects(owner.client)).find((p) => p.id === created.id);
+    expect(listed?.workspaceId).toBe(workspaceId);
+
+    const moved = await patchProject(owner.client, created.id, { name: "typed-surface-2" });
+    expect(moved.name).toBe("typed-surface-2");
+
+    // Exercises MEMBER_COLUMNS and its profiles(...) embed, which no other test issues.
+    const roster = await listMembers(owner.client, workspaceId);
+    expect(roster.every((m) => m.workspaceId === workspaceId)).toBe(true);
+
+    // `profile` is the ONLY field that comes from the profiles(...) embed in
+    // MEMBER_COLUMNS. Without this assertion a dropped or misspelled embed leaves it
+    // undefined and every other assertion here still passes — which is the exact gap
+    // this test exists to close. makeUser mints user_metadata.user_name as
+    // `owner-<stamp>` and handle_new_user() copies it into profiles.github_username, so
+    // the value is guaranteed non-empty.
+    const ownerSeat = roster.find((m) => m.userId === owner.id);
+    expect(ownerSeat?.role).toBe("owner");
+    expect(ownerSeat?.profile?.githubUsername).toMatch(/^owner-/);
   });
 });

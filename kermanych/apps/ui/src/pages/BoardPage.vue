@@ -2,17 +2,18 @@
   <main class="board">
     <header class="board__head">
       <div class="board__title">
-        <h1 class="board__heading">Дошка команди</h1>
+        <h1 class="board__heading">{{ scopeHeading }}</h1>
         <span class="board__count mono">{{ visibleTasks.length }} задач</span>
       </div>
       <div class="board__controls">
-        <KSelect v-model="projectFilter" :options="projectNames" placeholder="Усі проєкти" />
+        <KSelect v-model="projectFilter" :options="projectOptions" placeholder="Усі проєкти" />
+        <KSelect v-model="assigneeFilter" :options="assigneeOptions" placeholder="Усі виконавці" />
         <!-- A task row needs a `project_id` the tasks policies can check membership
-             against, so with no cloud project there is nothing to create a task on. Say so:
-             a grey button with no explanation is what made this look broken. -->
+             against, so with no project IN SCOPE there is nothing to create a task on.
+             Say so: a grey button with no explanation is what made this look broken. -->
         <KBtn
           variant="primary"
-          :disabled="!cloud.projects.length"
+          :disabled="!projectOptions.length"
           :title="newTaskHint"
           @click="openCreate"
         >Нова задача</KBtn>
@@ -20,6 +21,9 @@
     </header>
 
     <p v-if="loadHint" class="board__hint mono">{{ loadHint }}</p>
+    <!-- Five empty columns under a «Дошка команди» heading read as breakage, so a scope
+         that is legitimately empty names itself. -->
+    <p v-if="localOnlyHint" class="board__hint mono">{{ localOnlyHint }}</p>
     <!-- The way out of «дошка порожня, а кнопка сіра». A project that lives only in this
          machine's registry has no cloud row for a task to point at, and nothing else in the
          app can give it one — so every project made before the team cloud (or while
@@ -30,13 +34,30 @@
         команді під тим самим id — прив’язана тека, сесії та їхні робочі дерева залишаються
         на місці.
       </p>
+      <!-- `cloud.workspaces` is authoritative here rather than merely empty: this whole
+           section renders only once `unpublished` is non-empty, and that list is gated on
+           the cloud read having answered — workspaces and projects arrive in the same
+           Promise.all. Without that, an unread list reads as «you have no workspace». -->
+      <p v-if="!cloud.workspaces.length" class="board__publish-note">
+        Але спершу потрібен воркспейс: проєкт у хмарі завжди належить якійсь групі — створіть
+        її кнопкою «+» у лівій панелі.
+      </p>
       <div v-for="p in unpublished" :key="p.id" class="board__publish-row">
         <span class="board__publish-name">{{ p.name }}</span>
         <span class="board__publish-path mono">{{ p.localRepoPath || 'не прив’язано' }}</span>
+        <!-- Not v-model: an untouched row has NO key in `publishInto`, and passing that
+             `undefined` through as the model value is exactly what
+             exactOptionalPropertyTypes refuses. '' is the placeholder, i.e. "not chosen". -->
+        <KSelect
+          :model-value="publishInto[p.id] ?? ''"
+          :options="workspaceOptions"
+          placeholder="— виберіть воркспейс —"
+          @update:model-value="(id: string) => (publishInto[p.id] = id)"
+        />
         <KBtn
           variant="primary"
-          :disabled="!!publishing"
-          :title="`Створити «${p.name}» у хмарі — id, тека й сесії не змінюються`"
+          :disabled="!!publishing || !publishInto[p.id]"
+          :title="`Створити «${p.name}» у вибраному воркспейсі — id, тека й сесії не змінюються`"
           @click="publishProject(p)"
         >{{ publishing === p.id ? 'Публікуємо…' : 'Опублікувати в хмарі' }}</KBtn>
       </div>
@@ -92,7 +113,7 @@
           v-if="!editingId"
           v-model="draftProject"
           label="Проєкт"
-          :options="projectNames"
+          :options="projectOptions"
           placeholder="виберіть проєкт"
         />
         <KField v-model="draftTitle" label="Назва задачі" placeholder="що саме треба зробити" />
@@ -118,11 +139,11 @@
           <img v-if="avatarOf(editingTask)" :src="avatarOf(editingTask)" class="board__avatar" alt="" />
           <KSelect
             label="Виконавець"
-            :model-value="handleOfAssignee(editingTask)"
-            :options="memberHandles(editingTask.projectId)"
+            :model-value="editingTask.assigneeId ?? ''"
+            :options="editorAssigneeOptions"
             placeholder="не призначено"
             :disabled="isActiveTask(editingTask)"
-            @update:model-value="(h: string) => onAssign(editingTask!, h)"
+            @update:model-value="(id: string) => onAssign(editingTask!, id)"
           />
         </div>
         <p v-if="editingTask && isStale(editingTask)" class="board__stale-note mono" role="alert">
@@ -200,12 +221,12 @@
 
 <script setup lang="ts">
 // The shared cloud board (design deviation D6): a NEW page with status columns, kept apart
-// from WorkspacePage's LOCAL session table. Cards are cloud tasks; execution still happens
+// from AgentsPage's LOCAL session table. Cards are cloud tasks; execution still happens
 // on the assignee's own machine, which is why «Запустити» needs a local binding.
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import type { Project } from '@kermanych/core';
-import type { ProjectMember, Task, TaskStatus } from '@kermanych/cloud';
+import type { Task, TaskStatus, WorkspaceMember } from '@kermanych/cloud';
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import { useAuth } from 'stores/auth';
 import { useBoard } from 'stores/board';
@@ -214,7 +235,7 @@ import { useOrchestrator } from 'stores/orchestrator';
 import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
-import KSelect from 'components/kit/KSelect.vue';
+import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KKanbanCard from 'components/kit/KKanbanCard.vue';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
@@ -223,6 +244,7 @@ import { useDelayedTrue } from '../composables/useDelayedTrue';
 import { relativeTime } from '../lib/time';
 import { api } from '../lib/api';
 import { installReconcile } from '../lib/reconcile';
+import { UNASSIGNED, filterTasks, scopedProjectIds } from '../lib/scope';
 
 const auth = useAuth();
 const board = useBoard();
@@ -232,9 +254,9 @@ const now = useNow();
 const router = useRouter();
 
 // Back to the LOCAL board of whatever the rail has selected. The named route, not '/', so
-// this stays the same hop the workspace's «Дошка команди» button makes in reverse.
-function goToWorkspace(): void {
-  void router.push({ name: 'workspace' });
+// this stays the same hop the Агенти view's «Дошка команди» button makes in reverse.
+function goToAgents(): void {
+  void router.push({ name: 'agents' });
 }
 
 // Ten task statuses, five columns: `thinking` and `tool` are one human state («агент
@@ -250,8 +272,9 @@ const COLUMNS: Column[] = [
 ];
 
 // subscribe() refetches then opens the channel; leaving the page closes it, so Realtime
-// traffic is scoped to the screen that shows it. The task list survives in the store, which
-// is what lets WorkspacePage name a session's task without subscribing.
+// traffic is scoped to the screen that shows it. This page is the ONLY reader of the board
+// store — Агенти reads the cloud PROJECT list and writes project config, but never the
+// task list, so it needs neither this store nor the channel.
 //
 // The FIRST subscribe is the page's job. The store's project-set watcher deliberately only
 // REBUILDS a channel that already exists ("before the board mounts there is nothing to
@@ -323,38 +346,178 @@ watch(
 );
 
 // Cards show assignees by GitHub handle, which lives in `profiles` and reaches the UI
-// through the membership join. One project's failure must not blank the whole board.
+// through the membership join — a WORKSPACE join now, so a roster is read once per
+// workspace rather than once per project.
+//
+// Every VISIBLE workspace, not only the scoped one. An unscoped board shows cards from
+// every workspace this user belongs to, and the editor has to be able to name the
+// assignee of any card it opens: reading only the scoped roster would render a card from
+// another group with a raw uuid where a handle belongs. The count is the number of teams
+// this user is on, each roster is read at most once, and one group's failure must not
+// blank the whole board.
 async function loadMembers(): Promise<void> {
-  for (const p of cloud.projects) {
-    try {
-      await cloud.loadMembers(p.id);
-    } catch {
-      /* membership is decoration here; the cards render with raw ids instead */
-    }
-  }
+  await Promise.all(
+    cloud.workspaces.map(async (w) => {
+      if (cloud.members[w.id]) return;
+      try {
+        await cloud.loadMembers(w.id);
+      } catch {
+        /* membership is decoration here; the cards render with raw ids instead */
+      }
+    }),
+  );
 }
 
-// ── Project scope ─────────────────────────────────────────────────────────────
+// A workspace that arrives after mount — created from the sidebar, or first seen by a
+// retried load — has no roster yet, and `loadMembers()` skips one it already holds, so this
+// watcher is the only thing that can trigger that first read.
+//
+// Keyed on the joined IDS, not the count: `removeWorkspace` re-reads the whole RLS-scoped
+// list, so deleting one group while a teammate adds you to another leaves the length
+// identical and the new group's members would render as raw uuids until a reload. Same
+// pattern stores/board.ts uses for the project set.
+watch(() => cloud.workspaces.map((w) => w.id).join(','), () => void loadMembers());
+
+// ── Scope and filters ─────────────────────────────────────────────────────────
+// Scope comes from the sidebar: a workspace narrows to its projects, nothing selected
+// means every project this user can see, and a selected project carrying no workspace is
+// local-only and scopes to nothing (lib/scope.ts explains why empty is the exact answer
+// there). This does NOT narrow the Realtime channel — stores/board.ts stays subscribed to
+// every visible project, because a postgres_changes filter cannot be edited in place and
+// would be torn down and rebuilt on every workspace click.
+const scoped = computed(() =>
+  scopedProjectIds(
+    {
+      ...(local.selectedWorkspaceId ? { workspaceId: local.selectedWorkspaceId } : {}),
+      ...(local.selectedProjectId ? { projectId: local.selectedProjectId } : {}),
+    },
+    cloud.projects,
+  ),
+);
+
 const projectFilter = ref('');
-const projectNames = computed(() => cloud.projects.map((p) => p.name));
+const assigneeFilter = ref('');
 
 function projectName(id: string): string {
   return cloud.projects.find((p) => p.id === id)?.name ?? '—';
 }
 
-function projectIdByName(name: string): string | undefined {
-  return cloud.projects.find((p) => p.name === name)?.id;
-}
+// Keyed by ID, not by name: two workspaces may legitimately hold projects with the same
+// name, and the name-keyed filter this replaces then matched whichever came first.
+const projectOptions = computed<KSelectOption[]>(() =>
+  cloud.projects.filter((p) => scoped.value.includes(p.id)).map((p) => ({ value: p.id, label: p.name })),
+);
 
-const visibleTasks = computed(() => {
-  const id = projectFilter.value ? projectIdByName(projectFilter.value) : undefined;
-  return id ? board.tasks.filter((t) => t.projectId === id) : board.tasks;
+// The roster «Виконавці» offers. With a workspace selected it is that workspace's; with
+// nothing selected the board spans every workspace this user can see, so the options are
+// the union of their rosters, deduped by user id because the same person is often on
+// several teams. The alternative — an empty roster until a workspace is picked — would
+// leave the filter showing exactly one option on the screen the board opens with.
+//
+// «Не призначено» leads, and it is the category that had no representation at all before:
+// an unclaimed task was reachable only as a column state, never as a filter.
+const assigneeOptions = computed<KSelectOption[]>(() => {
+  const ws = local.selectedWorkspaceId;
+  const rosters = ws
+    ? [cloud.members[ws] ?? []]
+    : cloud.workspaces.map((w) => cloud.members[w.id] ?? []);
+  const out: KSelectOption[] = [{ value: UNASSIGNED, label: 'Не призначено' }];
+  const seen = new Set<string>();
+  for (const roster of rosters) {
+    for (const m of roster) {
+      if (seen.has(m.userId)) continue;
+      seen.add(m.userId);
+      out.push({ value: m.userId, label: handleOf(m) });
+    }
+  }
+  return out;
 });
+
+const scopeHeading = computed(() => {
+  const id = local.selectedWorkspaceId;
+  if (!id) return 'Дошка команди';
+  const name = cloud.workspaceById.get(id)?.name;
+  if (name) return `Дошка · ${name}`;
+  // Scoped, but the name has not arrived. «Дошка команди» would claim the OPPOSITE of what
+  // the board is showing — one group's tasks announced as every group's — so while the list
+  // is unread the heading keeps the scoped SHAPE and says «читаю…» where the name goes.
+  // After a read an unresolvable id means the group is gone, and there is no name to wait
+  // for any more.
+  return cloud.listRead ? 'Дошка команди' : 'Дошка · читаю…';
+});
+
+const visibleTasks = computed(() =>
+  filterTasks(board.tasks, {
+    scopedProjectIds: scoped.value,
+    projectFilter: projectFilter.value,
+    assigneeFilter: assigneeFilter.value,
+  }),
+);
 
 const byColumn = computed<Record<string, Task[]>>(() => {
   const out: Record<string, Task[]> = {};
   for (const col of COLUMNS) out[col.key] = visibleTasks.value.filter((t) => col.statuses.includes(t.status));
   return out;
+});
+
+// Requirement 6: clicking a project in the sidebar arrives here with that project already
+// in «Проєкти». A manual change afterwards is not clobbered, because only a NEW sidebar
+// selection fires this — and a workspace click clears the project, which clears the
+// filter, which is exactly the widening the user just asked for.
+//
+// `immediate: true` is what makes the ordinary path work at all. A sidebar project click
+// deliberately does not navigate (Requirement 5), `<router-view>` has no `<keep-alive>`, and
+// `agents` is the default route — so «pick a project, then press Дошка» MOUNTS this page
+// after the selection was made, and a change-only watcher never fires for it.
+watch(
+  () => local.selectedProjectId,
+  (id) => {
+    projectFilter.value = id ?? '';
+  },
+  { immediate: true },
+);
+
+// A filter naming a project outside the new scope would silently empty the board. This
+// covers what the watcher above cannot see: a project MOVED to another workspace, and a
+// cloud list that only arrives after the click.
+//
+// `immediate: true`, matching the pre-select above, because the two must agree AT MOUNT.
+// A LOCAL-ONLY project scopes to `[]` by design (lib/scope.ts), so `projectOptions` is
+// empty while the pre-select has already written the project's uuid into `projectFilter` —
+// and KSelect deliberately keeps a value it was never offered, which renders a bare
+// 36-character uuid where a project name belongs. Deferring this to the first CHANGE of
+// `scoped` leaves that on screen until something else moves.
+//
+// Gated on `listRead` because `scoped` is `[]` both when the filter is out of scope and
+// when no list has been read YET — the store's own flag for that distinction. That gate is
+// also what makes running at mount safe: with a warm store a local-only selection clears
+// and a real cloud project survives because `scoped` contains it, while an unread list
+// returns early and leaves the pre-select standing until the list lands.
+// Same rule as the assignee filter below: validating against an asynchronously-loaded list
+// is only sound once you know the list arrived.
+watch(
+  scoped,
+  (ids) => {
+    if (!cloud.listRead) return;
+    if (projectFilter.value && !ids.includes(projectFilter.value)) projectFilter.value = '';
+  },
+  { immediate: true },
+);
+
+// The assignee filter is CLEARED on a workspace change rather than validated against the
+// new roster: that roster loads asynchronously, so a validity check would drop a person
+// who really is on the new team merely because their row had not arrived yet. Switching
+// group is a deliberate act, and resetting a person filter on it is not a surprise.
+// Selecting a project inside the current workspace leaves it alone, so the two filters
+// still compose.
+//
+// UNASSIGNED is exempt, and that is not a special case but the rule read literally: it is
+// a constant belonging to no roster, offered unconditionally, and filterTasks resolves it
+// without consulting membership — so no roster load can invalidate it. Clearing it would
+// break the composition this task exists for, since `undefined → W` is exactly what a
+// project click produces on the unscoped board the app opens with.
+watch(() => local.selectedWorkspaceId, () => {
+  if (assigneeFilter.value !== UNASSIGNED) assigneeFilter.value = '';
 });
 
 // The read itself takes ~150 ms against a warm cloud, and a hint nobody can read is just a
@@ -381,30 +544,74 @@ const loadHint = computed(() => {
 // What it offers is publishing, which is the only control in the app that turns a
 // local-only project into one the team can put tasks on.
 //
-// A FAILED cloud read is excluded, and that guard is load-bearing: `cloud.projects` is then
-// an unread list rather than an empty one, every local row would look local-only, and the
-// user would be offered a publish the cloud is going to refuse with a duplicate key —
-// reported back as «ви не його учасник», about a project they own.
+// Two guards, and both say the same thing: this list is only meaningful once the cloud list
+// is an ANSWER. `offlineError` covers a read that failed; `listRead` covers one that has not
+// come back yet, when `cloud.byId` is empty and EVERY local row — published ones included —
+// looks local-only. Without them the user is offered a publish the cloud is going to refuse
+// with a duplicate key, reported back as «ви не його учасник» about a project they own.
+//
+// The guard lives HERE, on the collection, rather than at each of its readers: the publish
+// section, its «спершу потрібен воркспейс» note, `localOnlyHint` and `blankText` all form
+// their belief from this array, and four copies of one condition is how two of them came to
+// disagree in the first place.
 const unpublished = computed(() =>
-  cloud.offlineError ? [] : local.projects.filter((p) => !cloud.byId.has(p.id)),
+  !cloud.listRead || cloud.offlineError
+    ? []
+    : local.projects.filter((p) => !cloud.byId.has(p.id)),
 );
 
-// Why «Нова задача» is grey. `tasks.project_id` is what tasks_insert_member checks
-// membership against, so with no cloud project there is nothing to hang a task on — and
-// «no cloud project» is two different situations, only one of which the user can act on.
-const newTaskHint = computed(() => {
-  if (cloud.projects.length) return 'Створити задачу для команди';
-  return cloud.offlineError
-    ? 'Список проєктів не прочитано — хмара недоступна'
-    : 'Задача належить проєкту в хмарі, а тут його ще немає — опублікуйте локальний проєкт нижче або попросіть колегу додати вас до свого';
+// A local-only project SELECTED in the sidebar scopes the board to nothing (lib/scope.ts),
+// so every column is empty and the count reads 0 — a state indistinguishable from breakage
+// unless it says what it is.
+//
+// The unread window needs no guard here: `unpublished` is empty until the cloud list is an
+// answer, so this cannot assert that a published project lives only on this machine. A hint
+// that names a thing is held to a higher standard than a control that merely appears,
+// because the user can act on it.
+const localOnlyHint = computed(() => {
+  const id = local.selectedProjectId;
+  if (!id || local.selectedWorkspaceId) return '';
+  const row = unpublished.value.find((p) => p.id === id);
+  return row
+    ? `Проєкт «${row.name}» живе лише на цій машині, тому задач у хмарі в нього немає — опублікуйте його нижче.`
+    : '';
 });
 
-// The same three states, spelled out where the board is empty. Telling a user with two
-// local projects that they are «не в жодному проєкті» is how this page dead-ended.
+// «Читаю дошку…» is about the TASK read; this is the project read, and the two finish
+// independently. One constant because two surfaces say it and they must not drift.
+const READING_PROJECTS = 'Читаю список проєктів…';
+
+// Why «Нова задача» is grey. `tasks.project_id` is what tasks_insert_member checks
+// membership against, so with no project to hang a task on there is nothing to create —
+// and that is now three different situations, only some of which the user can act on.
+const newTaskHint = computed(() => {
+  if (!cloud.projects.length) {
+    if (cloud.offlineError) return 'Список проєктів не прочитано — хмара недоступна';
+    // Unread is not empty. Saying the cloud holds no project yet — and pointing at a publish
+    // section this window deliberately hides — hands the user a reason that is not the real
+    // one, on a button that is grey for a reason that will pass on its own.
+    if (!cloud.listRead) return READING_PROJECTS;
+    return 'Задача належить проєкту в хмарі, а тут його ще немає — опублікуйте локальний проєкт нижче або попросіть колегу додати вас до свого';
+  }
+  // Projects exist, but none in the current scope: the create picker offers only what the
+  // board is showing, so the way out is a sidebar click, not this button.
+  if (!projectOptions.value.length) {
+    return localOnlyHint.value
+      ? 'Цей проєкт ще не у хмарі — опублікуйте його нижче, і тоді на ньому можна буде створювати задачі'
+      : 'У вибраному воркспейсі ще немає проєктів — створіть проєкт у лівій панелі або виберіть інший воркспейс';
+  }
+  return 'Створити задачу для команди';
+});
+
+// The same states, spelled out where the board is empty. Telling a user with two local
+// projects that they are «не в жодному проєкті» is how this page dead-ended — and telling
+// them so while the list is still being read is the same dead end one beat earlier, since
+// the list above that this text sends them to is hidden until the read lands.
 const blankText = computed(() => {
   if (cloud.offlineError) {
     return 'Список проєктів не прочитано — хмара недоступна. Задачі команди зʼявляться, щойно буде звʼязок; локальні сесії працюють як завжди.';
   }
+  if (!cloud.listRead) return READING_PROJECTS;
   if (unpublished.value.length) {
     return 'Жоден проєкт цієї машини ще не живе у хмарі — опублікуйте будь-який зі списку вище, і його задачі побачить уся команда.';
   }
@@ -414,15 +621,33 @@ const blankText = computed(() => {
 const publishing = ref<string | null>(null);
 const publishError = ref<string | null>(null);
 
+// projectId → destination workspace id. `projects.workspace_id` is `not null`, so there is
+// no such thing as publishing into nothing: the row's button stays disabled until this is
+// picked, which is also why the destination is asked for HERE rather than guessed from the
+// current scope — the board's scope is wherever the user happens to be looking, and a
+// publish is permanent.
+const publishInto = ref<Record<string, string>>({});
+const workspaceOptions = computed<KSelectOption[]>(() =>
+  cloud.workspaces.map((w) => ({ value: w.id, label: w.name })),
+);
+
 async function publishProject(project: Project): Promise<void> {
   if (publishing.value) return;
+  const workspaceId = publishInto.value[project.id];
+  // The button is disabled without a destination; this is the refusal for a submit that
+  // arrives anyway (a stale click, a keyboard activation), so the call site can never hand
+  // publish() an empty workspace.
+  if (!workspaceId) {
+    publishError.value = `Виберіть воркспейс для «${project.name}»`;
+    return;
+  }
   publishing.value = project.id;
   publishError.value = null;
   try {
-    await cloud.publish(project);
-    // Neither watcher that reacts to a longer project list loads MEMBERSHIP: the 0→1 case
-    // re-runs open() below, but n→n+1 only rebuilds the store's channel. The assignee
-    // picker on every card of the new project needs those rows, so read them here.
+    await cloud.publish(project, workspaceId);
+    // Membership is a workspace fact, so publishing into a group whose roster is already
+    // loaded needs nothing new — this is the retry for a roster whose earlier read failed,
+    // and the first read for a group that had no visible project until now.
     await loadMembers();
     local.notify(`Проєкт «${project.name}» опубліковано — тепер тут можна створювати задачі.`);
   } catch (e) {
@@ -455,34 +680,30 @@ function isStale(task: Task): boolean {
 }
 
 // ── Assignee ──────────────────────────────────────────────────────────────────
-function membersOf(projectId: string): ProjectMember[] {
-  return cloud.members[projectId] ?? [];
+// Membership is a WORKSPACE fact now, so a task's roster is the roster of its project's
+// workspace — resolved through the project rather than read off it. A project whose cloud
+// row is not held (local-only, or a list that failed to read) has no roster, and the
+// picker then renders raw ids, which is what it did before for an unloaded membership.
+function membersOf(projectId: string): WorkspaceMember[] {
+  const workspaceId = cloud.byId.get(projectId)?.workspaceId;
+  return workspaceId ? cloud.members[workspaceId] ?? [] : [];
 }
 
-function handleOf(m: ProjectMember): string {
+// One fallback chain, shared by the «Виконавці» filter and the editor's picker: if they
+// diverged, the same person would appear under two different names in two dropdowns.
+function handleOf(m: WorkspaceMember): string {
   return m.profile?.githubUsername ?? m.profile?.displayName ?? m.userId;
-}
-
-function memberHandles(projectId: string): string[] {
-  return membersOf(projectId).map(handleOf);
-}
-
-// '' is KSelect's placeholder option. KSelect keeps an unknown current value as an option,
-// so a not-yet-loaded membership still renders the raw id instead of silently unassigning.
-function handleOfAssignee(task: Task): string {
-  if (!task.assigneeId) return '';
-  const m = membersOf(task.projectId).find((x) => x.userId === task.assigneeId);
-  return m ? handleOf(m) : task.assigneeId;
 }
 
 function avatarOf(task: Task): string | undefined {
   return membersOf(task.projectId).find((m) => m.userId === task.assigneeId)?.profile?.avatarUrl;
 }
 
-function onAssign(task: Task, handle: string): void {
-  const userId = handle ? (membersOf(task.projectId).find((m) => handleOf(m) === handle)?.userId ?? null) : null;
-  if (userId === (task.assigneeId ?? null)) return;
-  void board.assignTask(task.id, userId);
+function onAssign(task: Task, userId: string): void {
+  // Id-keyed like both filters. '' is KSelect's placeholder, i.e. «не призначено».
+  const next = userId || null;
+  if (next === (task.assigneeId ?? null)) return;
+  void board.assignTask(task.id, next);
 }
 
 // ── Launch ────────────────────────────────────────────────────────────────────
@@ -594,7 +815,7 @@ async function runLaunch(task: Task): Promise<void> {
   try {
     const session = await api.createSessionFromTask(task.id);
     local.notify(`Сесію «${session.name}» запущено на цій машині.`, 'info');
-    // The local session lives on the workspace board, so go where the work is.
+    // The local session lives on the Агенти board, so go where the work is.
     await router.push('/');
   } catch (e) {
     // `fetch` itself rejects with a TypeError; every refusal from the api arrives as a
@@ -646,7 +867,7 @@ async function confirmBinding(): Promise<void> {
 }
 
 // ── Create / edit ─────────────────────────────────────────────────────────────
-// Same launch vocabulary as the local launcher (WorkspacePage.vue:658-661), so a task born
+// Same launch vocabulary as the local launcher (AgentsPage.vue:658-661), so a task born
 // on the board and an agent started by hand offer identical choices.
 const MODEL_OPTIONS = ['opus-5', 'sonnet-4.5', 'haiku'];
 const PREFIX_OPTIONS = ['feature', 'fix', 'refactoring', 'chore'];
@@ -658,6 +879,15 @@ const editorError = ref<string | null>(null);
 const editingTask = computed(() =>
   editingId.value ? board.tasks.find((t) => t.id === editingId.value) : undefined,
 );
+
+// The editor's assignee picker reads the roster of the EDITED task's own workspace, which
+// is not necessarily the scoped one: an unscoped board shows cards from every workspace,
+// and «Виконавець» must name the person who actually holds the card.
+const editorAssigneeOptions = computed<KSelectOption[]>(() =>
+  editingTask.value
+    ? membersOf(editingTask.value.projectId).map((m) => ({ value: m.userId, label: handleOf(m) }))
+    : [],
+);
 const draftProject = ref('');
 const draftTitle = ref('');
 const draftDescription = ref('');
@@ -667,17 +897,20 @@ const draftPlatform = ref('');
 const draftBranch = ref('');
 
 // A task always needs a title; a NEW one also needs a project, because `project_id` is what
-// the tasks INSERT policy checks membership against.
+// the tasks INSERT policy checks membership against. `draftProject` holds an ID now, so it
+// is checked against the cloud list rather than merely being non-empty: a stale id must not
+// reach the insert.
 const canSubmit = computed(
-  () => !!draftTitle.value.trim() && (!!editingId.value || !!projectIdByName(draftProject.value)),
+  () => !!draftTitle.value.trim() && (!!editingId.value || cloud.byId.has(draftProject.value)),
 );
 
 function openCreate(): void {
   editingId.value = null;
   editorError.value = null;
   // Default to whatever the board is already filtered to — that is the project the user is
-  // looking at.
-  draftProject.value = projectFilter.value || (cloud.projects[0]?.name ?? '');
+  // looking at — and otherwise to the first project IN SCOPE, since those are the only ones
+  // the picker offers.
+  draftProject.value = projectFilter.value || (projectOptions.value[0]?.value ?? '');
   draftTitle.value = '';
   draftDescription.value = '';
   draftModel.value = '';
@@ -690,7 +923,7 @@ function openCreate(): void {
 function openEdit(task: Task): void {
   editingId.value = task.id;
   editorError.value = null;
-  draftProject.value = projectName(task.projectId);
+  draftProject.value = task.projectId;
   draftTitle.value = task.title;
   draftDescription.value = task.description ?? '';
   draftModel.value = task.model ?? '';
@@ -730,8 +963,8 @@ async function submitEditor(): Promise<void> {
       return;
     }
   } else {
-    const projectId = projectIdByName(draftProject.value);
-    if (!projectId) {
+    const projectId = draftProject.value;
+    if (!cloud.byId.has(projectId)) {
       editorError.value = 'Виберіть проєкт';
       return;
     }

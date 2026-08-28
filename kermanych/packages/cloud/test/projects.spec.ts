@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import {
-  createProject,
-  deleteProject,
-  inviteMember,
-  listMembers,
-  listProjects,
-  patchProject,
-  removeMember,
-} from "../src/projects";
+import { createProject, deleteProject, listProjects, patchProject, toCloudProject } from "../src/projects";
 
 type Op = [string, ...unknown[]];
 type Query = { table: string; ops: Op[] };
@@ -62,12 +54,17 @@ const projectRow = {
   carry_files: [".env", ".env.local"],
   env_keys: ["GITHUB_TOKEN"],
   color: "#ff563c",
-  owner_id: "u1",
+  workspace_id: "w1",
   created_at: "2026-08-21T00:00:00.000Z",
 };
 
-const profileRow = { id: "u2", github_username: "octocat", display_name: "Octo Cat", avatar_url: null };
-const memberRow = { project_id: "p1", user_id: "u2", role: "member" as const, added_at: "2026-08-21T01:00:00.000Z", profiles: profileRow };
+describe("toCloudProject", () => {
+  it("carries workspaceId and has no ownerId", () => {
+    const p = toCloudProject(projectRow);
+    expect(p.workspaceId).toBe("w1");
+    expect(p).not.toHaveProperty("ownerId");
+  });
+});
 
 describe("listProjects", () => {
   it("maps snake_case rows to CloudProject and nulls to absent keys", async () => {
@@ -84,11 +81,22 @@ describe("listProjects", () => {
       carryFiles: [".env", ".env.local"],
       envKeys: ["GITHUB_TOKEN"],
       color: "#ff563c",
-      ownerId: "u1",
+      workspaceId: "w1",
       createdAt: "2026-08-21T00:00:00.000Z",
     });
     expect(queries[0]!.table).toBe("projects");
     expect(queries[0]!.ops[1]).toEqual(["order", "created_at", { ascending: true }]);
+  });
+
+  // The column list is the contract with Postgres and nothing else asserts it; a typo
+  // here is a runtime 42703 that every fake-client test would happily miss.
+  it("selects workspace_id and never owner_id", async () => {
+    const { client, queries } = fakeClient({ data: [projectRow], error: null });
+    await listProjects(client);
+    expect(queries[0]!.ops[0]).toEqual([
+      "select",
+      "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, carry_files, env_keys, color, created_at",
+    ]);
   });
 
   it("defaults carry_files to [.env] and env_keys to [] when the row has nulls", async () => {
@@ -105,32 +113,52 @@ describe("listProjects", () => {
 });
 
 describe("createProject", () => {
-  it("inserts owner_id with a trimmed name and an empty remote as null", async () => {
+  // Exact equality, so this is also the "omits id" case: with no caller-supplied id the
+  // payload is name + workspace_id and nothing else, and Postgres mints the uuid.
+  it("sends workspace_id, not owner_id", async () => {
+    const { client, queries } = fakeClient({ data: projectRow, error: null });
+    await createProject(client, { name: "back-end", workspaceId: "w1" });
+    expect(queries[0]!.table).toBe("projects");
+    expect(queries[0]!.ops[0]).toEqual(["insert", { name: "back-end", workspace_id: "w1" }]);
+    expect(queries[0]!.ops.at(-1)).toEqual(["single"]);
+  });
+
+  it("trims the name and writes an empty remote as null", async () => {
     const { client, queries } = fakeClient({ data: projectRow, error: null });
 
-    await createProject(client, { name: "  Acme  ", ownerId: "u1", gitRemoteUrl: "   " });
+    await createProject(client, { name: "  Acme  ", workspaceId: "w1", gitRemoteUrl: "   " });
 
-    expect(queries[0]!.table).toBe("projects");
-    expect(queries[0]!.ops[0]).toEqual(["insert", { name: "Acme", git_remote_url: null, owner_id: "u1" }]);
-    expect(queries[0]!.ops.at(-1)).toEqual(["single"]);
+    expect(queries[0]!.ops[0]).toEqual(["insert", { name: "Acme", workspace_id: "w1", git_remote_url: null }]);
   });
 
   it("refuses a blank name before touching the network", async () => {
     const { client, queries } = fakeClient();
-    await expect(createProject(client, { name: "   ", ownerId: "u1" })).rejects.toThrow(/project name is required/);
+    await expect(createProject(client, { name: "   ", workspaceId: "w1" })).rejects.toThrow(
+      /project name is required/,
+    );
     expect(queries).toHaveLength(0);
+  });
+
+  it("adopts a caller-supplied id so publishing keeps the local identity", async () => {
+    const { client, queries } = fakeClient({ data: projectRow, error: null });
+    await createProject(client, { name: "back-end", workspaceId: "w1", id: "p-local" });
+    expect(queries[0]!.ops[0]).toEqual([
+      "insert",
+      { name: "back-end", id: "p-local", workspace_id: "w1" },
+    ]);
   });
 
   // Publishing a local-only project. The id is the load-bearing part: reuse it and the
   // machine's binding, sessions and worktrees stay attached; mint a new one and they are
-  // stranded on an orphan row.
-  it("adopts a supplied id and seeds the config columns", async () => {
+  // stranded on an orphan row. The config columns must ride along too, because
+  // syncProjects() overwrites the local row from the cloud one straight afterwards.
+  it("seeds the config columns at birth", async () => {
     const { client, queries } = fakeClient({ data: projectRow, error: null });
 
     await createProject(client, {
       id: "6d96ada8-7caf-43b2-98f0-e2d1245903e5",
       name: "Multiagent-app",
-      ownerId: "u1",
+      workspaceId: "w1",
       carryFiles: [".env"],
       color: "#ff563c",
       previewCommand: "pnpm dev",
@@ -143,7 +171,7 @@ describe("createProject", () => {
       {
         id: "6d96ada8-7caf-43b2-98f0-e2d1245903e5",
         name: "Multiagent-app",
-        owner_id: "u1",
+        workspace_id: "w1",
         carry_files: [".env"],
         color: "#ff563c",
         preview_command: "pnpm dev",
@@ -151,12 +179,6 @@ describe("createProject", () => {
         conventions: null,
       },
     ]);
-  });
-
-  it("omits id so Postgres mints one when none is supplied", async () => {
-    const { client, queries } = fakeClient({ data: projectRow, error: null });
-    await createProject(client, { name: "Acme", ownerId: "u1" });
-    expect(queries[0]!.ops[0]).toEqual(["insert", { name: "Acme", owner_id: "u1" }]);
   });
 });
 
@@ -172,83 +194,12 @@ describe("patchProject", () => {
     ]);
     expect(queries[0]!.ops[1]).toEqual(["eq", "id", "p1"]);
   });
-});
 
-describe("listMembers", () => {
-  it("filters by project and folds the embedded profile into `profile`", async () => {
-    const { client, queries } = fakeClient({ data: [memberRow], error: null });
-
-    const [m] = await listMembers(client, "p1");
-
-    expect(m).toEqual({
-      projectId: "p1",
-      userId: "u2",
-      role: "member",
-      addedAt: "2026-08-21T01:00:00.000Z",
-      profile: { id: "u2", githubUsername: "octocat", displayName: "Octo Cat" },
-    });
-    expect(queries[0]!.table).toBe("project_members");
-    expect(queries[0]!.ops[1]).toEqual(["eq", "project_id", "p1"]);
-  });
-});
-
-describe("inviteMember", () => {
-  it("normalizes the email, invites through the rpc, then re-reads the row it returned", async () => {
-    const { client, queries } = fakeClient(
-      { data: { project_id: "p1", user_id: "u2", role: "member", added_at: "2026-08-21T01:00:00.000Z" }, error: null },
-      { data: memberRow, error: null },
-    );
-
-    const m = await inviteMember(client, "p1", "  Octo@Example.COM ");
-
-    expect(queries[0]!.table).toBe("rpc:invite_project_member");
-    expect(queries[0]!.ops[0]).toEqual(["rpc", { p_project_id: "p1", p_email: "octo@example.com" }]);
-    // The invited user id comes from the rpc result, never from what the caller typed.
-    expect(queries[1]!.table).toBe("project_members");
-    expect(queries[1]!.ops.slice(1)).toEqual([
-      ["eq", "project_id", "p1"],
-      ["eq", "user_id", "u2"],
-      ["single"],
-    ]);
-    expect(m).toEqual({
-      projectId: "p1",
-      userId: "u2",
-      role: "member",
-      addedAt: "2026-08-21T01:00:00.000Z",
-      profile: { id: "u2", githubUsername: "octocat", displayName: "Octo Cat" },
-    });
-  });
-
-  it("refuses a blank email before any round trip", async () => {
-    const { client, queries } = fakeClient();
-    await expect(inviteMember(client, "p1", "   ")).rejects.toThrow(/email is required/);
-    expect(queries).toHaveLength(0);
-  });
-
-  it("refuses a github handle typed into the email field", async () => {
-    const { client, queries } = fakeClient();
-    await expect(inviteMember(client, "p1", "@octocat")).rejects.toThrow(/not a valid email/);
-    expect(queries).toHaveLength(0);
-  });
-
-  it("surfaces the rpc refusal and never re-reads", async () => {
-    const { client, queries } = fakeClient({
-      data: null,
-      error: { message: "no Kermanych account for ghost@example.com" },
-    });
-    await expect(inviteMember(client, "p1", "ghost@example.com")).rejects.toThrow(/no Kermanych account/);
-    expect(queries).toHaveLength(1);
-  });
-});
-
-describe("removeMember", () => {
-  it("deletes by the composite primary key", async () => {
-    const { client, queries } = fakeClient({ data: null, error: null });
-
-    await removeMember(client, "p1", "u2");
-
-    expect(queries[0]!.table).toBe("project_members");
-    expect(queries[0]!.ops).toEqual([["delete"], ["eq", "project_id", "p1"], ["eq", "user_id", "u2"]]);
+  it("moves a project by patching workspace_id", async () => {
+    const { client, queries } = fakeClient({ data: projectRow, error: null });
+    await patchProject(client, "p1", { workspaceId: "w2" });
+    expect(queries[0]!.ops[0]).toEqual(["update", { workspace_id: "w2" }]);
+    expect(queries[0]!.ops[1]).toEqual(["eq", "id", "p1"]);
   });
 });
 

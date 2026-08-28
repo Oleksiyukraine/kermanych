@@ -14,6 +14,14 @@ export type Profile = {
   avatarUrl?: string;
 };
 
+export type Workspace = {
+  id: string;
+  name: string;
+  color?: string;
+  ownerId: string;
+  createdAt: string;
+};
+
 export type CloudProject = {
   id: string;
   name: string;
@@ -25,12 +33,14 @@ export type CloudProject = {
   carryFiles: string[];
   envKeys: string[]; // key NAMES only — values never leave the bound repo's .env
   color?: string;
-  ownerId: string;
+  // The group that owns this project AND supplies its member list. `not null` in
+  // Postgres: there are no workspace-less projects in the cloud.
+  workspaceId: string;
   createdAt: string;
 };
 
-export type ProjectMember = {
-  projectId: string;
+export type WorkspaceMember = {
+  workspaceId: string;
   userId: string;
   role: "owner" | "member";
   addedAt: string;
