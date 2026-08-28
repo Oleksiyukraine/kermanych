@@ -139,11 +139,15 @@
              second ⚙ beside the project's: two identical gears in one cluster name
              neither, and this one also supplies what the header never said — which group
              the screen is scoped to. The sidebar's workspace row takes no fourth control
-             by design, so this is where the group's own settings live. -->
+             by design, so this is where the group's own settings live.
+
+             The chip's one cost over the brief's icon gear is the accessible name, which
+             `workspaceChipLabel` pays explicitly — see its comment. -->
         <KBtn
           v-if="scopedWorkspace"
           variant="ghost"
-          :title="`Воркспейс «${scopedWorkspace.name}»: склад команди й налаштування`"
+          :title="workspaceChipLabel"
+          :aria-label="workspaceChipLabel"
           @click="openWorkspaceSettings(scopedWorkspace.id)"
         >
           <span class="shell__ws-name">{{ scopedWorkspace.name }}</span>
@@ -404,6 +408,16 @@
           label="Локальна тека цієї машини"
           disabled
         />
+        <!-- CLOUD config needs a cloud row, and a «поза хмарою» local one has none. Save
+             used to be inert for such a project BY ACCIDENT, through the owner gate that
+             is now gone (see `isInCloud`), so the state gets its own gate and its own way
+             out. The binding above and the `.env` VALUES stay available: those are this
+             machine's business, and they always worked for an unpublished project. -->
+        <p v-if="!isInCloud" class="shell__hint">
+          Цей проєкт існує лише на цій машині, тому спільні налаштування нікуди зберігати.
+          Опублікуйте його в хмарі на дошці — прив’язка теки й «Змінні середовища»
+          доступні й без цього.
+        </p>
         <p v-if="settingsError" class="shell__error" role="alert">{{ settingsError }}</p>
       </div>
       <template #controls>
@@ -414,7 +428,7 @@
           @click="openDelete"
         >Видалити проєкт</KBtn>
         <KBtn variant="ghost" @click="settingsOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" @click="saveSettings">Зберегти</KBtn>
+        <KBtn variant="primary" :disabled="!isInCloud" @click="saveSettings">Зберегти</KBtn>
       </template>
     </KModal>
 
@@ -460,15 +474,21 @@
           </p>
         </div>
         <KField
+          v-if="isInCloud"
           v-model="envKeysText"
           label="Обовʼязкові ключі — лише ІМЕНА (через кому або з нового рядка)"
           placeholder="GITHUB_TOKEN, DATABASE_URL"
           multiline
           :rows="3"
         />
+        <!-- No cloud row, no list of names to keep in it. The VALUES editor above is
+             untouched: it writes this machine's file and never needed the cloud. -->
+        <p v-else class="shell__hint">
+          Перелік обовʼязкових ключів живе у хмарі, а цей проєкт існує лише на цій машині.
+        </p>
         <p class="shell__hint">
-          У хмарі зберігаються лише імена ключів. Значення живуть у `.env` цієї машини й нікуди
-          не передаються.
+          Значення живуть у `.env` цієї машини й нікуди не передаються: у хмарі Керманич
+          тримає лише ІМЕНА ключів.
         </p>
         <p v-if="envError" class="shell__error" role="alert">{{ envError }}</p>
       </div>
@@ -1015,6 +1035,17 @@ async function submitCreate(): Promise<void> {
   }
 }
 
+// PostgREST's "zero rows through .single()" refusal, in BOTH of its spellings. Every
+// owner-only policy in this schema refuses a write by matching zero rows rather than by
+// raising, and the cloud client throws `new Error(error.message)` and drops `error.code`,
+// so the TEXT is all a caller gets. PostgREST ≤11 said «JSON object requested, multiple (or
+// no) rows returned»; this server says «Cannot coerce the result to a single JSON object» —
+// AgentsPage.vue:1470-1473 records that first-hand, and packages/cloud/test/rls.spec.ts:246
+// asserts the CODE precisely because the message is version-dependent. Testing one spelling
+// leaves the branch dead against the other server and puts raw English in a Ukrainian
+// modal, so this MUST keep both. Every place that maps this refusal uses it.
+const NO_ROWS = /rows returned|coerce the result/;
+
 // WORKSPACE SETTINGS — the group's name, colour and TEAM, reached from the header chip.
 // Membership hangs off the workspace rather than the project because one invitation opens
 // every project in the group; that is also why inviting and removing are OWNER-only here
@@ -1074,6 +1105,17 @@ const scopedWorkspace = computed(() =>
   store.selectedWorkspaceId ? projects.workspaceById.get(store.selectedWorkspaceId) : undefined,
 );
 
+// The chip's tooltip AND its accessible name, one string so they cannot drift. KBtn sets
+// `aria-label` only for `variant="icon"`, and `title` feeds `v-tip`, which lib/tip.ts
+// states is purely presentational and never referenced by the accessibility tree — so a
+// ghost chip's accessible name is its slot text alone, a button called «Бета» that never
+// says it opens anything. The leading «Воркспейс «Бета»» also keeps the visible label
+// inside the accessible name (WCAG 2.5.3 Label in Name), which a voice-control user needs.
+// The VISIBLE text stays the bare name; that is the point of the chip.
+const workspaceChipLabel = computed(
+  () => `Воркспейс «${scopedWorkspace.value?.name ?? ''}»: склад команди й налаштування`,
+);
+
 async function openWorkspaceSettings(id: string): Promise<void> {
   workspaceSettingsId.value = id;
   const ws = projects.workspaceById.get(id);
@@ -1109,11 +1151,11 @@ async function saveWorkspace(): Promise<void> {
     workspaceSettingsOpen.value = false;
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
-    // workspaces_update_owner refuses a non-owner by matching zero rows, and the cloud
-    // client's `.single()` turns that into PGRST116 rather than an RLS message — so name
-    // the real reason. Reachable despite the disabled Save: ownership can change between
-    // the load that drew this modal and the click.
-    wsError.value = raw.includes('rows returned')
+    // workspaces_update_owner refuses a non-owner by matching zero rows, which surfaces as
+    // NO_ROWS rather than as anything mentioning RLS — so name the real reason. Reachable
+    // despite the disabled Save: ownership can change between the load that drew this
+    // modal and the click.
+    wsError.value = NO_ROWS.test(raw)
       ? 'Хмара відмовила: змінювати воркспейс може лише його власник'
       : raw;
   }
@@ -1132,9 +1174,18 @@ async function deleteWorkspace(): Promise<void> {
     workspaceSettingsOpen.value = false;
     store.notify(`Воркспейс «${name}» видалено`);
   } catch (e) {
-    // Both refusals already arrive as Ukrainian sentences from the store: a group that
-    // still holds projects, and a non-owner's silently-refused delete.
-    wsError.value = e instanceof Error ? e.message : String(e);
+    const raw = e instanceof Error ? e.message : String(e);
+    // ONE of the two refusals arrives already translated: the non-owner delete, which
+    // removeWorkspace detects by re-reading. The other is a courtesy at best —
+    // removeWorkspace's «спершу перенесіть…» pre-check and `workspaceHasProjects` both read
+    // the last cloud list THIS session read, so a project a teammate added since then is
+    // invisible to both: the button renders enabled, the explanatory hint is absent, the
+    // owner is walked through the irreversible confirm, and the `on delete restrict` FK is
+    // what says no — in English. Translate it here. The database is the authority; the
+    // pre-check only saves a round trip when it happens to know.
+    wsError.value = raw.includes('violates foreign key constraint')
+      ? 'Хмара відмовила: у цьому воркспейсі ще є проєкти — спершу перенесіть або видаліть їх'
+      : raw;
   }
 }
 
@@ -1225,6 +1276,20 @@ const isOwnerOfSelected = computed(
   () => !!store.selectedProjectId && projects.isOwner(store.selectedProjectId),
 );
 
+// IS THE SELECTED PROJECT IN THE CLOUD AT ALL? A «поза хмарою» local row — created before
+// the team cloud existed, or while Supabase was unreachable — is selectable: the sidebar
+// renders it in the local-only bucket and the header gear opens this modal for it.
+// `isOwnerOfSelected` used to make Save inert for such a row BY ACCIDENT, since it resolves
+// through `byId`, which is built from the cloud list and holds no entry for one. Dropping
+// the owner gate dropped that accident with it, so the state needs a gate of its own —
+// otherwise Save fires a patch whose `.eq('id', id) … single()` matches no row, and the
+// operator reads a Postgres coercion string. Only the CLOUD-writing controls are gated:
+// «Опублікувати в хмарі» on the board is the way out, and the folder binding and the `.env`
+// VALUES are this machine's business and have always worked without a cloud row.
+const isInCloud = computed(
+  () => !!store.selectedProjectId && projects.byId.has(store.selectedProjectId),
+);
+
 // Both separators are accepted, but only the multiline env-keys textarea can actually receive
 // a newline; the single-line carry-files input strips them, so its label promises commas only.
 function parseList(text: string): string[] {
@@ -1305,9 +1370,14 @@ async function saveSettings(): Promise<void> {
     });
     settingsOpen.value = false;
   } catch (e) {
-    // We believed this write was allowed, so the raw message is the useful part: an expired
-    // session, an unreachable cloud, or ownership that changed under us.
-    settingsError.value = `Хмара відмовила у записі: ${e instanceof Error ? e.message : String(e)}`;
+    const raw = e instanceof Error ? e.message : String(e);
+    // We believed this write was allowed, so the raw message is usually the useful part: an
+    // expired session, or an unreachable cloud. The one exception is membership lost under
+    // us, which projects_update_member refuses by matching zero rows — postgrest's wording,
+    // not RLS's, and nothing an operator can act on.
+    settingsError.value = NO_ROWS.test(raw)
+      ? 'Хмара відмовила: ви більше не учасник воркспейсу цього проєкту'
+      : `Хмара відмовила у записі: ${raw}`;
   }
 }
 
@@ -1373,15 +1443,26 @@ async function saveEnv(): Promise<void> {
     if (edits && (Object.keys(edits.set).length || edits.remove.length)) {
       await store.saveEnv(id, edits);
     }
-    // NAMES: the cloud checklist, and any workspace member may edit it now (the role
-    // matrix). Still sent only when it actually changed — an unchanged list is a project
-    // write worth not making.
-    const next = parseList(envKeysText.value);
-    const current = selectedCloud.value?.envKeys ?? [];
-    if (next.join('\n') !== current.join('\n')) await projects.patch(id, { envKeys: next });
+    // NAMES: cloud config, and any workspace member may edit it now (the role matrix).
+    // Skipped entirely for a project that is not in the cloud — there is no row to patch,
+    // and attempting one would throw AFTER the local values above had landed, leaving a
+    // half-applied save behind a modal that will not close. The field is hidden in that
+    // state for the same reason. Otherwise sent only when the list actually changed: an
+    // unchanged list is a project write worth not making.
+    if (isInCloud.value) {
+      const next = parseList(envKeysText.value);
+      const current = selectedCloud.value?.envKeys ?? [];
+      if (next.join('\n') !== current.join('\n')) await projects.patch(id, { envKeys: next });
+    }
     envOpen.value = false;
   } catch (e) {
-    envError.value = e instanceof Error ? e.message : String(e);
+    const raw = e instanceof Error ? e.message : String(e);
+    // The local VALUES are written first, so a refusal from the key-names patch leaves them
+    // saved while the modal stays open. Say which half landed rather than let the operator
+    // guess — that ambiguity is the whole cost of the ordering.
+    envError.value = NO_ROWS.test(raw)
+      ? 'Значення збережено на цій машині, але перелік ключів у хмарі — ні: ви більше не учасник воркспейсу цього проєкту'
+      : raw;
   }
 }
 
