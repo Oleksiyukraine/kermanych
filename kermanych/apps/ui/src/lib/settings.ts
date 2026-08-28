@@ -20,7 +20,7 @@
 // no column anywhere in the repo, so they get no panel.
 
 import type { AgentDef, AgentKind, EnvEntry, SkillView } from '@kermanych/core';
-import type { AgentSkill } from '@kermanych/cloud';
+import type { AgentSkill, TriggerSource } from '@kermanych/cloud';
 
 export type SettingsScope = 'project' | 'workspace' | 'app';
 
@@ -80,6 +80,14 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
     sub: 'скіли для ролей',
     blurb:
       'Які скіли роль отримує обовʼязково, а не бере за власним рішенням. Змінює лише власник воркспейсу.',
+  },
+  {
+    key: 'project-triggers',
+    scope: 'project',
+    label: 'Тригери',
+    sub: 'коли вмикається саме',
+    blurb:
+      'Що має спрацювати без рішення моделі — на слова оператора, на її власні розмірковування або на виклик інструмента.',
   },
   {
     key: 'project-env',
@@ -315,6 +323,89 @@ export function assignmentBadge(skill: AssignedSkill): AssignmentBadge {
  * blocked, because the operator may well mean it.
  */
 export const ASSIGNED_BYTES_WARN = 8 * 1024;
+
+/**
+ * THE FOUR THINGS A TRIGGER CAN WATCH, as the editor names them.
+ *
+ * `operator` is the odd one out and the labels say so: Kermanych matches it itself, before
+ * the message is forwarded, while the other three become TTSR rule conditions inside the omp
+ * child (SkillsService.renderRuleFile maps them to `[text]`, `[thinking]` and `[tool]`).
+ * That split is not cosmetic — it decides which actions are available and who compiles the
+ * pattern.
+ */
+export const TRIGGER_SOURCE_OPTIONS: readonly { value: TriggerSource; label: string }[] = [
+  { value: 'operator', label: 'слова оператора' },
+  { value: 'assistant', label: 'відповідь моделі' },
+  { value: 'thinking', label: 'розмірковування моделі' },
+  { value: 'tool', label: 'виклик інструмента' },
+];
+
+/**
+ * A stored source as a label. Takes a bare `string`, not `TriggerSource`, on purpose: the
+ * value comes from a database row, and a row predating the check constraint can carry a
+ * source outside the union — the api's own tests keep one (`reasoning`). Such a row still has
+ * to be visible and deletable from this pane, so it labels itself with the raw value rather
+ * than rendering an empty cell.
+ *
+ * A `find` over four entries and not a lookup object: an object indexed by a DB string is the
+ * exact shape that hands back `Object.prototype.constructor` for a row whose source is
+ * `constructor`, and there is nothing here worth guarding with `Object.hasOwn` when the total
+ * scan is the same four comparisons.
+ */
+export function triggerSourceLabel(source: string): string {
+  return TRIGGER_SOURCE_OPTIONS.find((o) => o.value === source)?.label ?? source;
+}
+
+/**
+ * WHICH ACTIONS A SOURCE CAN CARRY. A child cannot call back into Kermanych, so only a
+ * trigger matched on the OPERATOR's message can run an agent; the DB carries the same rule as
+ * a check constraint (`project_triggers_agent_action_is_operator`), and this is what stops the
+ * editor from offering an unsavable choice.
+ */
+export function triggerActionOptions(source: TriggerSource): { value: 'skill' | 'agent'; label: string }[] {
+  const skill = { value: 'skill' as const, label: 'вкинути скіл' };
+  return source === 'operator' ? [skill, { value: 'agent' as const, label: 'запустити агента' }] : [skill];
+}
+
+/**
+ * THE AGENTS A TRIGGER CAN RUN, derived from the registry rather than listed.
+ *
+ * The filter is the presence of an `instruction`, which is exactly what separates the four
+ * agents SupervisorService.runTriggerAgent can start from `finish` and `summary`: those are
+ * automations with no model and no session of their own, and naming one produces the error
+ * notice «агента … не існує» and nothing else. Same filter as `assignmentRows`, and for the
+ * same reason — a seventh agent must not be able to drift out of this list.
+ */
+export function triggerAgentOptions(agents: readonly AgentDef[]): { value: string; label: string }[] {
+  return agents.filter((a) => a.instruction).map((a) => ({ value: a.id, label: a.label }));
+}
+
+/**
+ * THE EDITOR'S TEST FIELD: does this pattern match this sample?
+ *
+ * A pattern that does not compile returns its error MESSAGE rather than `false`, and that is
+ * the whole point of the field. At launch an unparseable pattern costs its own trigger
+ * silently — Kermanych's operator loop `continue`s past it, and a TTSR rule that omp cannot
+ * compile simply never fires — so the editor is the only place it can ever be seen. A miss
+ * and a broken pattern must therefore never be the same answer: a miss invites widening the
+ * pattern, a broken one means it can never match anything.
+ *
+ * `source` decides the flags because Kermanych's two matchers do not agree, and the field must
+ * report the one that will actually run. An `operator` pattern is compiled with `i`
+ * (SupervisorService.matchOperatorTriggers): it runs against prose a human typed, where the
+ * capitalisation of a sentence is not a decision they made. The other three are written into a
+ * rule file verbatim and compiled by omp, and Kermanych adds no flag — so neither does this.
+ * A ternary and not a flags table: `source` is a database value, and a plain object indexed by
+ * one is how a row named after an `Object.prototype` member gets a truthy answer it never
+ * stored.
+ */
+export function triggerMatches(pattern: string, sample: string, source: TriggerSource = 'operator'): boolean | string {
+  try {
+    return new RegExp(pattern, source === 'operator' ? 'i' : '').test(sample);
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
 
 /**
  * WHICH KEYS OF A DRAFT DIFFER FROM ITS BASELINE. Drives both the «не збережено»

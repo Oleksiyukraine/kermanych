@@ -207,6 +207,15 @@
           <AgentSkillsPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
         </div>
 
+        <!-- ── PROJECT · ТРИГЕРИ ────────────────────────────────────────────── -->
+        <!-- The last pane of «ШІ команда» and the last arm of this chain. It follows the two
+             above because a trigger names a skill from the same library: the library says what
+             exists, «Призначення» hands it over unconditionally, and a trigger fires it on a
+             pattern. Same `v-if` type guard as both, for the same reason. -->
+        <div v-else-if="section.key === 'project-triggers'" class="set__form set__form--wide">
+          <TriggersPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
+        </div>
+
         <!-- ── PROJECT · ЗМІННІ СЕРЕДОВИЩА ──────────────────────────────────── -->
         <div v-else-if="section.key === 'project-env'" class="set__form set__form--wide">
           <p v-if="!isBound" class="set__note">
@@ -593,6 +602,7 @@ import KModal from 'components/kit/KModal.vue';
 import KTag from 'components/kit/KTag.vue';
 import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
 import AgentSkillsPanel from 'components/settings/AgentSkillsPanel.vue';
+import TriggersPanel from 'components/settings/TriggersPanel.vue';
 import AgentCatalogPanel from 'components/settings/AgentCatalogPanel.vue';
 
 const store = useOrchestrator();

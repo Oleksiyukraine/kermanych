@@ -83,6 +83,16 @@ describe('SETTINGS_CATEGORIES', () => {
     expect(board.scope).toBe('project');
     expect(board.label).toBe('Призначення');
   });
+
+  // Triggers are the third project-scoped pane of «ШІ команда» and the last row of the rail's
+  // project block before the danger zone: a trigger names a skill from THIS project's library
+  // and is stored per project, so it cannot live at the app scope beside the catalogue.
+  it('carries the trigger list at the project scope', () => {
+    const triggers = settingsSection('project-triggers');
+    expect(triggers.key).toBe('project-triggers');
+    expect(triggers.scope).toBe('project');
+    expect(triggers.label).toBe('Тригери');
+  });
 });
 
 describe('changedFields', () => {
