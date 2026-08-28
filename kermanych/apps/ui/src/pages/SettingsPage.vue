@@ -380,6 +380,15 @@
           </p>
         </div>
 
+        <!-- ── APP · ШІ КОМАНДА ─────────────────────────────────────────────── -->
+        <!-- Mounted, not inlined, for the same reason the library is: it is a list of its
+             own, and its content — six agents and four English templates — belongs beside
+             the registry it reads, not in this sheet. No props: `AGENTS` is a compile-time
+             constant, so the panel has nothing to be told and nothing to load. -->
+        <div v-else-if="section.key === 'app-agents'" class="set__form set__form--wide">
+          <AgentCatalogPanel />
+        </div>
+
         <!-- ── APP · АКАУНТ ─────────────────────────────────────────────────── -->
         <div v-else-if="section.key === 'app-account'" class="set__form">
           <div class="set__group">
@@ -576,6 +585,7 @@ import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KTag from 'components/kit/KTag.vue';
 import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
+import AgentCatalogPanel from 'components/settings/AgentCatalogPanel.vue';
 
 const store = useOrchestrator();
 const projects = useProjects();

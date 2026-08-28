@@ -12,12 +12,14 @@
 // invitation opens every project in the group — see the workspaces migration), so
 // listing «Учасники» under a project would name the wrong owner of that data.
 //
-// Everything registered below is backed by a real read and a real write. Nothing
-// here is a placeholder: harness paths, provider API keys, spend caps, a parallel
-// agent limit, a context-warning threshold and remappable keys have no storage,
-// no endpoint and no column anywhere in the repo, so they get no panel.
+// Everything registered below is backed by real data. Most rows carry a read and a
+// write; a few — «Гарячі клавіші», «ШІ команда» — are reference panes over something
+// the application hard-codes, and say so in the pane itself. Nothing here is a
+// placeholder: harness paths, provider API keys, spend caps, a parallel agent limit,
+// a context-warning threshold and remappable keys have no storage, no endpoint and
+// no column anywhere in the repo, so they get no panel.
 
-import type { EnvEntry } from '@kermanych/core';
+import type { AgentKind, EnvEntry } from '@kermanych/core';
 
 export type SettingsScope = 'project' | 'workspace' | 'app';
 
@@ -123,6 +125,14 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
     blurb: 'Клавіші зашиті в застосунок — перепризначати їх поки нема де.',
   },
   {
+    key: 'app-agents',
+    scope: 'app',
+    label: 'ШІ команда',
+    sub: 'ролі та їхні інструкції',
+    blurb:
+      'Хто працює в команді Керманича і що саме кожна роль отримує на старті. Тексти зашиті в застосунок — тут їх лише видно.',
+  },
+  {
     key: 'app-account',
     scope: 'app',
     label: 'Акаунт',
@@ -148,6 +158,22 @@ export function settingsSection(key: unknown): SettingsCategory {
 /** The scope switcher's landing category — the first row of that scope. */
 export function settingsScopeEntry(scope: SettingsScope): SettingsCategory {
   return SETTINGS_CATEGORIES.find((c) => c.scope === scope) ?? settingsSection(undefined);
+}
+
+const AGENT_KIND_LABELS: Record<AgentKind, string> = {
+  session: 'власна сесія',
+  procedure: 'процедура',
+  automation: 'без ШІ',
+};
+
+/**
+ * WHAT AN AGENT KIND MEANS FOR AN OPERATOR READING THE CATALOGUE. `kind` describes
+ * where the agent runs, it does not switch behaviour (see the note on `AGENTS` in
+ * core). The badge must never print the raw English enum, and the full sentence for
+ * each kind lives in the pane's lead paragraph rather than in the badge.
+ */
+export function agentKindLabel(kind: AgentKind): string {
+  return AGENT_KIND_LABELS[kind];
 }
 
 /**

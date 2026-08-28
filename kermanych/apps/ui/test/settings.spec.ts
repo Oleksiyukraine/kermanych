@@ -64,6 +64,15 @@ describe('SETTINGS_CATEGORIES', () => {
     expect(skills.scope).toBe('project');
     expect(skills.label).toBe('Бібліотека скілів');
   });
+
+  // The agent catalogue is an APP setting, not a project one: `AGENTS` is a compile-time
+  // constant of the harness itself, identical for every project and every workspace.
+  it('carries the agent catalogue at the app scope', () => {
+    const agents = settingsSection('app-agents');
+    expect(agents.key).toBe('app-agents');
+    expect(agents.scope).toBe('app');
+    expect(agents.label).toBe('ШІ команда');
+  });
 });
 
 describe('changedFields', () => {
