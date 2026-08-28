@@ -73,6 +73,16 @@ describe('SETTINGS_CATEGORIES', () => {
     expect(agents.scope).toBe('app');
     expect(agents.label).toBe('ШІ команда');
   });
+
+  // The board is the mirror image of the catalogue above: the team is app-wide, but WHICH
+  // skills each role is handed is a per-project decision, stored per project — so it is the
+  // project scope that keeps the pane hidden until there is a project to write for.
+  it('carries the assignment board at the project scope', () => {
+    const board = settingsSection('project-agents');
+    expect(board.key).toBe('project-agents');
+    expect(board.scope).toBe('project');
+    expect(board.label).toBe('Призначення');
+  });
 });
 
 describe('changedFields', () => {

@@ -6,6 +6,12 @@
       — агент сам вирішує, коли їх узяти. Скіл із таким же імʼям у репозиторії завжди
       перемагає: Керманич його не підміняє.
     </p>
+    <!-- The library is opt-in by the agent. Handing a skill to a role unconditionally is the
+         next pane's job, and the distinction is easy to miss from here. -->
+    <p class="sk__lead">
+      Щоб роль отримувала скіл обовʼязково, а не за власним рішенням — розділ
+      «Призначення».
+    </p>
 
     <p v-if="error" class="sk__error mono">{{ error }}</p>
 

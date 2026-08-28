@@ -200,6 +200,13 @@
           <SkillsLibraryPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
         </div>
 
+        <!-- ── PROJECT · ПРИЗНАЧЕННЯ ────────────────────────────────────────── -->
+        <!-- Directly after the library, because it is the library it assigns from. Same
+             `v-if` type guard as the pane above, for the same reason. -->
+        <div v-else-if="section.key === 'project-agents'" class="set__form set__form--wide">
+          <AgentSkillsPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
+        </div>
+
         <!-- ── PROJECT · ЗМІННІ СЕРЕДОВИЩА ──────────────────────────────────── -->
         <div v-else-if="section.key === 'project-env'" class="set__form set__form--wide">
           <p v-if="!isBound" class="set__note">
@@ -585,6 +592,7 @@ import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KTag from 'components/kit/KTag.vue';
 import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
+import AgentSkillsPanel from 'components/settings/AgentSkillsPanel.vue';
 import AgentCatalogPanel from 'components/settings/AgentCatalogPanel.vue';
 
 const store = useOrchestrator();

@@ -19,7 +19,8 @@
 // a context-warning threshold and remappable keys have no storage, no endpoint and
 // no column anywhere in the repo, so they get no panel.
 
-import type { AgentKind, EnvEntry } from '@kermanych/core';
+import type { AgentDef, AgentKind, EnvEntry, SkillView } from '@kermanych/core';
+import type { AgentSkill } from '@kermanych/cloud';
 
 export type SettingsScope = 'project' | 'workspace' | 'app';
 
@@ -71,6 +72,14 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
     sub: 'знання для агентів',
     blurb:
       'Тексти, які агент бере сам, коли вважає за потрібне. Скіл із таким же імʼям у репозиторії завжди перемагає.',
+  },
+  {
+    key: 'project-agents',
+    scope: 'project',
+    label: 'Призначення',
+    sub: 'скіли для ролей',
+    blurb:
+      'Які скіли роль отримує обовʼязково, а не бере за власним рішенням. Змінює лише власник воркспейсу.',
   },
   {
     key: 'project-env',
@@ -175,6 +184,107 @@ const AGENT_KIND_LABELS: Record<AgentKind, string> = {
 export function agentKindLabel(kind: AgentKind): string {
   return AGENT_KIND_LABELS[kind];
 }
+
+/**
+ * One row of the assignment board: an agent, what this project gave it, and what that
+ * costs. `skills` is display data only — the merge below is the sole producer, and the
+ * panel adds nothing to it.
+ */
+export interface AssignmentRow {
+  agent: AgentDef;
+  skills: AssignedSkill[];
+  bytes: number;
+}
+
+/** One assigned skill as the board shows it. A `broken` entry carries nothing else. */
+export interface AssignedSkill {
+  name: string;
+  source?: SkillView['source'];
+  shadowedByRepo?: string;
+  broken?: boolean;
+}
+
+/**
+ * THE BOARD: a pure merge of three reads — the agent registry, the project's assignments
+ * and the RESOLVED library view.
+ *
+ * Only instruction-bearing agents get a row. An `automation` agent involves no model at
+ * all, so there is no text for an assigned skill to be pasted into; offering the operator
+ * a slot there would promise a delivery that cannot happen.
+ *
+ * A name the view does not carry comes back `broken` rather than absent. The alternative —
+ * dropping it — hides a live row of `project_agent_skills` that the launcher still reads
+ * (SkillsService.assignedForNames reports it as `missing`), so the operator would have no
+ * surface on which to see the dangling assignment, let alone remove it.
+ *
+ * `bodyBytes` is keyed by skill name because the byte cost is a property of the LIBRARY,
+ * not of the assignment: the same skill on two agents is paid for twice, once per launch.
+ */
+export function assignmentRows(
+  agents: readonly AgentDef[],
+  assignments: readonly AgentSkill[],
+  view: readonly SkillView[],
+  bodyBytes: Readonly<Record<string, number>>,
+): AssignmentRow[] {
+  const byName = new Map(view.map((v) => [v.name, v]));
+  return agents
+    .filter((a) => a.instruction)
+    .map((agent) => {
+      // The operator's own order, with the name as the tiebreak — the exact comparator
+      // SkillsService.assignedFor sorts by, so the board's order is the launch order.
+      const mine = assignments
+        .filter((r) => r.agentId === agent.id)
+        .sort((a, b) => a.position - b.position || a.skillName.localeCompare(b.skillName));
+      const skills = mine.map<AssignedSkill>((r) => {
+        const hit = byName.get(r.skillName);
+        if (!hit) return { name: r.skillName, broken: true };
+        return {
+          name: hit.name,
+          source: hit.source,
+          // Spread rather than `shadowedByRepo: hit.shadowedByRepo`: an explicit
+          // `undefined` would make the key present, and the broken row is compared as a
+          // whole object.
+          ...(hit.shadowedByRepo ? { shadowedByRepo: hit.shadowedByRepo } : {}),
+        };
+      });
+      // A broken name contributes 0: there is no body to pay for. That keeps the total an
+      // honest estimate of what the launch would actually paste.
+      const bytes = mine.reduce((sum, r) => sum + (bodyBytes[r.skillName] ?? 0), 0);
+      return { agent, skills, bytes };
+    });
+}
+
+/**
+ * WHERE AN ASSIGNED SKILL'S TEXT COMES FROM, as one badge.
+ *
+ * `shadowedByRepo` is checked BEFORE `source`, and that order is the whole point.
+ * `SkillView.source` is `'default' | 'project'` with no repository value, so the endpoint
+ * reports a skill the repository provides as `source: 'project'` (SkillsService.view /
+ * assignedForNames, `hit?.source ?? "project"`). Reading `source` first would tell the
+ * operator the project owns a text the repository actually supplies — and the repository
+ * always wins the name.
+ */
+export type AssignmentBadge = { kind: 'default' | 'project' | 'repo' | 'broken'; label: string };
+
+export function assignmentBadge(skill: AssignedSkill): AssignmentBadge {
+  if (skill.broken) return { kind: 'broken', label: 'немає скіла' };
+  if (skill.shadowedByRepo) return { kind: 'repo', label: 'перекрито репо' };
+  return skill.source === 'default'
+    ? { kind: 'default', label: 'дефолт' }
+    : { kind: 'project', label: 'проєкт' };
+}
+
+/**
+ * WHEN AN AGENT'S ASSIGNED BLOCK IS BIG ENOUGH TO SAY SO. Assigned text is pasted into
+ * the instruction and is therefore paid for on every one of that agent's turns, unlike a
+ * library skill the agent may never take.
+ *
+ * 8 KiB is roughly two thousand tokens — enough to hold both of Kermanych's own defaults
+ * and a project skill or two without a word of complaint, and past it the block is a
+ * material share of a short task's budget. It is a warning and nothing else: no write is
+ * blocked, because the operator may well mean it.
+ */
+export const ASSIGNED_BYTES_WARN = 8 * 1024;
 
 /**
  * WHICH KEYS OF A DRAFT DIFFER FROM ITS BASELINE. Drives both the «не збережено»
