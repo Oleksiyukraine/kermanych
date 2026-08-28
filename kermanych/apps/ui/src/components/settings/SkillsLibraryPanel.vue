@@ -93,11 +93,11 @@
 import { computed, ref, watch } from 'vue';
 import { DEFAULT_SKILLS, SKILL_NAME_RE, type SkillView } from '@kermanych/core';
 import { deleteProjectSkill, listProjectSkills, upsertProjectSkill, type ProjectSkill } from '@kermanych/cloud';
-import { api } from '../lib/api';
-import { useAuth } from '../stores/auth';
-import { useProjects } from '../stores/projects';
-import KModal from '../components/kit/KModal.vue';
-import KField from '../components/kit/KField.vue';
+import { api } from '../../lib/api';
+import { useAuth } from 'stores/auth';
+import { useProjects } from 'stores/projects';
+import KModal from 'components/kit/KModal.vue';
+import KField from 'components/kit/KField.vue';
 
 const props = defineProps<{ projectId: string; projectName: string }>();
 
@@ -186,9 +186,9 @@ async function load(): Promise<void> {
   }
 }
 
-// `projectId` is a LIVE prop, not a mount-time constant: the Менеджмент shell renders its
-// sections with no `:key` (ManagementPage.vue) and the rail deliberately does not navigate on
-// a Менеджмент route (MainLayout.vue), so picking another project swaps the prop under a
+// `projectId` is a LIVE prop, not a mount-time constant: SettingsPage renders its panes with
+// no `:key` and the sidebar's project rows only move the selection, never the route
+// (MainLayout.selectProject), so picking another project swaps the prop under a
 // component that stays mounted. Reading once on mount would leave the PREVIOUS project's
 // library on screen under the new project's name, and every action would then write the old
 // project's data into the new one. Re-read on every change, and close the editor with it: a

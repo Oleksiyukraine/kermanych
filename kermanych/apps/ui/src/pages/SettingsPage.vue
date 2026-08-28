@@ -190,6 +190,16 @@
           <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
         </div>
 
+        <!-- ── PROJECT · БІБЛІОТЕКА СКІЛІВ ──────────────────────────────────── -->
+        <!-- Mounted, not inlined: the library is a screen's worth of list, modal and
+             cloud writes of its own, and it moved here whole from Менеджмент. Same
+             arrangement as KEnvEditor below. The `v-if` is the type guard the outer
+             chain cannot give: reaching this branch already means a project is
+             selected, but only the narrowing here turns the id into a string. -->
+        <div v-else-if="section.key === 'project-skills'" class="set__form set__form--wide">
+          <SkillsLibraryPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
+        </div>
+
         <!-- ── PROJECT · ЗМІННІ СЕРЕДОВИЩА ──────────────────────────────────── -->
         <div v-else-if="section.key === 'project-env'" class="set__form set__form--wide">
           <p v-if="!isBound" class="set__note">
@@ -565,6 +575,7 @@ import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KTag from 'components/kit/KTag.vue';
+import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
 
 const store = useOrchestrator();
 const projects = useProjects();

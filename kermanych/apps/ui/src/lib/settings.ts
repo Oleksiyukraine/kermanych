@@ -63,6 +63,14 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
     blurb: 'Що Керманич запускає для прев’ю і що копіює в кожну робочу теку.',
   },
   {
+    key: 'project-skills',
+    scope: 'project',
+    label: 'Бібліотека скілів',
+    sub: 'знання для агентів',
+    blurb:
+      'Тексти, які агент бере сам, коли вважає за потрібне. Скіл із таким же імʼям у репозиторії завжди перемагає.',
+  },
+  {
     key: 'project-env',
     scope: 'project',
     label: 'Змінні середовища',

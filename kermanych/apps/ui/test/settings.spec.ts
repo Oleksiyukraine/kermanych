@@ -54,6 +54,16 @@ describe('SETTINGS_CATEGORIES', () => {
     const firstSeen = [...new Set(scopes)];
     expect(scopes).toEqual(firstSeen.flatMap((s) => scopes.filter((x) => x === s)));
   });
+
+  // The skill library used to be a Менеджмент screen of its own. It is a project
+  // setting, so the rail — not the Менеджмент sub-nav — is where it is reached, and
+  // the scope is what keeps it hidden until a project is selected.
+  it('carries the skill library at the project scope', () => {
+    const skills = settingsSection('project-skills');
+    expect(skills.key).toBe('project-skills');
+    expect(skills.scope).toBe('project');
+    expect(skills.label).toBe('Бібліотека скілів');
+  });
 });
 
 describe('changedFields', () => {
