@@ -198,7 +198,9 @@
       <router-view />
     </q-page-container>
 
-    <!-- STATUS BAR — a VS Code-style footer; for now just git sync for the selected repo. -->
+    <!-- STATUS BAR — a VS Code-style footer; for now just git pull for the selected repo.
+         There is deliberately no Push: work leaves the machine through «Влити» (merge) and
+         the PR flow, never as a blind push of whatever branch the project repo sits on. -->
     <q-footer class="shell__footer">
       <button
         type="button"
@@ -206,16 +208,8 @@
         :disabled="!isBound || syncing"
         v-tip="isBound ? 'git pull (--ff-only) поточної гілки репозиторію проєкту' : BIND_HINT"
         aria-label="Pull"
-        @click="gitSync('pull')"
+        @click="gitPull"
       >↓ Pull</button>
-      <button
-        type="button"
-        class="shell__foot-btn"
-        :disabled="!isBound || syncing"
-        v-tip="isBound ? 'git push поточної гілки' : BIND_HINT"
-        aria-label="Push"
-        @click="gitSync('push')"
-      >↑ Push</button>
       <span class="shell__foot-spacer"></span>
       <button
         v-if="store.selectedProjectId"
@@ -1704,20 +1698,19 @@ async function confirmSignOut(): Promise<void> {
   }
 }
 
-// Footer git sync for the selected project's bound repo. `syncing` gates both buttons so a
+// Footer git pull for the selected project's bound repo. `syncing` gates the button so a
 // double-click cannot fire two operations; git's own output (or refusal) surfaces as a toast.
 const syncing = ref(false);
-async function gitSync(kind: 'pull' | 'push'): Promise<void> {
+async function gitPull(): Promise<void> {
   const id = store.selectedProjectId;
   if (!id || !isBound.value || syncing.value) return;
   syncing.value = true;
-  const label = kind === 'pull' ? 'Pull' : 'Push';
   try {
-    const r = kind === 'pull' ? await store.pullProject(id) : await store.pushProject(id);
-    if (r.ok) store.notify(`${label}: ${r.out.trim() || 'готово'}`);
-    else store.notify(`${label}: ${r.out.trim() || 'не вдалося'}`, 'error', 7000);
+    const r = await store.pullProject(id);
+    if (r.ok) store.notify(`Pull: ${r.out.trim() || 'готово'}`);
+    else store.notify(`Pull: ${r.out.trim() || 'не вдалося'}`, 'error', 7000);
   } catch (e) {
-    store.notify(`${label}: ${e instanceof Error ? e.message : String(e)}`, 'error', 7000);
+    store.notify(`Pull: ${e instanceof Error ? e.message : String(e)}`, 'error', 7000);
   } finally {
     syncing.value = false;
   }
