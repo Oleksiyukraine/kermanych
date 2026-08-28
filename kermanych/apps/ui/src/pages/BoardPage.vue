@@ -34,6 +34,10 @@
         команді під тим самим id — прив’язана тека, сесії та їхні робочі дерева залишаються
         на місці.
       </p>
+      <!-- `cloud.workspaces` is authoritative here rather than merely empty: this whole
+           section renders only once `unpublished` is non-empty, and that list is gated on
+           the cloud read having answered — workspaces and projects arrive in the same
+           Promise.all. Without that, an unread list reads as «you have no workspace». -->
       <p v-if="!cloud.workspaces.length" class="board__publish-note">
         Але спершу потрібен воркспейс: проєкт у хмарі завжди належить якійсь групі — створіть
         її кнопкою «+» у лівій панелі.
@@ -429,10 +433,16 @@ const assigneeOptions = computed<KSelectOption[]>(() => {
 });
 
 const scopeHeading = computed(() => {
-  const name = local.selectedWorkspaceId
-    ? cloud.workspaceById.get(local.selectedWorkspaceId)?.name
-    : undefined;
-  return name ? `Дошка · ${name}` : 'Дошка команди';
+  const id = local.selectedWorkspaceId;
+  if (!id) return 'Дошка команди';
+  const name = cloud.workspaceById.get(id)?.name;
+  if (name) return `Дошка · ${name}`;
+  // Scoped, but the name has not arrived. «Дошка команди» would claim the OPPOSITE of what
+  // the board is showing — one group's tasks announced as every group's — so while the list
+  // is unread the heading keeps the scoped SHAPE and says «читаю…» where the name goes.
+  // After a read an unresolvable id means the group is gone, and there is no name to wait
+  // for any more.
+  return cloud.listRead ? 'Дошка команди' : 'Дошка · читаю…';
 });
 
 const visibleTasks = computed(() =>
@@ -521,42 +531,54 @@ const loadHint = computed(() => {
 // What it offers is publishing, which is the only control in the app that turns a
 // local-only project into one the team can put tasks on.
 //
-// A FAILED cloud read is excluded, and that guard is load-bearing: `cloud.projects` is then
-// an unread list rather than an empty one, every local row would look local-only, and the
-// user would be offered a publish the cloud is going to refuse with a duplicate key —
-// reported back as «ви не його учасник», about a project they own.
+// Two guards, and both say the same thing: this list is only meaningful once the cloud list
+// is an ANSWER. `offlineError` covers a read that failed; `listRead` covers one that has not
+// come back yet, when `cloud.byId` is empty and EVERY local row — published ones included —
+// looks local-only. Without them the user is offered a publish the cloud is going to refuse
+// with a duplicate key, reported back as «ви не його учасник» about a project they own.
+//
+// The guard lives HERE, on the collection, rather than at each of its readers: the publish
+// section, its «спершу потрібен воркспейс» note, `localOnlyHint` and `blankText` all form
+// their belief from this array, and four copies of one condition is how two of them came to
+// disagree in the first place.
 const unpublished = computed(() =>
-  cloud.offlineError ? [] : local.projects.filter((p) => !cloud.byId.has(p.id)),
+  !cloud.listRead || cloud.offlineError
+    ? []
+    : local.projects.filter((p) => !cloud.byId.has(p.id)),
 );
 
 // A local-only project SELECTED in the sidebar scopes the board to nothing (lib/scope.ts),
 // so every column is empty and the count reads 0 — a state indistinguishable from breakage
-// unless it says what it is. Derived from `unpublished`, which already carries the
-// "no cloud row" test and the FAILED-read guard.
+// unless it says what it is.
 //
-// `listRead` on top of that, because `unpublished`'s guard is `offlineError`, which is null
-// while the FIRST read is still in flight — every local row looks local-only in that window.
-// The publish section merely flashed there; this line would instead assert something
-// specific and false, that a published project lives only on this machine, beside a board
-// legitimately reading 0 задач. A hint that names a thing is held to a higher standard than
-// a control that merely appears, because the user can act on it.
+// The unread window needs no guard here: `unpublished` is empty until the cloud list is an
+// answer, so this cannot assert that a published project lives only on this machine. A hint
+// that names a thing is held to a higher standard than a control that merely appears,
+// because the user can act on it.
 const localOnlyHint = computed(() => {
   const id = local.selectedProjectId;
-  if (!id || local.selectedWorkspaceId || !cloud.listRead) return '';
+  if (!id || local.selectedWorkspaceId) return '';
   const row = unpublished.value.find((p) => p.id === id);
   return row
     ? `Проєкт «${row.name}» живе лише на цій машині, тому задач у хмарі в нього немає — опублікуйте його нижче.`
     : '';
 });
 
+// «Читаю дошку…» is about the TASK read; this is the project read, and the two finish
+// independently. One constant because two surfaces say it and they must not drift.
+const READING_PROJECTS = 'Читаю список проєктів…';
+
 // Why «Нова задача» is grey. `tasks.project_id` is what tasks_insert_member checks
 // membership against, so with no project to hang a task on there is nothing to create —
 // and that is now three different situations, only some of which the user can act on.
 const newTaskHint = computed(() => {
   if (!cloud.projects.length) {
-    return cloud.offlineError
-      ? 'Список проєктів не прочитано — хмара недоступна'
-      : 'Задача належить проєкту в хмарі, а тут його ще немає — опублікуйте локальний проєкт нижче або попросіть колегу додати вас до свого';
+    if (cloud.offlineError) return 'Список проєктів не прочитано — хмара недоступна';
+    // Unread is not empty. Saying the cloud holds no project yet — and pointing at a publish
+    // section this window deliberately hides — hands the user a reason that is not the real
+    // one, on a button that is grey for a reason that will pass on its own.
+    if (!cloud.listRead) return READING_PROJECTS;
+    return 'Задача належить проєкту в хмарі, а тут його ще немає — опублікуйте локальний проєкт нижче або попросіть колегу додати вас до свого';
   }
   // Projects exist, but none in the current scope: the create picker offers only what the
   // board is showing, so the way out is a sidebar click, not this button.
@@ -568,12 +590,15 @@ const newTaskHint = computed(() => {
   return 'Створити задачу для команди';
 });
 
-// The same three states, spelled out where the board is empty. Telling a user with two
-// local projects that they are «не в жодному проєкті» is how this page dead-ended.
+// The same states, spelled out where the board is empty. Telling a user with two local
+// projects that they are «не в жодному проєкті» is how this page dead-ended — and telling
+// them so while the list is still being read is the same dead end one beat earlier, since
+// the list above that this text sends them to is hidden until the read lands.
 const blankText = computed(() => {
   if (cloud.offlineError) {
     return 'Список проєктів не прочитано — хмара недоступна. Задачі команди зʼявляться, щойно буде звʼязок; локальні сесії працюють як завжди.';
   }
+  if (!cloud.listRead) return READING_PROJECTS;
   if (unpublished.value.length) {
     return 'Жоден проєкт цієї машини ще не живе у хмарі — опублікуйте будь-який зі списку вище, і його задачі побачить уся команда.';
   }
