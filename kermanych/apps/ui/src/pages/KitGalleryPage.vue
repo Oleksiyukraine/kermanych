@@ -341,6 +341,18 @@
         />
       </div>
       <div class="kit__caption mono">форк: гілка та ревізія під батьківським агентом</div>
+
+      <!-- REMOVABLE — a backlog task, whose card click opens its editor and so cannot also
+           be the way out. The ✕ appears under the cursor; its width is reserved in the top
+           row, which is why the time sits a notch left of the cards above. -->
+      <div class="kit__cards">
+        <KSessionCard
+          removable branch="" title="перевести токени на 8pt" time="2 год" status="backlog"
+          status-line="в беклозі" model="opus-5"
+          remove-title="Видалити задачу «перевести токени на 8pt»"
+        />
+      </div>
+      <div class="kit__caption mono">видаляється на місці: ✕ на ховері картки</div>
     </section>
 
     <!-- kanban -->
