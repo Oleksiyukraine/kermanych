@@ -61,8 +61,22 @@ export const useProjects = defineStore('projects', () => {
   // stays grouped when that call fails. Presentation state only — the local SQLite
   // registry deliberately knows nothing about workspaces (design D1: it caches what
   // LAUNCHING reads, and launching never reads a workspace).
+  //
+  // STAMPED with the account that filled it. `localStorage` is per ORIGIN, so two accounts
+  // on one machine share this key, and signing out drops the session but not the key —
+  // without a stamp the next account renders the PREVIOUS account's workspace names and
+  // ownerIds as its groups, indefinitely if it is offline, because load() degrades instead
+  // of throwing. A stamp rather than a clear-on-sign-out: sign-out is not the only route to
+  // a different account (an expired token, a hand-copied profile directory), and a stamp
+  // also fails safe when the key is carried between machines. A payload from an older
+  // build carries no stamp and is therefore ignored too, which is the right reading —
+  // unstamped means unknown owner.
   const TREE_CACHE_KEY = 'kermanych.workspace-tree';
-  type TreeCache = { workspaces: Workspace[]; projectWorkspace: Record<string, string> };
+  type TreeCache = {
+    userId: string;
+    workspaces: Workspace[];
+    projectWorkspace: Record<string, string>;
+  };
 
   function readTreeCache(): void {
     try {
@@ -71,6 +85,12 @@ export const useProjects = defineStore('projects', () => {
       // Partial, because this payload comes off disk: it parses as JSON without being
       // anything this build wrote, so every field is checked before it reaches the tree.
       const cached = JSON.parse(raw) as Partial<TreeCache>;
+      // Reading the stamp synchronously is sound: every route that instantiates this store
+      // is `public: false`, and router/index.ts awaits `auth.ready` and bounces a session-
+      // less navigation to /login before the layout mounts — so `auth.user` is already set
+      // the first time this runs. A mismatch reads as NO CACHE, which the offline path
+      // already handles.
+      if (typeof cached.userId !== 'string' || cached.userId !== auth.user?.id) return;
       if (!Array.isArray(cached.workspaces)) return;
       // `ownerId` is checked with the rest because isWorkspaceOwner() reads it straight
       // off these rows: a version-skewed payload would otherwise decide which admin
@@ -97,7 +117,12 @@ export const useProjects = defineStore('projects', () => {
   }
 
   function writeTreeCache(): void {
+    // Nothing to stamp, so nothing worth keeping: an unattributable payload is exactly what
+    // this cache must never hold.
+    const userId = auth.user?.id;
+    if (!userId) return;
     const cache: TreeCache = {
+      userId,
       workspaces: workspaces.value,
       // Rebuilt from the projects we hold ONLY once a list has been read — that is the
       // moment `projects.value` is the whole truth, and a rebuild is what prunes entries
