@@ -39,14 +39,6 @@ export type CloudProject = {
   createdAt: string;
 };
 
-export type ProjectMember = {
-  projectId: string;
-  userId: string;
-  role: "owner" | "member";
-  addedAt: string;
-  profile?: Profile; // joined when the caller asks for it
-};
-
 export type WorkspaceMember = {
   workspaceId: string;
   userId: string;

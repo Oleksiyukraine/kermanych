@@ -10,7 +10,6 @@ export type {
   Workspace,
   WorkspaceMember,
   CloudProject,
-  ProjectMember,
   Task,
   TaskInsert,
   TaskPatch,
