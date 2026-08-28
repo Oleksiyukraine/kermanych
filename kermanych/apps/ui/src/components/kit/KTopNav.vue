@@ -2,7 +2,7 @@
   <div
     ref="rootEl"
     class="k-topnav"
-    :class="{ 'k-topnav--animate': animate }"
+    :class="{ 'k-topnav--animate': animate, 'k-topnav--dense': dense }"
     role="tablist"
     @keydown="onKeydown"
   >
@@ -13,7 +13,7 @@
       aria-hidden="true"
     ></span>
     <button
-      v-for="option in options"
+      v-for="(option, i) in options"
       :key="option.value"
       :ref="(el) => setBtn(option.value, el)"
       :data-nav-value="option.value"
@@ -22,7 +22,7 @@
       type="button"
       role="tab"
       :aria-selected="option.value === modelValue"
-      :tabindex="option.value === modelValue ? 0 : -1"
+      :tabindex="(activeIndex < 0 ? i === 0 : i === activeIndex) ? 0 : -1"
       @click="emit('update:modelValue', option.value)"
     >
       {{ option.label }}
@@ -43,9 +43,18 @@
 import { computed, ref } from 'vue';
 import { useSlidingIndicator } from '../../composables/useSlidingIndicator';
 
+// `options` is readonly because this component only ever reads it — that lets a
+// caller hand over a frozen registry table (lib/settings.ts) without copying it
+// into a mutable array first.
+//
+// `dense` is a GEOMETRY variant, not a second control: the settings rail is 280px
+// wide and three Ukrainian scope words do not fit the header strip's 16px
+// segment padding. Tightening it here keeps one tablist — one thumb, one travel,
+// one set of arrow keys — instead of a page-local copy that drifts.
 const props = defineProps<{
   modelValue: string;
-  options: { value: string; label: string }[];
+  options: readonly { value: string; label: string }[];
+  dense?: boolean;
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
@@ -53,6 +62,14 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 const rootEl = ref<HTMLElement | null>(null);
 const active = computed(() => props.modelValue);
 const { x, width, ready, animate } = useSlidingIndicator(rootEl, active);
+
+// WHICH SEGMENT IS ACTIVE, or -1 when the strip does not hold the current value
+// at all — the shell parks the nav there whenever it is on a screen outside the
+// table, e.g. Налаштування. That state has to stay Tab-reachable: with the roving
+// tabindex keyed on a match alone, every segment fell to -1 and the whole view
+// switcher dropped out of the tab order, so the only way back to Агенти was the
+// mouse. The FIRST segment carries the tab stop instead.
+const activeIndex = computed(() => props.options.findIndex((o) => o.value === props.modelValue));
 
 // Roving focus needs the button elements to move focus onto; a tablist that
 // answers only the mouse is not one.
@@ -65,15 +82,21 @@ function setBtn(value: string, el: unknown): void {
 const STEP: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
 
 function onKeydown(e: KeyboardEvent): void {
-  const i = props.options.findIndex((o) => o.value === props.modelValue);
-  if (i < 0) return;
+  const i = activeIndex.value;
   const last = props.options.length - 1;
+  if (last < 0) return;
   const step = STEP[e.key];
   const next =
     step !== undefined
-      ? // Wrap: a segmented control is a ring, and dead-ending at the edges reads
-        // as a broken key rather than a boundary.
-        (i + step + props.options.length) % props.options.length
+      ? i < 0
+        ? // Nothing is selected, so there is no neighbour to step from: enter the
+          // ring from the end the arrow came from.
+          step > 0
+          ? 0
+          : last
+        : // Wrap: a segmented control is a ring, and dead-ending at the edges reads
+          // as a broken key rather than a boundary.
+          (i + step + props.options.length) % props.options.length
       : e.key === 'Home'
         ? 0
         : e.key === 'End'
@@ -162,6 +185,14 @@ function onKeydown(e: KeyboardEvent): void {
 // The accent is spent here and nowhere else on this strip.
 .k-topnav__seg--active {
   color: var(--k-accent);
+}
+
+// DENSE — the same strip in a narrow column. Geometry only: nothing about the
+// thumb, the accent or the keyboard changes, so a dense strip is the same control
+// the header carries, not a lookalike.
+.k-topnav--dense .k-topnav__seg {
+  padding: var(--k-sp-2) 10px;
+  font-size: var(--k-fs-sm);
 }
 
 @media (prefers-reduced-motion: reduce) {
