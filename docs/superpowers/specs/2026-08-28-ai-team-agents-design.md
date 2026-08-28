@@ -1,12 +1,12 @@
-# Kermanych — «ШІ команда»: agent catalogue and skill assignment (Design)
+# Kermanych — «ШІ команда»: agent catalogue, skill assignment and triggers (Design)
 
 - **Status:** Draft for review
 - **Date:** 2026-08-28
 - **Scope:** `packages/core` (an agent registry extracted from the supervisor's
-  prompts), `supabase/migrations` (one new table), `packages/cloud` (its typed
-  surface), `apps/api` (assignment resolution + launch wiring at the four
-  procedure/session sites), `apps/ui` (three settings rows, one relocated panel,
-  the Менеджмент cleanup)
+  prompts), `supabase/migrations` (two new tables), `packages/cloud` (their typed
+  surfaces), `apps/api` (assignment resolution, the delivery block, the
+  per-session trigger package, operator-side matching), `apps/ui` (four settings
+  rows, one relocated panel, the Менеджмент cleanup)
 - **Builds on:** `docs/superpowers/specs/2026-08-27-project-skills-design.md`
   (the skill library: materialisation, `--config`, the resolved view, the badges)
 - **Baseline:** `dev` at the settings-v2 and workspaces merges. Every line
@@ -103,6 +103,37 @@ The session's used-skills summary lives in `AgentsPage.vue` (`:214`, `:830`).
   directories — i.e. inside the repository. Writing there is exactly what the
   skill-library design refused to do, and the runtime effect of the field on a
   *skill* is undocumented. This design therefore does not rely on it.
+
+### 2.6 Triggers: probed, not assumed
+
+A trigger fires content **without the model choosing to**. The mechanism is
+TTSR (Time Traveling Stream Rules): a *rule* carrying a `condition` regex is
+registered with `TtsrManager`, which monitors the assistant's text, its thinking
+and its tool arguments during streaming, and on a match injects the rule's body
+as `<system-interrupt reason="rule_violation" rule="…" path="…">`.
+
+Rules normally come from config roots inside the repository, which this feature
+may not write to. Four questions decided whether Kermanych can deliver a trigger
+anyway; all four were probed against a real `omp` child, and the probe was
+deleted afterwards:
+
+| question | answer | evidence |
+| --- | --- | --- |
+| Can `-e <dir>` deliver `rules/` from outside the repo? | **yes** — `package.json` with `omp.extensions` plus a no-op `index.js` is a sufficient package | a plain rulebook rule from the package appeared in the child's system prompt as `- probe-book (): PROBE BOOK …` |
+| Does TTSR register a rule that arrived through `omp-plugins` rather than `native`? | **yes** | firing it injected `<system-interrupt … rule="probe-text" path="…/pkg/rules/probe-text.md">` |
+| Does `scope: [thinking]` catch reasoning? | **yes** | a rule scoped to thinking fired when the model reasoned about the token, with `thinking_delta`s present |
+| Does `interruptMode: always` behave differently from `never`? | **yes, and worse than expected** | `always` emitted `ttsr_triggered`, aborted, retried — and the model then **re-emitted the forbidden token**, because `repeatMode: "once"` had already spent the rule. `never` let the message finish and delivered the same body as a follow-up, emitting no event |
+
+Two behavioural findings from the same probe, both load-bearing for §3.8:
+
+- **TTSR guarantees delivery, not obedience.** Under the hard mode the model was
+  interrupted and still said the thing again on retry. A trigger is a way to put
+  text in front of the model at the right moment; it is not enforcement.
+- **A vague body makes the model investigate instead of comply.** With a
+  placeholder body, the model reasoned that the rule "is just placeholder text
+  with no real instructions behind it… looks like a test scenario", then spent a
+  turn reading `rule://probe-text` and a sibling rule. Trigger bodies must be
+  actionable instructions.
 
 ## 3. Design
 
@@ -227,13 +258,14 @@ meaning what it means today — a skill the model chose by itself.
 
 ### 3.5 The settings surface
 
-Three rows added to `SETTINGS_CATEGORIES`:
+Four rows added to `SETTINGS_CATEGORIES`:
 
 | `key` | `scope` | `label` | contents |
 | --- | --- | --- | --- |
 | `app-agents` | `app` | ШІ команда | the read-only catalogue (§3.6) |
 | `project-agents` | `project` | ШІ команда | the assignment board |
 | `project-skills` | `project` | Бібліотека скілів | the relocated editor |
+| `project-triggers` | `project` | Тригери | the trigger list (§3.8) |
 
 No workspace-scoped row: there is nothing behind it, and the file's own
 no-placeholder rule forbids registering one. The rail filters by scope, so the
@@ -291,18 +323,91 @@ session, not once. The editor shows each body's size and the assignment board
 shows the sum per agent, with a warning past a threshold. Nothing is blocked: a
 long assigned skill is a legitimate choice with a visible price.
 
+### 3.8 Triggers
+
+A trigger is its own entity, not a field on a skill. That is the user's choice and
+it is the right one for a reason the two motivating examples contain: they have
+**different actions**. «Користувач пише "хочу зробити ПР"» must *run a Kermanych
+agent*; «модель розмірковує "треба додати env"» must *inject a skill's text into
+the running stream*. A trigger-as-skill-field could only ever express the second.
+
+```
+project_triggers(
+  project_id, id (slug), label, enabled,
+  source      : operator | assistant | thinking | tool,
+  pattern     : the regex,
+  path_globs  : optional path gate (tool source),
+  action      : skill | agent,
+  target      : a skill name or an agent id,
+  mode        : remind | interrupt,        -- → interruptMode never | always
+  repeat      : once | after-gap,
+  updated_at, updated_by,
+  primary key (project_id, id)
+)
+```
+
+RLS and the audit trigger copy `project_skills` in its post-workspaces form
+(§2.3), exactly as assignments do. `target` is a **name**, resolved the same way
+and with the same dangling-reference UI state as §3.3.
+
+**Which combinations exist, and which cannot.** This is mechanics, not taste, and
+the editor must enforce it or the operator will save a trigger that can never run:
+
+| `source` | matched by | `action: skill` | `action: agent` |
+| --- | --- | --- | --- |
+| `operator` | **Kermanych**, in `sendMessage`, before the message is forwarded | prepends the resolved skill text to that message | **runs any of the four agents** |
+| `assistant` / `thinking` / `tool` | **TTSR**, inside the child | injects the rule body mid-conversation | **impossible** — a child has no callback into Kermanych |
+
+The impossibility costs nothing for two of the four agents: `pull-request` and
+`resolve-conflict` **are** a prompt into the running session, so injecting their
+instruction — interpolated at materialisation time, when the branch and the
+project's conventions are known — has the identical effect. It is genuinely
+impossible only for `review` and `promote`, which spawn children.
+
+**Delivery.** Kermanych materialises a minimal extension package per **session**
+at `~/.kermanych/triggers/<sessionId>/` — `package.json` with `omp.extensions`, a
+no-op `index.js`, and one `rules/<id>.md` per TTSR-sourced trigger — and adds
+`-e <path>` to the argv. Per session rather than per project because a rule body
+may carry session-specific interpolation, and because the per-project overlay
+already taught us that shared filenames with cwd-dependent content race. The
+overlay written by the skill library additionally forces `ttsr.enabled: true`, so
+an operator who has TTSR switched off does not get triggers that silently do
+nothing.
+
+Name collisions need no guard here, and for once the priority order helps: rules
+dedupe by name with `native` (100) above `omp-plugins` (90), so a repository's own
+rule shadows Kermanych's automatically — the direction this feature always wants.
+
+**Defaults chosen from the probe, not from taste.** `mode: remind` and
+`repeat: once`. The hard mode aborts the turn, discards the partial output and
+still does not guarantee compliance (§2.6), so it is opt-in, and the editor says
+what it costs. `regex` is the only `match_kind` in this iteration.
+
+**The foot-gun, and what the editor does about it.** A three-letter pattern like
+`env` matches `.env`, `environment`, `envelope` and `Convention`, and every match
+spends a turn. The trigger editor therefore carries a **test field**: paste a
+sample of prose, a thought or tool arguments, see whether this pattern matches
+before saving. Nothing is blocked; the operator sees the cost.
+
+**Authoring guidance, stated in the UI.** A trigger's target body must be an
+actionable instruction. With a vague body the probe's model concluded the rule was
+"just placeholder text… a test scenario" and spent a turn investigating instead of
+acting — a trigger that fires and achieves nothing is worse than no trigger.
+
 ## 4. Isolation / boundaries
 
 - **`packages/core`** — `AgentDef`, `AGENTS`, the four templates. Pure data; no
   I/O, no cloud, no `omp` knowledge. Imported by both the supervisor and the UI.
-- **`packages/cloud`** — the `project_agent_skills` typed surface only.
-- **`SkillsService` (api)** — gains assignment resolution and the block builder.
-  It remains the only component that decides precedence or touches the
-  filesystem.
+- **`packages/cloud`** — the `project_agent_skills` and `project_triggers` typed
+  surfaces only.
+- **`SkillsService` (api)** — gains assignment resolution, the block builder, and
+  the per-session trigger package materialisation. It remains the only component
+  that decides precedence or touches the filesystem.
 - **`SupervisorService`** — appends the resolved block at all four instruction
-  sites through one helper. It sets no skill-related launch flags and gains no
-  resolution logic.
-- **UI** — three panels; no resolution logic, no second source of truth for the
+  sites through one helper, passes `-e <trigger package>` at launch, and matches
+  `operator`-sourced triggers in `sendMessage`. It sets no skill-related launch
+  flags and gains no resolution logic.
+- **UI** — four panels; no resolution logic, no second source of truth for the
   instruction texts.
 
 ## 5. Verification
@@ -328,7 +433,23 @@ in the child's argv.
 
 **RLS (`packages/cloud`, env-gated):** a member reads assignments; a member's
 write is refused; the workspace owner's write succeeds; `updated_by` is stamped
-by the trigger.
+by the trigger. The same four cases cover `project_triggers`.
+
+**Trigger unit (`apps/api`):** an `operator`-sourced trigger matches the message
+before it is forwarded and, per `action`, either prepends the skill text or runs
+the named agent; a `thinking`/`assistant`/`tool`-sourced trigger materialises a
+rule file whose frontmatter carries the mapped `scope`, `condition`,
+`interruptMode` and `repeatMode`; the impossible combination (a non-operator
+source with `action: agent` targeting `review` or `promote`) is rejected before it
+can be saved; a dangling `target` is reported, not dropped.
+
+**Trigger integration (real `omp` child, env-gated):** a `thinking`-scoped trigger
+materialised by Kermanych fires when the child reasons about the pattern, and the
+injected `<system-interrupt>` names the rule and its path under
+`~/.kermanych/triggers/<sessionId>/`. This is the probe of §2.6 turned into a
+standing test — it is the only evidence that the whole delivery chain
+(materialise → `-e` → `omp-plugins` → `TtsrManager`) still works after an `omp`
+upgrade.
 
 **Manual smoke:** Налаштування → Застосунок → ШІ команда shows six agents, four
 with English templates and two with none; Проєкт → ШІ команда assigns a skill to
@@ -363,3 +484,19 @@ the skill listed as «від ролі»; Проєкт → Бібліотека �
   and declined in §3.4; the delivery contract does not depend on it either way.
 - **Enforcing a context budget.** Sizes and a warning are shown; nothing is
   blocked.
+
+And, on triggers specifically:
+
+- **`astCondition`** as a second matching language. Regex only in this iteration:
+  AST conditions evaluate solely on tool-argument streams with an inferable file
+  language, which is a narrow win for a whole extra concept in the editor.
+- **Enforcement.** A trigger delivers text at the right moment; the probe showed
+  the model re-emitting a forbidden token after a hard interrupt, so nothing here
+  is a guarantee of behaviour and the UI must not imply one.
+- **A callback from a child into Kermanych.** That is what would let a
+  `thinking`-sourced trigger launch `review` or `promote`; it needs a hook calling
+  the local API from inside the agent process, which is a new surface and a new
+  trust boundary.
+- **Triggers at the app or workspace scope.** Project only, until there is a
+  reason.
+
