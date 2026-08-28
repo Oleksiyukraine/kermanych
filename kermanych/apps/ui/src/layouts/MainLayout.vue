@@ -705,8 +705,8 @@ function selectWorkspace(id: string): void {
 // `projects.projects.length > 0` is satisfied by create()/publish() appending, so one create
 // while Supabase recovered would have claimed a one-project cloud list and called seven
 // unchecked projects «поза хмарою». A local flag set in onMounted is false for a read that
-// resolves later — stores/board.ts retries load() on every Агенти entry, and remove()
-// re-reads — leaving an authoritative list in hand and unusable.
+// resolves later — `remove()` re-reads at :1007 and a refused move re-reads at :1540 —
+// leaving an authoritative list in hand and unusable.
 const hasCloudList = computed(() => projects.listRead);
 
 onMounted(async () => {
