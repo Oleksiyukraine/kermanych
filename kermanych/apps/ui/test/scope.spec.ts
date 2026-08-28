@@ -162,6 +162,24 @@ describe('sessionScopedProjectIds', () => {
     expect(sessionScopedProjectIds({ workspaceId: 'w1' }, oneCreated, map)).toEqual(['p1', 'p2']);
   });
 
+  // WHICH source is authoritative when the two disagree — the read-cloud path stated as an
+  // assertion rather than left to coincide with the map. Every other case here is satisfied by
+  // both branches, because a truthful map and a truthful list describe the same grouping, so
+  // without this one the delegation above could be deleted and the suite would stay green.
+  //
+  // The disagreement is not reachable through the store today: load() assigns the list and
+  // rebuilds the map from it in adjacent statements. So this pins the PRECEDENCE the function
+  // promises — the cloud answers once it has answered — which is what makes the `listRead`
+  // gate a gate rather than a coin toss.
+  it('answers from the cloud list, not the cached map, once the list is read', () => {
+    const stale = { p1: 'w2', p2: 'w2', p3: 'w1' };
+    expect(sessionScopedProjectIds({ workspaceId: 'w1' }, read, stale)).toEqual(['p1', 'p2']);
+    expect(sessionScopedProjectIds({ workspaceId: 'w2' }, read, stale)).toEqual(['p3']);
+    // A read list that genuinely holds nothing for this group is an answer, and the map must
+    // not be consulted to soften it.
+    expect(sessionScopedProjectIds({ workspaceId: 'w1' }, { projects: [], listRead: true }, map)).toEqual([]);
+  });
+
   // Offline AND uncached: the map has no entry for this group, so no project can be named.
   // Empty here is honest — the sidebar shows such rows in its «Воркспейс невідомий» bucket.
   it('scopes a workspace the cached map cannot place to nothing', () => {

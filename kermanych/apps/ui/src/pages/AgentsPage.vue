@@ -209,16 +209,16 @@
               >✕</KIconButton>
             </template>
             <template v-else-if="!showArchived">
+              <!-- `title` names the action even while disabled, and never explains the
+                   disabling: KIconButton feeds it to BOTH v-tip and aria-label, and a
+                   disabled button dispatches no mouseenter/focusin and cannot take focus, so
+                   a reason parked there is unreachable — while an aria-label holding an
+                   instruction gives the control no name at all. The reason is the visible
+                   line under this cluster. -->
               <KIconButton
                 :active="!!store.previews[selectedSession.id]"
                 :disabled="!isBoundFor(selectedSession.projectId)"
-                :title="
-                  !isBoundFor(selectedSession.projectId)
-                    ? BIND_HINT
-                    : store.previews[selectedSession.id]
-                      ? 'Зупинити превʼю'
-                      : 'Превʼю гілки в браузері'
-                "
+                :title="store.previews[selectedSession.id] ? 'Зупинити превʼю' : 'Превʼю гілки в браузері'"
                 @click="togglePreview(selectedSession)"
               >{{ store.previews[selectedSession.id] ? '◼' : '▶' }}</KIconButton>
               <KIconButton
@@ -244,6 +244,7 @@
               <KIconButton title="Видалити агента" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
             </template>
           </div>
+          <p v-if="previewBlocked" class="agents__note">{{ PREVIEW_BIND_HINT }}</p>
         </div>
         </template>
         <div v-else class="agents__detail-blank mono">Виберіть сесію зі списку.</div>
@@ -680,11 +681,14 @@ function projectName(id: string): string {
 //
 // Group ORDER is the best STATUS_RANK the group holds, so the project with the most urgent
 // agent leads, and it is seeded explicitly rather than taken from first appearance in
-// boardRows. First appearance looks equivalent and is not: boardRows emits each parent
-// followed by its own children, so a rank-0 child hanging off a rank-3 `merged` parent
-// appears near the END, and its project would sort below projects whose most urgent session
-// is merely `done`. An agent waiting on a question must not sit under a pile of merged work,
-// which is the whole reason the list is tiered in the first place.
+// boardRows. First appearance looks equivalent and is not: projectSessions filters by BUCKET
+// first, so in Активні a `merged` parent is not in the list at all and its still-running
+// child falls through boardRows' orphan sweep to the very END. Its project then sorts below
+// a project whose most urgent session is an `error` (rank 1) — the reachable worst case, and
+// the shape the browser check built. Only Активні can produce that orphan: in the buckets
+// where a rank-2 `done` survives, the parent survives with it and no child is orphaned. An
+// agent waiting on a question must not sit under another project's settled work, which is
+// the whole reason the list is tiered in the first place.
 //
 // Ties keep first-appearance order (Array#sort is stable), so within one rank the grouping
 // changes nothing about the order the sessions already had.
@@ -766,6 +770,20 @@ function isBoundFor(projectId: string): boolean {
 const selectedSession = computed(() =>
   store.sessions.find((s) => s.id === store.selectedSessionId),
 );
+
+// The one control in the Сесія tab a missing binding disables, and the third instance of the
+// dead-tooltip pattern in this file — the only one with no visible substitute anywhere, since
+// the meta list above carries no binding row. Derived from BIND_HINT rather than written out,
+// so the two cannot drift into saying different things about the same state.
+const PREVIEW_BIND_HINT = `${BIND_HINT}, щоб відкривати превʼю гілки.`;
+const previewBlocked = computed(() => {
+  const s = selectedSession.value;
+  if (!s || showArchived.value) return false;
+  // Matches the branch that renders the preview toggle, so the line cannot appear beside a
+  // cluster that has no such button (a discussion, a review, or the archived view).
+  if (s.kind === 'discussion' || s.kind === 'review') return false;
+  return !isBoundFor(s.projectId);
+});
 const entries = computed<TranscriptEntry[]>(() =>
   store.selectedSessionId
     ? store.transcripts[store.selectedSessionId] ?? []
