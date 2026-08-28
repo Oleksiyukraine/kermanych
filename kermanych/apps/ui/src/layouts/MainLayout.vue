@@ -39,9 +39,13 @@
               :active="store.selectedWorkspaceId === group.workspace.id && !store.selectedProjectId"
               :expanded="isExpanded(group.workspace.id)"
               :count="workspaceRunningCount(group.workspace.id)"
+              :drop-target="dropTargetId === group.workspace.id"
               @select="selectWorkspace(group.workspace.id)"
               @toggle="toggleWorkspace(group.workspace.id)"
               @add-project="openCreateProject(group.workspace.id)"
+              @dragover="onDragOver($event, group.workspace.id)"
+              @dragleave="onDragLeave($event, group.workspace.id)"
+              @drop.prevent="onDrop(group.workspace.id)"
             />
             <ul
               v-if="isExpanded(group.workspace.id)"
@@ -54,7 +58,10 @@
                   indent
                   :active="p.id === store.selectedProjectId"
                   :count="runningCount(p.id)"
+                  :draggable="hasCloudList"
                   @click="selectProject(p.id)"
+                  @dragstart="draggingProjectId = $event"
+                  @dragend="onDragEnd"
                 />
               </li>
             </ul>
@@ -373,6 +380,15 @@
     <KModal v-model="settingsOpen" :title="`Редагувати проєкт · ${selectedName}`">
       <div class="shell__form">
         <KField v-model="nameEdit" label="Назва проєкту" placeholder="my-project" />
+        <!-- The non-mouse path to a move, and the only path to a COLLAPSED destination —
+             a folded workspace renders no row, so it has no drop target at all. Same
+             write as the drag: a patch of workspace_id. -->
+        <KSelect
+          v-model="workspaceEdit"
+          label="Воркспейс"
+          :options="workspaceOptions"
+          :disabled="!isInCloud"
+        />
         <KColorPicker v-model="colorEdit" label="Колір проєкту" />
         <KSelect
           v-model="defaultBranchEdit"
@@ -535,6 +551,7 @@ import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
 import { IS_PREVIEW } from '../lib/preview';
 import { MANAGEMENT_DEFAULT_SECTION } from '../lib/management';
+import { canDropProject } from '../lib/scope';
 import { theme, toggleTheme } from '../lib/theme';
 import { percent, planWindow } from '../lib/format';
 import { until } from '../lib/time';
@@ -893,6 +910,72 @@ function workspaceRunningCount(workspaceId: string): number {
   return n;
 }
 
+// DRAG A PROJECT INTO ANOTHER WORKSPACE — hand-rolled HTML5 DnD. It is one gesture, and a
+// drag-and-drop library would bring its own reactivity model along for it.
+//
+// The dragged id lives HERE, not in dataTransfer: getData() is unreadable during
+// `dragover` (under the protected-mode rules the event exposes only the TYPES), so a
+// drop-validity decision taken from dataTransfer would always read an empty payload and
+// light up every row. KRailItem still calls setData — that is what makes this a
+// standards-conformant drag — and emits the id for this pair of refs.
+const draggingProjectId = ref<string | undefined>(undefined);
+const dropTargetId = ref<string | undefined>(undefined);
+
+// preventDefault ONLY for a valid destination. That one call is both what permits the drop
+// and what turns the cursor from «no» into «move», so cancelling unconditionally would
+// accept a release onto the project's OWN workspace and then quietly do nothing — a
+// gesture that looks like it worked. An invalid row keeps the browser's refusal cursor.
+function onDragOver(e: DragEvent, workspaceId: string): void {
+  if (!canDropProject(draggingProjectId.value, workspaceId, projects.projects)) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  dropTargetId.value = workspaceId;
+}
+
+// `dragleave` BUBBLES, and the row has three children: crossing from its chevron into its
+// body arrives here as a leave of the row ITSELF and would clear the border until the next
+// `dragover` repainted it — a flicker directly under the cursor. relatedTarget is the
+// element being ENTERED, so one still inside the row means the pointer never left.
+//
+// Chosen over a dragenter/dragleave counter because a counter is state that has to be
+// zeroed by hand on drop and on dragend, and any missed reset leaves a row that can no
+// longer clear its own border for the rest of the session. This check holds no state.
+// relatedTarget is null when the drag leaves the window entirely, which correctly clears.
+function onDragLeave(e: DragEvent, workspaceId: string): void {
+  const row = e.currentTarget;
+  const entering = e.relatedTarget;
+  if (row instanceof Node && entering instanceof Node && row.contains(entering)) return;
+  if (dropTargetId.value === workspaceId) dropTargetId.value = undefined;
+}
+
+function onDragEnd(): void {
+  draggingProjectId.value = undefined;
+  dropTargetId.value = undefined;
+}
+
+async function onDrop(workspaceId: string): Promise<void> {
+  const projectId = draggingProjectId.value;
+  // Cleared before the validity check and before the await, not after: once a drop has
+  // been handled the source's `dragend` is not something to rely on, and the accent
+  // border must not outlive the gesture that drew it.
+  onDragEnd();
+  if (!projectId || !canDropProject(projectId, workspaceId, projects.projects)) return;
+  const name = projects.byId.get(projectId)?.name ?? projectId;
+  const target = projects.workspaceById.get(workspaceId)?.name ?? '';
+  try {
+    await projects.moveProject(projectId, workspaceId);
+    store.notify(`«${name}» перенесено у «${target}»`);
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e);
+    store.notify(isMoveRefusal(raw) ? MOVE_REFUSAL : raw, 'error');
+    // Nothing optimistic to undo — patch() throws before it touches projects.value. The
+    // refetch is about the other direction: a refusal means the server's idea of this
+    // tree differs from ours, and re-reading is how the tree stops lying. load() degrades
+    // into offlineError rather than throwing, so this cannot reject.
+    await projects.load();
+  }
+}
+
 // The LOCAL row carries this machine's binding and the offline config cache; the CLOUD
 // project is the source of truth for config. Same id, two lookups.
 const selectedProject = computed(() =>
@@ -1039,6 +1122,21 @@ async function submitCreate(): Promise<void> {
 // leaves the branch dead against the other server and puts raw English in a Ukrainian
 // modal, so this MUST keep both. Every place that maps this refusal uses it.
 const NO_ROWS = /rows returned|coerce the result/;
+
+// A refused MOVE has TWO shapes, and they come from opposite ends of one policy.
+// projects_update_member evaluates USING against the OLD row and WITH CHECK against the
+// NEW one, so: a destination workspace the user does not belong to fails WITH CHECK and
+// Postgres RAISES `42501 new row violates row-level security policy`, while a SOURCE they
+// cannot see fails USING, matches zero rows, and surfaces through .single() as PGRST116 —
+// i.e. as NO_ROWS above. To the operator both are the same sentence, so say it instead of
+// echoing either code. Only a move can produce 42501 here; every other write in this
+// layout is refused the zero-rows way.
+function isMoveRefusal(raw: string): boolean {
+  return /42501|row-level security/.test(raw) || NO_ROWS.test(raw);
+}
+
+const MOVE_REFUSAL =
+  'Хмара відмовила: переносити проєкт можна лише між воркспейсами, у яких ви учасник';
 
 // WORKSPACE SETTINGS — the group's name, colour and TEAM, reached from the header chip.
 // Membership hangs off the workspace rather than the project because one invitation opens
@@ -1255,6 +1353,12 @@ const conventionsEdit = ref('');
 const previewCommandEdit = ref('');
 const apiCommandEdit = ref('');
 const settingsBranches = ref<string[]>([]);
+// {value,label}, never bare names: two workspaces may legitimately share one, and a
+// name-keyed select would move the project into whichever matched first.
+const workspaceEdit = ref('');
+const workspaceOptions = computed(() =>
+  projects.workspaces.map((w) => ({ value: w.id, label: w.name })),
+);
 
 const deleteOpen = ref(false);
 const deleteError = ref<string | null>(null);
@@ -1336,6 +1440,7 @@ async function openSettings(): Promise<void> {
   const row = selectedProject.value;
   settingsError.value = null;
   nameEdit.value = cloud?.name ?? row?.name ?? '';
+  workspaceEdit.value = cloud?.workspaceId ?? '';
   colorEdit.value = cloud?.color ?? row?.color ?? '';
   defaultBranchEdit.value = cloud?.defaultBranch ?? row?.defaultBranch ?? '';
   conventionsEdit.value = cloud?.conventions ?? row?.conventions ?? '';
@@ -1365,6 +1470,10 @@ async function saveSettings(): Promise<void> {
     return;
   }
   const carryFiles = parseList(carryFilesText.value);
+  // Sent only when it CHANGED. Re-sending the current workspace_id would pass WITH CHECK
+  // anyway, but it would also make every unrelated config save depend on the move policy —
+  // and it is what tells the catch below which refusal to expect.
+  const moved = !!workspaceEdit.value && workspaceEdit.value !== selectedCloud.value?.workspaceId;
   try {
     // CLOUD first (design D1: it is the source of truth for config), and patch() then mirrors
     // the returned row into the local registry via api.syncProjects([updated], false) — so the
@@ -1379,6 +1488,7 @@ async function saveSettings(): Promise<void> {
       apiCommand: apiCommandEdit.value,
       // Never store an empty carry list: the launch path would copy nothing into the worktree.
       carryFiles: carryFiles.length ? carryFiles : ['.env'],
+      ...(moved ? { workspaceId: workspaceEdit.value } : {}),
     });
     settingsOpen.value = false;
   } catch (e) {
@@ -1387,9 +1497,20 @@ async function saveSettings(): Promise<void> {
     // expired session, or an unreachable cloud. The one exception is membership lost under
     // us, which projects_update_member refuses by matching zero rows — postgrest's wording,
     // not RLS's, and nothing an operator can act on.
-    settingsError.value = NO_ROWS.test(raw)
-      ? 'Хмара відмовила: ви більше не учасник воркспейсу цього проєкту'
-      : `Хмара відмовила у записі: ${raw}`;
+    //
+    // A save that also MOVES has a second refusal on top of that: the destination fails
+    // WITH CHECK and raises 42501, which no other write on this modal can produce and which
+    // the «ви більше не учасник» wording would misname. Same sentence as the drag's.
+    if (moved && isMoveRefusal(raw)) {
+      settingsError.value = MOVE_REFUSAL;
+      // The write was refused, so nothing moved; re-read so the tree cannot keep showing
+      // a membership the server has already taken away.
+      await projects.load();
+    } else if (NO_ROWS.test(raw)) {
+      settingsError.value = 'Хмара відмовила: ви більше не учасник воркспейсу цього проєкту';
+    } else {
+      settingsError.value = `Хмара відмовила у записі: ${raw}`;
+    }
   }
 }
 
