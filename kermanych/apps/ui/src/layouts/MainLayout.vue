@@ -33,7 +33,23 @@
              (fallthrough attributes land on the row's root element, not on the button),
              so the containment is what supplies the relationship. -->
         <ul class="shell__projects">
-          <li v-for="group in tree" :key="group.workspace.id" class="shell__group">
+          <!-- The drop target is the whole GROUP, not just its header row. Groups are
+               expanded by default, so an open workspace's projects occupy most of what the
+               user reads as «that workspace» and the thin header is the smaller part of it;
+               a release onto the obvious half must not silently do nothing. Bound on the
+               <li> rather than on KWorkspaceRow so the header and the list are ONE target
+               and one `relatedTarget` boundary — crossing from the row into its own project
+               list is then not a leave at all, which is the same child-boundary problem the
+               guard already solves for the row's chevron. The highlight cannot smear: only
+               KWorkspaceRow styles `dropTarget`, so it renders on the header alone. -->
+          <li
+            v-for="group in tree"
+            :key="group.workspace.id"
+            class="shell__group"
+            @dragover="onDragOver($event, group.workspace.id)"
+            @dragleave="onDragLeave($event, group.workspace.id)"
+            @drop.prevent="onDrop(group.workspace.id)"
+          >
             <KWorkspaceRow
               :workspace="group.workspace"
               :active="store.selectedWorkspaceId === group.workspace.id && !store.selectedProjectId"
@@ -43,9 +59,6 @@
               @select="selectWorkspace(group.workspace.id)"
               @toggle="toggleWorkspace(group.workspace.id)"
               @add-project="openCreateProject(group.workspace.id)"
-              @dragover="onDragOver($event, group.workspace.id)"
-              @dragleave="onDragLeave($event, group.workspace.id)"
-              @drop.prevent="onDrop(group.workspace.id)"
             />
             <ul
               v-if="isExpanded(group.workspace.id)"
@@ -967,7 +980,11 @@ async function onDrop(workspaceId: string): Promise<void> {
     store.notify(`«${name}» перенесено у «${target}»`);
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
-    store.notify(isMoveRefusal(raw) ? MOVE_REFUSAL : raw, 'error');
+    // 6000 like every other full-sentence refusal here (the bind error, both member
+    // errors): MOVE_REFUSAL is a 76-character sentence, and it is the one message a user
+    // reads mid-gesture, with their attention on the pointer rather than on the corner of
+    // the screen. notify's 4000 default is for confirmations, which are short.
+    store.notify(isMoveRefusal(raw) ? MOVE_REFUSAL : raw, 'error', 6000);
     // Nothing optimistic to undo — patch() throws before it touches projects.value. The
     // refetch is about the other direction: a refusal means the server's idea of this
     // tree differs from ours, and re-reading is how the tree stops lying. load() degrades
@@ -1506,6 +1523,13 @@ async function saveSettings(): Promise<void> {
       // The write was refused, so nothing moved; re-read so the tree cannot keep showing
       // a membership the server has already taken away.
       await projects.load();
+      // That refetch has just removed the destination from `workspaceOptions` — in the
+      // 42501 case it is a workspace this user does not belong to — while `workspaceEdit`
+      // still holds its uuid. KSelect deliberately keeps a value it was never offered so a
+      // stale selection still renders, which here would put a bare uuid beside a Ukrainian
+      // refusal and let a second Save re-attempt the same doomed move. KSelect is doing its
+      // job; the caller owes it the truth afterwards.
+      workspaceEdit.value = selectedCloud.value?.workspaceId ?? '';
     } else if (NO_ROWS.test(raw)) {
       settingsError.value = 'Хмара відмовила: ви більше не учасник воркспейсу цього проєкту';
     } else {
