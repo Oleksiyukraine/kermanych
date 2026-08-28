@@ -131,7 +131,22 @@ supabase db push --linked --dry-run
 It prints the migration it *would* apply. Confirm it names `20260827100000_workspaces.sql`
 and nothing else.
 
-## Step 4 — push
+## Step 4 — take the dump. This is the last moment it can be taken
+
+```bash
+supabase db dump --linked           -f /tmp/kermanych-pre-workspaces.sql
+supabase db dump --linked --data-only -f /tmp/kermanych-pre-workspaces-data.sql
+```
+
+Confirm both files are non-empty before continuing. There is **no down migration**: the
+next step drops a column and a table, and this dump is the only copy of the pre-migration
+shape that will ever exist. Step 6's failure branch sends you back here, and by then you
+cannot come back — so it is a step, not an option.
+
+What it does and does not buy is spelled out in
+[Rollback, honestly](#rollback-honestly). Read that now if you have not.
+
+## Step 5 — push
 
 ```bash
 supabase db push --linked
@@ -141,7 +156,7 @@ supabase db push --linked
 it is a no-op — but this one is not idempotent in the sense that matters: after it has
 run, `projects.owner_id` is gone and cannot be recreated by running it again.
 
-## Step 5 — verify against the hosted project
+## Step 6 — verify against the hosted project
 
 From a checkout that **is** on this branch:
 
@@ -161,7 +176,7 @@ Sign in and confirm, in this order:
 If 2 or 4 disagrees with what you remember of the old state, say so immediately — see
 [Rollback](#rollback-honestly), because the answer is time-sensitive.
 
-## Step 6 — tell the team to pull
+## Step 7 — tell the team to pull
 
 > Done. `git pull && pnpm install` and restart Kermanych. Projects now live inside
 > workspaces; your existing projects each became a workspace of the same name, with the
@@ -194,14 +209,10 @@ the first person creates a second project in a workspace, moves a project betwee
 workspaces, or creates a new workspace. From that moment a `workspaces` row no longer
 corresponds to exactly one project and there is no `projects.owner_id` value to write
 back. **Practically: you have until the team starts using the feature, which is minutes
-after step 6.** Treat the push as one-way.
+after step 7.** Treat the push as one-way.
 
-**What does a backup buy?** Take one immediately before step 4:
-
-```bash
-supabase db dump --linked -f /tmp/kermanych-pre-workspaces.sql          # schema
-supabase db dump --linked --data-only -f /tmp/kermanych-pre-workspaces-data.sql
-```
+**What does a backup buy?** Step 4 is where you take it, and it is a step precisely so that
+this paragraph is never the first place a reader learns the dump exists.
 
 A restore from that dump returns the database to its pre-push state exactly — and
 **discards every write made after the dump**: new tasks, status changes pushed by running
