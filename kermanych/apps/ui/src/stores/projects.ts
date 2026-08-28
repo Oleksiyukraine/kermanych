@@ -42,6 +42,21 @@ export const useProjects = defineStore('projects', () => {
   const loading = ref(false);
   const offlineError = ref<string | null>(null);
 
+  // Has a cloud project list been READ on this run? The sidebar needs this to know whether
+  // it holds an authoritative picture of what exists in the cloud, and it cannot be inferred
+  // from `projects.value` being non-empty: create() and publish() append to that array, so a
+  // single create while Supabase is recovering would otherwise look like a one-project cloud
+  // list — and everything absent from it would be labelled «поза хмарою» / «лише на цій
+  // машині» about projects nobody ever checked.
+  //
+  // Set right after the list is assigned and BEFORE the registry mirror, because the mirror
+  // writes the local api and has no bearing on what the cloud holds. True for an EMPTY read
+  // too: an empty list is an answer, and it is the answer that makes surviving local rows
+  // genuine orphans rather than an unread cache. Sticky, on every resolved read including a
+  // post-mount retry — once a real list has been seen, a later failure leaves it stale, not
+  // absent, and stale is still an answer where absent is not.
+  const listRead = ref(false);
+
   // The tree, cached so the sidebar renders grouped before the first network call and
   // stays grouped when that call fails. Presentation state only — the local SQLite
   // registry deliberately knows nothing about workspaces (design D1: it caches what
@@ -84,13 +99,16 @@ export const useProjects = defineStore('projects', () => {
   function writeTreeCache(): void {
     const cache: TreeCache = {
       workspaces: workspaces.value,
-      // Rebuilt from the projects we hold — except when we hold none, where the map
-      // already in the orchestrator is kept instead. A workspace-only mutation
-      // (create/patch/removeWorkspace) can run before the first successful load(), and
-      // rebuilding from an empty list there would overwrite a good cached map with {}:
-      // the next cold start would then have cached workspaces and no way to place local
-      // project rows into them, which is the offline grouping this cache exists for.
-      projectWorkspace: projects.value.length
+      // Rebuilt from the projects we hold ONLY once a list has been read — that is the
+      // moment `projects.value` is the whole truth, and a rebuild is what prunes entries
+      // for projects the cloud no longer has. Before a read it is not the whole truth:
+      // a mutation (create/publish/patch, or a workspace-only one) can run first, and
+      // rebuilding from that partial array would overwrite a good cached map with one
+      // entry — or with {} — so the next cold start would have cached workspaces and no
+      // way to place local project rows into them, which is the offline grouping this
+      // cache exists for. There we keep the orchestrator's map, which the mutation has
+      // already merged its own entry into.
+      projectWorkspace: listRead.value
         ? projectWorkspaceMap(projects.value)
         : local.projectWorkspace,
     };
@@ -114,6 +132,9 @@ export const useProjects = defineStore('projects', () => {
       ]);
       workspaces.value = wsList;
       projects.value = list;
+      // Before the mirror below, deliberately: this says the CLOUD answered, and the
+      // mirror writes the local api, which is a different question.
+      listRead.value = true;
       local.setProjectWorkspaces(projectWorkspaceMap(list));
       writeTreeCache();
       // This IS the full cloud list, so prune is safe: local rows missing from it are
@@ -180,6 +201,24 @@ export const useProjects = defineStore('projects', () => {
     writeTreeCache();
   }
 
+  // The projectId → workspaceId map after a single-project mutation. A rebuild from
+  // `projects.value` is only the truth once a list has been read; before one that array
+  // holds just what this session created, so rebuilding would replace a warm cached map
+  // with one entry and writeTreeCache would persist the loss to the next cold start —
+  // exactly the offline grouping the cache exists for. So: rebuild after a read (which
+  // also prunes entries for projects the cloud no longer has), merge before one. Same
+  // rule the workspace-only mutations already follow, applied to the project map.
+  //
+  // Merging is safe for a MOVE too, because the entry is keyed by project id: the new
+  // workspace overwrites the old one rather than accumulating beside it.
+  function pushProjectWorkspace(project: CloudProject): void {
+    local.setProjectWorkspaces(
+      listRead.value
+        ? projectWorkspaceMap(projects.value)
+        : { ...local.projectWorkspace, [project.id]: project.workspaceId },
+    );
+  }
+
   async function create(
     workspaceId: string,
     name: string,
@@ -192,7 +231,7 @@ export const useProjects = defineStore('projects', () => {
       ...(gitRemoteUrl ? { gitRemoteUrl } : {}),
     });
     projects.value = [...projects.value, created];
-    local.setProjectWorkspaces(projectWorkspaceMap(projects.value));
+    pushProjectWorkspace(created);
     writeTreeCache();
     // prune=false: this is one project, not the full list.
     await api.syncProjects([created], false);
@@ -235,7 +274,7 @@ export const useProjects = defineStore('projects', () => {
       ...(localRow.conventions ? { conventions: localRow.conventions } : {}),
     });
     projects.value = [...projects.value, created];
-    local.setProjectWorkspaces(projectWorkspaceMap(projects.value));
+    pushProjectWorkspace(created);
     writeTreeCache();
     // prune=false, and upsertProject keeps a non-empty binding: the local row is updated in
     // place, so `localRepoPath` and the sessions hanging off this id are untouched.
@@ -248,7 +287,7 @@ export const useProjects = defineStore('projects', () => {
     projects.value = projects.value.map((x) => (x.id === id ? updated : x));
     // A patch may carry `workspaceId` (that IS the move), so the map and the cached tree
     // are refreshed unconditionally rather than only on the move path.
-    local.setProjectWorkspaces(projectWorkspaceMap(projects.value));
+    pushProjectWorkspace(updated);
     writeTreeCache();
     await api.syncProjects([updated], false);
     return updated;
@@ -329,6 +368,7 @@ export const useProjects = defineStore('projects', () => {
     projects,
     members,
     loading,
+    listRead,
     offlineError,
     byId,
     workspaceById,

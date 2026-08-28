@@ -600,35 +600,19 @@ function selectWorkspace(id: string): void {
   store.selectWorkspace(id);
 }
 
-// True only once BOTH halves of load() succeeded: the cloud read AND the registry mirror
-// after it (stores/projects.ts assigns the list, then awaits api.syncProjects, and a throw
-// there lands in offlineError, so the guard in onMounted returns before this is set). Keep
-// that composite meaning in mind — it is narrower than "we know what the cloud holds", which
-// is the question the sidebar actually asks, and answering that one with this flag is what
-// `hasCloudList` below exists to stop.
-const cloudSynced = ref(false);
-
 // DO WE HOLD AN AUTHORITATIVE CLOUD PROJECT LIST? Everything in the sidebar that could state
 // a falsehood about where a project lives asks this, and only this: which source the tree is
 // built from, whether a missing local row is an orphan, and what the bucket's heading claims.
 // One signal for all three, because three answers to one question is how they drift apart.
 //
-// Both terms are load-bearing.
-//   `length` — the local api is down but Supabase is fine, which is every api restart. The
-//     read succeeded and the list is in memory; `cloudSynced` is false because the mirror
-//     that follows it failed. Keying on the flag threw that list away and rendered four
-//     correctly-named EMPTY groups over nothing — the local rows were gone too, since the
-//     thing that failed is what supplies them. Looks like a team with no projects.
-//   `cloudSynced` — the list is legitimately EMPTY: a new account, or a team whose projects
-//     were all deleted. `length` cannot tell that from "never read", and the difference
-//     matters: the local rows that survived prune there are genuine orphans, and must be
-//     bucketed as such rather than placed into groups by a stale cached map.
-//
-// Either term implies the READ succeeded — `projects.projects` is only ever assigned from a
-// resolved read (or a create, which also implies a live cloud) — which is precisely the
-// evidence the three questions above need. The mirror is about writing the local registry
-// and has no bearing on any of them.
-const hasCloudList = computed(() => projects.projects.length > 0 || cloudSynced.value);
+// The signal belongs to the STORE (`listRead`, stores/projects.ts) because it is a fact about
+// what the cloud answered, and every local approximation of it was wrong in a real state.
+// `projects.projects.length > 0` is satisfied by create()/publish() appending, so one create
+// while Supabase recovered would have claimed a one-project cloud list and called seven
+// unchecked projects «поза хмарою». A local flag set in onMounted is false for a read that
+// resolves later — stores/board.ts retries load() on every Агенти entry, and remove()
+// re-reads — leaving an authoritative list in hand and unusable.
+const hasCloudList = computed(() => projects.listRead);
 
 onMounted(async () => {
   // Socket first: the snapshot, and the project_update events the sync inside load() emits,
@@ -637,9 +621,9 @@ onMounted(async () => {
   // The router guard already keeps this layout signed-in-only, but on a cold start `ready`
   // may still be pending, and useProjects() needs the session for RLS to return any row.
   await auth.ready;
-  // A preview has no cloud (lib/preview.ts): skip the read entirely. Leaving `cloudSynced`
-  // false is the point — a successful-looking sync would label every seeded local row
-  // «поза хмарою», and load()'s prune would run against an empty project list.
+  // A preview has no cloud (lib/preview.ts): skip the read entirely. Never calling load() is
+  // the point — it leaves `listRead` false, so no seeded local row is labelled «поза хмарою»
+  // on the strength of a list nobody read, and load()'s prune never runs against one.
   if (IS_PREVIEW) return;
   // load() reads the cloud list and mirrors it into the local registry itself
   // (api.syncProjects(list, true), see stores/projects.ts) — that mirror is what keeps
@@ -653,9 +637,7 @@ onMounted(async () => {
       'error',
       6000,
     );
-    return;
   }
-  cloudSynced.value = true;
 });
 
 // A session is "running" while it is queued or actively working; waiting means it is blocking
