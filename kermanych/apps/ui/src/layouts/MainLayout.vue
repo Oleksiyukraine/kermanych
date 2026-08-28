@@ -413,11 +413,7 @@
              is now gone (see `isInCloud`), so the state gets its own gate and its own way
              out. The binding above and the `.env` VALUES stay available: those are this
              machine's business, and they always worked for an unpublished project. -->
-        <p v-if="!isInCloud" class="shell__hint">
-          Цей проєкт існує лише на цій машині, тому спільні налаштування нікуди зберігати.
-          Опублікуйте його в хмарі на дошці — прив’язка теки й «Змінні середовища»
-          доступні й без цього.
-        </p>
+        <p v-if="!isInCloud" class="shell__hint">{{ noCloudRowHint }}</p>
         <p v-if="settingsError" class="shell__error" role="alert">{{ settingsError }}</p>
       </div>
       <template #controls>
@@ -483,9 +479,7 @@
         />
         <!-- No cloud row, no list of names to keep in it. The VALUES editor above is
              untouched: it writes this machine's file and never needed the cloud. -->
-        <p v-else class="shell__hint">
-          Перелік обовʼязкових ключів живе у хмарі, а цей проєкт існує лише на цій машині.
-        </p>
+        <p v-else class="shell__hint">{{ noCloudKeysHint }}</p>
         <p class="shell__hint">
           Значення живуть у `.env` цієї машини й нікуди не передаються: у хмарі Керманич
           тримає лише ІМЕНА ключів.
@@ -1288,6 +1282,24 @@ const isOwnerOfSelected = computed(
 // VALUES are this machine's business and have always worked without a cloud row.
 const isInCloud = computed(
   () => !!store.selectedProjectId && projects.byId.has(store.selectedProjectId),
+);
+
+// The hint behind that disabled Save has to name the RIGHT reason, because `isInCloud` is
+// false in TWO states that are not the same sentence: a project we KNOW is local-only (a
+// cloud list was read and it is not in it), and a cloud list we have not read yet or failed
+// to read. `hasCloudList` separates them — the same signal, for the same reason, that the
+// sidebar's own bucket label turns on: a claim about where a project lives must never
+// outrun what we actually checked. Only the first state has a way out to offer.
+const noCloudRowHint = computed(() =>
+  hasCloudList.value
+    ? 'Цей проєкт існує лише на цій машині, тому спільні налаштування нікуди зберігати. Опублікуйте його в хмарі на дошці — прив’язка теки й «Змінні середовища» доступні й без цього.'
+    : 'Хмара ще не відповіла, тому спільні налаштування зберігати нікуди. Прив’язка теки й «Змінні середовища» — ваші, для цієї машини, і працюють без неї.',
+);
+
+const noCloudKeysHint = computed(() =>
+  hasCloudList.value
+    ? 'Перелік обовʼязкових ключів живе у хмарі, а цей проєкт існує лише на цій машині.'
+    : 'Перелік обовʼязкових ключів живе у хмарі, а зв’язку з нею ще немає.',
 );
 
 // Both separators are accepted, but only the multiline env-keys textarea can actually receive
