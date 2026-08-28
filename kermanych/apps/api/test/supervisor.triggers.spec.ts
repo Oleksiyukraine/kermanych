@@ -11,6 +11,9 @@ import type { SkillsService } from "../src/skills/skills.service";
 type SpawnOpts = { cwd: string; configPath?: string; extensionPath?: string };
 const started: SpawnOpts[] = [];
 const sent: { kind: "prompt" | "follow_up" | "steer"; text: string }[] = [];
+// Flipped to false to force the next send down the resume path, which is the only await
+// inside a delivery long enough to hold two sends open at once.
+let alive = true;
 vi.mock("../src/rpc/rpc-session", () => {
   class FakeRpc {
     constructor(opts: SpawnOpts) {
@@ -20,7 +23,7 @@ vi.mock("../src/rpc/rpc-session", () => {
     onExit() {}
     async start() {}
     isAlive() {
-      return true;
+      return alive;
     }
     async getState() {
       return {};
@@ -85,6 +88,7 @@ const notices = (rows: TranscriptEntry[]): string[] =>
 beforeEach(() => {
   started.length = 0;
   sent.length = 0;
+  alive = true;
 });
 
 describe("the trigger package reaches the omp child", () => {
@@ -169,6 +173,52 @@ describe("an operator trigger fires before the message is forwarded", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]!.text.startsWith("A git merge is in progress")).toBe(true);
     expect(notices(sup.getTranscript(chat.id))).toEqual([]);
+  });
+
+  it("still matches an operator message that arrives while Kermanych's own send is in flight", async () => {
+    // The exemption is scoped to ONE call, not to a window on the session. With a per-session
+    // flag, a genuine operator message landing during a self-authored send would silently
+    // lose its trigger — the exact "fires and does nothing" failure this feature removes.
+    const gate = Promise.withResolvers<void>();
+    let launched = false;
+    const registry = new RegistryService(":memory:");
+    const worktree = {
+      isGitRepo: vi.fn().mockResolvedValue(true),
+      currentBranch: vi.fn().mockResolvedValue("main"),
+      unmergedFiles: vi.fn().mockResolvedValue(["src/a.ts"]),
+    } as unknown as WorktreeService;
+    const skills = {
+      // doResume awaits this, so both sends park here and overlap for as long as the gate holds.
+      materialize: async () => {
+        if (launched) await gate.promise;
+        return { view: [] };
+      },
+      assignedFor: async () => ({ block: "", view: [], missing: [] }),
+      assignedForNames: async () => ({ block: "SKILL", view: [], missing: [] }),
+      materializeTriggers: async () => ({}),
+      operatorTriggers: async () => [t({ id: "aaa", action: "skill", target: "s", pattern: "конфлікт" })],
+    } as unknown as SkillsService;
+    const sup = new SupervisorService(registry, worktree, offlineAuth(), skills);
+    const project = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const chat = await sup.createChat(project.id);
+    launched = true;
+    alive = false; // the next delivery resumes, and the resume is what parks on the gate
+
+    const kermanych = sup.resolveConflict(chat.id);
+    // A macrotask boundary flushes every already-resolved await, so the self-authored send is
+    // provably inside its own delivery — and its resume is deduped, so the operator joins it.
+    const tick = Promise.withResolvers<void>();
+    setTimeout(tick.resolve, 0);
+    await tick.promise;
+    const operator = sup.sendMessage(chat.id, "тут конфлікт", "prompt");
+    gate.resolve();
+    await Promise.all([kermanych, operator]);
+
+    expect(sent.map((x) => x.text)).toEqual([
+      expect.stringContaining("A git merge is in progress"),
+      "SKILL\n\nтут конфлікт",
+    ]);
+    expect(notices(sup.getTranscript(chat.id))).toEqual(["тригер «Хоче ПР» додав скіл «s»"]);
   });
 
   it("forwards the message untouched when the agent could not run", async () => {

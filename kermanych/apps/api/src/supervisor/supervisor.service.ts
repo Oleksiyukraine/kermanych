@@ -73,11 +73,6 @@ export class SupervisorService implements OnModuleDestroy {
   // name -> the badge a skill row shows. Written at launch from the materialised view,
   // read by the transcript reducers; dropped with the session.
   private skillLabels = new Map<string, Map<string, SkillLabel>>();
-  // Sessions whose in-flight sendMessage carries KERMANYCH's own text, not the operator's:
-  // a fired trigger's agent, a PR request, a merged discussion's conclusion. `source:
-  // "operator"` means the operator wrote it, so these are exempt — which is also what stops a
-  // fired `agent` action from looping through the very agent it ran.
-  private selfAuthored = new Set<string>();
   private lastStamp = 0;
   private events = new Subject<ServerEvent>();
   events$: Observable<ServerEvent> = this.events.asObservable();
@@ -1042,7 +1037,29 @@ export class SupervisorService implements OnModuleDestroy {
     return { ok: true };
   }
 
+  // The OPERATOR's own message. Everything Kermanych sends itself goes through
+  // `sendAsKermanych`, which is the same delivery with trigger matching off.
   async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
+    await this.deliver(id, text, mode, images, true);
+  }
+
+  // Kermanych's own prompt into a session: a fired trigger's agent, a PR request, a merged
+  // discussion's conclusion. `source: "operator"` means the OPERATOR wrote the text, so these
+  // are exempt — which is also what stops a fired `agent` action from looping through the very
+  // agent it ran. The exemption is an ARGUMENT, not a flag on the session: a genuine operator
+  // message arriving while this send is still in flight is matched as normal, because a
+  // trigger that silently does not fire is the failure this feature exists to remove.
+  private async sendAsKermanych(id: string, text: string, mode: "prompt" | "follow_up" | "steer") {
+    await this.deliver(id, text, mode, undefined, false);
+  }
+
+  private async deliver(
+    id: string,
+    text: string,
+    mode: "prompt" | "follow_up" | "steer",
+    images: ImageInput[] | undefined,
+    matchTriggers: boolean,
+  ) {
     const l = await this.liveOrResume(id);
     try {
       this.registry.touchSession(id);
@@ -1058,7 +1075,7 @@ export class SupervisorService implements OnModuleDestroy {
     // Operator-sourced triggers run BEFORE the message reaches the child: Kermanych is the
     // only party that sees the operator's text, and an `agent` action has to be Kermanych's
     // to perform — a child cannot call back into us.
-    const fired = s ? await this.matchOperatorTriggers(s, id, text) : undefined;
+    const fired = matchTriggers && s ? await this.matchOperatorTriggers(s, id, text) : undefined;
     if (fired?.trigger.action === "agent" && (await this.runTriggerAgent(id, fired.trigger))) return;
     // `skill`: the resolved body goes in FRONT of what the operator wrote, so the instruction
     // is read before the request it applies to. The transcript keeps the operator's own text
@@ -1069,18 +1086,6 @@ export class SupervisorService implements OnModuleDestroy {
     else l.rpc.prompt(body, images);
   }
 
-  // Kermanych's own prompt into a session, exempt from operator-trigger matching. Three call
-  // sites need this in lockstep — a fired trigger's agent, a PR request and a merged
-  // discussion — because a trigger that rewrote one of them would be rewriting Kermanych.
-  private async sendAsKermanych(id: string, text: string, mode: "prompt" | "follow_up" | "steer") {
-    this.selfAuthored.add(id);
-    try {
-      await this.sendMessage(id, text, mode);
-    } finally {
-      this.selfAuthored.delete(id);
-    }
-  }
-
   // The first enabled `operator` trigger whose pattern matches, with its `skill` body already
   // resolved. Never throws and never blocks a message: a trigger is an addition to a session.
   private async matchOperatorTriggers(
@@ -1088,9 +1093,7 @@ export class SupervisorService implements OnModuleDestroy {
     id: string,
     text: string,
   ): Promise<{ trigger: ProjectTrigger; block: string } | undefined> {
-    // An empty message has nothing to match, and Kermanych's own prompts are not the
-    // operator's text — see `selfAuthored`.
-    if (!text.trim() || this.selfAuthored.has(id)) return undefined;
+    if (!text.trim()) return undefined; // nothing to match
     try {
       const triggers = await this.skills.operatorTriggers(s.projectId);
       if (!triggers.length) return undefined;

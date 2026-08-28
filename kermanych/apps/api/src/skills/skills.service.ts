@@ -253,11 +253,17 @@ export function triggersRoot(): string {
  */
 export function renderRuleFile(t: ProjectTrigger, body: string): string {
   if (t.source === "operator") throw new Error(`trigger "${t.id}" is operator-sourced: it has no rule file`);
+  // `scope` is the one value that is not JSON-encoded, so it is the one that can be malformed:
+  // a source outside the union (a row predating the DB constraint) would write
+  // `scope: undefined`, which omp rejects at LOAD — after any write-time try/catch has already
+  // succeeded. Rejected here so a bad row costs its own rule and never a launch.
+  const scope: string | undefined = TRIGGER_SCOPE[t.source];
+  if (!scope) throw new Error(`trigger "${t.id}" has an unknown source: ${String(t.source)}`);
   const fm = [
     "---",
     `description: ${JSON.stringify(t.label)}`,
     `condition: ${JSON.stringify(t.pattern)}`,
-    `scope: ${TRIGGER_SCOPE[t.source]}`,
+    `scope: ${scope}`,
     `interruptMode: ${t.mode === "interrupt" ? "always" : "never"}`,
     `repeatMode: ${t.repeat === "after-gap" ? "after-gap" : "once"}`,
     ...(t.pathGlobs.length ? [`globs: ${JSON.stringify(t.pathGlobs)}`] : []),
@@ -493,7 +499,10 @@ export class SkillsService {
     const dir = join(triggersRoot(), sessionId);
     let triggers: ProjectTrigger[];
     try {
-      triggers = (await this.readTriggers(projectId)).filter((t) => t.enabled && t.source !== "operator");
+      // Only a source TTSR has a scope for gets a rule file: `operator` is matched by
+      // Kermanych itself, and anything outside the union is a row predating the DB
+      // constraint — dropped here so it costs its own rule rather than the whole package.
+      triggers = (await this.readTriggers(projectId)).filter((t) => t.enabled && Object.hasOwn(TRIGGER_SCOPE, t.source));
     } catch {
       return {}; // offline or signed out
     }

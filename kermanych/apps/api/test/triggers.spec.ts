@@ -47,6 +47,14 @@ test("an operator trigger has no rule file at all", () => {
   expect(() => renderRuleFile(t({ source: "operator" }), "B")).toThrow(/operator-sourced/);
 });
 
+test("a source outside the union is refused rather than written as `scope: undefined`", () => {
+  // `scope` is the one frontmatter value not JSON-encoded, so it is the one that can be
+  // malformed. omp rejects a bad rule at LOAD — after the write already succeeded — which is
+  // the one path where a trigger could still block a launch.
+  const stale = { ...t({}), source: "reasoning" } as unknown as ProjectTrigger;
+  expect(() => renderRuleFile(stale, "B")).toThrow(/unknown source: reasoning/);
+});
+
 // ---- materializeTriggers -------------------------------------------------------------
 
 const row = (p: Partial<ProjectSkill> & { name: string }): ProjectSkill => ({
@@ -99,6 +107,15 @@ test("an operator-sourced trigger writes no rule file", async () => {
   const { packagePath } = await svc.materializeTriggers("p1", SID, repo);
   expect(packagePath).toBeUndefined();
   expect(existsSync(join(triggersRoot(), SID, "rules", "wants-pr.md"))).toBe(false);
+});
+
+test("a stale row whose source TTSR has no scope for costs its own rule, not the package", async () => {
+  const stale = { ...t({ id: "stale" }), source: "reasoning" } as unknown as ProjectTrigger;
+  const { packagePath } = await service([stale, t({})]).materializeTriggers("p1", SID, repo);
+  expect(readdirSync(join(packagePath!, "rules"))).toEqual(["env-guard.md"]);
+  // Never `scope: undefined`, which omp rejects at load — the one malformed-rule path a
+  // write-time try/catch cannot see.
+  expect(readFileSync(join(packagePath!, "rules", "env-guard.md"), "utf8")).not.toContain("undefined");
 });
 
 test("a disabled trigger writes no rule file", async () => {
