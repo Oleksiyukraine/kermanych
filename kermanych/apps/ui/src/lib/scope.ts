@@ -45,9 +45,20 @@ export function projectWorkspaceMap(cloudProjects: CloudProject[]): Record<strin
 // Scope stays at the WORKSPACE even when a project is selected: the project narrows
 // the board through the «Проєкти» filter instead, which is what keeps that filter
 // meaningful and lets the user widen back to the whole group in one click.
+//
+// The middle case is a LOCAL-ONLY project. It has no cloud row, so the projectId →
+// workspaceId map has no entry for it and the selection carries no workspace. Reading
+// that missing workspace as "nothing selected" answers the narrowest possible question
+// with the widest possible answer — every task in every workspace the user can see —
+// whereas the true answer is empty: no cloud task can belong to a project the cloud
+// does not have. So an empty scope here is the exact answer, not a degraded one, and
+// the board says why and offers publishing (see BoardPage.vue).
 export function scopedProjectIds(scope: ScopeInput, cloudProjects: CloudProject[]): string[] {
-  if (!scope.workspaceId) return cloudProjects.map((p) => p.id);
-  return cloudProjects.filter((p) => p.workspaceId === scope.workspaceId).map((p) => p.id);
+  if (scope.workspaceId) {
+    return cloudProjects.filter((p) => p.workspaceId === scope.workspaceId).map((p) => p.id);
+  }
+  if (scope.projectId) return [];
+  return cloudProjects.map((p) => p.id);
 }
 
 // The three filters INTERSECT: scope, then project, then assignee.

@@ -92,6 +92,16 @@ describe('scopedProjectIds', () => {
     expect(scopedProjectIds({ workspaceId: 'w1', projectId: 'p1' }, projects)).toEqual(['p1', 'p2']);
   });
 
+  // A LOCAL-ONLY project: no cloud row, so nothing resolved its workspace and the
+  // selection carries only the project. Empty is the exact answer — the cloud holds no
+  // task that belongs to a project it does not have — and the answer this replaces was
+  // the widest one possible, every project in every visible workspace.
+  it('scopes a project with no resolved workspace to nothing', () => {
+    expect(scopedProjectIds({ projectId: 'local-only' }, projects)).toEqual([]);
+    // '' is "no selection" for the workspace, so the project is what decides here too.
+    expect(scopedProjectIds({ workspaceId: '', projectId: 'local-only' }, projects)).toEqual([]);
+  });
+
   it('falls back to every project for a workspace it does not know', () => {
     expect(scopedProjectIds({ workspaceId: 'w-gone' }, projects)).toEqual([]);
   });
