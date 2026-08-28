@@ -155,23 +155,18 @@
         @update:model-value="goView"
       />
       <div class="shell__actions">
-        <!-- CURRENT WORKSPACE, and the way into its settings. A named chip rather than a
-             second ⚙ beside the project's: two identical gears in one cluster name
-             neither, and this one also supplies what the header never said — which group
-             the screen is scoped to. The sidebar's workspace row takes no fourth control
-             by design, so this is where the group's own settings live.
-
-             The chip's one cost over the brief's icon gear is the accessible name, which
-             `workspaceChipLabel` pays explicitly — see its comment. -->
+        <!-- CURRENT WORKSPACE settings — a ⚙ gear, matching the project's ⚙ below.
+             Shown whenever anything in the tree is scoped (a workspace-row click, or a
+             project click that resolves its group), and it is the way into the group's
+             name, colour, team and deletion. The name is NOT printed here: the sidebar's
+             highlighted row already says which group is scoped, and the gear carries the
+             name in its tooltip / `aria-label` through `workspaceGearLabel`. -->
         <KBtn
           v-if="scopedWorkspace"
-          variant="ghost"
-          :title="workspaceChipLabel"
-          :aria-label="workspaceChipLabel"
+          variant="icon"
+          :title="workspaceGearLabel"
           @click="openWorkspaceSettings(scopedWorkspace.id)"
-        >
-          <span class="shell__ws-name">{{ scopedWorkspace.name }}</span>
-        </KBtn>
+        >⚙</KBtn>
         <template v-if="store.selectedProjectId">
         <KBtn
           variant="icon"
@@ -1229,14 +1224,13 @@ const scopedWorkspace = computed(() =>
   store.selectedWorkspaceId ? projects.workspaceById.get(store.selectedWorkspaceId) : undefined,
 );
 
-// The chip's tooltip AND its accessible name, one string so they cannot drift. KBtn sets
-// `aria-label` only for `variant="icon"`, and `title` feeds `v-tip`, which lib/tip.ts
-// states is purely presentational and never referenced by the accessibility tree — so a
-// ghost chip's accessible name is its slot text alone, a button called «Бета» that never
-// says it opens anything. The leading «Воркспейс «Бета»» also keeps the visible label
-// inside the accessible name (WCAG 2.5.3 Label in Name), which a voice-control user needs.
-// The VISIBLE text stays the bare name; that is the point of the chip.
-const workspaceChipLabel = computed(
+// The gear's tooltip AND its accessible name, one string so they cannot drift. For
+// `variant="icon"` KBtn routes `title` into both `v-tip` and `aria-label` (KBtn.vue:8),
+// so this string is the whole accessible name of an otherwise wordless ⚙: it names the
+// scoped workspace and says the gear opens its settings. Leading with «Воркспейс «Бета»»
+// keeps that name inside the accessible name (WCAG 2.5.3, Label in Name), which a
+// voice-control user needs.
+const workspaceGearLabel = computed(
   () => `Воркспейс «${scopedWorkspace.value?.name ?? ''}»: склад команди й налаштування`,
 );
 
@@ -2001,16 +1995,6 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
-}
-
-// The header cluster is fixed in practice; an arbitrary workspace name is not. The
-// ellipsis sits on a span rather than on the button because KBtn is an inline-flex
-// container and text-overflow does not apply to an anonymous flex item.
-.shell__ws-name {
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .shell__form {
