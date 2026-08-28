@@ -557,17 +557,34 @@ function toggleWorkspace(id: string): void {
   setExpanded(id, isFolded(id));
 }
 
-// A project can be selected from OUTSIDE the sidebar — the create-project flow below, or
-// the notification jump in stores/orchestrator.ts:99 — and a selection landing inside a
-// folded group renders nowhere: the highlight moves to a row the operator cannot see, and
-// the workspace row loses its own highlight at the same time. That is exactly the
-// "selection moves behind the operator's back" failure the navigation removal was meant to
-// end, so any selection unfolds its own group, whoever caused it. A local-only project has
-// no cloud row and therefore no group to unfold, which is why the lookup can miss.
+// WHICH GROUP OWNS A PROJECT — the one resolver, used by the watcher below and by the tree's
+// offline placement. Two lookups with different sources is how the bug beneath this comment
+// comes back: the watcher used to read `projects.byId` alone, which is empty whenever the
+// cloud read failed. That was harmless while offline rows sat in a fold-less bucket, and
+// became a live failure the moment they moved into real, foldable, persisted groups.
+//
+// Cloud list first, because it is authoritative when present; the cached map second, because
+// it is what remains when the read failed and it is what the offline tree renders from. The
+// online tree agrees with the first branch by construction, not by convention:
+// groupProjectsByWorkspace places a project by the same `workspaceId` field this reads off
+// the same object.
+function workspaceOf(projectId: string): string | undefined {
+  return projects.byId.get(projectId)?.workspaceId ?? store.projectWorkspace[projectId];
+}
+
+// A project can be selected from OUTSIDE the sidebar — the create-project flow below, or the
+// notification jump in stores/orchestrator.ts:99, which fires when a local agent finishes and
+// keeps firing with Supabase down, because local work never blocks on the cloud. A selection
+// landing inside a folded group renders nowhere: the highlight moves to a row the operator
+// cannot see, and the workspace row loses its own highlight at the same time, since `:active`
+// requires no project to be selected. That is exactly the "selection moves behind the
+// operator's back" failure the navigation removal was meant to end, so any selection unfolds
+// its own group, whoever caused it. The lookup still misses for a project with no group on
+// either side — a local-only row — which has no group to unfold.
 watch(
   () => store.selectedProjectId,
   (id) => {
-    const workspaceId = id ? projects.byId.get(id)?.workspaceId : undefined;
+    const workspaceId = id ? workspaceOf(id) : undefined;
     if (workspaceId) setExpanded(workspaceId, true);
   },
 );
@@ -583,10 +600,35 @@ function selectWorkspace(id: string): void {
   store.selectWorkspace(id);
 }
 
-// True only once a cloud read has actually succeeded on this run. Until then a local row
-// absent from the (still empty) cloud list is an unread cache, not an orphan — labelling
-// every project «поза хмарою» on a cold or offline boot would be a lie.
+// True only once BOTH halves of load() succeeded: the cloud read AND the registry mirror
+// after it (stores/projects.ts assigns the list, then awaits api.syncProjects, and a throw
+// there lands in offlineError, so the guard in onMounted returns before this is set). Keep
+// that composite meaning in mind — it is narrower than "we know what the cloud holds", which
+// is the question the sidebar actually asks, and answering that one with this flag is what
+// `hasCloudList` below exists to stop.
 const cloudSynced = ref(false);
+
+// DO WE HOLD AN AUTHORITATIVE CLOUD PROJECT LIST? Everything in the sidebar that could state
+// a falsehood about where a project lives asks this, and only this: which source the tree is
+// built from, whether a missing local row is an orphan, and what the bucket's heading claims.
+// One signal for all three, because three answers to one question is how they drift apart.
+//
+// Both terms are load-bearing.
+//   `length` — the local api is down but Supabase is fine, which is every api restart. The
+//     read succeeded and the list is in memory; `cloudSynced` is false because the mirror
+//     that follows it failed. Keying on the flag threw that list away and rendered four
+//     correctly-named EMPTY groups over nothing — the local rows were gone too, since the
+//     thing that failed is what supplies them. Looks like a team with no projects.
+//   `cloudSynced` — the list is legitimately EMPTY: a new account, or a team whose projects
+//     were all deleted. `length` cannot tell that from "never read", and the difference
+//     matters: the local rows that survived prune there are genuine orphans, and must be
+//     bucketed as such rather than placed into groups by a stale cached map.
+//
+// Either term implies the READ succeeded — `projects.projects` is only ever assigned from a
+// resolved read (or a create, which also implies a live cloud) — which is precisely the
+// evidence the three questions above need. The mirror is about writing the local registry
+// and has no bearing on any of them.
+const hasCloudList = computed(() => projects.projects.length > 0 || cloudSynced.value);
 
 onMounted(async () => {
   // Socket first: the snapshot, and the project_update events the sync inside load() emits,
@@ -737,7 +779,7 @@ const sidebarProjects = computed(() => {
   for (const group of tree.value) byWorkspace.set(group.workspace.id, []);
   const ungrouped: RailProject[] = [];
 
-  if (cloudSynced.value) {
+  if (hasCloudList.value) {
     for (const group of tree.value) {
       const tiles = byWorkspace.get(group.workspace.id);
       for (const c of group.projects) {
@@ -765,7 +807,7 @@ const sidebarProjects = computed(() => {
         color: row.color,
         state: row.localRepoPath ? 'bound' : 'unbound',
       };
-      const workspaceId = store.projectWorkspace[row.id];
+      const workspaceId = workspaceOf(row.id);
       if (workspaceId !== undefined && byWorkspace.has(workspaceId)) {
         byWorkspace.get(workspaceId)?.push(tile);
       } else {
@@ -777,21 +819,22 @@ const sidebarProjects = computed(() => {
   return { byWorkspace, ungrouped };
 });
 
-// The bucket's heading is a CLAIM, and the claim is not the same one in both states.
+// The bucket's heading is a CLAIM, and the claim is not the same one in both states. It turns
+// on `hasCloudList`, the same signal the branch above does — the two must agree or the
+// heading describes a bucket that was filled by different rules.
 //
-// ONLINE it is precise: these rows are absent from a cloud list we successfully read, so
+// WITH a cloud list it is precise: these rows are absent from a list we actually read, so
 // this machine really is the only place they exist — made before the team cloud, or while
 // Supabase was unreachable. The board's «Опублікувати в хмарі» is how such a row gets a
 // workspace. They are kept rather than hidden because sync's prune deliberately keeps a row
 // that still owns sessions, and agents you cannot select are agents you cannot stop.
 //
-// OFFLINE it is weaker and must say so. We have not read any cloud list, so the only true
-// statement about these rows is that we do not know their group — the cache has no entry for
-// them. «Лише на цій машині» there would assert something we have not checked, which on a
-// cold offline start used to be said about the team's entire project list. The tile states
-// draw the same line: `orphan` only when cloudSynced.
+// WITHOUT one it must be weaker. We have read no cloud list, so the only true statement about
+// these rows is that we do not know their group: the cached map has no entry for them.
+// «Лише на цій машині» there asserts something unchecked — on a cold offline start it used to
+// say it about the team's entire project list.
 const localOnlyLabel = computed(() =>
-  cloudSynced.value ? 'Лише на цій машині' : 'Воркспейс невідомий',
+  hasCloudList.value ? 'Лише на цій машині' : 'Воркспейс невідомий',
 );
 
 // The group header's badge: what is running anywhere inside it, so a folded workspace still
