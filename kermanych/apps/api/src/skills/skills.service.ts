@@ -258,7 +258,13 @@ export function renderRuleFile(t: ProjectTrigger, body: string): string {
   // a source outside the union (a row predating the DB constraint) would write
   // `scope: undefined`, which omp rejects at LOAD — after any write-time try/catch has already
   // succeeded. Rejected here so a bad row costs its own rule and never a launch.
-  const scope: string | undefined = TRIGGER_SCOPE[t.source];
+  //
+  // `Object.hasOwn`, not a bare `TRIGGER_SCOPE[t.source]`: the table is a plain object, so a
+  // row whose source is `constructor` (or any other Object.prototype member) would read back
+  // an inherited truthy value, walk straight past the guard below and interpolate a
+  // stringified function into the YAML. The guard exists precisely for values outside the
+  // union, so it must not be defeatable by one of them.
+  const scope = Object.hasOwn(TRIGGER_SCOPE, t.source) ? TRIGGER_SCOPE[t.source] : undefined;
   if (!scope) throw new Error(`trigger "${t.id}" has an unknown source: ${String(t.source)}`);
   const fm = [
     "---",

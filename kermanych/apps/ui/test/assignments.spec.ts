@@ -87,6 +87,35 @@ test('a name in neither the library nor the repository is broken', () => {
   expect(assignmentBadge(rows[0]!.skills[0]!)).toEqual({ kind: 'broken', label: 'немає скіла' });
 });
 
+// `constructor` is a LEGAL skill name — lowercase, no separators, so SKILL_NAME_RE and the
+// column's identical check constraint both accept it, and the library pane will create and
+// assign it. It is also the one Object.prototype member a skill can be named after
+// (`toString`, `valueOf`, `__proto__` all carry characters the pattern rejects), so a bare
+// `repo[name]` read it back as an inherited function: truthy, so the assignment rendered as a
+// LIVE «перекрито репо» row with a stringified function for a path, while the launcher
+// reported it `missing`. Reachable in three steps: create a skill called `constructor`, assign
+// it, delete its library row.
+//
+// Reverting the `Object.hasOwn` guard on that read must fail this test.
+test('a dangling assignment named constructor is broken, not a repository skill', () => {
+  for (const repo of [{}, { 'other-skill': '/repo/.omp/skills/other-skill/SKILL.md' }]) {
+    const rows = assignmentRows(AGENTS, [A('constructor')], [], {}, repo);
+    expect(rows[0]!.skills).toEqual([{ name: 'constructor', broken: true }]);
+    expect(assignmentBadge(rows[0]!.skills[0]!)).toEqual({ kind: 'broken', label: 'немає скіла' });
+    // And it is not an open question about the byte total either: there is no body anywhere.
+    expect(rows[0]!.unmeasured).toEqual([]);
+    expect(rows[0]!.bytes).toBe(0);
+  }
+  // A repository that really does define it still wins, exactly like any other name.
+  const real = assignmentRows(AGENTS, [A('constructor')], [], {}, {
+    constructor: '/repo/.omp/skills/constructor/SKILL.md',
+  });
+  expect(real[0]!.skills).toEqual([
+    { name: 'constructor', shadowedByRepo: '/repo/.omp/skills/constructor/SKILL.md' },
+  ]);
+  expect(real[0]!.unmeasured).toEqual(['constructor']);
+});
+
 test('a repo-shadowed skill carries its path, and the byte total sums the bodies', () => {
   const rows = assignmentRows(
     AGENTS,

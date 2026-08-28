@@ -55,6 +55,20 @@ test("a source outside the union is refused rather than written as `scope: undef
   expect(() => renderRuleFile(stale, "B")).toThrow(/unknown source: reasoning/);
 });
 
+// The same refusal, for the one out-of-union value that the lookup itself used to hand back a
+// truthy answer for: `TRIGGER_SCOPE` is a plain object, so `TRIGGER_SCOPE.constructor` is
+// inherited from Object.prototype and walked straight past the `if (!scope)` guard, writing a
+// stringified function into the YAML. A guard that exists for values outside the union must not
+// be defeatable by one of them.
+test("a source that names an Object.prototype member is refused like any other unknown", () => {
+  const stale = { ...t({}), source: "constructor" } as unknown as ProjectTrigger;
+  expect(() => renderRuleFile(stale, "B")).toThrow(/unknown source: constructor/);
+  // And the three real sources still resolve — the guard did not become a blanket refusal.
+  expect(renderRuleFile(t({ source: "thinking" }), "B")).toContain("scope: [thinking]");
+  expect(renderRuleFile(t({ source: "assistant" }), "B")).toContain("scope: [text]");
+  expect(renderRuleFile(t({ source: "tool" }), "B")).toContain("scope: [tool]");
+});
+
 // ---- materializeTriggers -------------------------------------------------------------
 
 const row = (p: Partial<ProjectSkill> & { name: string }): ProjectSkill => ({

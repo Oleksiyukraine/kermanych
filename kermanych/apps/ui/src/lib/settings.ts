@@ -251,7 +251,17 @@ export function assignmentRows(
       let bytes = 0;
       const skills = mine.map<AssignedSkill>((r) => {
         const hit = byName.get(r.skillName);
-        const repoPath = repo[r.skillName];
+        // `Object.hasOwn`, never a bare `repo[name]`: `repo` is a plain JSON-parsed object,
+        // and `constructor` is a LEGAL skill name under SKILL_NAME_RE — lowercase, no
+        // separators, so it passes both the pattern and the DB's identical check constraint.
+        // It is creatable and assignable through the library pane, and inherited from
+        // Object.prototype as a truthy value. A dangling assignment named `constructor` would
+        // otherwise render as a live «перекрито репо» row with a stringified function for a
+        // path — exactly the misinformation this condition exists to prevent. (`toString` and
+        // `valueOf` carry capitals and so cannot be skill names at all; `constructor` is the
+        // one member of the prototype that can.) The api-side mirror of this rule is safe for
+        // free because it reads a Map (assignedForNames).
+        const repoPath = Object.hasOwn(repo, r.skillName) ? repo[r.skillName] : undefined;
         // A broken name contributes no bytes and counts as measured: there is no body to
         // pay for, so the total stays an honest figure rather than an open question.
         if (!hit && !repoPath) return { name: r.skillName, broken: true };
