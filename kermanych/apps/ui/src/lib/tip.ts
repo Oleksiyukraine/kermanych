@@ -8,7 +8,7 @@ import type { Directive } from 'vue';
 // controls in a 34px panel header, more per table row), and a directive keeps a
 // single shared bubble for the whole app instead of one hidden node per control.
 //
-// Why not a CSS `::after` on the control: `.ws__board` sets `overflow-y: auto`,
+// Why not a CSS `::after` on the control: `.agents__board` sets `overflow-y: auto`,
 // which computes `overflow-x` to `auto` as well, so an absolutely positioned
 // pseudo-element gets cropped by the scroll container. A `position: fixed` node
 // under <body> is immune.

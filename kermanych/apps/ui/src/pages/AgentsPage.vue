@@ -1,25 +1,25 @@
 <template>
-  <main class="ws">
+  <main class="agents">
     <!-- No project selected — the rail invites a choice. -->
-    <div v-if="!store.selectedProjectId" class="ws__blank">
-      <div class="ws__blank-eyebrow mono">КЕРМАНИЧ</div>
-      <p class="ws__blank-text">Виберіть проєкт у лівій панелі, щоб побачити його агентів.</p>
+    <div v-if="!store.selectedProjectId" class="agents__blank">
+      <div class="agents__blank-eyebrow mono">КЕРМАНИЧ</div>
+      <p class="agents__blank-text">Виберіть проєкт у лівій панелі, щоб побачити його агентів.</p>
     </div>
 
-    <div v-else class="ws__content" ref="contentEl" :class="{ 'ws__content--resizing': resizing }">
+    <div v-else class="agents__content" ref="contentEl" :class="{ 'agents__content--resizing': resizing }">
       <!-- BOARD — one card per session in the selected project -->
-      <section class="ws__board" :style="{ width: detailWidth + 'px' }">
-        <header class="ws__board-head">
-          <div class="ws__board-title">
-            <span class="ws__bucket-label">{{ bucketLabel }}</span>
-            <span class="ws__bucket-count mono">{{ boardRows.length }}</span>
+      <section class="agents__board" :style="{ width: detailWidth + 'px' }">
+        <header class="agents__board-head">
+          <div class="agents__board-title">
+            <span class="agents__bucket-label">{{ bucketLabel }}</span>
+            <span class="agents__bucket-count mono">{{ boardRows.length }}</span>
           </div>
-          <div class="ws__board-controls">
+          <div class="agents__board-controls">
             <KBtn variant="primary" @click="openLauncher()">Нова задача</KBtn>
           </div>
         </header>
 
-        <div v-if="boardRows.length" class="ws__cards">
+        <div v-if="boardRows.length" class="agents__cards">
           <KSessionCard
             v-for="s in boardRows"
             :key="s.id"
@@ -34,14 +34,14 @@
             @click="onRowClick(s)"
           />
         </div>
-        <div v-else class="ws__empty mono">
+        <div v-else class="agents__empty mono">
           {{ showArchived ? 'Немає відкладених агентів.' : showTasks ? 'Беклог порожній. Створи задачу через «Нова задача».' : showHistory ? 'Історія порожня.' : 'Ще немає агентів. Запусти першого через «Нова задача».' }}
         </div>
       </section>
 
       <!-- RESIZER — drag the seam to widen / narrow the chat section -->
       <div
-        class="ws__resizer"
+        class="agents__resizer"
         role="separator"
         aria-orientation="vertical"
         aria-label="Змінити ширину секції з чатом"
@@ -54,22 +54,22 @@
       ></div>
 
       <!-- DETAIL — the full panel for the selected session -->
-      <aside class="ws__detail">
+      <aside class="agents__detail">
         <template v-if="selectedSession">
-        <div class="ws__detail-bar">
-          <span class="ws__detail-label mono">{{ selectedSession.name }}</span>
+        <div class="agents__detail-bar">
+          <span class="agents__detail-label mono">{{ selectedSession.name }}</span>
           <button
             type="button"
-            class="ws__close"
+            class="agents__close"
             v-tip="'Закрити'"
             aria-label="Закрити"
             @click="store.selectSession(undefined)"
           >✕</button>
         </div>
-        <KTabs v-model="detailTab" :tabs="detailTabs" class="ws__detail-tabs" />
-        <div v-show="detailTab === 'log'" class="ws__tabpane ws__tabpane--log">
+        <KTabs v-model="detailTab" :tabs="detailTabs" class="agents__detail-tabs" />
+        <div v-show="detailTab === 'log'" class="agents__tabpane agents__tabpane--log">
           <KPanel
-            class="ws__panel"
+            class="agents__panel"
             :session="selectedSession"
             :refreshing="refreshingId === selectedSession.id"
             @stop="onStop"
@@ -96,40 +96,40 @@
                 :expand-all="expandAll"
               />
             </template>
-            <div v-else class="ws__log-empty mono">Журнал порожній.</div>
+            <div v-else class="agents__log-empty mono">Журнал порожній.</div>
           </KPanel>
         </div>
-        <div v-if="detailTab === 'changes'" class="ws__tabpane ws__changes">
-          <p v-if="changesLoading" class="ws__log-empty mono">Готую…</p>
-          <p v-else-if="changesError" class="ws__error" role="alert">{{ changesError }}</p>
+        <div v-if="detailTab === 'changes'" class="agents__tabpane agents__changes">
+          <p v-if="changesLoading" class="agents__log-empty mono">Готую…</p>
+          <p v-else-if="changesError" class="agents__error" role="alert">{{ changesError }}</p>
           <template v-else-if="changesInfo">
-            <div class="ws__changes-summary mono">
-              <span class="ws__changes-branch">{{ changesInfo.branch }} → {{ changesInfo.target || '—' }}</span>
+            <div class="agents__changes-summary mono">
+              <span class="agents__changes-branch">{{ changesInfo.branch }} → {{ changesInfo.target || '—' }}</span>
               <span>{{ changesInfo.ahead }} комітів</span>
-              <span v-if="changesInfo.dirty" class="ws__changes-dirty">незакоммічені зміни</span>
+              <span v-if="changesInfo.dirty" class="agents__changes-dirty">незакоммічені зміни</span>
             </div>
-            <ul v-if="changesInfo.conflicts.length" class="ws__conflict mono">
-              <li class="ws__conflict-head">Конфлікти:</li>
+            <ul v-if="changesInfo.conflicts.length" class="agents__conflict mono">
+              <li class="agents__conflict-head">Конфлікти:</li>
               <li v-for="f in changesInfo.conflicts" :key="f">{{ f }}</li>
             </ul>
-            <ul v-if="changesInfo.files.length" class="ws__file-list">
-              <li v-for="f in changesInfo.files" :key="f.path" class="ws__file-item">
+            <ul v-if="changesInfo.files.length" class="agents__file-list">
+              <li v-for="f in changesInfo.files" :key="f.path" class="agents__file-item">
                 <button
                   type="button"
-                  class="ws__file-row"
-                  :class="{ 'ws__file-row--open': openFile === f.path }"
+                  class="agents__file-row"
+                  :class="{ 'agents__file-row--open': openFile === f.path }"
                   :aria-expanded="openFile === f.path"
                   @click="toggleFile(f.path)"
                 >
-                  <span class="ws__file-path mono">{{ f.path }}</span>
-                  <span class="ws__file-stat mono">
-                    <span class="ws__diff-add">+{{ f.added }}</span>
-                    <span class="ws__diff-del">−{{ f.removed }}</span>
+                  <span class="agents__file-path mono">{{ f.path }}</span>
+                  <span class="agents__file-stat mono">
+                    <span class="agents__diff-add">+{{ f.added }}</span>
+                    <span class="agents__diff-del">−{{ f.removed }}</span>
                   </span>
                 </button>
                 <KDiffView
                   v-if="openFile === f.path"
-                  class="ws__file-diff"
+                  class="agents__file-diff"
                   :path="f.path"
                   :diff="fileDiff"
                   :loading="fileDiffLoading"
@@ -138,48 +138,48 @@
                 />
               </li>
             </ul>
-            <p v-else class="ws__log-empty mono">Немає змінених файлів.</p>
+            <p v-else class="agents__log-empty mono">Немає змінених файлів.</p>
           </template>
         </div>
-        <div v-if="detailTab === 'session'" class="ws__tabpane ws__session">
-          <dl class="ws__meta">
-            <div class="ws__meta-row">
-              <dt class="ws__meta-label">Статус</dt>
-              <dd class="ws__meta-value">
+        <div v-if="detailTab === 'session'" class="agents__tabpane agents__session">
+          <dl class="agents__meta">
+            <div class="agents__meta-row">
+              <dt class="agents__meta-label">Статус</dt>
+              <dd class="agents__meta-value">
                 <KStatusDot :status="selectedSession.status" />
                 <span class="mono">{{ statusWord(selectedSession) }}</span>
               </dd>
             </div>
-            <div class="ws__meta-row">
-              <dt class="ws__meta-label">Модель</dt>
-              <dd class="ws__meta-value mono">{{ selectedSession.model || '—' }}</dd>
+            <div class="agents__meta-row">
+              <dt class="agents__meta-label">Модель</dt>
+              <dd class="agents__meta-value mono">{{ selectedSession.model || '—' }}</dd>
             </div>
-            <div class="ws__meta-row">
-              <dt class="ws__meta-label">Гілка</dt>
-              <dd class="ws__meta-value mono">{{ selectedSession.branch || '—' }}</dd>
+            <div class="agents__meta-row">
+              <dt class="agents__meta-label">Гілка</dt>
+              <dd class="agents__meta-value mono">{{ selectedSession.branch || '—' }}</dd>
             </div>
-            <div class="ws__meta-row">
-              <dt class="ws__meta-label">Worktree</dt>
-              <dd class="ws__meta-value mono">{{ selectedSession.worktree ? 'так' : 'ні' }}</dd>
+            <div class="agents__meta-row">
+              <dt class="agents__meta-label">Worktree</dt>
+              <dd class="agents__meta-value mono">{{ selectedSession.worktree ? 'так' : 'ні' }}</dd>
             </div>
-            <div class="ws__meta-row">
-              <dt class="ws__meta-label">База</dt>
-              <dd class="ws__meta-value mono">{{ selectedSession.baseBranch || '—' }}</dd>
+            <div class="agents__meta-row">
+              <dt class="agents__meta-label">База</dt>
+              <dd class="agents__meta-value mono">{{ selectedSession.baseBranch || '—' }}</dd>
             </div>
-            <div class="ws__meta-row">
-              <dt class="ws__meta-label">Контекст</dt>
-              <dd class="ws__meta-value mono">{{ ctxOf(selectedSession) ?? '—' }}</dd>
+            <div class="agents__meta-row">
+              <dt class="agents__meta-label">Контекст</dt>
+              <dd class="agents__meta-value mono">{{ ctxOf(selectedSession) ?? '—' }}</dd>
             </div>
-            <div class="ws__meta-row">
-              <dt class="ws__meta-label">Токени</dt>
-              <dd class="ws__meta-value mono">{{ tokenTotal ?? '—' }}</dd>
+            <div class="agents__meta-row">
+              <dt class="agents__meta-label">Токени</dt>
+              <dd class="agents__meta-value mono">{{ tokenTotal ?? '—' }}</dd>
             </div>
-            <div class="ws__meta-row">
-              <dt class="ws__meta-label">Вартість</dt>
-              <dd class="ws__meta-value mono">{{ costLabel || '—' }}</dd>
+            <div class="agents__meta-row">
+              <dt class="agents__meta-label">Вартість</dt>
+              <dd class="agents__meta-value mono">{{ costLabel || '—' }}</dd>
             </div>
           </dl>
-          <div class="ws__actions">
+          <div class="agents__actions">
             <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
               <KIconButton
                 v-if="selectedSession.status !== 'merged'"
@@ -229,32 +229,32 @@
           </div>
         </div>
         </template>
-        <div v-else class="ws__detail-blank mono">Виберіть сесію зі списку.</div>
+        <div v-else class="agents__detail-blank mono">Виберіть сесію зі списку.</div>
       </aside>
     </div>
 
     <!-- NEW-TASK LAUNCHER — two columns: left = what to do, right = where it lands -->
     <KModal v-model="launcherOpen" :title="launcherTitle" width="880px" flush>
       <template #head-meta>
-        <div class="ws-launcher__headmeta">
-          <span v-if="selectedProject" class="ws-launcher__tag mono">{{ selectedProject.name }}</span>
-          <span class="ws-launcher__spacer"></span>
-          <span class="ws-launcher__esc mono">Esc — закрити</span>
+        <div class="agents-launcher__headmeta">
+          <span v-if="selectedProject" class="agents-launcher__tag mono">{{ selectedProject.name }}</span>
+          <span class="agents-launcher__spacer"></span>
+          <span class="agents-launcher__esc mono">Esc — закрити</span>
         </div>
       </template>
 
-      <div class="ws-launcher" @keydown="onLauncherKeydown">
+      <div class="agents-launcher" @keydown="onLauncherKeydown">
         <!-- LEFT — the task itself -->
-        <div class="ws-launcher__main">
+        <div class="agents-launcher__main">
           <div>
-            <div class="ws-launcher__label-row">
-              <span class="ws-launcher__label ws-launcher__label--strong">Завдання</span>
-              <span class="ws-launcher__hint-inline mono">⌘⏎ — запустити</span>
+            <div class="agents-launcher__label-row">
+              <span class="agents-launcher__label agents-launcher__label--strong">Завдання</span>
+              <span class="agents-launcher__hint-inline mono">⌘⏎ — запустити</span>
             </div>
             <textarea
               ref="taskInput"
               v-model="draftTask"
-              class="ws-launcher__task"
+              class="agents-launcher__task"
               rows="9"
               placeholder="Що має зробити агент? Один абзац — далі він сам поставить уточнення."
               @paste="onLaunchPaste"
@@ -263,8 +263,8 @@
             />
           </div>
 
-          <div class="ws-launcher__attach">
-            <button type="button" class="ws-launcher__attach-btn mono" @click="launchFileInput?.click()">
+          <div class="agents-launcher__attach">
+            <button type="button" class="agents-launcher__attach-btn mono" @click="launchFileInput?.click()">
               ⛶ Зображення
             </button>
             <input
@@ -272,90 +272,90 @@
               type="file"
               accept="image/png,image/jpeg,image/gif,image/webp"
               multiple
-              class="ws__file"
+              class="agents__file"
               @change="onLaunchFilePick"
             />
-            <span class="ws-launcher__attach-note mono">або перетягни сюди</span>
+            <span class="agents-launcher__attach-note mono">або перетягни сюди</span>
           </div>
           <KAttachStrip v-if="launchImages.length" :images="launchImages" @remove="removeLaunchImage" />
-          <p v-if="launchError" class="ws__error" role="alert">{{ launchError }}</p>
+          <p v-if="launchError" class="agents__error" role="alert">{{ launchError }}</p>
 
-          <div class="ws-launcher__name">
-            <div class="ws-launcher__label">Назва задачі</div>
+          <div class="agents-launcher__name">
+            <div class="agents-launcher__label">Назва задачі</div>
             <input
               ref="nameField"
               v-model="draftName"
-              class="ws-launcher__name-input"
+              class="agents-launcher__name-input"
               placeholder="виводиться із завдання"
               @input="nameEdited = true"
             />
-            <div class="ws-launcher__hint mono">
+            <div class="agents-launcher__hint mono">
               {{ draftName.trim() ? branchPreview : 'зʼявиться, як напишеш завдання' }}
             </div>
           </div>
         </div>
 
         <!-- RIGHT — where it lands -->
-        <div class="ws-launcher__side">
+        <div class="agents-launcher__side">
           <div>
-            <div class="ws-launcher__label">Гілка</div>
-            <div class="ws-launcher__branch mono">{{ branchPreview }}</div>
-            <div class="ws-launcher__hint mono">{{ branchHint }}</div>
+            <div class="agents-launcher__label">Гілка</div>
+            <div class="agents-launcher__branch mono">{{ branchPreview }}</div>
+            <div class="agents-launcher__hint mono">{{ branchHint }}</div>
           </div>
 
           <div>
-            <div class="ws-launcher__label">Тип</div>
-            <div class="ws-launcher__seg ws-launcher__seg--grid2">
+            <div class="agents-launcher__label">Тип</div>
+            <div class="agents-launcher__seg agents-launcher__seg--grid2">
               <button
                 v-for="opt in prefixOptions"
                 :key="opt"
                 type="button"
-                class="ws-launcher__seg-btn mono"
-                :class="{ 'ws-launcher__seg-btn--active': opt === draftPrefix }"
+                class="agents-launcher__seg-btn mono"
+                :class="{ 'agents-launcher__seg-btn--active': opt === draftPrefix }"
                 @click="draftPrefix = opt"
               >{{ opt }}</button>
             </div>
           </div>
 
           <div>
-            <div class="ws-launcher__label-row ws-launcher__label-row--tight">
-              <span class="ws-launcher__label">Платформа</span>
-              <span class="ws-launcher__optional mono">необовʼязково</span>
+            <div class="agents-launcher__label-row agents-launcher__label-row--tight">
+              <span class="agents-launcher__label">Платформа</span>
+              <span class="agents-launcher__optional mono">необовʼязково</span>
             </div>
-            <div class="ws-launcher__seg">
+            <div class="agents-launcher__seg">
               <button
                 v-for="opt in platformOptions"
                 :key="opt"
                 type="button"
-                class="ws-launcher__seg-btn mono"
-                :class="{ 'ws-launcher__seg-btn--active': opt === draftPlatform }"
+                class="agents-launcher__seg-btn mono"
+                :class="{ 'agents-launcher__seg-btn--active': opt === draftPlatform }"
                 @click="draftPlatform = draftPlatform === opt ? undefined : opt"
               >{{ opt }}</button>
             </div>
           </div>
 
-          <div class="ws-launcher__block ws-launcher__block--stack">
-            <div class="ws-launcher__check">
+          <div class="agents-launcher__block agents-launcher__block--stack">
+            <div class="agents-launcher__check">
               <KCheckbox v-model="draftWorktree" label="Ізолювати у worktree" />
-              <p class="ws-launcher__check-desc">
+              <p class="agents-launcher__check-desc">
                 Окрема тека, окремий чекаут. Агент не чіпає твій робочий стан.
               </p>
             </div>
-            <div v-if="draftWorktree" class="ws-launcher__from">
-              <span class="ws-launcher__from-label mono">від</span>
+            <div v-if="draftWorktree" class="agents-launcher__from">
+              <span class="agents-launcher__from-label mono">від</span>
               <KSelect v-model="draftBaseBranch" :options="launchBranches" />
             </div>
           </div>
 
-          <div class="ws-launcher__block">
-            <div class="ws-launcher__label">Модель</div>
-            <div class="ws-launcher__seg">
+          <div class="agents-launcher__block">
+            <div class="agents-launcher__label">Модель</div>
+            <div class="agents-launcher__seg">
               <button
                 v-for="opt in modelOptions"
                 :key="opt"
                 type="button"
-                class="ws-launcher__seg-btn mono"
-                :class="{ 'ws-launcher__seg-btn--active': opt === draftModel }"
+                class="agents-launcher__seg-btn mono"
+                :class="{ 'agents-launcher__seg-btn--active': opt === draftModel }"
                 @click="draftModel = opt"
               >{{ opt }}</button>
             </div>
@@ -364,10 +364,10 @@
       </div>
 
       <template #controls>
-        <div class="ws-launcher__foot">
-          <span v-if="launcherError" class="ws__error" role="alert">{{ launcherError }}</span>
-          <span v-else class="ws-launcher__foot-hint mono">{{ footHint }}</span>
-          <span class="ws-launcher__spacer"></span>
+        <div class="agents-launcher__foot">
+          <span v-if="launcherError" class="agents__error" role="alert">{{ launcherError }}</span>
+          <span v-else class="agents-launcher__foot-hint mono">{{ footHint }}</span>
+          <span class="agents-launcher__spacer"></span>
           <KBtn variant="ghost" @click="launcherOpen = false">Скасувати</KBtn>
           <KBtn
             variant="secondary"
@@ -380,7 +380,7 @@
             :title="isBound ? '' : BIND_HINT"
             @click="submitLauncher(false)"
           >
-            Запустити<span class="ws-launcher__kbd mono">⌘⏎</span>
+            Запустити<span class="agents-launcher__kbd mono">⌘⏎</span>
           </KBtn>
         </div>
       </template>
@@ -388,21 +388,21 @@
 
     <!-- MERGE — pour a discussion branch's conclusion into its parent -->
     <KModal v-model="mergeOpen" :title="mergeIsReview ? 'Віддати висновок ревізора виконавцю' : 'Влити гілку в батьківського агента'">
-      <div class="ws__form">
-        <label class="ws__field">
-          <span class="ws__field-label">Summary (піде як повідомлення в батьківського агента)</span>
+      <div class="agents__form">
+        <label class="agents__field">
+          <span class="agents__field-label">Summary (піде як повідомлення в батьківського агента)</span>
           <textarea
             v-model="mergeSummary"
-            class="ws__textarea mono"
+            class="agents__textarea mono"
             rows="6"
             :placeholder="mergeIsReview ? 'Порожнє — візьму висновок ревізора' : 'Порожнє — візьму останню відповідь гілки'"
           />
         </label>
-        <p class="ws__hint mono">
+        <p class="agents__hint mono">
           Батьківський агент отримає це й почне діяти. Гілка стане історією
           (<code class="mono">merged</code>).
         </p>
-        <p v-if="mergeError" class="ws__error" role="alert">{{ mergeError }}</p>
+        <p v-if="mergeError" class="agents__error" role="alert">{{ mergeError }}</p>
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="mergeOpen = false">Скасувати</KBtn>
@@ -412,21 +412,21 @@
 
     <!-- MOVE TASK — re-parent a backlog task to another project -->
     <KModal v-model="moveOpen" :title="`Перемістити задачу · ${moveFor?.name ?? ''}`">
-      <div class="ws__form">
-        <p class="ws__hint mono">
+      <div class="agents__form">
+        <p class="agents__hint mono">
           Задача переїде в інший проєкт разом із назвою, промптом і налаштуваннями запуску.
         </p>
-        <div class="ws__move-list">
+        <div class="agents__move-list">
           <button
             v-for="p in moveTargets"
             :key="p.id"
             type="button"
-            class="ws__move-option"
+            class="agents__move-option"
             :disabled="moveBusy"
             @click="confirmMove(p.id)"
           >{{ p.name }}</button>
         </div>
-        <p v-if="moveError" class="ws__error" role="alert">{{ moveError }}</p>
+        <p v-if="moveError" class="agents__error" role="alert">{{ moveError }}</p>
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="moveOpen = false">Скасувати</KBtn>
@@ -435,16 +435,16 @@
 
     <!-- PREVIEW CONFIG — how to run this project's app for a live branch preview -->
     <KModal v-model="previewCfgOpen" title="Налаштувати превʼю">
-      <div class="ws__form">
-        <label class="ws__field">
-          <span class="ws__field-label">Команда web (з $PORT)</span>
-          <textarea v-model="draftWebCmd" class="ws__textarea mono" rows="2" />
+      <div class="agents__form">
+        <label class="agents__field">
+          <span class="agents__field-label">Команда web (з $PORT)</span>
+          <textarea v-model="draftWebCmd" class="agents__textarea mono" rows="2" />
         </label>
-        <label class="ws__field">
-          <span class="ws__field-label">Команда api (опційно; отримує PORT)</span>
-          <textarea v-model="draftApiCmd" class="ws__textarea mono" rows="2" />
+        <label class="agents__field">
+          <span class="agents__field-label">Команда api (опційно; отримує PORT)</span>
+          <textarea v-model="draftApiCmd" class="agents__textarea mono" rows="2" />
         </label>
-        <p class="ws__hint mono">
+        <p class="agents__hint mono">
           Запускається в worktree. web відкриється на автопорті; якщо задано api —
           підніметься першим, а web вкажеться на нього через VITE_API_BASE.
         </p>
@@ -459,16 +459,16 @@
 
     <!-- FINISH — merge the session branch into the project branch, retire the worktree -->
     <KModal v-model="finishOpen" title="Завершити сесію" persistent>
-      <div class="ws__form">
+      <div class="agents__form">
         <div v-show="finishFiles.length">
-          <p class="ws__error" role="alert">
+          <p class="agents__error" role="alert">
             Конфлікт при злитті — розвʼяжи його у worktree, потім «Влити» ще раз.
           </p>
-          <p class="ws__hint mono">Файли з конфліктом:</p>
-          <ul class="ws__conflict mono">
+          <p class="agents__hint mono">Файли з конфліктом:</p>
+          <ul class="agents__conflict mono">
             <li v-for="f in finishFiles" :key="f">{{ f }}</li>
           </ul>
-          <p class="ws__hint mono">
+          <p class="agents__hint mono">
             Відкрий у редакторі, прибери маркери конфлікту, закоміть — тоді «Влити».
           </p>
         </div>
@@ -477,13 +477,13 @@
             Влити <code class="mono">{{ finishData.branch }}</code> →
             <code class="mono">{{ finishData.target }}</code>
           </p>
-          <p v-if="finishData" class="ws__hint mono">
+          <p v-if="finishData" class="agents__hint mono">
             {{ finishData.ahead }} комітів{{ finishData.dirty ? ' + незакоммічені зміни (авто-коміт)' : '' }};
             worktree буде прибрано, сесія лишиться як «влито».
           </p>
-          <p v-else class="ws__hint mono">Готую…</p>
+          <p v-else class="agents__hint mono">Готую…</p>
         </div>
-        <p v-if="finishError" class="ws__error" role="alert">{{ finishError }}</p>
+        <p v-if="finishError" class="agents__error" role="alert">{{ finishError }}</p>
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="finishOpen = false">Закрити</KBtn>
@@ -679,7 +679,7 @@ const {
   onKeydown: onResizeKeydown,
   refresh: refreshDetailWidth,
 } = useResizableWidth({
-  storageKey: 'kermanych.ws.board-width',
+  storageKey: 'kermanych.agents.board-width',
   defaultWidth: 340,
   min: MIN_BOARD,
   edge: 'right',
@@ -709,7 +709,7 @@ watch(
 
 // ── Detail tabs (Лог / Зміни / Сесія) ─────────────────────────────────────
 // The right panel splits the session into three views. The choice is persisted
-// per session (localStorage `ws.tab.<id>`) so reopening an agent lands where the
+// per session (localStorage `kermanych.agents.tab.<id>`) so reopening an agent lands where the
 // operator left it; a fresh session defaults to the log.
 const detailTabs = [
   { value: 'log', label: 'Лог' },
@@ -720,14 +720,14 @@ const detailTab = ref('log');
 watch(
   () => store.selectedSessionId,
   (id) => {
-    const saved = id ? localStorage.getItem(`ws.tab.${id}`) : null;
+    const saved = id ? localStorage.getItem(`kermanych.agents.tab.${id}`) : null;
     detailTab.value = saved === 'changes' || saved === 'session' ? saved : 'log';
   },
   { immediate: true },
 );
 watch(detailTab, (t) => {
   const id = store.selectedSessionId;
-  if (id) localStorage.setItem(`ws.tab.${id}`, t);
+  if (id) localStorage.setItem(`kermanych.agents.tab.${id}`, t);
 });
 
 // ── Зміни tab (finishInfo: ahead/dirty/conflicts + changed files) ──────────
@@ -1497,14 +1497,14 @@ async function submitPreviewConfig(): Promise<void> {
 <style scoped lang="scss">
 // Fixed header (48px) + footer (30px) are overlaid by the Quasar layout; the
 // Агенти screen fills exactly the space between them.
-.ws {
+.agents {
   height: calc(100vh - 82px);
   overflow: hidden;
   padding: var(--k-sp-3);
 }
 
 // ── Blank / no-project state ──────────────────────────────────────────────
-.ws__blank {
+.agents__blank {
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -1514,13 +1514,13 @@ async function submitPreviewConfig(): Promise<void> {
   padding: 0 40px;
 }
 
-.ws__blank-eyebrow {
+.agents__blank-eyebrow {
   font-size: 11px;
   letter-spacing: 0.2em;
   color: var(--k-muted);
 }
 
-.ws__blank-text {
+.agents__blank-text {
   margin: 0;
   font-family: var(--k-font-ui);
   font-size: 15px;
@@ -1528,7 +1528,7 @@ async function submitPreviewConfig(): Promise<void> {
 }
 
 // ── Board + detail split ──────────────────────────────────────────────────
-.ws__content {
+.agents__content {
   display: flex;
   gap: 0;
   height: 100%;
@@ -1541,8 +1541,8 @@ async function submitPreviewConfig(): Promise<void> {
 
 // While dragging the seam, force the resize cursor everywhere and kill text
 // selection so a fast drag doesn't highlight the board or the log.
-.ws__content--resizing,
-.ws__content--resizing * {
+.agents__content--resizing,
+.agents__content--resizing * {
   cursor: col-resize !important;
   user-select: none;
 }
@@ -1550,7 +1550,7 @@ async function submitPreviewConfig(): Promise<void> {
 // The draggable seam between the board and the chat section. It stands in for
 // the detail column's old static left border: a faint line by default, accent
 // on hover / focus / active drag.
-.ws__resizer {
+.agents__resizer {
   flex: none;
   width: 7px;
   position: relative;
@@ -1563,7 +1563,7 @@ async function submitPreviewConfig(): Promise<void> {
   user-select: none;
 }
 
-.ws__resizer::before {
+.agents__resizer::before {
   content: '';
   position: absolute;
   top: 0;
@@ -1575,24 +1575,24 @@ async function submitPreviewConfig(): Promise<void> {
   transition: background 0.12s;
 }
 
-.ws__resizer:hover::before,
-.ws__resizer:focus-visible::before,
-.ws__content--resizing .ws__resizer::before {
+.agents__resizer:hover::before,
+.agents__resizer:focus-visible::before,
+.agents__content--resizing .agents__resizer::before {
   background: var(--k-accent);
 }
 
-.ws__resizer:focus-visible {
+.agents__resizer:focus-visible {
   outline: none;
 }
 
-.ws__board {
+.agents__board {
   flex: none;
   min-width: 0;
   overflow-y: auto;
   padding: var(--k-sp-4);
 }
 
-.ws__board-head {
+.agents__board-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1600,40 +1600,40 @@ async function submitPreviewConfig(): Promise<void> {
   margin-bottom: 20px;
 }
 
-.ws__board-controls {
+.agents__board-controls {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.ws__bucket-label {
+.agents__bucket-label {
   font-family: var(--k-font-ui);
   font-size: var(--k-fs-md);
   font-weight: var(--k-fw-semibold);
   color: var(--k-text);
 }
 
-.ws__bucket-count {
+.agents__bucket-count {
   margin-left: var(--k-sp-2);
   font-size: var(--k-fs-sm);
   color: var(--k-faint);
 }
 
-.ws__hint {
+.agents__hint {
   margin: 0;
   font-size: 11px;
   line-height: 1.5;
   color: var(--k-muted);
 }
 
-.ws__empty {
+.agents__empty {
   padding: 24px 2px;
   font-size: 13px;
   color: var(--k-muted);
 }
 
 // ── Detail column ─────────────────────────────────────────────────────────
-.ws__detail {
+.agents__detail {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1642,7 +1642,7 @@ async function submitPreviewConfig(): Promise<void> {
   padding-top: var(--k-sp-4);
 }
 
-.ws__detail-blank {
+.agents__detail-blank {
   flex: 1;
   display: flex;
   align-items: center;
@@ -1651,7 +1651,7 @@ async function submitPreviewConfig(): Promise<void> {
   font-size: var(--k-fs-sm);
 }
 
-.ws__detail-bar {
+.agents__detail-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1663,7 +1663,7 @@ async function submitPreviewConfig(): Promise<void> {
   flex: none;
 }
 
-.ws__detail-label {
+.agents__detail-label {
   font-size: 12px;
   color: var(--k-muted);
   overflow: hidden;
@@ -1671,7 +1671,7 @@ async function submitPreviewConfig(): Promise<void> {
   white-space: nowrap;
 }
 
-.ws__close {
+.agents__close {
   width: 24px;
   height: 24px;
   display: inline-flex;
@@ -1693,56 +1693,56 @@ async function submitPreviewConfig(): Promise<void> {
   }
 }
 
-.ws__panel {
+.agents__panel {
   flex: 1;
   min-height: 0;
 }
 
 // In the unified session card the panel is not its own box — the outer card owns the
 // border, so the transcript flows flat on the card surface instead of a box-in-a-box.
-.ws__tabpane .ws__panel {
+.agents__tabpane .agents__panel {
   border: none;
   border-radius: 0;
   background: transparent;
 }
 
-.ws__cards {
+.agents__cards {
   display: flex;
   flex-direction: column;
   gap: var(--k-sp-3);
 }
 
 // ── Detail tabs + panes ────────────────────────────────────────────────────
-.ws__detail-tabs {
+.agents__detail-tabs {
   flex: none;
   padding: 0 14px;
 }
 
-.ws__tabpane {
+.agents__tabpane {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-.ws__changes,
-.ws__session {
+.agents__changes,
+.agents__session {
   overflow-y: auto;
   gap: 14px;
   padding: 16px 14px;
 }
 
-.ws__changes-summary {
+.agents__changes-summary {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   font-size: 12px;
   color: var(--k-muted);
 }
-.ws__changes-branch { color: var(--k-text); }
-.ws__changes-dirty { color: var(--k-accent); }
+.agents__changes-branch { color: var(--k-text); }
+.agents__changes-dirty { color: var(--k-accent); }
 
-.ws__conflict {
+.agents__conflict {
   margin: 0;
   padding-left: 18px;
   display: flex;
@@ -1751,23 +1751,23 @@ async function submitPreviewConfig(): Promise<void> {
   font-size: 12px;
   color: var(--k-accent);
 }
-.ws__conflict-head { list-style: none; margin-left: -18px; }
+.agents__conflict-head { list-style: none; margin-left: -18px; }
 
-.ws__file-list {
+.agents__file-list {
   margin: 0;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
 }
-.ws__file-item {
+.agents__file-item {
   display: flex;
   flex-direction: column;
   border-bottom: 1px solid var(--k-line);
 }
 // A row is the control that opens the file's diff, so it is a button — focus and Enter
 // come with it — stripped back to the plain list row it looks like.
-.ws__file-row {
+.agents__file-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1780,49 +1780,49 @@ async function submitPreviewConfig(): Promise<void> {
   text-align: left;
   cursor: pointer;
 
-  &:hover .ws__file-path { color: var(--k-accent); }
+  &:hover .agents__file-path { color: var(--k-accent); }
 
   &:focus-visible {
     outline: 1px solid var(--k-accent);
     outline-offset: -1px;
   }
 }
-.ws__file-row--open .ws__file-path { color: var(--k-accent); }
-.ws__file-diff { margin: 0 0 8px; }
-.ws__file-path {
+.agents__file-row--open .agents__file-path { color: var(--k-accent); }
+.agents__file-diff { margin: 0 0 8px; }
+.agents__file-path {
   color: var(--k-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ws__file-stat {
+.agents__file-stat {
   flex: none;
   display: inline-flex;
   gap: 8px;
 }
-.ws__diff-add { color: var(--k-diff-add); }
-.ws__diff-del { color: var(--k-diff-del); }
+.agents__diff-add { color: var(--k-diff-add); }
+.agents__diff-del { color: var(--k-diff-del); }
 
 // ── Session metadata + actions ─────────────────────────────────────────────
-.ws__meta {
+.agents__meta {
   margin: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.ws__meta-row {
+.agents__meta-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
 }
-.ws__meta-label {
+.agents__meta-label {
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--k-muted);
 }
-.ws__meta-value {
+.agents__meta-value {
   margin: 0;
   display: inline-flex;
   align-items: center;
@@ -1832,7 +1832,7 @@ async function submitPreviewConfig(): Promise<void> {
   text-align: right;
   overflow-wrap: anywhere;
 }
-.ws__actions {
+.agents__actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -1840,32 +1840,32 @@ async function submitPreviewConfig(): Promise<void> {
   border-top: 1px solid var(--k-line);
 }
 
-.ws__log-empty {
+.agents__log-empty {
   font-size: 12px;
   color: var(--k-muted);
 }
 
 // ── Launcher form ─────────────────────────────────────────────────────────
-.ws__form {
+.agents__form {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-.ws__field {
+.agents__field {
   display: flex;
   flex-direction: column;
   gap: 6px;
   font-family: var(--k-font-ui);
 }
 
-.ws__field-label {
+.agents__field-label {
   text-align: left;
   font-size: 13px;
   color: var(--k-text);
 }
 
-.ws__textarea {
+.agents__textarea {
   font-family: var(--k-font-mono);
   font-size: 13px;
   line-height: 1.5;
@@ -1888,43 +1888,43 @@ async function submitPreviewConfig(): Promise<void> {
   }
 }
 
-.ws__error {
+.agents__error {
   margin: 0;
   font-size: 12.5px;
   line-height: 1.5;
   color: var(--k-accent);
 }
 
-.ws__file {
+.agents__file {
   display: none;
 }
 
 // ── New-task launcher (two-column) ────────────────────────────────────────
-.ws-launcher__headmeta {
+.agents-launcher__headmeta {
   flex: 1;
   display: flex;
   align-items: center;
   gap: 12px;
 }
-.ws-launcher__tag {
+.agents-launcher__tag {
   font-size: 11.5px;
   color: var(--k-muted);
   border: 1px solid var(--k-line);
   padding: 1px 6px;
 }
-.ws-launcher__spacer {
+.agents-launcher__spacer {
   flex: 1;
 }
-.ws-launcher__esc {
+.agents-launcher__esc {
   font-size: 11.5px;
   color: var(--k-muted);
 }
 
-.ws-launcher {
+.agents-launcher {
   display: grid;
   grid-template-columns: 1fr 320px;
 }
-.ws-launcher__main {
+.agents-launcher__main {
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -1932,7 +1932,7 @@ async function submitPreviewConfig(): Promise<void> {
   padding: 22px 24px;
   border-right: 1px solid var(--k-line);
 }
-.ws-launcher__side {
+.agents-launcher__side {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -1941,7 +1941,7 @@ async function submitPreviewConfig(): Promise<void> {
   background: var(--k-surface);
 }
 
-.ws-launcher__label {
+.agents-launcher__label {
   font-family: var(--k-font-ui);
   font-size: 11px;
   font-weight: 800;
@@ -1950,32 +1950,32 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-muted);
   margin-bottom: 8px;
 }
-.ws-launcher__label--strong {
+.agents-launcher__label--strong {
   color: var(--k-text);
 }
-.ws-launcher__label-row {
+.agents-launcher__label-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   margin-bottom: 8px;
 }
-.ws-launcher__label-row .ws-launcher__label {
+.agents-launcher__label-row .agents-launcher__label {
   margin-bottom: 0;
 }
-.ws-launcher__label-row--tight {
+.agents-launcher__label-row--tight {
   justify-content: flex-start;
   gap: 8px;
 }
-.ws-launcher__hint-inline,
-.ws-launcher__optional {
+.agents-launcher__hint-inline,
+.agents-launcher__optional {
   font-size: 11px;
   color: var(--k-muted);
 }
-.ws-launcher__optional {
+.agents-launcher__optional {
   font-size: 10.5px;
 }
 
-.ws-launcher__task {
+.agents-launcher__task {
   width: 100%;
   background: var(--k-surface);
   border: none;
@@ -1989,17 +1989,17 @@ async function submitPreviewConfig(): Promise<void> {
   resize: vertical;
   outline: none;
 }
-.ws-launcher__task::placeholder {
+.agents-launcher__task::placeholder {
   color: var(--k-muted);
 }
 
-.ws-launcher__attach {
+.agents-launcher__attach {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
-.ws-launcher__attach-btn {
+.agents-launcher__attach-btn {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -2011,20 +2011,20 @@ async function submitPreviewConfig(): Promise<void> {
   font-size: 12px;
   cursor: pointer;
 }
-.ws-launcher__attach-btn:hover {
+.agents-launcher__attach-btn:hover {
   border-color: var(--k-accent);
   color: var(--k-text);
 }
-.ws-launcher__attach-note {
+.agents-launcher__attach-note {
   font-size: 11.5px;
   color: var(--k-muted);
 }
 
-.ws-launcher__name {
+.agents-launcher__name {
   border-top: 1px solid var(--k-line);
   padding-top: 16px;
 }
-.ws-launcher__name-input {
+.agents-launcher__name-input {
   width: 100%;
   background: var(--k-bg);
   border: 1px solid var(--k-line);
@@ -2035,13 +2035,13 @@ async function submitPreviewConfig(): Promise<void> {
   padding: 9px 11px;
   outline: none;
 }
-.ws-launcher__name-input::placeholder {
+.agents-launcher__name-input::placeholder {
   color: var(--k-muted);
 }
-.ws-launcher__name-input:focus {
+.agents-launcher__name-input:focus {
   border-color: var(--k-accent);
 }
-.ws-launcher__hint {
+.agents-launcher__hint {
   margin-top: 7px;
   font-family: var(--k-font-mono);
   font-size: 11.5px;
@@ -2049,7 +2049,7 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-muted);
 }
 
-.ws-launcher__branch {
+.agents-launcher__branch {
   background: var(--k-bg);
   border: 1px solid var(--k-line-strong);
   border-radius: var(--k-r);
@@ -2061,7 +2061,7 @@ async function submitPreviewConfig(): Promise<void> {
   word-break: break-all;
 }
 
-.ws-launcher__seg {
+.agents-launcher__seg {
   display: flex;
   flex-wrap: wrap;
   gap: 2px;
@@ -2070,11 +2070,11 @@ async function submitPreviewConfig(): Promise<void> {
   border-radius: var(--k-r);
   overflow: hidden;
 }
-.ws-launcher__seg--grid2 {
+.agents-launcher__seg--grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
 }
-.ws-launcher__seg-btn {
+.agents-launcher__seg-btn {
   flex: 1;
   min-width: 0;
   padding: 7px 8px;
@@ -2089,24 +2089,24 @@ async function submitPreviewConfig(): Promise<void> {
   text-overflow: ellipsis;
   cursor: pointer;
 }
-.ws-launcher__seg-btn:hover {
+.agents-launcher__seg-btn:hover {
   color: var(--k-text);
 }
-.ws-launcher__seg-btn--active {
+.agents-launcher__seg-btn--active {
   background: var(--k-accent);
   color: var(--k-on-accent);
 }
 
-.ws-launcher__block {
+.agents-launcher__block {
   border-top: 1px solid var(--k-line);
   padding-top: 16px;
 }
-.ws-launcher__block--stack {
+.agents-launcher__block--stack {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-.ws-launcher__check-desc {
+.agents-launcher__check-desc {
   margin: 3px 0 0;
   padding-left: 24px;
   font-family: var(--k-font-ui);
@@ -2114,21 +2114,21 @@ async function submitPreviewConfig(): Promise<void> {
   line-height: 1.55;
   color: var(--k-muted);
 }
-.ws-launcher__from {
+.agents-launcher__from {
   display: flex;
   align-items: center;
   gap: 10px;
 }
-.ws-launcher__from-label {
+.agents-launcher__from-label {
   flex: 0 0 auto;
   font-size: 11.5px;
   color: var(--k-muted);
 }
-.ws-launcher__from :deep(.k-select) {
+.agents-launcher__from :deep(.k-select) {
   flex: 1;
   min-width: 0;
 }
-.ws-launcher__from :deep(.k-select__input) {
+.agents-launcher__from :deep(.k-select__input) {
   background: var(--k-bg);
   font-size: 12.5px;
   padding: 8px 10px;
@@ -2136,29 +2136,29 @@ async function submitPreviewConfig(): Promise<void> {
   min-width: 0;
 }
 
-.ws-launcher__foot {
+.agents-launcher__foot {
   flex: 1;
   display: flex;
   align-items: center;
   gap: 12px;
 }
-.ws-launcher__foot-hint {
+.agents-launcher__foot-hint {
   font-size: 11.5px;
   color: var(--k-muted);
 }
-.ws-launcher__kbd {
+.agents-launcher__kbd {
   margin-left: 10px;
   font-size: 11px;
   opacity: 0.7;
 }
 
-.ws__move-list {
+.agents__move-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.ws__move-option {
+.agents__move-option {
   font-family: var(--k-font-ui);
   font-size: 14px;
   text-align: left;
@@ -2171,12 +2171,12 @@ async function submitPreviewConfig(): Promise<void> {
   transition: border-color 0.12s, color 0.12s;
 }
 
-.ws__move-option:hover {
+.agents__move-option:hover {
   border-color: var(--k-accent);
   color: var(--k-accent);
 }
 
-.ws__move-option:disabled {
+.agents__move-option:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
