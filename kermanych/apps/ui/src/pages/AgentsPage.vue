@@ -1,13 +1,13 @@
 <template>
   <main class="agents">
-    <!-- No project selected — the rail invites a choice. -->
-    <div v-if="!store.selectedProjectId" class="agents__blank">
+    <!-- Nothing in scope — neither a workspace nor a project — so the rail invites a choice. -->
+    <div v-if="!store.selectedProjectId && !store.selectedWorkspaceId" class="agents__blank">
       <div class="agents__blank-eyebrow mono">КЕРМАНИЧ</div>
-      <p class="agents__blank-text">Виберіть проєкт у лівій панелі, щоб побачити його агентів.</p>
+      <p class="agents__blank-text">Виберіть воркспейс або проєкт у лівій панелі, щоб побачити агентів.</p>
     </div>
 
     <div v-else class="agents__content" ref="contentEl" :class="{ 'agents__content--resizing': resizing }">
-      <!-- BOARD — one card per session in the selected project -->
+      <!-- BOARD — one card per session in scope: one project, or every project of a workspace -->
       <section class="agents__board" :style="{ width: detailWidth + 'px' }">
         <header class="agents__board-head">
           <div class="agents__board-title">
@@ -15,28 +15,40 @@
             <span class="agents__bucket-count mono">{{ boardRows.length }}</span>
           </div>
           <div class="agents__board-controls">
-            <KBtn variant="primary" @click="openLauncher()">Нова задача</KBtn>
+            <!-- Creating anything needs ONE project (a session row carries a projectId), so
+                 under a workspace scope this is the one control that cannot act. -->
+            <KBtn
+              variant="primary"
+              :disabled="!store.selectedProjectId"
+              :title="store.selectedProjectId ? '' : PICK_PROJECT_HINT"
+              @click="openLauncher()"
+            >Нова задача</KBtn>
           </div>
         </header>
 
+        <!-- An active agent that fell outside the scope is never merely gone: the count says
+             so, and the rail's per-project badges say where. -->
+        <p v-if="outsideScopeNote" class="agents__outside mono">{{ outsideScopeNote }}</p>
+
         <div v-if="boardRows.length" class="agents__cards">
-          <KSessionCard
-            v-for="s in boardRows"
-            :key="s.id"
-            :branch="s.branch"
-            :title="s.name"
-            :time="relativeTime(s.lastActivityAt, now)"
-            :status="s.status"
-            :status-line="activityOf(s) || statusWord(s)"
-            :model="s.model"
-            :usage="s.usage"
-            :selected="store.selectedSessionId === s.id"
-            @click="onRowClick(s)"
-          />
+          <template v-for="g in boardGroups" :key="g.projectId">
+            <div v-if="groupByProject" class="agents__group-label mono">{{ g.name }}</div>
+            <KSessionCard
+              v-for="s in g.rows"
+              :key="s.id"
+              :branch="s.branch"
+              :title="s.name"
+              :time="relativeTime(s.lastActivityAt, now)"
+              :status="s.status"
+              :status-line="activityOf(s) || statusWord(s)"
+              :model="s.model"
+              :usage="s.usage"
+              :selected="store.selectedSessionId === s.id"
+              @click="onRowClick(s)"
+            />
+          </template>
         </div>
-        <div v-else class="agents__empty mono">
-          {{ showArchived ? 'Немає відкладених агентів.' : showTasks ? 'Беклог порожній. Створи задачу через «Нова задача».' : showHistory ? 'Історія порожня.' : 'Ще немає агентів. Запусти першого через «Нова задача».' }}
-        </div>
+        <div v-else class="agents__empty mono">{{ emptyText }}</div>
       </section>
 
       <!-- RESIZER — drag the seam to widen / narrow the chat section -->
@@ -237,7 +249,7 @@
     <KModal v-model="launcherOpen" :title="launcherTitle" width="880px" flush>
       <template #head-meta>
         <div class="agents-launcher__headmeta">
-          <span v-if="selectedProject" class="agents-launcher__tag mono">{{ selectedProject.name }}</span>
+          <span v-if="launchProject" class="agents-launcher__tag mono">{{ launchProject.name }}</span>
           <span class="agents-launcher__spacer"></span>
           <span class="agents-launcher__esc mono">Esc — закрити</span>
         </div>
@@ -523,6 +535,7 @@ import { useRouter } from 'vue-router';
 import { useProjects } from 'stores/projects';
 import type { FileDiff, MessageMode } from '../lib/api';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
+import { scopedProjectIds } from '../lib/scope';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
@@ -542,12 +555,14 @@ import { relativeTime } from '../lib/time';
 import { tokens, usageTokens, usd } from '../lib/format';
 import { useResizableWidth } from '../composables/useResizableWidth';
 
-// The Агенти screen (design-system section 07): the board of session cards
-// for the selected project + the full panel for the selected session, plus the
-// new-agent launcher. All mutations go through the Pinia store.
+// The Агенти screen (design-system section 07): the board of session cards for whatever is
+// in scope — one project, or every project of a workspace — plus the full panel for the
+// selected session and the new-agent launcher. All mutations go through the Pinia store.
 const store = useOrchestrator();
-// previewCommand/apiCommand are CLOUD config (owner-only), so the write goes to Supabase and
-// mirrors itself into the local row — a local-only edit would not survive the next sync.
+// Two things come from here: previewCommand/apiCommand are CLOUD config (owner-only), so
+// that write goes to Supabase and mirrors itself into the local row — a local-only edit
+// would not survive the next sync — and the cloud project list, which is the authority on
+// which projects a selected workspace holds (see `scopedIds`).
 const projects = useProjects();
 
 const now = useNow();
@@ -567,6 +582,11 @@ onMounted(() => {
 // backlog → Задачі, then merged/done/stopped → Історія, everything else → Активні
 // (error/conflict count as active — they need attention). Driven by store.selectedBucket.
 const HISTORY_STATUSES: readonly SessionStatus[] = ['merged', 'done', 'stopped'];
+// Active = an agent whose process is alive or is blocked on the operator. Beside
+// HISTORY_STATUSES because it is the same shape of question, and shared: archiving refuses
+// these (the API re-checks with core's ACTIVE_STATUSES) and the out-of-scope note counts
+// exactly them.
+const ACTIVE_STATUSES: readonly SessionStatus[] = ['queued', 'thinking', 'tool', 'waiting_input'];
 const showArchived = computed(() => store.selectedBucket === 'archived');
 const showTasks = computed(() => store.selectedBucket === 'tasks');
 const showHistory = computed(() => store.selectedBucket === 'history');
@@ -588,10 +608,41 @@ const STATUS_RANK: Record<SessionStatus, number> = {
   stopped: 2,
   merged: 3,
 };
+// ── Scope: workspace → project → session ──────────────────────────────────
+// The same three levels the board answers one step up, with the one difference that decides
+// this whole file: a local session needs NO cloud to exist. So the cloud is consulted for
+// exactly one question here — which projects a workspace holds — and nothing else on this
+// page (the sessions, the buckets, the launcher, the log, the changes, git) reads it at all.
+//
+// A PROJECT selection is the narrowest scope and answers itself: cloud and local share one
+// project identity (stores/projects.publish() reuses the local id), so the selected id IS
+// the filter. That is also why `scopedProjectIds` must never see a projectId from here —
+// its local-only case scopes a project with no cloud row to NO cloud tasks, which is exact
+// for the board and backwards for us, because a local-only project is precisely where a
+// developer's own agents live.
+//
+// A WORKSPACE selection is cloud knowledge and the cloud list is its authority — but only
+// once that list has been READ. Unread, an empty answer does not mean «this workspace holds
+// no projects», it means «not known yet», and rendering it would hide every running agent
+// from an operator who is merely offline. So the fallback is the cached projectId →
+// workspaceId map the sidebar's own offline tree places rows with, in the precedence
+// MainLayout.workspaceOf already uses: cloud list first, cache second. The guard sits on
+// this ONE array, so nothing downstream can form a different belief about it.
+const scopedIds = computed<string[]>(() => {
+  if (store.selectedProjectId) return [store.selectedProjectId];
+  const workspaceId = store.selectedWorkspaceId;
+  if (!workspaceId) return [];
+  if (projects.listRead) return scopedProjectIds({ workspaceId }, projects.projects);
+  return Object.keys(store.projectWorkspace).filter(
+    (id) => store.projectWorkspace[id] === workspaceId,
+  );
+});
+const inScope = computed(() => new Set(scopedIds.value));
+
 const projectSessions = computed(() =>
   store.sessions
     .filter((s) => {
-      if (s.projectId !== store.selectedProjectId) return false;
+      if (!inScope.value.has(s.projectId)) return false;
       if (store.selectedBucket === 'archived') return !!s.archived;
       if (s.archived) return false;
       if (store.selectedBucket === 'tasks') return s.status === 'backlog';
@@ -617,15 +668,87 @@ const boardRows = computed<Session[]>(() => {
   for (const s of all) if (!out.includes(s)) out.push(s);
   return out;
 });
-const selectedProject = computed(() =>
-  store.projects.find((p) => p.id === store.selectedProjectId),
+
+// One resolver for a project's label: the LOCAL row's name, which the last successful sync
+// mirrored from the cloud — so it is the name the online tree shows, and it still reads with
+// Supabase unreachable.
+function projectName(id: string): string {
+  return store.projects.find((p) => p.id === id)?.name ?? 'Невідомий проєкт';
+}
+
+// Under a workspace scope the cards come from several projects, and KSessionCard names only
+// the branch — so the project is stated once per run of cards rather than once per card: the
+// column is 300px wide and a per-card label would cost more than it tells. Group ORDER is
+// the order in which projects first appear in boardRows, so the project holding the most
+// urgent agent leads; grouping must not push a `waiting_input` agent below another project's
+// pile of merged ones. Under a project scope there is one group and no label — the rail
+// already says which project that is.
+const groupByProject = computed(() => !store.selectedProjectId);
+type BoardGroup = { projectId: string; name: string; rows: Session[] };
+const boardGroups = computed<BoardGroup[]>(() => {
+  const groups = new Map<string, BoardGroup>();
+  for (const s of boardRows.value) {
+    let group = groups.get(s.projectId);
+    if (!group) {
+      group = { projectId: s.projectId, name: projectName(s.projectId), rows: [] };
+      groups.set(s.projectId, group);
+    }
+    group.rows.push(s);
+  }
+  return [...groups.values()];
+});
+
+// Active agents the current scope hides — an agent that is running, or waiting for an answer,
+// and left the screen because the operator clicked elsewhere in the rail. The page must not
+// do that quietly, and it does not widen the scope by itself either (the rail owns
+// selection): it names the projects to click.
+//
+// Named rather than merely counted, and that is not decoration. A count has to point
+// somewhere, and the obvious pointer — the rail's running badges — answers a DIFFERENT
+// question: MainLayout's RUNNING is queued|thinking|tool and deliberately omits
+// `waiting_input`, which is the case an operator most needs back (the agent asked something
+// and the screen moved on). Observed in the browser: an out-of-scope `waiting_input` agent
+// leaves no badge at all, so «look at the counters» would have been a false pointer for it.
+// A project name is true whatever the badge shows.
+const outsideScopeProjects = computed(() => {
+  const names = new Map<string, string>();
+  for (const s of store.sessions) {
+    if (inScope.value.has(s.projectId)) continue;
+    if (s.archived || s.kind === 'chat' || !ACTIVE_STATUSES.includes(s.status)) continue;
+    if (!names.has(s.projectId)) names.set(s.projectId, projectName(s.projectId));
+  }
+  return [...names.values()];
+});
+const outsideScopeNote = computed(() => {
+  const names = outsideScopeProjects.value;
+  if (!names.length) return '';
+  // Capped, and no trailing instruction: this line sits directly above the cards in a 324px
+  // column, where the fuller «виберіть проєкт у лівій панелі, щоб їх побачити» measured four
+  // lines and pushed the first card most of a card-height down — for a sentence the blank and
+  // empty states already teach. The names ARE the affordance: they are the rail's own labels.
+  const rest = names.length - 3;
+  const shown = names.slice(0, 3).join(', ') + (rest > 0 ? ` та ще ${rest}` : '');
+  return `Активні агенти поза цим вибором: ${shown}.`;
+});
+// Which project the launcher acts ON. Creating: the selected project. Editing a backlog task
+// or spinning one out of a transcript: the SESSION's own project — a workspace scope can list
+// a task from a project other than the selection, and editing it must not read another
+// project's branches, ask about another project's binding, or silently move it. Set by
+// openLauncher()/openTaskFromText(), so the head tag, the fork-base list and the launch gate
+// all answer about one project.
+const launchProjectId = ref<string | undefined>(undefined);
+const launchProject = computed(() =>
+  store.projects.find((p) => p.id === launchProjectId.value),
 );
 
 // Requirement 3 in the UI: a task can be created, edited and moved without a binding, but
 // nothing that touches the repo may run. `BIND_HINT` is the same string MainLayout uses; both
 // copies are the operator's next action, not an apology.
 const BIND_HINT = 'Прив’яжіть локальну теку репозиторію';
-const isBound = computed(() => !!selectedProject.value?.localRepoPath);
+// A workspace is not a place a session can be created: it holds several projects and a
+// session row carries exactly one projectId.
+const PICK_PROJECT_HINT = 'Виберіть проєкт у лівій панелі, щоб створити задачу';
+const isBound = computed(() => !!launchProject.value?.localRepoPath);
 
 // Row-level check: the board can show sessions of an orphan project whose row is still here
 // but whose binding was never made, so per-row actions ask about the row's own project.
@@ -696,6 +819,23 @@ const bucketLabel = computed(() =>
         ? 'Історія'
         : 'Активні',
 );
+
+// The empty list, per bucket. Two branches split again on scope, because «Нова задача» is
+// disabled under a workspace scope: an invitation to press it would be a dead end there, so
+// the copy names the click that unblocks it instead.
+const emptyText = computed(() => {
+  if (showArchived.value) return 'Немає відкладених агентів.';
+  if (showHistory.value) return 'Історія порожня.';
+  const pickFirst = !store.selectedProjectId;
+  if (showTasks.value) {
+    return pickFirst
+      ? 'Беклог порожній. Виберіть проєкт у лівій панелі, щоб створити задачу.'
+      : 'Беклог порожній. Створи задачу через «Нова задача».';
+  }
+  return pickFirst
+    ? 'Ще немає агентів. Виберіть проєкт у лівій панелі, щоб запустити першого.'
+    : 'Ще немає агентів. Запусти першого через «Нова задача».';
+});
 
 // Re-clamp once the detail column mounts (the container is measurable by then),
 // so a persisted width from a wider viewport can't overflow a narrower one.
@@ -919,7 +1059,7 @@ const branchPreview = computed(() =>
 // Right-column summary line under the branch box.
 const branchHint = computed(() =>
   draftWorktree.value
-    ? `нова worktree, чекаут від ${draftBaseBranch.value || selectedProject.value?.defaultBranch || 'HEAD'}`
+    ? `нова worktree, чекаут від ${draftBaseBranch.value || launchProject.value?.defaultBranch || 'HEAD'}`
     : 'in-place у теці проєкту; дерево має бути чистим',
 );
 const taskInput = ref<HTMLTextAreaElement | null>(null);
@@ -943,7 +1083,7 @@ function onLaunchFilePick(e: Event): void {
 }
 
 const canLaunch = computed(
-  () => !!store.selectedProjectId && draftName.value.trim() !== '' && draftTask.value.trim() !== '',
+  () => !!launchProjectId.value && draftName.value.trim() !== '' && draftTask.value.trim() !== '',
 );
 
 const launcherTitle = computed(() => (editingTaskId.value ? 'Задача' : 'Нова задача'));
@@ -971,9 +1111,9 @@ function onLauncherKeydown(e: KeyboardEvent): void {
 // chosen on the task being edited; otherwise it falls back to the project default, then
 // (after the fetch) to the repo's current HEAD, so the picker always shows a sane base.
 async function loadLaunchBranches(preferred: string | undefined): Promise<void> {
-  const projectId = store.selectedProjectId;
+  const projectId = launchProjectId.value;
   launchBranches.value = [];
-  draftBaseBranch.value = preferred ?? selectedProject.value?.defaultBranch ?? '';
+  draftBaseBranch.value = preferred ?? launchProject.value?.defaultBranch ?? '';
   if (!projectId || !isBound.value) return;
   try {
     const info = await store.listBranches(projectId);
@@ -985,6 +1125,10 @@ async function loadLaunchBranches(preferred: string | undefined): Promise<void> 
 }
 
 function openLauncher(task?: Session): void {
+  // Before loadLaunchBranches(), which reads it. A task being edited stays in its own
+  // project; a new one lands in the selected project, and the «Нова задача» button is
+  // disabled unless there is one.
+  launchProjectId.value = task?.projectId ?? store.selectedProjectId;
   editingTaskId.value = task?.id ?? null;
   draftName.value = task?.name ?? '';
   draftTask.value = task?.task ?? '';
@@ -1008,6 +1152,9 @@ const refreshingId = ref<string | null>(null);
 // with the selection as the task body and a name suggested from its first line,
 // defaulting to "save to backlog" so a finding is parked rather than run now.
 function openTaskFromText(text: string): void {
+  // The finding belongs to the project the transcript came from, which under a workspace
+  // scope is not necessarily the selected one.
+  launchProjectId.value = selectedSession.value?.projectId ?? store.selectedProjectId;
   editingTaskId.value = null;
   draftName.value = taskNameFromText(text);
   draftTask.value = text;
@@ -1024,7 +1171,7 @@ function openTaskFromText(text: string): void {
 }
 
 async function submitLauncher(asTask: boolean): Promise<void> {
-  const projectId = store.selectedProjectId;
+  const projectId = launchProjectId.value;
   if (!projectId || !canLaunch.value) return;
   // Saving to the backlog is allowed unbound; starting an agent is not, and the api would
   // refuse it with `project not bound` anyway.
@@ -1217,10 +1364,6 @@ function onAnswer(res: RpcExtensionUIResponse): void {
   const s = selectedSession.value;
   if (s) void store.answerUi(s.id, res);
 }
-
-// Active = agent mid-work or awaiting input; archiving these is refused (the API also
-// enforces it via core's ACTIVE_STATUSES). The UI keeps its own set, like MainLayout's RUNNING.
-const ACTIVE_STATUSES: readonly Session['status'][] = ['queued', 'thinking', 'tool', 'waiting_input'];
 
 // Independent review can be requested on a settled (non-active, non-merged) agent that
 // owns a branch to audit. The API re-checks (refuses a mid-turn or non-agent session).
@@ -1503,7 +1646,7 @@ async function submitPreviewConfig(): Promise<void> {
   padding: var(--k-sp-3);
 }
 
-// ── Blank / no-project state ──────────────────────────────────────────────
+// ── Blank / nothing-in-scope state ────────────────────────────────────────
 .agents__blank {
   height: 100%;
   display: flex;
@@ -1630,6 +1773,34 @@ async function submitPreviewConfig(): Promise<void> {
   padding: 24px 2px;
   font-size: 13px;
   color: var(--k-muted);
+}
+
+// The out-of-scope notice. Muted like every other hint on this screen — it reports a fact
+// the operator may act on, not a warning — with a rule under it so the cards below read as
+// a separate list rather than as its continuation.
+.agents__outside {
+  margin: 0 0 var(--k-sp-3);
+  padding-bottom: var(--k-sp-3);
+  border-bottom: var(--k-rule-thin) solid var(--k-line);
+  font-size: var(--k-fs-xs);
+  line-height: 1.5;
+  color: var(--k-muted);
+}
+
+// Which project a run of cards belongs to; rendered only under a workspace scope. The
+// padding goes on TOP so the label sits closer to the cards it introduces than to the ones
+// above it — .agents__cards is a flex column with a uniform gap, which on its own would
+// leave the label floating equidistant between two groups.
+.agents__group-label {
+  padding-top: var(--k-sp-2);
+  font-size: var(--k-fs-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--k-faint);
+
+  &:first-child {
+    padding-top: 0;
+  }
 }
 
 // ── Detail column ─────────────────────────────────────────────────────────
