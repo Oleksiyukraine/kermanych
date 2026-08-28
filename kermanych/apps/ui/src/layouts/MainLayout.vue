@@ -564,7 +564,7 @@ import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
 import { IS_PREVIEW } from '../lib/preview';
 import { MANAGEMENT_DEFAULT_SECTION } from '../lib/management';
-import { canDropProject } from '../lib/scope';
+import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
 import { theme, toggleTheme } from '../lib/theme';
 import { percent, planWindow } from '../lib/format';
 import { until } from '../lib/time';
@@ -807,10 +807,25 @@ function onBucket(key: 'active' | 'tasks' | 'archived' | 'history'): void {
 }
 // Fleet tally per sidebar bucket (replaces the old footer KStatusBar). error/conflict
 // count as Активні (needs attention) so no session falls outside a bucket.
+//
+// Scoped by ASKING the Агенти page's predicate, not by re-deriving it. It used to test
+// `s.projectId !== store.selectedProjectId`, which was true while a workspace-only selection
+// rendered a blank page and became a falsehood the moment that page started listing a whole
+// workspace: every session was skipped and the rail printed «Активні 0 / Задачі 0» two
+// columns from a header counting real cards. «Задачі 0» is the costly one — an operator
+// scanning the rail concludes the workspace has no backlog and never opens it. One answer in
+// one place is the only version of this that stays true.
 const bucketCounts = computed(() => {
+  const inScope = new Set(
+    sessionScopedProjectIds(
+      { workspaceId: store.selectedWorkspaceId, projectId: store.selectedProjectId },
+      { projects: projects.projects, listRead: projects.listRead },
+      store.projectWorkspace,
+    ),
+  );
   const c = { active: 0, tasks: 0, archived: 0, history: 0 };
   for (const s of store.sessions) {
-    if (s.projectId !== store.selectedProjectId) continue;
+    if (!inScope.has(s.projectId)) continue;
     if (s.kind === 'chat') continue;
     if (s.archived) c.archived++;
     else if (s.status === 'backlog') c.tasks++;

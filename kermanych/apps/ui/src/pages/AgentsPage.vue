@@ -16,19 +16,24 @@
           </div>
           <div class="agents__board-controls">
             <!-- Creating anything needs ONE project (a session row carries a projectId), so
-                 under a workspace scope this is the one control that cannot act. -->
-            <KBtn
-              variant="primary"
-              :disabled="!store.selectedProjectId"
-              :title="store.selectedProjectId ? '' : PICK_PROJECT_HINT"
-              @click="openLauncher()"
-            >Нова задача</KBtn>
+                 under a workspace scope this is the one control that cannot act. Its reason is
+                 the visible line below and NOT a `title`: KBtn routes `title` into v-tip,
+                 which binds mouseenter/focusin on the element, and Chromium dispatches
+                 neither on a disabled button — nor can one take focus. A tooltip on a
+                 disabled control is unreachable by construction. -->
+            <KBtn variant="primary" :disabled="!store.selectedProjectId" @click="openLauncher()">
+              Нова задача
+            </KBtn>
           </div>
         </header>
 
-        <!-- An active agent that fell outside the scope is never merely gone: the count says
-             so, and the rail's per-project badges say where. -->
-        <p v-if="outsideScopeNote" class="agents__outside mono">{{ outsideScopeNote }}</p>
+        <!-- Muted lines about the SCOPE, above the cards the scope decided. Both state
+             something the operator can act on; the rule beneath keeps the cards reading as a
+             separate list rather than as their continuation. -->
+        <div v-if="!store.selectedProjectId || outsideScopeNote" class="agents__notes mono">
+          <p v-if="!store.selectedProjectId" class="agents__note">{{ PICK_PROJECT_HINT }}</p>
+          <p v-if="outsideScopeNote" class="agents__note">{{ outsideScopeNote }}</p>
+        </div>
 
         <div v-if="boardRows.length" class="agents__cards">
           <template v-for="g in boardGroups" :key="g.projectId">
@@ -386,10 +391,13 @@
             :disabled="!canLaunch"
             @click="submitLauncher(true)"
           >{{ editingTaskId ? 'Зберегти' : 'В беклог' }}</KBtn>
+          <!-- No `title` here either, and for the same reason: it only ever had content while
+               the button was disabled, so it was never reachable. `footHint` above already
+               renders BIND_HINT visibly, which is why the user never lost anything — the dead
+               attribute only told the next reader that the reason was covered. -->
           <KBtn
             variant="primary"
             :disabled="!canLaunch || !isBound"
-            :title="isBound ? '' : BIND_HINT"
             @click="submitLauncher(false)"
           >
             Запустити<span class="agents-launcher__kbd mono">⌘⏎</span>
@@ -535,7 +543,7 @@ import { useRouter } from 'vue-router';
 import { useProjects } from 'stores/projects';
 import type { FileDiff, MessageMode } from '../lib/api';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
-import { scopedProjectIds } from '../lib/scope';
+import { sessionScopedProjectIds } from '../lib/scope';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
@@ -614,29 +622,18 @@ const STATUS_RANK: Record<SessionStatus, number> = {
 // exactly one question here — which projects a workspace holds — and nothing else on this
 // page (the sessions, the buckets, the launcher, the log, the changes, git) reads it at all.
 //
-// A PROJECT selection is the narrowest scope and answers itself: cloud and local share one
-// project identity (stores/projects.publish() reuses the local id), so the selected id IS
-// the filter. That is also why `scopedProjectIds` must never see a projectId from here —
-// its local-only case scopes a project with no cloud row to NO cloud tasks, which is exact
-// for the board and backwards for us, because a local-only project is precisely where a
-// developer's own agents live.
-//
-// A WORKSPACE selection is cloud knowledge and the cloud list is its authority — but only
-// once that list has been READ. Unread, an empty answer does not mean «this workspace holds
-// no projects», it means «not known yet», and rendering it would hide every running agent
-// from an operator who is merely offline. So the fallback is the cached projectId →
-// workspaceId map the sidebar's own offline tree places rows with, in the precedence
-// MainLayout.workspaceOf already uses: cloud list first, cache second. The guard sits on
-// this ONE array, so nothing downstream can form a different belief about it.
-const scopedIds = computed<string[]>(() => {
-  if (store.selectedProjectId) return [store.selectedProjectId];
-  const workspaceId = store.selectedWorkspaceId;
-  if (!workspaceId) return [];
-  if (projects.listRead) return scopedProjectIds({ workspaceId }, projects.projects);
-  return Object.keys(store.projectWorkspace).filter(
-    (id) => store.projectWorkspace[id] === workspaceId,
-  );
-});
+// The rule itself lives in lib/scope.ts, with its three cases and the reason each is what it
+// is. It is there rather than here because it decides whether a developer's running agents
+// render at all, apps/ui has no component tests, and a `.vue` file is where that decision
+// cannot be covered (scope.ts:1-3). MainLayout's bucket counters ask the same function, so
+// the rail and this header cannot disagree about what is in scope.
+const scopedIds = computed(() =>
+  sessionScopedProjectIds(
+    { workspaceId: store.selectedWorkspaceId, projectId: store.selectedProjectId },
+    { projects: projects.projects, listRead: projects.listRead },
+    store.projectWorkspace,
+  ),
+);
 const inScope = computed(() => new Set(scopedIds.value));
 
 const projectSessions = computed(() =>
@@ -678,24 +675,34 @@ function projectName(id: string): string {
 
 // Under a workspace scope the cards come from several projects, and KSessionCard names only
 // the branch — so the project is stated once per run of cards rather than once per card: the
-// column is 300px wide and a per-card label would cost more than it tells. Group ORDER is
-// the order in which projects first appear in boardRows, so the project holding the most
-// urgent agent leads; grouping must not push a `waiting_input` agent below another project's
-// pile of merged ones. Under a project scope there is one group and no label — the rail
-// already says which project that is.
+// column is 300px wide and a per-card label would cost more than it tells. Under a project
+// scope there is one group and no label — the rail already says which project that is.
+//
+// Group ORDER is the best STATUS_RANK the group holds, so the project with the most urgent
+// agent leads, and it is seeded explicitly rather than taken from first appearance in
+// boardRows. First appearance looks equivalent and is not: boardRows emits each parent
+// followed by its own children, so a rank-0 child hanging off a rank-3 `merged` parent
+// appears near the END, and its project would sort below projects whose most urgent session
+// is merely `done`. An agent waiting on a question must not sit under a pile of merged work,
+// which is the whole reason the list is tiered in the first place.
+//
+// Ties keep first-appearance order (Array#sort is stable), so within one rank the grouping
+// changes nothing about the order the sessions already had.
 const groupByProject = computed(() => !store.selectedProjectId);
-type BoardGroup = { projectId: string; name: string; rows: Session[] };
+type BoardGroup = { projectId: string; name: string; rank: number; rows: Session[] };
 const boardGroups = computed<BoardGroup[]>(() => {
   const groups = new Map<string, BoardGroup>();
   for (const s of boardRows.value) {
     let group = groups.get(s.projectId);
     if (!group) {
-      group = { projectId: s.projectId, name: projectName(s.projectId), rows: [] };
+      group = { projectId: s.projectId, name: projectName(s.projectId), rank: Number.MAX_SAFE_INTEGER, rows: [] };
       groups.set(s.projectId, group);
     }
     group.rows.push(s);
+    // Accumulated in the same pass rather than recomputed per comparison.
+    group.rank = Math.min(group.rank, STATUS_RANK[s.status]);
   }
-  return [...groups.values()];
+  return [...groups.values()].sort((a, b) => a.rank - b.rank);
 });
 
 // Active agents the current scope hides — an agent that is running, or waiting for an answer,
@@ -745,9 +752,10 @@ const launchProject = computed(() =>
 // nothing that touches the repo may run. `BIND_HINT` is the same string MainLayout uses; both
 // copies are the operator's next action, not an apology.
 const BIND_HINT = 'Прив’яжіть локальну теку репозиторію';
-// A workspace is not a place a session can be created: it holds several projects and a
-// session row carries exactly one projectId.
-const PICK_PROJECT_HINT = 'Виберіть проєкт у лівій панелі, щоб створити задачу';
+// A workspace is not a place a session can be created: it holds several projects and a session
+// row carries exactly one projectId. Rendered as visible text beside the disabled button, not
+// as its tooltip — see the template.
+const PICK_PROJECT_HINT = 'Нова задача належить одному проєкту — виберіть проєкт у лівій панелі.';
 const isBound = computed(() => !!launchProject.value?.localRepoPath);
 
 // Row-level check: the board can show sessions of an orphan project whose row is still here
@@ -820,20 +828,19 @@ const bucketLabel = computed(() =>
         : 'Активні',
 );
 
-// The empty list, per bucket. Two branches split again on scope, because «Нова задача» is
-// disabled under a workspace scope: an invitation to press it would be a dead end there, so
-// the copy names the click that unblocks it instead.
+// The empty list, per bucket. The two creatable buckets split again on scope, because
+// «Нова задача» is disabled under a workspace scope and an invitation to press it would be a
+// dead end there. The click that unblocks it is NOT repeated here — PICK_PROJECT_HINT is
+// already on screen a few pixels above, and saying it twice reads as two different problems.
 const emptyText = computed(() => {
   if (showArchived.value) return 'Немає відкладених агентів.';
   if (showHistory.value) return 'Історія порожня.';
   const pickFirst = !store.selectedProjectId;
   if (showTasks.value) {
-    return pickFirst
-      ? 'Беклог порожній. Виберіть проєкт у лівій панелі, щоб створити задачу.'
-      : 'Беклог порожній. Створи задачу через «Нова задача».';
+    return pickFirst ? 'Беклог порожній.' : 'Беклог порожній. Створи задачу через «Нова задача».';
   }
   return pickFirst
-    ? 'Ще немає агентів. Виберіть проєкт у лівій панелі, щоб запустити першого.'
+    ? 'Ще немає агентів.'
     : 'Ще немає агентів. Запусти першого через «Нова задача».';
 });
 
@@ -1775,13 +1782,22 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-muted);
 }
 
-// The out-of-scope notice. Muted like every other hint on this screen — it reports a fact
-// the operator may act on, not a warning — with a rule under it so the cards below read as
-// a separate list rather than as its continuation.
-.agents__outside {
+// The scope notices — why «Нова задача» cannot act, and which projects hold active agents
+// this scope hides. Muted like every other hint on this screen, because both report a fact
+// the operator may act on rather than a warning. The rule and the spacing live on the
+// container so that one line or two cost the same frame, and so the cards below read as a
+// separate list rather than as a continuation of the prose.
+.agents__notes {
   margin: 0 0 var(--k-sp-3);
   padding-bottom: var(--k-sp-3);
   border-bottom: var(--k-rule-thin) solid var(--k-line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-1);
+}
+
+.agents__note {
+  margin: 0;
   font-size: var(--k-fs-xs);
   line-height: 1.5;
   color: var(--k-muted);

@@ -61,6 +61,48 @@ export function scopedProjectIds(scope: ScopeInput, cloudProjects: CloudProject[
   return cloudProjects.map((p) => p.id);
 }
 
+// The same three levels for a surface whose rows are LOCAL sessions — the Агенти page. A
+// local session exists with no cloud at all, which changes the answer at two of the three
+// levels, so this delegates to `scopedProjectIds` where they agree and states where they do
+// not, rather than either duplicating it or bending it.
+//
+// A PROJECT selection answers itself. Cloud and local share one project identity
+// (stores/projects.publish() reuses the local id), so the selected id IS the scope. This is
+// the case `scopedProjectIds` must never be asked here: its local-only branch returns `[]`,
+// which is exact for cloud tasks — a project the cloud does not have can own none — and
+// backwards for sessions, because a local-only project is precisely where a developer's own
+// agents live. It is also why the project comes FIRST here and second there: on the board a
+// project narrows through the «Проєкти» filter and the scope stays at the workspace, while
+// here it is the whole question.
+//
+// A WORKSPACE selection is cloud knowledge, and the cloud list is its authority — but only
+// once that list has been READ. Unread, an empty answer does not mean «this workspace holds
+// no projects», it means «not known yet», and rendering it would hide every running agent
+// from an operator who is merely offline. Unread, the answer therefore comes from
+// `projectWorkspace`: the cached projectId → workspaceId map that stores/projects writes
+// beside the cached workspaces, and that the sidebar's offline tree already places rows with.
+//
+// The gate switches the WHOLE collection, which is NOT what MainLayout.workspaceOf() does:
+// that is a per-project merge with no `listRead` gate and may answer from the cloud for one
+// project and from the cache for another. The two agree in every reachable state — load()
+// assigns `listRead` and replaces the map from the same list in adjacent statements, and
+// pushProjectWorkspace() merges the map on every single-project mutation — but they are
+// different mechanisms, and only this one can say «not known yet» about the set as a whole.
+//
+// Nothing selected is `[]`, not everything: the page renders its blank invitation. The board
+// wants the opposite for the same input, because its unscoped state is «Дошка команди».
+export function sessionScopedProjectIds(
+  scope: ScopeInput,
+  cloud: { projects: CloudProject[]; listRead: boolean },
+  projectWorkspace: Record<string, string>,
+): string[] {
+  if (scope.projectId) return [scope.projectId];
+  const workspaceId = scope.workspaceId;
+  if (!workspaceId) return [];
+  if (cloud.listRead) return scopedProjectIds({ workspaceId }, cloud.projects);
+  return Object.keys(projectWorkspace).filter((id) => projectWorkspace[id] === workspaceId);
+}
+
 // The three filters INTERSECT: scope, then project, then assignee.
 export function filterTasks(tasks: Task[], filters: TaskFilters): Task[] {
   const inScope = new Set(filters.scopedProjectIds);
