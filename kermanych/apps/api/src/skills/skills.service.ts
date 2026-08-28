@@ -16,7 +16,14 @@ import {
   type SkillDef,
   type SkillView,
 } from "@kermanych/core";
-import { listAgentSkills, listProjectSkills, type AgentSkill, type ProjectSkill } from "@kermanych/cloud";
+import {
+  listAgentSkills,
+  listProjectSkills,
+  listTriggers,
+  type AgentSkill,
+  type ProjectSkill,
+  type ProjectTrigger,
+} from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 
 // Every project-level skill directory omp itself discovers in the session cwd. One level
@@ -177,9 +184,13 @@ function readOmpCustomDirectories(cwd: string): Promise<string[] | undefined> {
 // control, and in a YAML plain scalar a ` #` opens a comment and a `: ` a mapping. A malformed
 // overlay is a HARD omp startup error, the one outcome "never block a launch" forbids.
 // JSON strings are valid YAML, the same technique renderSkillFile uses for descriptions.
+//
+// The overlay also forces `ttsr.enabled: true`: the same launch carries the session's trigger
+// package via `-e`, and an operator who has TTSR switched off would otherwise get rules that
+// load and silently never fire. It is a scalar, so it merges instead of replacing.
 function renderOverlay(dirs: readonly string[]): string {
   const lines = dirs.map((d) => `    - ${JSON.stringify(d)}`);
-  return `skills:\n  customDirectories:\n${lines.join("\n")}\n`;
+  return `skills:\n  customDirectories:\n${lines.join("\n")}\nttsr:\n  enabled: true\n`;
 }
 
 // Whether a name already has a materialised SKILL.md. Only ENOENT/ENOTDIR mean "no";
@@ -222,6 +233,39 @@ async function readRepoSkill(path: string, name: string): Promise<SkillDef | und
   return { name, description, body };
 }
 
+// A TTSR rule fires content WITHOUT the model choosing to. TTSR monitors assistant text and
+// tool arguments by default and thinking only when the scope says so — which is why a
+// "the model is reasoning about X" trigger MUST name it. `operator` has no entry here at all:
+// Kermanych matches that source itself, before the message ever reaches the child.
+const TRIGGER_SCOPE: Record<Exclude<ProjectTrigger["source"], "operator">, string> = {
+  assistant: "[text]",
+  thinking: "[thinking]",
+  tool: "[tool]",
+};
+
+export function triggersRoot(): string {
+  return join(process.env.KERMANYCH_SKILLS_HOME ?? join(homedir(), ".kermanych"), "triggers");
+}
+
+/**
+ * A TTSR rule file. Every value is JSON-encoded, which is valid YAML and survives a pattern
+ * containing `:` or `#` — a malformed rule is a hard omp startup error, not a degradation.
+ */
+export function renderRuleFile(t: ProjectTrigger, body: string): string {
+  if (t.source === "operator") throw new Error(`trigger "${t.id}" is operator-sourced: it has no rule file`);
+  const fm = [
+    "---",
+    `description: ${JSON.stringify(t.label)}`,
+    `condition: ${JSON.stringify(t.pattern)}`,
+    `scope: ${TRIGGER_SCOPE[t.source]}`,
+    `interruptMode: ${t.mode === "interrupt" ? "always" : "never"}`,
+    `repeatMode: ${t.repeat === "after-gap" ? "after-gap" : "once"}`,
+    ...(t.pathGlobs.length ? [`globs: ${JSON.stringify(t.pathGlobs)}`] : []),
+    "---",
+  ].join("\n");
+  return `${fm}\n\n${body.trim()}\n`;
+}
+
 // `stale` means "the library on disk may not reflect the cloud": a failed cloud read, a failed
 // repo scan, an unreadable `skills.customDirectories`, or a filesystem failure. It is never a
 // reason to refuse a launch. `configPath` is set only once the overlay write succeeded.
@@ -238,6 +282,8 @@ export class SkillsService {
   readCustomDirs = (cwd: string): Promise<string[] | undefined> => readOmpCustomDirectories(cwd);
   readAssignments = async (projectId: string): Promise<AgentSkill[]> =>
     listAgentSkills(this.auth.cloudClient(), [projectId]);
+  readTriggers = async (projectId: string): Promise<ProjectTrigger[]> =>
+    listTriggers(this.auth.cloudClient(), [projectId]);
 
   // What one agent's instruction carries for the skills assigned to it: the block to append,
   // the view the UI labels the rows with, and the names that resolved to nothing. Never
@@ -413,5 +459,92 @@ export class SkillsService {
       stale = true;
     }
     return { ...(configPath !== undefined ? { configPath } : {}), view, ...(stale ? { stale: true } : {}) };
+  }
+
+  // The triggers Kermanych itself matches, in the order it tries them. Sorted by id so two
+  // patterns that both match one message always pick the same winner — a message whose
+  // outcome depended on the cloud's row order would be untestable and unexplainable.
+  // Degrades to none rather than throwing: a trigger is an addition to a session, and an
+  // offline or signed-out operator still gets to send messages.
+  async operatorTriggers(projectId: string): Promise<ProjectTrigger[]> {
+    assertProjectId(projectId);
+    try {
+      return (await this.readTriggers(projectId))
+        .filter((t) => t.enabled && t.source === "operator")
+        .sort((a, b) => a.id.localeCompare(b.id));
+    } catch {
+      return []; // offline or signed out
+    }
+  }
+
+  /**
+   * Lay this session's TTSR rules out as a loadable extension package. Per SESSION, not per
+   * project: a rule body may carry session-specific interpolation, and the per-project config
+   * overlay already taught us that a shared filename with cwd-dependent content races.
+   *
+   * Never throws for a trigger reason: a session that cannot have triggers still launches
+   * without them.
+   */
+  async materializeTriggers(projectId: string, sessionId: string, cwd: string): Promise<{ packagePath?: string }> {
+    assertProjectId(projectId);
+    // The session id becomes a directory name that is then pruned with a recursive rm, so it
+    // gets the same boundary check the project id gets.
+    if (!isSkillName(sessionId)) throw new Error(`invalid session id: ${sessionId}`);
+    const dir = join(triggersRoot(), sessionId);
+    let triggers: ProjectTrigger[];
+    try {
+      triggers = (await this.readTriggers(projectId)).filter((t) => t.enabled && t.source !== "operator");
+    } catch {
+      return {}; // offline or signed out
+    }
+    // A trigger's body is the text it fires. `action: "skill"` resolves through the same
+    // three-level precedence as an assignment; `action: "agent"` cannot occur here (a child
+    // has no callback into Kermanych) and is skipped if an older row still carries it.
+    // An empty body is not written: a rule that fires and says nothing spends a turn and
+    // makes the model investigate the rule instead of acting (design §2.6).
+    const bodies = new Map<string, string>();
+    for (const t of triggers) {
+      if (t.action !== "skill") continue;
+      const { block } = await this.assignedForNames(projectId, [t.target], cwd);
+      if (block.trim()) bodies.set(t.id, block.trim());
+    }
+    if (bodies.size === 0) {
+      // A package left behind would keep firing rules whose triggers are gone, and an empty
+      // one would hand omp a `-e` with nothing in it.
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
+      return {};
+    }
+    try {
+      await mkdir(join(dir, "rules"), { recursive: true });
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify(
+          { name: `kermanych-triggers-${sessionId}`, version: "0.0.0", omp: { extensions: ["./index.js"] } },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+      // A package is only loaded when its entry point resolves, and the sibling `rules/`
+      // directory is only discovered for a loaded package. Hence a no-op extension.
+      await writeFile(join(dir, "index.js"), "export default function () {}\n", "utf8");
+      for (const t of triggers) {
+        const body = bodies.get(t.id);
+        if (body) await writeFile(join(dir, "rules", `${t.id}.md`), renderRuleFile(t, body), "utf8");
+      }
+      // Only after every write succeeded, so a half-written package is never pruned against.
+      // A rule whose trigger was deleted, disabled or left dangling disappears here.
+      for (const e of await readEntries(join(dir, "rules"))) {
+        if (e.isFile() && !bodies.has(e.name.replace(/\.md$/, ""))) {
+          await rm(join(dir, "rules", e.name), { force: true }).catch(() => {});
+        }
+      }
+    } catch {
+      // EACCES, ENOSPC, EROFS, or a plain file where the package should be. A partial package
+      // is worse than none: omp fails to start on a malformed rule, so it is removed outright.
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
+      return {};
+    }
+    return { packagePath: dir };
   }
 }

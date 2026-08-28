@@ -15,5 +15,10 @@ export function stubSkills(): SkillsService {
     // exactly as these specs assert it. Without this the four instruction sites would take
     // their catch and print a warning on every launch.
     assignedFor: async () => ({ block: "", view: [], missing: [] }),
+    // And for triggers: no project has any, so no launch gets `-e` and no message is ever
+    // rewritten on its way to the child. Without these the supervisor's two never-throws
+    // wrappers would take their catch and warn on every launch and every send.
+    materializeTriggers: async () => ({}),
+    operatorTriggers: async () => [],
   } as unknown as SkillsService;
 }

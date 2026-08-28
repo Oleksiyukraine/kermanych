@@ -130,8 +130,10 @@ test("materialize writes the library, the overlay, and skips a repo-shadowed ski
   expect(stale).toBeUndefined();
   expect(readdirSync(dir).sort()).toEqual(["extra", "kermanych-pull-request"]);
   expect(readFileSync(join(dir, "extra", "SKILL.md"), "utf8")).toContain('description: "e"');
+  // `ttsr.enabled: true` rides along with every overlay: the same launch carries the session's
+  // trigger package via `-e`, and an operator with TTSR off would get rules that never fire.
   expect(readFileSync(configPath!, "utf8")).toBe(
-    `skills:\n  customDirectories:\n    - ${JSON.stringify(dir)}\n`,
+    `skills:\n  customDirectories:\n    - ${JSON.stringify(dir)}\nttsr:\n  enabled: true\n`,
   );
   expect(view.find((v) => v.name === "kermanych-session")?.shadowedByRepo).toBe(
     join(repo, ".claude/skills/kermanych-session/SKILL.md"),
@@ -218,7 +220,8 @@ test("the overlay EXTENDS the directories omp already resolves, Kermanych's last
 
   const { configPath } = await svc.materialize("p1", repo);
   expect(readFileSync(configPath!, "utf8")).toBe(
-    `skills:\n  customDirectories:\n    - "/tmp/op # one"\n    - "/tmp/two: b"\n    - ${JSON.stringify(dir)}\n`,
+    `skills:\n  customDirectories:\n    - "/tmp/op # one"\n    - "/tmp/two: b"\n    - ${JSON.stringify(dir)}\n` +
+      `ttsr:\n  enabled: true\n`,
   );
 });
 

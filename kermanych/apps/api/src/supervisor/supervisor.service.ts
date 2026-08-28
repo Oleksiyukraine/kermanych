@@ -39,7 +39,7 @@ import {
   type ToolLine,
   type TranscriptEntry,
 } from "@kermanych/core";
-import { claimTask, getTask, listProjects, patchTask, type CloudProject } from "@kermanych/cloud";
+import { claimTask, getTask, listProjects, patchTask, type CloudProject, type ProjectTrigger } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 
 type Live = {
@@ -73,6 +73,11 @@ export class SupervisorService implements OnModuleDestroy {
   // name -> the badge a skill row shows. Written at launch from the materialised view,
   // read by the transcript reducers; dropped with the session.
   private skillLabels = new Map<string, Map<string, SkillLabel>>();
+  // Sessions whose in-flight sendMessage carries KERMANYCH's own text, not the operator's:
+  // a fired trigger's agent, a PR request, a merged discussion's conclusion. `source:
+  // "operator"` means the operator wrote it, so these are exempt — which is also what stops a
+  // fired `agent` action from looping through the very agent it ran.
+  private selfAuthored = new Set<string>();
   private lastStamp = 0;
   private events = new Subject<ServerEvent>();
   events$: Observable<ServerEvent> = this.events.asObservable();
@@ -109,6 +114,19 @@ export class SupervisorService implements OnModuleDestroy {
       // programming error (a missing dependency) as readily as an expected degradation
       // (offline cloud, invalid project id, EACCES on the skills root).
       console.warn(`[supervisor] no skill library for session ${sessionId}: ${(err as Error).message}`);
+      return undefined;
+    }
+  }
+
+  // The session's TTSR trigger package, laid out for `-e`. Its own wrapper rather than a
+  // second return value from ompSkills: the two degrade independently — a project can have a
+  // library and no triggers, or triggers and an unreadable library — and neither may cost a
+  // launch. `undefined` means "this child gets no rules".
+  private async ompTriggers(projectId: string, cwd: string, sessionId: string): Promise<string | undefined> {
+    try {
+      return (await this.skills.materializeTriggers(projectId, sessionId, cwd)).packagePath;
+    } catch (err) {
+      console.warn(`[supervisor] no triggers for session ${sessionId}: ${(err as Error).message}`);
       return undefined;
     }
   }
@@ -457,7 +475,8 @@ export class SupervisorService implements OnModuleDestroy {
       worktree: false, kind: "chat", status: "queued",
     });
     const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
-    const rpc = new RpcSession({ cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}) });
+    const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
+    const rpc = new RpcSession({ cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await rpc.start();
@@ -609,7 +628,8 @@ export class SupervisorService implements OnModuleDestroy {
 
     const cwd = worktree ? wtDir : project.localRepoPath;
     const configPath = await this.ompSkills(project.id, cwd, id);
-    const rpc = new RpcSession({ cwd, model, ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}) });
+    const extensionPath = await this.ompTriggers(project.id, cwd, id);
+    const rpc = new RpcSession({ cwd, model, ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await rpc.start();
@@ -677,7 +697,8 @@ export class SupervisorService implements OnModuleDestroy {
     });
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
-    const rpc = new RpcSession({ cwd, fork: parentFile, noTools: true, ...(configPath ? { configPath } : {}) });
+    const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
+    const rpc = new RpcSession({ cwd, fork: parentFile, noTools: true, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
@@ -735,7 +756,8 @@ export class SupervisorService implements OnModuleDestroy {
       renderInstruction(agentById("review")!, { task: s.task, base, branch: s.branch, diff }) + block;
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
-    const rpc = new RpcSession({ cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}) });
+    const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
+    const rpc = new RpcSession({ cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
@@ -778,7 +800,7 @@ export class SupervisorService implements OnModuleDestroy {
         ? "follow_up"
         : "prompt";
     // sendMessage resumes a dormant parent; if it throws, the child is left intact.
-    await this.sendMessage(parentId, wrapped, mode);
+    await this.sendAsKermanych(parentId, wrapped, mode);
 
     if (live) {
       live.live.status = "stopped";
@@ -860,6 +882,19 @@ export class SupervisorService implements OnModuleDestroy {
   private userEntry(text: string, images?: ImageInput[]): TranscriptEntry {
     const at = this.stamp();
     return { kind: "user_text", id: `u${at}`, at, text, ...(images?.length ? { images: images.map((i) => `data:${i.mimeType};base64,${i.data}`) } : {}) };
+  }
+
+  // A Kermanych-authored row in the conversation. A fired trigger changed what the child was
+  // asked, so the transcript has to say so: an invisible trigger is a session that behaves
+  // differently for no reason the operator can read back.
+  private noticeEntry(text: string, level: "info" | "warn" | "error" = "info"): TranscriptEntry {
+    const at = this.stamp();
+    return { kind: "notice", id: `n${at}`, at, level, text };
+  }
+
+  // A trigger's `target` is an agent id; the notice names the agent the way the catalogue does.
+  private agentLabel(agentId: string): string {
+    return agentById(agentId)?.label ?? agentId;
   }
 
   private onRpcEvent(id: string, e: RpcEvent) {
@@ -1014,16 +1049,109 @@ export class SupervisorService implements OnModuleDestroy {
     } catch {
       /* never let a bookkeeping write break message delivery */
     }
+    const s = this.registry.listSessions().find((x) => x.id === id);
     // A chat's opening message IS the ask. Record it once, so promoting the chat can name the
     // agent and its branch after the thing being built, and so review/PR prompts have a task.
-    if (text.trim()) {
-      const s = this.registry.listSessions().find((x) => x.id === id);
-      if (s?.kind === "chat" && !s.task.trim()) this.registry.updateSession(id, { task: text.trim() });
-    }
+    if (text.trim() && s?.kind === "chat" && !s.task.trim()) this.registry.updateSession(id, { task: text.trim() });
     if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images));
-    if (mode === "steer") l.rpc.steer(text, images);
-    else if (mode === "follow_up") l.rpc.followUp(text, images);
-    else l.rpc.prompt(text, images);
+
+    // Operator-sourced triggers run BEFORE the message reaches the child: Kermanych is the
+    // only party that sees the operator's text, and an `agent` action has to be Kermanych's
+    // to perform — a child cannot call back into us.
+    const fired = s ? await this.matchOperatorTriggers(s, id, text) : undefined;
+    if (fired?.trigger.action === "agent" && (await this.runTriggerAgent(id, fired.trigger))) return;
+    // `skill`: the resolved body goes in FRONT of what the operator wrote, so the instruction
+    // is read before the request it applies to. The transcript keeps the operator's own text
+    // as the visible row and the notice above says what was prepended to it.
+    const body = fired?.block ? `${fired.block}\n\n${text}` : text;
+    if (mode === "steer") l.rpc.steer(body, images);
+    else if (mode === "follow_up") l.rpc.followUp(body, images);
+    else l.rpc.prompt(body, images);
+  }
+
+  // Kermanych's own prompt into a session, exempt from operator-trigger matching. Three call
+  // sites need this in lockstep — a fired trigger's agent, a PR request and a merged
+  // discussion — because a trigger that rewrote one of them would be rewriting Kermanych.
+  private async sendAsKermanych(id: string, text: string, mode: "prompt" | "follow_up" | "steer") {
+    this.selfAuthored.add(id);
+    try {
+      await this.sendMessage(id, text, mode);
+    } finally {
+      this.selfAuthored.delete(id);
+    }
+  }
+
+  // The first enabled `operator` trigger whose pattern matches, with its `skill` body already
+  // resolved. Never throws and never blocks a message: a trigger is an addition to a session.
+  private async matchOperatorTriggers(
+    s: Session,
+    id: string,
+    text: string,
+  ): Promise<{ trigger: ProjectTrigger; block: string } | undefined> {
+    // An empty message has nothing to match, and Kermanych's own prompts are not the
+    // operator's text — see `selfAuthored`.
+    if (!text.trim() || this.selfAuthored.has(id)) return undefined;
+    try {
+      const triggers = await this.skills.operatorTriggers(s.projectId);
+      if (!triggers.length) return undefined;
+      const cwd = s.worktreePath || this.registry.listProjects().find((p) => p.id === s.projectId)?.localRepoPath || "";
+      for (const trigger of triggers) {
+        // Case-insensitive: the pattern is matched against prose an operator typed, where the
+        // capitalisation of a sentence is not a decision they made. An unparseable pattern
+        // costs its own trigger and nothing else.
+        let re: RegExp;
+        try {
+          re = new RegExp(trigger.pattern, "i");
+        } catch {
+          continue;
+        }
+        if (!re.test(text)) continue;
+        if (trigger.action === "agent") {
+          this.appendEntry(id, this.noticeEntry(`тригер «${trigger.label}» запускає «${this.agentLabel(trigger.target)}»`));
+          return { trigger, block: "" };
+        }
+        // One resolver for every skill body in Kermanych, assignments and triggers alike.
+        const { block, missing } = await this.skills.assignedForNames(s.projectId, [trigger.target], cwd);
+        if (!block.trim()) {
+          // Reported, not dropped: a trigger the operator believes is armed and which resolves
+          // to nothing is exactly the state the dangling-reference UI exists to surface.
+          this.appendEntry(
+            id,
+            this.noticeEntry(`тригер «${trigger.label}»: скіл «${missing[0] ?? trigger.target}» не знайдено`, "warn"),
+          );
+          return undefined;
+        }
+        this.appendEntry(id, this.noticeEntry(`тригер «${trigger.label}» додав скіл «${trigger.target}»`));
+        return { trigger, block };
+      }
+      return undefined;
+    } catch (err) {
+      console.warn(`[supervisor] operator triggers skipped for session ${id}: ${(err as Error).message}`);
+      return undefined;
+    }
+  }
+
+  // Run the agent an operator trigger names, REPLACING the message: the agent's own
+  // instruction says what the operator asked for, so forwarding both would say it twice.
+  // `false` means the agent never ran, and then the replacement is not earned — the caller
+  // forwards the operator's text rather than swallowing it.
+  private async runTriggerAgent(id: string, trigger: ProjectTrigger): Promise<boolean> {
+    try {
+      // The four agents a trigger can run. `finish` and `summary` are automations with no
+      // model and no session of their own, so they are not reachable from here.
+      if (trigger.target === "review") await this.reviewSession(id);
+      else if (trigger.target === "promote") await this.promoteChatToAgent(id);
+      else if (trigger.target === "pull-request") await this.createPullRequest(id);
+      else if (trigger.target === "resolve-conflict") await this.resolveConflict(id);
+      else throw new Error(`агента «${trigger.target}» не існує`);
+      return true;
+    } catch (err) {
+      this.appendEntry(
+        id,
+        this.noticeEntry(`тригер «${trigger.label}» не запустив агента: ${(err as Error).message}`, "error"),
+      );
+      return false;
+    }
   }
 
   // AI conflict resolution: resume the session's agent in its mid-merge worktree and
@@ -1039,7 +1167,7 @@ export class SupervisorService implements OnModuleDestroy {
     const block = await this.assignedBlockFor(s.projectId, "resolve-conflict", dir);
     const prompt =
       renderInstruction(agentById("resolve-conflict")!, { files: files.map((f) => `- ${f}`).join("\n") }) + block;
-    await this.sendMessage(id, prompt, "prompt");
+    await this.sendAsKermanych(id, prompt, "prompt");
     return { ok: true };
   }
 
@@ -1067,7 +1195,7 @@ export class SupervisorService implements OnModuleDestroy {
         baseLine,
       }) + block;
 
-    await this.sendMessage(id, prompt, "prompt");
+    await this.sendAsKermanych(id, prompt, "prompt");
     return { ok: true };
   }
   answerUi(id: string, res: RpcExtensionUIResponse) {
@@ -1343,7 +1471,8 @@ export class SupervisorService implements OnModuleDestroy {
     if (s.kind === "agent" && !s.worktree && (await this.worktree.currentBranch(g.localRepoPath)) !== s.branch)
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
     const configPath = await this.ompSkills(s.projectId, dir, id);
-    const rpc = new RpcSession({ cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(configPath ? { configPath } : {}) });
+    const extensionPath = await this.ompTriggers(s.projectId, dir, id);
+    const rpc = new RpcSession({ cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await rpc.start();
