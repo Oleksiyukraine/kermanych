@@ -9,7 +9,10 @@
     <button
       type="button"
       class="k-session-card"
-      :class="{ 'k-session-card--selected': selected }"
+      :class="{
+        'k-session-card--selected': selected,
+        'k-session-card--removable': removable,
+      }"
       @click="$emit('click')"
     >
       <div class="k-session-card__top">
@@ -30,6 +33,19 @@
         <span v-if="spend" class="k-session-card__spend">{{ spend }}</span>
       </div>
     </button>
+
+    <!-- Remove — revealed on hover, and a SIBLING of the card rather than a child: the card
+         is itself a <button>, which cannot nest one. Being a sibling is also what makes the
+         action unambiguous — the ✕ click never reaches the card, so pressing it deletes the
+         row instead of opening whatever the card's own click opens. -->
+    <button
+      v-if="removable"
+      type="button"
+      class="k-session-card__remove"
+      v-tip="removeTitle"
+      :aria-label="removeTitle"
+      @click="$emit('remove')"
+    >✕</button>
   </div>
 </template>
 
@@ -49,6 +65,13 @@ import { tokens, usageTokens, usd } from '../../lib/format';
 // agent that merely happens to sit there. The list is expected to keep a fork directly
 // under its parent, alone with its siblings in one container, and to leave `--k-fork-gap`
 // (default `--k-sp-2`) as the vertical gap between them — the spine crosses exactly that.
+//
+// `removable` gives the card a ✕ that appears under the cursor and emits `remove` — for a
+// list whose rows are deletable in place, such as the backlog, where the card's own click
+// opens an editor and so cannot double as the way out. The glyph's width is RESERVED in the
+// top row rather than laid over it: it neither hides the time nor shifts the row when the
+// pointer arrives. `removeTitle` names the action for the tooltip and the accessible name —
+// pass the row's subject ("Видалити задачу «…»"), since a bare ✕ has no name of its own.
 const props = withDefaults(
   defineProps<{
     branch: string;
@@ -62,11 +85,13 @@ const props = withDefaults(
     model?: string | undefined;
     selected?: boolean;
     fork?: boolean;
+    removable?: boolean;
+    removeTitle?: string;
   }>(),
-  { selected: false, fork: false },
+  { selected: false, fork: false, removable: false, removeTitle: 'Видалити' },
 );
 
-defineEmits<{ click: [] }>();
+defineEmits<{ click: []; remove: [] }>();
 
 // Same construction as the panel's status row: the facts we have, `·`-joined, so a missing
 // one leaves no dangling separator behind.
@@ -102,6 +127,59 @@ const spend = computed(() => {
 }
 
 .k-session-card--selected {
+  background: var(--k-surface2);
+}
+
+// ── Remove (✕ on hover) ───────────────────────────────────────────────────────────────
+// The control is positioned on the host, so the top row RESERVES its width instead of
+// letting it cover the time — the row must not shift, and nothing the card states may be
+// occluded by an action. Centring is the same arithmetic as the fork elbow: the card's own
+// top padding (12px) plus half the label's line box, less half the control.
+.k-session-card--removable .k-session-card__top {
+  padding-right: calc(20px + var(--k-sp-2));
+}
+
+.k-session-card__remove {
+  position: absolute;
+  top: var(--k-sp-3);
+  right: var(--k-sp-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--k-r-sm);
+  background: transparent;
+  color: var(--k-faint);
+  font-size: var(--k-fs-xs);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+
+  &:hover {
+    color: var(--k-text);
+  }
+
+  // The control is in the tab order whether or not a pointer is near the card, so focus
+  // alone has to reveal it — otherwise the keyboard lands on an invisible button.
+  &:focus-visible {
+    opacity: 1;
+    outline: 1px solid var(--k-accent);
+    outline-offset: 1px;
+  }
+}
+
+.k-session-card-host:hover .k-session-card__remove {
+  opacity: 1;
+}
+
+// Hovering the ✕ must not read as leaving the card: the card's own `:hover` fill drops the
+// moment the cursor crosses onto the sibling control, so for a removable card the fill
+// follows the HOST and the row stays lit while it is being acted on.
+.k-session-card-host:hover .k-session-card--removable {
   background: var(--k-surface2);
 }
 
