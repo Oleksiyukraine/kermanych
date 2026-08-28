@@ -135,6 +135,19 @@
         @update:model-value="goView"
       />
       <div class="shell__actions">
+        <!-- CURRENT WORKSPACE, and the way into its settings. A named chip rather than a
+             second ⚙ beside the project's: two identical gears in one cluster name
+             neither, and this one also supplies what the header never said — which group
+             the screen is scoped to. The sidebar's workspace row takes no fourth control
+             by design, so this is where the group's own settings live. -->
+        <KBtn
+          v-if="scopedWorkspace"
+          variant="ghost"
+          :title="`Воркспейс «${scopedWorkspace.name}»: склад команди й налаштування`"
+          @click="openWorkspaceSettings(scopedWorkspace.id)"
+        >
+          <span class="shell__ws-name">{{ scopedWorkspace.name }}</span>
+        </KBtn>
         <template v-if="store.selectedProjectId">
         <KBtn
           variant="icon"
@@ -222,6 +235,101 @@
       </template>
     </KModal>
 
+    <!-- WORKSPACE-SETTINGS MODAL — the group's name, its colour and its TEAM. Membership
+         lives here and not on the project because one invitation now opens EVERY project
+         in the group; that is also why inviting and removing are owner-only while the
+         project config below is open to any member (the approved role matrix). A plain
+         member therefore gets the roster read-only rather than a button the rpc refuses.
+
+         Every affordance here is decided by `workspaces.owner_id`, never by
+         `workspace_members.role` — see isWorkspaceOwnerSeat() for why that column cannot
+         be trusted to decide anything. -->
+    <KModal v-model="workspaceSettingsOpen" :title="`Воркспейс · ${workspaceSettingsName}`">
+      <div class="shell__form">
+        <KField
+          v-model="wsNameEdit"
+          label="Назва воркспейсу"
+          placeholder="AAA"
+          :disabled="!isOwnerOfWorkspace"
+        />
+        <KColorPicker
+          v-model="wsColorEdit"
+          label="Колір воркспейсу"
+          :class="{ 'shell__readonly': !isOwnerOfWorkspace }"
+        />
+        <div class="shell__members">
+          <span class="shell__members-label">Учасники</span>
+          <div v-if="membersLoading" class="shell__hint mono">Завантаження…</div>
+          <div v-for="m in workspaceMembers" :key="m.userId" class="shell__member">
+            <img
+              v-if="m.profile?.avatarUrl"
+              class="shell__member-avatar"
+              :src="m.profile.avatarUrl"
+              :alt="m.profile.githubUsername ?? ''"
+            />
+            <span v-else class="shell__member-avatar shell__member-avatar--blank mono">?</span>
+            <span class="shell__member-name mono">
+              @{{ m.profile?.githubUsername ?? m.profile?.displayName ?? m.userId.slice(0, 8) }}
+            </span>
+            <KTag>{{ isWorkspaceOwnerSeat(m.userId) ? 'власник' : 'учасник' }}</KTag>
+            <KBtn
+              v-if="isOwnerOfWorkspace && !isWorkspaceOwnerSeat(m.userId)"
+              variant="ghost"
+              title="Вилучити з воркспейсу"
+              @click="removeMemberOf(m)"
+            >✕</KBtn>
+          </div>
+          <template v-if="isOwnerOfWorkspace">
+            <div class="shell__member-add">
+              <KField
+                v-model="memberEmail"
+                label="Запросити за імейлом"
+                placeholder="colleague@example.com"
+                type="email"
+              />
+              <KBtn
+                variant="secondary"
+                :disabled="memberEmail.trim() === '' || memberBusy"
+                @click="submitMember"
+              >{{ memberBusy ? 'Запрошуємо…' : 'Запросити' }}</KBtn>
+            </div>
+            <p class="shell__hint">
+              Запрошуємо за адресою, якою колега входить у Керманич. Він одразу бачить усі
+              проєкти цього воркспейсу — окремо запрошувати в кожен не потрібно.
+            </p>
+          </template>
+          <p v-else class="shell__hint">
+            Склад воркспейсу змінює його власник. Одне запрошення відкриває доступ до всіх
+            проєктів воркспейсу, тому воно й належить власнику.
+          </p>
+        </div>
+        <!-- Why the refusal is VISIBLE text and not the delete button's tooltip: a
+             disabled <button> dispatches no mouseenter and takes no focus, so v-tip on it
+             never shows — the reason has to live where it can be read. -->
+        <p v-if="isOwnerOfWorkspace && workspaceHasProjects" class="shell__hint">
+          Видалити воркспейс можна лише порожнім: спершу перенесіть або видаліть його
+          проєкти.
+        </p>
+        <p v-if="wsError" class="shell__error" role="alert">{{ wsError }}</p>
+      </div>
+      <template #controls>
+        <KBtn
+          v-if="isOwnerOfWorkspace"
+          variant="ghost"
+          class="shell__danger"
+          :disabled="workspaceHasProjects"
+          title="Видалити воркспейс — назавжди й для всієї команди"
+          @click="deleteWorkspace"
+        >Видалити воркспейс</KBtn>
+        <KBtn variant="ghost" @click="workspaceSettingsOpen = false">Скасувати</KBtn>
+        <KBtn
+          variant="primary"
+          :disabled="!isOwnerOfWorkspace"
+          @click="saveWorkspace"
+        >Зберегти</KBtn>
+      </template>
+    </KModal>
+
     <!-- CREATE-PROJECT MODAL — a project is born in the CLOUD (Requirement 2: any signed-in
          user may create one and becomes its owner) INSIDE a known workspace, which is why the
          open state is that workspace's id rather than a boolean. The local row arrives through
@@ -254,25 +362,19 @@
 
     <!-- PROJECT-SETTINGS MODAL — CLOUD config (name, colour, conventions, commands, carry
          files) plus this machine's read-only binding. Config writes go to Supabase and are
-         mirrored into the local row; they are owner-only (design D1, Requirement 2). -->
+         mirrored into the local row, and ANY workspace member may make them: per the role
+         matrix config is shared work, not administration, and projects_update_member is
+         what allows it. Exactly one control here stays owner-only — «Видалити проєкт».
+         Membership is no longer on this modal; it moved up to the workspace. -->
     <KModal v-model="settingsOpen" :title="`Редагувати проєкт · ${selectedName}`">
       <div class="shell__form">
-        <KField
-          v-model="nameEdit"
-          label="Назва проєкту"
-          placeholder="my-project"
-          :disabled="!isOwnerOfSelected"
-        />
-        <KColorPicker
-          v-model="colorEdit"
-          label="Колір проєкту"
-          :class="{ 'shell__readonly': !isOwnerOfSelected }"
-        />
+        <KField v-model="nameEdit" label="Назва проєкту" placeholder="my-project" />
+        <KColorPicker v-model="colorEdit" label="Колір проєкту" />
         <KSelect
           v-model="defaultBranchEdit"
           label="Гілка за замовчуванням"
           :options="settingsBranches"
-          :disabled="!isBound || !isOwnerOfSelected"
+          :disabled="!isBound"
           placeholder="— поточна гілка репозиторію —"
         />
         <KField
@@ -281,77 +383,27 @@
           placeholder="Порожнє — Керманич підставить власні дефолти"
           multiline
           :rows="6"
-          :disabled="!isOwnerOfSelected"
         />
         <KField
           v-model="previewCommandEdit"
           label="Команда превʼю (веб)"
           placeholder="pnpm dev --port $PORT"
-          :disabled="!isOwnerOfSelected"
         />
         <KField
           v-model="apiCommandEdit"
           label="Команда превʼю (API, необовʼязково)"
           placeholder="pnpm dev:api"
-          :disabled="!isOwnerOfSelected"
         />
         <KField
           v-model="carryFilesText"
           label="Файли для сесії (через кому)"
           placeholder=".env"
-          :disabled="!isOwnerOfSelected"
         />
-        <p v-if="!isOwnerOfSelected" class="shell__hint">
-          Налаштування проєкту спільні для команди — змінювати їх може лише власник.
-          Прив’язка теки й «Змінні середовища» — ваші, для цієї машини, і залишаються доступними.
-        </p>
         <KField
           :model-value="selectedProject?.localRepoPath || 'не прив’язано'"
           label="Локальна тека цієї машини"
           disabled
         />
-        <!-- MEMBERS — cloud membership. Any member invites by email (invite_project_member);
-             removal stays owner-only. RLS and the rpc enforce both; this is UX. -->
-        <div class="shell__members">
-          <span class="shell__members-label">Учасники</span>
-          <div v-if="membersLoading" class="shell__hint mono">Завантаження…</div>
-          <div v-for="m in members" :key="m.userId" class="shell__member">
-            <img
-              v-if="m.profile?.avatarUrl"
-              class="shell__member-avatar"
-              :src="m.profile.avatarUrl"
-              :alt="m.profile.githubUsername ?? ''"
-            />
-            <span v-else class="shell__member-avatar shell__member-avatar--blank mono">?</span>
-            <span class="shell__member-name mono">
-              @{{ m.profile?.githubUsername ?? m.userId.slice(0, 8) }}
-            </span>
-            <KTag>{{ m.role === 'owner' ? 'власник' : 'учасник' }}</KTag>
-            <KBtn
-              v-if="isOwnerOfSelected && m.role !== 'owner'"
-              variant="ghost"
-              title="Вилучити з проєкту"
-              @click="removeMemberOf(m)"
-            >✕</KBtn>
-          </div>
-          <div class="shell__member-add">
-            <KField
-              v-model="memberEmail"
-              label="Запросити за імейлом"
-              placeholder="colleague@example.com"
-              type="email"
-            />
-            <KBtn
-              variant="secondary"
-              :disabled="memberEmail.trim() === '' || memberBusy"
-              @click="submitMember"
-            >Запросити</KBtn>
-          </div>
-          <p class="shell__hint">
-            Запросити може будь-який учасник — за адресою, якою колега входить у Керманич.
-            Вилучати учасників може лише власник.
-          </p>
-        </div>
         <p v-if="settingsError" class="shell__error" role="alert">{{ settingsError }}</p>
       </div>
       <template #controls>
@@ -362,7 +414,7 @@
           @click="openDelete"
         >Видалити проєкт</KBtn>
         <KBtn variant="ghost" @click="settingsOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" :disabled="!isOwnerOfSelected" @click="saveSettings">Зберегти</KBtn>
+        <KBtn variant="primary" @click="saveSettings">Зберегти</KBtn>
       </template>
     </KModal>
 
@@ -408,7 +460,6 @@
           </p>
         </div>
         <KField
-          v-if="isOwnerOfSelected"
           v-model="envKeysText"
           label="Обовʼязкові ключі — лише ІМЕНА (через кому або з нового рядка)"
           placeholder="GITHUB_TOKEN, DATABASE_URL"
@@ -464,7 +515,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import type { SessionStatus, EnvFileView } from '@kermanych/core';
-import type { ProjectMember } from '@kermanych/cloud';
+import type { WorkspaceMember } from '@kermanych/cloud';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
@@ -964,6 +1015,192 @@ async function submitCreate(): Promise<void> {
   }
 }
 
+// WORKSPACE SETTINGS — the group's name, colour and TEAM, reached from the header chip.
+// Membership hangs off the workspace rather than the project because one invitation opens
+// every project in the group; that is also why inviting and removing are OWNER-only here
+// while project config is open to any member (the approved role matrix). All of this is
+// UX: invite_workspace_member refuses a non-owner in its first statement, and
+// workspace_members_delete_owner refuses one by matching zero rows.
+const workspaceSettingsOpen = ref(false);
+const workspaceSettingsId = ref<string | undefined>(undefined);
+const wsNameEdit = ref('');
+const wsColorEdit = ref('');
+const wsError = ref<string | null>(null);
+const membersLoading = ref(false);
+const memberEmail = ref('');
+const memberBusy = ref(false);
+
+// Off the same map the sidebar renders from, so a rename here and the row there cannot
+// disagree — and so an offline open still shows a name, since that map is cache-backed.
+const workspaceSettings = computed(() =>
+  workspaceSettingsId.value ? projects.workspaceById.get(workspaceSettingsId.value) : undefined,
+);
+const workspaceSettingsName = computed(() => workspaceSettings.value?.name ?? '');
+
+// Keyed by WORKSPACE id, and missing entirely before the first read — the `?? []` is
+// load-bearing (noUncheckedIndexedAccess is on).
+const workspaceMembers = computed<WorkspaceMember[]>(() =>
+  workspaceSettingsId.value ? projects.members[workspaceSettingsId.value] ?? [] : [],
+);
+
+const isOwnerOfWorkspace = computed(
+  () => !!workspaceSettingsId.value && projects.isWorkspaceOwner(workspaceSettingsId.value),
+);
+
+// WHICH SEAT IS THE OWNER'S — read off `workspaces.owner_id`, never off
+// `workspace_members.role`. No policy and no security-definer function consults that
+// column: it is descriptive metadata, and the workspaces migration copied across whatever
+// project_members SAID (`set role = excluded.role`), so a backfilled owner whose project
+// role had been rewritten arrives here as 'member'. Deciding from it would badge the owner
+// «учасник» and offer a remove button that workspace_members_delete_owner refuses by
+// matching zero rows — a control that silently does nothing.
+function isWorkspaceOwnerSeat(userId: string): boolean {
+  return !!workspaceSettings.value && workspaceSettings.value.ownerId === userId;
+}
+
+// The FK from projects.workspace_id is `on delete restrict`, so a group still holding
+// projects cannot go. Read off the same array useProjects.removeWorkspace pre-checks, so
+// the button and the store agree about when the delete is possible at all.
+const workspaceHasProjects = computed(() =>
+  projects.projects.some((p) => p.workspaceId === workspaceSettingsId.value),
+);
+
+// The workspace in SCOPE, which is what the header chip opens. Set both by a workspace row
+// click and by selecting a project (orchestrator.selectProject resolves the group), so the
+// chip is there whenever anything in the tree is selected. Undefined for a workspace the
+// cloud list no longer holds — access revoked mid-session — and the chip then disappears
+// rather than opening a modal about a group we cannot name.
+const scopedWorkspace = computed(() =>
+  store.selectedWorkspaceId ? projects.workspaceById.get(store.selectedWorkspaceId) : undefined,
+);
+
+async function openWorkspaceSettings(id: string): Promise<void> {
+  workspaceSettingsId.value = id;
+  const ws = projects.workspaceById.get(id);
+  wsNameEdit.value = ws?.name ?? '';
+  wsColorEdit.value = ws?.color ?? '';
+  wsError.value = null;
+  memberEmail.value = '';
+  workspaceSettingsOpen.value = true;
+  membersLoading.value = true;
+  try {
+    await projects.loadMembers(id);
+  } catch (e) {
+    // Non-fatal: the roster stays empty and says why, and the name and colour still save.
+    wsError.value = `Не вдалось прочитати учасників: ${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    membersLoading.value = false;
+  }
+}
+
+async function saveWorkspace(): Promise<void> {
+  const id = workspaceSettingsId.value;
+  if (!id) return;
+  wsError.value = null;
+  const name = wsNameEdit.value.trim();
+  if (!name) {
+    wsError.value = 'Назва воркспейсу не може бути порожньою';
+    return;
+  }
+  try {
+    // patchWorkspace replaces the row in the store list and rewrites the tree cache, so
+    // the sidebar row picks the new name and colour up on its own.
+    await projects.patchWorkspace(id, { name, color: wsColorEdit.value });
+    workspaceSettingsOpen.value = false;
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e);
+    // workspaces_update_owner refuses a non-owner by matching zero rows, and the cloud
+    // client's `.single()` turns that into PGRST116 rather than an RLS message — so name
+    // the real reason. Reachable despite the disabled Save: ownership can change between
+    // the load that drew this modal and the click.
+    wsError.value = raw.includes('rows returned')
+      ? 'Хмара відмовила: змінювати воркспейс може лише його власник'
+      : raw;
+  }
+}
+
+async function deleteWorkspace(): Promise<void> {
+  const id = workspaceSettingsId.value;
+  if (!id) return;
+  const name = workspaceSettingsName.value;
+  if (!window.confirm(`Видалити воркспейс «${name}»? Це не відкотити.`)) return;
+  wsError.value = null;
+  try {
+    // removeWorkspace confirms the delete with a re-read and clears the scope when it was
+    // this group's, so nothing here navigates.
+    await projects.removeWorkspace(id);
+    workspaceSettingsOpen.value = false;
+    store.notify(`Воркспейс «${name}» видалено`);
+  } catch (e) {
+    // Both refusals already arrive as Ukrainian sentences from the store: a group that
+    // still holds projects, and a non-owner's silently-refused delete.
+    wsError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+// The refusals a workspace membership write really produces. The first two come from
+// inviteMember / the cloud client, the third from invite_workspace_member's own owner
+// check. Removal needs no branch: a DELETE the policy refuses matches zero rows WITHOUT
+// an error, which removeMemberOf catches by re-reading instead.
+function memberErrorText(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  if (raw.includes('no Kermanych account for')) {
+    return 'Немає акаунта Керманича з такою адресою — попросіть колегу спершу увійти через GitHub';
+  }
+  if (raw.includes('not a valid email address')) {
+    return 'Це не схоже на імейл — запрошуємо за адресою, якою колега входить у Керманич';
+  }
+  if (raw.includes('only the workspace owner can invite')) {
+    return 'Хмара відмовила: запрошувати до воркспейсу може лише його власник';
+  }
+  return raw;
+}
+
+async function submitMember(): Promise<void> {
+  const id = workspaceSettingsId.value;
+  const email = memberEmail.value.trim();
+  if (!id || !email) return;
+  memberBusy.value = true;
+  try {
+    const invited = await projects.inviteMember(id, email);
+    memberEmail.value = '';
+    // Name WHO the address resolved to: the roster lists github handles, so this is the
+    // caller's confirmation that the invite landed on the person they meant.
+    store.notify(
+      `@${invited.profile?.githubUsername ?? email} у воркспейсі «${workspaceSettingsName.value}»`,
+    );
+  } catch (e) {
+    store.notify(memberErrorText(e), 'error', 6000);
+  } finally {
+    memberBusy.value = false;
+  }
+}
+
+async function removeMemberOf(m: WorkspaceMember): Promise<void> {
+  const id = workspaceSettingsId.value;
+  if (!id) return;
+  const who = m.profile?.githubUsername ?? m.userId;
+  if (!window.confirm(`Вилучити @${who} з воркспейсу «${workspaceSettingsName.value}»?`)) return;
+  try {
+    await projects.removeMember(id, m.userId);
+    // A DELETE the owner-only policy refuses does NOT error — it matches zero rows, while
+    // the store has already dropped the row locally. Re-read so the roster cannot show a
+    // removal that never happened.
+    const after = await projects.loadMembers(id);
+    if (after.some((x) => x.userId === m.userId)) {
+      store.notify(
+        'Хмара відмовила: керувати складом воркспейсу може лише його власник',
+        'error',
+        6000,
+      );
+      return;
+    }
+    store.notify(`@${who} вилучено з воркспейсу — разом з усіма його проєктами`);
+  } catch (e) {
+    store.notify(memberErrorText(e), 'error', 6000);
+  }
+}
+
 const settingsOpen = ref(false);
 const settingsError = ref<string | null>(null);
 const nameEdit = ref('');
@@ -978,19 +1215,12 @@ const deleteOpen = ref(false);
 const deleteError = ref<string | null>(null);
 const deleteBusy = ref(false);
 
-const membersLoading = ref(false);
-const memberEmail = ref('');
-const memberBusy = ref(false);
-
-// `members` is keyed by project id and may be missing entirely before the first read, so the
-// `?? []` is load-bearing (noUncheckedIndexedAccess is on).
-const members = computed<ProjectMember[]>(() =>
-  store.selectedProjectId ? projects.members[store.selectedProjectId] ?? [] : [],
-);
-
-// UX only. Every owner-only path (project config, env-key names, removing a member) is
-// enforced by the owner-scoped RLS policies; this just keeps the UI from offering a write
-// that Postgres will refuse. Inviting is NOT owner-only — any member may.
+// UX only, and now for exactly ONE control: «Видалити проєкт». Per the approved role
+// matrix any workspace member edits project config — name, colour, default branch,
+// conventions, both preview commands, carry files and the env key NAMES — and
+// projects_update_member is what permits it. Deleting stays owner-only
+// (projects_delete_owner), and the answer resolves through the project's WORKSPACE:
+// ownership lives there now, not on the project row.
 const isOwnerOfSelected = computed(
   () => !!store.selectedProjectId && projects.isOwner(store.selectedProjectId),
 );
@@ -999,65 +1229,6 @@ const isOwnerOfSelected = computed(
 // a newline; the single-line carry-files input strips them, so its label promises commas only.
 function parseList(text: string): string[] {
   return text.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
-}
-
-// The refusals a membership write really produces. The first three come from
-// invite_project_member / the cloud client, the fourth from the owner-only DELETE policy.
-// Everything else is shown verbatim.
-function memberErrorText(e: unknown): string {
-  const raw = e instanceof Error ? e.message : String(e);
-  if (raw.includes('no Kermanych account for')) {
-    return 'Немає акаунта Керманича з такою адресою — попросіть колегу спершу увійти через GitHub';
-  }
-  if (raw.includes('not a valid email address')) {
-    return 'Це не схоже на імейл — запрошуємо за адресою, якою колега входить у Керманич';
-  }
-  if (raw.includes('only a project member can invite')) {
-    return 'Хмара відмовила: запрошувати може лише учасник проєкту';
-  }
-  if (raw.includes('violates row-level security policy')) {
-    return 'Хмара відмовила: вилучати учасників може лише власник проєкту';
-  }
-  return raw;
-}
-
-async function submitMember(): Promise<void> {
-  const id = store.selectedProjectId;
-  const email = memberEmail.value.trim();
-  if (!id || !email) return;
-  memberBusy.value = true;
-  try {
-    const invited = await projects.inviteMember(id, email);
-    memberEmail.value = '';
-    // Name WHO the address resolved to: the panel lists github handles, so this is the
-    // caller's confirmation that the invite landed on the person they meant.
-    store.notify(`@${invited.profile?.githubUsername ?? email} у проєкті`);
-  } catch (e) {
-    store.notify(memberErrorText(e), 'error', 6000);
-  } finally {
-    memberBusy.value = false;
-  }
-}
-
-async function removeMemberOf(m: ProjectMember): Promise<void> {
-  const id = store.selectedProjectId;
-  if (!id) return;
-  const who = m.profile?.githubUsername ?? m.userId;
-  if (!window.confirm(`Вилучити @${who} з проєкту «${selectedName.value}»?`)) return;
-  try {
-    await projects.removeMember(id, m.userId);
-    // A DELETE the owner-only policy refuses does NOT error — it matches zero rows, while the
-    // store has already dropped the row locally. Re-read so the panel cannot show a removal
-    // that never happened.
-    const after = await projects.loadMembers(id);
-    if (after.some((x) => x.userId === m.userId)) {
-      store.notify('Хмара відмовила: керувати складом учасників може лише власник проєкту', 'error', 6000);
-      return;
-    }
-    store.notify(`@${who} вилучено з проєкту`);
-  } catch (e) {
-    store.notify(memberErrorText(e), 'error', 6000);
-  }
 }
 
 const envOpen = ref(false);
@@ -1098,16 +1269,6 @@ async function openSettings(): Promise<void> {
   carryFilesText.value = (cloud?.carryFiles ?? row?.carryFiles ?? ['.env']).join(', ');
   settingsBranches.value = [];
   settingsOpen.value = true;
-  memberEmail.value = '';
-  membersLoading.value = true;
-  try {
-    await projects.loadMembers(id);
-  } catch (e) {
-    // Non-fatal: the panel stays empty and says why. Config editing still works.
-    store.notify(`Не вдалось прочитати учасників: ${e instanceof Error ? e.message : String(e)}`, 'error');
-  } finally {
-    membersLoading.value = false;
-  }
   // GET /projects/:id/branches answers `project not bound` without a binding, so do not ask.
   if (!isBound.value) return;
   try {
@@ -1124,10 +1285,6 @@ async function saveSettings(): Promise<void> {
   const name = nameEdit.value.trim();
   if (!name) {
     settingsError.value = 'Назва проєкту не може бути порожньою';
-    return;
-  }
-  if (!isOwnerOfSelected.value) {
-    settingsError.value = 'Змінювати налаштування проєкту може лише власник';
     return;
   }
   const carryFiles = parseList(carryFilesText.value);
@@ -1216,13 +1373,12 @@ async function saveEnv(): Promise<void> {
     if (edits && (Object.keys(edits.set).length || edits.remove.length)) {
       await store.saveEnv(id, edits);
     }
-    // NAMES: the cloud checklist, owner-only. Sent only when the owner actually changed it, so
-    // a member saving values never attempts a project write it cannot make.
-    if (isOwnerOfSelected.value) {
-      const next = parseList(envKeysText.value);
-      const current = selectedCloud.value?.envKeys ?? [];
-      if (next.join('\n') !== current.join('\n')) await projects.patch(id, { envKeys: next });
-    }
+    // NAMES: the cloud checklist, and any workspace member may edit it now (the role
+    // matrix). Still sent only when it actually changed — an unchanged list is a project
+    // write worth not making.
+    const next = parseList(envKeysText.value);
+    const current = selectedCloud.value?.envKeys ?? [];
+    if (next.join('\n') !== current.join('\n')) await projects.patch(id, { envKeys: next });
     envOpen.value = false;
   } catch (e) {
     envError.value = e instanceof Error ? e.message : String(e);
@@ -1592,6 +1748,16 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
+}
+
+// The header cluster is fixed in practice; an arbitrary workspace name is not. The
+// ellipsis sits on a span rather than on the button because KBtn is an inline-flex
+// container and text-overflow does not apply to an anonymous flex item.
+.shell__ws-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .shell__form {
