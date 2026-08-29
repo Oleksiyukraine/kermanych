@@ -63,6 +63,15 @@ type Live = {
 // dir without ever mutating it (git-free). Promotion to an agent later grants the full toolset.
 const CHAT_TOOLS = ["read", "grep", "glob"];
 
+// The longest message an operator trigger's pattern is run against. Operator patterns arrive
+// from the CLOUD, so a project owner's regex executes synchronously on a MEMBER's api event
+// loop — one person's pattern can cost another person's process. Backtracking gets expensive
+// with subject length, so the subject is bounded rather than the pattern analysed. 16 KiB is
+// ~2500 words: far longer than any message phrased AT Kermanych, which is what a trigger
+// matches, and short of the pasted logs and files that make a message big. Same idiom and the
+// same reasoning as CONFIG_MAX_BYTES in skills.service.ts.
+const MATCH_MAX_CHARS = 1 << 14;
+
 @Injectable()
 export class SupervisorService implements OnModuleDestroy {
   private map = new Map<string, Live>();
@@ -1093,7 +1102,9 @@ export class SupervisorService implements OnModuleDestroy {
     id: string,
     text: string,
   ): Promise<{ trigger: ProjectTrigger; block: string } | undefined> {
-    if (!text.trim()) return undefined; // nothing to match
+    // Past the cap no trigger fires. That is the degradation everything else on this path
+    // uses: never an exception, never a blocked message.
+    if (!text.trim() || text.length > MATCH_MAX_CHARS) return undefined;
     try {
       const triggers = await this.skills.operatorTriggers(s.projectId);
       if (!triggers.length) return undefined;

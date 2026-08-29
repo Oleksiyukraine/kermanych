@@ -278,4 +278,23 @@ describe("an operator trigger fires before the message is forwarded", () => {
     await sup.sendMessage(chat.id, "env", "prompt");
     expect(sent.at(-1)!.text).toBe("FIRST\n\nenv");
   });
+
+  it("never runs an operator pattern against an oversized message", async () => {
+    // An operator pattern comes from the cloud and runs on the api event loop, so a project
+    // owner's backtracking regex would cost a MEMBER's process. The subject is bounded; past
+    // the bound the trigger simply does not fire, with no exception and no blocked message.
+    const { sup, project } = make([t({ action: "skill", target: "s", pattern: "env" })], { s: "BODY" });
+    const chat = await sup.createChat(project.id);
+
+    await sup.sendMessage(chat.id, "додай env", "prompt");
+    expect(sent.at(-1)!.text).toBe("BODY\n\nдодай env");
+
+    // Same pattern, same match, one character past the 16 KiB cap.
+    const huge = `${"я".repeat(1 << 14)} env`;
+    await sup.sendMessage(chat.id, huge, "prompt");
+    expect(sent.at(-1)!.text).toBe(huge);
+    // The operator's own row is still there and the message still went through; only the
+    // trigger stayed out, and it added no second notice.
+    expect(notices(sup.getTranscript(chat.id))).toEqual(["тригер «Хоче ПР» додав скіл «s»"]);
+  });
 });
