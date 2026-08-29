@@ -5,6 +5,7 @@ import {
   triggerAgentOptions,
   triggerMatches,
   triggerSourceLabel,
+  triggerUsesRuleFile,
 } from '../src/lib/settings';
 
 // The pure half of the Тригери pane. A trigger fires WITHOUT the model choosing to, so
@@ -21,6 +22,21 @@ test('only an operator-sourced trigger may run an agent', () => {
   for (const s of ['assistant', 'thinking', 'tool'] as const) {
     expect(triggerActionOptions(s).map((o) => o.value)).toEqual(['skill']);
   }
+});
+
+// `mode` and `repeat` are front matter in a TTSR rule file and exist nowhere else. An operator
+// trigger has no rule file: Kermanych matches it before the message is forwarded, so there is no
+// turn in flight to abort, and matchOperatorTriggers re-tests every message rather than counting
+// firings. The editor must not offer a hard mode there — it would promise an abort the runtime
+// cannot perform.
+test('mode and repeat mean something only for a source that becomes a rule file', () => {
+  expect(triggerUsesRuleFile('operator')).toBe(false);
+  for (const s of ['assistant', 'thinking', 'tool']) {
+    expect(triggerUsesRuleFile(s)).toBe(true);
+  }
+  // A row predating the check constraint gets no rule file either — materializeTriggers drops a
+  // source TTSR has no scope for — so its mode is exactly as inert as an operator row's.
+  expect(triggerUsesRuleFile('reasoning')).toBe(false);
 });
 
 test('the agent picker offers exactly the instruction-carrying agents, from the registry', () => {

@@ -357,6 +357,25 @@ export function triggerSourceLabel(source: string): string {
 }
 
 /**
+ * WHETHER A SOURCE'S TRIGGER BECOMES A RULE FILE — which is the same question as «does `mode` or
+ * `repeat` mean anything for this row?».
+ *
+ * Both fields exist only in the TTSR front matter (`interruptMode`, `repeatMode` in
+ * SkillsService.renderRuleFile). An `operator` trigger has no rule file at all: Kermanych matches
+ * it in `sendMessage`, BEFORE the text is forwarded, so there is no turn in flight to abort, and
+ * `matchOperatorTriggers` re-tests every message instead of counting firings. Showing the
+ * hard-mode warning on such a draft would promise an abort the runtime cannot perform.
+ *
+ * A source OUTSIDE the union answers `false` too, and that is the accurate reading rather than a
+ * convenience: `materializeTriggers` drops a row whose source TTSR has no scope for, so it gets
+ * no rule file either and its mode is equally inert. Hence membership of the offered set, not
+ * `source !== 'operator'`.
+ */
+export function triggerUsesRuleFile(source: string): boolean {
+  return TRIGGER_SOURCE_OPTIONS.some((o) => o.value === source && o.value !== 'operator');
+}
+
+/**
  * WHICH ACTIONS A SOURCE CAN CARRY. A child cannot call back into Kermanych, so only a
  * trigger matched on the OPERATOR's message can run an agent; the DB carries the same rule as
  * a check constraint (`project_triggers_agent_action_is_operator`), and this is what stops the

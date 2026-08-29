@@ -42,10 +42,14 @@
             <span class="tg__name">{{ t.label }}</span>
             <span class="tg__id mono">{{ t.id }}</span>
             <span class="tg__badge">{{ triggerSourceLabel(t.source) }}</span>
-            <!-- Only the deliberate choices are badged. The defaults — soft, once — are the
-                 ordinary case and a badge on every row would say nothing. -->
-            <span v-if="t.mode === 'interrupt'" class="tg__badge tg__badge--hard">обриває хід</span>
-            <span v-if="t.repeat === 'after-gap'" class="tg__badge">може повторюватись</span>
+            <!-- Only the deliberate choices are badged, and only where they are consumed. The
+                 defaults — soft, once — are the ordinary case and a badge on every row would say
+                 nothing; a stored `interrupt` on an OPERATOR row says nothing either, because
+                 nothing reads it. -->
+            <template v-if="triggerUsesRuleFile(t.source)">
+              <span v-if="t.mode === 'interrupt'" class="tg__badge tg__badge--hard">обриває хід</span>
+              <span v-if="t.repeat === 'after-gap'" class="tg__badge">може повторюватись</span>
+            </template>
           </div>
 
           <p class="tg__pattern mono">{{ t.pattern }}</p>
@@ -109,7 +113,12 @@
           Назву видно в стрічці сесії, коли тригер спрацював, і вона ж іде в правило як опис.
         </p>
 
-        <KSelect v-model="draft.source" label="Дивитися на" :options="TRIGGER_SOURCE_OPTIONS" />
+        <KSelect
+          :model-value="draft.source"
+          label="Дивитися на"
+          :options="TRIGGER_SOURCE_OPTIONS"
+          @update:model-value="onSource"
+        />
 
         <KField v-model="draft.pattern" label="Патерн (регулярний вираз)" placeholder="нов\w* env" />
         <p class="tg__note">
@@ -153,7 +162,12 @@
           />
         </template>
 
-        <KSelect v-model="draft.action" label="Що зробити" :options="actionOptions" />
+        <KSelect
+          :model-value="draft.action"
+          label="Що зробити"
+          :options="actionOptions"
+          @update:model-value="onAction"
+        />
         <KSelect
           v-if="draft.action === 'agent'"
           v-model="draft.target"
@@ -176,12 +190,25 @@
           розбиратися, замість того щоб зробити.
         </p>
 
-        <KSelect v-model="draft.mode" label="Режим" :options="MODE_OPTIONS" />
-        <p v-if="draft.mode === 'interrupt'" class="tg__warn">
-          Жорсткий режим обриває хід і викидає недописану відповідь — і однаково не гарантує
-          послуху: у прогоні модель повторила заборонене слово одразу після переривання.
+        <!-- `mode` and `repeat` exist ONLY in the TTSR rule file, and an operator trigger has
+             none: Kermanych matches it before the message is forwarded, so there is no turn to
+             abort, and matchOperatorTriggers checks every message rather than counting firings.
+             Rendering the hard-mode warning here would promise an abort the runtime cannot
+             perform — the same contradiction a broken pattern at launch is. -->
+        <template v-if="triggerUsesRuleFile(draft.source)">
+          <KSelect v-model="draft.mode" label="Режим" :options="MODE_OPTIONS" />
+          <p v-if="draft.mode === 'interrupt'" class="tg__warn">
+            Жорсткий режим обриває хід і викидає недописану відповідь — і однаково не гарантує
+            послуху: у прогоні модель повторила заборонене слово одразу після переривання.
+          </p>
+          <KSelect v-model="draft.repeat" label="Повтор" :options="REPEAT_OPTIONS" />
+        </template>
+        <!-- Said rather than silently omitted: two controls that vanish without explanation read
+             as a rendering fault, and the reason is a fact about the trigger worth knowing. -->
+        <p v-else class="tg__note">
+          Режим і повтор тут не діють: тригер на слова оператора спрацьовує ще до того, як
+          почався хід — обривати нема чого, — і Керманич звіряє його з кожним повідомленням.
         </p>
-        <KSelect v-model="draft.repeat" label="Повтор" :options="REPEAT_OPTIONS" />
 
         <p v-if="formError" class="tg__error mono">{{ formError }}</p>
       </div>
@@ -225,6 +252,7 @@ import {
   triggerAgentOptions,
   triggerMatches,
   triggerSourceLabel,
+  triggerUsesRuleFile,
   TRIGGER_SOURCE_OPTIONS,
 } from '../../lib/settings';
 
@@ -390,29 +418,43 @@ watch(
   { immediate: true },
 );
 
-// `agent` is only reachable from `operator` (the DB says so too), so a source change has to
-// take the action with it — otherwise the select would keep showing a choice its own option
-// list no longer contains, and the save would be refused by a check constraint. Globs go the
-// same way: they scope a tool call, and nothing else has a path to scope on.
-watch(
-  () => draft.source,
-  (source) => {
-    if (source !== 'operator' && draft.action === 'agent') {
-      draft.action = 'skill';
-      draft.target = '';
-    }
-    if (source !== 'tool') globs.value = '';
-  },
-);
+// CHANGING the source or the action drops what no longer applies. Handlers on the selects, NOT
+// watchers on the values, and that distinction is the whole fix: a watcher fires on the value
+// however it moved, and `flush: 'pre'` means it fires on the NEXT flush — so `edit()`, which
+// assigns `action` and then `target` in one synchronous `Object.assign`, had its target wiped
+// afterwards by a watcher that could not tell a prefill from a keystroke. Every operator→agent
+// trigger opened for editing rendered an empty agent picker.
+//
+// A guard flag around the prefill would have suppressed the symptom; moving the reset onto the
+// gesture removes the class. «The operator picked another action, so the old target is stale» is
+// a statement about a CLICK, and it is now written where the click arrives — with no scheduling
+// left to reason about, and no second path into these fields to forget next time.
+//
+// Both handlers narrow through the option list they are rendered from, so the draft cannot hold
+// an action the source does not permit even if a `<select>` were driven from outside.
+function onSource(value: string): void {
+  const source = TRIGGER_SOURCE_OPTIONS.find((o) => o.value === value)?.value;
+  if (!source) return;
+  draft.source = source;
+  // `agent` is only reachable from `operator`, and the DB carries the same rule as a check
+  // constraint: keeping it would offer a choice the option list no longer contains and a save
+  // postgrest would refuse.
+  if (source !== 'operator' && draft.action === 'agent') {
+    draft.action = 'skill';
+    draft.target = '';
+  }
+  // Globs scope the files a tool touched; nothing else has a path to scope on.
+  if (source !== 'tool') globs.value = '';
+}
 
 // A skill name and an agent id are different namespaces: keeping the old value would leave the
 // picker showing a target the new action cannot resolve.
-watch(
-  () => draft.action,
-  () => {
-    draft.target = '';
-  },
-);
+function onAction(value: string): void {
+  const action = triggerActionOptions(draft.source).find((o) => o.value === value)?.value;
+  if (!action) return;
+  draft.action = action;
+  draft.target = '';
+}
 
 function resetDraft(): void {
   Object.assign(draft, blankDraft());
