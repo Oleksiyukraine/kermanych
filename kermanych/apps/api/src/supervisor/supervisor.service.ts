@@ -14,6 +14,9 @@ import { ToolDetailCache } from "./tool-detail-cache";
 import { SkillsService, skillsRoot } from "../skills/skills.service";
 import { copyCarryFiles } from "../env/carry-files";
 import {
+  PR_CONVENTIONS_FALLBACK,
+  agentById,
+  renderInstruction,
   INITIAL_STATUS,
   reduceStatus,
   ACTIVE_STATUSES,
@@ -36,7 +39,7 @@ import {
   type ToolLine,
   type TranscriptEntry,
 } from "@kermanych/core";
-import { claimTask, getTask, listProjects, patchTask, type CloudProject } from "@kermanych/cloud";
+import { claimTask, getTask, listProjects, patchTask, type CloudProject, type ProjectTrigger } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 
 type Live = {
@@ -60,15 +63,14 @@ type Live = {
 // dir without ever mutating it (git-free). Promotion to an agent later grants the full toolset.
 const CHAT_TOOLS = ["read", "grep", "glob"];
 
-// Kermanych's built-in fallback PR/commit conventions, injected only when the target repo
-// defines none of its own (no `### PR Conventions` / `### Commit Conventions` in
-// CLAUDE.md/AGENTS.md) and the project has no override. A project's own rules always win.
-const DEFAULT_PR_CONVENTIONS = [
-  "- Commits: Conventional Commits — `type(scope): summary` in the imperative mood (feat, fix, chore, refactor, docs, test).",
-  "- PR title: the same Conventional-Commit style, summarising the whole change.",
-  "- PR body: a `## Summary` section (what changed and why) and a `## Testing` section (commands run / how it was verified).",
-  "- Keep the PR scoped to this branch's work; do not fold in unrelated changes.",
-].join("\n");
+// The longest message an operator trigger's pattern is run against. Operator patterns arrive
+// from the CLOUD, so a project owner's regex executes synchronously on a MEMBER's api event
+// loop — one person's pattern can cost another person's process. Backtracking gets expensive
+// with subject length, so the subject is bounded rather than the pattern analysed. 16 KiB is
+// ~2500 words: far longer than any message phrased AT Kermanych, which is what a trigger
+// matches, and short of the pasted logs and files that make a message big. Same idiom and the
+// same reasoning as CONFIG_MAX_BYTES in skills.service.ts.
+const MATCH_MAX_CHARS = 1 << 14;
 
 @Injectable()
 export class SupervisorService implements OnModuleDestroy {
@@ -117,6 +119,33 @@ export class SupervisorService implements OnModuleDestroy {
       // (offline cloud, invalid project id, EACCES on the skills root).
       console.warn(`[supervisor] no skill library for session ${sessionId}: ${(err as Error).message}`);
       return undefined;
+    }
+  }
+
+  // The session's TTSR trigger package, laid out for `-e`. Its own wrapper rather than a
+  // second return value from ompSkills: the two degrade independently — a project can have a
+  // library and no triggers, or triggers and an unreadable library — and neither may cost a
+  // launch. `undefined` means "this child gets no rules".
+  private async ompTriggers(projectId: string, cwd: string, sessionId: string): Promise<string | undefined> {
+    try {
+      return (await this.skills.materializeTriggers(projectId, sessionId, cwd)).packagePath;
+    } catch (err) {
+      console.warn(`[supervisor] no triggers for session ${sessionId}: ${(err as Error).message}`);
+      return undefined;
+    }
+  }
+
+  // The block one agent's assigned skills add to its instruction — the ONE way any of the
+  // four instruction sites gets it. Never throws, for the same reason as ompSkills: the
+  // service degrades on its own for a library reason (offline cloud, unreadable repository
+  // file) and throws for a caller error (an invalid project id), and neither may cost an
+  // agent its run. An empty string appends nothing.
+  private async assignedBlockFor(projectId: string, agentId: string, cwd: string): Promise<string> {
+    try {
+      return (await this.skills.assignedFor(projectId, agentId, cwd)).block;
+    } catch (err) {
+      console.warn(`[supervisor] no assigned skills for ${agentId}: ${(err as Error).message}`);
+      return "";
     }
   }
 
@@ -450,7 +479,8 @@ export class SupervisorService implements OnModuleDestroy {
       worktree: false, kind: "chat", status: "queued",
     });
     const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
-    const rpc = new RpcSession({ cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}) });
+    const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
+    const rpc = new RpcSession({ cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await rpc.start();
@@ -501,16 +531,8 @@ export class SupervisorService implements OnModuleDestroy {
     // task, its first line the name, and the rest are the project's defaults.
     const name = taskNameFromText(chat.task) || chat.name;
     const { branch, baseBranch } = await this.resolveLaunchParams(project, name, "feature", true, chatId);
-    const prompt =
-      `The planning discussion above is settled — implement it now.\n\n` +
-      `You are no longer read-only: you have been moved out of the project directory into a ` +
-      `dedicated git worktree on branch \`${branch}\`, with the full toolset. Everything agreed ` +
-      `above is the specification — do not re-open it and do not re-ask what was already ` +
-      `answered.\n\n` +
-      `Implement it end to end: follow the repo's existing conventions and patterns, leave no ` +
-      `stubs or TODOs behind, and commit your work on this branch. Where the discussion left ` +
-      `something ambiguous, take the most reasonable reading, say which one you took, and keep ` +
-      `going — stop only for a genuinely blocking question.`;
+    const block = await this.assignedBlockFor(chat.projectId, "promote", project.localRepoPath);
+    const prompt = renderInstruction(agentById("promote")!, { branch }) + block;
 
     // The read-only child must die before the worktree one takes over this row's event stream.
     if (live) {
@@ -610,7 +632,8 @@ export class SupervisorService implements OnModuleDestroy {
 
     const cwd = worktree ? wtDir : project.localRepoPath;
     const configPath = await this.ompSkills(project.id, cwd, id);
-    const rpc = new RpcSession({ cwd, model, ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}) });
+    const extensionPath = await this.ompTriggers(project.id, cwd, id);
+    const rpc = new RpcSession({ cwd, model, ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await rpc.start();
@@ -678,7 +701,8 @@ export class SupervisorService implements OnModuleDestroy {
     });
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
-    const rpc = new RpcSession({ cwd, fork: parentFile, noTools: true, ...(configPath ? { configPath } : {}) });
+    const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
+    const rpc = new RpcSession({ cwd, fork: parentFile, noTools: true, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
@@ -731,20 +755,13 @@ export class SupervisorService implements OnModuleDestroy {
       parentSessionId: parentId,
     });
 
+    const block = await this.assignedBlockFor(s.projectId, "review", cwd);
     const prompt =
-      `You are an INDEPENDENT code reviewer. You did NOT do this work and have no prior ` +
-      `context — audit ONLY the task and the diff below, with fresh eyes.\n\n` +
-      `## Original task\n${s.task}\n\n` +
-      `## Diff (base \`${base}\` → branch \`${s.branch}\`)\n` +
-      "```diff\n" + diff + "\n```\n\n" +
-      `Perform a FULL audit: does the change satisfy the task; are any requirements missed ` +
-      `or only partly done; are there bugs, edge cases, or security issues; are tests present ` +
-      `and meaningful; is the code sound? You may read any file in the worktree for context, ` +
-      `but you are read-only — do NOT modify anything or run commands. Finish with a clear ` +
-      `verdict (APPROVE or NEEDS CHANGES) and a prioritized list of findings.`;
+      renderInstruction(agentById("review")!, { task: s.task, base, branch: s.branch, diff }) + block;
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
-    const rpc = new RpcSession({ cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}) });
+    const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
+    const rpc = new RpcSession({ cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
@@ -787,7 +804,7 @@ export class SupervisorService implements OnModuleDestroy {
         ? "follow_up"
         : "prompt";
     // sendMessage resumes a dormant parent; if it throws, the child is left intact.
-    await this.sendMessage(parentId, wrapped, mode);
+    await this.sendAsKermanych(parentId, wrapped, mode);
 
     if (live) {
       live.live.status = "stopped";
@@ -869,6 +886,19 @@ export class SupervisorService implements OnModuleDestroy {
   private userEntry(text: string, images?: ImageInput[]): TranscriptEntry {
     const at = this.stamp();
     return { kind: "user_text", id: `u${at}`, at, text, ...(images?.length ? { images: images.map((i) => `data:${i.mimeType};base64,${i.data}`) } : {}) };
+  }
+
+  // A Kermanych-authored row in the conversation. A fired trigger changed what the child was
+  // asked, so the transcript has to say so: an invisible trigger is a session that behaves
+  // differently for no reason the operator can read back.
+  private noticeEntry(text: string, level: "info" | "warn" | "error" = "info"): TranscriptEntry {
+    const at = this.stamp();
+    return { kind: "notice", id: `n${at}`, at, level, text };
+  }
+
+  // A trigger's `target` is an agent id; the notice names the agent the way the catalogue does.
+  private agentLabel(agentId: string): string {
+    return agentById(agentId)?.label ?? agentId;
   }
 
   private onRpcEvent(id: string, e: RpcEvent) {
@@ -1016,23 +1046,126 @@ export class SupervisorService implements OnModuleDestroy {
     return { ok: true };
   }
 
+  // The OPERATOR's own message. Everything Kermanych sends itself goes through
+  // `sendAsKermanych`, which is the same delivery with trigger matching off.
   async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
+    await this.deliver(id, text, mode, images, true);
+  }
+
+  // Kermanych's own prompt into a session: a fired trigger's agent, a PR request, a merged
+  // discussion's conclusion. `source: "operator"` means the OPERATOR wrote the text, so these
+  // are exempt — which is also what stops a fired `agent` action from looping through the very
+  // agent it ran. The exemption is an ARGUMENT, not a flag on the session: a genuine operator
+  // message arriving while this send is still in flight is matched as normal, because a
+  // trigger that silently does not fire is the failure this feature exists to remove.
+  private async sendAsKermanych(id: string, text: string, mode: "prompt" | "follow_up" | "steer") {
+    await this.deliver(id, text, mode, undefined, false);
+  }
+
+  private async deliver(
+    id: string,
+    text: string,
+    mode: "prompt" | "follow_up" | "steer",
+    images: ImageInput[] | undefined,
+    matchTriggers: boolean,
+  ) {
     const l = await this.liveOrResume(id);
     try {
       this.registry.touchSession(id);
     } catch {
       /* never let a bookkeeping write break message delivery */
     }
+    const s = this.registry.listSessions().find((x) => x.id === id);
     // A chat's opening message IS the ask. Record it once, so promoting the chat can name the
     // agent and its branch after the thing being built, and so review/PR prompts have a task.
-    if (text.trim()) {
-      const s = this.registry.listSessions().find((x) => x.id === id);
-      if (s?.kind === "chat" && !s.task.trim()) this.registry.updateSession(id, { task: text.trim() });
-    }
+    if (text.trim() && s?.kind === "chat" && !s.task.trim()) this.registry.updateSession(id, { task: text.trim() });
     if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images));
-    if (mode === "steer") l.rpc.steer(text, images);
-    else if (mode === "follow_up") l.rpc.followUp(text, images);
-    else l.rpc.prompt(text, images);
+
+    // Operator-sourced triggers run BEFORE the message reaches the child: Kermanych is the
+    // only party that sees the operator's text, and an `agent` action has to be Kermanych's
+    // to perform — a child cannot call back into us.
+    const fired = matchTriggers && s ? await this.matchOperatorTriggers(s, id, text) : undefined;
+    if (fired?.trigger.action === "agent" && (await this.runTriggerAgent(id, fired.trigger))) return;
+    // `skill`: the resolved body goes in FRONT of what the operator wrote, so the instruction
+    // is read before the request it applies to. The transcript keeps the operator's own text
+    // as the visible row and the notice above says what was prepended to it.
+    const body = fired?.block ? `${fired.block}\n\n${text}` : text;
+    if (mode === "steer") l.rpc.steer(body, images);
+    else if (mode === "follow_up") l.rpc.followUp(body, images);
+    else l.rpc.prompt(body, images);
+  }
+
+  // The first enabled `operator` trigger whose pattern matches, with its `skill` body already
+  // resolved. Never throws and never blocks a message: a trigger is an addition to a session.
+  private async matchOperatorTriggers(
+    s: Session,
+    id: string,
+    text: string,
+  ): Promise<{ trigger: ProjectTrigger; block: string } | undefined> {
+    // Past the cap no trigger fires. That is the degradation everything else on this path
+    // uses: never an exception, never a blocked message.
+    if (!text.trim() || text.length > MATCH_MAX_CHARS) return undefined;
+    try {
+      const triggers = await this.skills.operatorTriggers(s.projectId);
+      if (!triggers.length) return undefined;
+      const cwd = s.worktreePath || this.registry.listProjects().find((p) => p.id === s.projectId)?.localRepoPath || "";
+      for (const trigger of triggers) {
+        // Case-insensitive: the pattern is matched against prose an operator typed, where the
+        // capitalisation of a sentence is not a decision they made. An unparseable pattern
+        // costs its own trigger and nothing else.
+        let re: RegExp;
+        try {
+          re = new RegExp(trigger.pattern, "i");
+        } catch {
+          continue;
+        }
+        if (!re.test(text)) continue;
+        if (trigger.action === "agent") {
+          this.appendEntry(id, this.noticeEntry(`тригер «${trigger.label}» запускає «${this.agentLabel(trigger.target)}»`));
+          return { trigger, block: "" };
+        }
+        // One resolver for every skill body in Kermanych, assignments and triggers alike.
+        const { block, missing } = await this.skills.assignedForNames(s.projectId, [trigger.target], cwd);
+        if (!block.trim()) {
+          // Reported, not dropped: a trigger the operator believes is armed and which resolves
+          // to nothing is exactly the state the dangling-reference UI exists to surface.
+          this.appendEntry(
+            id,
+            this.noticeEntry(`тригер «${trigger.label}»: скіл «${missing[0] ?? trigger.target}» не знайдено`, "warn"),
+          );
+          return undefined;
+        }
+        this.appendEntry(id, this.noticeEntry(`тригер «${trigger.label}» додав скіл «${trigger.target}»`));
+        return { trigger, block };
+      }
+      return undefined;
+    } catch (err) {
+      console.warn(`[supervisor] operator triggers skipped for session ${id}: ${(err as Error).message}`);
+      return undefined;
+    }
+  }
+
+  // Run the agent an operator trigger names, REPLACING the message: the agent's own
+  // instruction says what the operator asked for, so forwarding both would say it twice.
+  // `false` means the agent never ran, and then the replacement is not earned — the caller
+  // forwards the operator's text rather than swallowing it.
+  private async runTriggerAgent(id: string, trigger: ProjectTrigger): Promise<boolean> {
+    try {
+      // The four agents a trigger can run. `finish` and `summary` are automations with no
+      // model and no session of their own, so they are not reachable from here.
+      if (trigger.target === "review") await this.reviewSession(id);
+      else if (trigger.target === "promote") await this.promoteChatToAgent(id);
+      else if (trigger.target === "pull-request") await this.createPullRequest(id);
+      else if (trigger.target === "resolve-conflict") await this.resolveConflict(id);
+      else throw new Error(`агента «${trigger.target}» не існує`);
+      return true;
+    } catch (err) {
+      this.appendEntry(
+        id,
+        this.noticeEntry(`тригер «${trigger.label}» не запустив агента: ${(err as Error).message}`, "error"),
+      );
+      return false;
+    }
   }
 
   // AI conflict resolution: resume the session's agent in its mid-merge worktree and
@@ -1045,14 +1178,10 @@ export class SupervisorService implements OnModuleDestroy {
     const dir = s.worktreePath || g.localRepoPath;
     const files = await this.worktree.unmergedFiles(dir);
     if (!files.length) throw new Error("no merge conflict to resolve");
+    const block = await this.assignedBlockFor(s.projectId, "resolve-conflict", dir);
     const prompt =
-      `A git merge is in progress in this worktree with conflicts in:\n` +
-      files.map((f) => `- ${f}`).join("\n") +
-      `\n\nResolve every conflict: edit each file, remove the conflict markers ` +
-      `(<<<<<<<, =======, >>>>>>>), and combine BOTH sides so nothing is lost — keep this ` +
-      `branch's changes AND the changes merged in from the base branch. When all conflicts ` +
-      `are resolved, run \`git add -A && git commit --no-edit\` to complete the merge. Do only this.`;
-    await this.sendMessage(id, prompt, "prompt");
+      renderInstruction(agentById("resolve-conflict")!, { files: files.map((f) => `- ${f}`).join("\n") }) + block;
+    await this.sendAsKermanych(id, prompt, "prompt");
     return { ok: true };
   }
 
@@ -1068,23 +1197,19 @@ export class SupervisorService implements OnModuleDestroy {
     const g = this.project(s.projectId);
 
     const baseHint = (s.baseBranch || g.defaultBranch || "").trim();
-    const fallback = (g.conventions || "").trim() || DEFAULT_PR_CONVENTIONS;
     const baseLine = baseHint
       ? `Target the PR at \`${baseHint}\`, unless the repo's PR conventions dictate a different base.`
       : `Target the PR at the repository's default branch, unless the repo's PR conventions dictate otherwise.`;
 
+    const block = await this.assignedBlockFor(s.projectId, "pull-request", s.worktreePath || g.localRepoPath);
     const prompt =
-      `Open a pull request for this session's branch \`${s.branch}\`.\n\n` +
-      `Follow the repository's own \`### PR Conventions\` and \`### Commit Conventions\` from its ` +
-      `CLAUDE.md / AGENTS.md if they exist. If the repo defines none, follow these defaults instead:\n` +
-      `${fallback}\n\n` +
-      `Steps:\n` +
-      `1. Commit any uncommitted work, following the commit conventions.\n` +
-      `2. Push \`${s.branch}\` to \`origin\` (set the upstream).\n` +
-      `3. Open the PR with \`gh pr create\`. ${baseLine}\n` +
-      `Reply with the PR URL when done. Do only this.`;
+      renderInstruction(agentById("pull-request")!, {
+        branch: s.branch,
+        conventions: (g.conventions || "").trim() || PR_CONVENTIONS_FALLBACK,
+        baseLine,
+      }) + block;
 
-    await this.sendMessage(id, prompt, "prompt");
+    await this.sendAsKermanych(id, prompt, "prompt");
     return { ok: true };
   }
   answerUi(id: string, res: RpcExtensionUIResponse) {
@@ -1360,7 +1485,8 @@ export class SupervisorService implements OnModuleDestroy {
     if (s.kind === "agent" && !s.worktree && (await this.worktree.currentBranch(g.localRepoPath)) !== s.branch)
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
     const configPath = await this.ompSkills(s.projectId, dir, id);
-    const rpc = new RpcSession({ cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(configPath ? { configPath } : {}) });
+    const extensionPath = await this.ompTriggers(s.projectId, dir, id);
+    const rpc = new RpcSession({ cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await rpc.start();

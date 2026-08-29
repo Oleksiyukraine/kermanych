@@ -6,6 +6,12 @@
       — агент сам вирішує, коли їх узяти. Скіл із таким же імʼям у репозиторії завжди
       перемагає: Керманич його не підміняє.
     </p>
+    <!-- The library is opt-in by the agent. Handing a skill to a role unconditionally is the
+         next pane's job, and the distinction is easy to miss from here. -->
+    <p class="sk__lead">
+      Щоб роль отримувала скіл обовʼязково, а не за власним рішенням — розділ
+      «Призначення».
+    </p>
 
     <p v-if="error" class="sk__error mono">{{ error }}</p>
 
@@ -93,11 +99,11 @@
 import { computed, ref, watch } from 'vue';
 import { DEFAULT_SKILLS, SKILL_NAME_RE, type SkillView } from '@kermanych/core';
 import { deleteProjectSkill, listProjectSkills, upsertProjectSkill, type ProjectSkill } from '@kermanych/cloud';
-import { api } from '../lib/api';
-import { useAuth } from '../stores/auth';
-import { useProjects } from '../stores/projects';
-import KModal from '../components/kit/KModal.vue';
-import KField from '../components/kit/KField.vue';
+import { api } from '../../lib/api';
+import { useAuth } from 'stores/auth';
+import { useProjects } from 'stores/projects';
+import KModal from 'components/kit/KModal.vue';
+import KField from 'components/kit/KField.vue';
 
 const props = defineProps<{ projectId: string; projectName: string }>();
 
@@ -168,13 +174,15 @@ async function load(): Promise<void> {
   loading.value = true;
   try {
     // Both reads, together: the resolved view is what the session gets, the cloud rows are
-    // the only place a switched-off default is still recorded.
-    const [view, stored] = await Promise.all([
+    // the only place a switched-off default is still recorded. The payload's `repo` half is
+    // deliberately ignored here — a name only the repository defines is not in this
+    // project's library, and listing it would invite an edit that cannot take effect.
+    const [library, stored] = await Promise.all([
       api.projectSkills(projectId),
       listProjectSkills(auth.client, [projectId]),
     ]);
     if (projectId !== props.projectId) return;
-    rows.value = [...view, ...tombstones(stored)];
+    rows.value = [...library.view, ...tombstones(stored)];
   } catch (e) {
     if (projectId !== props.projectId) return;
     // The endpoint refuses rather than degrade to the defaults, so a failed read must not
@@ -186,9 +194,9 @@ async function load(): Promise<void> {
   }
 }
 
-// `projectId` is a LIVE prop, not a mount-time constant: the Менеджмент shell renders its
-// sections with no `:key` (ManagementPage.vue) and the rail deliberately does not navigate on
-// a Менеджмент route (MainLayout.vue), so picking another project swaps the prop under a
+// `projectId` is a LIVE prop, not a mount-time constant: SettingsPage renders its panes with
+// no `:key` and the sidebar's project rows only move the selection, never the route
+// (MainLayout.selectProject), so picking another project swaps the prop under a
 // component that stays mounted. Reading once on mount would leave the PREVIOUS project's
 // library on screen under the new project's name, and every action would then write the old
 // project's data into the new one. Re-read on every change, and close the editor with it: a

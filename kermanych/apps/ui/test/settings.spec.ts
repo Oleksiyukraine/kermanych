@@ -54,6 +54,45 @@ describe('SETTINGS_CATEGORIES', () => {
     const firstSeen = [...new Set(scopes)];
     expect(scopes).toEqual(firstSeen.flatMap((s) => scopes.filter((x) => x === s)));
   });
+
+  // The skill library used to be a Менеджмент screen of its own. It is a project
+  // setting, so the rail — not the Менеджмент sub-nav — is where it is reached, and
+  // the scope is what keeps it hidden until a project is selected.
+  it('carries the skill library at the project scope', () => {
+    const skills = settingsSection('project-skills');
+    expect(skills.key).toBe('project-skills');
+    expect(skills.scope).toBe('project');
+    expect(skills.label).toBe('Бібліотека скілів');
+  });
+
+  // The agent catalogue is an APP setting, not a project one: `AGENTS` is a compile-time
+  // constant of the harness itself, identical for every project and every workspace.
+  it('carries the agent catalogue at the app scope', () => {
+    const agents = settingsSection('app-agents');
+    expect(agents.key).toBe('app-agents');
+    expect(agents.scope).toBe('app');
+    expect(agents.label).toBe('ШІ команда');
+  });
+
+  // The board is the mirror image of the catalogue above: the team is app-wide, but WHICH
+  // skills each role is handed is a per-project decision, stored per project — so it is the
+  // project scope that keeps the pane hidden until there is a project to write for.
+  it('carries the assignment board at the project scope', () => {
+    const board = settingsSection('project-agents');
+    expect(board.key).toBe('project-agents');
+    expect(board.scope).toBe('project');
+    expect(board.label).toBe('Призначення');
+  });
+
+  // Triggers are the third project-scoped pane of «ШІ команда» and the last row of the rail's
+  // project block before the danger zone: a trigger names a skill from THIS project's library
+  // and is stored per project, so it cannot live at the app scope beside the catalogue.
+  it('carries the trigger list at the project scope', () => {
+    const triggers = settingsSection('project-triggers');
+    expect(triggers.key).toBe('project-triggers');
+    expect(triggers.scope).toBe('project');
+    expect(triggers.label).toBe('Тригери');
+  });
 });
 
 describe('changedFields', () => {

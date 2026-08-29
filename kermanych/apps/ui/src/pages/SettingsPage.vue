@@ -190,6 +190,32 @@
           <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
         </div>
 
+        <!-- ── PROJECT · БІБЛІОТЕКА СКІЛІВ ──────────────────────────────────── -->
+        <!-- Mounted, not inlined: the library is a screen's worth of list, modal and
+             cloud writes of its own, and it moved here whole from Менеджмент. Same
+             arrangement as KEnvEditor below. The `v-if` is the type guard the outer
+             chain cannot give: reaching this branch already means a project is
+             selected, but only the narrowing here turns the id into a string. -->
+        <div v-else-if="section.key === 'project-skills'" class="set__form set__form--wide">
+          <SkillsLibraryPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
+        </div>
+
+        <!-- ── PROJECT · ПРИЗНАЧЕННЯ ────────────────────────────────────────── -->
+        <!-- Directly after the library, because it is the library it assigns from. Same
+             `v-if` type guard as the pane above, for the same reason. -->
+        <div v-else-if="section.key === 'project-agents'" class="set__form set__form--wide">
+          <AgentSkillsPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
+        </div>
+
+        <!-- ── PROJECT · ТРИГЕРИ ────────────────────────────────────────────── -->
+        <!-- The last pane of «ШІ команда» and the last arm of this chain. It follows the two
+             above because a trigger names a skill from the same library: the library says what
+             exists, «Призначення» hands it over unconditionally, and a trigger fires it on a
+             pattern. Same `v-if` type guard as both, for the same reason. -->
+        <div v-else-if="section.key === 'project-triggers'" class="set__form set__form--wide">
+          <TriggersPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
+        </div>
+
         <!-- ── PROJECT · ЗМІННІ СЕРЕДОВИЩА ──────────────────────────────────── -->
         <div v-else-if="section.key === 'project-env'" class="set__form set__form--wide">
           <p v-if="!isBound" class="set__note">
@@ -368,6 +394,15 @@
             Це повний перелік — усе, що застосунок слухає сьогодні. Перепризначення немає:
             жодна з цих клавіш ніде не зберігається, тому й змінювати нічого.
           </p>
+        </div>
+
+        <!-- ── APP · ШІ КОМАНДА ─────────────────────────────────────────────── -->
+        <!-- Mounted, not inlined, for the same reason the library is: it is a list of its
+             own, and its content — six agents and four English templates — belongs beside
+             the registry it reads, not in this sheet. No props: `AGENTS` is a compile-time
+             constant, so the panel has nothing to be told and nothing to load. -->
+        <div v-else-if="section.key === 'app-agents'" class="set__form set__form--wide">
+          <AgentCatalogPanel />
         </div>
 
         <!-- ── APP · АКАУНТ ─────────────────────────────────────────────────── -->
@@ -565,6 +600,10 @@ import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KTag from 'components/kit/KTag.vue';
+import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
+import AgentSkillsPanel from 'components/settings/AgentSkillsPanel.vue';
+import TriggersPanel from 'components/settings/TriggersPanel.vue';
+import AgentCatalogPanel from 'components/settings/AgentCatalogPanel.vue';
 
 const store = useOrchestrator();
 const projects = useProjects();

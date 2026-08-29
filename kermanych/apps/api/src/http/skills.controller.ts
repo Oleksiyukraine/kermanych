@@ -1,8 +1,9 @@
-// The RESOLVED view of a project's skill library. Writes go straight from the UI to
-// Supabase (RLS is the gate); only this read needs the API, because the repository-shadow
-// check is a filesystem question about this machine's checkout.
+// The RESOLVED view of a project's skill library, plus the names the bound checkout's own
+// skill directories define. Writes go straight from the UI to Supabase (RLS is the gate);
+// only this read needs the API, because both the repository-shadow check and the
+// repository's own name list are filesystem questions about this machine's checkout.
 import { BadRequestException, Controller, Get, Param, ServiceUnavailableException } from "@nestjs/common";
-import type { SkillView } from "@kermanych/core";
+import type { ProjectSkillsPayload } from "@kermanych/core";
 import { SkillsService } from "../skills/skills.service";
 import { RegistryService } from "../registry/registry.service";
 
@@ -14,7 +15,7 @@ export class SkillsController {
   ) {}
 
   @Get(":id/skills")
-  async list(@Param("id") id: string): Promise<SkillView[]> {
+  async list(@Param("id") id: string): Promise<ProjectSkillsPayload> {
     const project = this.registry.listProjects().find((p) => p.id === id);
     if (!project) throw new BadRequestException("project not found");
     try {

@@ -15,6 +15,11 @@ export type {
   TaskPatch,
   ProjectSkill,
   ProjectSkillInsert,
+  AgentSkill,
+  AgentSkillInsert,
+  TriggerSource,
+  ProjectTrigger,
+  ProjectTriggerInsert,
 } from "./types";
 
 export type { SupabaseClient, CloudEnv, CloudClientOptions } from "./client";
@@ -68,3 +73,12 @@ export {
   upsertProjectSkill,
   deleteProjectSkill,
 } from "./skills";
+
+export {
+  toAgentSkill,
+  listAgentSkills,
+  setAgentSkill,
+  deleteAgentSkill,
+} from "./agent-skills";
+
+export { toTrigger, listTriggers, upsertTrigger, deleteTrigger } from "./triggers";
