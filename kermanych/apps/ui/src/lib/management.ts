@@ -23,7 +23,6 @@ export interface ManagementSection {
 export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
   { name: 'management-home', path: 'home', label: 'Home', hint: 'огляд проєкту' },
   { name: 'management-storage', path: 'storage', label: 'Storage', hint: 'файли й артефакти' },
-  { name: 'management-skills', path: 'skills', label: 'Skills', hint: 'бібліотека скілів' },
   { name: 'management-risks', path: 'risk-registry', label: 'Risk Registry', hint: 'ризики й мітигації' },
   { name: 'management-releases', path: 'release-notes', label: 'Release Notes', hint: 'зміни по релізах' },
   { name: 'management-capacity', path: 'team-capacity', label: 'Team Capacity', hint: 'навантаження команди' },
