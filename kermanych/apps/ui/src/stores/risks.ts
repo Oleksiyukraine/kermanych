@@ -66,25 +66,24 @@ export const useRisks = defineStore('risks', () => {
     }
   }
 
+  // Writes THROW; reads report inline. Two callers now write to this register — the editor
+  // on the screen and the management assistant's action executor
+  // (stores/management-chat.ts) — and they answer a failure differently: the editor stays
+  // open with a toast, the chat prints the reason into the transcript as the line that says
+  // the risk was NOT filed. A store that swallowed the error into a toast would leave the
+  // chat with nothing to say but «не вдалося», which is the message an operator cannot act on.
+  //
   // No optimistic row: `code` is minted by the trigger under a per-project advisory lock, so
   // the register's own identifier only exists once Postgres has answered. Showing R-??? for a
   // moment would be showing a number that is about to change.
   async function create(
     projectId: string,
     input: Omit<ProjectRiskInsert, 'projectId'>,
-  ): Promise<ProjectRisk | undefined> {
-    if (!auth.user) {
-      local.notify('Спочатку увійдіть у Kermanych', 'error');
-      return undefined;
-    }
-    try {
-      const created = await cloudCreateRisk(auth.client, { projectId, ...input });
-      upsert(projectId, created);
-      return created;
-    } catch (e) {
-      fail(e);
-      return undefined;
-    }
+  ): Promise<ProjectRisk> {
+    if (!auth.user) throw new Error('Спочатку увійдіть у Kermanych');
+    const created = await cloudCreateRisk(auth.client, { projectId, ...input });
+    upsert(projectId, created);
+    return created;
   }
 
   // Optimistic writes are pointless here and would be wrong: `exposure`, `residualExposure`,
@@ -95,27 +94,31 @@ export const useRisks = defineStore('risks', () => {
     projectId: string,
     id: string,
     patch: ProjectRiskPatch,
-  ): Promise<ProjectRisk | undefined> {
-    try {
-      const saved = await cloudPatchRisk(auth.client, id, patch);
-      upsert(projectId, saved);
-      // The history changed with the row, so a cached copy would be a lie the next time the
-      // «Історія» tab opens. Drop it rather than guess what the trigger recorded.
-      const next = { ...eventsByRisk.value };
-      delete next[id];
-      eventsByRisk.value = next;
-      return saved;
-    } catch (e) {
-      fail(e);
-      return undefined;
-    }
+  ): Promise<ProjectRisk> {
+    const saved = await cloudPatchRisk(auth.client, id, patch);
+    upsert(projectId, saved);
+    // The history changed with the row, so a cached copy would be a lie the next time the
+    // «Історія» tab opens. Drop it rather than guess what the trigger recorded.
+    const next = { ...eventsByRisk.value };
+    delete next[id];
+    eventsByRisk.value = next;
+    return saved;
   }
 
   // The review cadence, recorded. This is the one audit column a client may write, and only
   // to «now»: the trigger files it as a `reviewed` event, which is what turns «we review
   // weekly» into something a phase gate can check.
-  function markReviewed(projectId: string, id: string): Promise<ProjectRisk | undefined> {
-    return save(projectId, id, { lastReviewedAt: new Date().toISOString() });
+  //
+  // The one write that reports its own failure, because it is the one write with no form and
+  // no transcript behind it: a row's «переглянуто» button takes no input, so there is nothing
+  // for a caller to keep open and nothing better to say than the toast.
+  async function markReviewed(projectId: string, id: string): Promise<ProjectRisk | undefined> {
+    try {
+      return await save(projectId, id, { lastReviewedAt: new Date().toISOString() });
+    } catch (e) {
+      fail(e);
+      return undefined;
+    }
   }
 
   async function loadEvents(riskId: string): Promise<void> {

@@ -1,8 +1,45 @@
 // apps/api/src/http/management.controller.ts
 import { BadRequestException, Body, Controller, Post } from "@nestjs/common";
-import type { ManagementChatAsk, ManagementChatReply } from "@kermanych/core";
+import {
+  isRiskCategory,
+  isRiskKind,
+  isRiskResponse,
+  isRiskStatus,
+  type ManagementChatAsk,
+  type ManagementChatReply,
+  type ManagementContext,
+  type ManagementRiskRow,
+} from "@kermanych/core";
 import { ManagementChatService } from "../management/management-chat.service";
 import { RegistryService } from "../registry/registry.service";
+
+// The register as the browser sent it, kept only where every field is one this build knows.
+// `project_risks` is behind RLS and the api has no credentials for it, so this list cannot be
+// re-derived here — but a row with an invented category would be printed into the prompt as
+// fact, and the assistant would then file more of them.
+function riskRows(v: unknown): ManagementRiskRow[] {
+  if (!Array.isArray(v)) return [];
+  const rows: ManagementRiskRow[] = [];
+  for (const r of v) {
+    if (typeof r !== "object" || r === null) continue;
+    const x = r as Record<string, unknown>;
+    if (typeof x.code !== "string" || x.code === "") continue;
+    if (!isRiskKind(x.kind) || !isRiskCategory(x.category) || !isRiskResponse(x.response) || !isRiskStatus(x.status))
+      continue;
+    if (typeof x.probability !== "number" || typeof x.impact !== "number") continue;
+    rows.push({
+      code: x.code,
+      kind: x.kind,
+      category: x.category,
+      event: typeof x.event === "string" ? x.event : "",
+      probability: x.probability,
+      impact: x.impact,
+      response: x.response,
+      status: x.status,
+    });
+  }
+  return rows;
+}
 
 // The Менеджмент assistant, over REST rather than the sessions WebSocket: one question,
 // one answer, no board row and no live transcript to stream. Auto-guarded by the global
@@ -40,8 +77,16 @@ export class ManagementController {
         "не вдалося визначити воркспейс: жоден із переданих проєктів не привʼязаний у цьому Kermanych",
       );
     if (!b?.context) throw new BadRequestException("не передано контекст розділу");
+    // Rebuilt rather than forwarded: `risks` is printed into the prompt as the state the
+    // write actions operate on, and the rest of the block is prose the model reads as fact.
+    const context: ManagementContext = {
+      workspaceName: typeof b.context.workspaceName === "string" ? b.context.workspaceName : "",
+      projectName: typeof b.context.projectName === "string" ? b.context.projectName : "",
+      section: typeof b.context.section === "string" ? b.context.section : "",
+      risks: riskRows(b.context.risks),
+    };
     try {
-      return await this.chat.ask({ ...b, conversationId, text, projectId, workspaceProjects });
+      return await this.chat.ask({ ...b, conversationId, text, projectId, workspaceProjects, context });
     } catch (err) {
       // A missing `omp`, a start timeout or a turn timeout are all operator-actionable
       // sentences already; a 500 would hide every one of them behind "Internal Server

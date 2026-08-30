@@ -95,6 +95,12 @@
                      feature here, not an aside. -->
                 <p v-else class="mgmt__res mono" :class="`mgmt__res--${e.level}`">{{ e.text }}</p>
               </template>
+              <!-- The turn in flight. A management turn can grep three repositories before
+                   it answers (the api allows four minutes), so the wait needs a heartbeat:
+                   without one the chat looks dead and the operator sends the question again.
+                   Same «Думаю…» idiom as the agent panel, with the seconds counting up
+                   because a static label held for two minutes reads as a hang. -->
+              <p v-if="chat.busy" class="mgmt__think" aria-live="polite">{{ thinkingLabel }}</p>
             </div>
           </section>
 
@@ -158,7 +164,7 @@
 // sections themselves are the child routes of /management (the table lives in
 // @kermanych/core, shared with the api and the action executor) — this component decides
 // WHETHER one renders and WHICH project it renders for; it never renders their content.
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { MANAGEMENT_SECTIONS } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -247,15 +253,40 @@ function onKeydown(e: KeyboardEvent): void {
 
 // Keep the newest entry in view as the transcript grows — deep, because a turn appends to
 // the same array rather than replacing it.
+function scrollLog(): void {
+  void nextTick(() => {
+    const el = logEl.value;
+    if (el) el.scrollTop = el.scrollHeight;
+  });
+}
+
+watch(() => chat.entries, scrollLog, { deep: true });
+
+// «Думає» — the heartbeat under the transcript while a turn is in flight. The seconds are
+// counted by an interval that exists ONLY during a turn: a permanent one-second ticker would
+// wake an idle tab (and the machine) forever to redraw a line that is not on screen.
+const thinkingSec = ref(0);
+let thinkTimer: ReturnType<typeof setInterval> | undefined;
+
+// Silent for the first seconds — a fast answer must not flash a stopwatch — then the count
+// appears and keeps the wait honest.
+const thinkingLabel = computed(() => (thinkingSec.value < 3 ? 'Думає…' : `Думає… ${thinkingSec.value} с`));
+
 watch(
-  () => chat.entries,
-  () =>
-    void nextTick(() => {
-      const el = logEl.value;
-      if (el) el.scrollTop = el.scrollHeight;
-    }),
-  { deep: true },
+  () => chat.busy,
+  (busy) => {
+    clearInterval(thinkTimer);
+    thinkTimer = undefined;
+    thinkingSec.value = 0;
+    if (!busy) return;
+    const startedAt = Date.now();
+    thinkTimer = setInterval(() => (thinkingSec.value = Math.round((Date.now() - startedAt) / 1000)), 1000);
+    // The «Думає…» line appends below the last entry, so the log has to follow it down.
+    scrollLog();
+  },
 );
+
+onUnmounted(() => clearInterval(thinkTimer));
 
 // PLAN SPEND — the same figure the sidebar shows, folded to the single tightest window.
 // The composer has room for one number, and the number that matters before spending a turn
@@ -568,6 +599,29 @@ const projectColor = computed(() => {
   flex-direction: column;
   gap: var(--k-sp-3);
   padding: var(--k-sp-3);
+}
+
+// The turn in flight. Italic, muted and gently pulsing — the app's one «working» idiom,
+// shared with the agent panel's «Думаю…» (components/kit/KPanel.vue), so a wait reads the
+// same wherever it happens. NOT mono: this is the assistant's own state, not the app
+// reporting an outcome, and the mono rule belongs to `.mgmt__res`.
+.mgmt__think {
+  margin: 0;
+  padding: 0 var(--k-sp-3);
+  font-size: var(--k-fs-xs);
+  font-style: italic;
+  color: var(--k-muted);
+  animation: mgmt-think-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes mgmt-think-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 // What the app did about a turn. A left rule and mono type, so a refusal cannot be skimmed

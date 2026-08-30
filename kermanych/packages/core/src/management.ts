@@ -43,31 +43,26 @@ export interface ManagementSection {
 
 const NOT_BUILT = "розділ ще не реалізований — за ним немає ні екрана, ні сховища даних";
 
-// The assistant has no write path into ANY section yet, which is why nothing here is
-// `read_write`. For the two sections that do have a screen, the limitation says which half
-// is missing — the screen or the connection to it. Both readings matter to the operator:
-// «немає куди писати» and «я не підключений» are different answers to «why not».
-const NO_WRITE_PATH =
-  "розділ працює, але асистент до нього ще не підключений — записати через чат неможливо";
-
 export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
   { name: "management-home", path: "home", label: "Home", hint: "огляд проєкту", capability: "none", limitation: NOT_BUILT },
   { name: "management-storage", path: "storage", label: "Storage", hint: "файли й артефакти", capability: "none", limitation: NOT_BUILT },
-  // The one section with a real store behind it: `project_risks` (threat vs opportunity,
-  // cause·event·consequence, 1-5 probability × impact, PMI response strategies, an
-  // append-only event log). The assistant can DESCRIBE it and must refuse to write it,
-  // because connecting the two is three edits nobody has made yet — flip this row to
-  // `read_write`, add the `risk.create` / `risk.update` action kinds to ./management-actions
-  // with THAT schema's vocabulary (note: it has no `client` or `financial` category, so an
-  // unpaid invoice is `external`), and give the executor in
-  // apps/ui/src/stores/management-chat.ts a branch calling `useRisks().create(projectId, …)`.
+  // The one section the assistant can WRITE, because it is the one section with a real store
+  // behind it: `project_risks` (threat vs opportunity, cause·event·consequence, 1-5
+  // probability × impact, PMI response strategies, an append-only event log). Three pieces
+  // make that true and all three must stay true for this row to say `read_write`:
+  //   * ./management-actions carries `risk.create` / `risk.update` in THAT schema's
+  //     vocabulary (note: it has no `client` or `financial` category — an unpaid invoice is
+  //     `external`);
+  //   * apps/api/src/management/management-prompt.ts prints that vocabulary and the current
+  //     register into the prompt;
+  //   * apps/ui/src/stores/management-chat.ts executes both kinds through `useRisks()`, in
+  //     the browser, under the operator's own JWT — so RLS decides what a member may file.
   {
     name: "management-risks",
     path: "risk-registry",
     label: "Risk Registry",
     hint: "ризики й мітигації",
-    capability: "read",
-    limitation: NO_WRITE_PATH,
+    capability: "read_write",
   },
   { name: "management-releases", path: "release-notes", label: "Release Notes", hint: "зміни по релізах", capability: "none", limitation: NOT_BUILT },
   { name: "management-capacity", path: "team-capacity", label: "Team Capacity", hint: "навантаження команди", capability: "none", limitation: NOT_BUILT },
