@@ -4,7 +4,7 @@
 import type { CloudProject, Task, Workspace } from '@kermanych/cloud';
 
 // The «Не призначено» option's value. '' already means "no filter" throughout the UI
-// (KSelect renders the placeholder as <option value="">), so unassigned needs a
+// (KSelect renders its placeholder as the row whose value is ''), so unassigned needs a
 // sentinel that cannot collide with a uuid.
 export const UNASSIGNED = '\u0000unassigned';
 

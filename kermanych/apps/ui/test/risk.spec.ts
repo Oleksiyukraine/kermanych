@@ -12,7 +12,6 @@ import {
   eventValueLabel,
   filterRisks,
   formatDate,
-  isoDate,
   matrixCounts,
   mitigationGain,
   money,
@@ -317,9 +316,8 @@ describe('dates and money', () => {
     expect(dueLabel('2027-02-28', NOW)).toBe('за 6 міс');
   });
 
-  it('renders today as the value a date input expects', () => {
-    expect(isoDate(Date.parse('2026-01-05T09:00:00'))).toBe('2026-01-05');
-  });
+  // `todayIso` — the other half of this pair — moved to lib/calendar.ts with the date field
+  // that shares it, and is covered by test/calendar.spec.ts.
 
   it('shows money at register zoom', () => {
     expect(money(840)).toBe('$840');

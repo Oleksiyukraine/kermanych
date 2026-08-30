@@ -85,7 +85,11 @@
            justifies the contingency reserve, so the field sits with the score, not in a
            corner. -->
       <div class="rform__row rform__row--3">
-        <KField v-model="draft.proximity" label="Проксіміті — коли може вдарити" type="date" />
+        <KDateField
+          v-model="draft.proximity"
+          label="Проксіміті — коли може вдарити"
+          :now-ms="now"
+        />
         <KField
           v-model="draft.costImpact"
           label="Вартість наслідку, $ (необовʼязково)"
@@ -126,7 +130,7 @@
             :options="members"
             placeholder="— оберіть людину —"
           />
-          <KField v-model="draft.actionDue" label="Дедлайн дій" type="date" />
+          <KDateField v-model="draft.actionDue" label="Дедлайн дій" :now-ms="now" />
         </div>
       </section>
 
@@ -243,6 +247,7 @@ import KModal from 'components/kit/KModal.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
+import KDateField from 'components/kit/KDateField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KTag from 'components/kit/KTag.vue';
 import RiskMatrix from './RiskMatrix.vue';
