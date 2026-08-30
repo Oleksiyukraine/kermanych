@@ -3,6 +3,16 @@
     <div class="k-kanban-card__title">
       <KStatusDot :status="status" />
       <span class="k-kanban-card__name">{{ title }}</span>
+      <!-- Who owns this card, in the one spot the eye scans a Kanban column for it. Always
+           rendered: a face that appears only when assigned makes «нікому» look like «не
+           дочиталося», and the row would reflow as tasks get claimed. -->
+      <KAvatar
+        :name="assignee?.name ?? 'Не призначено'"
+        :avatar-url="assignee?.avatarUrl"
+        :hint="assigneeHint"
+        :empty="!assignee"
+        :size="22"
+      />
     </div>
     <div class="k-kanban-card__branch">{{ branch }}</div>
     <div class="k-kanban-card__meta">{{ project }} · {{ time }}</div>
@@ -10,18 +20,29 @@
 </template>
 
 <script setup lang="ts">
-// Kanban card: a compact session tile for the board — status dot + title,
+// Kanban card: a compact session tile for the board — status dot + title + assignee avatar,
 // mono branch, and a "project · time" meta line (design-system Дошка section).
+import { computed } from 'vue';
 import type { SessionStatus } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
+import KAvatar from './KAvatar.vue';
 
-defineProps<{
+// `assignee` is the resolved person, not an id: the card cannot look one up, and the board
+// already owns that resolution for its filter and its editor. `null` is «не призначено».
+const props = defineProps<{
   title: string;
   branch: string;
   project: string;
   time: string;
   status: SessionStatus;
+  assignee?: { name: string; avatarUrl?: string | undefined } | null;
 }>();
+
+// The picture is the only thing naming the assignee on a card, so the bubble spells out the
+// relation — a bare handle over a task tile could be read as its author.
+const assigneeHint = computed(() =>
+  props.assignee ? `Виконавець: ${props.assignee.name}` : 'Виконавця не призначено',
+);
 
 const emit = defineEmits<{ click: [] }>();
 </script>
@@ -58,6 +79,9 @@ const emit = defineEmits<{ click: [] }>();
 .k-kanban-card__name {
   font-size: var(--k-fs-base);
   font-weight: var(--k-fw-medium);
+  // Claims the row so the avatar is pinned to the right edge, and shrinks (min-width: 0)
+  // rather than pushing the face out of a narrow column.
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

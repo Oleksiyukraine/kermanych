@@ -369,12 +369,16 @@
       <div class="kit__label">07 · Дошка (kanban)</div>
       <div class="kit__kanban">
         <KKanbanColumn label="Беклог" :count="2">
-          <KKanbanCard title="ротація ключів у Keychain" branch="feature/keychain-rotate" project="Backend-core" time="1 дн" status="backlog" />
+          <KKanbanCard title="ротація ключів у Keychain" branch="feature/keychain-rotate" project="Backend-core" time="1 дн" status="backlog" :assignee="{ name: 'oleksii-motornyi' }" />
           <KKanbanCard title="скорочення шляху в топбарі" branch="chore/path-ellipsis" project="FE-kit" time="4 дн" status="backlog" />
         </KKanbanColumn>
         <KKanbanColumn label="В роботі" :count="1">
-          <KKanbanCard title="rate limiting на /v1/messages" branch="feature/rate-limit" project="Backend-core" time="2 хв" status="thinking" />
+          <KKanbanCard title="rate limiting на /v1/messages" branch="feature/rate-limit" project="Backend-core" time="2 хв" status="thinking" :assignee="{ name: 'Дарʼя Ковальчук', avatarUrl: sampleAvatar }" />
         </KKanbanColumn>
+      </div>
+      <div class="kit__caption mono">
+        виконавець — квадратна аватарка праворуч у рядку назви: фото, або ініціали без фото,
+        або пунктирна рамка «—», коли задача нікому не призначена
       </div>
     </section>
 
@@ -574,6 +578,15 @@ const sampleImage =
   '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="110">' +
   '<rect width="180" height="110" fill="%232a2724"/>' +
   '<text x="14" y="60" fill="%238f8b88" font-family="monospace" font-size="11">session.png</text></svg>';
+// Same rule for the assignee's picture: inline SVG, so the face on a card is not one more
+// avatar url that can 404 in a catalogue. A member with no picture (the Беклог card above)
+// falls back to initials, which is the state this one is contrasted against.
+const sampleAvatar =
+  'data:image/svg+xml;utf8,' +
+  '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80">' +
+  '<rect width="80" height="80" fill="%23c4643a"/>' +
+  '<circle cx="40" cy="32" r="14" fill="%23f2e6dc"/>' +
+  '<rect x="14" y="52" width="52" height="30" rx="14" fill="%23f2e6dc"/></svg>';
 const panelLog: TranscriptEntry[] = [
   { kind: 'user_text', id: '0', at: nowMs, text: 'Зведи ротацію токенів в один запит.' },
   {
