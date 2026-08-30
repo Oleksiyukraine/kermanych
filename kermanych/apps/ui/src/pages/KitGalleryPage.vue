@@ -299,6 +299,9 @@
       <div class="kit__row" style="margin-top: var(--k-sp-3)">
         <KSubNav v-model="subNav" :items="subNavItems" aria-label="Демо розділів" />
       </div>
+      <!-- No `icon` here: the leading mark is a MINIFIED-rail affordance, and the layout
+           hides it whenever the labels are on screen. Passing one would document a
+           combination the app never renders. -->
       <div class="kit__sidebar">
         <KNavItem label="Активні" :count="3" :active="navActive === 'active'" @click="navActive = 'active'" />
         <KNavItem label="Задачі" :count="5" :active="navActive === 'tasks'" @click="navActive = 'tasks'" />
