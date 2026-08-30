@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { ProjectRisk } from '@kermanych/cloud';
+import type { WorkspaceRisk } from '@kermanych/cloud';
 import { findRiskByCode, refusalText } from '../src/stores/management-actions';
 
-function risk(code: string): ProjectRisk {
+function risk(code: string): WorkspaceRisk {
   return {
     id: `id-${code}`,
-    projectId: 'p1',
+    workspaceId: 'w1',
     code,
     kind: 'threat',
     category: 'external',
