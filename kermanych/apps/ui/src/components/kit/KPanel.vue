@@ -151,7 +151,8 @@
     <!-- plan lane — present only while the agent keeps a todo list -->
     <KTodoLane :phases="session.todoPhases" />
 
-    <!-- status row — never hidden: model, context, spend, live action -->
+    <!-- status row — never hidden: context budget + what the agent is doing right now. Model
+         and spend belong to the composer's chip row below, printed once. -->
     <KStatusRow :session="session" />
 
     <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎), with the
@@ -160,7 +161,12 @@
       <KComposer
         v-model="draft"
         :placeholder="placeholder"
+        :model="session.model"
+        :effort="session.effort"
+        :worktree="session.worktree"
+        :usage="session.usage"
         @send="(text, images) => emit('send', text, images)"
+        @effort="(level) => emit('effort', level)"
       >
         <template #actions>
           <KIconButton
@@ -196,7 +202,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { Session, RpcExtensionUIResponse, ImageInput } from '@kermanych/core';
+import type { Session, RpcExtensionUIResponse, ImageInput, ThinkingLevel } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KTag from './KTag.vue';
 import KBtn from './KBtn.vue';
@@ -239,6 +245,7 @@ const emit = defineEmits<{
   promoteAgent: [];
   promoteTask: [];
   expandAll: [value: boolean];
+  effort: [level: ThinkingLevel];
 }>();
 
 const draft = ref('');

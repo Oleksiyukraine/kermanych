@@ -130,6 +130,7 @@
           @stop="onStop"
           @delete="onDelete"
           @expand-all="onGalleryExpandAll"
+          @effort="onPanelEffort"
         >
           <KLogBlock v-for="(e, i) in panelLog" :key="i" :entry="e" session-id="kit-demo" :expand-all="galleryExpandAll" />
         </KPanel>
@@ -395,7 +396,15 @@
     <!-- composer -->
     <section class="kit__section">
       <div class="kit__label">09 · Композер</div>
-      <KComposer v-model="composerDraft" model="opus-5" :worktree="true" :token-count="31600" @send="() => {}" />
+      <KComposer
+        v-model="composerDraft"
+        model="opus-5"
+        :effort="composerEffort"
+        :worktree="true"
+        :usage="{ input: 18_400, output: 9_200, cacheRead: 214_000, cacheWrite: 620, cost: 0.62 }"
+        @send="() => {}"
+        @effort="(level) => (composerEffort = level)"
+      />
     </section>
 
     <!-- file diff -->
@@ -420,7 +429,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import type {
-  SessionStatus, Session, TranscriptEntry, RpcExtensionUIResponse, Usage,
+  SessionStatus, Session, TranscriptEntry, RpcExtensionUIResponse, ThinkingLevel, Usage,
 } from '@kermanych/core';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import KBtn from 'components/kit/KBtn.vue';
@@ -473,6 +482,9 @@ const detailTabs = [
   { value: 'session', label: 'Сесія' },
 ];
 const composerDraft = ref('');
+// The gallery has no session behind the chip, so the pick is held locally — the point here is
+// that the menu opens upward inside the row and reports the level it landed on.
+const composerEffort = ref<ThinkingLevel>('high');
 const diffOpen = ref(true);
 // Every row shape at once: context, a paired replacement, a one-sided addition and a
 // one-sided removal — the four cases the two columns have to keep aligned.
@@ -540,7 +552,7 @@ function mkSession(over: Partial<Session>): Session {
     worktreePath: '', worktree: true, branch: 'main', kind: 'agent', status: 'thinking', createdAt: now, lastActivityAt: now, ...over,
   };
 }
-const runningSession = mkSession({ id: 's1', status: 'thinking', branch: 'main', model: 'opus-5', contextPercent: 42, usage: { input: 18_400, output: 9_200, cacheRead: 1_240_000, cacheWrite: 62_000, cost: 3.18 } });
+const runningSession = mkSession({ id: 's1', status: 'thinking', branch: 'main', model: 'opus-5', effort: 'high', contextPercent: 42, usage: { input: 18_400, output: 9_200, cacheRead: 1_240_000, cacheWrite: 62_000, cost: 3.18 } });
 const stalledSession = mkSession({ id: 's3', status: 'thinking', branch: 'feat/wedged', lastEventAt: Date.now() - 90_000 });
 const waitingSession = mkSession({
   id: 's2', status: 'waiting_input', branch: 'feat/schema',
@@ -730,6 +742,10 @@ function onAnswer(res: RpcExtensionUIResponse) { lastAction.value = `answer: ${J
 function onStop() { lastAction.value = 'stop'; }
 function onDelete() { lastAction.value = 'delete'; }
 function onRestart() { lastAction.value = 'restart'; }
+// The panel demo carries a live effort chip, so the pick is reported like every other action
+// here: these sample sessions are plain objects, and a chip that swallowed the choice would
+// be showing a control that does nothing.
+function onPanelEffort(level: ThinkingLevel) { lastAction.value = `effort: ${level}`; }
 </script>
 
 <style scoped lang="scss">

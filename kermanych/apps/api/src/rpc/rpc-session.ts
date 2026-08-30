@@ -2,11 +2,12 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { LineSplitter, ChunkReassembler } from "@kermanych/core";
-import type { RpcEvent, RpcExtensionUIResponse, TodoPhase, ImageInput } from "@kermanych/core";
+import type { RpcEvent, RpcExtensionUIResponse, TodoPhase, ImageInput, ThinkingLevel } from "@kermanych/core";
 
 export interface RpcStateData {
   isStreaming: boolean; contextUsage?: { percent: number };
-  model?: { provider: string; id: string }; sessionId?: string; sessionFile?: string; todoPhases?: TodoPhase[];
+  model?: { provider: string; id: string }; thinkingLevel?: ThinkingLevel;
+  sessionId?: string; sessionFile?: string; todoPhases?: TodoPhase[];
 }
 
 interface RpcResponseFrame {
@@ -36,7 +37,7 @@ export class RpcSession {
   // transcript work exists to remove, so the count is kept and each loss is announced.
   droppedFrames = 0;
   private seq = 0;
-  constructor(private opts: { cwd: string; model?: string; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; commandTimeoutMs?: number; configPath?: string }) {}
+  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; commandTimeoutMs?: number; configPath?: string }) {}
 
   onEvent(cb: (e: RpcEvent) => void) { this.eventCbs.push(cb); }
   onExit(cb: (code: number | null, reason: string) => void) { this.exitCbs.push(cb); }
@@ -49,6 +50,9 @@ export class RpcSession {
     // no RPC command can add skills to a running child.
     if (this.opts.configPath) argv.push("--config", this.opts.configPath);
     if (this.opts.model) argv.push("--model", this.opts.model);
+    // Reasoning effort at spawn. omp keeps it as session state, so this is the opening value
+    // only — `setThinkingLevel` retunes the same child later without a respawn.
+    if (this.opts.thinking) argv.push("--thinking", this.opts.thinking);
     if (this.opts.fork) argv.push("--fork", this.opts.fork);
     if (this.opts.noTools) argv.push("--no-tools");
     if (this.opts.tools?.length) argv.push("--tools", this.opts.tools.join(","));
@@ -146,6 +150,14 @@ export class RpcSession {
   async switchSession(sessionPath: string): Promise<void> {
     const r = await this.command("switch_session", { sessionPath });
     if (!r.success) throw new Error(r.error ?? "switch_session failed");
+  }
+
+  // Retune a live child's reasoning effort. omp models effort as session state rather than a
+  // per-prompt argument, so this is a command in its own right and takes effect from the next
+  // turn on; `get_state` then reports the new level back.
+  async setThinkingLevel(level: ThinkingLevel): Promise<void> {
+    const r = await this.command("set_thinking_level", { level });
+    if (!r.success) throw new Error(r.error ?? "set_thinking_level failed");
   }
 
   // Drain the paged message history (used to rehydrate a resumed session's transcript).

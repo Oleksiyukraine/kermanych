@@ -13,6 +13,7 @@ import type {
   SubscriptionUsage,
   TaskDraft,
   TranscriptEntry,
+  ThinkingLevel,
   ToolLine,
   RpcExtensionUIResponse,
 } from '@kermanych/core';
@@ -198,6 +199,9 @@ export const api = {
 
   sendMessage: (id: string, text: string, mode: MessageMode, images?: ImageInput[]): Promise<unknown> =>
     post(`/sessions/${id}/message`, { text, mode, images }),
+
+  setEffort: (id: string, level: ThinkingLevel): Promise<Session> =>
+    post<Session>(`/sessions/${id}/effort`, { level }),
 
   answerUi: (id: string, res: RpcExtensionUIResponse): Promise<unknown> =>
     post(`/sessions/${id}/answer`, { res }),

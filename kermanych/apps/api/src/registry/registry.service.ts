@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
+import { isThinkingLevel } from "@kermanych/core";
 import type { Project, Session, SessionStatus, Usage } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
@@ -151,6 +152,14 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: the reasoning effort omp runs the session at. Launch config for a
+    // backlog row (`omp --thinking`) and live state for a running one (`set_thinking_level`),
+    // which is why it is one column rather than a field of the task draft only.
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN effort TEXT`);
+    } catch {
+      /* column already exists */
+    }
     // The first index in this schema: listSessions(projectId) filters on project_id on
     // every board render and every supervisor lookup.
     this.db.exec(`CREATE INDEX IF NOT EXISTS sessions_project_idx ON sessions (project_id)`);
@@ -242,14 +251,16 @@ export class RegistryService {
   }
 
   listSessions(projectId?: string): Session[] {
-    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, status, archived, usage, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
+    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, effort, status, archived, usage, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
     const rows = (
       projectId
         ? this.db.prepare(sql + ` WHERE project_id = ? ORDER BY created_at`).all(projectId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as (Omit<Session, "archived" | "worktree" | "usage"> & { archived: number; worktree: number; usage: string | null })[];
-    // SQLite stores the flag as 0/1; hand callers a real boolean.
-    return rows.map((r) => ({ ...r, archived: r.archived !== 0, worktree: r.worktree !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, usage: readUsage(r.usage) }));
+    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort"> & { archived: number; worktree: number; usage: string | null; effort: string | null })[];
+    // SQLite stores the flag as 0/1; hand callers a real boolean. `effort` is validated rather
+    // than cast: a row written by an older build (or by hand) must degrade to "not known" —
+    // typing an unknown word as a ThinkingLevel would send it straight back into omp's argv.
+    return rows.map((r) => ({ ...r, archived: r.archived !== 0, worktree: r.worktree !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) }));
   }
 
   createSession(
@@ -272,7 +283,7 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, platform, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, platform, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id,
@@ -291,6 +302,7 @@ export class RegistryService {
         row.model ?? null,
         row.prefix ?? null,
         row.platform ?? null,
+        row.effort ?? null,
         row.status,
         row.createdAt,
         row.lastActivityAt,
@@ -306,7 +318,7 @@ export class RegistryService {
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, platform=?, status=?, archived=? WHERE id=?`,
+        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, platform=?, effort=?, status=?, archived=? WHERE id=?`,
       )
       .run(
         next.projectId,
@@ -323,6 +335,7 @@ export class RegistryService {
         next.model ?? null,
         next.prefix ?? null,
         next.platform ?? null,
+        next.effort ?? null,
         next.status,
         next.archived ? 1 : 0,
         id,
