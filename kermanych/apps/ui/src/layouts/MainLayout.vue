@@ -2,7 +2,7 @@
   <q-layout view="hHh Lpr fFf" class="shell">
     <!-- LEFT SIDEBAR — bucket nav + projects + folder binding + account (v3 section 07) -->
     <q-drawer model-value side="left" :width="collapsed ? 76 : 264" :breakpoint="0" class="shell__sidebar">
-      <div class="shell__side-inner" :class="{ 'shell--min': collapsed }">
+      <div class="shell__side-inner" :class="{ 'shell--min': minified }">
         <nav class="shell__buckets">
           <KNavItem
             v-for="b in buckets"
@@ -10,7 +10,7 @@
             :label="b.label"
             :icon="b.icon"
             :count="bucketCounts[b.key]"
-            :tip="collapsed ? b.label : undefined"
+            :tip="minified ? b.label : undefined"
             :active="store.selectedBucket === b.key"
             @click="onBucket(b.key)"
           />
@@ -556,7 +556,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import type { SessionStatus, EnvFileView } from '@kermanych/core';
 import type { WorkspaceMember } from '@kermanych/cloud';
@@ -602,6 +602,28 @@ const router = useRouter();
 const collapsed = ref(localStorage.getItem('kermanych.sidebar-collapsed') === '1');
 watch(collapsed, (v) => localStorage.setItem('kermanych.sidebar-collapsed', v ? '1' : '0'));
 
+// The rail's WIDTH tweens (css/app.scss transitions the drawer's inline width), but the
+// content swap between labels and icons is a `display` switch that no transition can carry,
+// so the two are deliberately out of phase. `minified` LEADS a collapse — the labels leave
+// before the box narrows, or they would be clipped and reflowed inside a 76px column on the
+// way down — and LAGS an expansion, returning once there is room for them and fading in
+// (see the shell-reveal animation). One timer, cleared on re-entry, because a second click
+// mid-flight must not later minify a sidebar the operator has re-opened.
+const REVEAL_MS = 160;
+const minified = ref(collapsed.value);
+let revealTimer: ReturnType<typeof setTimeout> | undefined;
+watch(collapsed, (v) => {
+  clearTimeout(revealTimer);
+  if (v) {
+    minified.value = true;
+    return;
+  }
+  revealTimer = setTimeout(() => {
+    minified.value = false;
+  }, REVEAL_MS);
+});
+onBeforeUnmount(() => clearTimeout(revealTimer));
+
 // Which workspace groups are FOLDED. Stored as a list of ids because a Set does not
 // survive JSON, and stored at all because a fold the reload undoes is not a fold. Absent
 // from the list means expanded, so a workspace created on another machine — or one this
@@ -634,8 +656,11 @@ function isFolded(id: string): boolean {
 // controls in that column — so a group folded at full width would sit there with no
 // affordance to open it and its projects would be unreachable until the sidebar is widened.
 // The rail's job is a dense list of everything, not a navigable tree.
+//
+// Keyed on `minified`, not `collapsed`: this decides which ROWS render, and rows must appear
+// and disappear in step with the styling that shapes them, not one animation frame apart.
 function isExpanded(id: string): boolean {
-  return collapsed.value || !isFolded(id);
+  return minified.value || !isFolded(id);
 }
 
 // The ONE place the folded set is written, so the toggle and the selection watcher below
@@ -1808,6 +1833,56 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
 .shell--min :deep(.k-rail--indent) {
   margin-left: 0;
   width: 100%;
+}
+
+// The return of the labels. Everything the rail hides is hidden with `display: none`, which
+// no transition can tween, so the way back is an ENTRANCE animation: it plays the frame the
+// `shell--min` class is dropped — 160ms into the width tween, when the column is already
+// wide enough to hold a label — and never again while the sidebar sits open. The collapse
+// needs no counterpart: `minified` flips first there, so the labels are gone before the box
+// starts narrowing and there is nothing left to fade.
+@keyframes shell-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.shell__side-inner:not(.shell--min) {
+  .shell__side-label,
+  .shell__account-meta,
+  :deep(.k-nav-item__text),
+  :deep(.k-count),
+  :deep(.k-rail__name),
+  :deep(.k-rail__agents),
+  :deep(.k-ws__name),
+  :deep(.k-ws__count),
+  :deep(.k-ws__chevron),
+  :deep(.k-ws__add) {
+    animation: shell-reveal 0.14s ease-out;
+  }
+}
+// The row chrome itself does tween: padding and the indent are real lengths, so the marks
+// glide to their centred rail positions instead of jumping there a frame before the box does.
+:deep(.k-nav-item),
+:deep(.k-rail) {
+  transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+:deep(.k-rail--indent) {
+  transition:
+    padding 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .shell__side-inner:not(.shell--min) :deep(*) {
+    animation: none;
+  }
+  :deep(.k-nav-item),
+  :deep(.k-rail),
+  :deep(.k-rail--indent) {
+    transition: none;
+  }
 }
 
 .shell__buckets {
