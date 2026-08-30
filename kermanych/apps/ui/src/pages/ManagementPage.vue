@@ -57,15 +57,17 @@
           <router-view :project-id="projectId" :project-name="projectName" />
         </div>
 
-        <!-- The Менеджмент assistant, docked to the foot of the section pane like the chat
-             composer: the section's content owns the space above it, the input keeps the
-             pane's bottom edge whatever the section renders. The transcript hangs ABOVE the
-             pill (`bottom: 100%`) rather than pushing it, so the section never reflows as
-             the conversation grows — a chat that moves the register it is describing is
-             unusable. Centred rather than stretched: a capsule pulled across a 1400px
-             window reads as a toolbar and puts its controls a screen away from the text they
-             belong to. Frosted over the page's glow layer, which is why `.mgmt__atmo` exists
-             rather than a flat canvas — glass needs a substrate to bend. -->
+        <!-- The Менеджмент assistant, FLOATING over the section pane rather than sitting in
+             its column: the dock is absolutely positioned at the pane's foot, so section
+             content passes BEHIND the frosted pill instead of stopping above it — which is
+             also what finally makes the frost mean something, since it now blurs the register
+             underneath. `.mgmt__body` keeps a bottom pad so the last row of a section can
+             still be read clear of the pill. The transcript hangs ABOVE the pill
+             (`bottom: 100%`) rather than pushing it, so nothing reflows as the conversation
+             grows. Centred rather than stretched: a capsule pulled across a 1400px window
+             reads as a toolbar and puts its controls a screen away from the text they belong
+             to. Frosted over the page's glow layer, which is why `.mgmt__atmo` exists rather
+             than a flat canvas — glass needs a substrate to bend. -->
         <div class="mgmt__dock">
           <section
             v-if="chat.hasConversation"
@@ -104,21 +106,13 @@
             aria-label="Асистент менеджменту"
             @submit.prevent="submit"
           >
-            <button
-              v-tip="'Новий чат'"
-              class="mgmt__c-icon"
-              type="button"
-              :disabled="!chat.hasConversation || chat.busy"
-              aria-label="Новий чат"
-              @click="chat.reset()"
-            >⊞</button>
             <textarea
               ref="fieldEl"
               v-model="draft"
               class="mgmt__c-input"
               rows="1"
               :disabled="chat.busy"
-              placeholder="Запитайте про менеджмент цього воркспейсу — ризики, статуси, рішення"
+              placeholder="Запитайте про менеджмент — ризики, статуси, рішення"
               aria-label="Повідомлення асистенту менеджменту"
               @input="autoGrow"
               @keydown="onKeydown"
@@ -353,11 +347,7 @@ const projectColor = computed(() => {
 
 // Everything above the glow.
 .mgmt__rail,
-.mgmt__pane,
-// `.mgmt__dock` is here for its `position: relative` as much as its layer: the transcript
-// above it is absolutely positioned against this box (`bottom: 100%`), and without a
-// positioned dock it would anchor to `.mgmt` and hang over the rail.
-.mgmt__dock {
+.mgmt__pane {
   position: relative;
   z-index: 1;
 }
@@ -478,21 +468,31 @@ const projectColor = computed(() => {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  // Room for the floating pill at the foot: content scrolls BEHIND it, but the last row of
+  // a section must still be readable once scrolled to the end. 52px of pill + its 16px
+  // offset, less the 16px of pane padding the body already ends above, plus 8px of air.
+  padding-bottom: 60px;
 }
 
 // ── Assistant dock — the frosted capsule and the transcript above it ─────────
-// The dock is what the page's foot reserves: the pill, and a positioning context for a
-// transcript that must NOT take part in the column's layout. Anchoring the log to the dock
-// (rather than making it a flex sibling) is why the section above keeps its geometry as the
-// conversation grows — a chat that reflows the screen it is describing is unusable.
+// The dock does not sit IN the pane's column, it floats over it: absolutely positioned at
+// the pane's foot so the section's own content passes behind the glass rather than being
+// pushed above it. It is also the positioning context for the transcript (`bottom: 100%`),
+// which is why the section keeps its geometry as the conversation grows — a chat that
+// reflows the screen it is describing is unusable.
 .mgmt__dock {
-  flex: none;
+  position: absolute;
   // Centred on the pane's foot, not stretched across it: a capsule pulled to the
   // full width of a 1400px window reads as a toolbar, and its trailing controls
   // end up a screen away from the text they belong to. Capped at a comfortable
   // measure and centred, it stays a single object.
-  align-self: center;
-  width: min(680px, 100%);
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: var(--k-sp-4);
+  // The containing block is the pane's PADDING box, so the pane's own side padding has to
+  // be subtracted here or the pill would run under its border on a narrow window.
+  width: min(680px, calc(100% - var(--k-sp-5) * 2));
+  z-index: 2;
 }
 
 // The same frost recipe as the pill — one glass object split in two, not two materials —
@@ -602,7 +602,9 @@ const projectColor = computed(() => {
   // the baseline of the last one, the way they sit on the only line of a single-line pill.
   align-items: flex-end;
   gap: var(--k-sp-2);
-  padding: 7px 7px 7px var(--k-sp-3);
+  // Left pad set optically against the stadium's own radius now that no icon sits inside
+  // the curve: at 12px the text started inside the corner's sweep.
+  padding: 7px 7px 7px var(--k-sp-5);
   // Frosted, not see-through: a heavy blur under a mostly-opaque surface tint,
   // so text stays readable while the glow behind still bleeds through the edges.
   background: color-mix(in srgb, var(--k-surface) 74%, transparent);
@@ -624,6 +626,11 @@ const projectColor = computed(() => {
 .mgmt__c-input {
   flex: 1;
   min-width: 0;
+  // Centred against the row's tallest control (the 36px send disc) while the field is one
+  // line high, so the placeholder and the first line of text sit on the pill's middle
+  // instead of 3px below it. Once the field outgrows the disc it IS the tallest item and
+  // this has no effect — the composer's `flex-end` then puts the controls on its last line.
+  align-self: center;
   // The height is written by autoGrow(); this is the floor it starts from and returns to.
   height: 30px;
   max-height: 132px;
@@ -672,35 +679,6 @@ const projectColor = computed(() => {
   border: var(--k-rule-thin) solid var(--k-line);
   border-radius: var(--k-r-pill);
   white-space: nowrap;
-}
-
-.mgmt__c-icon {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  appearance: none;
-  border: none;
-  border-radius: var(--k-r-pill);
-  background: transparent;
-  color: var(--k-muted);
-  font-size: 17px;
-  line-height: 1;
-  transition:
-    color 0.16s ease,
-    background 0.16s ease;
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.72;
-  }
-
-  &:not(:disabled):hover {
-    color: var(--k-text);
-    background: color-mix(in srgb, var(--k-surface2) 70%, transparent);
-  }
 }
 
 // The one loud element, exactly as in the reference: a filled accent disc.
