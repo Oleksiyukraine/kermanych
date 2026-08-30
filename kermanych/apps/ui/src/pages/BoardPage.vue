@@ -136,21 +136,26 @@
           />
         </div>
         <KField v-model="draftBranch" label="Базова гілка" placeholder="за замовчуванням проєкту" />
+        <!-- The label is hoisted OUT of KSelect so the avatar can be centred on the
+             control itself: inside the component the label and the input are one column,
+             and centring the face on that column parks it in the gap between them. -->
         <div v-if="editingTask" class="board__assign">
-          <KAvatar
-            :name="editingAssignee?.name ?? 'Не призначено'"
-            :avatar-url="editingAssignee?.avatarUrl"
-            :empty="!editingAssignee"
-            :size="26"
-          />
-          <KSelect
-            label="Виконавець"
-            :model-value="editingTask.assigneeId ?? ''"
-            :options="editorAssigneeOptions"
-            placeholder="не призначено"
-            :disabled="isActiveTask(editingTask)"
-            @update:model-value="(id: string) => onAssign(editingTask!, id)"
-          />
+          <span class="board__assign-label">Виконавець</span>
+          <div class="board__assign-row">
+            <KAvatar
+              :name="editingAssignee?.name ?? 'Не призначено'"
+              :avatar-url="editingAssignee?.avatarUrl"
+              :empty="!editingAssignee"
+              :size="26"
+            />
+            <KSelect
+              :model-value="editingTask.assigneeId ?? ''"
+              :options="editorAssigneeOptions"
+              placeholder="не призначено"
+              :disabled="isActiveTask(editingTask)"
+              @update:model-value="(id: string) => onAssign(editingTask!, id)"
+            />
+          </div>
         </div>
         <p v-if="editingTask && isStale(editingTask)" class="board__stale-note mono" role="alert">
           ⚠ Давно без змін — машина виконавця, схоже, офлайн.
@@ -1103,6 +1108,18 @@ function onDelete(task: Task): void {
 }
 
 .board__assign {
+  display: flex;
+  flex-direction: column;
+  /* Same label-to-control gap KSelect uses, so a hoisted label sits where its own would. */
+  gap: 6px;
+}
+
+.board__assign-label {
+  font-size: 13px;
+  color: var(--k-text);
+}
+
+.board__assign-row {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
