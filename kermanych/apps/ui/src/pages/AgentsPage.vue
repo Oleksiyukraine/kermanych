@@ -1891,13 +1891,16 @@ async function submitPreviewConfig(): Promise<void> {
 }
 
 // ── Detail column ─────────────────────────────────────────────────────────
+// No top padding, unlike the board next to it: the first thing in this column is a title
+// bar with its own rule, and 16px of background above it read as slack in the bar rather
+// than as a margin — the title and the ✕ then sit low in a 50px strip instead of centred
+// in a 34px one. The bar is flush with the column's top edge and centres its own content.
 .agents__detail {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  padding-top: var(--k-sp-4);
 }
 
 .agents__detail-blank {
