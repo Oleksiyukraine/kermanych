@@ -236,6 +236,12 @@ const projectColor = computed(() => {
 }
 
 // The section's own content, centred in whatever space the docked composer leaves.
+//
+// `safe center`, not plain `center`: a section taller than the frame — Risk Registry with a
+// full register — is centred INTO its own overflow by plain centering, and the part above
+// the top edge cannot be scrolled back to, because scrollTop 0 is already past it. `safe`
+// keeps the centring for the short sections and falls back to flex-start the moment the
+// child stops fitting, which is the only state where centring was never what was wanted.
 .mgmt__body {
   flex: 1;
   min-height: 0;
@@ -243,7 +249,7 @@ const projectColor = computed(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: safe center;
   gap: var(--k-sp-5);
 }
 
