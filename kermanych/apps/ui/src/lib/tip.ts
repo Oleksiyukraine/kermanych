@@ -20,8 +20,9 @@ import type { Directive } from 'vue';
 // skips the delay.
 const HOVER_DELAY_MS = 120;
 // Offset from the control's edge, and the minimum breathing room at the viewport
-// border once the bubble is clamped.
-const GAP_PX = 6;
+// border once the bubble is clamped. 8, not the bubble's old 6: the glass bubble
+// casts a shadow now, and a cast that touches its trigger reads as a seam.
+const GAP_PX = 8;
 
 let bubble: HTMLElement | null = null;
 let host: HTMLElement | null = null;
@@ -65,8 +66,12 @@ function place(el: HTMLElement, tip: HTMLElement): void {
   const left = Math.min(Math.max(r.right - w, GAP_PX), Math.max(maxLeft, GAP_PX));
 
   const below = r.bottom + GAP_PX;
-  const top = below + h > window.innerHeight - GAP_PX ? r.top - h - GAP_PX : below;
+  const flip = below + h > window.innerHeight - GAP_PX;
+  const top = flip ? r.top - h - GAP_PX : below;
 
+  // The entrance slide has to travel TOWARDS the control, so the stylesheet
+  // needs to know which way the bubble ended up facing (src/css/app.scss).
+  tip.dataset.side = flip ? 'top' : 'bottom';
   tip.style.left = `${Math.round(left)}px`;
   tip.style.top = `${Math.round(top)}px`;
 }
@@ -81,6 +86,10 @@ function show(el: HTMLElement): void {
   // Measured before it is shown: the resting style is `visibility: hidden`, not
   // `display: none`, so the box is already laid out here.
   place(el, tip);
+  // Flush the resting frame — new position AND the `data-side` rest offset — before
+  // the reveal. Without it, a bubble that flips sides between two shows would start
+  // its slide from the previous side's offset and travel AWAY from its control.
+  void tip.offsetHeight;
   tip.classList.add('k-tip--on');
 }
 

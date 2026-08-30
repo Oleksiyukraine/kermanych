@@ -207,8 +207,8 @@
             </div>
             <div class="agents__meta-row">
               <dt
+                v-tip="SKILLS_HINT"
                 class="agents__meta-label"
-                title="Скіли з усього завантаженого транскрипту цієї сесії — разом із турами, перебраними від батька, якщо гілку відгалужено. Скіл, узятий субагентом, тут не видно."
               >Скіли</dt>
               <dd class="agents__meta-value mono">{{ usedSkills.join(', ') || '—' }}</dd>
             </div>
@@ -776,6 +776,11 @@ const BIND_HINT = 'Прив’яжіть локальну теку репози�
 // row carries exactly one projectId. Rendered as visible text beside the disabled button, not
 // as its tooltip — see the template.
 const PICK_PROJECT_HINT = 'Нова задача належить одному проєкту — виберіть проєкт у лівій панелі.';
+// The one explanatory bubble in the meta list. `v-tip`, not the native `title` it used to
+// be: that one drew the OS rectangle after a ~1s delay, the single square bubble left in a
+// rounded UI. A <dt> is neither focusable nor disabled, so the directive fires on it.
+const SKILLS_HINT =
+  'Скіли з усього завантаженого транскрипту цієї сесії — разом із турами, перебраними від батька, якщо гілку відгалужено. Скіл, узятий субагентом, тут не видно.';
 const isBound = computed(() => !!launchProject.value?.localRepoPath);
 
 // Row-level check: the board can show sessions of an orphan project whose row is still here
