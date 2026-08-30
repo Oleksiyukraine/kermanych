@@ -50,7 +50,14 @@
               :usage="s.usage"
               :selected="store.selectedSessionId === s.id"
               @click="onRowClick(s)"
-            />
+            >
+              <!-- A backlog task's card is the only place it exists: clicking it opens the
+                   launcher to edit it, and it has no detail panel to carry a delete. Without
+                   this the Задачі bucket is append-only. -->
+              <template v-if="s.kind === 'task'" #actions>
+                <KIconButton title="Видалити задачу" @click.stop="onDeleteTask(s)">✕</KIconButton>
+              </template>
+            </KSessionCard>
           </template>
         </div>
         <div v-else class="agents__empty mono">{{ emptyText }}</div>
