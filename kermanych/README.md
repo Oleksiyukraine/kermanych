@@ -395,3 +395,60 @@ everyone else, and refuses even the owner any status other than `stopped`. It on
 corrects the board — it
 cannot stop a session on a machine you do not control, and if that machine is still alive
 it will simply push its real status again.
+
+## The Менеджмент tab and its assistant
+
+Менеджмент is the non-code half of the product: six project-scoped sections
+(`packages/core/src/management.ts` is the one table that names them) plus a chat
+field docked to the foot of the page.
+
+That field is a real assistant, and it is deliberately narrow:
+
+- **It only touches Менеджмент.** Its tools are the read-only subset
+  (`read`, `grep`, `glob`) — it can look at your repositories but it cannot edit a
+  file, create a branch or start a session. The only writes it could ever perform are
+  the ones the section table marks `read_write`, and in this branch no section is:
+  the assistant reads, explains and refuses, and says which it is doing.
+- **It spends the same subscription your agents spend.** It runs through the same
+  `omp` on your PATH, the same provider account and the same plan; there is no second
+  key to configure and no separate budget. The mono pill on the right of the field is
+  that plan's tightest rolling window, read from `omp usage` — the same figure the
+  sidebar shows.
+- **It knows the whole workspace, not just the open project.** Every turn carries the
+  repositories of the scoped Воркспейс — name, remote, default branch, conventions and
+  the local path where each is bound on this machine — so «which of our repos does this
+  affect» is answerable. Unbound projects are listed as unbound rather than guessed at.
+- **It says why when it cannot act.** Ask it to change Release Notes and it refuses
+  with that section's stated limitation. The refusal is not the model being polite: the
+  model reports only WHICH section was asked for, and the sentence you read is looked
+  up in the section table by the app (`ManagementAction` `unsupported`,
+  `packages/core/src/management-actions.ts`). A model that would rather agree with you
+  cannot make that sentence disappear.
+
+### Giving it a section it can write
+
+The chat has no write path of its own on purpose. Adding one is three edits, and they
+belong to the branch that owns the screen being written to:
+
+1. flip that section's row in `packages/core/src/management.ts` to `capability:
+   "read_write"` and drop its `limitation`;
+2. add the action kind to `ManagementAction` in
+   `packages/core/src/management-actions.ts`, with the vocabulary that section's table
+   actually enforces — `validateManagementAction` is what stops the model inventing a
+   value the database would reject;
+3. give the executor in `apps/ui/src/stores/management-chat.ts` a branch for it.
+
+Step 3 stays in the **browser**, under your own JWT — the API must never gain a write
+path of its own. That is what makes RLS, rather than trust in the model, the thing that
+decides what lands: an action aimed at a project you are not a member of is refused by
+Postgres. The app refuses earlier too, and twice: an action block that does not
+type-check is reported in the chat and never executed, and an unknown `kind` is named
+back to you instead of silently dropped.
+
+### Its conversation
+
+One conversation per project (`management:<projectId>`), held open as a git-free `omp`
+child in the project's directory — no worktree, no branch, no row on the Агенти board.
+Switching project in the sidebar switches conversation; «Новий чат» drops the child so
+the next question starts from nothing. An idle conversation is stopped after a while,
+and the next message simply spawns a fresh one.

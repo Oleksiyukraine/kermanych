@@ -6,6 +6,7 @@ import { SessionsController } from "./http/sessions.controller";
 import { FsController } from "./http/fs.controller";
 import { UsageController } from "./http/usage.controller";
 import { SkillsController } from "./http/skills.controller";
+import { ManagementController } from "./http/management.controller";
 import { RegistryService } from "./registry/registry.service";
 import { WorktreeService } from "./worktree/worktree.service";
 import { SupervisorService } from "./supervisor/supervisor.service";
@@ -18,14 +19,19 @@ import { SupabaseAuthGuard } from "./auth/auth.guard";
 import { CloudController } from "./cloud/cloud.controller";
 import { CloudSyncService } from "./cloud/cloud-sync.service";
 import { SkillsService } from "./skills/skills.service";
+import { ManagementChatService } from "./management/management-chat.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
     AuthService,
     SkillsService,
+    // The Менеджмент assistant. Depends on RegistryService alone: it resolves the scoped
+    // workspace's local repo paths and drives its own omp children, and it deliberately
+    // knows nothing about SupervisorService — this chat has no session, branch or worktree.
+    ManagementChatService,
     // Dependency direction, stated once: CloudSyncService → { SupervisorService,
     // RegistryService, AuthService }. The supervisor never knows the mirror exists — it is
     // a pure `events$` subscriber, like EventsGateway.
