@@ -41,7 +41,9 @@ withDefaults(
     label: string;
     count?: number;
     active?: boolean;
-    icon?: KIconName;
+    // `| undefined` (like `tip` below) because the Менеджмент rail passes a MAP LOOKUP:
+    // under `exactOptionalPropertyTypes` an absent key is `undefined`, not an absent prop.
+    icon?: KIconName | undefined;
     hint?: string;
     tip?: string | undefined;
   }>(),

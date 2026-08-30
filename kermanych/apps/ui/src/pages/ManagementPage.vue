@@ -30,6 +30,7 @@
           v-for="s in MANAGEMENT_SECTIONS"
           :key="s.name"
           :label="s.label"
+          :icon="SECTION_ICONS[s.name]"
           :hint="s.hint"
           :active="s.name === activeSection"
           :aria-current="s.name === activeSection ? 'page' : undefined"
@@ -168,6 +169,7 @@ import { useManagementChat } from 'stores/management-chat';
 // The rail's row component, shared with the shell's bucket rail — it is what renders the
 // `hint` second line. KSubNav is gone from this page with the horizontal strip it drove.
 import KNavItem from 'components/kit/KNavItem.vue';
+import { type KIconName } from 'components/kit/KIcon.vue';
 import KChatMessage from 'components/kit/KChatMessage.vue';
 import { renderMarkdown } from '../lib/markdown';
 import { percent, planWindow } from '../lib/format';
@@ -189,6 +191,22 @@ const sectionLabel = computed(
 function goSection(name: string): void {
   if (route.name !== name) void router.push({ name });
 }
+
+// The rail's marks, keyed by route name. They live HERE and not in @kermanych/core's section
+// table for the same reason the section's component does not live there either
+// (router/routes.ts `SECTION_PAGES`): the table is shared with the api, which builds the
+// assistant's prompt from it and has no business knowing what a row looks like. A section
+// missing from this map still renders — `icon` is optional on KNavItem — it just renders
+// without a mark, which is the correct failure: a new section appears in the rail the moment
+// core lists it, and picking its mark is a separate, deliberate edit.
+const SECTION_ICONS: Record<string, KIconName> = {
+  'management-home': 'home',
+  'management-storage': 'storage',
+  'management-risks': 'risks',
+  'management-releases': 'releases',
+  'management-capacity': 'capacity',
+  'management-integrations': 'integrations',
+};
 
 const workspaceId = computed(() => store.selectedWorkspaceId);
 
