@@ -20,6 +20,15 @@ export type {
   TriggerSource,
   ProjectTrigger,
   ProjectTriggerInsert,
+  RiskKind,
+  RiskCategory,
+  RiskResponse,
+  RiskStatus,
+  RiskEventKind,
+  WorkspaceRisk,
+  WorkspaceRiskInsert,
+  WorkspaceRiskPatch,
+  WorkspaceRiskEvent,
 } from "./types";
 
 export type { SupabaseClient, CloudEnv, CloudClientOptions } from "./client";
@@ -62,6 +71,9 @@ export {
   pushTaskStatus,
   forceStopTask,
   deleteTask,
+  uploadTaskImages,
+  signedTaskImageUrls,
+  TASK_IMAGE_BUCKET,
   REALTIME_IN_FILTER_MAX,
   tasksFilter,
   subscribeTasks,
@@ -82,3 +94,13 @@ export {
 } from "./agent-skills";
 
 export { toTrigger, listTriggers, upsertTrigger, deleteTrigger } from "./triggers";
+
+export {
+  toWorkspaceRisk,
+  toWorkspaceRiskEvent,
+  toRiskRow,
+  listWorkspaceRisks,
+  createWorkspaceRisk,
+  patchWorkspaceRisk,
+  listRiskEvents,
+} from "./risks";

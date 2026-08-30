@@ -2,7 +2,7 @@
   <q-layout view="hHh Lpr fFf" class="shell">
     <!-- LEFT SIDEBAR — bucket nav + projects + folder binding + account (v3 section 07) -->
     <q-drawer model-value side="left" :width="collapsed ? 76 : 264" :breakpoint="0" class="shell__sidebar">
-      <div class="shell__side-inner" :class="{ 'shell--min': collapsed }">
+      <div class="shell__side-inner" :class="{ 'shell--min': minified }">
         <nav class="shell__buckets">
           <KNavItem
             v-for="b in buckets"
@@ -10,6 +10,7 @@
             :label="b.label"
             :icon="b.icon"
             :count="bucketCounts[b.key]"
+            :tip="minified ? b.label : undefined"
             :active="store.selectedBucket === b.key"
             @click="onBucket(b.key)"
           />
@@ -273,14 +274,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import type { SessionStatus } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
 import { IS_PREVIEW } from '../lib/preview';
-import { MANAGEMENT_DEFAULT_SECTION } from '../lib/management';
+import { MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
 import { theme, toggleTheme } from '../lib/theme';
 import { isMoveRefusal, MOVE_REFUSAL } from '../lib/cloud-errors';
@@ -315,6 +316,28 @@ const router = useRouter();
 const collapsed = ref(localStorage.getItem('kermanych.sidebar-collapsed') === '1');
 watch(collapsed, (v) => localStorage.setItem('kermanych.sidebar-collapsed', v ? '1' : '0'));
 
+// The rail's WIDTH tweens (css/app.scss transitions the drawer's inline width), but the
+// content swap between labels and icons is a `display` switch that no transition can carry,
+// so the two are deliberately out of phase. `minified` LEADS a collapse — the labels leave
+// before the box narrows, or they would be clipped and reflowed inside a 76px column on the
+// way down — and LAGS an expansion, returning once there is room for them and fading in
+// (see the shell-reveal animation). One timer, cleared on re-entry, because a second click
+// mid-flight must not later minify a sidebar the operator has re-opened.
+const REVEAL_MS = 160;
+const minified = ref(collapsed.value);
+let revealTimer: ReturnType<typeof setTimeout> | undefined;
+watch(collapsed, (v) => {
+  clearTimeout(revealTimer);
+  if (v) {
+    minified.value = true;
+    return;
+  }
+  revealTimer = setTimeout(() => {
+    minified.value = false;
+  }, REVEAL_MS);
+});
+onBeforeUnmount(() => clearTimeout(revealTimer));
+
 // Which workspace groups are FOLDED. Stored as a list of ids because a Set does not
 // survive JSON, and stored at all because a fold the reload undoes is not a fold. Absent
 // from the list means expanded, so a workspace created on another machine — or one this
@@ -347,8 +370,11 @@ function isFolded(id: string): boolean {
 // controls in that column — so a group folded at full width would sit there with no
 // affordance to open it and its projects would be unreachable until the sidebar is widened.
 // The rail's job is a dense list of everything, not a navigable tree.
+//
+// Keyed on `minified`, not `collapsed`: this decides which ROWS render, and rows must appear
+// and disappear in step with the styling that shapes them, not one animation frame apart.
 function isExpanded(id: string): boolean {
-  return collapsed.value || !isFolded(id);
+  return minified.value || !isFolded(id);
 }
 
 // The ONE place the folded set is written, so the toggle and the selection watcher below
@@ -513,11 +539,15 @@ function onThemeToggle(e: MouseEvent): void {
   toggleTheme(el instanceof HTMLElement ? el.getBoundingClientRect() : null);
 }
 
+// The marks are drawn (KIcon), not typed. They only ever show while the rail is minified,
+// which is precisely where the label is gone and the mark alone has to say which bucket it
+// opens — a job the text glyphs this replaced could not do: ◉ read as a radio button, ☰ as a
+// menu, ⤓ as a download and ↺ as a reload.
 const buckets = [
-  { key: 'active', label: 'Активні', icon: '◉' },
-  { key: 'tasks', label: 'Задачі', icon: '☰' },
-  { key: 'archived', label: 'Відкладені', icon: '⤓' },
-  { key: 'history', label: 'Історія', icon: '↺' },
+  { key: 'active', label: 'Активні', icon: 'activity' },
+  { key: 'tasks', label: 'Задачі', icon: 'tasks' },
+  { key: 'archived', label: 'Відкладені', icon: 'archive' },
+  { key: 'history', label: 'Історія', icon: 'history' },
 ] as const;
 function onBucket(key: 'active' | 'tasks' | 'archived' | 'history'): void {
   store.setBucket(key);
@@ -969,7 +999,7 @@ async function gitPull(): Promise<void> {
 }
 
 // ── Minified (Slack-style) rail — icons only, ~64px wide ─────────────────────
-// Expanded stays label-only, so the leading glyph is hidden until the rail is minified.
+// Expanded stays label-only, so the leading mark is hidden until the rail is minified.
 .shell__side-inner:not(.shell--min) :deep(.k-nav-item__icon) {
   display: none;
 }
@@ -988,12 +1018,16 @@ async function gitPull(): Promise<void> {
   gap: 0;
   padding: var(--k-sp-2);
 }
-.shell--min :deep(.k-nav-item__label),
+// The whole text column, not just the label inside it: the column is `flex: 1`, so leaving
+// it in place would stretch an empty box across the rail and push the mark off centre.
+.shell--min :deep(.k-nav-item__text),
 .shell--min :deep(.k-count) {
   display: none;
 }
+// In the rail the mark IS the control — nothing else is left of the row — so it takes the
+// largest step of KIcon's scale rather than the 18px default it would use beside a label.
 .shell--min :deep(.k-nav-item__icon) {
-  font-size: var(--k-fs-md);
+  --k-icon-size: 20px;
 }
 .shell--min :deep(.k-rail) {
   justify-content: center;
@@ -1007,15 +1041,15 @@ async function gitPull(): Promise<void> {
   display: flex;
 }
 // The tree collapses to the icon strip like the rail always did: the workspace row keeps
-// its colour dot as the group's marker and drops the name, the chevron and the «+» — a
-// 76px column has no room for three controls, and the group cannot be folded or added to
-// from a strip that cannot show which group it is. Because the chevron goes, isExpanded()
-// ignores the folded set while `shell--min` is on: hiding the only control that unfolds a
-// group while still honouring the fold would leave its projects unreachable.
+// its colour dot as the group's marker and drops the name, the chevron and the end slot
+// that carries the count and the «+» — a 76px column has no room for three controls, and
+// the group cannot be folded or added to from a strip that cannot show which group it is.
+// Because the chevron goes, isExpanded() ignores the folded set while `shell--min` is on:
+// hiding the only control that unfolds a group while still honouring the fold would leave
+// its projects unreachable.
 .shell--min :deep(.k-ws__name),
-.shell--min :deep(.k-ws__count),
-.shell--min :deep(.k-ws__chevron),
-.shell--min :deep(.k-ws__add) {
+.shell--min :deep(.k-ws__end),
+.shell--min :deep(.k-ws__chevron) {
   display: none;
 }
 .shell--min :deep(.k-ws__body) {
@@ -1026,14 +1060,66 @@ async function gitPull(): Promise<void> {
   width: 100%;
 }
 
+// The return of the labels. Everything the rail hides is hidden with `display: none`, which
+// no transition can tween, so the way back is an ENTRANCE animation: it plays the frame the
+// `shell--min` class is dropped — 160ms into the width tween, when the column is already
+// wide enough to hold a label — and never again while the sidebar sits open. The collapse
+// needs no counterpart: `minified` flips first there, so the labels are gone before the box
+// starts narrowing and there is nothing left to fade.
+@keyframes shell-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.shell__side-inner:not(.shell--min) {
+  .shell__side-label,
+  .shell__account-meta,
+  :deep(.k-nav-item__text),
+  :deep(.k-count),
+  :deep(.k-rail__name),
+  :deep(.k-rail__agents),
+  :deep(.k-ws__name),
+  :deep(.k-ws__end),
+  :deep(.k-ws__chevron) {
+    animation: shell-reveal 0.14s ease-out;
+  }
+}
+// The row chrome itself does tween: padding and the indent are real lengths, so the marks
+// glide to their centred rail positions instead of jumping there a frame before the box does.
+:deep(.k-nav-item),
+:deep(.k-rail) {
+  transition: padding 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+:deep(.k-rail--indent) {
+  transition:
+    padding 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .shell__side-inner:not(.shell--min) :deep(*) {
+    animation: none;
+  }
+  :deep(.k-nav-item),
+  :deep(.k-rail),
+  :deep(.k-rail--indent) {
+    transition: none;
+  }
+}
+
 .shell__buckets {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
+// The right margin is 1px, not the 4px on the other three sides: the rows below carry a
+// 1px transparent border and this heading does not, so that pixel is what puts this row's
+// «+» in the same column as the one on KWorkspaceRow.
 .shell__side-label {
-  margin: var(--k-sp-3) var(--k-sp-1) var(--k-sp-1);
+  margin: var(--k-sp-3) 1px var(--k-sp-1) var(--k-sp-1);
   font-size: var(--k-fs-xs);
   font-weight: var(--k-fw-medium);
   letter-spacing: 0.06em;
@@ -1084,8 +1170,16 @@ async function gitPull(): Promise<void> {
   opacity: 0.75;
 }
 
+// A 28px-wide glyph box like the row controls, so its «+» centres on the same column as
+// KWorkspaceRow's — but only as tall as the heading's own line, which keeps this band the
+// height of a caption instead of the height of a row.
 .shell__label-add {
-  padding: 0 var(--k-sp-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  padding: 0;
   background: none;
   border: none;
   color: var(--k-faint);

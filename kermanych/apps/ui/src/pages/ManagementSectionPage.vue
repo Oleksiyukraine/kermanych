@@ -5,21 +5,21 @@
         <i class="mgmt-section__pulse" aria-hidden="true"></i>coming soon
       </span>
       <p class="mgmt-section__text">Розділ у розробці.</p>
-      <p class="mgmt-section__scope mono">Проєкт: {{ projectName }}</p>
+      <p class="mgmt-section__scope mono">Воркспейс: {{ workspaceName }}</p>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
 // Placeholder body shared by every Менеджмент section. It states the contract a
-// real section inherits: the shell only mounts it once a project is selected and
-// passes that project in, so no section has to handle «no project» itself.
+// real section inherits: the shell only mounts it once a WORKSPACE is selected and
+// passes that workspace in, so no section has to handle «no workspace» itself.
 //
 // Dashed card, not bare text: an empty screen under a finished nav reads as a
-// bug, while a card that carries the state and the project reads as a promise.
+// bug, while a card that carries the state and the workspace reads as a promise.
 // The section is NOT named again here — the shell's heading and the active tab
 // both already say it.
-defineProps<{ projectId: string; projectName: string }>();
+defineProps<{ workspaceId: string; workspaceName: string }>();
 </script>
 
 <style scoped lang="scss">

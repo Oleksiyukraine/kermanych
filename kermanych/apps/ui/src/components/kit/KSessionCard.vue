@@ -4,6 +4,7 @@
     :class="{
       'k-session-card-host--fork': fork,
       'k-session-card-host--fork-lit': fork && selected,
+      'k-session-card-host--actions': !!$slots.actions,
     }"
   >
     <button

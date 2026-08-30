@@ -6,8 +6,8 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "dev:api": "pnpm --filter @kermanych/api start:dev",
-    "dev:ui": "pnpm --filter @kermanych/core build && pnpm --filter @kermanych/cloud build && pnpm --filter @kermanych/ui dev",
-    "dev:app": "pnpm --filter @kermanych/core build && pnpm --filter @kermanych/cloud build && pnpm --filter @kermanych/api build && pnpm --filter @kermanych/ui dev -m electron",
+    "dev:ui": "pnpm --filter @kermanych/ui dev",
+    "dev:app": "pnpm --filter @kermanych/ui dev -m electron",
     "build:app": "pnpm --filter @kermanych/ui build -m electron"
   },
   "pnpm": {

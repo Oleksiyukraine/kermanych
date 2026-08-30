@@ -5,6 +5,8 @@ import type {
   Platform,
   DirListing,
   ImageInput,
+  ManagementChatAsk,
+  ManagementChatReply,
   Project,
   EnvFileView,
   Session,
@@ -149,7 +151,6 @@ export const api = {
   // because RLS — not this loopback api — is what makes them owner-only.
   projectSkills: (id: string): Promise<ProjectSkillsPayload> =>
     get<ProjectSkillsPayload>(`/projects/${id}/skills`),
-
   setProjectBinding: (id: string, localRepoPath: string): Promise<Project> =>
     put<Project>(`/projects/${id}/binding`, { localRepoPath }),
 
@@ -189,6 +190,18 @@ export const api = {
   // rate-limit window). Local-only, like the outbox above: only this process can ask omp.
   subscriptionUsage: (): Promise<SubscriptionUsage> =>
     get<SubscriptionUsage>('/usage/subscription'),
+
+  // One turn of the Менеджмент assistant. Local-only for the same reason as the two calls
+  // above: the model is reached by spawning `omp` on THIS machine (apps/api/src/management),
+  // and only this process has the binary, the provider credentials and the local registry
+  // that turns project ids into repository paths. There is no cloud route to fall back to.
+  managementChat: (ask: ManagementChatAsk): Promise<ManagementChatReply> =>
+    post<ManagementChatReply>('/management/chat', ask),
+
+  // Drops the omp child behind a conversation, so «Новий чат» starts with no history rather
+  // than a fresh transcript in front of a model that still remembers the old one.
+  resetManagementChat: (conversationId: string): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>('/management/chat/reset', { conversationId }),
 
   promoteChat: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/promote`, {}),

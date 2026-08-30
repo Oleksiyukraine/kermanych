@@ -67,3 +67,24 @@ export {
   type BlockSummary,
   type ChatBlock,
 } from "./chat-blocks";
+export {
+  MANAGEMENT_SECTIONS,
+  MANAGEMENT_DEFAULT_SECTION,
+  managementSection,
+  type ManagementCapability,
+  type ManagementSection,
+} from "./management";
+export {
+  MANAGEMENT_ACTION_FENCE,
+  parseManagementReply,
+  validateManagementAction,
+  type ManagementAction,
+  type ManagementActionKind,
+  type ManagementUnsupported,
+  type ManagementRepo,
+  type ManagementWorkspaceProject,
+  type ManagementContext,
+  type ManagementChatAsk,
+  type ManagementChatReply,
+  type ParsedManagementReply,
+} from "./management-actions";
