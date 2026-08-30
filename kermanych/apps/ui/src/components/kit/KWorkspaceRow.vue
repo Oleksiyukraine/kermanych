@@ -79,24 +79,39 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
         aria-hidden="true"
       ></span>
       <span class="k-ws__name">{{ workspace.name }}</span>
-      <span v-if="badge" class="k-ws__count mono" aria-hidden="true">{{ badge }}</span>
     </button>
-    <button
-      class="k-ws__add"
-      type="button"
-      v-tip="addLabel"
-      :aria-label="addLabel"
-      @click.stop="emit('add-project')"
-    >+</button>
+    <!-- The row's right end is ONE 28px slot, and the counter and the «+» take turns in
+         it: the counter while the row rests, the button while it is pointed at or its
+         control is focused. They cannot share it — a slot wide enough for both would push
+         this row's counter 28px out of the column KNavItem and KRailItem keep theirs in,
+         which is exactly the raggedness this replaced — and they must not reflow into each
+         other either, so the slot's width is fixed and neither move nor truncate the name
+         when the swap happens. Nothing is lost while the «+» shows: the count is
+         decoration here (aria-hidden), and the row's own label carries it. -->
+    <span class="k-ws__end">
+      <span v-if="badge" class="k-ws__count mono" aria-hidden="true">{{ badge }}</span>
+      <button
+        class="k-ws__add"
+        type="button"
+        v-tip="addLabel"
+        :aria-label="addLabel"
+        @click.stop="emit('add-project')"
+      >+</button>
+    </span>
   </div>
 </template>
 
 <style scoped lang="scss">
+// The 30px sidebar row (see KNavItem for the box), here built from the 28px control boxes
+// inside it plus the 1px border on each side rather than from padding. The 20px line box
+// is the same one the other two rows use, so the name and the counter centre on whole
+// pixels inside that 28px interior.
 .k-ws {
   display: flex;
   align-items: center;
   gap: 2px;
   font-family: var(--k-font-ui);
+  line-height: 20px;
   border-radius: var(--k-r);
   border: 1px solid transparent;
   transition: background 0.12s;
@@ -161,8 +176,16 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
 }
 
 // Secondary action, so it stays out of the way until the row is pointed at — but keyboard
-// users never hover, and an invisible tab stop is a trap. Focus reveals it too.
+// users never hover, and an invisible tab stop is a trap. Focus reveals it too, which is
+// why this is opacity and not `display: none`: a hidden button is not focusable at all.
+//
+// Pinned over the slot instead of sitting in it, so the 28px box it needs is not also
+// charged to the counter beside it. Offsets resolve against the slot's padding box, so
+// `right: 0` is the row's inner edge — the same edge the chevron's box starts from.
 .k-ws__add {
+  position: absolute;
+  top: 0;
+  right: 0;
   opacity: 0;
   font-size: var(--k-fs-md);
 }
@@ -170,6 +193,13 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
 .k-ws:hover .k-ws__add,
 .k-ws__add:focus-visible {
   opacity: 1;
+}
+
+// The two occupants of the slot are stacked, so the one that is not wanted has to go
+// quiet as the other arrives — otherwise the «+» is drawn straight over the digit.
+.k-ws:hover .k-ws__count,
+.k-ws:has(.k-ws__add:focus-visible) .k-ws__count {
+  opacity: 0;
 }
 
 .k-ws__body {
@@ -184,7 +214,7 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
   cursor: pointer;
   font-size: var(--k-fs-base);
   min-height: 28px;
-  padding: var(--k-sp-1) 2px;
+  padding: 0 2px;
   text-align: left;
   border-radius: var(--k-r);
 
@@ -213,8 +243,25 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
   font-weight: var(--k-fw-medium);
 }
 
+// The right-end slot the counter and the «+» share. 28px wide because that is the button
+// pinned inside it, and the 12px of padding is the rail's indicator gutter: it puts this
+// digit's right edge exactly where KNavItem's counter and KRailItem's badge sit.
+// `min-width`, not `width`, so a three-digit count widens the slot instead of spilling
+// over the name.
+.k-ws__end {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 28px;
+  height: 28px;
+  padding-right: var(--k-sp-3);
+}
+
 .k-ws__count {
   font-size: var(--k-fs-xs);
   color: var(--k-muted);
+  transition: opacity 0.12s;
 }
 </style>

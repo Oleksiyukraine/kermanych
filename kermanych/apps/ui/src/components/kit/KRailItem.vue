@@ -96,12 +96,17 @@ function onDragStart(e: DragEvent): void {
 </template>
 
 <style scoped lang="scss">
+// The 30px sidebar row (see KNavItem for the box): 4px padding + a 20px line box + the
+// 1px border on each side. The right padding is the rail's 12px indicator gutter, so this
+// row's badge lands in the same column as KNavItem's counter and KWorkspaceRow's — the
+// three used to sit at 9, 13 and 33px from the row's edge.
 .k-rail {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
   width: 100%;
-  padding: var(--k-sp-2);
+  padding: var(--k-sp-1) var(--k-sp-3);
+  line-height: 20px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--k-muted);
