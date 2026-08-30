@@ -115,6 +115,38 @@ export type ProjectSkillInsert = {
   enabled?: boolean;
 };
 
+/** One skill assigned to one Kermanych agent, for one project. */
+export type AgentSkill = {
+  projectId: string;
+  agentId: string;
+  skillName: string;
+  position: number;
+};
+
+export type AgentSkillInsert = { projectId: string; agentId: string; skillName: string; position?: number };
+
+export type TriggerSource = "operator" | "assistant" | "thinking" | "tool";
+
+/** A rule that fires a skill or an agent without the model choosing to. */
+export type ProjectTrigger = {
+  projectId: string;
+  id: string;
+  label: string;
+  enabled: boolean;
+  source: TriggerSource;
+  pattern: string;
+  pathGlobs: string[];
+  action: "skill" | "agent";
+  target: string;
+  mode: "remind" | "interrupt";
+  repeat: "once" | "after-gap";
+};
+
+export type ProjectTriggerInsert = Omit<ProjectTrigger, "pathGlobs" | "enabled"> & {
+  pathGlobs?: string[];
+  enabled?: boolean;
+};
+
 // ── Risk register ───────────────────────────────────────────────────────────────
 // The four enums are OWNED by @kermanych/core (packages/core/src/risks.ts) and re-exported
 // here, because the management assistant validates a `risk.create` against them in core,

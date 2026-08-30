@@ -107,7 +107,9 @@ import { matchByPrefix, placeMenu } from '../../lib/menu';
 const props = defineProps<{
   label?: string;
   modelValue?: string;
-  options: string[] | KSelectOption[];
+  // `readonly` because this component only ever maps over the list: a caller whose options are
+  // a frozen module constant (TRIGGER_SOURCE_OPTIONS) must not have to copy them per render.
+  options: readonly string[] | readonly KSelectOption[];
   placeholder?: string;
   disabled?: boolean;
 }>();

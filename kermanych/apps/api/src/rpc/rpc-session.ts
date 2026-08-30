@@ -37,7 +37,7 @@ export class RpcSession {
   // transcript work exists to remove, so the count is kept and each loss is announced.
   droppedFrames = 0;
   private seq = 0;
-  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; commandTimeoutMs?: number; configPath?: string }) {}
+  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; commandTimeoutMs?: number; configPath?: string; extensionPath?: string }) {}
 
   onEvent(cb: (e: RpcEvent) => void) { this.eventCbs.push(cb); }
   onExit(cb: (code: number | null, reason: string) => void) { this.exitCbs.push(cb); }
@@ -49,6 +49,9 @@ export class RpcSession {
     // The project's skill-library overlay (skills.customDirectories). Launch-time only:
     // no RPC command can add skills to a running child.
     if (this.opts.configPath) argv.push("--config", this.opts.configPath);
+    // The session's trigger package (TTSR rules). Launch-time only, like --config: no RPC
+    // command can register a rule with a running child.
+    if (this.opts.extensionPath) argv.push("-e", this.opts.extensionPath);
     if (this.opts.model) argv.push("--model", this.opts.model);
     // Reasoning effort at spawn. omp keeps it as session state, so this is the opening value
     // only — `setThinkingLevel` retunes the same child later without a respawn.

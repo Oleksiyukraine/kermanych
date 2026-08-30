@@ -49,15 +49,11 @@
               :model="s.model"
               :usage="s.usage"
               :selected="store.selectedSessionId === s.id"
+              :removable="s.kind === 'task'"
+              :remove-title="`Видалити задачу «${s.name}»`"
               @click="onRowClick(s)"
-            >
-              <!-- A backlog task's card is the only place it exists: clicking it opens the
-                   launcher to edit it, and it has no detail panel to carry a delete. Without
-                   this the Задачі bucket is append-only. -->
-              <template v-if="s.kind === 'task'" #actions>
-                <KIconButton title="Видалити задачу" @click.stop="onDeleteTask(s)">✕</KIconButton>
-              </template>
-            </KSessionCard>
+              @remove="onDeleteTask(s)"
+            />
           </template>
         </div>
         <div v-else class="agents__empty mono">{{ emptyText }}</div>
@@ -416,6 +412,13 @@
 
       <template #controls>
         <div class="agents-launcher__foot">
+          <!-- Destructive, so it sits alone on the far side of the spacer instead of beside
+               «Запустити». Only while editing: there is nothing to delete before the task
+               exists, and this modal is the task's only detail view — the board's cards
+               carry a ✕, but a task opened for editing must be closable from here too. -->
+          <KBtn v-if="editingTask" variant="ghost" @click="onDeleteTask(editingTask)">
+            Видалити
+          </KBtn>
           <span v-if="launcherError" class="agents__error" role="alert">{{ launcherError }}</span>
           <span v-else class="agents-launcher__foot-hint mono">{{ footHint }}</span>
           <span class="agents-launcher__spacer"></span>
@@ -1119,6 +1122,12 @@ const nameEdited = ref(false);
 const draftBaseBranch = ref('');
 const launchBranches = ref<string[]>([]);
 const editingTaskId = ref<string | null>(null);
+// The row `editingTaskId` points at. Resolved from the store rather than snapshotted when
+// the modal opens, so a task deleted from another window (`session_removed` drops it here)
+// takes its «Видалити» with it instead of leaving a button that deletes nothing.
+const editingTask = computed(() =>
+  editingTaskId.value ? store.sessions.find((s) => s.id === editingTaskId.value) : undefined,
+);
 const branchPreview = computed(() =>
   draftName.value.trim()
     ? branchName(slugify(draftName.value), draftPrefix.value)
@@ -1286,10 +1295,15 @@ async function submitLauncher(asTask: boolean): Promise<void> {
   }
 }
 
+// Both ways out of a backlog task: the ✕ on its card and «Видалити» in its editor. Deleting
+// a backlog task is a registry row and nothing else — it owns no branch, no worktree and no
+// omp child — so there is no work to lose and one confirm is the whole guard.
 async function onDeleteTask(s: Session): Promise<void> {
   if (!window.confirm(`Видалити задачу «${s.name}»?`)) return;
   try {
     await store.deleteSession(s.id);
+    // The editor is this task's only detail view; it must not outlive the row it edits.
+    if (editingTaskId.value === s.id) launcherOpen.value = false;
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }

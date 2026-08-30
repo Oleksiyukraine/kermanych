@@ -4,12 +4,27 @@
 // The materialised directory doubles as the offline cache — there is no SQLite mirror.
 import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";
-import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_SKILLS, isSkillName, renderSkillFile, type SkillDef, type SkillView } from "@kermanych/core";
-import { listProjectSkills, type ProjectSkill } from "@kermanych/cloud";
+import {
+  assignedBlock,
+  DEFAULT_SKILLS,
+  isSkillName,
+  renderSkillFile,
+  type ProjectSkillsPayload,
+  type SkillDef,
+  type SkillView,
+} from "@kermanych/core";
+import {
+  listAgentSkills,
+  listProjectSkills,
+  listTriggers,
+  type AgentSkill,
+  type ProjectSkill,
+  type ProjectTrigger,
+} from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 
 // Every project-level skill directory omp itself discovers in the session cwd. One level
@@ -170,9 +185,13 @@ function readOmpCustomDirectories(cwd: string): Promise<string[] | undefined> {
 // control, and in a YAML plain scalar a ` #` opens a comment and a `: ` a mapping. A malformed
 // overlay is a HARD omp startup error, the one outcome "never block a launch" forbids.
 // JSON strings are valid YAML, the same technique renderSkillFile uses for descriptions.
+//
+// The overlay also forces `ttsr.enabled: true`: the same launch carries the session's trigger
+// package via `-e`, and an operator who has TTSR switched off would otherwise get rules that
+// load and silently never fire. It is a scalar, so it merges instead of replacing.
 function renderOverlay(dirs: readonly string[]): string {
   const lines = dirs.map((d) => `    - ${JSON.stringify(d)}`);
-  return `skills:\n  customDirectories:\n${lines.join("\n")}\n`;
+  return `skills:\n  customDirectories:\n${lines.join("\n")}\nttsr:\n  enabled: true\n`;
 }
 
 // Whether a name already has a materialised SKILL.md. Only ENOENT/ENOTDIR mean "no";
@@ -185,6 +204,79 @@ async function hasSkillFile(dir: string, name: string): Promise<boolean> {
     if (isMissingPath(err)) return false;
     throw err;
   }
+}
+
+// A repository's own SKILL.md as a def, so an assigned name the repository owns is delivered
+// with the REPOSITORY's text. The body is what the agent is given, so the frontmatter is
+// stripped rather than parsed: a one-line `description:` is picked up for the UI's label
+// (renderSkillFile writes exactly that, as a JSON string), and any richer YAML scalar simply
+// leaves the label empty rather than pulling a YAML parser into the launch path.
+// `undefined` on any read failure — the caller turns that into a `missing` entry, because a
+// repository file that cannot be read must not crash a launch.
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/;
+async function readRepoSkill(path: string, name: string): Promise<SkillDef | undefined> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch {
+    return undefined;
+  }
+  const m = FRONTMATTER_RE.exec(text);
+  const body = m ? text.slice(m[0].length) : text;
+  let description = /^description:[ \t]*(.*)$/m.exec(m?.[1] ?? "")?.[1]?.trim() ?? "";
+  if (description.startsWith('"')) {
+    try {
+      description = JSON.parse(description) as string;
+    } catch {
+      // Not a JSON string after all — the raw text is a better label than nothing.
+    }
+  }
+  return { name, description, body };
+}
+
+// A TTSR rule fires content WITHOUT the model choosing to. TTSR monitors assistant text and
+// tool arguments by default and thinking only when the scope says so — which is why a
+// "the model is reasoning about X" trigger MUST name it. `operator` has no entry here at all:
+// Kermanych matches that source itself, before the message ever reaches the child.
+const TRIGGER_SCOPE: Record<Exclude<ProjectTrigger["source"], "operator">, string> = {
+  assistant: "[text]",
+  thinking: "[thinking]",
+  tool: "[tool]",
+};
+
+export function triggersRoot(): string {
+  return join(process.env.KERMANYCH_SKILLS_HOME ?? join(homedir(), ".kermanych"), "triggers");
+}
+
+/**
+ * A TTSR rule file. Every value is JSON-encoded, which is valid YAML and survives a pattern
+ * containing `:` or `#` — a malformed rule is a hard omp startup error, not a degradation.
+ */
+export function renderRuleFile(t: ProjectTrigger, body: string): string {
+  if (t.source === "operator") throw new Error(`trigger "${t.id}" is operator-sourced: it has no rule file`);
+  // `scope` is the one value that is not JSON-encoded, so it is the one that can be malformed:
+  // a source outside the union (a row predating the DB constraint) would write
+  // `scope: undefined`, which omp rejects at LOAD — after any write-time try/catch has already
+  // succeeded. Rejected here so a bad row costs its own rule and never a launch.
+  //
+  // `Object.hasOwn`, not a bare `TRIGGER_SCOPE[t.source]`: the table is a plain object, so a
+  // row whose source is `constructor` (or any other Object.prototype member) would read back
+  // an inherited truthy value, walk straight past the guard below and interpolate a
+  // stringified function into the YAML. The guard exists precisely for values outside the
+  // union, so it must not be defeatable by one of them.
+  const scope = Object.hasOwn(TRIGGER_SCOPE, t.source) ? TRIGGER_SCOPE[t.source] : undefined;
+  if (!scope) throw new Error(`trigger "${t.id}" has an unknown source: ${String(t.source)}`);
+  const fm = [
+    "---",
+    `description: ${JSON.stringify(t.label)}`,
+    `condition: ${JSON.stringify(t.pattern)}`,
+    `scope: ${scope}`,
+    `interruptMode: ${t.mode === "interrupt" ? "always" : "never"}`,
+    `repeatMode: ${t.repeat === "after-gap" ? "after-gap" : "once"}`,
+    ...(t.pathGlobs.length ? [`globs: ${JSON.stringify(t.pathGlobs)}`] : []),
+    "---",
+  ].join("\n");
+  return `${fm}\n\n${body.trim()}\n`;
 }
 
 // `stale` means "the library on disk may not reflect the cloud": a failed cloud read, a failed
@@ -201,21 +293,110 @@ export class SkillsService {
   readRows = async (projectId: string): Promise<ProjectSkill[]> =>
     listProjectSkills(this.auth.cloudClient(), [projectId]);
   readCustomDirs = (cwd: string): Promise<string[] | undefined> => readOmpCustomDirectories(cwd);
+  readAssignments = async (projectId: string): Promise<AgentSkill[]> =>
+    listAgentSkills(this.auth.cloudClient(), [projectId]);
+  readTriggers = async (projectId: string): Promise<ProjectTrigger[]> =>
+    listTriggers(this.auth.cloudClient(), [projectId]);
+
+  // What one agent's instruction carries for the skills assigned to it: the block to append,
+  // the view the UI labels the rows with, and the names that resolved to nothing. Never
+  // throws for a library reason — an agent that cannot read its assignments still runs with
+  // its own instruction.
+  async assignedFor(
+    projectId: string,
+    agentId: string,
+    cwd: string,
+  ): Promise<{ block: string; view: SkillView[]; missing: string[] }> {
+    assertProjectId(projectId);
+    let rows: AgentSkill[];
+    try {
+      rows = (await this.readAssignments(projectId)).filter((r) => r.agentId === agentId);
+    } catch {
+      return { block: "", view: [], missing: [] }; // offline or signed out
+    }
+    // The operator's own order, with the name as the tiebreak so two rows that were never
+    // reordered still read the same way on every launch.
+    rows.sort((a, b) => a.position - b.position || a.skillName.localeCompare(b.skillName));
+    return this.assignedForNames(
+      projectId,
+      rows.map((r) => r.skillName),
+      cwd,
+    );
+  }
+
+  // The resolution half, given names in the order they must appear. Shared with the trigger
+  // path, which materialises the same bodies from a different source: precedence has exactly
+  // one answer, and it lives here. Degrades rather than throws for the same reason as above.
+  async assignedForNames(
+    projectId: string,
+    names: readonly string[],
+    cwd: string,
+  ): Promise<{ block: string; view: SkillView[]; missing: string[] }> {
+    assertProjectId(projectId);
+    // A failed CLOUD read only narrows the library to DEFAULT_SKILLS, which need neither
+    // network nor sign-in, so an assigned default is still delivered. A failed REPO SCAN is
+    // different: with no trustworthy shadow map, delivering the library's text could hand the
+    // agent a body the repository has overridden, and "the repository always wins" outranks
+    // delivering anything at all. Same degradation as an unreachable cloud, one layer up.
+    const [library, repo] = await Promise.all([
+      this.readRows(projectId).catch(() => [] as ProjectSkill[]),
+      repoSkillNames(cwd).catch(() => undefined),
+    ]);
+    if (!repo) return { block: "", view: [], missing: [] };
+    const resolved = new Map(resolveSkills(library).map((r) => [r.def.name, r]));
+    const defs: SkillDef[] = [];
+    const view: SkillView[] = [];
+    const missing: string[] = [];
+    const seen = new Set<string>();
+    for (const name of names) {
+      if (seen.has(name)) continue; // a name delivered twice would just spend context twice
+      seen.add(name);
+      const hit = resolved.get(name);
+      const repoPath = repo.get(name);
+      if (!hit && !repoPath) {
+        missing.push(name);
+        continue;
+      }
+      // The repository's own file wins the name, so its text is what the agent must be given.
+      const def = repoPath ? await readRepoSkill(repoPath, name) : hit!.def;
+      if (!def) {
+        missing.push(name);
+        continue;
+      }
+      defs.push(def);
+      view.push({
+        name: def.name,
+        description: def.description,
+        source: hit?.source ?? "project",
+        ...(repoPath ? { shadowedByRepo: repoPath } : {}),
+      });
+    }
+    return { block: assignedBlock(defs), view, missing };
+  }
 
   // Read-only: what the UI lists. Never writes, so a settings screen cannot mutate a
   // session's library as a side effect of being opened. Errors propagate on purpose: a
   // settings screen that showed the defaults after a failed read would tell the user their
   // project skills are gone, when what failed was the read.
-  async view(projectId: string, cwd: string): Promise<SkillView[]> {
+  //
+  // The repository scan is returned ALONGSIDE the library rather than folded into it. The
+  // repository is not the library: a name it alone defines has no row and no default, so it
+  // has no place in a list of the project's skills — but it IS deliverable, because
+  // `assignedForNames` reads the repository's file for it. A caller that has to tell
+  // "assigned to something that no longer exists" from "assigned to something the
+  // repository provides" cannot do it from `view` alone, and every caller that only wants
+  // the library simply ignores `repo`.
+  async view(projectId: string, cwd: string): Promise<ProjectSkillsPayload> {
     assertProjectId(projectId);
     const rows = await this.readRows(projectId);
     const repo = await repoSkillNames(cwd);
-    return resolveSkills(rows).map(({ def, source }) => ({
+    const view = resolveSkills(rows).map(({ def, source }) => ({
       name: def.name,
       description: def.description,
       source,
       ...(repo.has(def.name) ? { shadowedByRepo: repo.get(def.name)! } : {}),
     }));
+    return { view, repo: Object.fromEntries(repo) };
   }
 
   // Never blocks a launch: every filesystem, cloud or config failure degrades to
@@ -300,5 +481,95 @@ export class SkillsService {
       stale = true;
     }
     return { ...(configPath !== undefined ? { configPath } : {}), view, ...(stale ? { stale: true } : {}) };
+  }
+
+  // The triggers Kermanych itself matches, in the order it tries them. Sorted by id so two
+  // patterns that both match one message always pick the same winner — a message whose
+  // outcome depended on the cloud's row order would be untestable and unexplainable.
+  // Degrades to none rather than throwing: a trigger is an addition to a session, and an
+  // offline or signed-out operator still gets to send messages.
+  async operatorTriggers(projectId: string): Promise<ProjectTrigger[]> {
+    assertProjectId(projectId);
+    try {
+      return (await this.readTriggers(projectId))
+        .filter((t) => t.enabled && t.source === "operator")
+        .sort((a, b) => a.id.localeCompare(b.id));
+    } catch {
+      return []; // offline or signed out
+    }
+  }
+
+  /**
+   * Lay this session's TTSR rules out as a loadable extension package. Per SESSION, not per
+   * project: a rule body may carry session-specific interpolation, and the per-project config
+   * overlay already taught us that a shared filename with cwd-dependent content races.
+   *
+   * Never throws for a trigger reason: a session that cannot have triggers still launches
+   * without them.
+   */
+  async materializeTriggers(projectId: string, sessionId: string, cwd: string): Promise<{ packagePath?: string }> {
+    assertProjectId(projectId);
+    // The session id becomes a directory name that is then pruned with a recursive rm, so it
+    // gets the same boundary check the project id gets.
+    if (!isSkillName(sessionId)) throw new Error(`invalid session id: ${sessionId}`);
+    const dir = join(triggersRoot(), sessionId);
+    let triggers: ProjectTrigger[];
+    try {
+      // Only a source TTSR has a scope for gets a rule file: `operator` is matched by
+      // Kermanych itself, and anything outside the union is a row predating the DB
+      // constraint — dropped here so it costs its own rule rather than the whole package.
+      triggers = (await this.readTriggers(projectId)).filter((t) => t.enabled && Object.hasOwn(TRIGGER_SCOPE, t.source));
+    } catch {
+      return {}; // offline or signed out
+    }
+    // A trigger's body is the text it fires. `action: "skill"` resolves through the same
+    // three-level precedence as an assignment; `action: "agent"` cannot occur here (a child
+    // has no callback into Kermanych) and is skipped if an older row still carries it.
+    // An empty body is not written: a rule that fires and says nothing spends a turn and
+    // makes the model investigate the rule instead of acting (design §2.6).
+    const bodies = new Map<string, string>();
+    for (const t of triggers) {
+      if (t.action !== "skill") continue;
+      const { block } = await this.assignedForNames(projectId, [t.target], cwd);
+      if (block.trim()) bodies.set(t.id, block.trim());
+    }
+    if (bodies.size === 0) {
+      // A package left behind would keep firing rules whose triggers are gone, and an empty
+      // one would hand omp a `-e` with nothing in it.
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
+      return {};
+    }
+    try {
+      await mkdir(join(dir, "rules"), { recursive: true });
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify(
+          { name: `kermanych-triggers-${sessionId}`, version: "0.0.0", omp: { extensions: ["./index.js"] } },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+      // A package is only loaded when its entry point resolves, and the sibling `rules/`
+      // directory is only discovered for a loaded package. Hence a no-op extension.
+      await writeFile(join(dir, "index.js"), "export default function () {}\n", "utf8");
+      for (const t of triggers) {
+        const body = bodies.get(t.id);
+        if (body) await writeFile(join(dir, "rules", `${t.id}.md`), renderRuleFile(t, body), "utf8");
+      }
+      // Only after every write succeeded, so a half-written package is never pruned against.
+      // A rule whose trigger was deleted, disabled or left dangling disappears here.
+      for (const e of await readEntries(join(dir, "rules"))) {
+        if (e.isFile() && !bodies.has(e.name.replace(/\.md$/, ""))) {
+          await rm(join(dir, "rules", e.name), { force: true }).catch(() => {});
+        }
+      }
+    } catch {
+      // EACCES, ENOSPC, EROFS, or a plain file where the package should be. A partial package
+      // is worse than none: omp fails to start on a malformed rule, so it is removed outright.
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
+      return {};
+    }
+    return { packagePath: dir };
   }
 }

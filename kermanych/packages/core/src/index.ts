@@ -39,14 +39,25 @@ export {
 export { PLATFORMS, type Platform } from "./platform";
 export { THINKING_LEVELS, isThinkingLevel, type ThinkingLevel } from "./thinking";
 export {
+  ASSIGNED_BLOCK_HEADER,
   DEFAULT_SKILLS,
   SKILL_NAME_RE,
+  assignedBlock,
   isSkillName,
   renderSkillFile,
   skillsUsed,
+  type ProjectSkillsPayload,
   type SkillDef,
   type SkillView,
 } from "./skills";
+export {
+  AGENTS,
+  PR_CONVENTIONS_FALLBACK,
+  agentById,
+  renderInstruction,
+  type AgentDef,
+  type AgentKind,
+} from "./agents";
 export {
   buildChatBlocks,
   THINK_MIN_MS,

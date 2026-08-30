@@ -44,9 +44,10 @@ import { RegistryService } from "../src/registry/registry.service";
 import { offlineAuth } from "./offline-auth";
 
 // Only `materialize` is on the path under test; the DI seam is cast once, as the other
-// supervisor specs do for WorktreeService.
+// supervisor specs do for WorktreeService. The two trigger members answer "this project has
+// none" so the launch's trigger wrapper does not take its catch and warn over these assertions.
 function skillsStub(materialize: (projectId: string, cwd: string) => Promise<Materialized>): SkillsService {
-  return { materialize } as unknown as SkillsService;
+  return { materialize, materializeTriggers: async () => ({}), operatorTriggers: async () => [] } as unknown as SkillsService;
 }
 
 function make(skills: SkillsService) {

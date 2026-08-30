@@ -9,5 +9,16 @@
 import type { SkillsService } from "../src/skills/skills.service";
 
 export function stubSkills(): SkillsService {
-  return { materialize: async () => ({ view: [] }) } as unknown as SkillsService;
+  return {
+    materialize: async () => ({ view: [] }),
+    // Same stance for assignments: no project has any, so every instruction is rendered
+    // exactly as these specs assert it. Without this the four instruction sites would take
+    // their catch and print a warning on every launch.
+    assignedFor: async () => ({ block: "", view: [], missing: [] }),
+    // And for triggers: no project has any, so no launch gets `-e` and no message is ever
+    // rewritten on its way to the child. Without these the supervisor's two never-throws
+    // wrappers would take their catch and warn on every launch and every send.
+    materializeTriggers: async () => ({}),
+    operatorTriggers: async () => [],
+  } as unknown as SkillsService;
 }

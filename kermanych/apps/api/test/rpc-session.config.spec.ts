@@ -54,3 +54,33 @@ test("no configPath means no --config", async () => {
     "--mode", "rpc", "--cwd", dir, "--model", "m", "--tools", "read",
   ]);
 });
+
+// Both launch-time paths at once, with --model and --tools straddling them: the trigger
+// package's `-e` sits immediately after --config, so a reordering of either push changes
+// this array. Nothing else may appear — the skill library and the triggers between them add
+// exactly two flags to a launch.
+test("configPath and extensionPath become --config then -e, ahead of every other flag", async () => {
+  const out = join(dir, "argv3.json");
+  const rpc = new RpcSession({
+    cwd: dir, ompPath: argvEchoOmp(out), configPath: "/tmp/p1.config.yml",
+    extensionPath: "/tmp/triggers/s1", model: "m", tools: ["read", "grep"],
+  });
+  rpc.onExit(() => {});
+  await rpc.start();
+  await rpc.stop();
+  expect(JSON.parse(readFileSync(out, "utf8"))).toEqual([
+    "--mode", "rpc", "--cwd", dir, "--config", "/tmp/p1.config.yml", "-e", "/tmp/triggers/s1",
+    "--model", "m", "--tools", "read,grep",
+  ]);
+});
+
+test("no extensionPath means no -e", async () => {
+  const out = join(dir, "argv4.json");
+  const rpc = new RpcSession({ cwd: dir, ompPath: argvEchoOmp(out), configPath: "/tmp/p1.config.yml" });
+  rpc.onExit(() => {});
+  await rpc.start();
+  await rpc.stop();
+  expect(JSON.parse(readFileSync(out, "utf8"))).toEqual([
+    "--mode", "rpc", "--cwd", dir, "--config", "/tmp/p1.config.yml",
+  ]);
+});

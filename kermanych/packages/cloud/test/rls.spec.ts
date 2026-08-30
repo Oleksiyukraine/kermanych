@@ -15,8 +15,10 @@
 // through the admin API — the same provisioning path GitHub OAuth drives.
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
+import { deleteAgentSkill, listAgentSkills, setAgentSkill } from "../src/agent-skills";
 import { createProject, listProjects, patchProject } from "../src/projects";
 import { deleteProjectSkill, listProjectSkills, upsertProjectSkill } from "../src/skills";
+import { deleteTrigger, listTriggers, upsertTrigger } from "../src/triggers";
 import { listMembers } from "../src/workspaces";
 
 const URL = process.env.SUPABASE_TEST_URL;
@@ -474,6 +476,154 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
   it("the owner's delete removes the skill", async () => {
     await expect(deleteProjectSkill(owner.client, projectId, "opening-a-pr")).resolves.toBeUndefined();
     expect(await listProjectSkills(owner.client, [projectId])).toEqual([]);
+  });
+
+  // ── project_agent_skills / project_triggers ─────────────────────────────────
+  // Same policy matrix as project_skills — members read, the workspace owner writes — so
+  // these cases exist to prove the NEW tables carry it, not to re-prove the shape. Placed
+  // before the workspace-membership tests below because the last of those ends with
+  // `member` removed from the workspace, which would make every read here vacuous.
+  it("the workspace owner can assign a skill to an agent and create a trigger", async () => {
+    const assignment = await setAgentSkill(owner.client, {
+      projectId,
+      agentId: "review",
+      skillName: "how-we-review",
+      position: 2,
+    });
+    expect(assignment).toEqual({
+      projectId,
+      agentId: "review",
+      skillName: "how-we-review",
+      position: 2,
+    });
+
+    const trigger = await upsertTrigger(owner.client, {
+      projectId,
+      id: "env-guard",
+      label: "  Нова env-змінна  ",
+      source: "thinking",
+      pattern: "нову env|new env var",
+      action: "skill",
+      target: "how-we-add-env",
+      mode: "remind",
+      repeat: "once",
+    });
+    // upsertTrigger trims the label and defaults `enabled`; an omitted glob list is stored
+    // as NULL and read back as [], which is the normalisation the whole UI relies on.
+    expect(trigger.label).toBe("Нова env-змінна");
+    expect(trigger.enabled).toBe(true);
+    expect(trigger.pathGlobs).toEqual([]);
+  });
+
+  // ai_team_touch() owns both audit columns on both tables, so a writer cannot be forged
+  // and an edit cannot be backdated. Neither column is in the typed surface, so the check
+  // reads them straight off the tables.
+  it("ai_team_touch stamps updated_by and updated_at on both tables", async () => {
+    const assignment = await owner.client
+      .from("project_agent_skills")
+      .select("updated_at, updated_by")
+      .eq("project_id", projectId)
+      .eq("agent_id", "review")
+      .eq("skill_name", "how-we-review")
+      .single();
+    expect(assignment.error).toBeNull();
+    expect(assignment.data?.updated_by).toBe(owner.id);
+    expect(Date.parse(assignment.data?.updated_at as string)).not.toBeNaN();
+
+    const trigger = await owner.client
+      .from("project_triggers")
+      .select("updated_at, updated_by")
+      .eq("project_id", projectId)
+      .eq("id", "env-guard")
+      .single();
+    expect(trigger.error).toBeNull();
+    expect(trigger.data?.updated_by).toBe(owner.id);
+    expect(Date.parse(trigger.data?.updated_at as string)).not.toBeNaN();
+  });
+
+  it("a member reads the project's agent assignments and triggers", async () => {
+    const assignments = await listAgentSkills(member.client, [projectId]);
+    expect(assignments.map((a) => `${a.agentId}/${a.skillName}`)).toEqual(["review/how-we-review"]);
+
+    const triggers = await listTriggers(member.client, [projectId]);
+    expect(triggers.map((t) => t.id)).toEqual(["env-guard"]);
+    expect(triggers[0]?.source).toBe("thinking");
+  });
+
+  // The configuration a session launches with is the workspace owner's call: a member reads
+  // it and runs under it, but cannot change who does what.
+  it("a member cannot write or delete an assignment or a trigger", async () => {
+    await expect(
+      setAgentSkill(member.client, { projectId, agentId: "plan", skillName: "member-written" }),
+    ).rejects.toThrow(/row-level security|violates/);
+
+    await expect(
+      upsertTrigger(member.client, {
+        projectId,
+        id: "member-written",
+        label: "should never land",
+        source: "operator",
+        pattern: "anything",
+        action: "skill",
+        target: "how-we-add-env",
+        mode: "remind",
+        repeat: "once",
+      }),
+    ).rejects.toThrow(/row-level security|violates/);
+
+    // A refused DELETE matches zero rows and reports success; both modules turn that empty
+    // result into a throw, which is the only thing that makes the refusal visible.
+    await expect(deleteAgentSkill(member.client, projectId, "review", "how-we-review")).rejects.toThrow(
+      /was not unassigned/,
+    );
+    await expect(deleteTrigger(member.client, projectId, "env-guard")).rejects.toThrow(/was not deleted/);
+
+    const assignments = await listAgentSkills(owner.client, [projectId]);
+    expect(assignments.map((a) => a.skillName)).toEqual(["how-we-review"]);
+    const triggers = await listTriggers(owner.client, [projectId]);
+    expect(triggers.map((t) => t.id)).toEqual(["env-guard"]);
+  });
+
+  it("a non-member sees zero assignments and zero triggers", async () => {
+    expect(await listAgentSkills(outsider.client, [projectId])).toEqual([]);
+    expect(await listTriggers(outsider.client, [projectId])).toEqual([]);
+  });
+
+  // A child omp process cannot call back into Kermanych, so a trigger that RUNS AN AGENT is
+  // only meaningful when Kermanych itself matched it — that is, `source: 'operator'`. The
+  // editor blocks the combination too; this constraint is what makes it true for psql and
+  // for a direct PostgREST call.
+  it("an agent-action trigger from a non-operator source is refused by the check constraint", async () => {
+    await expect(
+      upsertTrigger(owner.client, {
+        projectId,
+        id: "bad-agent",
+        label: "агент із думок",
+        source: "thinking",
+        pattern: "щось",
+        action: "agent",
+        target: "review",
+        mode: "remind",
+        repeat: "once",
+      }),
+    ).rejects.toThrow(/project_triggers_agent_action_is_operator/);
+
+    const operatorSourced = await upsertTrigger(owner.client, {
+      projectId,
+      id: "good-agent",
+      label: "агент від оператора",
+      source: "operator",
+      pattern: "перевір",
+      action: "agent",
+      target: "review",
+      mode: "interrupt",
+      repeat: "after-gap",
+      pathGlobs: ["apps/api/**"],
+    });
+    expect(operatorSourced.action).toBe("agent");
+    expect(operatorSourced.pathGlobs).toEqual(["apps/api/**"]);
+
+    await expect(deleteTrigger(owner.client, projectId, "good-agent")).resolves.toBeUndefined();
   });
 
   // handle_new_workspace() is the mirror of the retired handle_new_project(): the

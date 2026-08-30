@@ -50,7 +50,19 @@ const routes: RouteRecordRaw[] = [
       { path: 'board', name: 'board', component: () => import('pages/BoardPage.vue'), meta: { public: false } },
       { path: 'kit', name: 'kit', component: () => import('pages/KitGalleryPage.vue'), meta: { public: false } },
       { path: 'chat', name: 'chat', component: () => import('pages/ChatPage.vue'), meta: { public: false } },
-      // Менеджмент is a nested shell: ManagementPage owns the section rail and
+      // Налаштування is ONE record with the category in a param, not a nested
+      // shell like Менеджмент below: all eleven categories share a single
+      // component, because the save bar and the draft they queue into are one
+      // piece of state. `:section?` keeps a bare /settings resolvable, and
+      // `settingsSection()` (lib/settings.ts) maps an unknown or missing segment
+      // onto the default rather than rendering an empty pane.
+      {
+        path: 'settings/:section?',
+        name: 'settings',
+        component: () => import('pages/SettingsPage.vue'),
+        meta: { public: false },
+      },
+      // Менеджмент is a nested shell: ManagementPage owns the section strip and
       // the «pick a project» gate, one child route per section. The named parent
       // is what the top nav matches on (route.matched in MainLayout), and the
       // empty path redirects rather than rendering, so /management has exactly

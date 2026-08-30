@@ -11,6 +11,7 @@ import type {
   EnvFileView,
   Session,
   SubscriptionUsage,
+  ProjectSkillsPayload,
   TaskDraft,
   TranscriptEntry,
   ThinkingLevel,
@@ -142,6 +143,15 @@ export const api = {
     body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string },
   ): Promise<Project> => patchJson<Project>(`/projects/${id}`, body),
 
+  // The resolved library (defaults + project rows, with the repo-shadowed ones marked), AND
+  // the names the bound checkout's own skill directories define. The second list is the only
+  // way a caller can tell an assignment to a deleted skill from one the repository provides
+  // under a name the library never had.
+  //
+  // A read, and only a read: skill rows are written straight to Supabase by the editor,
+  // because RLS — not this loopback api — is what makes them owner-only.
+  projectSkills: (id: string): Promise<ProjectSkillsPayload> =>
+    get<ProjectSkillsPayload>(`/projects/${id}/skills`),
   setProjectBinding: (id: string, localRepoPath: string): Promise<Project> =>
     put<Project>(`/projects/${id}/binding`, { localRepoPath }),
 
@@ -226,9 +236,6 @@ export const api = {
 
   pullProject: (id: string): Promise<{ ok: boolean; out: string }> =>
     post<{ ok: boolean; out: string }>(`/projects/${id}/pull`, {}),
-
-  pushProject: (id: string): Promise<{ ok: boolean; out: string }> =>
-    post<{ ok: boolean; out: string }>(`/projects/${id}/push`, {}),
 
   getEnv: (id: string, file?: string): Promise<EnvFileView> =>
     get<EnvFileView>(`/projects/${id}/env${file ? `?file=${encodeURIComponent(file)}` : ''}`),

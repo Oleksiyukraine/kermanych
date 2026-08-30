@@ -15,6 +15,11 @@ export type {
   TaskPatch,
   ProjectSkill,
   ProjectSkillInsert,
+  AgentSkill,
+  AgentSkillInsert,
+  TriggerSource,
+  ProjectTrigger,
+  ProjectTriggerInsert,
   RiskKind,
   RiskCategory,
   RiskResponse,
@@ -80,6 +85,15 @@ export {
   upsertProjectSkill,
   deleteProjectSkill,
 } from "./skills";
+
+export {
+  toAgentSkill,
+  listAgentSkills,
+  setAgentSkill,
+  deleteAgentSkill,
+} from "./agent-skills";
+
+export { toTrigger, listTriggers, upsertTrigger, deleteTrigger } from "./triggers";
 
 export {
   toWorkspaceRisk,

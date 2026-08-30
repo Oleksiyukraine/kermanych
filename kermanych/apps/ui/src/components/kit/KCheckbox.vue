@@ -13,10 +13,19 @@
 
 <script setup lang="ts">
 // Checkbox: token-styled native input, radius 0, accent fill when checked.
-defineProps<{ modelValue?: boolean; label?: string; disabled?: boolean }>();
+const props = defineProps<{ modelValue?: boolean; label?: string; disabled?: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
 function onChange(e: Event) {
-  emit('update:modelValue', (e.target as HTMLInputElement).checked);
+  const el = e.target as HTMLInputElement;
+  const next = el.checked;
+  // The box is CONTROLLED by `modelValue`, and the browser has already flipped it before this
+  // handler runs. An owner that REFUSES the change — a rejected cloud write, a failed
+  // validation — leaves `modelValue` exactly as it was, and Vue then patches nothing, because
+  // the bound value never changed: the box would keep the state the browser gave it and report
+  // a setting the data does not hold. Snapped back here, so `modelValue` is the only thing that
+  // can move it; an owner that accepts re-renders on the next tick with the new value.
+  el.checked = props.modelValue ?? false;
+  emit('update:modelValue', next);
 }
 </script>
 

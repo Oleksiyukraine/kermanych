@@ -1,5 +1,13 @@
 import { expect, test } from "vitest";
-import { DEFAULT_SKILLS, isSkillName, renderSkillFile, SKILL_NAME_RE, skillsUsed } from "../src/skills";
+import {
+  assignedBlock,
+  ASSIGNED_BLOCK_HEADER,
+  DEFAULT_SKILLS,
+  isSkillName,
+  renderSkillFile,
+  SKILL_NAME_RE,
+  skillsUsed,
+} from "../src/skills";
 import type { TranscriptEntry } from "../src/types";
 
 test("skill names are safe directory names", () => {
@@ -48,4 +56,20 @@ test("skillsUsed lists unique skills in order of first use", () => {
     { kind: "tool", id: "6", at: 6, tool: "skill", status: "pending" },
   ] as TranscriptEntry[];
   expect(skillsUsed(entries)).toEqual(["kermanych-session", "kermanych-pull-request"]);
+});
+
+test("the assigned block names its skills and tells the agent not to re-read them", () => {
+  const out = assignedBlock([
+    { name: "how-we-review", description: "d", body: "Body one.\n" },
+    { name: "how-we-add-env", description: "d", body: "Body two." },
+  ]);
+  expect(out).toContain(ASSIGNED_BLOCK_HEADER);
+  expect(out).toContain("skill://");
+  expect(out).toContain("### how-we-review\nBody one.");
+  expect(out).toContain("### how-we-add-env\nBody two.");
+  expect(out.indexOf("how-we-review")).toBeLessThan(out.indexOf("how-we-add-env"));
+});
+
+test("no assigned skills means no block at all, not an empty heading", () => {
+  expect(assignedBlock([])).toBe("");
 });
