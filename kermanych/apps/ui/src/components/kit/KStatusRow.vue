@@ -1,8 +1,6 @@
 <template>
-  <div class="k-sr mono">
-    <span v-if="context">{{ context }}</span>
-    <span class="k-sr__spacer"></span>
-    <span v-if="live" class="k-sr__live">◆ {{ live }}<template v-if="silence"> · тиша {{ silence }}</template></span>
+  <div v-if="live" class="k-sr mono">
+    <span class="k-sr__live">◆ {{ live }}<template v-if="silence"> · тиша {{ silence }}</template></span>
   </div>
 </template>
 
@@ -12,24 +10,16 @@ import type { Session } from '@kermanych/core';
 import { dur } from '../../lib/time';
 import { useNow } from '../../composables/useNow';
 
-// The one row that never disappears: how full the context is and — on the right — what the
-// agent is doing right now. Model and spend deliberately live in the composer's chip row one
-// floor below (`KComposer`), not here: printing them twice, a few pixels apart, made the
-// panel look like two disagreeing readouts of the same session. Every figure here is either
-// true or absent; a rounded-down zero would be a claim the project does not let this row make.
+// The live lane: what the agent is doing right now, pinned between the plan lane and the
+// composer. Everything countable about the session — model, effort, isolation, context
+// budget, tokens, spend — lives one floor below in the composer's chip row (`KComposer`),
+// printed once: two readouts of the same session a few pixels apart looked like two
+// disagreeing instruments. So this row carries only the transient fact that has no place
+// among static chips, and is absent entirely while the agent is idle (same rule as
+// `KTodoLane`) rather than holding an empty strip open.
 const props = defineProps<{ session: Session }>();
 
 const now = useNow(1000);
-
-// How full the model's context window is, as omp reports it. Sub-half-percent context is
-// still context loaded; `toFixed(0)` would call it 0%. An exact 0 is not rounded from
-// anything — the supervisor assigns omp's raw reading or nothing, with no `?? 0` anywhere —
-// so it keeps `0%`; flooring that too would be the mirror-image lie, hiding a true zero
-// behind a `<`. Do not "tidy" this guard.
-const context = computed(() => {
-  const pc = props.session.contextPercent;
-  return pc == null ? '' : pc > 0 && pc < 0.5 ? '<1%' : `${pc.toFixed(0)}%`;
-});
 
 const live = computed(() =>
   props.session.status === 'tool' ? (props.session.currentTool ?? 'виконує')
@@ -57,6 +47,7 @@ const silence = computed(() => {
 .k-sr {
   flex: none;
   display: flex;
+  justify-content: flex-end;
   align-items: center;
   gap: 8px;
   padding: 5px 12px;
@@ -66,6 +57,5 @@ const silence = computed(() => {
   white-space: nowrap;
   overflow: hidden;
 }
-.k-sr__spacer { margin-left: auto; }
 .k-sr__live { flex: none; color: var(--k-accent); }
 </style>
