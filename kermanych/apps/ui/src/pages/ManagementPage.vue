@@ -295,6 +295,12 @@ const projectColor = computed(() => {
 
 // The section's own content. Top-aligned and scrolling: the pane is a document
 // column now, not a stage with one card centred in it.
+//
+// That also settles what `safe center` was here for: a section taller than the frame — Risk
+// Registry with a full register — is centred INTO its own overflow by plain centering, and
+// the part above the top edge cannot be scrolled back to, because scrollTop 0 is already
+// past it. Flex-start has no such state; it overflows downward only, so the whole register
+// stays reachable.
 .mgmt__body {
   flex: 1;
   min-height: 0;
