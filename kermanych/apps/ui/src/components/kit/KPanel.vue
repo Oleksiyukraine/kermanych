@@ -151,8 +151,9 @@
     <!-- plan lane — present only while the agent keeps a todo list -->
     <KTodoLane :phases="session.todoPhases" />
 
-    <!-- status row — never hidden: context budget + what the agent is doing right now. Model
-         and spend belong to the composer's chip row below, printed once. -->
+    <!-- live lane — what the agent is doing right now; absent while idle. Everything
+         countable (model, effort, isolation, context, spend) is printed once, in the
+         composer's chip row below. -->
     <KStatusRow :session="session" />
 
     <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎), with the
@@ -164,6 +165,7 @@
         :model="session.model"
         :effort="session.effort"
         :worktree="session.worktree"
+        :context="session.contextPercent"
         :usage="session.usage"
         @send="(text, images) => emit('send', text, images)"
         @effort="(level) => emit('effort', level)"

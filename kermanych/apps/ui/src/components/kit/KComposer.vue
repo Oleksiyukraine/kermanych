@@ -64,7 +64,7 @@
           <span class="mono">worktree</span>
         </span>
         <span class="k-composer__spacer"></span>
-        <span v-if="spend" class="k-composer__tokens mono">{{ spend }}</span>
+        <span v-if="stats" class="k-composer__stats mono">{{ stats }}</span>
         <slot name="actions" />
         <button
           type="submit"
@@ -98,10 +98,12 @@ import { tokens, usageTokens, usd } from '../../lib/format';
 
 // The composer atom: a mono textarea that grows with content up to a cap, plus a
 // v3 controls row — what this session is running as (model, reasoning effort, isolation),
-// what it has spent, and the accent send FAB. Attach images via paste, drag-drop, or the 📎
-// file-pick. `modelValue` is owned by the host so the same primitive drives both the panel
-// and the Чат screen. The chips are equally host-owned: this component reads the session's
-// facts and reports an effort pick; it never talks to the store itself.
+// how full its context is, what it has spent, and the accent send FAB. Attach images via
+// paste, drag-drop, or the 📎 file-pick. `modelValue` is owned by the host so the same
+// primitive drives both the panel and the Чат screen. The chips are equally host-owned:
+// this component reads the session's facts and reports an effort pick; it never talks to
+// the store itself.
+
 const props = withDefaults(
   defineProps<{
     modelValue: string;
@@ -113,6 +115,10 @@ const props = withDefaults(
     // stays away rather than naming a level the agent may not be running at.
     effort?: ThinkingLevel | undefined;
     worktree?: boolean;
+    // How full the model's context window is, in percent, as omp reports it. Read straight
+    // from the session rather than derived from `usage`: cached reads and summarisation move
+    // the two figures independently.
+    context?: number | undefined;
     // What the session has spent, lifetime, as the api counted it. The whole shape rather
     // than a token total: the row prints tokens AND money, and summing them here keeps every
     // caller from re-deriving the same two figures.
@@ -175,14 +181,26 @@ function onFilePick(e: Event): void {
 
 const canSend = computed(() => props.modelValue.trim().length > 0 || attachImages.value.length > 0);
 
-// What this session has spent, lifetime: `242k токенів · $0.62`. Tokens are spelled out
-// rather than abbreviated to the card strip's `ток` because this readout stands alone at the
-// end of the row, and `usd` yields the empty string for nothing-spent, so a session that has
-// only ever read cache prints its tokens without a `· $0.00` nobody can stand behind. No
-// usage at all — never counted — prints nothing: a `0` would claim a free agent.
-const spend = computed(() => {
+// The session's numbers, one readout at the end of the row:
+// `контекст 14% · 6.2M токенів · $5.09`. Every piece is either true or absent, and each is
+// dropped independently, so a fresh session prints `контекст 0%` alone and a cache-only one
+// prints its tokens without a `· $0.00` nobody can stand behind. No usage at all — never
+// counted — prints nothing rather than a `0` claiming a free agent. Tokens are spelled out
+// rather than abbreviated to the card strip's `ток` because there is room here.
+//
+// Sub-half-percent context is still context loaded; `toFixed(0)` would call it 0%. An exact
+// 0 is not rounded from anything — the supervisor assigns omp's raw reading or nothing, with
+// no `?? 0` anywhere — so it keeps `0%`; flooring that too would be the mirror-image lie,
+// hiding a true zero behind a `<`. Do not "tidy" this guard.
+const stats = computed(() => {
+  const pc = props.context;
   const u = props.usage;
-  return u ? [`${tokens(usageTokens(u))} токенів`, usd(u.cost)].filter(Boolean).join(' · ') : '';
+  return [
+    pc == null ? '' : `контекст ${pc > 0 && pc < 0.5 ? '<1' : pc.toFixed(0)}%`,
+    ...(u ? [`${tokens(usageTokens(u))} токенів`, usd(u.cost)] : []),
+  ]
+    .filter(Boolean)
+    .join(' · ');
 });
 
 function submit(): void {
@@ -327,7 +345,9 @@ function submit(): void {
   --k-mark-size: 12px;
 }
 
-.k-composer__tokens {
+// Context / tokens / spend — the session's numbers, quietest type in the row: they are
+// watched by glance, not read, so they sit a step below the chips they follow.
+.k-composer__stats {
   font-size: var(--k-fs-sm);
   color: var(--k-faint);
   white-space: nowrap;

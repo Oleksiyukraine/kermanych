@@ -401,6 +401,7 @@
         model="opus-5"
         :effort="composerEffort"
         :worktree="true"
+        :context="14"
         :usage="{ input: 18_400, output: 9_200, cacheRead: 214_000, cacheWrite: 620, cost: 0.62 }"
         @send="() => {}"
         @effort="(level) => (composerEffort = level)"

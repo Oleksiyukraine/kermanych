@@ -86,6 +86,7 @@
           v-model="draft"
           :model="chatSession?.model"
           :effort="chatSession?.effort"
+          :context="chatSession?.contextPercent"
           :usage="chatSession?.usage"
           placeholder="запитай або опиши, що потрібно зробити…"
           @send="onSend"
