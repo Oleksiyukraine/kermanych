@@ -15,6 +15,7 @@ declare module 'vue-router' {
 // section is one entry in this map.
 const SECTION_PAGES: Record<string, RouteRecordRaw['component']> = {
   'management-integrations': () => import('pages/ManagementIntegrationsPage.vue'),
+  'management-risks': () => import('pages/ManagementRisksPage.vue'),
 };
 
 const routes: RouteRecordRaw[] = [
@@ -49,7 +50,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'board', name: 'board', component: () => import('pages/BoardPage.vue'), meta: { public: false } },
       { path: 'kit', name: 'kit', component: () => import('pages/KitGalleryPage.vue'), meta: { public: false } },
       { path: 'chat', name: 'chat', component: () => import('pages/ChatPage.vue'), meta: { public: false } },
-      // Менеджмент is a nested shell: ManagementPage owns the section strip and
+      // Менеджмент is a nested shell: ManagementPage owns the section rail and
       // the «pick a project» gate, one child route per section. The named parent
       // is what the top nav matches on (route.matched in MainLayout), and the
       // empty path redirects rather than rendering, so /management has exactly

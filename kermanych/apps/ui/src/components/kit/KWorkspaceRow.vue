@@ -151,6 +151,15 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
   }
 }
 
+// ▾/▸ are filled triangles: their ink is roughly a third of the em box, so at the 12px the
+// rest of this row uses the fold control was a ~6px smudge — the one affordance in the tree
+// a new user has to find, and the hardest thing in the sidebar to see. Stepped up to the
+// 18px title size, which puts its ink at the weight of the 12px «+» beside it without
+// changing the 28x28 hit box either control occupies.
+.k-ws__chevron {
+  font-size: var(--k-fs-lg);
+}
+
 // Secondary action, so it stays out of the way until the row is pointed at — but keyboard
 // users never hover, and an invisible tab stop is a trap. Focus reveals it too.
 .k-ws__add {

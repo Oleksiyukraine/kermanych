@@ -15,6 +15,15 @@ export type {
   TaskPatch,
   ProjectSkill,
   ProjectSkillInsert,
+  RiskKind,
+  RiskCategory,
+  RiskResponse,
+  RiskStatus,
+  RiskEventKind,
+  ProjectRisk,
+  ProjectRiskInsert,
+  ProjectRiskPatch,
+  ProjectRiskEvent,
 } from "./types";
 
 export type { SupabaseClient, CloudEnv, CloudClientOptions } from "./client";
@@ -68,3 +77,13 @@ export {
   upsertProjectSkill,
   deleteProjectSkill,
 } from "./skills";
+
+export {
+  toProjectRisk,
+  toProjectRiskEvent,
+  toRiskRow,
+  listProjectRisks,
+  createProjectRisk,
+  patchProjectRisk,
+  listRiskEvents,
+} from "./risks";

@@ -299,11 +299,32 @@
       <div class="kit__row" style="margin-top: var(--k-sp-3)">
         <KSubNav v-model="subNav" :items="subNavItems" aria-label="Демо розділів" />
       </div>
+      <!-- No `icon` here: the leading mark is a MINIFIED-rail affordance, and the layout
+           hides it whenever the labels are on screen. Passing one would document a
+           combination the app never renders. -->
       <div class="kit__sidebar">
         <KNavItem label="Активні" :count="3" :active="navActive === 'active'" @click="navActive = 'active'" />
         <KNavItem label="Задачі" :count="5" :active="navActive === 'tasks'" @click="navActive = 'tasks'" />
         <KNavItem label="Відкладені" :count="12" :active="navActive === 'archived'" @click="navActive = 'archived'" />
         <KNavItem label="Історія" :active="navActive === 'history'" @click="navActive = 'history'" />
+      </div>
+      <div class="kit__caption mono">
+        рядок рейки: лейбл + лічильник — і той самий рядок із другим рядком тексту
+        (секційна рейка Менеджменту)
+      </div>
+      <div class="kit__sidebar">
+        <KNavItem
+          label="Skills"
+          hint="бібліотека скілів"
+          :active="navStacked === 'skills'"
+          @click="navStacked = 'skills'"
+        />
+        <KNavItem
+          label="Integrations"
+          hint="Linear, Jira, Slack"
+          :active="navStacked === 'integrations'"
+          @click="navStacked = 'integrations'"
+        />
       </div>
     </section>
 
@@ -440,6 +461,7 @@ const subNavItems = [
   { value: 'releases', label: 'Release Notes' },
 ];
 const navActive = ref('active');
+const navStacked = ref('skills');
 const detailTab = ref('log');
 const detailTabs = [
   { value: 'log', label: 'Лог' },

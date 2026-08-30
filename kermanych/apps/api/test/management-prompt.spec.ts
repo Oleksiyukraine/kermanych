@@ -95,7 +95,9 @@ describe("buildManagementTurn", () => {
     const out = buildManagementTurn({ first: false, repos, context, text: "?" });
     expect(out).toContain("- Альфа · /repos/alpha · гілка: main");
     expect(out).toContain("- Бета · не привʼязаний на цій машині");
-    expect(out).toContain("Активний розділ: management-risks (Risk Registry, capability=none)");
+    // Risk Registry has a real screen since the register merged, so it is `read` — the
+    // assistant may describe it and must still refuse to write it.
+    expect(out).toContain("Активний розділ: management-risks (Risk Registry, capability=read)");
     expect(out.trimEnd().endsWith("?")).toBe(true);
   });
 });

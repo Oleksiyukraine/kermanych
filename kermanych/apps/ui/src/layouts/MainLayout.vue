@@ -10,6 +10,7 @@
             :label="b.label"
             :icon="b.icon"
             :count="bucketCounts[b.key]"
+            :tip="collapsed ? b.label : undefined"
             :active="store.selectedBucket === b.key"
             @click="onBucket(b.key)"
           />
@@ -795,11 +796,15 @@ function onThemeToggle(e: MouseEvent): void {
   toggleTheme(el instanceof HTMLElement ? el.getBoundingClientRect() : null);
 }
 
+// The marks are drawn (KIcon), not typed. They only ever show while the rail is minified,
+// which is precisely where the label is gone and the mark alone has to say which bucket it
+// opens — a job the text glyphs this replaced could not do: ◉ read as a radio button, ☰ as a
+// menu, ⤓ as a download and ↺ as a reload.
 const buckets = [
-  { key: 'active', label: 'Активні', icon: '◉' },
-  { key: 'tasks', label: 'Задачі', icon: '☰' },
-  { key: 'archived', label: 'Відкладені', icon: '⤓' },
-  { key: 'history', label: 'Історія', icon: '↺' },
+  { key: 'active', label: 'Активні', icon: 'activity' },
+  { key: 'tasks', label: 'Задачі', icon: 'tasks' },
+  { key: 'archived', label: 'Відкладені', icon: 'archive' },
+  { key: 'history', label: 'Історія', icon: 'history' },
 ] as const;
 function onBucket(key: 'active' | 'tasks' | 'archived' | 'history'): void {
   store.setBucket(key);
@@ -1744,7 +1749,7 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
 }
 
 // ── Minified (Slack-style) rail — icons only, ~64px wide ─────────────────────
-// Expanded stays label-only, so the leading glyph is hidden until the rail is minified.
+// Expanded stays label-only, so the leading mark is hidden until the rail is minified.
 .shell__side-inner:not(.shell--min) :deep(.k-nav-item__icon) {
   display: none;
 }
@@ -1763,12 +1768,16 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   gap: 0;
   padding: var(--k-sp-2);
 }
-.shell--min :deep(.k-nav-item__label),
+// The whole text column, not just the label inside it: the column is `flex: 1`, so leaving
+// it in place would stretch an empty box across the rail and push the mark off centre.
+.shell--min :deep(.k-nav-item__text),
 .shell--min :deep(.k-count) {
   display: none;
 }
+// In the rail the mark IS the control — nothing else is left of the row — so it takes the
+// largest step of KIcon's scale rather than the 18px default it would use beside a label.
 .shell--min :deep(.k-nav-item__icon) {
-  font-size: var(--k-fs-md);
+  --k-icon-size: 20px;
 }
 .shell--min :deep(.k-rail) {
   justify-content: center;
