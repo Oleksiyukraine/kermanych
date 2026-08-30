@@ -125,9 +125,41 @@
           multiline
           :rows="6"
         />
+        <div class="board__images">
+          <span class="board__images-label">Зображення</span>
+          <template v-if="!editingId">
+            <label class="board__images-add">
+              <input
+                class="board__images-input"
+                type="file"
+                accept="image/*"
+                multiple
+                @change="onImagesSelected"
+              />
+              <span>Додати зображення…</span>
+            </label>
+            <div v-if="draftImages.length" class="board__images-grid">
+              <div v-for="(img, i) in draftImages" :key="img.url" class="board__images-thumb">
+                <img :src="img.url" alt="" />
+                <button
+                  type="button"
+                  class="board__images-remove"
+                  title="Прибрати"
+                  @click="removeDraftImage(i)"
+                >×</button>
+              </div>
+            </div>
+          </template>
+          <div v-else-if="editImageUrls.length" class="board__images-grid">
+            <div v-for="url in editImageUrls" :key="url" class="board__images-thumb">
+              <img :src="url" alt="" />
+            </div>
+          </div>
+          <p v-else class="board__images-empty mono">Немає зображень</p>
+        </div>
         <div class="board__form-row">
           <KSelect v-model="draftModel" label="Модель" :options="MODEL_OPTIONS" placeholder="за замовчуванням" />
-          <KSelect v-model="draftPrefix" label="Тип" :options="PREFIX_OPTIONS" placeholder="feature" />
+          <KSelect v-model="draftPrefix" label="Тип" :options="PREFIX_OPTIONS" placeholder="за замовчуванням" />
           <KSelect
             v-model="draftPlatform"
             label="Платформа"
@@ -139,21 +171,28 @@
         <!-- The label is hoisted OUT of KSelect so the avatar can be centred on the
              control itself: inside the component the label and the input are one column,
              and centring the face on that column parks it in the gap between them. -->
-        <div v-if="editingTask" class="board__assign">
+        <div class="board__assign">
           <span class="board__assign-label">Виконавець</span>
           <div class="board__assign-row">
             <KAvatar
-              :name="editingAssignee?.name ?? 'Не призначено'"
-              :avatar-url="editingAssignee?.avatarUrl"
-              :empty="!editingAssignee"
+              :name="activeAssignee?.name ?? 'Не призначено'"
+              :avatar-url="activeAssignee?.avatarUrl"
+              :empty="!activeAssignee"
               :size="26"
             />
             <KSelect
+              v-if="editingTask"
               :model-value="editingTask.assigneeId ?? ''"
               :options="editorAssigneeOptions"
               placeholder="не призначено"
               :disabled="isActiveTask(editingTask)"
               @update:model-value="(id: string) => onAssign(editingTask!, id)"
+            />
+            <KSelect
+              v-else
+              v-model="draftAssignee"
+              :options="createAssigneeOptions"
+              placeholder="не призначено"
             />
           </div>
         </div>
@@ -238,6 +277,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import type { Project } from '@kermanych/core';
 import type { Task, TaskStatus, WorkspaceMember } from '@kermanych/cloud';
+import { signedTaskImageUrls } from '@kermanych/cloud';
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import { useAuth } from 'stores/auth';
 import { useBoard } from 'stores/board';
@@ -910,6 +950,79 @@ const draftPrefix = ref('');
 const draftPlatform = ref('');
 const draftBranch = ref('');
 
+// Assignee is OPTIONAL at creation: '' is «не призначено». The picker reads the chosen
+// project's workspace roster, since a new task is not bound to a person until submit.
+const draftAssignee = ref('');
+const createAssigneeOptions = computed<KSelectOption[]>(() =>
+  draftProject.value
+    ? membersOf(draftProject.value).map((m) => ({ value: m.userId, label: handleOf(m) }))
+    : [],
+);
+const createAssignee = computed(() =>
+  resolveAssignee(draftAssignee.value || null, membersOf(draftProject.value)),
+);
+// The face beside the picker, for whichever mode the modal is in.
+const activeAssignee = computed(() => (editingId.value ? editingAssignee.value : createAssignee.value));
+
+// Switching the project in create mode invalidates a person picked from the old project's
+// workspace, so the selection is dropped rather than submitted against a roster they may
+// not belong to. Harmless in edit mode, which never reads draftAssignee.
+watch(draftProject, () => {
+  draftAssignee.value = '';
+});
+
+// Each selected file carries its own object URL for the thumbnail; both are revoked on
+// removal and on close, so a modal opened many times never leaks blob URLs.
+const draftImages = ref<{ file: File; url: string }[]>([]);
+
+function onImagesSelected(e: Event): void {
+  const input = e.target as HTMLInputElement;
+  for (const file of Array.from(input.files ?? [])) {
+    draftImages.value.push({ file, url: URL.createObjectURL(file) });
+  }
+  // Clear the native input so re-picking the same file fires change again.
+  input.value = '';
+}
+
+function removeDraftImage(index: number): void {
+  const [removed] = draftImages.value.splice(index, 1);
+  if (removed) URL.revokeObjectURL(removed.url);
+}
+
+function clearDraftImages(): void {
+  for (const img of draftImages.value) URL.revokeObjectURL(img.url);
+  draftImages.value = [];
+}
+
+// The images an EDITED task already carries. The bucket is private, so the row's paths are
+// resolved to short-lived signed URLs. Keyed on the id AND the paths, so both opening a
+// different card and a Realtime edit to the current one refresh the strip.
+const editImageUrls = ref<string[]>([]);
+watch(
+  () => `${editingId.value ?? ''}:${editingTask.value?.imagePaths?.join(',') ?? ''}`,
+  async () => {
+    const paths = editingTask.value?.imagePaths ?? [];
+    if (!paths.length) {
+      editImageUrls.value = [];
+      return;
+    }
+    try {
+      editImageUrls.value = await signedTaskImageUrls(auth.client, paths);
+    } catch {
+      // A failed sign is not worth a toast on a modal opened to edit text; the images
+      // simply do not render.
+      editImageUrls.value = [];
+    }
+  },
+);
+
+// Esc, the backdrop, cancel and submit all route through `editorOpen`, so one watcher frees
+// the blob URLs however the modal closed.
+watch(editorOpen, (open) => {
+  if (!open) clearDraftImages();
+});
+onUnmounted(clearDraftImages);
+
 // A task always needs a title; a NEW one also needs a project, because `project_id` is what
 // the tasks INSERT policy checks membership against. `draftProject` holds an ID now, so it
 // is checked against the cloud list rather than merely being non-empty: a stale id must not
@@ -931,6 +1044,8 @@ function openCreate(): void {
   draftPrefix.value = '';
   draftPlatform.value = '';
   draftBranch.value = '';
+  draftAssignee.value = '';
+  clearDraftImages();
   editorOpen.value = true;
 }
 
@@ -944,6 +1059,8 @@ function openEdit(task: Task): void {
   draftPrefix.value = task.prefix ?? '';
   draftPlatform.value = task.platform ?? '';
   draftBranch.value = task.branch ?? '';
+  draftAssignee.value = '';
+  clearDraftImages();
   editorOpen.value = true;
 }
 
@@ -982,7 +1099,11 @@ async function submitEditor(): Promise<void> {
       editorError.value = 'Виберіть проєкт';
       return;
     }
-    if (!(await board.createTask({ projectId, ...fields }))) {
+    const created = await board.createTask(
+      { projectId, ...fields, ...(draftAssignee.value ? { assigneeId: draftAssignee.value } : {}) },
+      draftImages.value.map((d) => d.file),
+    );
+    if (!created) {
       editorError.value = 'Не вдалося створити задачу — подробиці в повідомленні';
       return;
     }
@@ -1123,6 +1244,83 @@ function onDelete(task: Task): void {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
+}
+
+.board__images {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.board__images-label {
+  font-size: 13px;
+  color: var(--k-text);
+}
+
+/* A styled trigger over a hidden native input — the raw control has no place in this form's
+   look, but the label still opens the OS picker. */
+.board__images-add {
+  align-self: flex-start;
+  font-family: var(--k-font-ui);
+  font-size: 13px;
+  color: var(--k-text);
+  background: var(--k-surface);
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+
+.board__images-add:hover {
+  border-color: var(--k-accent);
+}
+
+.board__images-input {
+  display: none;
+}
+
+.board__images-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--k-sp-2);
+}
+
+.board__images-thumb {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  overflow: hidden;
+}
+
+.board__images-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.board__images-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.board__images-empty {
+  font-size: 11.5px;
+  color: var(--k-faint);
 }
 
 .board__stale-note {
