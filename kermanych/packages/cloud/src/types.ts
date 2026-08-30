@@ -63,6 +63,9 @@ export type Task = {
   platform?: string;
   kind?: string;
   branch?: string;
+  // Storage object paths in the `task-images` bucket (private). The board mints signed
+  // URLs from these on demand; the row never carries a URL. Absent when the task has none.
+  imagePaths?: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -77,6 +80,7 @@ export type TaskInsert = {
   platform?: string;
   kind?: string;
   branch?: string;
+  imagePaths?: string[];
 };
 
 export type TaskPatch = {
@@ -88,6 +92,7 @@ export type TaskPatch = {
   platform?: string;
   kind?: string;
   branch?: string;
+  imagePaths?: string[];
 };
 
 // A per-project skill (the Kermanych UI's library). `enabled: false` on a row whose name
