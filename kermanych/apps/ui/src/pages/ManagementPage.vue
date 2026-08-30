@@ -11,18 +11,18 @@
       <div class="mgmt__rail-head">
         <span class="mgmt__eyebrow mono">Менеджмент</span>
         <!-- The scope, stated above the rows it applies to: every section below
-             reports on this one project. Greyed out and dot-less while nothing is
+             reports on this one workspace. Greyed out and dot-less while nothing is
              chosen, so the chip reads as an empty slot rather than a label. -->
-        <span class="mgmt__chip" :class="{ 'mgmt__chip--empty': !projectId }">
+        <span class="mgmt__chip" :class="{ 'mgmt__chip--empty': !workspaceId }">
           <span
-            v-if="projectId"
+            v-if="workspaceId"
             class="mgmt__chip-dot"
-            :style="{ background: projectColor }"
+            :style="{ background: workspaceColor }"
             aria-hidden="true"
           ></span>
-          <span class="mgmt__chip-name">{{ projectName || 'проєкт не вибрано' }}</span>
+          <span class="mgmt__chip-name">{{ workspaceName || 'воркспейс не вибрано' }}</span>
         </span>
-        <p class="mgmt__rail-note">Кожен розділ звітує про цей проєкт.</p>
+        <p class="mgmt__rail-note">Кожен розділ звітує про цей воркспейс.</p>
       </div>
 
       <nav class="mgmt__rail-list" aria-label="Розділи менеджменту">
@@ -43,18 +43,25 @@
         <h1 class="mgmt__heading">{{ sectionLabel }}</h1>
       </header>
 
-      <!-- The selection IS the access rule: every section reports on one project, so
+      <!-- The selection IS the access rule: every section reports on one workspace, so
            with none chosen there is nothing to report on. Same invitation the
-           Агенти view shows, rather than seven sections each repeating it. -->
-      <div v-if="!projectId" class="mgmt__blank">
+           Агенти view shows, rather than seven sections each repeating it. A project
+           that lives only on this machine has no workspace at all, and that case gets
+           named on its own line — otherwise the gate looks like the app forgot the
+           selection the sidebar is visibly holding. -->
+      <div v-if="!workspaceId" class="mgmt__blank">
         <div class="mgmt__blank-eyebrow mono">КЕРМАНИЧ</div>
         <p class="mgmt__blank-text">
-          Виберіть проєкт у лівій панелі, щоб побачити його менеджмент.
+          Виберіть воркспейс у лівій панелі, щоб побачити його менеджмент.
+        </p>
+        <p v-if="store.selectedProjectId" class="mgmt__blank-text mgmt__blank-note">
+          Вибраний проєкт існує лише локально — у нього немає воркспейсу, а значить і
+          менеджменту. Опублікуйте його або виберіть воркспейс.
         </p>
       </div>
       <template v-else>
         <div class="mgmt__body">
-          <router-view :project-id="projectId" :project-name="projectName" />
+          <router-view :workspace-id="workspaceId" :workspace-name="workspaceName" />
         </div>
 
         <!-- The Менеджмент assistant, FLOATING over the section pane rather than sitting in
@@ -147,11 +154,11 @@
 </template>
 
 <script setup lang="ts">
-// Shell of the Менеджмент tab: the section rail, the «pick a project» gate, the project
+// Shell of the Менеджмент tab: the section rail, the «pick a workspace» gate, the workspace
 // every section is scoped to, and the assistant docked at the section pane's foot. The
 // sections themselves are the child routes of /management (the table lives in
 // @kermanych/core, shared with the api and the action executor) — this component decides
-// WHETHER one renders and WHICH project it renders for; it never renders their content.
+// WHETHER one renders and WHICH WORKSPACE it renders for; it never renders their content.
 import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { MANAGEMENT_SECTIONS } from '@kermanych/core';
@@ -183,14 +190,15 @@ function goSection(name: string): void {
   if (route.name !== name) void router.push({ name });
 }
 
-const projectId = computed(() => store.selectedProjectId);
+const workspaceId = computed(() => store.selectedWorkspaceId);
 
-// Prefer the cloud name, fall back to the cached local row — the shell header's
-// two-lookup idiom, so a project whose sync failed still reads right here.
-const projectName = computed(() => {
-  const id = projectId.value;
+// One lookup, unlike the shell header's project name: workspaces exist only in the cloud,
+// so there is no cached local row to fall back to — an id we hold without a row is a list
+// that has not loaded yet, and the chip stays an empty slot until it does.
+const workspaceName = computed(() => {
+  const id = workspaceId.value;
   if (!id) return '';
-  return projects.byId.get(id)?.name ?? store.projects.find((p) => p.id === id)?.name ?? '';
+  return projects.workspaceById.get(id)?.name ?? '';
 });
 
 // ── The assistant ────────────────────────────────────────────────────────────
@@ -287,12 +295,11 @@ const planChip = computed(() => {
 });
 
 // Same join the sidebar rail uses for its tile colour; the accent is the fallback
-// so an uncoloured project still gets a dot instead of a hole.
-const projectColor = computed(() => {
-  const id = projectId.value;
+// so an uncoloured workspace still gets a dot instead of a hole.
+const workspaceColor = computed(() => {
+  const id = workspaceId.value;
   if (!id) return 'var(--k-accent)';
-  const local = store.projects.find((p) => p.id === id);
-  return projects.byId.get(id)?.color ?? local?.color ?? 'var(--k-accent)';
+  return projects.workspaceById.get(id)?.color ?? 'var(--k-accent)';
 });
 </script>
 
@@ -728,7 +735,7 @@ const projectColor = computed(() => {
   }
 }
 
-// ── Blank / no-project state — mirrors AgentsPage's invitation ───────────────
+// ── Blank / no-workspace state — mirrors AgentsPage's invitation ─────────────
 .mgmt__blank {
   flex: 1;
   display: flex;
@@ -749,6 +756,17 @@ const projectColor = computed(() => {
   font-family: var(--k-font-ui);
   font-size: var(--k-fs-md);
   color: var(--k-muted);
+}
+
+// The local-only-project line: same invitation stack, one step quieter and one step
+// smaller, because it explains the state the line above it just announced rather than
+// competing with it. Measured so the sentence wraps at a readable line rather than
+// running the pane's full width.
+.mgmt__blank-note {
+  margin-top: var(--k-sp-2);
+  max-width: 52ch;
+  font-size: var(--k-fs-sm);
+  color: var(--k-faint);
 }
 
 // The shell's own drawer already owns 264px; below this the two rails plus a

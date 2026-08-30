@@ -12,9 +12,9 @@
 // Type-only imports on purpose: the file must stay loadable under bare vitest, which cannot
 // resolve @kermanych/cloud's CJS dist.
 import type {
-  ProjectRisk,
-  ProjectRiskInsert,
-  ProjectRiskPatch,
+  WorkspaceRisk,
+  WorkspaceRiskInsert,
+  WorkspaceRiskPatch,
   RiskCategory,
   RiskEventKind,
   RiskKind,
@@ -106,7 +106,7 @@ export const RISK_KINDS: readonly Labelled<RiskKind>[] = [
 ];
 
 // Which strategies are legal depends on the direction of the uncertainty. The Postgres
-// constraint project_risks_response_matches_kind enforces the same split, so the editor
+// constraint workspace_risks_response_matches_kind enforces the same split, so the editor
 // filtering this list is a courtesy, not the guard.
 export const RISK_RESPONSES: readonly (Labelled<RiskResponse> & { kind: RiskKind | 'both' })[] = [
   { value: 'avoid', label: 'Уникнути', kind: 'threat' },
@@ -162,28 +162,28 @@ export function eventValueLabel(kind: RiskEventKind, token: string): string {
 // A risk is uncertain and in the future. The moment it occurs it becomes an issue and gets a
 // resolution plan, not a mitigation — which is exactly the line `materialized` draws, and
 // why it is not counted as live here.
-export function isLive(r: ProjectRisk): boolean {
+export function isLive(r: WorkspaceRisk): boolean {
   return r.status === 'open' || r.status === 'treated';
 }
 
 // What the register manages TODAY: the residual score once the response has been scored,
 // the inherent score until then.
-export function effectiveExposure(r: ProjectRisk): number {
+export function effectiveExposure(r: WorkspaceRisk): number {
   return r.residualExposure ?? r.exposure;
 }
 
 // Above the agreed tolerance and still live — the sponsor's problem, not the PM's.
-export function needsEscalation(r: ProjectRisk): boolean {
+export function needsEscalation(r: WorkspaceRisk): boolean {
   return isLive(r) && effectiveExposure(r) >= ESCALATION_EXPOSURE;
 }
 
 // What the mitigation bought, in exposure points. Undefined while the residual is unscored:
 // zero would be a claim, and «not yet scored» is not «bought nothing».
-export function mitigationGain(r: ProjectRisk): number | undefined {
+export function mitigationGain(r: WorkspaceRisk): number | undefined {
   return r.residualExposure === undefined ? undefined : r.exposure - r.residualExposure;
 }
 
-export function reviewOverdue(r: ProjectRisk, nowMs: number): boolean {
+export function reviewOverdue(r: WorkspaceRisk, nowMs: number): boolean {
   if (!isLive(r)) return false;
   const seen = new Date(r.lastReviewedAt).getTime();
   if (Number.isNaN(seen)) return false;
@@ -217,18 +217,18 @@ export function proximityOf(date: string | undefined, nowMs: number): Proximity 
 // Schedule and budget reserve justified by quantified exposure, not a flat 10%. Only the
 // live rows count, and only the ones somebody actually put a number on — a register where
 // nothing is quantified reports a reserve of nothing, which is the honest answer.
-export function contingencyReserve(risks: readonly ProjectRisk[]): number {
+export function contingencyReserve(risks: readonly WorkspaceRisk[]): number {
   return risks.reduce((sum, r) => (isLive(r) && r.emv !== undefined ? sum + r.emv : sum), 0);
 }
 
-export function quantifiedCount(risks: readonly ProjectRisk[]): number {
+export function quantifiedCount(risks: readonly WorkspaceRisk[]): number {
   return risks.filter((r) => isLive(r) && r.emv !== undefined).length;
 }
 
 // Status reports carry the top 5–10 by exposure plus anything newly escalated; the full
 // register stays in the tool. Ties break on the inherent score, then on code, so the list is
 // stable between two reads of an unchanged register.
-export function topByExposure(risks: readonly ProjectRisk[], n: number): ProjectRisk[] {
+export function topByExposure(risks: readonly WorkspaceRisk[], n: number): WorkspaceRisk[] {
   return risks
     .filter(isLive)
     .slice()
@@ -245,7 +245,7 @@ export function topByExposure(risks: readonly ProjectRisk[], n: number): Project
 // may genuinely carry no licensing risk — but a register that has never once considered data
 // migration or key-person dependency is a register that has not been worked, and this is
 // what «force them into every register» looks like on a screen.
-export function registerGaps(risks: readonly ProjectRisk[]): RiskCategory[] {
+export function registerGaps(risks: readonly WorkspaceRisk[]): RiskCategory[] {
   const covered = new Set(risks.filter(isLive).map((r) => r.category));
   return RISK_CATEGORIES.filter((c) => c.mandatory && !covered.has(c.value)).map((c) => c.value);
 }
@@ -254,7 +254,7 @@ export const cellKey = (probability: number, impact: number): string => `${proba
 
 // Counts per 5×5 cell for the heat map, on the effective score — the matrix has to show
 // where the register stands after its responses, not where it stood before them.
-export function matrixCounts(risks: readonly ProjectRisk[]): Record<string, number> {
+export function matrixCounts(risks: readonly WorkspaceRisk[]): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const r of risks) {
     if (!isLive(r)) continue;
@@ -297,7 +297,7 @@ export const EMPTY_FILTER: RiskFilter = {
   cell: '',
 };
 
-export function filterRisks(risks: readonly ProjectRisk[], f: RiskFilter): ProjectRisk[] {
+export function filterRisks(risks: readonly WorkspaceRisk[], f: RiskFilter): WorkspaceRisk[] {
   const q = f.query.trim().toLowerCase();
   return risks.filter((r) => {
     if (f.status === 'active' ? !isLive(r) : f.status !== '' && r.status !== f.status) return false;
@@ -323,11 +323,11 @@ export const SORTS: readonly Labelled<RiskSort>[] = [
   { value: 'code', label: 'За номером' },
 ];
 
-export function sortRisks(risks: readonly ProjectRisk[], sort: RiskSort): ProjectRisk[] {
+export function sortRisks(risks: readonly WorkspaceRisk[], sort: RiskSort): WorkspaceRisk[] {
   const out = risks.slice();
   // Every comparator falls back to the code, so the order never depends on the order the
   // rows happened to arrive in.
-  const byCode = (a: ProjectRisk, b: ProjectRisk): number => a.code.localeCompare(b.code);
+  const byCode = (a: WorkspaceRisk, b: WorkspaceRisk): number => a.code.localeCompare(b.code);
   if (sort === 'code') return out.sort(byCode);
   if (sort === 'review') {
     return out.sort((a, b) => a.lastReviewedAt.localeCompare(b.lastReviewedAt) || byCode(a, b));
@@ -353,7 +353,7 @@ function clause(s: string): string {
 // cause -> event -> consequence, rendered as the one sentence a steering committee can read
 // without the register open. Composed rather than stored, so the three parts stay separately
 // editable and a row can never drift into an unscoreable «the API might be a problem».
-export function statementOf(r: Pick<ProjectRisk, 'kind' | 'cause' | 'event' | 'consequence'>): string {
+export function statementOf(r: Pick<WorkspaceRisk, 'kind' | 'cause' | 'event' | 'consequence'>): string {
   const middle = r.kind === 'opportunity' ? 'існує можливість, що' : 'існує ризик, що';
   const tail = r.kind === 'opportunity' ? 'що дало б' : 'що призвело б до';
   return `Оскільки ${clause(r.cause)}, ${middle} ${clause(r.event)}, ${tail} ${clause(r.consequence)}.`;
@@ -470,7 +470,7 @@ export function emptyDraft(nowMs: number): RiskDraft {
   };
 }
 
-export function draftOf(r: ProjectRisk): RiskDraft {
+export function draftOf(r: WorkspaceRisk): RiskDraft {
   return {
     kind: r.kind,
     category: r.category,
@@ -571,11 +571,11 @@ export function validateDraft(d: RiskDraft): string[] {
 // An insert OMITS what the user left empty: `exactOptionalPropertyTypes` makes an explicit
 // `undefined` a different type from an absent key, and the column defaults are what should
 // apply to a field nobody filled in.
-export function draftToInsert(projectId: string, d: RiskDraft): ProjectRiskInsert {
+export function draftToInsert(workspaceId: string, d: RiskDraft): WorkspaceRiskInsert {
   const cost = parseAmount(d.costImpact);
   const pct = parseAmount(d.probabilityPct);
   return {
-    projectId,
+    workspaceId,
     kind: d.kind,
     category: d.category,
     cause: d.cause,
@@ -602,7 +602,7 @@ export function draftToInsert(projectId: string, d: RiskDraft): ProjectRiskInser
 // A patch is the whole form, so an emptied field means CLEAR IT — `null`, not an omitted
 // key. The editor loads every field, so nothing it sends can be «unspecified»; omitting the
 // cleared ones instead would make an unassigned action owner impossible to record.
-export function draftToPatch(d: RiskDraft): ProjectRiskPatch {
+export function draftToPatch(d: RiskDraft): WorkspaceRiskPatch {
   const cost = parseAmount(d.costImpact);
   const pct = parseAmount(d.probabilityPct);
   return {

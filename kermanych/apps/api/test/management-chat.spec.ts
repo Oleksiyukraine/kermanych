@@ -60,11 +60,11 @@ function make() {
 
 function ask(text: string): ManagementChatAsk {
   return {
-    conversationId: "management:p1",
-    projectId: "p1",
+    conversationId: "management:w1",
+    workspaceId: "w1",
     workspaceProjects: [{ id: "p1" }],
     text,
-    context: { workspaceName: "Acme", projectName: "Альфа", section: "management-risks" },
+    context: { workspaceName: "Acme", section: "management-risks" },
   };
 }
 
@@ -143,7 +143,7 @@ describe("ManagementChatService", () => {
     const svc = make();
     turns = [reply("перша розмова")];
     await svc.ask(ask("перше"));
-    await svc.reset("management:p1");
+    await svc.reset("management:w1");
     expect(stopped).toBe(1);
     turns = [reply("друга розмова")];
     await svc.ask(ask("знову перше"));

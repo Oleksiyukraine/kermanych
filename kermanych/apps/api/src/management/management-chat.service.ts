@@ -95,11 +95,11 @@ export class ManagementChatService implements OnModuleDestroy {
   async ask(input: ManagementChatAsk): Promise<ManagementChatReply> {
     const startedAt = Date.now();
     this.sweep();
-    // The client always sends the scoped project among the workspace entries
-    // (ManagementChatAsk), but one that sent only `projectId` still gets its own
-    // repository rather than a chat convinced the workspace is empty.
-    const scope = input.workspaceProjects.length ? input.workspaceProjects : [{ id: input.projectId }];
-    const repos = managementRepos(this.registry.listProjects(), scope);
+    // A workspace whose projects are all unbound on this machine — or which holds none at
+    // all — still gets a working chat: `managementRepos` drops the ids the registry does not
+    // know and `managementCwd` then falls back to `homedir()`. The assistant's subject is
+    // the management surface, not the source, so there is nothing to refuse here.
+    const repos = managementRepos(this.registry.listProjects(), input.workspaceProjects);
     const key = input.conversationId;
     const run = (): Promise<ManagementChatReply> => this.turn(key, repos, input, startedAt);
     // `then(run, run)` and not `finally`: a rejected predecessor must not cancel the ask

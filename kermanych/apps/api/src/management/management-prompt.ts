@@ -116,7 +116,6 @@ function contextBlock(repos: ManagementRepo[], c: ManagementContext): string {
   return [
     "── КОНТЕКСТ ──",
     `Воркспейс: ${c.workspaceName}`,
-    `Проєкт: ${c.projectName}`,
     `Активний розділ: ${section}`,
     "Репозиторії воркспейсу (шлях абсолютний — читай їх саме за ним):",
     repos.length ? repos.map(repoLine).join("\n") : "- жодного привʼязаного репозиторію",
