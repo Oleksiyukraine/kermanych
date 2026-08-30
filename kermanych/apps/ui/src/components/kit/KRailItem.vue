@@ -48,6 +48,10 @@ const STATE_HINT: Record<RailProject['state'], string> = {
 // The badge is aria-hidden (a bare digit reads as noise), so the count travels to assistive
 // tech through the button's label instead. Count-agnostic phrasing — «запущено агентів: 3»
 // — because Ukrainian would otherwise need three plural forms for one tooltip.
+//
+// Feeds `v-tip` (src/lib/tip.ts) AND `aria-label`, never the native `title`: the rail is the
+// most-hovered surface in the app, and `title` drew the OS rectangle there — square, delayed,
+// and the one bubble in the UI the app does not style.
 const title = computed(
   () =>
     props.project.name +
@@ -78,7 +82,7 @@ function onDragStart(e: DragEvent): void {
     class="k-rail"
     :class="{ 'k-rail--active': active, 'k-rail--indent': indent }"
     type="button"
-    :title="title"
+    v-tip="title"
     :aria-label="title"
     :aria-pressed="active"
     :draggable="draggable"

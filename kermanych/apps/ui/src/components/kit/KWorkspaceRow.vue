@@ -32,6 +32,9 @@ const emit = defineEmits<{ select: []; toggle: []; 'add-project': [] }>();
 // The counter is aria-hidden (a bare digit reads as noise), so the count reaches assistive
 // tech through the row's label instead. Count-agnostic phrasing — «запущено агентів: 3» —
 // because Ukrainian would otherwise need three plural forms for one tooltip.
+//
+// Feeds `v-tip` + `aria-label`, like the chevron and «+» beside it — this row was the odd one
+// out on a native `title`, which the OS draws as an unstyled square after ~1s.
 const title = computed(
   () =>
     props.workspace.name +
@@ -68,7 +71,7 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
     <button
       class="k-ws__body"
       type="button"
-      :title="title"
+      v-tip="title"
       :aria-label="title"
       :aria-pressed="active"
       @click="emit('select')"

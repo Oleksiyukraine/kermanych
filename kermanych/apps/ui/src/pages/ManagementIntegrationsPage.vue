@@ -19,11 +19,16 @@
         </span>
         <h3 class="int__name">{{ brand.name }}</h3>
         <p class="int__blurb">{{ brand.blurb }}</p>
-        <div class="int__foot">
+        <!-- The bubble hangs on the ROW, not on the button: `v-tip` binds mouseenter/focusin,
+             and Chromium dispatches neither on a disabled control — the same dead-tooltip
+             constraint AgentsPage and MainLayout document. The row is the cursor's target on
+             the way to «Підключити» and reads correctly for the state chip beside it too.
+             It replaces a native `title`, which drew the OS rectangle in a rounded UI. -->
+        <div v-tip="'У розробці'" class="int__foot">
           <span class="int__state mono">
             <i class="int__state-dot" aria-hidden="true"></i>не підключено
           </span>
-          <button class="int__cta" type="button" disabled title="У розробці">Підключити</button>
+          <button class="int__cta" type="button" disabled>Підключити</button>
         </div>
       </article>
     </div>
