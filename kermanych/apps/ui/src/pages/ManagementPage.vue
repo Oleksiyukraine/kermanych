@@ -1,72 +1,90 @@
 <template>
   <main class="mgmt">
     <div class="mgmt__atmo" aria-hidden="true"></div>
-    <header class="mgmt__head">
-      <div class="mgmt__title">
+
+    <!-- SECTION RAIL — the tab's own nav, in the app's one nav idiom: a column of
+         rows on a panel, exactly like the shell's bucket rail one column to the
+         left. It used to be a horizontal strip of seven labels, which is the one
+         nav shape this app uses nowhere else and which has no room for the second
+         line that says what a section holds. -->
+    <aside class="mgmt__rail">
+      <div class="mgmt__rail-head">
         <span class="mgmt__eyebrow mono">Менеджмент</span>
-        <h1 class="mgmt__heading">{{ sectionLabel }}</h1>
-      </div>
-      <!-- The scope, stated where the eye lands after the heading: every section
-           below reports on this one project. Greyed out and dot-less while nothing
-           is chosen, so the chip reads as an empty slot rather than a label. -->
-      <span class="mgmt__chip" :class="{ 'mgmt__chip--empty': !projectId }">
-        <span
-          v-if="projectId"
-          class="mgmt__chip-dot"
-          :style="{ background: projectColor }"
-          aria-hidden="true"
-        ></span>
-        <span class="mgmt__chip-name">{{ projectName || 'проєкт не вибрано' }}</span>
-      </span>
-    </header>
-
-    <KSubNav
-      :model-value="activeSection"
-      :items="tabs"
-      aria-label="Розділи менеджменту"
-      @update:model-value="goSection"
-    />
-
-    <!-- The selection IS the access rule: every section reports on one project, so
-         with none chosen there is nothing to report on. Same invitation the
-         Агенти view shows, rather than five sections each repeating it. -->
-    <div v-if="!projectId" class="mgmt__blank">
-      <div class="mgmt__blank-eyebrow mono">КЕРМАНИЧ</div>
-      <p class="mgmt__blank-text">
-        Виберіть проєкт у лівій панелі, щоб побачити його менеджмент.
-      </p>
-    </div>
-    <template v-else>
-      <div class="mgmt__body">
-        <router-view :project-id="projectId" :project-name="projectName" />
+        <!-- The scope, stated above the rows it applies to: every section below
+             reports on this one project. Greyed out and dot-less while nothing is
+             chosen, so the chip reads as an empty slot rather than a label. -->
+        <span class="mgmt__chip" :class="{ 'mgmt__chip--empty': !projectId }">
+          <span
+            v-if="projectId"
+            class="mgmt__chip-dot"
+            :style="{ background: projectColor }"
+            aria-hidden="true"
+          ></span>
+          <span class="mgmt__chip-name">{{ projectName || 'проєкт не вибрано' }}</span>
+        </span>
+        <p class="mgmt__rail-note">Кожен розділ звітує про цей проєкт.</p>
       </div>
 
-      <!-- WIP composer, docked to the foot of the page like the chat composer:
-           the section's content owns the space above it, the input keeps the
-           bottom edge whatever the section renders. Page furniture, deliberately
-           not a kit component yet — it is inert (readonly field, disabled
-           controls) and gets promoted to components/kit once it does something.
-           Frosted capsule over the page's glow layer, which is why `.mgmt__atmo`
-           exists rather than a flat canvas behind it: glass needs a substrate. -->
-      <form class="mgmt__composer" aria-label="Поле введення (у розробці)" @submit.prevent>
-        <button class="mgmt__c-icon" type="button" disabled title="У розробці">⊞</button>
-        <input
-          class="mgmt__c-input"
-          type="text"
-          readonly
-          aria-readonly="true"
-          :value="WIP_TEXT"
-          title="У розробці — поле поки не працює"
+      <nav class="mgmt__rail-list" aria-label="Розділи менеджменту">
+        <KNavItem
+          v-for="s in MANAGEMENT_SECTIONS"
+          :key="s.name"
+          :label="s.label"
+          :hint="s.hint"
+          :active="s.name === activeSection"
+          :aria-current="s.name === activeSection ? 'page' : undefined"
+          @click="goSection(s.name)"
         />
-        <button class="mgmt__c-icon" type="button" disabled title="У розробці">⚙</button>
-        <button class="mgmt__c-send" type="button" disabled title="У розробці" aria-label="Надіслати">+</button>
-      </form>
-    </template>
+      </nav>
+    </aside>
+
+    <section class="mgmt__pane">
+      <header class="mgmt__head">
+        <h1 class="mgmt__heading">{{ sectionLabel }}</h1>
+      </header>
+
+      <!-- The selection IS the access rule: every section reports on one project, so
+           with none chosen there is nothing to report on. Same invitation the
+           Агенти view shows, rather than seven sections each repeating it. -->
+      <div v-if="!projectId" class="mgmt__blank">
+        <div class="mgmt__blank-eyebrow mono">КЕРМАНИЧ</div>
+        <p class="mgmt__blank-text">
+          Виберіть проєкт у лівій панелі, щоб побачити його менеджмент.
+        </p>
+      </div>
+      <template v-else>
+        <div class="mgmt__body">
+          <router-view :project-id="projectId" :project-name="projectName" />
+        </div>
+
+        <!-- WIP composer, docked to the foot of the section pane like the chat
+             composer: the section's content owns the space above it, the input keeps
+             the bottom edge whatever the section renders. Page furniture,
+             deliberately not a kit component yet — it is inert (readonly field,
+             disabled controls) and gets promoted to components/kit once it does
+             something. Frosted capsule over the page's glow layer, which is why
+             `.mgmt__atmo` exists rather than a flat canvas behind it: glass needs a
+             substrate. -->
+        <form class="mgmt__composer" aria-label="Поле введення (у розробці)" @submit.prevent>
+          <button class="mgmt__c-icon" type="button" disabled title="У розробці">⊞</button>
+          <input
+            class="mgmt__c-input"
+            type="text"
+            readonly
+            aria-readonly="true"
+            :value="WIP_TEXT"
+            title="У розробці — поле поки не працює"
+          />
+          <button class="mgmt__c-icon" type="button" disabled title="У розробці">⚙</button>
+          <button class="mgmt__c-send" type="button" disabled title="У розробці" aria-label="Надіслати">+</button>
+        </form>
+      </template>
+    </section>
   </main>
 </template>
 
 <script setup lang="ts">
-// Shell of the Менеджмент tab: the section strip, the «pick a project» gate, and
+// Shell of the Менеджмент tab: the section rail, the «pick a project» gate, and
 // the project every section is scoped to. The sections themselves are the child
 // routes of /management (lib/management.ts) — this component decides WHETHER one
 // renders and WHICH project it renders for; it never renders their content.
@@ -74,7 +92,7 @@ import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
-import KSubNav from 'components/kit/KSubNav.vue';
+import KNavItem from 'components/kit/KNavItem.vue';
 import { MANAGEMENT_SECTIONS } from '../lib/management';
 
 const store = useOrchestrator();
@@ -82,9 +100,8 @@ const projects = useProjects();
 const route = useRoute();
 const router = useRouter();
 
-const tabs = MANAGEMENT_SECTIONS.map((s) => ({ value: s.name, label: s.label }));
-// The child route name IS the tab value, so the strip follows deep links and the
-// browser's back button with no state of its own.
+// The child route name IS the rail's selection, so the rail follows deep links and
+// the browser's back button with no state of its own.
 const activeSection = computed(() => (typeof route.name === 'string' ? route.name : ''));
 const sectionLabel = computed(
   () => MANAGEMENT_SECTIONS.find((s) => s.name === activeSection.value)?.label ?? 'Менеджмент',
@@ -117,10 +134,14 @@ const projectColor = computed(() => {
 </script>
 
 <style scoped lang="scss">
+// Two columns: the rail keeps its width, the section pane takes the rest. The
+// `minmax(0, 1fr)` is load-bearing — a plain `1fr` floors at the pane's content
+// width, and one wide row inside a section (a skill body, a diff) would then push
+// the rail off screen instead of scrolling inside the pane.
 .mgmt {
   position: relative;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 244px minmax(0, 1fr);
   gap: var(--k-sp-4);
   height: calc(100vh - 82px);
   min-height: 0;
@@ -145,12 +166,12 @@ const projectColor = computed(() => {
   pointer-events: none;
   background:
     radial-gradient(
-      520px 220px at 50% 97%,
+      520px 220px at 62% 97%,
       color-mix(in srgb, var(--k-accent) 10%, transparent),
       transparent 72%
     ),
     radial-gradient(
-      680px 340px at 44% 112%,
+      680px 340px at 56% 112%,
       color-mix(in srgb, var(--k-surface2) 85%, transparent),
       transparent 70%
     ),
@@ -162,28 +183,34 @@ const projectColor = computed(() => {
 }
 
 // Everything above the glow.
-.mgmt__head,
-.mgmt__body,
-.mgmt__composer {
+.mgmt__rail,
+.mgmt__pane {
   position: relative;
   z-index: 1;
 }
 
-.mgmt__head {
-  display: flex;
-  align-items: center;
-  gap: var(--k-sp-3);
-}
-
-.mgmt__title {
+// ── Section rail ────────────────────────────────────────────────────────────
+.mgmt__rail {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  min-width: 0;
+  gap: var(--k-sp-3);
+  min-height: 0;
+  padding: var(--k-sp-2);
+  background: color-mix(in srgb, var(--k-surface) 70%, transparent);
+  border: var(--k-rule-thin) solid var(--k-line);
+  border-radius: var(--k-r-lg);
+  overflow-y: auto;
 }
 
-// Breadcrumb without the slashes: the tab you are in, small and spaced out, over
-// the section you are looking at.
+.mgmt__rail-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--k-sp-2);
+  padding: var(--k-sp-2) var(--k-sp-3) 0;
+}
+
+// Which tab you are in, small and spaced out, over the scope it applies to.
 .mgmt__eyebrow {
   font-size: 10px;
   letter-spacing: 0.22em;
@@ -191,21 +218,11 @@ const projectColor = computed(() => {
   color: var(--k-faint);
 }
 
-.mgmt__heading {
-  margin: 0;
-  font-family: var(--k-font-ui);
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  line-height: 1;
-  color: var(--k-text);
-}
-
 .mgmt__chip {
   display: inline-flex;
   align-items: center;
   gap: var(--k-sp-2);
-  margin-left: auto;
+  max-width: 100%;
   padding: 5px var(--k-sp-3);
   font-family: var(--k-font-mono);
   font-size: var(--k-fs-xs);
@@ -213,7 +230,6 @@ const projectColor = computed(() => {
   background: color-mix(in srgb, var(--k-surface2) 55%, transparent);
   border: var(--k-rule-thin) solid var(--k-line);
   border-radius: var(--k-r-pill);
-  max-width: 320px;
 }
 
 .mgmt__chip--empty {
@@ -235,28 +251,66 @@ const projectColor = computed(() => {
   white-space: nowrap;
 }
 
-// The section's own content, centred in whatever space the docked composer leaves.
+.mgmt__rail-note {
+  margin: 0;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-xs);
+  line-height: 1.35;
+  color: var(--k-faint);
+}
+
+.mgmt__rail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+// ── Section pane ────────────────────────────────────────────────────────────
+.mgmt__pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-4);
+  min-height: 0;
+  padding: var(--k-sp-5) var(--k-sp-5) var(--k-sp-4);
+  background: color-mix(in srgb, var(--k-surface) 45%, transparent);
+  border: var(--k-rule-thin) solid var(--k-line);
+  border-radius: var(--k-r-lg);
+}
+
+.mgmt__head {
+  flex: none;
+  padding-bottom: var(--k-sp-3);
+  border-bottom: var(--k-rule-thin) solid var(--k-line);
+}
+
+.mgmt__heading {
+  margin: 0;
+  font-family: var(--k-font-ui);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--k-text);
+}
+
+// The section's own content. Top-aligned and scrolling: the pane is a document
+// column now, not a stage with one card centred in it.
 //
-// `safe center`, not plain `center`: a section taller than the frame — Risk Registry with a
-// full register — is centred INTO its own overflow by plain centering, and the part above
-// the top edge cannot be scrolled back to, because scrollTop 0 is already past it. `safe`
-// keeps the centring for the short sections and falls back to flex-start the moment the
-// child stops fitting, which is the only state where centring was never what was wanted.
+// That also settles what `safe center` was here for: a section taller than the frame — Risk
+// Registry with a full register — is centred INTO its own overflow by plain centering, and
+// the part above the top edge cannot be scrolled back to, because scrollTop 0 is already
+// past it. Flex-start has no such state; it overflows downward only, so the whole register
+// stays reachable.
 .mgmt__body {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: safe center;
-  gap: var(--k-sp-5);
 }
 
 // ── WIP composer — frosted capsule ──────────────────────────────────────────
 .mgmt__composer {
   flex: none;
-  // Centred on the page's foot, not stretched across it: a capsule pulled to the
+  // Centred on the pane's foot, not stretched across it: a capsule pulled to the
   // full width of a 1400px window reads as a toolbar, and its trailing controls
   // end up a screen away from the text they belong to. Capped at a comfortable
   // measure and centred, it stays a single object.
@@ -365,7 +419,6 @@ const projectColor = computed(() => {
   align-items: flex-start;
   justify-content: center;
   gap: 10px;
-  padding: 0 40px;
 }
 
 .mgmt__blank-eyebrow {
@@ -379,5 +432,14 @@ const projectColor = computed(() => {
   font-family: var(--k-font-ui);
   font-size: var(--k-fs-md);
   color: var(--k-muted);
+}
+
+// The shell's own drawer already owns 264px; below this the two rails plus a
+// section body stop fitting side by side at a readable measure, so the section
+// rail gives up its second line's comfort first.
+@media (max-width: 1180px) {
+  .mgmt {
+    grid-template-columns: 196px minmax(0, 1fr);
+  }
 }
 </style>

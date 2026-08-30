@@ -308,6 +308,24 @@
         <KNavItem label="Відкладені" :count="12" :active="navActive === 'archived'" @click="navActive = 'archived'" />
         <KNavItem label="Історія" :active="navActive === 'history'" @click="navActive = 'history'" />
       </div>
+      <div class="kit__caption mono">
+        рядок рейки: лейбл + лічильник — і той самий рядок із другим рядком тексту
+        (секційна рейка Менеджменту)
+      </div>
+      <div class="kit__sidebar">
+        <KNavItem
+          label="Skills"
+          hint="бібліотека скілів"
+          :active="navStacked === 'skills'"
+          @click="navStacked = 'skills'"
+        />
+        <KNavItem
+          label="Integrations"
+          hint="Linear, Jira, Slack"
+          :active="navStacked === 'integrations'"
+          @click="navStacked = 'integrations'"
+        />
+      </div>
     </section>
 
     <!-- session cards -->
@@ -443,6 +461,7 @@ const subNavItems = [
   { value: 'releases', label: 'Release Notes' },
 ];
 const navActive = ref('active');
+const navStacked = ref('skills');
 const detailTab = ref('log');
 const detailTabs = [
   { value: 'log', label: 'Лог' },

@@ -1768,7 +1768,9 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   gap: 0;
   padding: var(--k-sp-2);
 }
-.shell--min :deep(.k-nav-item__label),
+// The whole text column, not just the label inside it: the column is `flex: 1`, so leaving
+// it in place would stretch an empty box across the rail and push the mark off centre.
+.shell--min :deep(.k-nav-item__text),
 .shell--min :deep(.k-count) {
   display: none;
 }
