@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { SessionStatus } from "@kermanych/core";
+import type { RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same ten labels.
@@ -116,42 +116,15 @@ export type ProjectSkillInsert = {
 };
 
 // ── Risk register ───────────────────────────────────────────────────────────────
-// The four enums mirror the Postgres types created in 20260830140000_workspace_risks.sql
-// one label for one label. The register is scoped to the WORKSPACE — the group that carries
-// the membership — and not to a single project, so one register covers everything the group
-// is accountable for. The UI's labels and scoring policy live in apps/ui/src/lib/risk.ts,
-// because they are copy and risk-method policy, not storage.
-export type RiskKind = "threat" | "opportunity";
-
-export type RiskCategory =
-  | "technical"
-  | "security"
-  | "vendor"
-  | "resource"
-  | "external"
-  | "compliance"
-  | "organizational"
-  | "legacy"
-  | "key_person"
-  | "infrastructure"
-  | "data_migration"
-  | "performance"
-  | "licensing"
-  | "ai_model";
-
-// Threat strategies and opportunity strategies share the type; which set is legal for a
-// given row is decided by its `kind` and enforced by workspace_risks_response_matches_kind.
-export type RiskResponse =
-  | "avoid"
-  | "reduce"
-  | "transfer"
-  | "escalate"
-  | "exploit"
-  | "enhance"
-  | "share"
-  | "accept";
-
-export type RiskStatus = "open" | "treated" | "closed" | "materialized";
+// The four enums are OWNED by @kermanych/core (packages/core/src/risks.ts) and re-exported
+// here, because the management assistant validates a `risk.create` against them in core,
+// where this package cannot be imported from. They mirror the Postgres types created in
+// 20260830140000_workspace_risks.sql one label for one label. The register is scoped to the
+// WORKSPACE — the group that carries the membership — and not to a single project, so one
+// register covers everything the group is accountable for. The UI's labels and scoring
+// policy live in apps/ui/src/lib/risk.ts, because they are copy and risk-method policy, not
+// storage.
+export type { RiskKind, RiskCategory, RiskResponse, RiskStatus } from "@kermanych/core";
 
 // One row of the register. `code`, `exposure`, `emv`, `residualExposure`, `closedAt` and
 // every audit field are SERVER-owned (generated columns and workspace_risks_touch()), which

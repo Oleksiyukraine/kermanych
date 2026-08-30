@@ -252,6 +252,7 @@ import KBtn from 'components/kit/KBtn.vue';
 import KTag from 'components/kit/KTag.vue';
 import RiskMatrix from './RiskMatrix.vue';
 import { useRisks } from 'stores/risks';
+import { useOrchestrator } from 'stores/orchestrator';
 import { useNow } from '../../composables/useNow';
 import { relativeTime } from '../../lib/time';
 import {
@@ -295,6 +296,8 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [risk: WorkspaceRisk] }>();
 
 const store = useRisks();
+// Toasts, for the one thing this dialog cannot show inline: a write the database refused.
+const local = useOrchestrator();
 const now = useNow(30_000);
 
 const TABS = [
@@ -417,13 +420,20 @@ async function submit(): Promise<void> {
     return;
   }
   busy.value = true;
-  const saved = props.risk
-    ? await store.save(props.workspaceId, props.risk.id, draftToPatch(draft.value))
-    : await store.create(props.workspaceId, draftToInsert(props.workspaceId, draft.value));
-  busy.value = false;
-  if (!saved) return;
-  emit('saved', saved);
-  emit('update:modelValue', false);
+  try {
+    // The store throws on a rejected write (RLS, a CHECK constraint, an unreachable
+    // Supabase). The dialog stays open with the draft intact: everything typed here is worth
+    // more than the error, and the fix is usually one field away.
+    const saved = props.risk
+      ? await store.save(props.workspaceId, props.risk.id, draftToPatch(draft.value))
+      : await store.create(props.workspaceId, draftToInsert(props.workspaceId, draft.value));
+    emit('saved', saved);
+    emit('update:modelValue', false);
+  } catch (e) {
+    local.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    busy.value = false;
+  }
 }
 
 // Re-validate live once the user has been told what is wrong, so a fixed field stops

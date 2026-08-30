@@ -64,7 +64,7 @@ function ask(text: string): ManagementChatAsk {
     workspaceId: "w1",
     workspaceProjects: [{ id: "p1" }],
     text,
-    context: { workspaceName: "Acme", section: "management-risks" },
+    context: { workspaceName: "Acme", section: "management-risks", risks: [] },
   };
 }
 
@@ -152,16 +152,34 @@ describe("ManagementChatService", () => {
     expect(sent.map((s) => s.kind)).toEqual(["prompt", "prompt"]);
   });
 
-  // A model reaching for a writing kind is describing a capability this branch does not
-  // have. It must be reported, never guessed at — «нічого не сталося» while the prose says
-  // otherwise is the one outcome the operator cannot detect.
-  it("reports an unknown action kind instead of executing a guess", async () => {
+  // The api parses and validates; it never writes. A well-formed risk comes back as an
+  // action for the BROWSER to execute under the user's own JWT, and a malformed one comes
+  // back as a rejection — «нічого не сталося» while the prose says otherwise is the one
+  // outcome the operator cannot detect.
+  it("hands a validated write action to the browser and reports a malformed one", async () => {
     const svc = make();
-    turns = [reply('Ось дія.\n\n```kermanych-action\n{"kind":"risk.create","title":"Клієнт не платить"}\n```')];
-    const r = await svc.ask(ask("зафіксуй ризик"));
-    expect(r.actions).toEqual([]);
-    expect(r.rejected).toHaveLength(1);
-    expect(r.rejected[0]).toContain("risk.create");
-    expect(r.text).toBe("Ось дія.");
+    const risk = {
+      kind: "threat",
+      category: "external",
+      cause: "клієнт мовчить",
+      event: "рахунок не оплачено",
+      consequence: "касовий розрив",
+      probability: 4,
+      impact: 5,
+      response: "reduce",
+      responseActions: "офіційна вимога, призупинення робіт",
+    };
+    turns = [
+      reply("Заношу.\n\n```kermanych-action\n" + JSON.stringify({ kind: "risk.create", risk }) + "\n```"),
+      reply('Ще одна.\n\n```kermanych-action\n{"kind":"risk.create","title":"Клієнт не платить"}\n```'),
+    ];
+    const ok = await svc.ask(ask("зафіксуй ризик"));
+    expect(ok.actions).toEqual([{ kind: "risk.create", risk }]);
+    expect(ok.rejected).toEqual([]);
+    expect(ok.text).toBe("Заношу.");
+
+    const bad = await svc.ask(ask("і ще один"));
+    expect(bad.actions).toEqual([]);
+    expect(bad.rejected).toEqual(["risk.create без об'єкта risk"]);
   });
 });

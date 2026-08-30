@@ -1,6 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { homedir } from "node:os";
-import { MANAGEMENT_SECTIONS, type ManagementContext, type ManagementRepo, type Project } from "@kermanych/core";
+import {
+  MANAGEMENT_SECTIONS,
+  RISK_CATEGORY_VALUES,
+  RISK_RESPONSES_BY_KIND,
+  RISK_STATUS_VALUES,
+  type ManagementContext,
+  type ManagementRepo,
+  type ManagementRiskRow,
+  type Project,
+} from "@kermanych/core";
 import { buildManagementTurn, managementCwd, managementRepos } from "../src/management/management-prompt";
 
 function project(p: Partial<Project> & { id: string }): Project {
@@ -10,6 +19,7 @@ function project(p: Partial<Project> & { id: string }): Project {
 const context: ManagementContext = {
   workspaceName: "Acme",
   section: "management-risks",
+  risks: [],
 };
 
 describe("managementRepos", () => {
@@ -67,14 +77,20 @@ describe("buildManagementTurn", () => {
     expect(out).toContain('"kind": "unsupported"');
   });
 
-  // The protocol must not advertise a write while no section can take one — a model told it
-  // may create things then reports having created them, and the operator believes it.
-  it("offers no writing action while every section is read-only", () => {
+  // The write protocol must describe EXACTLY what the validator accepts. A vocabulary that
+  // drifts from @kermanych/core is how the assistant starts filing risks that are refused
+  // one round trip later, or — worse — stops offering a category the register needs.
+  it("teaches the write protocol from the register's own vocabulary", () => {
     const out = buildManagementTurn({ first: true, repos, context, text: "?" });
-    expect(out).not.toContain("risk.create");
-    expect(out).not.toContain("risk.update");
-    expect(out).toContain("Жодного розділу з capability=read_write зараз немає");
-    expect(MANAGEMENT_SECTIONS.some((s) => s.capability === "read_write")).toBe(false);
+    expect(out).toContain('"kind": "risk.create"');
+    expect(out).toContain('"kind": "risk.update"');
+    for (const c of RISK_CATEGORY_VALUES) expect(out).toContain(c);
+    for (const s of RISK_STATUS_VALUES) expect(out).toContain(s);
+    expect(out).toContain(`threat → ${RISK_RESPONSES_BY_KIND.threat.join(", ")}`);
+    expect(out).toContain(`opportunity → ${RISK_RESPONSES_BY_KIND.opportunity.join(", ")}`);
+    // Server-owned columns are never offered: a model that sends `code` is guessing at a
+    // value the trigger mints under an advisory lock.
+    expect(out).toContain("Не передавай code, exposure, emv");
   });
 
   it("omits the contract on a follow-up but keeps the context and the message", () => {
@@ -94,10 +110,34 @@ describe("buildManagementTurn", () => {
     const out = buildManagementTurn({ first: false, repos, context, text: "?" });
     expect(out).toContain("- Альфа · /repos/alpha · гілка: main");
     expect(out).toContain("- Бета · не привʼязаний на цій машині");
-    // Risk Registry has a real screen since the register merged, so it is `read` — the
-    // assistant may describe it and must still refuse to write it.
-    expect(out).toContain("Активний розділ: management-risks (Risk Registry, capability=read)");
+    // The Risk Registry is the one section with a store behind it, so it is the one section
+    // the assistant may write — and the context says so in the token the rules compare against.
+    expect(out).toContain("Активний розділ: management-risks (Risk Registry, capability=read_write)");
     expect(out.trimEnd().endsWith("?")).toBe(true);
+  });
+
+  // The register is state, not contract: it is re-sent every turn, because the assistant
+  // filing R-004 on turn two must see R-004 on turn three instead of filing it again.
+  it("sends the register with every turn, empty or not", () => {
+    const empty = buildManagementTurn({ first: false, repos, context, text: "?" });
+    expect(empty).toContain("Реєстр ризиків воркспейсу (0)");
+    expect(empty).toContain("- реєстр порожній");
+
+    const risks: ManagementRiskRow[] = [
+      {
+        code: "R-001",
+        kind: "threat",
+        category: "external",
+        event: "рахунки не оплачуються",
+        probability: 4,
+        impact: 5,
+        response: "reduce",
+        status: "open",
+      },
+    ];
+    const filled = buildManagementTurn({ first: false, repos, context: { ...context, risks }, text: "?" });
+    expect(filled).toContain("Реєстр ризиків воркспейсу (1)");
+    expect(filled).toContain("- R-001 · threat · external · «рахунки не оплачуються» · 4×5=20 · reduce · open");
   });
 
   // Regression guard for the workspace re-scope: the context block names the Воркспейс and

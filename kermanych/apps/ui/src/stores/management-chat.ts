@@ -18,22 +18,28 @@
 //      `MANAGEMENT_SECTIONS.limitation`) and NEVER a sentence the model supplied. A model
 //      that would rather be agreeable invents a plausible limitation, and an invented reason
 //      is worse than no answer at all;
-//   3. when a WRITING action kind is added, it executes HERE, in the browser, under the
-//      user's own Supabase JWT — so RLS, not trust in the model, decides what a given member
-//      may change. The Risk Registry branch would call `useRisks().create(workspaceId, …)`
-//      from `run()` below. The api deliberately holds no write path of its own.
+//   3. the WRITING actions execute HERE, in the browser, under the user's own Supabase JWT —
+//      so RLS, not trust in the model, decides what a given member may change. The Risk
+//      Registry branch in `run()` below calls `useRisks().create(workspaceId, …)`. The api
+//      deliberately holds no write path of its own and no credentials for `workspace_risks`.
 //
-// Every section is currently `capability: "none" | "read"`, so the only action the protocol
-// carries is `unsupported`. The Risk Registry that can take a write lives on its own branch;
-// the comment on that row in @kermanych/core's `MANAGEMENT_SECTIONS` names the three edits
-// that connect the two.
+// The Risk Registry is the one section whose @kermanych/core row says `read_write`, so
+// `risk.create` and `risk.update` are the only actions that reach a database. Every other
+// section can only be answered with `unsupported`, and its refusal quotes that table.
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import { managementSection } from '@kermanych/core';
-import type { ManagementAction, ManagementChatAsk, ManagementWorkspaceProject, Usage } from '@kermanych/core';
+import { findRiskByCode, refusalText } from './management-actions';
+import type {
+  ManagementAction,
+  ManagementChatAsk,
+  ManagementRiskRow,
+  ManagementWorkspaceProject,
+  Usage,
+} from '@kermanych/core';
 import { api } from '../lib/api';
 import { useOrchestrator } from './orchestrator';
 import { useProjects } from './projects';
+import { useRisks } from './risks';
 
 // One line of the conversation. `result` is neither the user's words nor the model's: it is
 // what the APP did (or refused to do) about them, which is why it is a third kind with its
@@ -64,6 +70,9 @@ function errorText(e: unknown): string {
 export const useManagementChat = defineStore('management-chat', () => {
   const store = useOrchestrator();
   const projects = useProjects();
+  // The register the write actions land in — and the same store the Risk Registry screen
+  // renders, so a risk the assistant files appears on that screen without a refetch.
+  const risks = useRisks();
 
   // Keyed by workspace id, because the conversation id is `management:<workspaceId>`: picking
   // another workspace in the sidebar switches the conversation the api talks to, so it has to
@@ -104,27 +113,63 @@ export const useManagementChat = defineStore('management-chat', () => {
       .map((p) => ({ id: p.id, ...(p.gitRemoteUrl ? { gitRemoteUrl: p.gitRemoteUrl } : {}) }));
   }
 
+  // The register as the assistant is shown it. Read from the SAME store the Risk Registry
+  // screen renders, so the list in the prompt is the list on screen — including the row the
+  // assistant filed one turn ago, which is how it learns the code Postgres minted.
+  function riskDigest(workspaceId: string): ManagementRiskRow[] {
+    return (risks.byWorkspace[workspaceId] ?? []).map((r) => ({
+      code: r.code,
+      kind: r.kind,
+      category: r.category,
+      event: r.event,
+      probability: r.probability,
+      impact: r.impact,
+      response: r.response,
+      status: r.status,
+    }));
+  }
+
   // One validated action -> one result line. Never throws: an action that fails must not
   // swallow the actions after it, and a batch where the second is refused still has to
   // report the others.
   //
-  // `unsupported` is the only kind the protocol carries, so this is a single branch rather
-  // than a switch. It stays a function because a writing kind lands beside it, not inside
-  // it — and because the refusal it renders must never be inlined into the send path where
-  // the model's own words are in scope.
-  function run(workspaceId: string, action: ManagementAction): void {
-    const section = managementSection(action.section);
-    // `action.request` is the model's echo of what was asked and is never used as the
-    // explanation — the explanation comes from the table. When the section does not
-    // resolve at all, say exactly that and name what was claimed, so the operator can see
-    // the assistant is confused rather than the product broken.
-    result(
-      workspaceId,
-      'warn',
-      section
-        ? `Не можу змінити розділ «${section.label}»: ${section.limitation ?? 'розділ доступний лише для читання'}`
-        : `Асистент назвав розділ «${action.section}», якого не існує в Менеджменті.`,
-    );
+  // Every line it writes is the APP's account of what happened, never the model's. The model
+  // is told (rule (а) of the prompt) not to claim a write succeeded — this is the only place
+  // «Ризик R-004 занесено» may be said, because this is the only place that knows it.
+  async function run(workspaceId: string, action: ManagementAction): Promise<void> {
+    if (action.kind === 'risk.create') {
+      try {
+        // No cast and no mapping: `ManagementRiskFields` is deliberately the subset of
+        // `WorkspaceRiskInsert` a model may state, field for field. The day the two disagree,
+        // this line is the compile error that says so.
+        const created = await risks.create(workspaceId, action.risk);
+        result(
+          workspaceId,
+          'info',
+          `Ризик ${created.code} занесено до реєстру: ${created.event} (${created.probability}×${created.impact})`,
+        );
+      } catch (e) {
+        // The reason, verbatim: an RLS refusal, a CHECK constraint and an unreachable
+        // Supabase are three different problems with three different fixes.
+        result(workspaceId, 'error', `Не вдалося занести ризик: ${errorText(e)}`);
+      }
+      return;
+    }
+    if (action.kind === 'risk.update') {
+      const row = findRiskByCode(risks.byWorkspace[workspaceId] ?? [], action.code);
+      if (!row) {
+        result(workspaceId, 'warn', `У реєстрі цього воркспейсу немає ризику ${action.code} — нічого не змінено.`);
+        return;
+      }
+      try {
+        const saved = await risks.save(workspaceId, row.id, action.patch);
+        result(workspaceId, 'info', `Ризик ${saved.code} оновлено: ${Object.keys(action.patch).join(', ')}`);
+      } catch (e) {
+        result(workspaceId, 'error', `Не вдалося оновити ризик ${row.code}: ${errorText(e)}`);
+      }
+      return;
+    }
+    result(workspaceId, 'warn', refusalText(action));
   }
 
   // `section` is passed in rather than read from the router: Quasar builds the router in a
@@ -144,6 +189,11 @@ export const useManagementChat = defineStore('management-chat', () => {
     push(workspaceId, { kind: 'user', id: entryId(), at: Date.now(), text: body });
     busy.value = true;
     try {
+      // The register travels with the question, so the assistant can see what is already
+      // filed before it files another one. Fetched once per workspace: after that this store
+      // IS the local copy — `useRisks().create/save` upsert into it — and refetching every
+      // turn would flash the Risk Registry screen's loading state on each message.
+      if (!risks.byWorkspace[workspaceId]) await risks.load(workspaceId);
       const ask: ManagementChatAsk = {
         conversationId: conversationId(workspaceId),
         workspaceId,
@@ -152,6 +202,7 @@ export const useManagementChat = defineStore('management-chat', () => {
         context: {
           workspaceName: projects.workspaceById.get(workspaceId)?.name ?? '',
           section,
+          risks: riskDigest(workspaceId),
         },
       };
 
@@ -171,9 +222,10 @@ export const useManagementChat = defineStore('management-chat', () => {
       // was not is exactly how that ends. Notices are omp's own asides and rank below it.
       for (const line of reply.rejected) result(workspaceId, 'warn', line);
       for (const line of reply.notices) result(workspaceId, 'info', line);
-      // In order: the model may refuse two sections in one turn, and the operator reads
-      // those refusals in the order they were asked for.
-      for (const action of reply.actions) run(workspaceId, action);
+      // In order and one at a time: the model may file two risks in one turn, and the codes
+      // Postgres mints depend on the order they arrive in. Awaited, so the transcript's
+      // result lines follow the actions rather than racing them.
+      for (const action of reply.actions) await run(workspaceId, action);
     } catch (e) {
       // The api failing is news, and news belongs in the transcript. A chat that swallows a
       // dead api looks exactly like a model with nothing to say.

@@ -9,11 +9,19 @@
 // that has no store behind it.
 import { homedir } from "node:os";
 import {
+  isTerminalRiskStatus,
   MANAGEMENT_ACTION_FENCE,
   MANAGEMENT_SECTIONS,
   managementSection,
+  RISK_CATEGORY_VALUES,
+  RISK_KIND_VALUES,
+  RISK_RESPONSES_BY_KIND,
+  RISK_SCORE_MAX,
+  RISK_SCORE_MIN,
+  RISK_STATUS_VALUES,
   type ManagementContext,
   type ManagementRepo,
+  type ManagementRiskRow,
   type ManagementWorkspaceProject,
   type Project,
 } from "@kermanych/core";
@@ -85,15 +93,44 @@ function contract(): string {
     '{ "kind": "unsupported", "section": "management-releases", "request": "додати нотатку релізу 2.1" }',
     "```",
     "",
-    "Усередині блоку — один JSON-обʼєкт або масив обʼєктів. Наразі дозволена рівно одна форма:",
+    "Усередині блоку — один JSON-обʼєкт або масив обʼєктів. Дозволені рівно три форми:",
     '  { "kind": "unsupported", "section": <назва розділу>, "request": <що просили зробити> }',
-    "Жодного розділу з capability=read_write зараз немає, тому жодної дії, що щось записує, теж немає. Не вигадуй інші `kind` — вони відкидаються без виконання.",
+    '  { "kind": "risk.create", "risk": { … } }',
+    '  { "kind": "risk.update", "code": "R-003", "patch": { … } }',
+    "Не вигадуй інші `kind` — вони відкидаються без виконання.",
+    "",
+    riskProtocol(),
     "",
     "ПРАВИЛА:",
-    '(а) якщо просять ЗМІНИТИ будь-який розділ Менеджменту — віддай { "kind": "unsupported", "section": "<назва розділу>", "request": "<що просили>" } І поясни це прозою, цитуючи обмеження цього розділу зі списку вище. Ніколи не пиши, що ти щось записав, створив або оновив;',
-    "(б) якщо просять ПРОЧИТАТИ або пояснити — відповідай звичайною прозою, без блоку дії. Ти можеш читати репозиторії воркспейсу (див. контекст) своїми read/grep/glob;",
-    "(в) ніколи не викликай інтерактивний інструмент або запит, який чекає відповіді в інтерфейсі: за цим маршрутом немає жодного інтерфейсу, який міг би відповісти, і запит просто зависне. Будь-яке уточнення — прозою;",
-    "(г) відповідай мовою користувача, за замовчуванням українською.",
+    '(а) якщо просять ЗМІНИТИ розділ з capability=read_write (сьогодні це лише management-risks) — віддай відповідний блок дії. Дію виконує застосунок, не ти: у прозі опиши, ЩО саме заносиш, і не пиши, що це вже зроблено — результат («Ризик R-004 занесено…») чат покаже сам;',
+    '(б) якщо просять ЗМІНИТИ розділ, у якого capability НЕ read_write — віддай { "kind": "unsupported", "section": "<назва розділу>", "request": "<що просили>" } І поясни це прозою, цитуючи обмеження цього розділу зі списку вище. Ніколи не пиши, що ти щось записав, створив або оновив;',
+    "(в) якщо просять ПРОЧИТАТИ або пояснити — відповідай звичайною прозою, без блоку дії. Ти можеш читати репозиторії воркспейсу (див. контекст) своїми read/grep/glob;",
+    "(г) ніколи не викликай інтерактивний інструмент або запит, який чекає відповіді в інтерфейсі: за цим маршрутом немає жодного інтерфейсу, який міг би відповісти, і запит просто зависне. Будь-яке уточнення — прозою;",
+    "(ґ) відповідай мовою користувача, за замовчуванням українською.",
+  ].join("\n");
+}
+
+// The Risk Registry's vocabulary, printed from @kermanych/core so the model is told exactly
+// what `validateManagementAction` will accept. A hand-written list here would start
+// rejecting perfectly reasonable risks the day a category is added to the enum.
+function riskProtocol(): string {
+  const strategies = RISK_KIND_VALUES.map((k) => `${k} → ${RISK_RESPONSES_BY_KIND[k].join(", ")}`).join("; ");
+  return [
+    "РЕЄСТР РИЗИКІВ (management-risks) — єдиний розділ, у який ти можеш писати. Поля `risk` та `patch` однакові:",
+    `  kind: ${RISK_KIND_VALUES.join(" | ")}`,
+    `  category: ${RISK_CATEGORY_VALUES.join(", ")}`,
+    "  cause, event, consequence — три частини формулювання (через що · що станеться · з якими наслідками). Порожніх немає.",
+    `  probability, impact — цілі ${RISK_SCORE_MIN}–${RISK_SCORE_MAX} (експозиція = їх добуток, її рахує база)`,
+    `  response — залежить від kind: ${strategies}`,
+    "  responseActions — що саме буде зроблено; обовʼязкове для всіх стратегій, крім accept («спостерігати» — не реакція)",
+    "  earlyWarning — ознака, що ризик реалізується (необовʼязково, але дуже бажано)",
+    "  proximity, actionDue — дати РРРР-ММ-ДД (необовʼязково)",
+    "  costImpact + probabilityPct (0–100) — тільки разом, для грошової оцінки (необовʼязково)",
+    "  residualProbability + residualImpact — тільки разом, оцінка ПІСЛЯ реагування (необовʼязково)",
+    `  status: ${RISK_STATUS_VALUES.join(", ")} (за замовчуванням open); closureNote обовʼязковий для ${RISK_STATUS_VALUES.filter(isTerminalRiskStatus).join(" і ")}`,
+    "Не передавай code, exposure, emv, дати аудиту чи власників (riskOwner, actionOwner) — код і розрахунки присвоює база, а власників призначають на екрані.",
+    "У risk.update поле code бери СУВОРО зі списку реєстру в контексті; patch містить лише те, що змінюється.",
+    "Перед створенням звірся з реєстром у контексті: якщо такий ризик уже є — онови його, а не дублюй.",
   ].join("\n");
 }
 
@@ -108,17 +145,29 @@ function repoLine(r: ManagementRepo): string {
   return `- ${parts.join(" · ")}`;
 }
 
+// One register row on one line: the code to quote back, the statement that makes it
+// recognisable, and the four fields an assistant reasons about before filing another one.
+function riskLine(r: ManagementRiskRow): string {
+  return `- ${r.code} · ${r.kind} · ${r.category} · «${r.event}» · ${r.probability}×${r.impact}=${r.probability * r.impact} · ${r.response} · ${r.status}`;
+}
+
 function contextBlock(repos: ManagementRepo[], c: ManagementContext): string {
   const s = managementSection(c.section);
   // An unresolved section name is still printed: the model must be able to say WHICH
   // screen it was asked about even when the ui sent a name this build does not know.
   const section = s ? `${s.name} (${s.label}, capability=${s.capability})` : c.section;
+  const risks = c.risks;
   return [
     "── КОНТЕКСТ ──",
     `Воркспейс: ${c.workspaceName}`,
     `Активний розділ: ${section}`,
     "Репозиторії воркспейсу (шлях абсолютний — читай їх саме за ним):",
     repos.length ? repos.map(repoLine).join("\n") : "- жодного привʼязаного репозиторію",
+    // The register is the state the write actions operate on, so it is sent every turn —
+    // including the turn right after the assistant filed a row, which is how it learns the
+    // code Postgres minted for it.
+    `Реєстр ризиків воркспейсу (${risks.length}) — code · kind · category · подія · P×I · стратегія · статус:`,
+    risks.length ? risks.map(riskLine).join("\n") : "- реєстр порожній",
   ].join("\n");
 }
 

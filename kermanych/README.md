@@ -406,9 +406,19 @@ That field is a real assistant, and it is deliberately narrow:
 
 - **It only touches Менеджмент.** Its tools are the read-only subset
   (`read`, `grep`, `glob`) — it can look at your repositories but it cannot edit a
-  file, create a branch or start a session. The only writes it could ever perform are
-  the ones the section table marks `read_write`, and in this branch no section is:
-  the assistant reads, explains and refuses, and says which it is doing.
+  file, create a branch or start a session. The only section it can WRITE is the one
+  the section table marks `read_write`: the Risk Registry. Everywhere else it reads,
+  explains and refuses, and says which it is doing.
+- **It keeps the risk register.** Ask it to file a risk and it emits a `risk.create`
+  action carrying that schema's own vocabulary — threat or opportunity, one of the
+  fourteen categories, cause·event·consequence, 1–5 probability × impact, a PMI
+  response strategy with the actions that make it one. `risk.update` changes a row you
+  name by its register code (`R-003`). The write runs in your browser under your own
+  JWT, so RLS decides whether it lands, and the line you read afterwards
+  («Ризик R-004 занесено…») is written by the app after Postgres answered — never by
+  the model. Every turn also carries the current register, so it updates R-004 instead
+  of filing it twice. Owners are not something it can set: `risk_owner` and
+  `action_owner` are profile ids, and those are assigned on the register screen.
 - **It spends the same subscription your agents spend.** It runs through the same
   `omp` on your PATH, the same provider account and the same plan; there is no second
   key to configure and no separate budget. The mono pill on the right of the field is
@@ -425,17 +435,20 @@ That field is a real assistant, and it is deliberately narrow:
   `packages/core/src/management-actions.ts`). A model that would rather agree with you
   cannot make that sentence disappear.
 
-### Giving it a section it can write
+### Giving another section something it can write
 
-The chat has no write path of its own on purpose. Adding one is three edits, and they
-belong to the branch that owns the screen being written to:
+The Risk Registry is wired end to end; every other section is `none` or `read`, and the
+chat has no write path into them on purpose. Adding one is three edits, and they belong
+to the branch that owns the screen being written to:
 
 1. flip that section's row in `packages/core/src/management.ts` to `capability:
    "read_write"` and drop its `limitation`;
 2. add the action kind to `ManagementAction` in
    `packages/core/src/management-actions.ts`, with the vocabulary that section's table
    actually enforces — `validateManagementAction` is what stops the model inventing a
-   value the database would reject;
+   value the database would reject, and the prompt in
+   `apps/api/src/management/management-prompt.ts` prints that same vocabulary so the
+   two cannot drift;
 3. give the executor in `apps/ui/src/stores/management-chat.ts` a branch for it.
 
 Step 3 stays in the **browser**, under your own JWT — the API must never gain a write
