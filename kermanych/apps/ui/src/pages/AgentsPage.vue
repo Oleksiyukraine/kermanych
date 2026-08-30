@@ -1909,13 +1909,25 @@ async function submitPreviewConfig(): Promise<void> {
   font-size: var(--k-fs-sm);
 }
 
+// THE CHAT COLUMN'S GUTTER. This bar, the tabs under it, both other panes and every floor
+// of KPanel below them (header, tools, log, status row, composer) inset their content by
+// 12px on each side, and the trailing control sits 6px in — one left edge and one control
+// column for the whole stack. They used to disagree by 2px, which is enough to see when
+// five rules sit on top of each other in one narrow column.
 .agents__detail-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   height: 34px;
-  padding: 0 6px 0 14px;
+  // `height` is border-box, so the 2px rule below is taken out of the interior and
+  // `align-items: center` then centres the title and the ✕ in the 32px ABOVE the rule —
+  // 1px high in a bar the eye reads as its full 34px, which measures as 10.8px of air over
+  // the glyphs and 14px under them. The 2px of top padding is that rule's counterweight:
+  // the content centres on the strip's own middle, and the ~0.5px that remains is the
+  // font's ink bias (a line box centres 5px over the baseline, cap ink 4.5px), which every
+  // centred label in the app shares.
+  padding: 2px 6px 0 12px;
   background: var(--k-bg);
   border-bottom: 2px solid var(--k-line-strong);
   flex: none;
@@ -1980,9 +1992,12 @@ async function submitPreviewConfig(): Promise<void> {
   white-space: nowrap;
 }
 
+// The house 28px glyph box (KIconButton's size), so this ✕ centres on the same column as
+// the panel controls in the bar right below it; borderless, because a title bar is not an
+// actions cluster. A 24px box put it 2px off that column.
 .agents__close {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2024,7 +2039,7 @@ async function submitPreviewConfig(): Promise<void> {
 // ── Detail tabs + panes ────────────────────────────────────────────────────
 .agents__detail-tabs {
   flex: none;
-  padding: 0 14px;
+  padding: 0 12px;
 }
 
 .agents__tabpane {
@@ -2038,7 +2053,7 @@ async function submitPreviewConfig(): Promise<void> {
 .agents__session {
   overflow-y: auto;
   gap: 14px;
-  padding: 16px 14px;
+  padding: 16px 12px;
 }
 
 .agents__changes-summary {
