@@ -1,8 +1,8 @@
 <template>
   <section class="risk">
     <p class="risk__lead">
-      Реєстр ризиків проєкту
-      <span class="risk__lead-project mono">{{ projectName }}</span>
+      Реєстр ризиків воркспейсу
+      <span class="risk__lead-workspace mono">{{ workspaceName }}</span>
       — ризики, які ще не сталися. Те, що вже сталося, живе тут зі статусом «реалізувався» і
       планом усунення.
     </p>
@@ -110,7 +110,7 @@
         class="risk__table"
         :columns="COLUMNS"
         :rows="rows"
-        :row-key="(r: ProjectRisk) => r.id"
+        :row-key="(r: WorkspaceRisk) => r.id"
         :row-class="rowClass"
         clickable
         @row-click="edit"
@@ -188,7 +188,7 @@
 
     <!-- The risk management plan, quoted where the register is read. These are the numbers
          every score, every escalation and every review date on this page is measured against;
-         they are agreed before the project starts and live in lib/risk.ts. -->
+         they are agreed once for the whole workspace and live in lib/risk.ts. -->
     <p class="risk__plan mono">
       план: шкали 1–5 · толерантність експозиції ≥ {{ ESCALATION_EXPOSURE }} → спонсор ·
       перегляд щотижня ({{ REVIEW_CADENCE_DAYS }} дн) · рядки не видаляються, лише закриваються
@@ -196,8 +196,8 @@
 
     <RiskEditor
       v-model="editorOpen"
-      :project-id="projectId"
-      :project-name="projectName"
+      :workspace-id="workspaceId"
+      :workspace-name="workspaceName"
       :risk="editing"
       :initial-category="pendingCategory"
       :members="memberOptions"
@@ -207,14 +207,15 @@
 
 <script setup lang="ts">
 // Risk Registry — the Менеджмент section that actually manages something. The shell above
-// (ManagementPage) already renders the heading, the project chip and the «pick a project»
-// gate, so this component renders only the register itself and can assume a project.
+// (ManagementPage) already renders the heading, the workspace chip and the «pick a
+// workspace» gate, so this component renders only the register itself and can assume a
+// workspace.
 //
 // It holds view state (filter, sort, which row is open) and nothing else: every rule it
 // applies — scoring, tolerance, review cadence, top-N, register gaps — comes from
 // lib/risk.ts, and every write goes through stores/risks.ts.
 import { computed, reactive, ref, watch } from 'vue';
-import type { ProjectRisk, RiskCategory } from '@kermanych/cloud';
+import type { RiskCategory, WorkspaceRisk } from '@kermanych/cloud';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KField from 'components/kit/KField.vue';
@@ -258,7 +259,7 @@ import {
   type RiskStatusFilter,
 } from '../lib/risk';
 
-const props = defineProps<{ projectId: string; projectName: string }>();
+const props = defineProps<{ workspaceId: string; workspaceName: string }>();
 
 const store = useRisks();
 const projects = useProjects();
@@ -291,27 +292,26 @@ const SORT_OPTIONS: KSelectOption[] = SORTS.map((s) => ({ value: s.value, label:
 const filter = reactive({ ...EMPTY_FILTER });
 const sort = ref<RiskSort>('exposure');
 const editorOpen = ref(false);
-const editing = ref<ProjectRisk | undefined>(undefined);
+const editing = ref<WorkspaceRisk | undefined>(undefined);
 // The row whose review is being recorded, so its tick cannot be double-clicked into two
 // writes while the first is in flight.
 const reviewing = ref('');
 
-// The register is read on open and whenever the sidebar moves to another project. No
+// The register is read on open and whenever the sidebar moves to another workspace. No
 // Realtime channel: see the header of stores/risks.ts.
 watch(
-  () => props.projectId,
+  () => props.workspaceId,
   (id) => {
     if (id) void store.load(id);
   },
   { immediate: true },
 );
 
-// Member list for the owner pickers. Membership is a WORKSPACE concept, so it is loaded for
-// the project's workspace, not the project.
-const workspaceId = computed(() => projects.byId.get(props.projectId)?.workspaceId ?? '');
-
+// Member list for the owner pickers. The roster is workspace-scoped — and so is the register
+// now — so it reads the register's own prop instead of deriving a workspace from the cloud
+// project list, which had to have been loaded before an owner could be picked.
 watch(
-  workspaceId,
+  () => props.workspaceId,
   (id) => {
     if (id && !projects.members[id]) void projects.loadMembers(id);
   },
@@ -319,13 +319,13 @@ watch(
 );
 
 const memberOptions = computed<KSelectOption[]>(() =>
-  (projects.members[workspaceId.value] ?? []).map((m) => ({
+  (projects.members[props.workspaceId] ?? []).map((m) => ({
     value: m.userId,
     label: m.profile?.displayName ?? m.profile?.githubUsername ?? m.userId,
   })),
 );
 
-const all = computed<ProjectRisk[]>(() => store.byProject[props.projectId] ?? []);
+const all = computed<WorkspaceRisk[]>(() => store.byWorkspace[props.workspaceId] ?? []);
 const live = computed(() => all.value.filter(isLive));
 const liveCount = computed(() => live.value.length);
 const escalations = computed(() => all.value.filter(needsEscalation));
@@ -372,7 +372,7 @@ function toggleCell(probability: number, impact: number): void {
   filter.cell = filter.cell === key ? '' : key;
 }
 
-function edit(risk: ProjectRisk): void {
+function edit(risk: WorkspaceRisk): void {
   editing.value = risk;
   editorOpen.value = true;
 }
@@ -387,15 +387,15 @@ function createIn(category?: RiskCategory): void {
 
 const pendingCategory = ref<RiskCategory | undefined>(undefined);
 
-async function review(risk: ProjectRisk): Promise<void> {
+async function review(risk: WorkspaceRisk): Promise<void> {
   reviewing.value = risk.id;
-  await store.markReviewed(props.projectId, risk.id);
+  await store.markReviewed(props.workspaceId, risk.id);
   reviewing.value = '';
 }
 
 // Two row states worth seeing without reading a cell: over the tolerance line, and overdue
 // for its review. Escalation wins — it is the one that has to leave the room.
-function rowClass(risk: ProjectRisk): string | undefined {
+function rowClass(risk: WorkspaceRisk): string | undefined {
   if (needsEscalation(risk)) return 'risk__row--hot';
   if (reviewOverdue(risk, now.value)) return 'risk__row--stale';
   return undefined;
@@ -423,7 +423,7 @@ function rowClass(risk: ProjectRisk): string | undefined {
   color: var(--k-muted);
 }
 
-.risk__lead-project {
+.risk__lead-workspace {
   color: var(--k-text);
 }
 

@@ -1,33 +1,33 @@
-// Data access for the project risk register. Owns the snake_case <-> camelCase boundary for
-// `project_risks` and `project_risk_events`. Every call runs under the caller's JWT; the RLS
-// policies (read and write = project member) are the authorization surface and refusals
+// Data access for the workspace risk register. Owns the snake_case <-> camelCase boundary for
+// `workspace_risks` and `workspace_risk_events`. Every call runs under the caller's JWT; the
+// RLS policies (read and write = workspace member) are the authorization surface and refusals
 // surface as thrown postgrest messages.
 //
-// There is deliberately NO deleteProjectRisk. A risk leaves the register by moving to
+// There is deliberately NO deleteWorkspaceRisk. A risk leaves the register by moving to
 // `closed` or `materialized` with a closure note — the table grants no `delete` to anyone,
 // so a function here could only ever throw.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
-  ProjectRisk,
-  ProjectRiskEvent,
-  ProjectRiskInsert,
-  ProjectRiskPatch,
   RiskCategory,
   RiskEventKind,
   RiskKind,
   RiskResponse,
   RiskStatus,
+  WorkspaceRisk,
+  WorkspaceRiskEvent,
+  WorkspaceRiskInsert,
+  WorkspaceRiskPatch,
 } from "./types";
 
 // One string literal, not a concatenation: postgrest-js parses this at the TYPE level to
 // shape the response, and a `+`-joined value degrades to GenericStringError.
-const RISK_COLUMNS = "id, project_id, code, kind, category, cause, event, consequence, probability, impact, exposure, cost_impact, probability_pct, emv, proximity, response, response_actions, action_owner, action_due, risk_owner, residual_probability, residual_impact, residual_exposure, early_warning, status, closure_note, closed_at, raised_at, raised_by, last_reviewed_at, updated_at, updated_by";
+const RISK_COLUMNS = "id, workspace_id, code, kind, category, cause, event, consequence, probability, impact, exposure, cost_impact, probability_pct, emv, proximity, response, response_actions, action_owner, action_due, risk_owner, residual_probability, residual_impact, residual_exposure, early_warning, status, closure_note, closed_at, raised_at, raised_by, last_reviewed_at, updated_at, updated_by";
 
 const EVENT_COLUMNS = "id, risk_id, at, actor, kind, from_value, to_value";
 
 type RiskRow = {
   id: string;
-  project_id: string;
+  workspace_id: string;
   code: string;
   kind: RiskKind;
   category: RiskCategory;
@@ -78,10 +78,10 @@ function num(v: string | number | null): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-export function toProjectRisk(row: RiskRow): ProjectRisk {
-  const r: ProjectRisk = {
+export function toWorkspaceRisk(row: RiskRow): WorkspaceRisk {
+  const r: WorkspaceRisk = {
     id: row.id,
-    projectId: row.project_id,
+    workspaceId: row.workspace_id,
     code: row.code,
     kind: row.kind,
     category: row.category,
@@ -120,8 +120,8 @@ export function toProjectRisk(row: RiskRow): ProjectRisk {
   return r;
 }
 
-export function toProjectRiskEvent(row: RiskEventRow): ProjectRiskEvent {
-  const e: ProjectRiskEvent = {
+export function toWorkspaceRiskEvent(row: RiskEventRow): WorkspaceRiskEvent {
+  const e: WorkspaceRiskEvent = {
     id: row.id,
     riskId: row.risk_id,
     at: row.at,
@@ -136,7 +136,7 @@ export function toProjectRiskEvent(row: RiskEventRow): ProjectRiskEvent {
 // Only the keys actually present in the patch are sent, so a two-field edit never overwrites
 // a column someone else changed in between. An explicit `null` clears the column; an empty
 // string in a text field is a legitimate value (a cleared trigger note), not a NULL.
-export function toRiskRow(patch: ProjectRiskPatch): Record<string, unknown> {
+export function toRiskRow(patch: WorkspaceRiskPatch): Record<string, unknown> {
   const row: Record<string, unknown> = {};
   if (patch.kind !== undefined) row.kind = patch.kind;
   if (patch.category !== undefined) row.category = patch.category;
@@ -162,54 +162,55 @@ export function toRiskRow(patch: ProjectRiskPatch): Record<string, unknown> {
   return row;
 }
 
-// One project at a time, unlike listTasks: the register is a screen you open for a project,
-// not a board that spans every project you are a member of.
+// One workspace at a time, unlike listTasks: the register is a screen you open for a group,
+// and it is that group's membership that decides who may read it — so the workspace is both
+// the scope of the query and the scope of the authorization behind it.
 //
 // Ordered by exposure so the rows that matter arrive first even before the UI sorts them,
 // and by code as the tiebreak so two equally exposed risks keep a stable order between reads.
-export async function listProjectRisks(
+export async function listWorkspaceRisks(
   client: SupabaseClient,
-  projectId: string,
-): Promise<ProjectRisk[]> {
+  workspaceId: string,
+): Promise<WorkspaceRisk[]> {
   const { data, error } = await client
-    .from("project_risks")
+    .from("workspace_risks")
     .select(RISK_COLUMNS)
-    .eq("project_id", projectId)
+    .eq("workspace_id", workspaceId)
     .order("exposure", { ascending: false })
     .order("code", { ascending: true });
   if (error) throw new Error(error.message);
-  return (data as RiskRow[]).map(toProjectRisk);
+  return (data as RiskRow[]).map(toWorkspaceRisk);
 }
 
-export async function createProjectRisk(
+export async function createWorkspaceRisk(
   client: SupabaseClient,
-  input: ProjectRiskInsert,
-): Promise<ProjectRisk> {
-  // `code` is minted by project_risks_touch() under a per-project advisory lock, so it is
-  // not sent — a client-chosen id would race and would not survive the trigger anyway.
-  const { projectId, ...rest } = input;
+  input: WorkspaceRiskInsert,
+): Promise<WorkspaceRisk> {
+  // `code` is minted by workspace_risks_touch() under a per-workspace advisory lock, so it
+  // is not sent — a client-chosen id would race and would not survive the trigger anyway.
+  const { workspaceId, ...rest } = input;
   const { data, error } = await client
-    .from("project_risks")
-    .insert({ project_id: projectId, ...toRiskRow(rest) })
+    .from("workspace_risks")
+    .insert({ workspace_id: workspaceId, ...toRiskRow(rest) })
     .select(RISK_COLUMNS)
     .single();
   if (error) throw new Error(error.message);
-  return toProjectRisk(data as RiskRow);
+  return toWorkspaceRisk(data as RiskRow);
 }
 
-export async function patchProjectRisk(
+export async function patchWorkspaceRisk(
   client: SupabaseClient,
   id: string,
-  patch: ProjectRiskPatch,
-): Promise<ProjectRisk> {
+  patch: WorkspaceRiskPatch,
+): Promise<WorkspaceRisk> {
   const { data, error } = await client
-    .from("project_risks")
+    .from("workspace_risks")
     .update(toRiskRow(patch))
     .eq("id", id)
     .select(RISK_COLUMNS)
     .single();
   if (error) throw new Error(error.message);
-  return toProjectRisk(data as RiskRow);
+  return toWorkspaceRisk(data as RiskRow);
 }
 
 // The audit trail behind one risk, newest first. Read on demand — the register lists dozens
@@ -217,13 +218,13 @@ export async function patchProjectRisk(
 export async function listRiskEvents(
   client: SupabaseClient,
   riskId: string,
-): Promise<ProjectRiskEvent[]> {
+): Promise<WorkspaceRiskEvent[]> {
   const { data, error } = await client
-    .from("project_risk_events")
+    .from("workspace_risk_events")
     .select(EVENT_COLUMNS)
     .eq("risk_id", riskId)
     .order("at", { ascending: false })
     .order("id", { ascending: false });
   if (error) throw new Error(error.message);
-  return (data as RiskEventRow[]).map(toProjectRiskEvent);
+  return (data as RiskEventRow[]).map(toWorkspaceRiskEvent);
 }

@@ -13,8 +13,12 @@
 // drift, and the drift would show up as the assistant confidently editing a screen that
 // does not exist.
 //
-// Every section is PROJECT-SCOPED: ManagementPage renders none of them until a project is
-// selected in the sidebar, and hands the matched section that project's id and name as props.
+// Every section is WORKSPACE-SCOPED: ManagementPage renders none of them until a workspace
+// is selected in the sidebar (selecting a project selects its workspace too), and hands the
+// matched section that workspace's id and name as props. The level sits there because the
+// subject does: the risk register, the membership that decides who may touch it and the
+// repositories the assistant reads all belong to the group, so a per-project management tab
+// could only ever show a slice of its own subject.
 
 // What the assistant may do with a section.
 //   read_write — it has a store and a table; the assistant may read it and change it.
@@ -51,16 +55,16 @@ const NO_WRITE_PATH =
   "розділ працює, але асистент до нього ще не підключений — записати через чат неможливо";
 
 export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
-  { name: "management-home", path: "home", label: "Home", hint: "огляд проєкту", capability: "none", limitation: NOT_BUILT },
+  { name: "management-home", path: "home", label: "Home", hint: "огляд воркспейсу", capability: "none", limitation: NOT_BUILT },
   { name: "management-storage", path: "storage", label: "Storage", hint: "файли й артефакти", capability: "none", limitation: NOT_BUILT },
-  // The one section with a real store behind it: `project_risks` (threat vs opportunity,
+  // The one section with a real store behind it: `workspace_risks` (threat vs opportunity,
   // cause·event·consequence, 1-5 probability × impact, PMI response strategies, an
   // append-only event log). The assistant can DESCRIBE it and must refuse to write it,
   // because connecting the two is three edits nobody has made yet — flip this row to
   // `read_write`, add the `risk.create` / `risk.update` action kinds to ./management-actions
   // with THAT schema's vocabulary (note: it has no `client` or `financial` category, so an
   // unpaid invoice is `external`), and give the executor in
-  // apps/ui/src/stores/management-chat.ts a branch calling `useRisks().create(projectId, …)`.
+  // apps/ui/src/stores/management-chat.ts a branch calling `useRisks().create(workspaceId, …)`.
   {
     name: "management-risks",
     path: "risk-registry",

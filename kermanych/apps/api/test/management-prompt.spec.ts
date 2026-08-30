@@ -9,7 +9,6 @@ function project(p: Partial<Project> & { id: string }): Project {
 
 const context: ManagementContext = {
   workspaceName: "Acme",
-  projectName: "Каса",
   section: "management-risks",
 };
 
@@ -99,5 +98,15 @@ describe("buildManagementTurn", () => {
     // assistant may describe it and must still refuse to write it.
     expect(out).toContain("Активний розділ: management-risks (Risk Registry, capability=read)");
     expect(out.trimEnd().endsWith("?")).toBe(true);
+  });
+
+  // Regression guard for the workspace re-scope: the context block names the Воркспейс and
+  // nothing else. A `Проєкт:` line would put a scope in the transcript that the tab no
+  // longer has, and the assistant would answer as if one project of the group were «the»
+  // subject.
+  it("names the workspace and never a project", () => {
+    const out = buildManagementTurn({ first: false, repos, context, text: "?" });
+    expect(out).not.toContain("Проєкт:");
+    expect(out).toContain("Воркспейс: Acme");
   });
 });

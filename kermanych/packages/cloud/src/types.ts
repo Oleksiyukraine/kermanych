@@ -111,9 +111,11 @@ export type ProjectSkillInsert = {
 };
 
 // ── Risk register ───────────────────────────────────────────────────────────────
-// The four enums mirror the Postgres types created in 20260830120000_project_risks.sql
-// one label for one label; the UI's labels and scoring policy live in
-// apps/ui/src/lib/risk.ts, because they are copy and project policy, not storage.
+// The four enums mirror the Postgres types created in 20260830140000_workspace_risks.sql
+// one label for one label. The register is scoped to the WORKSPACE — the group that carries
+// the membership — and not to a single project, so one register covers everything the group
+// is accountable for. The UI's labels and scoring policy live in apps/ui/src/lib/risk.ts,
+// because they are copy and risk-method policy, not storage.
 export type RiskKind = "threat" | "opportunity";
 
 export type RiskCategory =
@@ -133,7 +135,7 @@ export type RiskCategory =
   | "ai_model";
 
 // Threat strategies and opportunity strategies share the type; which set is legal for a
-// given row is decided by its `kind` and enforced by project_risks_response_matches_kind.
+// given row is decided by its `kind` and enforced by workspace_risks_response_matches_kind.
 export type RiskResponse =
   | "avoid"
   | "reduce"
@@ -147,11 +149,11 @@ export type RiskResponse =
 export type RiskStatus = "open" | "treated" | "closed" | "materialized";
 
 // One row of the register. `code`, `exposure`, `emv`, `residualExposure`, `closedAt` and
-// every audit field are SERVER-owned (generated columns and project_risks_touch()), which
+// every audit field are SERVER-owned (generated columns and workspace_risks_touch()), which
 // is why none of them appear on the insert or patch types.
-export type ProjectRisk = {
+export type WorkspaceRisk = {
   id: string;
-  projectId: string;
+  workspaceId: string;
   code: string;
   kind: RiskKind;
   category: RiskCategory;
@@ -186,8 +188,8 @@ export type ProjectRisk = {
   updatedBy?: string;
 };
 
-export type ProjectRiskInsert = {
-  projectId: string;
+export type WorkspaceRiskInsert = {
+  workspaceId: string;
   kind: RiskKind;
   category: RiskCategory;
   cause: string;
@@ -213,7 +215,7 @@ export type ProjectRiskInsert = {
 // `null` clears an optional column; an absent key leaves it alone. `lastReviewedAt` is the
 // only audit field a client may write, and only to the current instant — that write IS the
 // «reviewed at the cadence» record the event log picks up.
-export type ProjectRiskPatch = {
+export type WorkspaceRiskPatch = {
   kind?: RiskKind;
   category?: RiskCategory;
   cause?: string;
@@ -242,7 +244,7 @@ export type RiskEventKind = "created" | "scored" | "response" | "status" | "revi
 // An append-only line of a risk's history. `fromValue`/`toValue` carry machine tokens —
 // enum labels for `status`/`response`, `3x4 / 2x2` for `scored` — so the UI phrases them
 // with the same label tables it renders the row itself with.
-export type ProjectRiskEvent = {
+export type WorkspaceRiskEvent = {
   id: number;
   riskId: string;
   at: string;

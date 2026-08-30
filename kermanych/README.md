@@ -398,7 +398,7 @@ it will simply push its real status again.
 
 ## The Менеджмент tab and its assistant
 
-Менеджмент is the non-code half of the product: six project-scoped sections
+Менеджмент is the non-code half of the product: six workspace-scoped sections
 (`packages/core/src/management.ts` is the one table that names them) plus a chat
 field docked to the foot of the page.
 
@@ -414,8 +414,8 @@ That field is a real assistant, and it is deliberately narrow:
   key to configure and no separate budget. The mono pill on the right of the field is
   that plan's tightest rolling window, read from `omp usage` — the same figure the
   sidebar shows.
-- **It knows the whole workspace, not just the open project.** Every turn carries the
-  repositories of the scoped Воркспейс — name, remote, default branch, conventions and
+- **It is scoped to the Воркспейс, and so is the tab it lives in.** Every turn carries the
+  repositories of that Воркспейс — name, remote, default branch, conventions and
   the local path where each is bound on this machine — so «which of our repos does this
   affect» is answerable. Unbound projects are listed as unbound rather than guessed at.
 - **It says why when it cannot act.** Ask it to change Release Notes and it refuses
@@ -440,15 +440,16 @@ belong to the branch that owns the screen being written to:
 
 Step 3 stays in the **browser**, under your own JWT — the API must never gain a write
 path of its own. That is what makes RLS, rather than trust in the model, the thing that
-decides what lands: an action aimed at a project you are not a member of is refused by
+decides what lands: an action aimed at a workspace you are not a member of is refused by
 Postgres. The app refuses earlier too, and twice: an action block that does not
 type-check is reported in the chat and never executed, and an unknown `kind` is named
 back to you instead of silently dropped.
 
 ### Its conversation
 
-One conversation per project (`management:<projectId>`), held open as a git-free `omp`
-child in the project's directory — no worktree, no branch, no row on the Агенти board.
-Switching project in the sidebar switches conversation; «Новий чат» drops the child so
-the next question starts from nothing. An idle conversation is stopped after a while,
-and the next message simply spawns a fresh one.
+One conversation per Воркспейс (`management:<workspaceId>`), held open as a git-free `omp`
+child in the first bound repository of the group — or in your home directory when none is
+bound — with no worktree, no branch and no row on the Агенти board. Switching workspace in
+the sidebar switches conversation; «Новий чат» drops the child so the next question starts
+from nothing. An idle conversation is stopped after a while, and the next message simply
+spawns a fresh one.

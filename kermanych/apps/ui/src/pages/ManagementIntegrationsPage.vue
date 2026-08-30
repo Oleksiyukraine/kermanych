@@ -1,8 +1,8 @@
 <template>
   <section class="int">
     <p class="int__lead">
-      Підключіть зовнішні сервіси до проєкту
-      <span class="int__lead-project mono">{{ projectName }}</span>
+      Підключіть зовнішні сервіси до воркспейсу
+      <span class="int__lead-workspace mono">{{ workspaceName }}</span>
     </p>
 
     <div class="int__grid">
@@ -41,9 +41,9 @@
 // Slack, every «Підключити» is disabled, and no state is stored. The tiles exist
 // so the shape of the feature can be judged before it is built.
 //
-// It takes the same props every section gets from ManagementPage, so the project
+// It takes the same props every section gets from ManagementPage, so the workspace
 // it would connect to is already named for it.
-defineProps<{ projectId: string; projectName: string }>();
+defineProps<{ workspaceId: string; workspaceName: string }>();
 
 type Brand = {
   id: string;
@@ -101,7 +101,7 @@ const BRANDS: readonly Brand[] = [
   color: var(--k-muted);
 }
 
-.int__lead-project {
+.int__lead-workspace {
   color: var(--k-text);
 }
 

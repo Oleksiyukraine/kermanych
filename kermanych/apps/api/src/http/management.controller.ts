@@ -2,7 +2,6 @@
 import { BadRequestException, Body, Controller, Post } from "@nestjs/common";
 import type { ManagementChatAsk, ManagementChatReply } from "@kermanych/core";
 import { ManagementChatService } from "../management/management-chat.service";
-import { RegistryService } from "../registry/registry.service";
 
 // The Менеджмент assistant, over REST rather than the sessions WebSocket: one question,
 // one answer, no board row and no live transcript to stream. Auto-guarded by the global
@@ -10,10 +9,7 @@ import { RegistryService } from "../registry/registry.service";
 // operator's own provider plan and must not be drivable by anything else on the machine.
 @Controller("management")
 export class ManagementController {
-  constructor(
-    private chat: ManagementChatService,
-    private reg: RegistryService,
-  ) {}
+  constructor(private chat: ManagementChatService) {}
 
   @Post("chat")
   async ask(@Body() b: ManagementChatAsk): Promise<ManagementChatReply> {
@@ -23,7 +19,15 @@ export class ManagementController {
     // A blank turn would still spawn omp and still cost a provider call, for a question
     // nobody asked.
     if (!text) throw new BadRequestException("повідомлення порожнє");
-    const projectId = typeof b?.projectId === "string" ? b.projectId : "";
+    // The one scope check this endpoint makes, and it replaced a registry-binding refusal
+    // that turned away a workspace none of whose repositories are bound on this machine.
+    // The honest scope question at this level is «is a workspace named»: a named workspace
+    // always has a subject — its risk register and the section table — even with nothing
+    // bound here, and `managementCwd` documents that fallback to the home directory.
+    // `ManagementChatService` reads the registry itself to resolve the repos it can name,
+    // so dropping the old check lost nothing but a working chat it used to refuse.
+    const workspaceId = typeof b?.workspaceId === "string" ? b.workspaceId.trim() : "";
+    if (!workspaceId) throw new BadRequestException("не вказано воркспейс");
     // Only the two fields the browser is the authority on survive: the id, and the cloud
     // row's git remote. Anything else a client sent about a repository is ignored — the
     // paths come from this machine's registry and nowhere else.
@@ -32,16 +36,9 @@ export class ManagementController {
           .filter((x): x is { id: string; gitRemoteUrl?: string } => !!x && typeof x.id === "string" && x.id !== "")
           .map((x) => ({ id: x.id, ...(typeof x.gitRemoteUrl === "string" && x.gitRemoteUrl !== "" ? { gitRemoteUrl: x.gitRemoteUrl } : {}) }))
       : [];
-    // Paths are never taken from the client, so with no id this machine recognises there is
-    // no workspace to reason about — and the honest answer is to say so rather than to open
-    // a chat in the home directory and pretend it knows the projects.
-    if (!workspaceProjects.length && !this.reg.listProjects().some((p) => p.id === projectId))
-      throw new BadRequestException(
-        "не вдалося визначити воркспейс: жоден із переданих проєктів не привʼязаний у цьому Kermanych",
-      );
     if (!b?.context) throw new BadRequestException("не передано контекст розділу");
     try {
-      return await this.chat.ask({ ...b, conversationId, text, projectId, workspaceProjects });
+      return await this.chat.ask({ ...b, conversationId, text, workspaceId, workspaceProjects });
     } catch (err) {
       // A missing `omp`, a start timeout or a turn timeout are all operator-actionable
       // sentences already; a 500 would hide every one of them behind "Internal Server

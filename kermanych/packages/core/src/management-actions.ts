@@ -70,18 +70,25 @@ export type ManagementRepo = {
 
 export type ManagementContext = {
   workspaceName: string;
-  projectName: string;
+  // Deliberately NO project name. Nothing on this surface states a «current project» any
+  // more: a transcript outlives the selection that opened it, so a line naming one project
+  // would be lying about its own scope the moment the operator moved on — while
+  // `ManagementRepo[]` already names every project of the group, which is the honest
+  // answer to «which of our repos does this affect».
+  //
   // Active section, by route name — the assistant answers "about this screen" first.
   section: string;
 };
 
 export type ManagementChatAsk = {
-  // One conversation per scoped project (`management:<projectId>`): switching project in the
-  // sidebar switches conversation, which is also what the user sees happen on screen.
+  // One conversation per scoped WORKSPACE (`management:<workspaceId>`): switching workspace
+  // in the sidebar switches conversation, which is also what the user sees happen on screen.
+  // The level matches the subject — the register, the membership and the repositories the
+  // assistant reads all belong to the group, not to one of its projects.
   conversationId: string;
-  projectId: string;
-  // Every project of the scoped workspace, INCLUDING `projectId`. The api turns these into
-  // `ManagementRepo[]`; ids the local registry does not know are dropped, not guessed.
+  workspaceId: string;
+  // Every project of the scoped workspace. The api turns these into `ManagementRepo[]`;
+  // ids the local registry does not know are dropped, not guessed.
   workspaceProjects: ManagementWorkspaceProject[];
   text: string;
   context: ManagementContext;

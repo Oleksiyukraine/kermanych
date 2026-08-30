@@ -2,36 +2,43 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type {
-  ProjectRisk,
-  ProjectRiskEvent,
-  ProjectRiskInsert,
-  ProjectRiskPatch,
+  WorkspaceRisk,
+  WorkspaceRiskEvent,
+  WorkspaceRiskInsert,
+  WorkspaceRiskPatch,
 } from '@kermanych/cloud';
 import {
-  createProjectRisk as cloudCreateRisk,
-  listProjectRisks as cloudListRisks,
+  createWorkspaceRisk as cloudCreateRisk,
+  listWorkspaceRisks as cloudListRisks,
   listRiskEvents as cloudListRiskEvents,
-  patchProjectRisk as cloudPatchRisk,
+  patchWorkspaceRisk as cloudPatchRisk,
 } from '@kermanych/cloud';
 import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { IS_PREVIEW } from '../lib/preview';
 
-// The project risk register. Keyed by PROJECT rather than held as one flat list: the register
-// is a screen you open for one project, and a shared list would flash the previous project's
-// rows for the length of a fetch every time the sidebar selection changes.
+// The workspace risk register. Keyed by WORKSPACE rather than held as one flat list: the
+// register is a screen you open for one workspace, and a shared list would flash the
+// previous workspace's rows for the length of a fetch every time the sidebar selection
+// changes.
 //
-// Deliberately no Realtime channel (the table is not in the supabase_realtime publication):
-// a register is edited a handful of times a week by people who are looking at it, so a live
-// socket would cost a connection to deliver almost nothing. The screen refetches on open.
+// The register lives a level above the project because membership — and therefore who may
+// read a risk at all — is a workspace fact (`is_workspace_member`). A per-project register
+// was scoped more narrowly than its own access rule: the same people could always read it,
+// yet the same «ключова людина піде» row had to be filed again under every project.
+//
+// Deliberately no Realtime channel (`workspace_risks` is not in the supabase_realtime
+// publication): a register is edited a handful of times a week by people who are looking at
+// it, so a live socket would cost a connection to deliver almost nothing. The screen
+// refetches on open.
 export const useRisks = defineStore('risks', () => {
   const auth = useAuth();
   const local = useOrchestrator();
 
-  const byProject = ref<Record<string, ProjectRisk[]>>({});
+  const byWorkspace = ref<Record<string, WorkspaceRisk[]>>({});
   // One risk's audit trail, fetched when its history is opened. Dozens of risks each carry a
   // history nobody is reading until they ask for it.
-  const eventsByRisk = ref<Record<string, ProjectRiskEvent[]>>({});
+  const eventsByRisk = ref<Record<string, WorkspaceRiskEvent[]>>({});
   const loading = ref(false);
   // Inline on the screen, never a toast: an unreachable Supabase must not greet someone who
   // opened the register only to read it (same call as stores/board.ts).
@@ -43,22 +50,25 @@ export const useRisks = defineStore('risks', () => {
 
   // Replace-or-append keyed by id, then re-sorted the way the cloud returns a fresh page, so
   // an edited row does not jump to the end of the table it was edited in.
-  function upsert(projectId: string, risk: ProjectRisk): void {
-    const rows = (byProject.value[projectId] ?? []).filter((r) => r.id !== risk.id);
+  function upsert(workspaceId: string, risk: WorkspaceRisk): void {
+    const rows = (byWorkspace.value[workspaceId] ?? []).filter((r) => r.id !== risk.id);
     rows.push(risk);
     rows.sort((a, b) => b.exposure - a.exposure || a.code.localeCompare(b.code));
-    byProject.value = { ...byProject.value, [projectId]: rows };
+    byWorkspace.value = { ...byWorkspace.value, [workspaceId]: rows };
   }
 
-  async function load(projectId: string): Promise<void> {
+  async function load(workspaceId: string): Promise<void> {
     await auth.ready;
     // A preview signs in against a cloudless api (lib/preview.ts): there is no Supabase
     // project behind it, so there is no register to read.
-    if (IS_PREVIEW || !auth.user || !projectId) return;
+    if (IS_PREVIEW || !auth.user || !workspaceId) return;
     loading.value = true;
     loadError.value = null;
     try {
-      byProject.value = { ...byProject.value, [projectId]: await cloudListRisks(auth.client, projectId) };
+      byWorkspace.value = {
+        ...byWorkspace.value,
+        [workspaceId]: await cloudListRisks(auth.client, workspaceId),
+      };
     } catch (e) {
       loadError.value = e instanceof Error ? e.message : String(e);
     } finally {
@@ -66,20 +76,20 @@ export const useRisks = defineStore('risks', () => {
     }
   }
 
-  // No optimistic row: `code` is minted by the trigger under a per-project advisory lock, so
-  // the register's own identifier only exists once Postgres has answered. Showing R-??? for a
-  // moment would be showing a number that is about to change.
+  // No optimistic row: `code` is minted by the trigger under a per-workspace advisory lock,
+  // so the register's own identifier only exists once Postgres has answered. Showing R-???
+  // for a moment would be showing a number that is about to change.
   async function create(
-    projectId: string,
-    input: Omit<ProjectRiskInsert, 'projectId'>,
-  ): Promise<ProjectRisk | undefined> {
+    workspaceId: string,
+    input: Omit<WorkspaceRiskInsert, 'workspaceId'>,
+  ): Promise<WorkspaceRisk | undefined> {
     if (!auth.user) {
       local.notify('Спочатку увійдіть у Kermanych', 'error');
       return undefined;
     }
     try {
-      const created = await cloudCreateRisk(auth.client, { projectId, ...input });
-      upsert(projectId, created);
+      const created = await cloudCreateRisk(auth.client, { workspaceId, ...input });
+      upsert(workspaceId, created);
       return created;
     } catch (e) {
       fail(e);
@@ -92,13 +102,13 @@ export const useRisks = defineStore('risks', () => {
   // OLD severity beside the new scores until the response landed. The editor stays busy
   // instead, and the row arrives complete.
   async function save(
-    projectId: string,
+    workspaceId: string,
     id: string,
-    patch: ProjectRiskPatch,
-  ): Promise<ProjectRisk | undefined> {
+    patch: WorkspaceRiskPatch,
+  ): Promise<WorkspaceRisk | undefined> {
     try {
       const saved = await cloudPatchRisk(auth.client, id, patch);
-      upsert(projectId, saved);
+      upsert(workspaceId, saved);
       // The history changed with the row, so a cached copy would be a lie the next time the
       // «Історія» tab opens. Drop it rather than guess what the trigger recorded.
       const next = { ...eventsByRisk.value };
@@ -114,8 +124,8 @@ export const useRisks = defineStore('risks', () => {
   // The review cadence, recorded. This is the one audit column a client may write, and only
   // to «now»: the trigger files it as a `reviewed` event, which is what turns «we review
   // weekly» into something a phase gate can check.
-  function markReviewed(projectId: string, id: string): Promise<ProjectRisk | undefined> {
-    return save(projectId, id, { lastReviewedAt: new Date().toISOString() });
+  function markReviewed(workspaceId: string, id: string): Promise<WorkspaceRisk | undefined> {
+    return save(workspaceId, id, { lastReviewedAt: new Date().toISOString() });
   }
 
   async function loadEvents(riskId: string): Promise<void> {
@@ -130,5 +140,5 @@ export const useRisks = defineStore('risks', () => {
     }
   }
 
-  return { byProject, eventsByRisk, loading, loadError, load, create, save, markReviewed, loadEvents };
+  return { byWorkspace, eventsByRisk, loading, loadError, load, create, save, markReviewed, loadEvents };
 });
