@@ -19,7 +19,6 @@ export interface ManagementSection {
 export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
   { name: 'management-home', path: 'home', label: 'Home' },
   { name: 'management-storage', path: 'storage', label: 'Storage' },
-  { name: 'management-skills', path: 'skills', label: 'Skills' },
   { name: 'management-risks', path: 'risk-registry', label: 'Risk Registry' },
   { name: 'management-releases', path: 'release-notes', label: 'Release Notes' },
   { name: 'management-capacity', path: 'team-capacity', label: 'Team Capacity' },
