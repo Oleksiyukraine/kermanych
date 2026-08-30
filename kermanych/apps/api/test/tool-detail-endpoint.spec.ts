@@ -31,3 +31,15 @@ test("the service serves cached lines and 410s on an unknown call id or session 
   expect(() => sup.getToolDetail("s1", "nope")).toThrow(GoneException);
   expect(() => sup.getToolDetail("nope", "c1")).toThrow(GoneException);
 });
+
+// The effort route is the one place an operator-supplied string becomes an omp RPC field, so
+// the level is validated at the door: omp's own refusal is asynchronous and would never reach
+// the caller of this POST.
+test("the effort route refuses a level omp has no rung for and never reaches the supervisor", async () => {
+  const sup = { setEffort: vi.fn() };
+  const c = new SessionsController(sup as never, {} as never, {} as never);
+  await expect(c.effort("s1", { level: "ludicrous" })).rejects.toThrow(/ludicrous/);
+  expect(sup.setEffort).not.toHaveBeenCalled();
+  await c.effort("s1", { level: "xhigh" });
+  expect(sup.setEffort).toHaveBeenCalledWith("s1", "xhigh");
+});

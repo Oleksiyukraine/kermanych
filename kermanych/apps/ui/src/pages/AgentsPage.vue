@@ -120,6 +120,7 @@
             @reopen="onReopenSelected"
             @newTask="openTaskFromText"
             @expand-all="onExpandAll"
+            @effort="onEffort"
           >
             <template v-if="blocks.length">
               <KRequestBlock
@@ -562,6 +563,7 @@ import {
   type Session,
   type SessionStatus,
   type TranscriptEntry,
+  type ThinkingLevel,
   type RpcExtensionUIResponse,
 } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -1378,6 +1380,19 @@ async function onRestart(): Promise<void> {
   if (!s) return;
   try {
     await store.restartSession(s.id);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+// The composer's effort chip. omp refuses a level its provider cannot run, and the api
+// reports that refusal rather than writing the row — so a failure has to be shown, or the
+// chip would snap back with no explanation.
+async function onEffort(level: ThinkingLevel): Promise<void> {
+  const s = selectedSession.value;
+  if (!s) return;
+  try {
+    await store.setEffort(s.id, level);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }

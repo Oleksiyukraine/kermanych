@@ -1,5 +1,6 @@
 // apps/api/src/http/sessions.controller.ts
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from "@nestjs/common";
+import { isThinkingLevel } from "@kermanych/core";
 import type { BranchPrefix, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { RegistryService } from "../registry/registry.service";
@@ -101,6 +102,18 @@ export class SessionsController {
   async message(@Param("id") id: string, @Body() b: { text: string; mode: "prompt" | "follow_up" | "steer"; images?: ImageInput[] }) {
     try {
       return await this.sup.sendMessage(id, b.text, b.mode, b.images);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  // The composer's effort chip. The level is validated here rather than trusted: it goes on to
+  // become an omp argv value / RPC frame field, and omp's own refusal would never reach the UI.
+  @Post(":id/effort")
+  async effort(@Param("id") id: string, @Body() b: { level: string }) {
+    if (!isThinkingLevel(b.level)) throw new BadRequestException(`unknown effort level ${JSON.stringify(b.level)}`);
+    try {
+      return await this.sup.setEffort(id, b.level);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }

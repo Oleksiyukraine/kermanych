@@ -10,6 +10,7 @@ import type {
   Session,
   TaskDraft,
   TranscriptEntry,
+  ThinkingLevel,
   ServerEvent,
   RpcExtensionUIResponse,
 } from '@kermanych/core';
@@ -220,6 +221,12 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.sendMessage(id, text, mode, images);
   }
 
+  // The composer's effort chip. No optimistic patch: the api answers with the saved row AND
+  // broadcasts `session_update`, so the chip follows what omp actually accepted.
+  function setEffort(id: string, level: ThinkingLevel) {
+    return api.setEffort(id, level);
+  }
+
   function answerUi(id: string, res: RpcExtensionUIResponse) {
     return api.answerUi(id, res);
   }
@@ -372,6 +379,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     updateTask,
     moveTask,
     sendMessage,
+    setEffort,
     answerUi,
     stopSession,
     deleteSession,

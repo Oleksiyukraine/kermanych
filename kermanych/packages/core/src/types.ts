@@ -1,5 +1,6 @@
 import type { BranchPrefix } from "./worktree-names";
 import type { Platform } from "./platform";
+import type { ThinkingLevel } from "./thinking";
 
 export type SessionStatus =
   | "backlog" | "queued" | "thinking" | "tool" | "waiting_input" | "done" | "error" | "stopped" | "merged" | "conflict";
@@ -26,6 +27,10 @@ export type Session = {
   worktreePath: string; branch: string;
   worktree: boolean; baseBranch?: string;
   model?: string; prefix?: BranchPrefix; platform?: Platform;
+  // How hard omp is told to think, as omp itself reports it (`get_state.thinkingLevel`) or as
+  // the operator set it from the composer. Absent means "not known yet" — a fresh child has
+  // not answered its first state poll — never "off", which is a real setting.
+  effort?: ThinkingLevel;
   kind: "agent" | "discussion" | "task" | "review" | "chat";
   parentSessionId?: string;
   ompSessionId?: string; ompSessionFile?: string;
@@ -42,7 +47,7 @@ export type Session = {
 // The editable launch config the New-task launcher collects; startTask/updateTask patch
 // these onto a backlog row. All fields optional — it is a partial patch.
 export type TaskDraft = {
-  name?: string | undefined; task?: string | undefined; model?: string | undefined; prefix?: BranchPrefix | undefined; platform?: Platform | undefined; worktree?: boolean | undefined; baseBranch?: string | undefined;
+  name?: string | undefined; task?: string | undefined; model?: string | undefined; prefix?: BranchPrefix | undefined; platform?: Platform | undefined; worktree?: boolean | undefined; baseBranch?: string | undefined; effort?: ThinkingLevel | undefined;
 };
 
 export type ImageInput = { data: string; mimeType: string };

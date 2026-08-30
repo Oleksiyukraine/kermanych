@@ -33,6 +33,7 @@ import {
   type ServerEvent,
   type Session,
   type TaskDraft,
+  type ThinkingLevel,
   type ToolLine,
   type TranscriptEntry,
 } from "@kermanych/core";
@@ -393,6 +394,7 @@ export class SupervisorService implements OnModuleDestroy {
         prefix: overrides.prefix ?? cur.prefix,
         platform: overrides.platform ?? cur.platform,
         worktree: overrides.worktree ?? cur.worktree,
+        effort: overrides.effort ?? cur.effort,
         baseBranch: overrides.baseBranch ?? cur.baseBranch,
       });
     const edited = this.registry.listSessions().find((x) => x.id === id)!;
@@ -423,6 +425,7 @@ export class SupervisorService implements OnModuleDestroy {
       prefix: patch.prefix ?? cur.prefix,
       platform: patch.platform ?? cur.platform,
       worktree: patch.worktree ?? cur.worktree,
+      effort: patch.effort ?? cur.effort,
       baseBranch: patch.baseBranch ?? cur.baseBranch,
     });
     this.pushUpdate(id);
@@ -589,7 +592,7 @@ export class SupervisorService implements OnModuleDestroy {
     project: Project,
     opts: { images?: ImageInput[]; fork?: string; firstPrompt?: string } = {},
   ): Promise<Session> {
-    const { id, branch, worktree, baseBranch, task, model } = session;
+    const { id, branch, worktree, baseBranch, task, model, effort } = session;
     if (!project.localRepoPath) throw new Error("project not bound");
     const { images, fork } = opts;
     const firstPrompt = opts.firstPrompt ?? task;
@@ -614,7 +617,7 @@ export class SupervisorService implements OnModuleDestroy {
 
     const cwd = worktree ? wtDir : project.localRepoPath;
     const configPath = await this.ompSkills(project.id, cwd, id);
-    const rpc = new RpcSession({ cwd, model, ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}) });
+    const rpc = new RpcSession({ cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await rpc.start();
@@ -989,6 +992,12 @@ export class SupervisorService implements OnModuleDestroy {
         if (!this.registry.listSessions().find((x) => x.id === id)?.model)
           this.registry.updateSession(id, { model: st.model.id });
       }
+      // Reasoning effort, unlike the model, is LIVE state: omp accepts `set_thinking_level`
+      // mid-session (from the composer here, or from omp's own UI in a shared session file),
+      // so every poll reconciles rather than settling once. A write only when the value moved
+      // keeps this off the hot path — the poll runs every couple of seconds per live child.
+      if (st.thinkingLevel && this.registry.listSessions().find((x) => x.id === id)?.effort !== st.thinkingLevel)
+        this.registry.updateSession(id, { effort: st.thinkingLevel });
       this.pushUpdate(id);
     } catch {}
   }
@@ -1037,6 +1046,21 @@ export class SupervisorService implements OnModuleDestroy {
     if (mode === "steer") l.rpc.steer(text, images);
     else if (mode === "follow_up") l.rpc.followUp(text, images);
     else l.rpc.prompt(text, images);
+  }
+
+  // Retune how hard the agent thinks, from the composer's effort chip. omp treats the level as
+  // session state, so a LIVE child is told first and only then is the row written: a refused or
+  // timed-out command must not leave the UI showing a level the agent is not running at. A
+  // dormant or backlog row is persisted without waking anything — `doResume`/`launch` re-assert
+  // it on the next spawn, and the state poll reconciles from omp either way.
+  async setEffort(id: string, level: ThinkingLevel): Promise<Session> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    const l = this.map.get(id);
+    if (l?.rpc.isAlive()) await l.rpc.setThinkingLevel(level);
+    const saved = this.registry.updateSession(id, { effort: level });
+    this.pushUpdate(id);
+    return this.merge(saved);
   }
 
   // AI conflict resolution: resume the session's agent in its mid-merge worktree and
@@ -1372,6 +1396,14 @@ export class SupervisorService implements OnModuleDestroy {
         await rpc.switchSession(s.ompSessionFile);
         this.rehydrate(live, id, await rpc.getAllMessages());
       }
+      // Re-assert the chosen effort AFTER switch_session: the reloaded session file carries its
+      // own thinking level, so setting it at spawn (`--thinking`) would be overwritten here.
+      // Best-effort — an agent that woke at the wrong effort is a nuisance, a resume that failed
+      // because of it would cost the operator the whole session.
+      if (s.effort)
+        await rpc
+          .setThinkingLevel(s.effort)
+          .catch((e: unknown) => console.warn(`[supervisor] could not restore effort ${s.effort} on ${id}: ${(e as Error).message}`));
     } catch (err) {
       this.stopPoll(live);
       await rpc.stop().catch(() => {});
