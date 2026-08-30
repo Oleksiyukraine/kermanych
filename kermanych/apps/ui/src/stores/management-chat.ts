@@ -1,6 +1,13 @@
 // apps/ui/src/stores/management-chat.ts
-// The Менеджмент assistant, browser side: one transcript per scoped project, one turn
+// The Менеджмент assistant, browser side: one transcript per scoped workspace, one turn
 // through the local api, and the executor that applies the model's validated actions.
+//
+// The transcript is keyed by WORKSPACE and not by project because every subject of this
+// conversation already is: the register the assistant talks about (`workspace_risks`), the
+// membership that decides who may read it (`workspace_members`), and the repositories it
+// greps (every project of the workspace) all belong to the group. A per-project transcript
+// was narrower than every subject in it — the operator had to re-ask one team's question
+// once per project to hear about the team.
 //
 // Three properties of this file are the product, not implementation detail:
 //
@@ -12,8 +19,9 @@
 //      that would rather be agreeable invents a plausible limitation, and an invented reason
 //      is worse than no answer at all;
 //   3. the WRITING actions execute HERE, in the browser, under the user's own Supabase JWT —
-//      so RLS, not trust in the model, decides what a given member may change. The api
-//      deliberately holds no write path of its own and no credentials for `project_risks`.
+//      so RLS, not trust in the model, decides what a given member may change. The Risk
+//      Registry branch in `run()` below calls `useRisks().create(workspaceId, …)`. The api
+//      deliberately holds no write path of its own and no credentials for `workspace_risks`.
 //
 // The Risk Registry is the one section whose @kermanych/core row says `read_write`, so
 // `risk.create` and `risk.update` are the only actions that reach a database. Every other
@@ -44,9 +52,9 @@ export type MgmtChatEntry =
 
 export type MgmtResultLevel = Extract<MgmtChatEntry, { kind: 'result' }>['level'];
 
-// Same shape the api keys its omp children by: one conversation per scoped project.
-function conversationId(projectId: string): string {
-  return `management:${projectId}`;
+// Same shape the api keys its omp children by: one conversation per scoped workspace.
+function conversationId(workspaceId: string): string {
+  return `management:${workspaceId}`;
 }
 
 // The toast store's id idiom — monotonic enough for a `:key` and unique enough for two
@@ -66,28 +74,28 @@ export const useManagementChat = defineStore('management-chat', () => {
   // renders, so a risk the assistant files appears on that screen without a refetch.
   const risks = useRisks();
 
-  // Keyed by project id, because the conversation id is `management:<projectId>`: picking
-  // another project in the sidebar switches the conversation the api talks to, so it has to
+  // Keyed by workspace id, because the conversation id is `management:<workspaceId>`: picking
+  // another workspace in the sidebar switches the conversation the api talks to, so it has to
   // switch the conversation on screen too. Keeping one flat list would show the operator a
   // transcript the model no longer has.
-  const byProject = ref<Record<string, MgmtChatEntry[]>>({});
+  const byWorkspace = ref<Record<string, MgmtChatEntry[]>>({});
   const busy = ref(false);
 
   const entries = computed<MgmtChatEntry[]>(() => {
-    const id = store.selectedProjectId;
-    return (id ? byProject.value[id] : undefined) ?? [];
+    const id = store.selectedWorkspaceId;
+    return (id ? byWorkspace.value[id] : undefined) ?? [];
   });
 
   const hasConversation = computed(() => entries.value.length > 0);
 
-  function push(projectId: string, entry: MgmtChatEntry): void {
-    const list = byProject.value[projectId];
+  function push(workspaceId: string, entry: MgmtChatEntry): void {
+    const list = byWorkspace.value[workspaceId];
     if (list) list.push(entry);
-    else byProject.value[projectId] = [entry];
+    else byWorkspace.value[workspaceId] = [entry];
   }
 
-  function result(projectId: string, level: MgmtResultLevel, text: string): void {
-    push(projectId, { kind: 'result', id: entryId(), at: Date.now(), level, text });
+  function result(workspaceId: string, level: MgmtResultLevel, text: string): void {
+    push(workspaceId, { kind: 'result', id: entryId(), at: Date.now(), level, text });
   }
 
   // Requirement 3: the assistant carries every repository of the scoped workspace, not just
@@ -95,27 +103,21 @@ export const useManagementChat = defineStore('management-chat', () => {
   // the api joins them against its own local registry for the on-disk path, so the prompt
   // cannot be talked into naming a directory nobody bound.
   //
-  // A local-only project has no workspace row. Then the scope is honestly this one project:
-  // the alternative, sending every known id, would leak another workspace's repositories into
-  // the prompt.
-  function workspaceProjects(projectId: string): ManagementWorkspaceProject[] {
-    const workspaceId = store.selectedWorkspaceId;
-    const scoped = workspaceId
-      ? projects.projects.filter((p) => p.workspaceId === workspaceId)
-      : [];
-    const entries = scoped.map((p) => ({
-      id: p.id,
-      ...(p.gitRemoteUrl ? { gitRemoteUrl: p.gitRemoteUrl } : {}),
-    }));
-    if (!entries.length) return [{ id: projectId }];
-    return entries.some((e) => e.id === projectId) ? entries : [...entries, { id: projectId }];
+  // There is no single-project fallback, because at workspace scope that case cannot arrive:
+  // a local-only project resolves to NO workspace, and the shell then refuses to render the
+  // chat at all. An empty array is a legitimate answer — a workspace that owns no projects
+  // yet — and the api handles it.
+  function workspaceProjects(workspaceId: string): ManagementWorkspaceProject[] {
+    return projects.projects
+      .filter((p) => p.workspaceId === workspaceId)
+      .map((p) => ({ id: p.id, ...(p.gitRemoteUrl ? { gitRemoteUrl: p.gitRemoteUrl } : {}) }));
   }
 
   // The register as the assistant is shown it. Read from the SAME store the Risk Registry
   // screen renders, so the list in the prompt is the list on screen — including the row the
   // assistant filed one turn ago, which is how it learns the code Postgres minted.
-  function riskDigest(projectId: string): ManagementRiskRow[] {
-    return (risks.byProject[projectId] ?? []).map((r) => ({
+  function riskDigest(workspaceId: string): ManagementRiskRow[] {
+    return (risks.byWorkspace[workspaceId] ?? []).map((r) => ({
       code: r.code,
       kind: r.kind,
       category: r.category,
@@ -134,40 +136,40 @@ export const useManagementChat = defineStore('management-chat', () => {
   // Every line it writes is the APP's account of what happened, never the model's. The model
   // is told (rule (а) of the prompt) not to claim a write succeeded — this is the only place
   // «Ризик R-004 занесено» may be said, because this is the only place that knows it.
-  async function run(projectId: string, action: ManagementAction): Promise<void> {
+  async function run(workspaceId: string, action: ManagementAction): Promise<void> {
     if (action.kind === 'risk.create') {
       try {
         // No cast and no mapping: `ManagementRiskFields` is deliberately the subset of
-        // `ProjectRiskInsert` a model may state, field for field. The day the two disagree,
+        // `WorkspaceRiskInsert` a model may state, field for field. The day the two disagree,
         // this line is the compile error that says so.
-        const created = await risks.create(projectId, action.risk);
+        const created = await risks.create(workspaceId, action.risk);
         result(
-          projectId,
+          workspaceId,
           'info',
           `Ризик ${created.code} занесено до реєстру: ${created.event} (${created.probability}×${created.impact})`,
         );
       } catch (e) {
         // The reason, verbatim: an RLS refusal, a CHECK constraint and an unreachable
         // Supabase are three different problems with three different fixes.
-        result(projectId, 'error', `Не вдалося занести ризик: ${errorText(e)}`);
+        result(workspaceId, 'error', `Не вдалося занести ризик: ${errorText(e)}`);
       }
       return;
     }
     if (action.kind === 'risk.update') {
-      const row = findRiskByCode(risks.byProject[projectId] ?? [], action.code);
+      const row = findRiskByCode(risks.byWorkspace[workspaceId] ?? [], action.code);
       if (!row) {
-        result(projectId, 'warn', `У реєстрі цього проєкту немає ризику ${action.code} — нічого не змінено.`);
+        result(workspaceId, 'warn', `У реєстрі цього воркспейсу немає ризику ${action.code} — нічого не змінено.`);
         return;
       }
       try {
-        const saved = await risks.save(projectId, row.id, action.patch);
-        result(projectId, 'info', `Ризик ${saved.code} оновлено: ${Object.keys(action.patch).join(', ')}`);
+        const saved = await risks.save(workspaceId, row.id, action.patch);
+        result(workspaceId, 'info', `Ризик ${saved.code} оновлено: ${Object.keys(action.patch).join(', ')}`);
       } catch (e) {
-        result(projectId, 'error', `Не вдалося оновити ризик ${row.code}: ${errorText(e)}`);
+        result(workspaceId, 'error', `Не вдалося оновити ризик ${row.code}: ${errorText(e)}`);
       }
       return;
     }
-    result(projectId, 'warn', refusalText(action));
+    result(workspaceId, 'warn', refusalText(action));
   }
 
   // `section` is passed in rather than read from the router: Quasar builds the router in a
@@ -176,44 +178,36 @@ export const useManagementChat = defineStore('management-chat', () => {
   // ManagementPage already knows the active section from its own `useRoute()`, so it hands it
   // over — one source of truth, no second router lookup that could disagree with the strip.
   async function send(text: string, section: string): Promise<void> {
-    const projectId = store.selectedProjectId;
+    const workspaceId = store.selectedWorkspaceId;
     const body = text.trim();
     // Nothing to say, nothing to say it about, or a turn already in flight. Silent because
     // the composer disables its own send disc in exactly these three states.
-    if (busy.value || !body || !projectId) return;
+    if (busy.value || !body || !workspaceId) return;
 
     // Appended before the request, so the operator's words are on screen while the model
     // thinks — a turn that takes twenty seconds must not look like a dropped keystroke.
-    push(projectId, { kind: 'user', id: entryId(), at: Date.now(), text: body });
+    push(workspaceId, { kind: 'user', id: entryId(), at: Date.now(), text: body });
     busy.value = true;
     try {
       // The register travels with the question, so the assistant can see what is already
-      // filed before it files another one. Fetched once per project: after that this store
+      // filed before it files another one. Fetched once per workspace: after that this store
       // IS the local copy — `useRisks().create/save` upsert into it — and refetching every
       // turn would flash the Risk Registry screen's loading state on each message.
-      if (!risks.byProject[projectId]) await risks.load(projectId);
+      if (!risks.byWorkspace[workspaceId]) await risks.load(workspaceId);
       const ask: ManagementChatAsk = {
-        conversationId: conversationId(projectId),
-        projectId,
-        workspaceProjects: workspaceProjects(projectId),
+        conversationId: conversationId(workspaceId),
+        workspaceId,
+        workspaceProjects: workspaceProjects(workspaceId),
         text: body,
         context: {
-          workspaceName: store.selectedWorkspaceId
-            ? (projects.workspaceById.get(store.selectedWorkspaceId)?.name ?? '')
-            : '',
-          // The cloud name first, the cached local row second — the shell header's two-lookup
-          // idiom, so a project whose sync failed is still named in the prompt.
-          projectName:
-            projects.byId.get(projectId)?.name ??
-            store.projects.find((p) => p.id === projectId)?.name ??
-            '',
+          workspaceName: projects.workspaceById.get(workspaceId)?.name ?? '',
           section,
-          risks: riskDigest(projectId),
+          risks: riskDigest(workspaceId),
         },
       };
 
       const reply = await api.managementChat(ask);
-      push(projectId, {
+      push(workspaceId, {
         kind: 'assistant',
         id: entryId(),
         at: Date.now(),
@@ -226,16 +220,16 @@ export const useManagementChat = defineStore('management-chat', () => {
       // Rejections first, then notices: a block that did not validate is the closest thing
       // to a lost instruction, and an operator who believes something was recorded when it
       // was not is exactly how that ends. Notices are omp's own asides and rank below it.
-      for (const line of reply.rejected) result(projectId, 'warn', line);
-      for (const line of reply.notices) result(projectId, 'info', line);
+      for (const line of reply.rejected) result(workspaceId, 'warn', line);
+      for (const line of reply.notices) result(workspaceId, 'info', line);
       // In order and one at a time: the model may file two risks in one turn, and the codes
       // Postgres mints depend on the order they arrive in. Awaited, so the transcript's
       // result lines follow the actions rather than racing them.
-      for (const action of reply.actions) await run(projectId, action);
+      for (const action of reply.actions) await run(workspaceId, action);
     } catch (e) {
       // The api failing is news, and news belongs in the transcript. A chat that swallows a
       // dead api looks exactly like a model with nothing to say.
-      result(projectId, 'error', errorText(e));
+      result(workspaceId, 'error', errorText(e));
     } finally {
       busy.value = false;
     }
@@ -245,16 +239,16 @@ export const useManagementChat = defineStore('management-chat', () => {
   // because a cleared transcript in front of a model that still remembers the last twenty
   // turns is the opposite of a new chat.
   async function reset(): Promise<void> {
-    const projectId = store.selectedProjectId;
-    if (busy.value || !projectId) return;
-    byProject.value[projectId] = [];
+    const workspaceId = store.selectedWorkspaceId;
+    if (busy.value || !workspaceId) return;
+    byWorkspace.value[workspaceId] = [];
     try {
-      await api.resetManagementChat(conversationId(projectId));
+      await api.resetManagementChat(conversationId(workspaceId));
     } catch (e) {
       // Reported, never thrown: the screen is already clear, and the operator needs to know
       // that the model's memory is not — otherwise the next answer refers to a conversation
       // that visibly never happened.
-      result(projectId, 'error', `Не вдалося скинути розмову: ${errorText(e)}`);
+      result(workspaceId, 'error', `Не вдалося скинути розмову: ${errorText(e)}`);
     }
   }
 

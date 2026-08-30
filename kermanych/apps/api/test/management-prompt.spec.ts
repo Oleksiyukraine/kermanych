@@ -18,7 +18,6 @@ function project(p: Partial<Project> & { id: string }): Project {
 
 const context: ManagementContext = {
   workspaceName: "Acme",
-  projectName: "Каса",
   section: "management-risks",
   risks: [],
 };
@@ -121,7 +120,7 @@ describe("buildManagementTurn", () => {
   // filing R-004 on turn two must see R-004 on turn three instead of filing it again.
   it("sends the register with every turn, empty or not", () => {
     const empty = buildManagementTurn({ first: false, repos, context, text: "?" });
-    expect(empty).toContain("Реєстр ризиків проєкту (0)");
+    expect(empty).toContain("Реєстр ризиків воркспейсу (0)");
     expect(empty).toContain("- реєстр порожній");
 
     const risks: ManagementRiskRow[] = [
@@ -137,7 +136,17 @@ describe("buildManagementTurn", () => {
       },
     ];
     const filled = buildManagementTurn({ first: false, repos, context: { ...context, risks }, text: "?" });
-    expect(filled).toContain("Реєстр ризиків проєкту (1)");
+    expect(filled).toContain("Реєстр ризиків воркспейсу (1)");
     expect(filled).toContain("- R-001 · threat · external · «рахунки не оплачуються» · 4×5=20 · reduce · open");
+  });
+
+  // Regression guard for the workspace re-scope: the context block names the Воркспейс and
+  // nothing else. A `Проєкт:` line would put a scope in the transcript that the tab no
+  // longer has, and the assistant would answer as if one project of the group were «the»
+  // subject.
+  it("names the workspace and never a project", () => {
+    const out = buildManagementTurn({ first: false, repos, context, text: "?" });
+    expect(out).not.toContain("Проєкт:");
+    expect(out).toContain("Воркспейс: Acme");
   });
 });

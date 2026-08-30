@@ -37,6 +37,7 @@ export {
   type BranchPrefix,
 } from "./worktree-names";
 export { PLATFORMS, type Platform } from "./platform";
+export { THINKING_LEVELS, isThinkingLevel, type ThinkingLevel } from "./thinking";
 export {
   DEFAULT_SKILLS,
   SKILL_NAME_RE,

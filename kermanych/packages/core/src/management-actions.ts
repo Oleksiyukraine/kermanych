@@ -22,7 +22,7 @@
 // requirement «if the assistant cannot act on a page, it must say why» — every section
 // whose ./management row is not `read_write` can only be answered with it. `risk.create`
 // and `risk.update` are the write path into the ONE section that has a store behind it,
-// the Risk Registry (`project_risks`); they carry that schema's vocabulary, validated here
+// the Risk Registry (`workspace_risks`); they carry that schema's vocabulary, validated here
 // against ./risks, so a category Postgres never heard of is refused in the browser with a
 // sentence naming it rather than as a 400 from PostgREST.
 import {
@@ -47,10 +47,10 @@ import type { Usage } from "./types";
 // its prose must not be mistaken for an instruction to act.
 export const MANAGEMENT_ACTION_FENCE = "kermanych-action";
 
-// One risk as the assistant may state it. Deliberately NOT the whole of `ProjectRiskInsert`:
+// One risk as the assistant may state it. Deliberately NOT the whole of `WorkspaceRiskInsert`:
 //
 //   * `code`, `exposure`, `emv`, `residualExposure` and every audit column are minted by
-//     Postgres (project_risks_touch), so nothing here can name them;
+//     Postgres (workspace_risks_touch), so nothing here can name them;
 //   * `riskOwner` and `actionOwner` are profile uuids. A model cannot know one, and a
 //     guessed uuid is either a foreign-key error or — worse — somebody else. Owners are
 //     assigned on the screen, and the prompt says so.
@@ -137,7 +137,7 @@ export type ManagementRepo = {
 // the owners and the audit trail stay on the screen — a prompt that carried the whole
 // register would spend the operator's plan re-reading columns the model cannot write.
 //
-// It travels on the ASK rather than being read by the api, because `project_risks` is
+// It travels on the ASK rather than being read by the api, because `workspace_risks` is
 // behind RLS and the browser holds the user's JWT. The api has no cloud credentials for it
 // and must not grow any: what the assistant may see is exactly what the operator may see.
 export type ManagementRiskRow = {
@@ -155,7 +155,12 @@ export type ManagementRiskRow = {
 
 export type ManagementContext = {
   workspaceName: string;
-  projectName: string;
+  // Deliberately NO project name. Nothing on this surface states a «current project» any
+  // more: a transcript outlives the selection that opened it, so a line naming one project
+  // would be lying about its own scope the moment the operator moved on — while
+  // `ManagementRepo[]` already names every project of the group, which is the honest
+  // answer to «which of our repos does this affect».
+  //
   // Active section, by route name — the assistant answers "about this screen" first.
   section: string;
   // The project's risk register as it stands THIS turn. Re-sent every turn rather than once
@@ -166,12 +171,14 @@ export type ManagementContext = {
 };
 
 export type ManagementChatAsk = {
-  // One conversation per scoped project (`management:<projectId>`): switching project in the
-  // sidebar switches conversation, which is also what the user sees happen on screen.
+  // One conversation per scoped WORKSPACE (`management:<workspaceId>`): switching workspace
+  // in the sidebar switches conversation, which is also what the user sees happen on screen.
+  // The level matches the subject — the register, the membership and the repositories the
+  // assistant reads all belong to the group, not to one of its projects.
   conversationId: string;
-  projectId: string;
-  // Every project of the scoped workspace, INCLUDING `projectId`. The api turns these into
-  // `ManagementRepo[]`; ids the local registry does not know are dropped, not guessed.
+  workspaceId: string;
+  // Every project of the scoped workspace. The api turns these into `ManagementRepo[]`;
+  // ids the local registry does not know are dropped, not guessed.
   workspaceProjects: ManagementWorkspaceProject[];
   text: string;
   context: ManagementContext;
@@ -248,8 +255,9 @@ function has(o: Record<string, unknown>, key: string): boolean {
 }
 
 // Every field the model may state about a risk, validated one by one against ./risks and
-// against the CHECK constraints of 20260830120000_project_risks.sql. Shared by create and
-// update: an update states a subset of exactly the same vocabulary.
+// against the CHECK constraints the register table carries (written in
+// 20260830120000_project_risks.sql, renamed with the table by 20260830140000_workspace_risks.sql).
+// Shared by create and update: an update states a subset of exactly the same vocabulary.
 //
 // The cross-field rules that need two values are checked only when both are present — a
 // patch that changes `response` alone cannot be matched against a `kind` it did not send,
@@ -322,17 +330,17 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
     p[key] = t;
   }
 
-  // project_risks_response_matches_kind, checked here so the operator reads «reduce не
+  // workspace_risks_response_matches_kind, checked here so the operator reads «reduce не
   // застосовується до можливості» instead of a Postgres constraint name.
   if (p.kind !== undefined && p.response !== undefined && !RISK_RESPONSES_BY_KIND[p.kind].includes(p.response))
     return {
       error: `стратегія ${p.response} не застосовується до ${p.kind} — допустимі: ${RISK_RESPONSES_BY_KIND[p.kind].join(", ")}`,
     };
-  // project_risks_closure_note_required. Demanded from the SAME action that closes the risk:
+  // workspace_risks_closure_note_required. Demanded from the SAME action that closes the risk:
   // a terminal status is the one write that must arrive with its reason attached.
   if (p.status !== undefined && isTerminalRiskStatus(p.status) && !(p.closureNote ?? ""))
     return { error: `статус ${p.status} потребує closureNote — причини закриття або плану по інциденту` };
-  // project_risks_emv_pair and project_risks_residual_pair: both halves or neither.
+  // workspace_risks_emv_pair and workspace_risks_residual_pair: both halves or neither.
   if ((p.costImpact === undefined) !== (p.probabilityPct === undefined))
     return { error: "costImpact і probabilityPct вказуються разом — EMV з половини пари є вигаданим числом" };
   if ((p.residualProbability === undefined) !== (p.residualImpact === undefined))
@@ -364,7 +372,7 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
     if (isFail(p)) return p;
     const missing = RISK_REQUIRED.filter((k) => p[k] === undefined);
     if (missing.length) return { error: `risk.create без обов'язкових полів: ${missing.join(", ")}` };
-    // project_risks_actions_required — «спостерігати» is not a response.
+    // workspace_risks_actions_required — «спостерігати» is not a response.
     if (p.response !== "accept" && !(p.responseActions ?? ""))
       return { error: `стратегія ${p.response} потребує responseActions — що саме буде зроблено` };
     return { kind: "risk.create", risk: { responseActions: "", ...p } as ManagementRiskFields };

@@ -11,18 +11,18 @@
       <div class="mgmt__rail-head">
         <span class="mgmt__eyebrow mono">Менеджмент</span>
         <!-- The scope, stated above the rows it applies to: every section below
-             reports on this one project. Greyed out and dot-less while nothing is
+             reports on this one workspace. Greyed out and dot-less while nothing is
              chosen, so the chip reads as an empty slot rather than a label. -->
-        <span class="mgmt__chip" :class="{ 'mgmt__chip--empty': !projectId }">
+        <span class="mgmt__chip" :class="{ 'mgmt__chip--empty': !workspaceId }">
           <span
-            v-if="projectId"
+            v-if="workspaceId"
             class="mgmt__chip-dot"
-            :style="{ background: projectColor }"
+            :style="{ background: workspaceColor }"
             aria-hidden="true"
           ></span>
-          <span class="mgmt__chip-name">{{ projectName || 'проєкт не вибрано' }}</span>
+          <span class="mgmt__chip-name">{{ workspaceName || 'воркспейс не вибрано' }}</span>
         </span>
-        <p class="mgmt__rail-note">Кожен розділ звітує про цей проєкт.</p>
+        <p class="mgmt__rail-note">Кожен розділ звітує про цей воркспейс.</p>
       </div>
 
       <nav class="mgmt__rail-list" aria-label="Розділи менеджменту">
@@ -30,6 +30,7 @@
           v-for="s in MANAGEMENT_SECTIONS"
           :key="s.name"
           :label="s.label"
+          :icon="SECTION_ICONS[s.name]"
           :hint="s.hint"
           :active="s.name === activeSection"
           :aria-current="s.name === activeSection ? 'page' : undefined"
@@ -43,29 +44,38 @@
         <h1 class="mgmt__heading">{{ sectionLabel }}</h1>
       </header>
 
-      <!-- The selection IS the access rule: every section reports on one project, so
+      <!-- The selection IS the access rule: every section reports on one workspace, so
            with none chosen there is nothing to report on. Same invitation the
-           Агенти view shows, rather than seven sections each repeating it. -->
-      <div v-if="!projectId" class="mgmt__blank">
+           Агенти view shows, rather than seven sections each repeating it. A project
+           that lives only on this machine has no workspace at all, and that case gets
+           named on its own line — otherwise the gate looks like the app forgot the
+           selection the sidebar is visibly holding. -->
+      <div v-if="!workspaceId" class="mgmt__blank">
         <div class="mgmt__blank-eyebrow mono">КЕРМАНИЧ</div>
         <p class="mgmt__blank-text">
-          Виберіть проєкт у лівій панелі, щоб побачити його менеджмент.
+          Виберіть воркспейс у лівій панелі, щоб побачити його менеджмент.
+        </p>
+        <p v-if="store.selectedProjectId" class="mgmt__blank-text mgmt__blank-note">
+          Вибраний проєкт існує лише локально — у нього немає воркспейсу, а значить і
+          менеджменту. Опублікуйте його або виберіть воркспейс.
         </p>
       </div>
       <template v-else>
         <div class="mgmt__body">
-          <router-view :project-id="projectId" :project-name="projectName" />
+          <router-view :workspace-id="workspaceId" :workspace-name="workspaceName" />
         </div>
 
-        <!-- The Менеджмент assistant, docked to the foot of the section pane like the chat
-             composer: the section's content owns the space above it, the input keeps the
-             pane's bottom edge whatever the section renders. The transcript hangs ABOVE the
-             pill (`bottom: 100%`) rather than pushing it, so the section never reflows as
-             the conversation grows — a chat that moves the register it is describing is
-             unusable. Centred rather than stretched: a capsule pulled across a 1400px
-             window reads as a toolbar and puts its controls a screen away from the text they
-             belong to. Frosted over the page's glow layer, which is why `.mgmt__atmo` exists
-             rather than a flat canvas — glass needs a substrate to bend. -->
+        <!-- The Менеджмент assistant, FLOATING over the section pane rather than sitting in
+             its column: the dock is absolutely positioned at the pane's foot, so section
+             content passes BEHIND the frosted pill instead of stopping above it — which is
+             also what finally makes the frost mean something, since it now blurs the register
+             underneath. `.mgmt__body` keeps a bottom pad so the last row of a section can
+             still be read clear of the pill. The transcript hangs ABOVE the pill
+             (`bottom: 100%`) rather than pushing it, so nothing reflows as the conversation
+             grows. Centred rather than stretched: a capsule pulled across a 1400px window
+             reads as a toolbar and puts its controls a screen away from the text they belong
+             to. Frosted over the page's glow layer, which is why `.mgmt__atmo` exists rather
+             than a flat canvas — glass needs a substrate to bend. -->
         <div class="mgmt__dock">
           <section
             v-if="chat.hasConversation"
@@ -110,21 +120,13 @@
             aria-label="Асистент менеджменту"
             @submit.prevent="submit"
           >
-            <button
-              v-tip="'Новий чат'"
-              class="mgmt__c-icon"
-              type="button"
-              :disabled="!chat.hasConversation || chat.busy"
-              aria-label="Новий чат"
-              @click="chat.reset()"
-            >⊞</button>
             <textarea
               ref="fieldEl"
               v-model="draft"
               class="mgmt__c-input"
               rows="1"
               :disabled="chat.busy"
-              placeholder="Запитайте про менеджмент цього воркспейсу — ризики, статуси, рішення"
+              placeholder="Запитайте про менеджмент — ризики, статуси, рішення"
               aria-label="Повідомлення асистенту менеджменту"
               @input="autoGrow"
               @keydown="onKeydown"
@@ -159,11 +161,11 @@
 </template>
 
 <script setup lang="ts">
-// Shell of the Менеджмент tab: the section rail, the «pick a project» gate, the project
+// Shell of the Менеджмент tab: the section rail, the «pick a workspace» gate, the workspace
 // every section is scoped to, and the assistant docked at the section pane's foot. The
 // sections themselves are the child routes of /management (the table lives in
 // @kermanych/core, shared with the api and the action executor) — this component decides
-// WHETHER one renders and WHICH project it renders for; it never renders their content.
+// WHETHER one renders and WHICH WORKSPACE it renders for; it never renders their content.
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { MANAGEMENT_SECTIONS } from '@kermanych/core';
@@ -173,6 +175,7 @@ import { useManagementChat } from 'stores/management-chat';
 // The rail's row component, shared with the shell's bucket rail — it is what renders the
 // `hint` second line. KSubNav is gone from this page with the horizontal strip it drove.
 import KNavItem from 'components/kit/KNavItem.vue';
+import { type KIconName } from 'components/kit/KIcon.vue';
 import KChatMessage from 'components/kit/KChatMessage.vue';
 import { renderMarkdown } from '../lib/markdown';
 import { percent, planWindow } from '../lib/format';
@@ -195,14 +198,31 @@ function goSection(name: string): void {
   if (route.name !== name) void router.push({ name });
 }
 
-const projectId = computed(() => store.selectedProjectId);
+// The rail's marks, keyed by route name. They live HERE and not in @kermanych/core's section
+// table for the same reason the section's component does not live there either
+// (router/routes.ts `SECTION_PAGES`): the table is shared with the api, which builds the
+// assistant's prompt from it and has no business knowing what a row looks like. A section
+// missing from this map still renders — `icon` is optional on KNavItem — it just renders
+// without a mark, which is the correct failure: a new section appears in the rail the moment
+// core lists it, and picking its mark is a separate, deliberate edit.
+const SECTION_ICONS: Record<string, KIconName> = {
+  'management-home': 'home',
+  'management-storage': 'storage',
+  'management-risks': 'risks',
+  'management-releases': 'releases',
+  'management-capacity': 'capacity',
+  'management-integrations': 'integrations',
+};
 
-// Prefer the cloud name, fall back to the cached local row — the shell header's
-// two-lookup idiom, so a project whose sync failed still reads right here.
-const projectName = computed(() => {
-  const id = projectId.value;
+const workspaceId = computed(() => store.selectedWorkspaceId);
+
+// One lookup, unlike the shell header's project name: workspaces exist only in the cloud,
+// so there is no cached local row to fall back to — an id we hold without a row is a list
+// that has not loaded yet, and the chip stays an empty slot until it does.
+const workspaceName = computed(() => {
+  const id = workspaceId.value;
   if (!id) return '';
-  return projects.byId.get(id)?.name ?? store.projects.find((p) => p.id === id)?.name ?? '';
+  return projects.workspaceById.get(id)?.name ?? '';
 });
 
 // ── The assistant ────────────────────────────────────────────────────────────
@@ -324,12 +344,11 @@ const planChip = computed(() => {
 });
 
 // Same join the sidebar rail uses for its tile colour; the accent is the fallback
-// so an uncoloured project still gets a dot instead of a hole.
-const projectColor = computed(() => {
-  const id = projectId.value;
+// so an uncoloured workspace still gets a dot instead of a hole.
+const workspaceColor = computed(() => {
+  const id = workspaceId.value;
   if (!id) return 'var(--k-accent)';
-  const local = store.projects.find((p) => p.id === id);
-  return projects.byId.get(id)?.color ?? local?.color ?? 'var(--k-accent)';
+  return projects.workspaceById.get(id)?.color ?? 'var(--k-accent)';
 });
 </script>
 
@@ -384,11 +403,7 @@ const projectColor = computed(() => {
 
 // Everything above the glow.
 .mgmt__rail,
-.mgmt__pane,
-// `.mgmt__dock` is here for its `position: relative` as much as its layer: the transcript
-// above it is absolutely positioned against this box (`bottom: 100%`), and without a
-// positioned dock it would anchor to `.mgmt` and hang over the rail.
-.mgmt__dock {
+.mgmt__pane {
   position: relative;
   z-index: 1;
 }
@@ -509,21 +524,31 @@ const projectColor = computed(() => {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  // Room for the floating pill at the foot: content scrolls BEHIND it, but the last row of
+  // a section must still be readable once scrolled to the end. 52px of pill + its 16px
+  // offset, less the 16px of pane padding the body already ends above, plus 8px of air.
+  padding-bottom: 60px;
 }
 
 // ── Assistant dock — the frosted capsule and the transcript above it ─────────
-// The dock is what the page's foot reserves: the pill, and a positioning context for a
-// transcript that must NOT take part in the column's layout. Anchoring the log to the dock
-// (rather than making it a flex sibling) is why the section above keeps its geometry as the
-// conversation grows — a chat that reflows the screen it is describing is unusable.
+// The dock does not sit IN the pane's column, it floats over it: absolutely positioned at
+// the pane's foot so the section's own content passes behind the glass rather than being
+// pushed above it. It is also the positioning context for the transcript (`bottom: 100%`),
+// which is why the section keeps its geometry as the conversation grows — a chat that
+// reflows the screen it is describing is unusable.
 .mgmt__dock {
-  flex: none;
+  position: absolute;
   // Centred on the pane's foot, not stretched across it: a capsule pulled to the
   // full width of a 1400px window reads as a toolbar, and its trailing controls
   // end up a screen away from the text they belong to. Capped at a comfortable
   // measure and centred, it stays a single object.
-  align-self: center;
-  width: min(680px, 100%);
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: var(--k-sp-4);
+  // The containing block is the pane's PADDING box, so the pane's own side padding has to
+  // be subtracted here or the pill would run under its border on a narrow window.
+  width: min(680px, calc(100% - var(--k-sp-5) * 2));
+  z-index: 2;
 }
 
 // The same frost recipe as the pill — one glass object split in two, not two materials —
@@ -656,7 +681,9 @@ const projectColor = computed(() => {
   // the baseline of the last one, the way they sit on the only line of a single-line pill.
   align-items: flex-end;
   gap: var(--k-sp-2);
-  padding: 7px 7px 7px var(--k-sp-3);
+  // Left pad set optically against the stadium's own radius now that no icon sits inside
+  // the curve: at 12px the text started inside the corner's sweep.
+  padding: 7px 7px 7px var(--k-sp-5);
   // Frosted, not see-through: a heavy blur under a mostly-opaque surface tint,
   // so text stays readable while the glow behind still bleeds through the edges.
   background: color-mix(in srgb, var(--k-surface) 74%, transparent);
@@ -678,6 +705,11 @@ const projectColor = computed(() => {
 .mgmt__c-input {
   flex: 1;
   min-width: 0;
+  // Centred against the row's tallest control (the 36px send disc) while the field is one
+  // line high, so the placeholder and the first line of text sit on the pill's middle
+  // instead of 3px below it. Once the field outgrows the disc it IS the tallest item and
+  // this has no effect — the composer's `flex-end` then puts the controls on its last line.
+  align-self: center;
   // The height is written by autoGrow(); this is the floor it starts from and returns to.
   height: 30px;
   max-height: 132px;
@@ -728,35 +760,6 @@ const projectColor = computed(() => {
   white-space: nowrap;
 }
 
-.mgmt__c-icon {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  appearance: none;
-  border: none;
-  border-radius: var(--k-r-pill);
-  background: transparent;
-  color: var(--k-muted);
-  font-size: 17px;
-  line-height: 1;
-  transition:
-    color 0.16s ease,
-    background 0.16s ease;
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.72;
-  }
-
-  &:not(:disabled):hover {
-    color: var(--k-text);
-    background: color-mix(in srgb, var(--k-surface2) 70%, transparent);
-  }
-}
-
 // The one loud element, exactly as in the reference: a filled accent disc.
 .mgmt__c-send {
   flex: none;
@@ -804,7 +807,7 @@ const projectColor = computed(() => {
   }
 }
 
-// ── Blank / no-project state — mirrors AgentsPage's invitation ───────────────
+// ── Blank / no-workspace state — mirrors AgentsPage's invitation ─────────────
 .mgmt__blank {
   flex: 1;
   display: flex;
@@ -825,6 +828,17 @@ const projectColor = computed(() => {
   font-family: var(--k-font-ui);
   font-size: var(--k-fs-md);
   color: var(--k-muted);
+}
+
+// The local-only-project line: same invitation stack, one step quieter and one step
+// smaller, because it explains the state the line above it just announced rather than
+// competing with it. Measured so the sentence wraps at a readable line rather than
+// running the pane's full width.
+.mgmt__blank-note {
+  margin-top: var(--k-sp-2);
+  max-width: 52ch;
+  font-size: var(--k-fs-sm);
+  color: var(--k-faint);
 }
 
 // The shell's own drawer already owns 264px; below this the two rails plus a

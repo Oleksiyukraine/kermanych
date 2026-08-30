@@ -160,14 +160,13 @@ function contextBlock(repos: ManagementRepo[], c: ManagementContext): string {
   return [
     "── КОНТЕКСТ ──",
     `Воркспейс: ${c.workspaceName}`,
-    `Проєкт: ${c.projectName}`,
     `Активний розділ: ${section}`,
     "Репозиторії воркспейсу (шлях абсолютний — читай їх саме за ним):",
     repos.length ? repos.map(repoLine).join("\n") : "- жодного привʼязаного репозиторію",
     // The register is the state the write actions operate on, so it is sent every turn —
     // including the turn right after the assistant filed a row, which is how it learns the
     // code Postgres minted for it.
-    `Реєстр ризиків проєкту (${risks.length}) — code · kind · category · подія · P×I · стратегія · статус:`,
+    `Реєстр ризиків воркспейсу (${risks.length}) — code · kind · category · подія · P×I · стратегія · статус:`,
     risks.length ? risks.map(riskLine).join("\n") : "- реєстр порожній",
   ].join("\n");
 }

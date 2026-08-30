@@ -4,6 +4,7 @@
     :class="{
       'k-session-card-host--fork': fork,
       'k-session-card-host--fork-lit': fork && selected,
+      'k-session-card-host--actions': !!$slots.actions,
     }"
   >
     <button
@@ -30,6 +31,12 @@
         <span v-if="spend" class="k-session-card__spend">{{ spend }}</span>
       </div>
     </button>
+    <!-- Row actions live OUTSIDE the card's <button> — a button inside a button is invalid
+         HTML, and Chromium drops the inner one's activation. They are laid over the gutter
+         the host reserves for them, so revealing them never reflows the card. -->
+    <div v-if="$slots.actions" class="k-session-card__actions">
+      <slot name="actions" />
+    </div>
   </div>
 </template>
 
@@ -49,6 +56,11 @@ import { tokens, usageTokens, usd } from '../../lib/format';
 // agent that merely happens to sit there. The list is expected to keep a fork directly
 // under its parent, alone with its siblings in one container, and to leave `--k-fork-gap`
 // (default `--k-sp-2`) as the vertical gap between them — the spine crosses exactly that.
+//
+// The `actions` slot holds per-row controls (KIconButton), revealed on hover or keyboard
+// focus. Fill it only for rows that HAVE an action: its mere presence reserves the gutter
+// on every card that passes it, and an always-empty gutter is a promise the card breaks.
+// Handlers inside it must `@click.stop`, or the card's own click fires too.
 const props = withDefaults(
   defineProps<{
     branch: string;
@@ -103,6 +115,38 @@ const spend = computed(() => {
 
 .k-session-card--selected {
   background: var(--k-surface2);
+}
+
+// ── Row actions ───────────────────────────────────────────────────────────────────────
+// A card that carries actions reserves a gutter for them for its whole life, so the
+// cluster appearing on hover never nudges the branch or the time it sits beside. The
+// cluster is hidden with `opacity` rather than `display`/`visibility`: it stays in the
+// tab order, and `:focus-within` reveals it for a keyboard operator who never hovers.
+.k-session-card-host--actions {
+  --k-card-actions: 36px;
+
+  .k-session-card {
+    padding-right: calc(var(--k-sp-3) + var(--k-card-actions));
+  }
+}
+
+.k-session-card__actions {
+  position: absolute;
+  right: var(--k-sp-3);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.k-session-card-host:hover > .k-session-card__actions,
+.k-session-card-host:focus-within > .k-session-card__actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 // ── Fork (a branch of the card above) ─────────────────────────────────────────────────

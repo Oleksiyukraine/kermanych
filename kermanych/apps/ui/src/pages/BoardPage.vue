@@ -90,6 +90,7 @@
           :project="projectName(task.projectId)"
           :time="relativeTime(task.updatedAt, now)"
           :status="task.status"
+          :assignee="resolveAssignee(task.assigneeId, membersOf(task.projectId))"
           @click="openEdit(task)"
         />
 
@@ -124,9 +125,41 @@
           multiline
           :rows="6"
         />
+        <div class="board__images">
+          <span class="board__images-label">Зображення</span>
+          <template v-if="!editingId">
+            <label class="board__images-add">
+              <input
+                class="board__images-input"
+                type="file"
+                accept="image/*"
+                multiple
+                @change="onImagesSelected"
+              />
+              <span>Додати зображення…</span>
+            </label>
+            <div v-if="draftImages.length" class="board__images-grid">
+              <div v-for="(img, i) in draftImages" :key="img.url" class="board__images-thumb">
+                <img :src="img.url" alt="" />
+                <button
+                  type="button"
+                  class="board__images-remove"
+                  title="Прибрати"
+                  @click="removeDraftImage(i)"
+                >×</button>
+              </div>
+            </div>
+          </template>
+          <div v-else-if="editImageUrls.length" class="board__images-grid">
+            <div v-for="url in editImageUrls" :key="url" class="board__images-thumb">
+              <img :src="url" alt="" />
+            </div>
+          </div>
+          <p v-else class="board__images-empty mono">Немає зображень</p>
+        </div>
         <div class="board__form-row">
           <KSelect v-model="draftModel" label="Модель" :options="MODEL_OPTIONS" placeholder="за замовчуванням" />
-          <KSelect v-model="draftPrefix" label="Тип" :options="PREFIX_OPTIONS" placeholder="feature" />
+          <KSelect v-model="draftPrefix" label="Тип" :options="PREFIX_OPTIONS" placeholder="за замовчуванням" />
           <KSelect
             v-model="draftPlatform"
             label="Платформа"
@@ -135,16 +168,33 @@
           />
         </div>
         <KField v-model="draftBranch" label="Базова гілка" placeholder="за замовчуванням проєкту" />
-        <div v-if="editingTask" class="board__assign">
-          <img v-if="avatarOf(editingTask)" :src="avatarOf(editingTask)" class="board__avatar" alt="" />
-          <KSelect
-            label="Виконавець"
-            :model-value="editingTask.assigneeId ?? ''"
-            :options="editorAssigneeOptions"
-            placeholder="не призначено"
-            :disabled="isActiveTask(editingTask)"
-            @update:model-value="(id: string) => onAssign(editingTask!, id)"
-          />
+        <!-- The label is hoisted OUT of KSelect so the avatar can be centred on the
+             control itself: inside the component the label and the input are one column,
+             and centring the face on that column parks it in the gap between them. -->
+        <div class="board__assign">
+          <span class="board__assign-label">Виконавець</span>
+          <div class="board__assign-row">
+            <KAvatar
+              :name="activeAssignee?.name ?? 'Не призначено'"
+              :avatar-url="activeAssignee?.avatarUrl"
+              :empty="!activeAssignee"
+              :size="26"
+            />
+            <KSelect
+              v-if="editingTask"
+              :model-value="editingTask.assigneeId ?? ''"
+              :options="editorAssigneeOptions"
+              placeholder="не призначено"
+              :disabled="isActiveTask(editingTask)"
+              @update:model-value="(id: string) => onAssign(editingTask!, id)"
+            />
+            <KSelect
+              v-else
+              v-model="draftAssignee"
+              :options="createAssigneeOptions"
+              placeholder="не призначено"
+            />
+          </div>
         </div>
         <p v-if="editingTask && isStale(editingTask)" class="board__stale-note mono" role="alert">
           ⚠ Давно без змін — машина виконавця, схоже, офлайн.
@@ -227,6 +277,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import type { Project } from '@kermanych/core';
 import type { Task, TaskStatus, WorkspaceMember } from '@kermanych/cloud';
+import { signedTaskImageUrls } from '@kermanych/cloud';
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import { useAuth } from 'stores/auth';
 import { useBoard } from 'stores/board';
@@ -237,6 +288,7 @@ import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KKanbanCard from 'components/kit/KKanbanCard.vue';
+import KAvatar from 'components/kit/KAvatar.vue';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
@@ -245,6 +297,7 @@ import { relativeTime } from '../lib/time';
 import { api } from '../lib/api';
 import { installReconcile } from '../lib/reconcile';
 import { UNASSIGNED, filterTasks, scopedProjectIds } from '../lib/scope';
+import { handleOf, resolveAssignee } from '../lib/members';
 
 const auth = useAuth();
 const board = useBoard();
@@ -689,15 +742,9 @@ function membersOf(projectId: string): WorkspaceMember[] {
   return workspaceId ? cloud.members[workspaceId] ?? [] : [];
 }
 
-// One fallback chain, shared by the «Виконавці» filter and the editor's picker: if they
-// diverged, the same person would appear under two different names in two dropdowns.
-function handleOf(m: WorkspaceMember): string {
-  return m.profile?.githubUsername ?? m.profile?.displayName ?? m.userId;
-}
-
-function avatarOf(task: Task): string | undefined {
-  return membersOf(task.projectId).find((m) => m.userId === task.assigneeId)?.profile?.avatarUrl;
-}
+// `handleOf`/`resolveAssignee` come from lib/members.ts — the same pair the «Виконавці»
+// filter, the editor's picker and every card's avatar read, so one screen never shows the
+// same teammate under two names.
 
 function onAssign(task: Task, userId: string): void {
   // Id-keyed like both filters. '' is KSelect's placeholder, i.e. «не призначено».
@@ -880,6 +927,13 @@ const editingTask = computed(() =>
   editingId.value ? board.tasks.find((t) => t.id === editingId.value) : undefined,
 );
 
+// The same face the card shows, beside the picker that changes it: a re-assign is confirmed
+// by the picture changing, without closing the modal.
+const editingAssignee = computed(() => {
+  const task = editingTask.value;
+  return task ? resolveAssignee(task.assigneeId, membersOf(task.projectId)) : null;
+});
+
 // The editor's assignee picker reads the roster of the EDITED task's own workspace, which
 // is not necessarily the scoped one: an unscoped board shows cards from every workspace,
 // and «Виконавець» must name the person who actually holds the card.
@@ -895,6 +949,79 @@ const draftModel = ref('');
 const draftPrefix = ref('');
 const draftPlatform = ref('');
 const draftBranch = ref('');
+
+// Assignee is OPTIONAL at creation: '' is «не призначено». The picker reads the chosen
+// project's workspace roster, since a new task is not bound to a person until submit.
+const draftAssignee = ref('');
+const createAssigneeOptions = computed<KSelectOption[]>(() =>
+  draftProject.value
+    ? membersOf(draftProject.value).map((m) => ({ value: m.userId, label: handleOf(m) }))
+    : [],
+);
+const createAssignee = computed(() =>
+  resolveAssignee(draftAssignee.value || null, membersOf(draftProject.value)),
+);
+// The face beside the picker, for whichever mode the modal is in.
+const activeAssignee = computed(() => (editingId.value ? editingAssignee.value : createAssignee.value));
+
+// Switching the project in create mode invalidates a person picked from the old project's
+// workspace, so the selection is dropped rather than submitted against a roster they may
+// not belong to. Harmless in edit mode, which never reads draftAssignee.
+watch(draftProject, () => {
+  draftAssignee.value = '';
+});
+
+// Each selected file carries its own object URL for the thumbnail; both are revoked on
+// removal and on close, so a modal opened many times never leaks blob URLs.
+const draftImages = ref<{ file: File; url: string }[]>([]);
+
+function onImagesSelected(e: Event): void {
+  const input = e.target as HTMLInputElement;
+  for (const file of Array.from(input.files ?? [])) {
+    draftImages.value.push({ file, url: URL.createObjectURL(file) });
+  }
+  // Clear the native input so re-picking the same file fires change again.
+  input.value = '';
+}
+
+function removeDraftImage(index: number): void {
+  const [removed] = draftImages.value.splice(index, 1);
+  if (removed) URL.revokeObjectURL(removed.url);
+}
+
+function clearDraftImages(): void {
+  for (const img of draftImages.value) URL.revokeObjectURL(img.url);
+  draftImages.value = [];
+}
+
+// The images an EDITED task already carries. The bucket is private, so the row's paths are
+// resolved to short-lived signed URLs. Keyed on the id AND the paths, so both opening a
+// different card and a Realtime edit to the current one refresh the strip.
+const editImageUrls = ref<string[]>([]);
+watch(
+  () => `${editingId.value ?? ''}:${editingTask.value?.imagePaths?.join(',') ?? ''}`,
+  async () => {
+    const paths = editingTask.value?.imagePaths ?? [];
+    if (!paths.length) {
+      editImageUrls.value = [];
+      return;
+    }
+    try {
+      editImageUrls.value = await signedTaskImageUrls(auth.client, paths);
+    } catch {
+      // A failed sign is not worth a toast on a modal opened to edit text; the images
+      // simply do not render.
+      editImageUrls.value = [];
+    }
+  },
+);
+
+// Esc, the backdrop, cancel and submit all route through `editorOpen`, so one watcher frees
+// the blob URLs however the modal closed.
+watch(editorOpen, (open) => {
+  if (!open) clearDraftImages();
+});
+onUnmounted(clearDraftImages);
 
 // A task always needs a title; a NEW one also needs a project, because `project_id` is what
 // the tasks INSERT policy checks membership against. `draftProject` holds an ID now, so it
@@ -917,6 +1044,8 @@ function openCreate(): void {
   draftPrefix.value = '';
   draftPlatform.value = '';
   draftBranch.value = '';
+  draftAssignee.value = '';
+  clearDraftImages();
   editorOpen.value = true;
 }
 
@@ -930,6 +1059,8 @@ function openEdit(task: Task): void {
   draftPrefix.value = task.prefix ?? '';
   draftPlatform.value = task.platform ?? '';
   draftBranch.value = task.branch ?? '';
+  draftAssignee.value = '';
+  clearDraftImages();
   editorOpen.value = true;
 }
 
@@ -968,7 +1099,11 @@ async function submitEditor(): Promise<void> {
       editorError.value = 'Виберіть проєкт';
       return;
     }
-    if (!(await board.createTask({ projectId, ...fields }))) {
+    const created = await board.createTask(
+      { projectId, ...fields, ...(draftAssignee.value ? { assigneeId: draftAssignee.value } : {}) },
+      draftImages.value.map((d) => d.file),
+    );
+    if (!created) {
       editorError.value = 'Не вдалося створити задачу — подробиці в повідомленні';
       return;
     }
@@ -1095,20 +1230,102 @@ function onDelete(task: Task): void {
 
 .board__assign {
   display: flex;
+  flex-direction: column;
+  /* Same label-to-control gap KSelect uses, so a hoisted label sits where its own would. */
+  gap: 6px;
+}
+
+.board__assign-label {
+  font-size: 13px;
+  color: var(--k-text);
+}
+
+.board__assign-row {
+  display: flex;
   align-items: center;
   gap: var(--k-sp-2);
+}
+
+.board__images {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.board__images-label {
+  font-size: 13px;
+  color: var(--k-text);
+}
+
+/* A styled trigger over a hidden native input — the raw control has no place in this form's
+   look, but the label still opens the OS picker. */
+.board__images-add {
+  align-self: flex-start;
+  font-family: var(--k-font-ui);
+  font-size: 13px;
+  color: var(--k-text);
+  background: var(--k-surface);
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+
+.board__images-add:hover {
+  border-color: var(--k-accent);
+}
+
+.board__images-input {
+  display: none;
+}
+
+.board__images-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--k-sp-2);
+}
+
+.board__images-thumb {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  overflow: hidden;
+}
+
+.board__images-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.board__images-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.board__images-empty {
+  font-size: 11.5px;
+  color: var(--k-faint);
 }
 
 .board__stale-note {
   font-size: 11.5px;
   color: var(--k-warning);
-}
-
-.board__avatar {
-  width: 18px;
-  height: 18px;
-  border: 1px solid var(--k-line-strong);
-  object-fit: cover;
 }
 
 .board__blank {

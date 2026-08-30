@@ -13,8 +13,12 @@
 // drift, and the drift would show up as the assistant confidently editing a screen that
 // does not exist.
 //
-// Every section is PROJECT-SCOPED: ManagementPage renders none of them until a project is
-// selected in the sidebar, and hands the matched section that project's id and name as props.
+// Every section is WORKSPACE-SCOPED: ManagementPage renders none of them until a workspace
+// is selected in the sidebar (selecting a project selects its workspace too), and hands the
+// matched section that workspace's id and name as props. The level sits there because the
+// subject does: the risk register, the membership that decides who may touch it and the
+// repositories the assistant reads all belong to the group, so a per-project management tab
+// could only ever show a slice of its own subject.
 
 // What the assistant may do with a section.
 //   read_write — it has a store and a table; the assistant may read it and change it.
@@ -44,10 +48,10 @@ export interface ManagementSection {
 const NOT_BUILT = "розділ ще не реалізований — за ним немає ні екрана, ні сховища даних";
 
 export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
-  { name: "management-home", path: "home", label: "Home", hint: "огляд проєкту", capability: "none", limitation: NOT_BUILT },
+  { name: "management-home", path: "home", label: "Home", hint: "огляд воркспейсу", capability: "none", limitation: NOT_BUILT },
   { name: "management-storage", path: "storage", label: "Storage", hint: "файли й артефакти", capability: "none", limitation: NOT_BUILT },
   // The one section the assistant can WRITE, because it is the one section with a real store
-  // behind it: `project_risks` (threat vs opportunity, cause·event·consequence, 1-5
+  // behind it: `workspace_risks` (threat vs opportunity, cause·event·consequence, 1-5
   // probability × impact, PMI response strategies, an append-only event log). Three pieces
   // make that true and all three must stay true for this row to say `read_write`:
   //   * ./management-actions carries `risk.create` / `risk.update` in THAT schema's
@@ -55,8 +59,9 @@ export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
   //     `external`);
   //   * apps/api/src/management/management-prompt.ts prints that vocabulary and the current
   //     register into the prompt;
-  //   * apps/ui/src/stores/management-chat.ts executes both kinds through `useRisks()`, in
-  //     the browser, under the operator's own JWT — so RLS decides what a member may file.
+  //   * apps/ui/src/stores/management-chat.ts executes both kinds through
+  //     `useRisks().create(workspaceId, …)`, in the browser, under the operator's own JWT —
+  //     so RLS decides what a member may file.
   {
     name: "management-risks",
     path: "risk-registry",

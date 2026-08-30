@@ -10,7 +10,7 @@
       <span class="rform__meta">
         <KTag v-if="risk">занесено {{ formatDate(risk.raisedAt) }}</KTag>
         <KTag v-if="risk">{{ statusLabel(risk.status) }}</KTag>
-        <KTag v-else>{{ projectName }}</KTag>
+        <KTag v-else>{{ workspaceName }}</KTag>
       </span>
     </template>
 
@@ -190,7 +190,7 @@
       <!-- The tolerance line, stated where the decision is made rather than in a policy
            document nobody has open. -->
       <p v-if="overTolerance" class="rform__alert">
-        Експозиція {{ effective }} ≥ {{ ESCALATION_EXPOSURE }} — перевищує толерантність проєкту.
+        Експозиція {{ effective }} ≥ {{ ESCALATION_EXPOSURE }} — перевищує толерантність воркспейсу.
         Ризик має піти спонсору, а не лишатися на менеджері.
       </p>
 
@@ -232,11 +232,11 @@
 // anyone. A risk leaves the register through the status field, with a note.
 import { computed, nextTick, ref, useTemplateRef, watch } from 'vue';
 import type {
-  ProjectRisk,
   RiskCategory,
   RiskKind,
   RiskResponse,
   RiskStatus,
+  WorkspaceRisk,
 } from '@kermanych/cloud';
 import type { KSelectOption } from 'components/kit/KSelect.vue';
 import KModal from 'components/kit/KModal.vue';
@@ -277,10 +277,10 @@ import {
 
 const props = defineProps<{
   modelValue: boolean;
-  projectId: string;
-  projectName: string;
+  workspaceId: string;
+  workspaceName: string;
   // Absent = the «new risk» form. Present = editing that row.
-  risk?: ProjectRisk | undefined;
+  risk?: WorkspaceRisk | undefined;
   // Which category a NEW risk starts in. The register-gaps strip uses it so closing a gap is
   // one click plus a statement; ignored when `risk` is present.
   initialCategory?: RiskCategory | undefined;
@@ -288,7 +288,7 @@ const props = defineProps<{
   members: KSelectOption[];
 }>();
 
-const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [risk: ProjectRisk] }>();
+const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [risk: WorkspaceRisk] }>();
 
 const store = useRisks();
 // Toasts, for the one thing this dialog cannot show inline: a write the database refused.
@@ -420,8 +420,8 @@ async function submit(): Promise<void> {
     // Supabase). The dialog stays open with the draft intact: everything typed here is worth
     // more than the error, and the fix is usually one field away.
     const saved = props.risk
-      ? await store.save(props.projectId, props.risk.id, draftToPatch(draft.value))
-      : await store.create(props.projectId, draftToInsert(props.projectId, draft.value));
+      ? await store.save(props.workspaceId, props.risk.id, draftToPatch(draft.value))
+      : await store.create(props.workspaceId, draftToInsert(props.workspaceId, draft.value));
     emit('saved', saved);
     emit('update:modelValue', false);
   } catch (e) {

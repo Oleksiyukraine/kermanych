@@ -6,7 +6,7 @@ import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import type { Task, TaskInsert, TaskPatch, TaskStatus } from "./types";
 
 const TASK_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, prefix, platform, kind, branch, created_at, updated_at";
+  "id, project_id, title, description, status, assignee_id, created_by, model, prefix, platform, kind, branch, image_paths, created_at, updated_at";
 
 type TaskRow = {
   id: string;
@@ -22,6 +22,7 @@ type TaskRow = {
   platform: string | null;
   kind: string | null;
   branch: string | null;
+  image_paths: string[] | null;
   created_at: string;
   updated_at: string;
 };
@@ -45,6 +46,10 @@ export function toTask(row: TaskRow): Task {
   if (row.platform !== null) t.platform = row.platform;
   if (row.kind !== null) t.kind = row.kind;
   if (row.branch !== null) t.branch = row.branch;
+  // `not null default '{}'`, so this is an array in practice; the Array check keeps an
+  // image-less task an ABSENT key (like every other optional field) and tolerates a row
+  // that omitted the column entirely.
+  if (Array.isArray(row.image_paths) && row.image_paths.length) t.imagePaths = row.image_paths;
   return t;
 }
 
@@ -61,6 +66,9 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   if (patch.platform !== undefined) row.platform = patch.platform.trim() || null;
   if (patch.kind !== undefined) row.kind = patch.kind.trim() || null;
   if (patch.branch !== undefined) row.branch = patch.branch.trim() || null;
+  // Arrays are sent verbatim: an empty array is the "no images" value, not a clear-to-null,
+  // because the column is `not null`.
+  if (patch.imagePaths !== undefined) row.image_paths = patch.imagePaths;
   return row;
 }
 
@@ -107,6 +115,7 @@ export async function createTask(
       platform: input.platform,
       kind: input.kind,
       branch: input.branch,
+      imagePaths: input.imagePaths,
     }),
   };
   const { data, error } = await client.from("tasks").insert(row).select(TASK_COLUMNS).single();
@@ -123,6 +132,62 @@ export async function patchTask(client: SupabaseClient, id: string, patch: TaskP
     .single();
   if (error) throw new Error(error.message);
   return toTask(data as TaskRow);
+}
+
+// ── Images ──────────────────────────────────────────────────────────────────
+// Task images live in a PRIVATE Storage bucket; the task row carries only these paths.
+// Both helpers run under the caller's JWT, so the storage RLS in 20260830160000 — project
+// membership on the `{project_id}/…` prefix — is the authorization surface, exactly as for
+// the table.
+export const TASK_IMAGE_BUCKET = "task-images";
+
+// Slug a filename down to what a storage key tolerates, so the extension survives (the
+// signed URL and the browser both read it) while spaces and other characters cannot break
+// the path the RLS policy parses.
+function safeName(name: string): string {
+  const cleaned = name.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-");
+  return cleaned.replace(/^[.-]+/, "") || "image";
+}
+
+// Upload files under `{projectId}/{uuid}-{name}` and return the stored paths in order. One
+// failed upload aborts the batch and removes whatever already landed, so a caller never
+// records a path with no object behind it (createTask writes these into the row next).
+export async function uploadTaskImages(
+  client: SupabaseClient,
+  projectId: string,
+  files: File[],
+): Promise<string[]> {
+  const paths: string[] = [];
+  try {
+    for (const file of files) {
+      const path = `${projectId}/${crypto.randomUUID()}-${safeName(file.name)}`;
+      const { error } = await client.storage
+        .from(TASK_IMAGE_BUCKET)
+        .upload(path, file, { contentType: file.type || "application/octet-stream", upsert: false });
+      if (error) throw new Error(error.message);
+      paths.push(path);
+    }
+    return paths;
+  } catch (e) {
+    if (paths.length) await client.storage.from(TASK_IMAGE_BUCKET).remove(paths).catch(() => {});
+    throw e;
+  }
+}
+
+// Mint short-lived signed URLs for private objects, one per path in order. The bucket is
+// private, so this is the only way the board can render an image the row merely names.
+export async function signedTaskImageUrls(
+  client: SupabaseClient,
+  paths: string[],
+  expiresIn = 3600,
+): Promise<string[]> {
+  if (!paths.length) return [];
+  const { data, error } = await client.storage
+    .from(TASK_IMAGE_BUCKET)
+    .createSignedUrls(paths, expiresIn);
+  if (error) throw new Error(error.message);
+  // A per-path sign can fail (signedUrl: null); drop those rather than render a broken img.
+  return (data ?? []).map((d) => d.signedUrl).filter((u): u is string => u !== null);
 }
 
 // Atomic self-assign: one `UPDATE tasks SET assignee_id = $1 WHERE id = $2 AND assignee_id

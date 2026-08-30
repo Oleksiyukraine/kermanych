@@ -6,14 +6,14 @@
 // instance and a network, these rules need neither, and they are the part that can be wrong.
 import { managementSection } from '@kermanych/core';
 import type { ManagementUnsupported } from '@kermanych/core';
-import type { ProjectRisk } from '@kermanych/cloud';
+import type { WorkspaceRisk } from '@kermanych/cloud';
 
 // The register code as a person writes it. `R-003`, `R-3` and `r3` are one row to everyone
 // except a string comparison, and the model writes all three — the code it saw in the
 // context block, the code the operator typed at it, and the one it reconstructed from a
 // sentence. Exact match first; then the sequence number, which is the only part that
-// identifies a row inside its project (`R-` + lpad(3) is minted by project_risks_touch).
-export function findRiskByCode(rows: readonly ProjectRisk[], code: string): ProjectRisk | undefined {
+// identifies a row inside its workspace (`R-` + lpad(3) is minted by workspace_risks_touch).
+export function findRiskByCode(rows: readonly WorkspaceRisk[], code: string): WorkspaceRisk | undefined {
   const wanted = code.trim().toUpperCase();
   const exact = rows.find((r) => r.code.toUpperCase() === wanted);
   if (exact) return exact;

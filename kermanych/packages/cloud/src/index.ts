@@ -20,10 +20,10 @@ export type {
   RiskResponse,
   RiskStatus,
   RiskEventKind,
-  ProjectRisk,
-  ProjectRiskInsert,
-  ProjectRiskPatch,
-  ProjectRiskEvent,
+  WorkspaceRisk,
+  WorkspaceRiskInsert,
+  WorkspaceRiskPatch,
+  WorkspaceRiskEvent,
 } from "./types";
 
 export type { SupabaseClient, CloudEnv, CloudClientOptions } from "./client";
@@ -66,6 +66,9 @@ export {
   pushTaskStatus,
   forceStopTask,
   deleteTask,
+  uploadTaskImages,
+  signedTaskImageUrls,
+  TASK_IMAGE_BUCKET,
   REALTIME_IN_FILTER_MAX,
   tasksFilter,
   subscribeTasks,
@@ -79,11 +82,11 @@ export {
 } from "./skills";
 
 export {
-  toProjectRisk,
-  toProjectRiskEvent,
+  toWorkspaceRisk,
+  toWorkspaceRiskEvent,
   toRiskRow,
-  listProjectRisks,
-  createProjectRisk,
-  patchProjectRisk,
+  listWorkspaceRisks,
+  createWorkspaceRisk,
+  patchWorkspaceRisk,
   listRiskEvents,
 } from "./risks";

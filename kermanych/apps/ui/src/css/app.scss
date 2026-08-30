@@ -57,24 +57,55 @@ body,
 // Tooltip bubble for `v-tip` (src/lib/tip.ts). One shared node lives under
 // <body>, so the rule is global and `position: fixed` keeps it clear of the
 // scroll containers that would crop an in-flow bubble.
+//
+// Same glass recipe as the app's other floating surfaces (ManagementPage's log
+// popover and command bar): a translucent fill over a backdrop blur, a hairline
+// border, and a 1px inset top highlight that sells the lit edge. This was the
+// last hard-edged rectangle in the UI.
+//
+// `--k-r` (8px), not `--k-r-lg`: the bubble is two or three lines of 11px mono,
+// and a 12px radius on a ~30px-tall box eats the corners rather than softening
+// them. Padding grows with the radius — text must clear the curve.
 .k-tip {
   position: fixed;
   z-index: 9000;
   top: 0;
   left: 0;
   max-width: 280px;
-  padding: 5px 8px;
-  background: var(--k-surface2);
-  border: 1px solid var(--k-line-strong);
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--k-surface2) 85%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  backdrop-filter: blur(22px) saturate(150%);
+  border: var(--k-rule-thin) solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  // `--k-shadow-pop`, not `--k-shadow-toast`: a 32px blur under a 30px box reads
+  // as a smear, not as elevation.
+  box-shadow:
+    var(--k-shadow-pop),
+    inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent);
   color: var(--k-text);
   font-family: var(--k-font-mono);
-  font-size: 11px;
+  font-size: var(--k-fs-xs);
   line-height: 1.35;
   white-space: normal;
   pointer-events: none;
   visibility: hidden;
   opacity: 0;
-  transition: opacity 0.1s;
+  // `visibility` is discrete, but a transition on it keeps the node visible for
+  // the duration of the fade OUT — without it the bubble would vanish mid-fade.
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0.12s;
+  // Rests 3px toward its trigger and settles into place, so the bubble reads as
+  // emerging from the control rather than materialising beside it. The default
+  // is the below-the-control case; `data-side` (written by place() in lib/tip.ts)
+  // flips it for a bubble that had to go above. Scoped to the resting state so
+  // it never out-specifies the `transform: none` below.
+  transform: translateY(-3px);
+}
+.k-tip:not(.k-tip--on)[data-side='top'] {
+  transform: translateY(3px);
 }
 
 // Resting state stays laid out (hidden, not display:none) so the bubble can be
@@ -82,6 +113,16 @@ body,
 .k-tip--on {
   visibility: visible;
   opacity: 1;
+  transform: none;
+}
+
+// House convention: motion is opt-out. The bubble still fades — an instantly
+// painted overlay is a flash — but it no longer travels.
+@media (prefers-reduced-motion: reduce) {
+  .k-tip,
+  .k-tip:not(.k-tip--on)[data-side='top'] {
+    transform: none;
+  }
 }
 
 // Brief highlight when jumping to a message (my-message navigation). Global

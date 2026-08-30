@@ -1816,15 +1816,15 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   display: flex;
 }
 // The tree collapses to the icon strip like the rail always did: the workspace row keeps
-// its colour dot as the group's marker and drops the name, the chevron and the «+» — a
-// 76px column has no room for three controls, and the group cannot be folded or added to
-// from a strip that cannot show which group it is. Because the chevron goes, isExpanded()
-// ignores the folded set while `shell--min` is on: hiding the only control that unfolds a
-// group while still honouring the fold would leave its projects unreachable.
+// its colour dot as the group's marker and drops the name, the chevron and the end slot
+// that carries the count and the «+» — a 76px column has no room for three controls, and
+// the group cannot be folded or added to from a strip that cannot show which group it is.
+// Because the chevron goes, isExpanded() ignores the folded set while `shell--min` is on:
+// hiding the only control that unfolds a group while still honouring the fold would leave
+// its projects unreachable.
 .shell--min :deep(.k-ws__name),
-.shell--min :deep(.k-ws__count),
-.shell--min :deep(.k-ws__chevron),
-.shell--min :deep(.k-ws__add) {
+.shell--min :deep(.k-ws__end),
+.shell--min :deep(.k-ws__chevron) {
   display: none;
 }
 .shell--min :deep(.k-ws__body) {
@@ -1857,9 +1857,8 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   :deep(.k-rail__name),
   :deep(.k-rail__agents),
   :deep(.k-ws__name),
-  :deep(.k-ws__count),
-  :deep(.k-ws__chevron),
-  :deep(.k-ws__add) {
+  :deep(.k-ws__end),
+  :deep(.k-ws__chevron) {
     animation: shell-reveal 0.14s ease-out;
   }
 }
@@ -1891,8 +1890,11 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   gap: 2px;
 }
 
+// The right margin is 1px, not the 4px on the other three sides: the rows below carry a
+// 1px transparent border and this heading does not, so that pixel is what puts this row's
+// «+» in the same column as the one on KWorkspaceRow.
 .shell__side-label {
-  margin: var(--k-sp-3) var(--k-sp-1) var(--k-sp-1);
+  margin: var(--k-sp-3) 1px var(--k-sp-1) var(--k-sp-1);
   font-size: var(--k-fs-xs);
   font-weight: var(--k-fw-medium);
   letter-spacing: 0.06em;
@@ -1943,8 +1945,16 @@ async function gitSync(kind: 'pull' | 'push'): Promise<void> {
   opacity: 0.75;
 }
 
+// A 28px-wide glyph box like the row controls, so its «+» centres on the same column as
+// KWorkspaceRow's — but only as tall as the heading's own line, which keeps this band the
+// height of a caption instead of the height of a row.
 .shell__label-add {
-  padding: 0 var(--k-sp-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  padding: 0;
   background: none;
   border: none;
   color: var(--k-faint);

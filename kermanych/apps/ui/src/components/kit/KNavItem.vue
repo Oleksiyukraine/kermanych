@@ -41,7 +41,9 @@ withDefaults(
     label: string;
     count?: number;
     active?: boolean;
-    icon?: KIconName;
+    // `| undefined` (like `tip` below) because the Менеджмент rail passes a MAP LOOKUP:
+    // under `exactOptionalPropertyTypes` an absent key is `undefined`, not an absent prop.
+    icon?: KIconName | undefined;
     hint?: string;
     tip?: string | undefined;
   }>(),
@@ -52,16 +54,25 @@ const emit = defineEmits<{ click: [] }>();
 </script>
 
 <style scoped lang="scss">
+// THE SIDEBAR ROW BOX. Every row in the left rail — this one, KRailItem and
+// KWorkspaceRow — is 30px tall with a 20px line box for its label, and the three agree
+// on purpose: the buckets, the workspaces and the projects are read as one column, and
+// three row heights (they used to be 31 / 30 / 37.5px) made that column look ragged.
+//
+// 4px padding + a 20px line box + the 1px border on each side = 30. The 20px box is what
+// keeps the label on whole pixels: the row's 28px interior less 20 splits into 4 and 4.
+// It also clears the font's 15.1px ink extent at this size, so `overflow: hidden` on the
+// label never bites into a descender the way a `line-height: 1` box does.
 .k-nav-item {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
   width: 100%;
-  padding: var(--k-sp-2) var(--k-sp-3);
+  padding: var(--k-sp-1) var(--k-sp-3);
   font-family: var(--k-font-ui);
   font-size: var(--k-fs-base);
   font-weight: var(--k-fw-medium);
-  line-height: 1;
+  line-height: 20px;
   text-align: left;
   color: var(--k-muted);
   background: transparent;
@@ -81,9 +92,11 @@ const emit = defineEmits<{ click: [] }>();
 
 // Two lines need air the one-line row does not: at 8px the pair sits tighter to
 // its neighbours than the two lines sit to each other, and the rail reads as
-// stripes rather than as rows.
+// stripes rather than as rows. The 30px row is a ONE-line contract, so the stacked
+// variant drops back to the tight line box its two lines were spaced for.
 .k-nav-item--stacked {
   padding: var(--k-sp-3);
+  line-height: 1;
 }
 
 .k-nav-item__icon {

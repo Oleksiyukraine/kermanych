@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import type { ProjectRisk } from '@kermanych/cloud';
+import type { WorkspaceRisk } from '@kermanych/cloud';
 import {
   contingencyReserve,
   daysUntil,
   draftOf,
+  draftToInsert,
   dueLabel,
   effectiveExposure,
   emptyDraft,
@@ -32,10 +33,10 @@ import {
 const NOW = Date.parse('2026-08-30T12:00:00.000Z');
 
 // Minimal register row: only the fields the rules read, everything else at a sane default.
-function risk(over: Partial<ProjectRisk> & { code: string }): ProjectRisk {
+function risk(over: Partial<WorkspaceRisk> & { code: string }): WorkspaceRisk {
   return {
     id: over.code,
-    projectId: 'p1',
+    workspaceId: 'w1',
     kind: 'threat',
     category: 'technical',
     cause: 'причина',
@@ -418,5 +419,23 @@ describe('draftOf', () => {
     expect(d.costImpact).toBe('40000');
     expect(d.probabilityPct).toBe('45');
     expect(d.proximity).toBe('');
+  });
+});
+
+describe('draftToInsert', () => {
+  // The register is scoped to a WORKSPACE, not a project. A row inserted with the old key
+  // would be rejected by the table outright, and one inserted with no scope at all would be
+  // filed against nothing — so the scope column is asserted by name, both ways.
+  it('scopes the insert to the workspace and carries the draft through', () => {
+    const out = draftToInsert('w1', draft());
+    expect(out.workspaceId).toBe('w1');
+    expect(out).not.toHaveProperty('projectId');
+    expect(out.kind).toBe('threat');
+    expect(out.category).toBe('technical');
+    expect(out.cause).toBe('пісочниця провайдера спільна з іншими клієнтами');
+    expect(out.event).toBe('інтеграційне тестування заблокують на кілька днів');
+    expect(out.consequence).toBe('UAT зсунеться за реліз-гейт');
+    expect(out.probability).toBe(3);
+    expect(out.impact).toBe(3);
   });
 });

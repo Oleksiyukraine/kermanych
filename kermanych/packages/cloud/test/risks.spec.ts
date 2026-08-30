@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  createProjectRisk,
-  listProjectRisks,
+  createWorkspaceRisk,
   listRiskEvents,
-  patchProjectRisk,
-  toProjectRisk,
+  listWorkspaceRisks,
+  patchWorkspaceRisk,
   toRiskRow,
+  toWorkspaceRisk,
 } from "../src/risks";
 
 type Op = [string, ...unknown[]];
@@ -39,7 +39,7 @@ function fakeClient(...results: Result[]) {
 
 const riskRow = {
   id: "r1",
-  project_id: "p1",
+  workspace_id: "w1",
   code: "R-001",
   kind: "threat" as const,
   category: "vendor" as const,
@@ -73,9 +73,10 @@ const riskRow = {
   updated_by: "u1",
 };
 
-describe("toProjectRisk", () => {
+describe("toWorkspaceRisk", () => {
   it("parses numeric money columns instead of passing the postgrest strings through", () => {
-    const r = toProjectRisk(riskRow);
+    const r = toWorkspaceRisk(riskRow);
+    expect(r.workspaceId).toBe("w1");
     expect(r.costImpact).toBe(40000);
     expect(r.emv).toBe(18000);
     expect(r.probabilityPct).toBe(45);
@@ -84,7 +85,7 @@ describe("toProjectRisk", () => {
   // exactOptionalPropertyTypes: a null column must produce an ABSENT key, not `undefined`,
   // or every `{ ...risk }` spread starts asserting emptiness it was never told.
   it("omits the keys whose columns are null rather than setting them undefined", () => {
-    const r = toProjectRisk({
+    const r = toWorkspaceRisk({
       ...riskRow,
       cost_impact: null,
       probability_pct: null,
@@ -120,7 +121,7 @@ describe("toProjectRisk", () => {
   });
 
   it("keeps the statement in three parts and carries the derived scores", () => {
-    const r = toProjectRisk(riskRow);
+    const r = toWorkspaceRisk(riskRow);
     expect(r.cause).toBe(riskRow.cause);
     expect(r.event).toBe(riskRow.event);
     expect(r.consequence).toBe(riskRow.consequence);
@@ -155,14 +156,14 @@ describe("toRiskRow", () => {
   });
 });
 
-describe("listProjectRisks", () => {
-  it("scopes to one project and orders by exposure, then code", async () => {
+describe("listWorkspaceRisks", () => {
+  it("scopes to one workspace and orders by exposure, then code", async () => {
     const { client, queries } = fakeClient({ data: [riskRow], error: null });
 
-    const [r] = await listProjectRisks(client, "p1");
+    const [r] = await listWorkspaceRisks(client, "w1");
 
-    expect(queries[0]!.table).toBe("project_risks");
-    expect(queries[0]!.ops).toContainEqual(["eq", "project_id", "p1"]);
+    expect(queries[0]!.table).toBe("workspace_risks");
+    expect(queries[0]!.ops).toContainEqual(["eq", "workspace_id", "w1"]);
     expect(queries[0]!.ops).toContainEqual(["order", "exposure", { ascending: false }]);
     expect(queries[0]!.ops).toContainEqual(["order", "code", { ascending: true }]);
     expect(r!.code).toBe("R-001");
@@ -170,18 +171,18 @@ describe("listProjectRisks", () => {
 
   it("throws the postgrest message so an RLS refusal reaches the caller", async () => {
     const { client } = fakeClient({ data: null, error: { message: "permission denied" } });
-    await expect(listProjectRisks(client, "p1")).rejects.toThrow("permission denied");
+    await expect(listWorkspaceRisks(client, "w1")).rejects.toThrow("permission denied");
   });
 });
 
-describe("createProjectRisk", () => {
-  // `code` is minted by project_risks_touch() under an advisory lock. A client-sent code
+describe("createWorkspaceRisk", () => {
+  // `code` is minted by workspace_risks_touch() under an advisory lock. A client-sent code
   // would race two people filing at once and would be overwritten anyway.
-  it("never sends a code and passes the project id as its own column", async () => {
+  it("never sends a code and passes the workspace id as its own column", async () => {
     const { client, queries } = fakeClient({ data: riskRow, error: null });
 
-    await createProjectRisk(client, {
-      projectId: "p1",
+    await createWorkspaceRisk(client, {
+      workspaceId: "w1",
       kind: "threat",
       category: "vendor",
       cause: "  спільна пісочниця  ",
@@ -195,18 +196,22 @@ describe("createProjectRisk", () => {
 
     const insert = queries[0]!.ops.find(([op]) => op === "insert")!;
     const payload = insert[1] as Record<string, unknown>;
-    expect(payload.project_id).toBe("p1");
+    expect(payload.workspace_id).toBe("w1");
     expect("code" in payload).toBe(false);
+    // Regression guard for the project -> workspace cutover: the register carries no project
+    // scope at all any more, so a leftover `project_id` must never reach the insert.
+    expect("project_id" in payload).toBe(false);
     expect(payload.cause).toBe("спільна пісочниця");
   });
 });
 
-describe("patchProjectRisk", () => {
+describe("patchWorkspaceRisk", () => {
   it("updates by id and reads the row back through the same column list", async () => {
     const { client, queries } = fakeClient({ data: riskRow, error: null });
 
-    await patchProjectRisk(client, "r1", { lastReviewedAt: "2026-09-06T09:00:00.000Z" });
+    await patchWorkspaceRisk(client, "r1", { lastReviewedAt: "2026-09-06T09:00:00.000Z" });
 
+    expect(queries[0]!.table).toBe("workspace_risks");
     expect(queries[0]!.ops).toContainEqual(["eq", "id", "r1"]);
     expect(queries[0]!.ops).toContainEqual([
       "update",
@@ -235,7 +240,7 @@ describe("listRiskEvents", () => {
 
     const [e] = await listRiskEvents(client, "r1");
 
-    expect(queries[0]!.table).toBe("project_risk_events");
+    expect(queries[0]!.table).toBe("workspace_risk_events");
     expect(queries[0]!.ops).toContainEqual(["order", "at", { ascending: false }]);
     expect(e).toEqual({
       id: 7,

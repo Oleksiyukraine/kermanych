@@ -33,8 +33,10 @@
         ></textarea>
       </div>
 
-      <!-- v3 controls row: attach + machine-text chips + token count on the left,
-           session actions + the accent send FAB on the right. -->
+      <!-- v3 controls row: attach + the session's own facts (model, reasoning effort,
+           isolation) on the left, spend + session actions + the accent send FAB on the right.
+           The model and worktree chips are readings, not controls — both are fixed when omp is
+           spawned — so only effort carries a caret. -->
       <div class="k-composer__controls">
         <button
           type="button"
@@ -44,10 +46,25 @@
           :disabled="disabled"
           @click="fileInput?.click()"
         >📎</button>
-        <KTag v-if="model" class="k-composer__chip">{{ model }}</KTag>
-        <KTag v-if="worktree" class="k-composer__chip">⎇ worktree</KTag>
-        <span v-if="tokenCount != null" class="k-composer__tokens mono">{{ tokenLabel }}</span>
+        <span v-if="model" class="k-composer__chip" v-tip="'Модель цієї сесії'">
+          <KModelMark class="k-composer__chip-mark" :model="model" />
+          <span class="mono">{{ model }}</span>
+        </span>
+        <KChipSelect
+          v-if="effort"
+          :model-value="effort"
+          :options="EFFORT_OPTIONS"
+          icon="⚡"
+          title="Рівень роздумів"
+          :disabled="disabled"
+          @update:model-value="(level) => emit('effort', level)"
+        />
+        <span v-if="worktree" class="k-composer__chip" v-tip="'Працює в окремому worktree'">
+          <span class="k-composer__chip-icon" aria-hidden="true">⑂</span>
+          <span class="mono">worktree</span>
+        </span>
         <span class="k-composer__spacer"></span>
+        <span v-if="stats" class="k-composer__stats mono">{{ stats }}</span>
         <slot name="actions" />
         <button
           type="submit"
@@ -71,24 +88,41 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import type { ImageInput } from '@kermanych/core';
+import type { ImageInput, ThinkingLevel, Usage } from '@kermanych/core';
 import KAttachStrip from './KAttachStrip.vue';
-import KTag from './KTag.vue';
+import KChipSelect from './KChipSelect.vue';
+import KModelMark from './KModelMark.vue';
 import { useImageAttach } from '../../composables/useImageAttach';
-import { tokens } from '../../lib/format';
+import { EFFORT_OPTIONS } from '../../lib/effort';
+import { tokens, usageTokens, usd } from '../../lib/format';
 
 // The composer atom: a mono textarea that grows with content up to a cap, plus a
-// v3 controls row (model + worktree chips, token count, accent send FAB). Attach
-// images via paste, drag-drop, or the 📎 file-pick. `modelValue` is owned by the
-// host so the same primitive drives both the panel and future Агенти/Чат screens.
+// v3 controls row — what this session is running as (model, reasoning effort, isolation),
+// how full its context is, what it has spent, and the accent send FAB. Attach images via
+// paste, drag-drop, or the 📎 file-pick. `modelValue` is owned by the host so the same
+// primitive drives both the panel and the Чат screen. The chips are equally host-owned:
+// this component reads the session's facts and reports an effort pick; it never talks to
+// the store itself.
+
 const props = withDefaults(
   defineProps<{
     modelValue: string;
     placeholder?: string | undefined;
     disabled?: boolean;
     model?: string | undefined;
+    // omp's reasoning effort for this session, as the api last read it back. Absent means the
+    // level is not known yet (a child that has not answered its first state poll), and the chip
+    // stays away rather than naming a level the agent may not be running at.
+    effort?: ThinkingLevel | undefined;
     worktree?: boolean;
-    tokenCount?: number | undefined;
+    // How full the model's context window is, in percent, as omp reports it. Read straight
+    // from the session rather than derived from `usage`: cached reads and summarisation move
+    // the two figures independently.
+    context?: number | undefined;
+    // What the session has spent, lifetime, as the api counted it. The whole shape rather
+    // than a token total: the row prints tokens AND money, and summing them here keeps every
+    // caller from re-deriving the same two figures.
+    usage?: Usage | undefined;
   }>(),
   { placeholder: 'напиши наступний крок…', disabled: false, worktree: false },
 );
@@ -96,6 +130,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   'update:modelValue': [value: string];
   send: [text: string, images: ImageInput[]];
+  effort: [level: ThinkingLevel];
 }>();
 
 const focused = ref(false);
@@ -146,8 +181,27 @@ function onFilePick(e: Event): void {
 
 const canSend = computed(() => props.modelValue.trim().length > 0 || attachImages.value.length > 0);
 
-// Compact token readout: 12_300 → "12.3k ток", small counts stay exact.
-const tokenLabel = computed(() => `${tokens(props.tokenCount ?? 0)} ток`);
+// The session's numbers, one readout at the end of the row:
+// `контекст 14% · 6.2M токенів · $5.09`. Every piece is either true or absent, and each is
+// dropped independently, so a fresh session prints `контекст 0%` alone and a cache-only one
+// prints its tokens without a `· $0.00` nobody can stand behind. No usage at all — never
+// counted — prints nothing rather than a `0` claiming a free agent. Tokens are spelled out
+// rather than abbreviated to the card strip's `ток` because there is room here.
+//
+// Sub-half-percent context is still context loaded; `toFixed(0)` would call it 0%. An exact
+// 0 is not rounded from anything — the supervisor assigns omp's raw reading or nothing, with
+// no `?? 0` anywhere — so it keeps `0%`; flooring that too would be the mirror-image lie,
+// hiding a true zero behind a `<`. Do not "tidy" this guard.
+const stats = computed(() => {
+  const pc = props.context;
+  const u = props.usage;
+  return [
+    pc == null ? '' : `контекст ${pc > 0 && pc < 0.5 ? '<1' : pc.toFixed(0)}%`,
+    ...(u ? [`${tokens(usageTokens(u))} токенів`, usd(u.cost)] : []),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+});
 
 function submit(): void {
   if (props.disabled) return;
@@ -262,8 +316,39 @@ function submit(): void {
   }
 }
 
-.k-composer__tokens {
-  font-size: var(--k-fs-xs);
+// Session facts — flat, borderless chips: these are readings, so they get no hover, no caret
+// and no frame. The effort KChipSelect beside them repeats this metric (5/8 padding, ui font
+// at --k-fs-sm) so the row reads as one set rather than a control wedged between two labels.
+.k-composer__chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-sm);
+  line-height: 1;
+  color: var(--k-muted);
+  white-space: nowrap;
+}
+
+.k-composer__chip-icon {
+  font-size: var(--k-fs-base);
+  line-height: 1;
+}
+
+// The model is the one fact worth a colour: it is what the operator changes screens to check.
+// The vendor mark inherits it through `fill: currentColor`, and sits a hair below the cap
+// height of the id beside it — a filled logo matched to the type size reads heavier than it.
+.k-composer__chip-mark {
+  color: var(--k-accent);
+  --k-mark-size: 12px;
+}
+
+// Context / tokens / spend — the session's numbers, quietest type in the row: they are
+// watched by glance, not read, so they sit a step below the chips they follow.
+.k-composer__stats {
+  font-size: var(--k-fs-sm);
   color: var(--k-faint);
   white-space: nowrap;
 }

@@ -12,9 +12,12 @@
 //      category Postgres has never heard of is refused in the browser, with a sentence that
 //      names the offending value, instead of arriving as a 400 from PostgREST.
 //
-// Every label here matches supabase/migrations/20260830120000_project_risks.sql one for one.
-// The human-readable names are NOT here: they are copy, they are Ukrainian, and they live
-// with the screen that renders them (apps/ui/src/lib/risk.ts).
+// Every label here matches the enums created in
+// supabase/migrations/20260830120000_project_risks.sql — carried through the move to
+// workspace scope by 20260830140000_workspace_risks.sql, which renames the TABLES and
+// leaves these five types exactly as they were. The human-readable names are NOT here: they
+// are copy, they are Ukrainian, and they live with the screen that renders them
+// (apps/ui/src/lib/risk.ts).
 
 export const RISK_KIND_VALUES = ["threat", "opportunity"] as const;
 export type RiskKind = (typeof RISK_KIND_VALUES)[number];

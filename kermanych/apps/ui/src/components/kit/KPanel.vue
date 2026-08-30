@@ -151,7 +151,9 @@
     <!-- plan lane — present only while the agent keeps a todo list -->
     <KTodoLane :phases="session.todoPhases" />
 
-    <!-- status row — never hidden: model, context, spend, live action -->
+    <!-- live lane — what the agent is doing right now; absent while idle. Everything
+         countable (model, effort, isolation, context, spend) is printed once, in the
+         composer's chip row below. -->
     <KStatusRow :session="session" />
 
     <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎), with the
@@ -160,7 +162,13 @@
       <KComposer
         v-model="draft"
         :placeholder="placeholder"
+        :model="session.model"
+        :effort="session.effort"
+        :worktree="session.worktree"
+        :context="session.contextPercent"
+        :usage="session.usage"
         @send="(text, images) => emit('send', text, images)"
+        @effort="(level) => emit('effort', level)"
       >
         <template #actions>
           <KIconButton
@@ -196,7 +204,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { Session, RpcExtensionUIResponse, ImageInput } from '@kermanych/core';
+import type { Session, RpcExtensionUIResponse, ImageInput, ThinkingLevel } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KTag from './KTag.vue';
 import KBtn from './KBtn.vue';
@@ -239,6 +247,7 @@ const emit = defineEmits<{
   promoteAgent: [];
   promoteTask: [];
   expandAll: [value: boolean];
+  effort: [level: ThinkingLevel];
 }>();
 
 const draft = ref('');
@@ -504,11 +513,12 @@ function answerCancel() {
 .k-panel__tools-btn:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
 
 // my-message nav — floating stepper pinned to the log's top-right, over the log
-// (outside the scroll container so it stays put while the log scrolls).
+// (outside the scroll container so it stays put while the log scrolls). Its right edge is
+// the column's 12px gutter, so it stops where the transcript under it stops.
 .k-panel__nav {
   position: absolute;
   top: 68px; // header (34px) + tools (26px) + 8px
-  right: 14px;
+  right: 12px;
   z-index: 2;
   display: flex;
   flex-direction: column;
@@ -558,7 +568,12 @@ function answerCancel() {
   // it keeps the ellipsised branch tag from sitting flush against the status word.
   gap: 8px;
   height: 34px;
-  padding: 0 6px 0 12px;
+  // The 2px of top padding is the counterweight to the 2px rule below, which `height`
+  // (border-box) takes out of the interior: without it `align-items: center` centres this
+  // row's dot, harness, tag and controls in the 32px above the rule and the floor reads
+  // 1px high. It also lands the content exactly between this header's two 2px edges while
+  // a session is active, when the accent strip is inset over the top one.
+  padding: 2px 6px 0 12px;
   background: var(--k-surface);
   border-bottom: 2px solid var(--k-line-strong);
   flex: none;
@@ -605,11 +620,14 @@ function answerCancel() {
   white-space: nowrap;
 }
 
-// floor 2 — log
+// floor 2 — log. Horizontally on the panel's 12px gutter, the same one the header above
+// and the status row and composer below use, so the transcript's left edge is the column's
+// left edge; the vertical figures are free to differ — they are breathing room, not a
+// gutter.
 .k-panel__log {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 14px 14px 16px;
+  padding: 14px 12px 16px;
 }
 
 // live reasoning placeholder — muted, gently pulsing; replaced by the collapsed
@@ -786,7 +804,7 @@ function answerCancel() {
   border-top: 2px solid var(--k-line-strong);
 }
 .k-panel__merged-note {
-  padding: 14px 16px;
+  padding: 14px 12px;
   color: var(--k-muted);
   font-size: 12.5px;
   line-height: 1.5;
