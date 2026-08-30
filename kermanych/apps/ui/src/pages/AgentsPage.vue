@@ -1611,11 +1611,16 @@ async function submitPr(): Promise<void> {
 // ── Live preview (per-session worktree app on a free port) ─────────────────
 const LOADING_HTML =
   '<p style="font:14px system-ui;padding:24px;color:#888">Піднімаю превʼю гілки… (перший раз довше — встановлення залежностей).</p>';
-const DEFAULT_WEB_CMD = 'cd kermanych && pnpm --filter @kermanych/ui dev';
-// Fresh worktrees carry no build output (dist is gitignored), so build the shared
-// core and the api before starting it — otherwise `node dist/main.js` is MODULE_NOT_FOUND.
+// A fresh worktree carries no dependencies and no build output (`dist` is gitignored), so
+// each command installs first and then runs the package script — which builds that
+// package's workspace deps itself (see apps/*/package.json). Naming the deps here instead
+// is what broke this: the old api command built @kermanych/core only, and the api also
+// imports @kermanych/cloud, so `nest build` died with TS2307 before the preview ever
+// listened. The web command must stand on its own too — a project may configure no api
+// command at all, and the UI needs @kermanych/cloud built to load.
+const DEFAULT_WEB_CMD = 'cd kermanych && pnpm install && pnpm --filter @kermanych/ui dev';
 const DEFAULT_API_CMD =
-  'cd kermanych && pnpm install && pnpm --filter @kermanych/core build && pnpm --filter @kermanych/api build && pnpm --filter @kermanych/api start';
+  'cd kermanych && pnpm install && pnpm --filter @kermanych/api build && pnpm --filter @kermanych/api start';
 const previewCfgOpen = ref(false);
 const previewCfgSession = ref<Session | null>(null);
 const draftWebCmd = ref('');

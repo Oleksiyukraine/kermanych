@@ -624,10 +624,26 @@ function rowClass(risk: ProjectRisk): string | undefined {
 }
 
 .risk__toolbar {
+  // One height for the whole strip. Left alone the kit hands out three: the <input> is 35px,
+  // a native <select> 37px (its content box is taller than a text input's at the same padding),
+  // and the button 35px — visibly ragged in one unlabelled row. Pinned here, not in the kit,
+  // because only this row mixes all three.
+  --risk-toolbar-h: 36px;
+
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  // Centred, not bottom-aligned: the checkbox is a 16px control, so flex-end dropped its label
+  // onto the button's bottom edge whenever the row wrapped.
+  align-items: center;
   gap: var(--k-sp-2);
+
+  :deep(.k-field__input),
+  :deep(.k-select__input),
+  :deep(.k-btn),
+  :deep(.k-checkbox) {
+    box-sizing: border-box;
+    height: var(--risk-toolbar-h);
+  }
 
   // The kit's fields are labelled block elements; here they sit in one unlabelled strip, so
   // each gets an explicit measure instead of stretching to whatever is left.
