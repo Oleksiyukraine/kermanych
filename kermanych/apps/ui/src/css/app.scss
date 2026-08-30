@@ -18,6 +18,36 @@ body,
   box-sizing: border-box;
 }
 
+// SIDEBAR COLLAPSE TWEEN. QDrawer writes its `width` prop straight onto the <aside> as an
+// inline style and only transitions it while `body.q-body--layout-animate` is on — a class
+// Quasar adds when a drawer is SHOWN or HIDDEN, never when its width changes. This drawer
+// is permanently shown (`model-value`, `breakpoint: 0`) and only ever changes width, so
+// without these two rules the rail snapped between 264px and 76px in a single frame.
+//
+// Both halves of the move are here: the aside itself, and the page's left padding, which
+// QPageContainer derives from the same drawer size — tweening one and not the other would
+// tear the board away from the rail's edge and let it snap back. Global, not scoped: the
+// layout's `class` lands on .q-drawer__content, and these are its ancestors.
+//
+// 0.25s sits in the middle of the 0.2–0.3s band where a panel reads as moving rather than
+// as either teleporting or lagging; the curve is the standard-easing decelerate, so the
+// motion leaves fast and settles slowly. Quasar's own 0.12s !important rules still win
+// during a real show/hide, which is correct — that is a different gesture.
+.q-drawer--left {
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.q-page-container {
+  transition: padding-left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+// House convention (KTopNav, KSubNav, ManagementSectionPage): motion is opt-out. With the
+// tween off the toggle is instantly wide or narrow again — the state, never a half-drawn rail.
+@media (prefers-reduced-motion: reduce) {
+  .q-drawer--left,
+  .q-page-container {
+    transition: none;
+  }
+}
+
 
 // Machine text helper.
 .mono {
