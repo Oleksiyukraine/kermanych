@@ -67,7 +67,7 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
       :aria-label="toggleLabel"
       v-tip="toggleLabel"
       @click.stop="emit('toggle')"
-    >{{ expanded ? '▾' : '▸' }}</button>
+    ><span class="k-ws__caret" :class="{ 'k-ws__caret--open': expanded }" aria-hidden="true"></span></button>
     <button
       class="k-ws__body"
       type="button"
@@ -137,10 +137,10 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
   border-color: var(--k-accent);
 }
 
-// Glyph-only controls, so they take the house 28x28 box from KIconButton rather than a
-// padding guess: 28 clears the 24x24 minimum of WCAG 2.5.8 and matches every other icon
-// control in the app. Borderless, because a rule around each of these would fence the row
-// into three visible boxes.
+// Two 28x28 glyph boxes taken from KIconButton rather than guessed with padding: 28 clears
+// the 24x24 minimum of WCAG 2.5.8 and matches every other icon control in the app.
+// Borderless, because a rule around each of these would fence the row into three visible
+// boxes. Only the «+» is type, and it sets its own size below.
 .k-ws__chevron,
 .k-ws__add {
   display: flex;
@@ -154,7 +154,6 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
   border: none;
   color: var(--k-muted);
   cursor: pointer;
-  font-size: var(--k-fs-sm);
   line-height: 1;
   border-radius: var(--k-r);
   transition: color 0.12s, opacity 0.12s;
@@ -169,13 +168,25 @@ const addLabel = computed(() => `Новий проєкт у «${props.workspace.
   }
 }
 
-// ▾/▸ are filled triangles: their ink is roughly a third of the em box, so at the 12px the
-// rest of this row uses the fold control was a ~6px smudge — the one affordance in the tree
-// a new user has to find, and the hardest thing in the sidebar to see. Stepped up to the
-// 18px title size, which puts its ink at the weight of the 12px «+» beside it without
-// changing the 28x28 hit box either control occupies.
-.k-ws__chevron {
-  font-size: var(--k-fs-lg);
+// The fold marker is DRAWN, not typed. As a ▾/▸ glyph it sat ~1.6px below the row's centre
+// line and no font-size cured it: `--k-font-ui` is the system UI face, which carries no
+// geometric-shapes glyph, so the triangle came from a fallback whose 17/4 ascent/descent
+// put the baseline of a `line-height: 1` box 6.5px under its own middle — the arrow visibly
+// hung below the dot and the name beside it. A clipped box has no baseline to drift: its
+// ink IS its box, so flex centring lands it on the row's centre on every platform.
+//
+// 6x10 keeps the ink at the weight the 18px glyph had, and both it and its 90°-rotated
+// footprint (10x6) leave even margins inside the 28x28 hit box, so every edge is on a whole
+// pixel in both states.
+.k-ws__caret {
+  width: 6px;
+  height: 10px;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+
+.k-ws__caret--open {
+  transform: rotate(90deg);
 }
 
 // Secondary action, so it stays out of the way until the row is pointed at — but keyboard
