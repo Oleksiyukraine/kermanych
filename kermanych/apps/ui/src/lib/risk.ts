@@ -21,6 +21,7 @@ import type {
   RiskResponse,
   RiskStatus,
 } from '@kermanych/cloud';
+import { formatIsoDate, isoParts, todayIso } from './calendar';
 import { tokens } from './format';
 
 const DAY = 86_400_000;
@@ -361,30 +362,22 @@ export function statementOf(r: Pick<WorkspaceRisk, 'kind' | 'cause' | 'event' | 
 
 // ── Dates and money ─────────────────────────────────────────────────────────────
 
-// Date-only columns are calendar answers, so they are handled as text: parsing
-// '2026-09-20' into a Date and back is how a due date lands a day early for half of Europe.
-const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})/;
-
+// Date-only columns are calendar answers, so they are handled as a Y-M-D triple, never as a
+// parsed Date: '2026-09-20' through `new Date()` is UTC midnight, which lands a day early for
+// half of Europe. The triple work itself lives in lib/calendar.ts, which the date FIELD also
+// runs on — one calendar, one set of rules.
 export function formatDate(value: string | undefined): string {
-  const m = value ? DATE_RE.exec(value) : null;
-  return m ? `${m[3]}.${m[2]}.${m[1]}` : '—';
-}
-
-// Today in the user's own calendar, as the same YYYY-MM-DD the columns hold — the value a
-// date input needs as its min/default.
-export function isoDate(nowMs: number): string {
-  const d = new Date(nowMs);
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${month}-${day}`;
+  // The em dash is a READ-ONLY cell's answer for «no date»; the field renders '' instead,
+  // which is why the shared formatter stops short of it.
+  return formatIsoDate(value) || '—';
 }
 
 // Whole calendar days from today to a date column. Both sides are collapsed to UTC midnight
 // of their Y-M-D triple, so the answer is a day count and never an hours-apart rounding.
 export function daysUntil(date: string, nowMs: number): number | undefined {
-  const m = DATE_RE.exec(date);
-  if (!m) return undefined;
-  const target = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const p = isoParts(date);
+  if (!p) return undefined;
+  const target = Date.UTC(p.year, p.month - 1, p.day);
   const t = new Date(nowMs);
   const today = Date.UTC(t.getFullYear(), t.getMonth(), t.getDate());
   return Math.round((target - today) / DAY);
@@ -454,7 +447,7 @@ export function emptyDraft(nowMs: number): RiskDraft {
     consequence: '',
     probability: 3,
     impact: 3,
-    proximity: isoDate(nowMs),
+    proximity: todayIso(nowMs),
     response: 'reduce',
     responseActions: '',
     actionOwner: '',

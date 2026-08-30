@@ -113,10 +113,16 @@
           placeholder="Усі воркспейси"
         />
       </div>
+      <div class="kit__row kit__row--fields">
+        <KDateField v-model="galleryDate" label="Дата (свій календар)" />
+        <KDateField v-model="galleryDate" label="Заблокована дата" disabled />
+      </div>
       <div class="kit__caption mono">
         branch={{ branch }} · select(рядки)={{ galleryBranch }} · select(пари)={{ galleryWorkspace || '—' }}
+        · date={{ galleryDate || '—' }}
         — праворуч у списку видно назву, а модель тримає id: фільтр за назвою ламається,
-        щойно зʼявиться другий воркспейс із такою самою назвою.
+        щойно зʼявиться другий воркспейс із такою самою назвою. Дата живе в моделі як
+        YYYY-MM-DD, а показує себе як дд.мм.рррр — і те й те можна вписати руками.
       </div>
     </section>
 
@@ -435,6 +441,7 @@ import KLogBlock from 'components/kit/KLogBlock.vue';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KWorkspaceRow from 'components/kit/KWorkspaceRow.vue';
 import KSelect from 'components/kit/KSelect.vue';
+import KDateField from 'components/kit/KDateField.vue';
 import KUserButton from 'components/kit/KUserButton.vue';
 import KStatusBar from 'components/kit/KStatusBar.vue';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
@@ -718,6 +725,9 @@ const galleryBranches = ['main', 'develop', 'feat/schema'];
 const galleryBranch = ref('main');
 const galleryWorkspaceOptions = galleryWorkspaces.map((w) => ({ value: w.id, label: w.name }));
 const galleryWorkspace = ref('');
+// Seeded rather than empty: a calendar showcase whose only state is «нічого не вибрано»
+// shows neither the selected day nor the today ring.
+const galleryDate = ref('2026-09-20');
 const lastAction = ref('');
 // The gallery panels carry the real detail toolbar, so it drives a real command here too
 // — a showcase with a dead button showcases the wrong thing.

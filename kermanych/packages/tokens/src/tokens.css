@@ -10,8 +10,8 @@
  * The attribute is written by apps/ui/src/lib/theme.ts.
  */
 :root {
-  /* Native chrome — scrollbars, caret, date pickers, `<select>` popups. Without
-     this the OS paints a light scrollbar over the dark canvas. */
+  /* Native chrome — scrollbars, caret, date pickers, form controls the page cannot
+     paint. Without this the OS paints a light scrollbar over the dark canvas. */
   color-scheme: dark;
   /* surfaces — cool near-black, darkest→lightest */
   --k-canvas:#050505; --k-bg:#141414; --k-surface:#1c1c1c; --k-surface2:#2b2b2b;

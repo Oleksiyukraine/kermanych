@@ -624,10 +624,10 @@ function rowClass(risk: WorkspaceRisk): string | undefined {
 }
 
 .risk__toolbar {
-  // One height for the whole strip. Left alone the kit hands out three: the <input> is 35px,
-  // a native <select> 37px (its content box is taller than a text input's at the same padding),
-  // and the button 35px — visibly ragged in one unlabelled row. Pinned here, not in the kit,
-  // because only this row mixes all three.
+  // One height for the whole strip. Left alone the kit hands out 35px for the <input>, the
+  // select trigger and the button — close, but the checkbox is a 16px control, so the row
+  // still needed one number. Pinned here, not in the kit, because only this row mixes all
+  // four.
   --risk-toolbar-h: 36px;
 
   display: flex;
@@ -652,9 +652,9 @@ function rowClass(risk: WorkspaceRisk): string | undefined {
     min-width: 200px;
   }
 
-  // A native <select> sizes to its LONGEST option, and «Постачальник, SaaS-залежність,
-  // vendor lock-in» is 45 characters — left to itself the category filter eats the strip.
-  // Fixed measures here, ellipsis inside.
+  // «Постачальник, SaaS-залежність, vendor lock-in» is 45 characters, and KSelect reserves
+  // the width of its LONGEST option — left to itself the category filter eats the strip.
+  // Fixed measures here; the trigger ellipsises inside them.
   > :nth-child(2) {
     flex: 0 1 200px;
     min-width: 0;
@@ -664,13 +664,6 @@ function rowClass(risk: WorkspaceRisk): string | undefined {
   > :nth-child(4) {
     flex: 0 1 168px;
     min-width: 0;
-  }
-
-  > :nth-child(2) :deep(select),
-  > :nth-child(3) :deep(select),
-  > :nth-child(4) :deep(select) {
-    width: 100%;
-    text-overflow: ellipsis;
   }
 
   > :last-child {
