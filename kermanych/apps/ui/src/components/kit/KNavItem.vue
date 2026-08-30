@@ -3,25 +3,37 @@
     class="k-nav-item"
     :class="{ 'k-nav-item--active': active }"
     type="button"
+    v-tip="tip"
+    :aria-label="tip"
     @click="emit('click')"
   >
-    <span v-if="icon" class="k-nav-item__icon">{{ icon }}</span>
+    <span v-if="icon" class="k-nav-item__icon">
+      <KIcon :name="icon" />
+    </span>
     <span class="k-nav-item__label">{{ label }}</span>
     <KCount v-if="count != null" :value="count" />
   </button>
 </template>
 
 <script setup lang="ts">
-// A sidebar navigation row: optional leading glyph, a label, and an optional
+// A sidebar navigation row: optional leading mark, a label, and an optional
 // trailing count pill. Active rows lift onto surface2 with full-strength text.
+//
+// `tip` is for the minified rail, where the layout hides the label and the count with
+// `display: none` — which takes them out of the accessibility tree too, leaving the button
+// with no name at all. Set it to the label there and the mark gets both a tooltip and an
+// accessible name; leave it unset while the label is visible, since a bubble repeating text
+// already on screen is noise.
 import KCount from './KCount.vue';
+import KIcon, { type KIconName } from './KIcon.vue';
 
 withDefaults(
   defineProps<{
     label: string;
     count?: number;
     active?: boolean;
-    icon?: string;
+    icon?: KIconName;
+    tip?: string | undefined;
   }>(),
   { active: false },
 );
