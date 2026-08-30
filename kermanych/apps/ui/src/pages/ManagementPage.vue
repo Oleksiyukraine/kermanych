@@ -41,41 +41,118 @@
         <router-view :project-id="projectId" :project-name="projectName" />
       </div>
 
-      <!-- WIP composer, docked to the foot of the page like the chat composer:
-           the section's content owns the space above it, the input keeps the
-           bottom edge whatever the section renders. Page furniture, deliberately
-           not a kit component yet — it is inert (readonly field, disabled
-           controls) and gets promoted to components/kit once it does something.
-           Frosted capsule over the page's glow layer, which is why `.mgmt__atmo`
-           exists rather than a flat canvas behind it: glass needs a substrate. -->
-      <form class="mgmt__composer" aria-label="Поле введення (у розробці)" @submit.prevent>
-        <button class="mgmt__c-icon" type="button" disabled title="У розробці">⊞</button>
-        <input
-          class="mgmt__c-input"
-          type="text"
-          readonly
-          aria-readonly="true"
-          :value="WIP_TEXT"
-          title="У розробці — поле поки не працює"
-        />
-        <button class="mgmt__c-icon" type="button" disabled title="У розробці">⚙</button>
-        <button class="mgmt__c-send" type="button" disabled title="У розробці" aria-label="Надіслати">+</button>
-      </form>
+      <!-- The Менеджмент assistant, docked to the foot of the page. The transcript hangs
+           ABOVE the pill (`bottom: 100%`) rather than pushing it, so the section's own
+           content never reflows as the conversation grows and the input keeps the page's
+           bottom edge whatever the section renders. Centred rather than stretched: a
+           capsule pulled across a 1400px window reads as a toolbar and puts its controls a
+           screen away from the text they belong to. Frosted over the page's glow layer,
+           which is why `.mgmt__atmo` exists rather than a flat canvas — glass needs a
+           substrate to bend. -->
+      <div class="mgmt__dock">
+        <section
+          v-if="chat.hasConversation"
+          class="mgmt__log"
+          aria-label="Розмова з асистентом менеджменту"
+        >
+          <header class="mgmt__log-head">
+            <span class="mgmt__log-title mono">Асистент менеджменту</span>
+            <button
+              v-tip="'Новий чат'"
+              class="mgmt__log-close mono"
+              type="button"
+              :disabled="chat.busy"
+              aria-label="Закрити розмову і почати новий чат"
+              @click="chat.reset()"
+            >×</button>
+          </header>
+          <div ref="logEl" class="mgmt__log-body">
+            <template v-for="e in chat.entries" :key="e.id">
+              <KChatMessage v-if="e.kind === 'user'" role="user">{{ e.text }}</KChatMessage>
+              <KChatMessage v-else-if="e.kind === 'assistant'" role="assistant">
+                <div class="k-log__markdown" v-html="renderMarkdown(e.text)"></div>
+              </KChatMessage>
+              <!-- What the APP did about the turn, not what the model said about it. Mono
+                   and colour-coded because a refusal that reads like prose gets skimmed as
+                   part of the answer — and stating WHY a section cannot be changed is the
+                   feature here, not an aside. -->
+              <p v-else class="mgmt__res mono" :class="`mgmt__res--${e.level}`">{{ e.text }}</p>
+            </template>
+          </div>
+        </section>
+
+        <form
+          class="mgmt__composer"
+          :class="{ 'mgmt__composer--grown': grown }"
+          aria-label="Асистент менеджменту"
+          @submit.prevent="submit"
+        >
+          <button
+            v-tip="'Новий чат'"
+            class="mgmt__c-icon"
+            type="button"
+            :disabled="!chat.hasConversation || chat.busy"
+            aria-label="Новий чат"
+            @click="chat.reset()"
+          >⊞</button>
+          <textarea
+            ref="fieldEl"
+            v-model="draft"
+            class="mgmt__c-input"
+            rows="1"
+            :disabled="chat.busy"
+            placeholder="Запитайте про менеджмент цього воркспейсу — ризики, статуси, рішення"
+            aria-label="Повідомлення асистенту менеджменту"
+            @input="autoGrow"
+            @keydown="onKeydown"
+          ></textarea>
+          <!-- The plan the turn is charged to. This chat runs through the same `omp`, the
+               same provider account and the same subscription as every agent, so a message
+               here is a message debited there — the figure sits in the composer because
+               that is where the spending decision is made. Absent entirely when no plan can
+               be reported: no figure beats a zero nobody can stand behind. -->
+          <span
+            v-if="planChip"
+            v-tip="planChip.hint"
+            class="mgmt__c-plan mono"
+          >{{ planChip.short }} {{ planChip.percent }}</span>
+          <button
+            v-tip="chat.busy ? 'Асистент відповідає' : 'Надіслати (Enter)'"
+            class="mgmt__c-send"
+            type="submit"
+            :disabled="!canSend"
+            :aria-busy="chat.busy"
+            :aria-label="chat.busy ? 'Асистент відповідає' : 'Надіслати'"
+          ><span
+            class="mgmt__c-glyph"
+            :class="{ 'mgmt__c-glyph--busy': chat.busy }"
+            aria-hidden="true"
+          >↑</span></button>
+        </form>
+      </div>
     </template>
   </main>
 </template>
 
 <script setup lang="ts">
-// Shell of the Менеджмент tab: the section strip, the «pick a project» gate, and
-// the project every section is scoped to. The sections themselves are the child
-// routes of /management (lib/management.ts) — this component decides WHETHER one
-// renders and WHICH project it renders for; it never renders their content.
-import { computed } from 'vue';
+// Shell of the Менеджмент tab: the section strip, the «pick a project» gate, the project
+// every section is scoped to, and the assistant docked at its foot. The sections themselves
+// are the child routes of /management (the table lives in @kermanych/core, shared with the
+// api and the action executor) — this component decides WHETHER one renders and WHICH
+// project it renders for; it never renders their content.
+import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { MANAGEMENT_SECTIONS } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
+import { useManagementChat } from 'stores/management-chat';
 import KSubNav from 'components/kit/KSubNav.vue';
-import { MANAGEMENT_SECTIONS } from '../lib/management';
+import KChatMessage from 'components/kit/KChatMessage.vue';
+import { renderMarkdown } from '../lib/markdown';
+import { percent, planWindow } from '../lib/format';
+import { until } from '../lib/time';
+import { useNow } from '../composables/useNow';
+import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
 
 const store = useOrchestrator();
 const projects = useProjects();
@@ -103,8 +180,98 @@ const projectName = computed(() => {
   return projects.byId.get(id)?.name ?? store.projects.find((p) => p.id === id)?.name ?? '';
 });
 
-// The field is inert on purpose — this is the shape of the thing, not the thing.
-const WIP_TEXT = 'I am a dummy that is in WIP';
+// ── The assistant ────────────────────────────────────────────────────────────
+const chat = useManagementChat();
+const draft = ref('');
+const fieldEl = ref<HTMLTextAreaElement | null>(null);
+const logEl = ref<HTMLElement | null>(null);
+
+// The field grows with the text and then scrolls, so Shift+Enter newlines stay visible
+// instead of being clipped by a one-line input. 132px ≈ six lines of the pill's type.
+const MAX_FIELD_PX = 132;
+// A stadium is the right shape for one line and the wrong one for three: at full pill
+// radius the corners of a grown field eat the ends of its middle rows.
+const grown = ref(false);
+
+function autoGrow(): void {
+  const el = fieldEl.value;
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, MAX_FIELD_PX)}px`;
+  // Measured against the field's OWN line-height rather than a pixel constant, so a theme
+  // that changes the type scale cannot desynchronise the shape from the content.
+  grown.value = el.scrollHeight > parseFloat(getComputedStyle(el).lineHeight) * 1.5;
+}
+
+const canSend = computed(() => draft.value.trim().length > 0 && !chat.busy);
+
+// The active section travels with the message: the store has no router of its own (Quasar
+// builds one per app in a factory, and a store setup has no injection context to reach it),
+// and this component already knows which section is on screen. One source of truth.
+function submit(): void {
+  if (!canSend.value) return;
+  const text = draft.value;
+  // Cleared before the await: the turn is already in the transcript, and a field that keeps
+  // the sent text invites sending it twice.
+  draft.value = '';
+  void nextTick(autoGrow);
+  void chat.send(text, activeSection.value);
+}
+
+// Enter sends; Shift+Enter inserts a newline. Enter mid-IME-composition is ignored, so
+// committing a Ukrainian or CJK candidate does not fire the message.
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+  e.preventDefault();
+  submit();
+}
+
+// Keep the newest entry in view as the transcript grows — deep, because a turn appends to
+// the same array rather than replacing it.
+watch(
+  () => chat.entries,
+  () =>
+    void nextTick(() => {
+      const el = logEl.value;
+      if (el) el.scrollTop = el.scrollHeight;
+    }),
+  { deep: true },
+);
+
+// PLAN SPEND — the same figure the sidebar shows, folded to the single tightest window.
+// The composer has room for one number, and the number that matters before spending a turn
+// is the window closest to its ceiling. `providers` empty means nothing can be reported (no
+// omp on PATH, no authenticated plan), and then the chip is absent rather than zero.
+const planUsage = useSubscriptionUsage();
+const planNow = useNow(30_000);
+
+const planChip = computed(() => {
+  const providers = planUsage.value?.providers ?? [];
+  const windows = providers.flatMap((p) => p.windows);
+  const tightest = windows.reduce<(typeof windows)[number] | undefined>(
+    (worst, w) => (worst && worst.usedPercent >= w.usedPercent ? worst : w),
+    undefined,
+  );
+  if (!tightest) return undefined;
+  return {
+    short: planWindow(tightest.id),
+    percent: percent(tightest.usedPercent),
+    // The detail the one-number chip drops, plus the sentence that explains why a
+    // management chat shows a provider plan at all.
+    hint: [
+      'Цей чат витрачає ту саму підписку, що й агенти',
+      ...providers.flatMap((p) => [
+        p.provider[0]!.toUpperCase() + p.provider.slice(1),
+        ...(p.accounts > 1 ? [`${p.accounts} акаунти, у середньому`] : []),
+        ...p.windows.map(
+          (w) =>
+            `${w.label}: ${percent(w.usedPercent)}` +
+            (w.resetsAt ? ` — оновиться за ${until(w.resetsAt, planNow.value)}` : ''),
+        ),
+      ]),
+    ].join(' · '),
+  };
+});
 
 // Same join the sidebar rail uses for its tile colour; the accent is the fallback
 // so an uncoloured project still gets a dot instead of a hole.
@@ -164,7 +331,7 @@ const projectColor = computed(() => {
 // Everything above the glow.
 .mgmt__head,
 .mgmt__body,
-.mgmt__composer {
+.mgmt__dock {
   position: relative;
   z-index: 1;
 }
@@ -247,8 +414,12 @@ const projectColor = computed(() => {
   gap: var(--k-sp-5);
 }
 
-// ── WIP composer — frosted capsule ──────────────────────────────────────────
-.mgmt__composer {
+// ── Assistant dock — the frosted capsule and the transcript above it ─────────
+// The dock is what the page's foot reserves: the pill, and a positioning context for a
+// transcript that must NOT take part in the column's layout. Anchoring the log to the dock
+// (rather than making it a flex sibling) is why the section above keeps its geometry as the
+// conversation grows — a chat that reflows the screen it is describing is unusable.
+.mgmt__dock {
   flex: none;
   // Centred on the page's foot, not stretched across it: a capsule pulled to the
   // full width of a 1400px window reads as a toolbar, and its trailing controls
@@ -256,8 +427,114 @@ const projectColor = computed(() => {
   // measure and centred, it stays a single object.
   align-self: center;
   width: min(680px, 100%);
+}
+
+// The same frost recipe as the pill — one glass object split in two, not two materials —
+// but on `--k-r-lg`: a stadium is a shape for a control, and this is a panel of text.
+.mgmt__log {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  margin-bottom: var(--k-sp-2);
+  display: flex;
+  flex-direction: column;
+  max-height: min(46vh, 520px);
+  background: color-mix(in srgb, var(--k-surface) 74%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  backdrop-filter: blur(22px) saturate(150%);
+  border: var(--k-rule-thin) solid var(--k-line-strong);
+  border-radius: var(--k-r-lg);
+  box-shadow:
+    var(--k-shadow-toast),
+    inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent);
+  overflow: hidden;
+}
+
+.mgmt__log-head {
+  flex: none;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: var(--k-sp-2);
+  padding: var(--k-sp-2) var(--k-sp-2) var(--k-sp-2) var(--k-sp-3);
+  border-bottom: var(--k-rule-thin) solid var(--k-line);
+}
+
+.mgmt__log-title {
+  font-size: var(--k-fs-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--k-faint);
+}
+
+.mgmt__log-close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  appearance: none;
+  border: none;
+  border-radius: var(--k-r-sm);
+  background: transparent;
+  color: var(--k-muted);
+  font-size: 15px;
+  line-height: 1;
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.72;
+  }
+
+  &:not(:disabled):hover {
+    color: var(--k-text);
+    background: color-mix(in srgb, var(--k-surface2) 70%, transparent);
+  }
+}
+
+.mgmt__log-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-3);
+  padding: var(--k-sp-3);
+}
+
+// What the app did about a turn. A left rule and mono type, so a refusal cannot be skimmed
+// as part of the answer above it: the whole point of the section table's `limitation` is
+// that the operator READS why a section could not be changed.
+.mgmt__res {
+  margin: 0;
+  padding: 6px var(--k-sp-3);
+  font-size: var(--k-fs-xs);
+  line-height: 1.5;
+  border-left: 2px solid var(--k-line-strong);
+  color: var(--k-muted);
+}
+
+// info is the quiet default above; warn and error borrow the register's own severity
+// colours, so «не можу» and «зламалось» never read as the same event.
+.mgmt__res--warn {
+  color: var(--k-text);
+  border-left-color: var(--k-accent);
+  background: color-mix(in srgb, var(--k-accent) 8%, transparent);
+}
+
+.mgmt__res--error {
+  color: var(--k-danger);
+  border-left-color: var(--k-danger);
+  background: color-mix(in srgb, var(--k-danger) 8%, transparent);
+}
+
+.mgmt__composer {
+  display: flex;
+  // Bottom-aligned, not centred: once the field grows to three lines the controls belong on
+  // the baseline of the last one, the way they sit on the only line of a single-line pill.
+  align-items: flex-end;
   gap: var(--k-sp-2);
   padding: 7px 7px 7px var(--k-sp-3);
   // Frosted, not see-through: a heavy blur under a mostly-opaque surface tint,
@@ -271,29 +548,64 @@ const projectColor = computed(() => {
   box-shadow:
     var(--k-shadow-toast),
     inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent);
+  transition: border-radius 0.16s ease;
+}
+
+.mgmt__composer--grown {
+  border-radius: var(--k-r-lg);
 }
 
 .mgmt__c-input {
   flex: 1;
   min-width: 0;
+  // The height is written by autoGrow(); this is the floor it starts from and returns to.
+  height: 30px;
+  max-height: 132px;
+  padding: 5px 0;
   appearance: none;
+  resize: none;
+  overflow-y: auto;
   border: none;
   background: transparent;
   font-family: var(--k-font-ui);
   font-size: var(--k-fs-md);
+  line-height: 20px;
   letter-spacing: -0.01em;
   color: var(--k-text);
-  // Readonly: it takes focus (so the ring proves it is a real field) but refuses
-  // a caret, which is the honest signal that nothing is wired behind it.
-  cursor: default;
 
   &:focus {
     outline: none;
   }
 
+  // Disabled while a turn is in flight: the field keeps its place in the pill and only
+  // stops taking text, so nothing moves when the answer lands.
+  &:disabled {
+    cursor: not-allowed;
+    color: var(--k-muted);
+  }
+
+  &::placeholder {
+    color: var(--k-faint);
+  }
+
   &::selection {
     background: color-mix(in srgb, var(--k-accent) 28%, transparent);
   }
+}
+
+// The plan chip. Mono because it is a figure, quiet because it is context for a decision
+// rather than the decision — the tooltip carries the per-window detail.
+.mgmt__c-plan {
+  flex: none;
+  align-self: center;
+  padding: 3px var(--k-sp-2);
+  font-size: var(--k-fs-xs);
+  line-height: 1.4;
+  color: var(--k-muted);
+  background: color-mix(in srgb, var(--k-surface2) 60%, transparent);
+  border: var(--k-rule-thin) solid var(--k-line);
+  border-radius: var(--k-r-pill);
+  white-space: nowrap;
 }
 
 .mgmt__c-icon {
@@ -344,10 +656,31 @@ const projectColor = computed(() => {
   box-shadow: 0 4px 16px -4px color-mix(in srgb, var(--k-accent) 75%, transparent);
 
   // Not dimmed: `opacity` on an accent disc washes it to salmon over the light
-  // canvas. The cursor, the title and the field's own text carry the WIP state,
-  // so the disc keeps the exact hue it will have once it works.
+  // canvas. The disabled state is carried by the cursor and by the arrow inside,
+  // so the disc keeps the exact hue it has when it works.
   &:disabled {
     cursor: not-allowed;
+  }
+}
+
+// The in-flight signal, on the GLYPH rather than the disc, for the reason above: the arrow
+// breathes while the model is answering. The house pulse (see KToolRow, KStatusDot), which
+// keeps «working» reading the same everywhere in the app.
+.mgmt__c-glyph {
+  display: inline-flex;
+}
+
+.mgmt__c-glyph--busy {
+  animation: mgmt-send-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes mgmt-send-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
   }
 }
 
