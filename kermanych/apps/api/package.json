@@ -5,10 +5,11 @@
   "main": "dist/main.js",
   "exports": { ".": "./dist/main.js" },
   "scripts": {
-    "build": "nest build",
+    "//deps": "`dist/` is gitignored, so a fresh clone or worktree has no @kermanych/core or @kermanych/cloud build output and `nest build` fails with TS2307. `<pkg>^...` is pnpm's dependencies-of-pkg-excluding-pkg selector: it builds them in topological order and cannot recurse into this package.",
+    "build": "pnpm --filter '@kermanych/api^...' build && nest build",
     "typecheck": "tsc --noEmit",
     "start": "node dist/main.js",
-    "start:dev": "nest start --watch",
+    "start:dev": "pnpm --filter '@kermanych/api^...' build && nest start --watch",
     "test": "vitest run"
   },
   "dependencies": {
