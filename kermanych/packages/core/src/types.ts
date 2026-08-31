@@ -26,6 +26,10 @@ export type Session = {
   worktreePath: string; branch: string;
   worktree: boolean; baseBranch?: string;
   model?: string; prefix?: BranchPrefix; platform?: Platform;
+  // "task" is no longer produced: a task is a cloud card and `from-task` is the only way an
+  // agent is born. Rows with this kind are pre-cutover backlog leftovers whose project is
+  // not in the cloud, so lib/publish-backlog.ts could not move them; AgentsPage lists them
+  // under «Задачі» as local-only until their project is published.
   kind: "agent" | "discussion" | "task" | "review" | "chat";
   parentSessionId?: string;
   ompSessionId?: string; ompSessionFile?: string;
@@ -37,12 +41,6 @@ export type Session = {
   usage?: Usage;
   pendingUiRequest?: RpcExtensionUIRequest; archived?: boolean; createdAt: string;
   lastActivityAt: string;
-};
-
-// The editable launch config the New-task launcher collects; startTask/updateTask patch
-// these onto a backlog row. All fields optional — it is a partial patch.
-export type TaskDraft = {
-  name?: string | undefined; task?: string | undefined; model?: string | undefined; prefix?: BranchPrefix | undefined; platform?: Platform | undefined; worktree?: boolean | undefined; baseBranch?: string | undefined;
 };
 
 export type ImageInput = { data: string; mimeType: string };

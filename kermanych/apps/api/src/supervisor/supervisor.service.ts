@@ -35,7 +35,6 @@ import {
   type RpcExtensionUIResponse,
   type ServerEvent,
   type Session,
-  type TaskDraft,
   type ToolLine,
   type TranscriptEntry,
 } from "@kermanych/core";
@@ -264,43 +263,6 @@ export class SupervisorService implements OnModuleDestroy {
     return this.worktree.pull(this.boundProject(projectId).localRepoPath);
   }
 
-  async createSession(
-    projectId: string,
-    name: string,
-    task: string,
-    model?: string,
-    images?: ImageInput[],
-    worktree = true,
-    prefix: BranchPrefix = "feature",
-    asTask = false,
-    platform?: Session["platform"],
-    baseBranch?: string,
-  ): Promise<Session> {
-    const project = this.project(projectId);
-
-    // A backlog task is just a saved launch config: no branch, no worktree, no omp child.
-    // startTask turns it into a running agent later, reusing exactly these fields. It is
-    // allowed on an unbound project — only launching needs the binding.
-    if (asTask) {
-      const session = this.registry.createSession({
-        projectId, name, task, worktreePath: "", branch: "",
-        worktree, model, prefix, platform, baseBranch, status: "backlog", kind: "task",
-      });
-      this.pushUpdate(session.id);
-      return this.merge(session);
-    }
-
-    const { branch, baseBranch: resolvedBase } = await this.resolveLaunchParams(project, name, prefix, worktree, undefined, baseBranch);
-    const session = this.registry.createSession({ projectId, name, task, worktreePath: "", branch, worktree, baseBranch: resolvedBase, model, prefix, platform });
-    try {
-      return await this.launch(session, project, { images });
-    } catch (err) {
-      this.registry.removeSession(session.id);
-      this.events.next({ type: "session_removed", sessionId: session.id });
-      throw err;
-    }
-  }
-
   // Launch a CLOUD task on this machine. The cloud decides who may run a task (assignee +
   // atomic claim) and owns the project config; SQLite owns where the repo lives locally.
   // From `registry.createSession` onward this is byte-for-byte the ordinary launch path, so
@@ -403,76 +365,6 @@ export class SupervisorService implements OnModuleDestroy {
     }
   }
 
-  // Turn a backlog task into a running agent in place: apply any last edits, resolve its
-  // branch, flip kind task→agent + status backlog→queued on the SAME row, then launch. On
-  // failure the row returns to the backlog so a transient spawn error never loses the plan.
-  async startTask(
-    id: string,
-    overrides?: TaskDraft,
-    images?: ImageInput[],
-  ): Promise<Session> {
-    const cur = this.registry.listSessions().find((x) => x.id === id);
-    if (!cur) throw new Error("session not found");
-    if (cur.kind !== "task" || cur.status !== "backlog") throw new Error("not a backlog task");
-    const project = this.boundProject(cur.projectId);
-
-    if (overrides)
-      this.registry.updateSession(id, {
-        name: overrides.name ?? cur.name,
-        task: overrides.task ?? cur.task,
-        model: overrides.model ?? cur.model,
-        prefix: overrides.prefix ?? cur.prefix,
-        platform: overrides.platform ?? cur.platform,
-        worktree: overrides.worktree ?? cur.worktree,
-        baseBranch: overrides.baseBranch ?? cur.baseBranch,
-      });
-    const edited = this.registry.listSessions().find((x) => x.id === id)!;
-
-    const { branch, baseBranch } = await this.resolveLaunchParams(project, edited.name, edited.prefix ?? "feature", edited.worktree, id, edited.baseBranch);
-    const session = this.registry.updateSession(id, { status: "queued", kind: "agent", branch, baseBranch, worktreePath: "" });
-    try {
-      return await this.launch(session, project, { images });
-    } catch (err) {
-      this.registry.updateSession(id, { status: "backlog", kind: "task", branch: "", baseBranch: undefined, worktreePath: "" });
-      this.pushUpdate(id);
-      throw err;
-    }
-  }
-
-  // Edit a backlog task's saved launch config without starting it.
-  updateTask(
-    id: string,
-    patch: TaskDraft,
-  ): Session {
-    const cur = this.registry.listSessions().find((x) => x.id === id);
-    if (!cur) throw new Error("session not found");
-    if (cur.kind !== "task" || cur.status !== "backlog") throw new Error("not a backlog task");
-    const saved = this.registry.updateSession(id, {
-      name: patch.name ?? cur.name,
-      task: patch.task ?? cur.task,
-      model: patch.model ?? cur.model,
-      prefix: patch.prefix ?? cur.prefix,
-      platform: patch.platform ?? cur.platform,
-      worktree: patch.worktree ?? cur.worktree,
-      baseBranch: patch.baseBranch ?? cur.baseBranch,
-    });
-    this.pushUpdate(id);
-    return this.merge(saved);
-  }
-
-  // Move a backlog task to another project. A backlog row is bound to its project only by
-  // project_id (no branch/worktree/omp child yet), so this is a pure re-parent — no git side
-  // effects, and the destination does not need a local binding yet.
-  moveTask(id: string, projectId: string): Session {
-    const cur = this.registry.listSessions().find((x) => x.id === id);
-    if (!cur) throw new Error("session not found");
-    if (cur.kind !== "task" || cur.status !== "backlog") throw new Error("not a backlog task");
-    this.project(projectId);
-    const saved = this.registry.updateSession(id, { projectId });
-    this.pushUpdate(id);
-    return this.merge(saved);
-  }
-
   // A quick chat: an instant, git-free omp conversation in the project dir with a read-only
   // tool subset. No branch, no worktree, no opening prompt — it spawns ready and the operator
   // sends the first message. It can later be promoted (forked) into a real agent, so a throwaway
@@ -573,9 +465,9 @@ export class SupervisorService implements OnModuleDestroy {
     }
   }
 
-  // In-place guards + a de-duplicated branch name, shared by an immediate agent
-  // (createSession) and a started backlog task (startTask). excludeId keeps a task from
-  // colliding with or blocking itself.
+  // In-place guards + a de-duplicated branch name, shared by every birth path of an agent
+  // (createSessionFromTask, promoteChatToAgent) and by attaching a worktree to an existing
+  // session. excludeId keeps a session from colliding with or blocking itself.
   private async resolveLaunchParams(
     project: Project,
     name: string,
@@ -591,7 +483,7 @@ export class SupervisorService implements OnModuleDestroy {
     if (!worktree) {
       if (await this.worktree.hasUncommitted(project.localRepoPath))
         throw new Error("project working tree must be clean to create an in-place (non-worktree) agent");
-      // A backlog task hasn't launched, so it never occupies the single in-place slot.
+      // A pre-cutover backlog leftover never launched, so it never occupies the in-place slot.
       const activeInPlace = this.registry
         .listSessions(project.id)
         .some((s) => s.id !== excludeId && !s.worktree && s.kind !== "discussion" && s.kind !== "review" && s.status !== "merged" && s.status !== "backlog");

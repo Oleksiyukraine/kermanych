@@ -3,12 +3,9 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type { Socket } from 'socket.io-client';
 import type {
-  BranchPrefix,
-  Platform,
   ImageInput,
   Project,
   Session,
-  TaskDraft,
   TranscriptEntry,
   ServerEvent,
   RpcExtensionUIResponse,
@@ -181,39 +178,12 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.syncProjects(cloud, prune);
   }
 
-  function createSession(
-    projectId: string,
-    name: string,
-    task: string,
-    model?: string,
-    images?: ImageInput[],
-    worktree = true,
-    prefix: BranchPrefix = 'feature',
-    asTask = false,
-    platform?: Platform,
-    baseBranch?: string,
-  ) {
-    return api.createSession(projectId, name, task, model, images, worktree, prefix, asTask, platform, baseBranch);
-  }
-
   function createChat(projectId: string) {
     return api.createChat(projectId);
   }
 
   function promoteChat(id: string, taskId: string) {
     return api.promoteChat(id, taskId);
-  }
-
-  function startTask(id: string, draft?: TaskDraft & { images?: ImageInput[] }) {
-    return api.startTask(id, draft);
-  }
-
-  function updateTask(id: string, patch: TaskDraft) {
-    return api.updateTask(id, patch);
-  }
-
-  function moveTask(id: string, projectId: string) {
-    return api.moveTask(id, projectId);
   }
 
   function sendMessage(id: string, text: string, mode: MessageMode, images?: ImageInput[]) {
@@ -361,12 +331,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     connect,
     selectProject,
     selectSession,
-    createSession,
     createChat,
     promoteChat,
-    startTask,
-    updateTask,
-    moveTask,
     sendMessage,
     answerUi,
     stopSession,

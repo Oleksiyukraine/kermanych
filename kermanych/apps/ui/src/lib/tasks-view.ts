@@ -8,7 +8,6 @@ import type { BranchPrefix, Platform } from '@kermanych/core';
 
 // The optional fields spell out `| undefined` because the launcher CLEARS a select by
 // assigning undefined, and exactOptionalPropertyTypes refuses that against a bare `?:`.
-// Same shape and same reason as core's TaskDraft.
 export type LauncherDraft = {
   name: string;
   task: string;

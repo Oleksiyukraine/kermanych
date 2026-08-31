@@ -514,29 +514,6 @@
       </template>
     </KModal>
 
-    <!-- MOVE TASK — re-parent a backlog task to another project -->
-    <KModal v-model="moveOpen" :title="`Перемістити задачу · ${moveFor?.name ?? ''}`">
-      <div class="agents__form">
-        <p class="agents__hint mono">
-          Задача переїде в інший проєкт разом із назвою, промптом і налаштуваннями запуску.
-        </p>
-        <div class="agents__move-list">
-          <button
-            v-for="p in moveTargets"
-            :key="p.id"
-            type="button"
-            class="agents__move-option"
-            :disabled="moveBusy"
-            @click="confirmMove(p.id)"
-          >{{ p.name }}</button>
-        </div>
-        <p v-if="moveError" class="agents__error" role="alert">{{ moveError }}</p>
-      </div>
-      <template #controls>
-        <KBtn variant="ghost" @click="moveOpen = false">Скасувати</KBtn>
-      </template>
-    </KModal>
-
     <!-- PREVIEW CONFIG — how to run this project's app for a live branch preview -->
     <KModal v-model="previewCfgOpen" title="Налаштувати превʼю">
       <div class="agents__form">
@@ -1769,37 +1746,6 @@ async function submitMerge(): Promise<void> {
   }
 }
 
-// ── Move a backlog task to another project ────────────────────────────────
-const moveOpen = ref(false);
-const moveFor = ref<Session | null>(null);
-const moveBusy = ref(false);
-const moveError = ref<string | null>(null);
-const moveTargets = computed(() => store.projects.filter((p) => p.id !== moveFor.value?.projectId));
-
-function openMove(s: Session): void {
-  moveFor.value = s;
-  moveError.value = null;
-  moveBusy.value = false;
-  moveOpen.value = true;
-}
-
-async function confirmMove(projectId: string): Promise<void> {
-  const s = moveFor.value;
-  if (!s) return;
-  moveBusy.value = true;
-  moveError.value = null;
-  try {
-    await store.moveTask(s.id, projectId);
-    moveOpen.value = false;
-    const dest = store.projects.find((p) => p.id === projectId);
-    store.notify(`Задачу «${s.name}» перенесено в «${dest?.name ?? 'проєкт'}»`);
-  } catch (e) {
-    moveError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    moveBusy.value = false;
-  }
-}
-
 function onDiscardRow(s: Session): void {
   if (!window.confirm(`Викинути ${s.kind === 'review' ? 'ревізію' : 'гілку'} «${s.name}»? Розмову буде втрачено.`)) return;
   void store.deleteSession(s.id).then(() => {
@@ -2721,34 +2667,5 @@ async function submitPreviewConfig(): Promise<void> {
   margin-left: 10px;
   font-size: 11px;
   opacity: 0.7;
-}
-
-.agents__move-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.agents__move-option {
-  font-family: var(--k-font-ui);
-  font-size: 14px;
-  text-align: left;
-  color: var(--k-text);
-  background: var(--k-surface);
-  border: 1px solid var(--k-line-strong);
-  padding: 11px 13px;
-  border-radius: var(--k-r);
-  cursor: pointer;
-  transition: border-color 0.12s, color 0.12s;
-}
-
-.agents__move-option:hover {
-  border-color: var(--k-accent);
-  color: var(--k-accent);
-}
-
-.agents__move-option:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 </style>

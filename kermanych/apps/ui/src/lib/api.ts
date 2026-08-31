@@ -1,8 +1,6 @@
 // apps/ui/src/lib/api.ts
 // Typed REST helpers against the Kermanych API (NestJS, global prefix "api").
 import type {
-  BranchPrefix,
-  Platform,
   DirListing,
   ImageInput,
   Project,
@@ -10,7 +8,6 @@ import type {
   Session,
   SubscriptionUsage,
   ProjectSkillsPayload,
-  TaskDraft,
   TranscriptEntry,
   ToolLine,
   RpcExtensionUIResponse,
@@ -158,20 +155,6 @@ export const api = {
   syncProjects: (projects: CloudProject[], prune = false): Promise<Project[]> =>
     post<Project[]>('/projects/sync', { projects, prune }),
 
-  createSession: (
-    projectId: string,
-    name: string,
-    task: string,
-    model?: string,
-    images?: ImageInput[],
-    worktree = true,
-    prefix: BranchPrefix = 'feature',
-    asTask = false,
-    platform?: Platform,
-    baseBranch?: string,
-  ): Promise<Session> =>
-    post<Session>('/sessions', { projectId, name, task, model, images, worktree, prefix, platform, asTask, baseBranch }),
-
   createChat: (projectId: string): Promise<Session> =>
     post<Session>('/sessions/chat', { projectId }),
 
@@ -284,15 +267,6 @@ export const api = {
 
   mergeBranch: (id: string, summary?: string): Promise<{ merged: boolean }> =>
     post<{ merged: boolean }>(`/sessions/${id}/merge`, { summary }),
-
-  startTask: (id: string, draft: TaskDraft & { images?: ImageInput[] } = {}): Promise<Session> =>
-    post<Session>(`/sessions/${id}/start`, draft),
-
-  updateTask: (id: string, draft: TaskDraft): Promise<Session> =>
-    patchJson<Session>(`/sessions/${id}`, draft),
-
-  moveTask: (id: string, projectId: string): Promise<Session> =>
-    post<Session>(`/sessions/${id}/move`, { projectId }),
 
   // Token handoff to the local api. POST is @Public() on the server (the UI has
   // no bearer to present yet); DELETE and GET are guarded like everything else.

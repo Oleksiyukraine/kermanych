@@ -1,6 +1,6 @@
 // apps/api/src/http/sessions.controller.ts
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from "@nestjs/common";
-import type { BranchPrefix, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft } from "@kermanych/core";
+import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, Req } from "@nestjs/common";
+import type { ImageInput, RpcExtensionUIResponse } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
@@ -18,18 +18,6 @@ export class SessionsController {
     return this.reg.listSessions(projectId);
   }
 
-  @Post()
-  async create(
-    @Body()
-    b: { projectId: string; name: string; task: string; model?: string; images?: ImageInput[]; worktree?: boolean; prefix?: BranchPrefix; platform?: Platform; asTask?: boolean; baseBranch?: string },
-  ) {
-    try {
-      return await this.sup.createSession(b.projectId, b.name, b.task, b.model, b.images, b.worktree ?? true, b.prefix ?? "feature", b.asTask ?? false, b.platform, b.baseBranch);
-    } catch (err) {
-      throw new BadRequestException((err as Error).message);
-    }
-  }
-
   @Post("chat")
   async createChat(@Body() b: { projectId: string }) {
     try {
@@ -41,7 +29,7 @@ export class SessionsController {
 
   // A literal segment, so it MUST be declared above the `:id` block — Nest matches in
   // declaration order and `:id/...` would otherwise swallow `from-task` (same reason
-  // `@Post("chat")` sits above `@Post(":id/start")`).
+  // `@Post("chat")` sits above `@Post(":id/promote")`).
   // The task id is the ONLY identity input: who may run it comes from the guard's cached
   // token, never from the request body. `images` are the first prompt's attachments; they
   // stay on this machine and never reach the cloud.
@@ -54,46 +42,12 @@ export class SessionsController {
     }
   }
 
-  @Post(":id/start")
-  async start(
-    @Param("id") id: string,
-    @Body() b: TaskDraft & { images?: ImageInput[] },
-  ) {
-    try {
-      const { images, ...draft } = b;
-      return await this.sup.startTask(id, draft, images);
-    } catch (err) {
-      throw new BadRequestException((err as Error).message);
-    }
-  }
-
   // A chat carries everything else the promotion needs (its conversation, its opening ask);
   // the task id is the card the UI has just minted for it.
   @Post(":id/promote")
   async promote(@Param("id") id: string, @Body() b: { taskId: string }) {
     try {
       return await this.sup.promoteChatToAgent(id, b.taskId);
-    } catch (err) {
-      throw new BadRequestException((err as Error).message);
-    }
-  }
-
-  @Patch(":id")
-  update(
-    @Param("id") id: string,
-    @Body() b: TaskDraft,
-  ) {
-    try {
-      return this.sup.updateTask(id, b);
-    } catch (err) {
-      throw new BadRequestException((err as Error).message);
-    }
-  }
-
-  @Post(":id/move")
-  move(@Param("id") id: string, @Body() b: { projectId: string }) {
-    try {
-      return this.sup.moveTask(id, b.projectId);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
