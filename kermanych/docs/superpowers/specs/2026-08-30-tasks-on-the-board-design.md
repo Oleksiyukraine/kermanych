@@ -254,11 +254,17 @@ grepping `store.createSession|startTask|updateTask|moveTask` and
 | `PATCH /sessions/:id` + `updateTask` | `patchTask` (UI) | `AgentsPage.vue:1269` |
 | `POST /sessions/:id/move` + `moveTask` | nothing | `AgentsPage.vue:1564`, reachable only from `openMove`, which has **zero** call sites — dead UI (`AgentsPage.vue:469-494`, `:1551-1566`) |
 | `TaskDraft` (`packages/core/src/types.ts:43-45`) | — | the two methods above |
-| `Session["kind"]` variant `"task"` | — | `AgentsPage.vue:52`, `:1307` |
 
 `SessionStatus`'s `'backlog'` label stays: cloud cards carry it and
-`TaskStatus = SessionStatus` (`packages/cloud/src/types.ts:8`). What disappears is any
-local row that holds it.
+`TaskStatus = SessionStatus` (`packages/cloud/src/types.ts:8`). No local row is ever
+CREATED with it again.
+
+`Session["kind"]`'s `"task"` variant stays too, and is no longer produced. Rows that still
+carry it are pre-cutover backlog leftovers whose project is not in the cloud, so the
+publication pass below cannot move them; they keep existing on disk and the registry keeps
+reading them, so narrowing the union would make the type lie. «Задачі» lists them as
+local-only until their project is published, and that is the only branch left that reads
+the kind (`AgentsPage.vue:52`, `:1307`).
 
 Changed:
 
@@ -315,10 +321,11 @@ survive). With no workspace at all: «спершу створи воркспей
 **«Задачі» bucket.** Source becomes `board.tasks`, predicate
 `status === 'backlog' && assigneeId === me`, narrowed by the same `scopedProjectIds` the
 rest of the page uses. That is my inbox — including what a colleague assigned to me —
-while unclaimed team cards live on «Дошка». `bucketOf` loses its `backlog` branch
-(`lib/buckets.ts:29`); `MainLayout.vue:549` counts my cloud backlog cards in scope
-instead of local rows. Transitional group «лише на цій машині» for rows the
-one-time publication could not move (see below).
+while unclaimed team cards live on «Дошка». `MainLayout.vue:549` keeps counting local
+`backlog` rows — they are the leftovers now — and ADDS my cloud backlog cards, so the badge
+equals what the list renders. `lib/buckets.ts` is not touched: `bucketOf` has zero consumers
+in `src` (the layout inlines the same rule), and its `backlog → tasks` answer stays right,
+because a leftover IS a task shown under «Задачі», labelled «лише на цій машині».
 
 **ChatPage.** «В беклог» → `board.createTask({ projectId, title: taskNameFromText(seed),
 description: seed, model: chat.model, prefix: 'feature', assigneeId: me })`, the same
