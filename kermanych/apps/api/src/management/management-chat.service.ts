@@ -12,6 +12,8 @@
 import { Injectable, Logger, type OnModuleDestroy } from "@nestjs/common";
 import {
   INTERACTIVE_UI_METHODS,
+  expandHelpers,
+  helperNotice,
   parseManagementReply,
   type ManagementChatAsk,
   type ManagementChatReply,
@@ -147,8 +149,14 @@ export class ManagementChatService implements OnModuleDestroy {
   ): Promise<ManagementChatReply> {
     const live = await this.child(key, repos);
     const first = !live.greeted;
-    const message = buildManagementTurn({ first, repos, context: input.context, text: input.text });
+    // Хелпери are expanded HERE rather than inside buildManagementTurn: that function wraps
+    // the operator's text in the contract and the context markers, so by the time the child
+    // reads it a leading `/el10` is no longer leading and would expand nowhere.
+    const helped = expandHelpers(input.text);
+    const message = buildManagementTurn({ first, repos, context: input.context, text: helped.text });
     const { events, notices } = await this.drive(key, live, message);
+    // First, because it describes the message that produced everything after it.
+    if (helped.used.length) notices.unshift(helperNotice(helped.used));
 
     // The reduction is the supervisor's, not a second copy of it: the same events that
     // build a session transcript build this reply, so an omp frame that changes meaning

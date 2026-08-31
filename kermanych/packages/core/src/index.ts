@@ -51,6 +51,14 @@ export {
   type SkillView,
 } from "./skills";
 export {
+  DEFAULT_HELPERS,
+  expandHelpers,
+  helperNotice,
+  prependHelper,
+  type HelperDef,
+  type HelperKind,
+} from "./helpers";
+export {
   AGENTS,
   PR_CONVENTIONS_FALLBACK,
   agentById,

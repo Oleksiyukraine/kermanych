@@ -405,6 +405,13 @@
           <AgentCatalogPanel />
         </div>
 
+        <!-- ── APP · ХЕЛПЕРИ ────────────────────────────────────────────────── -->
+        <!-- Beside the agent catalogue and for the same reason: `DEFAULT_HELPERS` is a
+             compile-time constant, so the pane has nothing to be told and nothing to load. -->
+        <div v-else-if="section.key === 'app-helpers'" class="set__form set__form--wide">
+          <HelpersCatalogPanel />
+        </div>
+
         <!-- ── APP · АКАУНТ ─────────────────────────────────────────────────── -->
         <div v-else-if="section.key === 'app-account'" class="set__form">
           <div class="set__group">
@@ -604,6 +611,7 @@ import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
 import AgentSkillsPanel from 'components/settings/AgentSkillsPanel.vue';
 import TriggersPanel from 'components/settings/TriggersPanel.vue';
 import AgentCatalogPanel from 'components/settings/AgentCatalogPanel.vue';
+import HelpersCatalogPanel from 'components/settings/HelpersCatalogPanel.vue';
 
 const store = useOrchestrator();
 const projects = useProjects();

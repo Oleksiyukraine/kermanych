@@ -17,6 +17,8 @@ import {
   PR_CONVENTIONS_FALLBACK,
   agentById,
   renderInstruction,
+  expandHelpers,
+  helperNotice,
   INITIAL_STATUS,
   reduceStatus,
   ACTIVE_STATUSES,
@@ -963,17 +965,19 @@ export class SupervisorService implements OnModuleDestroy {
   }
 
   // The OPERATOR's own message. Everything Kermanych sends itself goes through
-  // `sendAsKermanych`, which is the same delivery with trigger matching off.
+  // `sendAsKermanych`, which is the same delivery with the operator's own affordances off.
   async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
     await this.deliver(id, text, mode, images, true);
   }
 
   // Kermanych's own prompt into a session: a fired trigger's agent, a PR request, a merged
-  // discussion's conclusion. `source: "operator"` means the OPERATOR wrote the text, so these
-  // are exempt — which is also what stops a fired `agent` action from looping through the very
-  // agent it ran. The exemption is an ARGUMENT, not a flag on the session: a genuine operator
-  // message arriving while this send is still in flight is matched as normal, because a
-  // trigger that silently does not fire is the failure this feature exists to remove.
+  // discussion's conclusion. Trigger matching and helper expansion both exist for text a
+  // HUMAN wrote, so these are exempt — which is also what stops a fired `agent` action from
+  // looping through the very agent it ran, and what keeps a machine-authored prompt that
+  // happens to open with a slash from being rewritten. The exemption is an ARGUMENT, not a
+  // flag on the session: a genuine operator message arriving while this send is still in
+  // flight is treated as normal, because a trigger that silently does not fire is the failure
+  // this feature exists to remove.
   private async sendAsKermanych(id: string, text: string, mode: "prompt" | "follow_up" | "steer") {
     await this.deliver(id, text, mode, undefined, false);
   }
@@ -983,7 +987,7 @@ export class SupervisorService implements OnModuleDestroy {
     text: string,
     mode: "prompt" | "follow_up" | "steer",
     images: ImageInput[] | undefined,
-    matchTriggers: boolean,
+    fromOperator: boolean,
   ) {
     const l = await this.liveOrResume(id);
     try {
@@ -1000,12 +1004,17 @@ export class SupervisorService implements OnModuleDestroy {
     // Operator-sourced triggers run BEFORE the message reaches the child: Kermanych is the
     // only party that sees the operator's text, and an `agent` action has to be Kermanych's
     // to perform — a child cannot call back into us.
-    const fired = matchTriggers && s ? await this.matchOperatorTriggers(s, id, text) : undefined;
+    const fired = fromOperator && s ? await this.matchOperatorTriggers(s, id, text) : undefined;
     if (fired?.trigger.action === "agent" && (await this.runTriggerAgent(id, fired.trigger))) return;
+    // Хелпери are expanded AFTER the trigger match, and the match runs on the operator's raw
+    // text on purpose: a pattern that happens to appear inside a helper's instruction must not
+    // fire a trigger the operator never wrote for.
+    const helped = fromOperator ? expandHelpers(text) : { text, used: [] };
+    if (helped.used.length) this.appendEntry(id, this.noticeEntry(helperNotice(helped.used)));
     // `skill`: the resolved body goes in FRONT of what the operator wrote, so the instruction
     // is read before the request it applies to. The transcript keeps the operator's own text
-    // as the visible row and the notice above says what was prepended to it.
-    const body = fired?.block ? `${fired.block}\n\n${text}` : text;
+    // as the visible row and the notices above say what was prepended to it.
+    const body = fired?.block ? `${fired.block}\n\n${helped.text}` : helped.text;
     if (mode === "steer") l.rpc.steer(body, images);
     else if (mode === "follow_up") l.rpc.followUp(body, images);
     else l.rpc.prompt(body, images);

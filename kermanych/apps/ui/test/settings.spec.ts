@@ -93,6 +93,15 @@ describe('SETTINGS_CATEGORIES', () => {
     expect(triggers.scope).toBe('project');
     expect(triggers.label).toBe('Тригери');
   });
+
+  // Хелпери are baked into the app exactly like `AGENTS`, so they sit beside the agent
+  // catalogue at the app scope: nothing here is per-project, and the pane is read-only.
+  it('carries the helper catalogue at the app scope', () => {
+    const helpers = settingsSection('app-helpers');
+    expect(helpers.key).toBe('app-helpers');
+    expect(helpers.scope).toBe('app');
+    expect(helpers.label).toBe('Хелпери');
+  });
 });
 
 describe('changedFields', () => {
