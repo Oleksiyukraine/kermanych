@@ -274,7 +274,7 @@ export const api = {
 
   finish: (
     id: string,
-  ): Promise<{ merged: boolean; into: string } | { conflict: boolean; files: string[] }> =>
+  ): Promise<{ merged: boolean; into: string; pushed?: boolean; reason?: string } | { conflict: boolean; files: string[] }> =>
     post(`/sessions/${id}/finish`, {}),
 
   createPr: (id: string): Promise<{ ok: boolean }> =>
