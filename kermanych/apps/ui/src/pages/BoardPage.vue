@@ -142,8 +142,18 @@
             :model-value="editingTask.assigneeId ?? ''"
             :options="editorAssigneeOptions"
             placeholder="не призначено"
-            :disabled="isActiveTask(editingTask)"
+            :disabled="isActiveTask(editingTask) || !canAssign(editingTask)"
             @update:model-value="(id: string) => onAssign(editingTask!, id)"
+          />
+        </div>
+        <!-- Creating: nobody holds the card yet, so tasks_guard has nobody to protect it
+             from — any member may name any member, and «не призначено» stays the default. -->
+        <div v-else-if="!editingId" class="board__assign">
+          <KSelect
+            v-model="draftAssignee"
+            label="Виконавець"
+            :options="editorAssigneeOptions"
+            placeholder="не призначено"
           />
         </div>
         <p v-if="editingTask && isStale(editingTask)" class="board__stale-note mono" role="alert">
@@ -163,7 +173,7 @@
         <KBtn
           v-if="editingTask"
           variant="secondary"
-          :disabled="launching !== null || isActiveTask(editingTask)"
+          :disabled="launching !== null || isActiveTask(editingTask) || !canRun(editingTask)"
           :title="launchHint(editingTask)"
           @click="editorOpen = false; launch(editingTask)"
         >Запустити</KBtn>
@@ -245,6 +255,8 @@ import { relativeTime } from '../lib/time';
 import { api } from '../lib/api';
 import { installReconcile } from '../lib/reconcile';
 import { UNASSIGNED, filterTasks, scopedProjectIds } from '../lib/scope';
+import { ASSIGNMENT_REFUSALS } from '../lib/cloud-errors';
+import { canAssignTask, canRunTask } from '../lib/tasks-view';
 
 const auth = useAuth();
 const board = useBoard();
@@ -276,9 +288,9 @@ const COLUMNS: Column[] = [
 // be live on every route. What is left here is page-local — the workspace member rosters
 // the cards name assignees by.
 //
-// `opening` is component-local and not reactive: the project list growing BECAUSE of
-// open()'s own reads is not a project arriving, and must not queue a second open() on top
-// of the one already running.
+// `opening` is component-local and not reactive: a concurrent project load landing while
+// open() is still in flight would grow the list under the watcher below and queue a second
+// open() on top of the one already running, re-reading the same rosters.
 let opening = false;
 
 async function open(): Promise<void> {
@@ -715,12 +727,28 @@ function hasLocalSession(task: Task): boolean {
   return local.sessions.some((s) => s.taskId === task.id);
 }
 
+// The API refuses `task assigned to someone else` and tasks_guard refuses the reassignment;
+// showing that BEFORE the click is the difference between a rule and a surprise. Both are
+// mirrors of a server-side rule (lib/tasks-view.ts) — never the rule itself.
+function canRun(task: Task): boolean {
+  return !!auth.user && canRunTask(task, auth.user.id);
+}
+
+function canAssign(task: Task): boolean {
+  return !!auth.user && canAssignTask(task, auth.user.id, cloud.isOwner(task.projectId));
+}
+
 // The old text told everyone with a disabled button to «зупини сесію», which on any machine
 // but the executing one names a session that does not exist there — leaving the user hunting
 // for a stop button they cannot have. Say where the work actually is instead, and point at
 // the recovery control when there is one.
 function launchHint(task: Task): string {
   if (!isActiveTask(task)) {
+    // Ordered before the binding hint because a card held by someone else cannot be run
+    // from here at all — pointing at the folder picker would be a dead end. An ACTIVE card
+    // keeps the branches below instead: «де воно виконується» is the more useful answer
+    // there, and it is the only place the force-stop pointer lives.
+    if (!canRun(task)) return 'Задача призначена іншому учаснику — запустити її може лише він';
     return isBound(task)
       ? 'Запустити локальну сесію'
       : 'Проєкт не звʼязано з локальною текою — вкажи її';
@@ -784,7 +812,9 @@ const pendingLaunch = ref<Task | null>(null);
 // picker — a dead end would leave the user with no way to fix it from here.
 const LAUNCH_ERRORS: Record<string, string> = {
   'task not found': 'Задачі вже немає — хтось її видалив. Онови дошку.',
-  'task assigned to someone else': 'Задача призначена іншому учаснику — запустити її може лише він.',
+  // tasks_guard's own two sentences, shared with every other surface that renders a refused
+  // assignment so the wording cannot drift between them.
+  ...ASSIGNMENT_REFUSALS,
   'task already claimed': 'Задачу щойно забрав інший учасник — онови дошку.',
   'task is already running': 'Задача вже виконується — зупини поточну сесію, перш ніж запускати нову.',
   'not signed in': 'Локальний Керманич не має токена — увійди ще раз.',
@@ -871,14 +901,6 @@ const editingTask = computed(() =>
   editingId.value ? board.tasks.find((t) => t.id === editingId.value) : undefined,
 );
 
-// The editor's assignee picker reads the roster of the EDITED task's own workspace, which
-// is not necessarily the scoped one: an unscoped board shows cards from every workspace,
-// and «Виконавець» must name the person who actually holds the card.
-const editorAssigneeOptions = computed<KSelectOption[]>(() =>
-  editingTask.value
-    ? membersOf(editingTask.value.projectId).map((m) => ({ value: m.userId, label: handleOf(m) }))
-    : [],
-);
 const draftProject = ref('');
 const draftTitle = ref('');
 const draftDescription = ref('');
@@ -886,6 +908,18 @@ const draftModel = ref('');
 const draftPrefix = ref('');
 const draftPlatform = ref('');
 const draftBranch = ref('');
+// Creation only: while editing, the select writes through onAssign and the card itself is
+// the value. '' is «не призначено».
+const draftAssignee = ref('');
+
+// The editor's assignee picker reads the roster of the picker's OWN project, which is not
+// necessarily the scoped one: an unscoped board shows cards from every workspace, and
+// «Виконавець» must name the person who actually holds the card. `draftProject` is the key
+// for both modes — it is the edited card's (immutable) project while editing, and the
+// project the create dialog is currently pointed at otherwise.
+const editorAssigneeOptions = computed<KSelectOption[]>(() =>
+  membersOf(draftProject.value).map((m) => ({ value: m.userId, label: handleOf(m) })),
+);
 
 // A task always needs a title; a NEW one also needs a project, because `project_id` is what
 // the tasks INSERT policy checks membership against. `draftProject` holds an ID now, so it
@@ -908,6 +942,7 @@ function openCreate(): void {
   draftPrefix.value = '';
   draftPlatform.value = '';
   draftBranch.value = '';
+  draftAssignee.value = '';
   editorOpen.value = true;
 }
 
@@ -921,6 +956,9 @@ function openEdit(task: Task): void {
   draftPrefix.value = task.prefix ?? '';
   draftPlatform.value = task.platform ?? '';
   draftBranch.value = task.branch ?? '';
+  // Reset with the rest of the draft set rather than left over from a previous dialog: only
+  // the create branch reads it, and a half-reset draft set is a trap for the next edit here.
+  draftAssignee.value = task.assigneeId ?? '';
   editorOpen.value = true;
 }
 
@@ -959,7 +997,15 @@ async function submitEditor(): Promise<void> {
       editorError.value = 'Виберіть проєкт';
       return;
     }
-    if (!(await board.createTask({ projectId, ...fields }))) {
+    if (
+      !(await board.createTask({
+        projectId,
+        ...fields,
+        // «не призначено» is still the default: the board is the shared backlog. An assignee
+        // picked here is the «this one is yours» case, and tasks_guard refuses a non-member.
+        ...(draftAssignee.value ? { assigneeId: draftAssignee.value } : {}),
+      }))
+    ) {
       editorError.value = 'Не вдалося створити задачу — подробиці в повідомленні';
       return;
     }
