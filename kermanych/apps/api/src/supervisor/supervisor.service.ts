@@ -533,9 +533,10 @@ export class SupervisorService implements OnModuleDestroy {
     if (live && (live.state.status === "thinking" || live.state.status === "tool"))
       throw new Error("wait for the chat to finish its turn before starting implementation");
 
-    // The cloud identity arrives with the promotion: the UI mints the card (it is the only
-    // writer of `tasks`) and hands the id over here, so the row starts mirroring status the
-    // moment it stops being a chat. Written BEFORE the launch so a failure leaves a row
+    // The cloud identity arrives with the promotion: the caller mints the card — the UI on
+    // the human path, the supervisor itself for a trigger-driven promotion — and hands the
+    // id over here, so the row starts mirroring status the moment it stops being a chat.
+    // Written BEFORE the launch so a failure leaves a row
     // that is still a chat but already linked — harmless — rather than a running agent the
     // board cannot see.
     this.registry.updateSession(chatId, { taskId });

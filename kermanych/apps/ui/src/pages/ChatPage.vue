@@ -205,6 +205,12 @@ async function promote(): Promise<void> {
     store.notify('Проєкт ще не у хмарі — опублікуйте його, щоб підняти агента.', 'error');
     return;
   }
+  // The other half of what the disabled button says: promotion grows a worktree, so without
+  // a local binding the card would be minted and then refused server-side, orphaning it.
+  if (!isBound.value) {
+    store.notify(BIND_HINT, 'error');
+    return;
+  }
   promoting.value = true;
   try {
     const card = await board.createTask({
