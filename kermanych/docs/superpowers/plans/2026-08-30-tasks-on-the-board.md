@@ -891,7 +891,7 @@ describe('taskPatchFromDraft', () => {
 });
 
 describe('myBacklogTasks', () => {
-  it('keeps my backlog cards in scope, newest last', () => {
+  it('keeps only my backlog cards, and only in scope', () => {
     const mine = task({ id: 'a', assigneeId: ME });
     const theirs = task({ id: 'b', assigneeId: OTHER });
     const unclaimed = task({ id: 'c' });
