@@ -409,6 +409,108 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(error).toBeNull();
   });
 
+  // ── Assignment (20260830090000_tasks_assignment.sql) ────────────────────────
+  // Insert a fresh card per case: the fixture `taskId` carries state from the cases above.
+  async function freshTask(assigneeId: string | null): Promise<string> {
+    const inserted = await owner.client
+      .from("tasks")
+      .insert({
+        project_id: projectId,
+        title: "assignment case",
+        created_by: owner.id,
+        ...(assigneeId ? { assignee_id: assigneeId } : {}),
+      })
+      .select("id")
+      .single();
+    if (inserted.error) throw inserted.error;
+    return inserted.data.id as string;
+  }
+
+  it("refuses to take a backlog card that is already assigned to someone else", async () => {
+    const id = await freshTask(owner.id);
+
+    const stolen = await member.client.from("tasks").update({ assignee_id: member.id }).eq("id", id);
+
+    expect(stolen.error?.message).toMatch(/task assigned to someone else/);
+    const after = await owner.client.from("tasks").select("assignee_id").eq("id", id).single();
+    expect(after.data!.assignee_id).toBe(owner.id);
+  });
+
+  it("still lets any member claim an unassigned card", async () => {
+    const id = await freshTask(null);
+
+    const claimed = await member.client
+      .from("tasks")
+      .update({ assignee_id: member.id })
+      .eq("id", id)
+      .is("assignee_id", null)
+      .select("assignee_id")
+      .maybeSingle();
+
+    expect(claimed.error).toBeNull();
+    expect(claimed.data!.assignee_id).toBe(member.id);
+  });
+
+  it("lets the assignee release or hand over their own card", async () => {
+    const id = await freshTask(member.id);
+
+    const released = await member.client.from("tasks").update({ assignee_id: null }).eq("id", id);
+    expect(released.error).toBeNull();
+
+    const handedOver = await member.client.from("tasks").update({ assignee_id: owner.id }).eq("id", id);
+    expect(handedOver.error).toBeNull();
+  });
+
+  // The escape hatch: rule 1 already lets the workspace owner force 'stopped' when an
+  // assignee is gone for good; reassigning a settled card is the same situation.
+  it("lets the workspace owner reassign a non-active card", async () => {
+    const id = await freshTask(member.id);
+
+    const moved = await owner.client
+      .from("tasks")
+      .update({ assignee_id: owner.id })
+      .eq("id", id)
+      .select("assignee_id")
+      .single();
+
+    expect(moved.error).toBeNull();
+    expect(moved.data!.assignee_id).toBe(owner.id);
+  });
+
+  it("refuses an assignee who is not a member of the task's workspace", async () => {
+    const onInsert = await owner.client
+      .from("tasks")
+      .insert({
+        project_id: projectId,
+        title: "outsider assignee",
+        created_by: owner.id,
+        assignee_id: outsider.id,
+      })
+      .select("id")
+      .maybeSingle();
+    expect(onInsert.error?.message).toMatch(/assignee is not a workspace member/);
+
+    const id = await freshTask(null);
+    const onUpdate = await owner.client.from("tasks").update({ assignee_id: outsider.id }).eq("id", id);
+    expect(onUpdate.error?.message).toMatch(/assignee is not a workspace member/);
+  });
+
+  // Requirement 8's storage half: the column the launcher's «Ізолювати у worktree» maps to.
+  it("defaults worktree to true and accepts false", async () => {
+    const id = await freshTask(null);
+    const def = await owner.client.from("tasks").select("worktree").eq("id", id).single();
+    expect(def.data!.worktree).toBe(true);
+
+    const inPlace = await owner.client
+      .from("tasks")
+      .update({ worktree: false })
+      .eq("id", id)
+      .select("worktree")
+      .single();
+    expect(inPlace.error).toBeNull();
+    expect(inPlace.data!.worktree).toBe(false);
+  });
+
   // ── project_skills ──────────────────────────────────────────────────────────
   // Project-level cloud config, so the policy matrix is the projects one: members read,
   // the owner writes. `member` was invited above, `outsider` never was.
