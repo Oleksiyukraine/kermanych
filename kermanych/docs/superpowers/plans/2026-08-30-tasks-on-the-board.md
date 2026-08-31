@@ -554,7 +554,8 @@ replace the hardcoded worktree (currently `supervisor.service.ts:361-377`):
     // hardcoded `true` here used to guarantee. The in-place option is personal, so it
     // survives exactly for the person who filed the card — for anybody else the card is
     // isolated, whatever it says.
-    const worktree = task.worktree === false && task.createdBy === userId;
+    const inPlace = task.worktree === false && task.createdBy === userId;
+    const worktree = !inPlace;
 
     const { branch, baseBranch } = await this.resolveLaunchParams(
       project,
