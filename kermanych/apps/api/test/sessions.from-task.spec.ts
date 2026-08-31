@@ -95,6 +95,7 @@ function task(over: Partial<Task> = {}): Task {
     createdBy: OTHER,
     createdAt: NOW,
     updatedAt: NOW,
+    worktree: true,
     ...over,
   };
   cloudTasks.set(t.id, t);

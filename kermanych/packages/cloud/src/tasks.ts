@@ -6,7 +6,7 @@ import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import type { Task, TaskInsert, TaskPatch, TaskStatus } from "./types";
 
 const TASK_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, prefix, platform, kind, branch, created_at, updated_at";
+  "id, project_id, title, description, status, assignee_id, created_by, model, prefix, platform, kind, branch, worktree, created_at, updated_at";
 
 type TaskRow = {
   id: string;
@@ -20,6 +20,7 @@ type TaskRow = {
   model: string | null;
   prefix: string | null;
   platform: string | null;
+  worktree: boolean;
   kind: string | null;
   branch: string | null;
   created_at: string;
@@ -34,6 +35,7 @@ export function toTask(row: TaskRow): Task {
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    worktree: row.worktree,
   };
   // Optional keys are omitted rather than set to undefined, so a mapped task deep-equals a
   // hand-written literal in tests and carries no null noise into Vue's reactivity.
@@ -59,6 +61,8 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   if (patch.model !== undefined) row.model = patch.model.trim() || null;
   if (patch.prefix !== undefined) row.prefix = patch.prefix.trim() || null;
   if (patch.platform !== undefined) row.platform = patch.platform.trim() || null;
+  // A boolean, so no trim/blank-to-null step: `false` is a value, not an empty field.
+  if (patch.worktree !== undefined) row.worktree = patch.worktree;
   if (patch.kind !== undefined) row.kind = patch.kind.trim() || null;
   if (patch.branch !== undefined) row.branch = patch.branch.trim() || null;
   return row;
@@ -96,6 +100,7 @@ export async function createTask(
   // apps/api builds a per-request client with `persistSession: false` and has no session.
   // `status` is deliberately absent: the column defaults to 'backlog'.
   const row: Record<string, unknown> = {
+    ...(input.id ? { id: input.id } : {}),
     project_id: input.projectId,
     created_by: input.createdBy,
     title,
@@ -107,6 +112,7 @@ export async function createTask(
       platform: input.platform,
       kind: input.kind,
       branch: input.branch,
+      worktree: input.worktree,
     }),
   };
   const { data, error } = await client.from("tasks").insert(row).select(TASK_COLUMNS).single();

@@ -61,6 +61,11 @@ export type Task = {
   model?: string;
   prefix?: string;
   platform?: string;
+  // `tasks.worktree` is `not null default true`, so unlike every other launch param this
+  // key is always present. `false` means the launcher's «Ізолювати у worktree» was cleared:
+  // run in the project folder itself. createSessionFromTask honours that only for the
+  // card's author (a shared card must never commandeer another developer's checkout).
+  worktree: boolean;
   kind?: string;
   branch?: string;
   createdAt: string;
@@ -75,6 +80,11 @@ export type TaskInsert = {
   model?: string;
   prefix?: string;
   platform?: string;
+  // Supplied ONLY by the one-time publication of pre-cutover local backlog rows, which
+  // reuses the local session id so a repeated pass collides instead of duplicating. Same
+  // trick as CloudProjectInsert.id (projects.ts:95).
+  id?: string;
+  worktree?: boolean;
   kind?: string;
   branch?: string;
 };
@@ -86,6 +96,7 @@ export type TaskPatch = {
   model?: string;
   prefix?: string;
   platform?: string;
+  worktree?: boolean;
   kind?: string;
   branch?: string;
 };
