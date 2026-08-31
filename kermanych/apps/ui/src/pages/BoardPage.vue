@@ -271,28 +271,20 @@ const COLUMNS: Column[] = [
   { key: 'closed', label: 'Завершені', statuses: ['done', 'merged', 'stopped', 'error', 'conflict'] },
 ];
 
-// subscribe() refetches then opens the channel; leaving the page closes it, so Realtime
-// traffic is scoped to the screen that shows it. This page is the ONLY reader of the board
-// store — Агенти reads the cloud PROJECT list and writes project config, but never the
-// task list, so it needs neither this store nor the channel.
-//
-// The FIRST subscribe is the page's job. The store's project-set watcher deliberately only
-// REBUILDS a channel that already exists ("before the board mounts there is nothing to
-// rebuild"), so a board opened by a user with no cloud project yet would otherwise stay
-// silent — no Realtime, no reconcile timer — even after a project arrives from the rail.
+// The Realtime subscription is NOT this page's any more: MainLayout owns subscribe() and
+// unsubscribe(), because «Агенти» and the sidebar count read the same store and it has to
+// be live on every route. What is left here is page-local — the workspace member rosters
+// the cards name assignees by.
 //
 // `opening` is component-local and not reactive: the project list growing BECAUSE of
-// open()'s own load is not a project arriving, and must not queue a second subscribe on top
-// of the one already building. The in-flight subscribe reads the project set after that
-// load, so it already covers those projects.
+// open()'s own reads is not a project arriving, and must not queue a second open() on top
+// of the one already running.
 let opening = false;
 
 async function open(): Promise<void> {
   opening = true;
   try {
-    // Also performs the initial project load, which is why it runs even with an empty
-    // project list.
-    await board.subscribe();
+    // The workspace rosters, not the tasks: the store's own load() owns those.
     await loadMembers();
   } finally {
     opening = false;
@@ -300,7 +292,6 @@ async function open(): Promise<void> {
 }
 
 onMounted(open);
-onUnmounted(() => board.unsubscribe());
 
 // 5 s: fast enough that «щойно відправили» feels immediate, slow enough to be a rounding
 // error against the local API (one SELECT COUNT-shaped read of a table with at most a few
@@ -336,8 +327,8 @@ onUnmounted(() => {
   stopOutboxPoll = undefined;
 });
 
-// 0 → n only: once a channel exists the store rebuilds it on every project-set change, and
-// a board that never had one is exactly the case the store skips.
+// 0 → n only: the rosters' first read, for a page mounted before this user had any cloud
+// project. The channel behind those projects is the layout's business now.
 watch(
   () => cloud.projects.length,
   (count, prev) => {

@@ -273,12 +273,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import type { SessionStatus } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
+import { useBoard } from 'stores/board';
 import { IS_PREVIEW } from '../lib/preview';
 import { MANAGEMENT_DEFAULT_SECTION } from '../lib/management';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
@@ -306,6 +307,7 @@ import KUserButton from 'components/kit/KUserButton.vue';
 const store = useOrchestrator();
 const projects = useProjects();
 const auth = useAuth();
+const board = useBoard();
 const route = useRoute();
 const router = useRouter();
 
@@ -448,6 +450,23 @@ onMounted(async () => {
     );
   }
 });
+
+// The board store is app-wide now: Агенти renders my backlog cards from it and the sidebar
+// counts them, so it must be live on every route, not only on /#/board. subscribe() is
+// idempotent — BoardPage no longer owns this.
+onMounted(() => void board.subscribe());
+onUnmounted(() => board.unsubscribe());
+
+// 0 → n only, and it has to live here for the same reason the mount call does: the store
+// rebuilds a channel on every project-set change but SKIPS a set that never had one
+// (stores/board.ts:287, `!unsubscribeChannel`), so a user whose first cloud project
+// appears mid-session would otherwise get no channel until a reload.
+watch(
+  () => projects.projects.length,
+  (count, prev) => {
+    if (count && !prev) void board.subscribe();
+  },
+);
 
 // A session is "running" while it is queued or actively working; waiting means it is blocking
 // on an interactive UI request; done is terminal-success.
