@@ -3,14 +3,19 @@
 import type {
   DirListing,
   ImageInput,
+  ManagementChatAsk,
+  ManagementChatReply,
   Project,
   EnvFileView,
   Session,
   SubscriptionUsage,
   ProjectSkillsPayload,
   TranscriptEntry,
+  ThinkingLevel,
   ToolLine,
   RpcExtensionUIResponse,
+  TreeEntry,
+  FileContent,
 } from '@kermanych/core';
 import type { CloudProject } from '@kermanych/cloud';
 
@@ -146,7 +151,6 @@ export const api = {
   // because RLS — not this loopback api — is what makes them owner-only.
   projectSkills: (id: string): Promise<ProjectSkillsPayload> =>
     get<ProjectSkillsPayload>(`/projects/${id}/skills`),
-
   setProjectBinding: (id: string, localRepoPath: string): Promise<Project> =>
     put<Project>(`/projects/${id}/binding`, { localRepoPath }),
 
@@ -173,11 +177,28 @@ export const api = {
   subscriptionUsage: (): Promise<SubscriptionUsage> =>
     get<SubscriptionUsage>('/usage/subscription'),
 
+  // One turn of the Менеджмент assistant. Local-only for the same reason as the two calls
+  // above: the model is reached by spawning `omp` on THIS machine (apps/api/src/management),
+  // and only this process has the binary, the provider credentials and the local registry
+  // that turns project ids into repository paths. There is no cloud route to fall back to.
+  managementChat: (ask: ManagementChatAsk): Promise<ManagementChatReply> =>
+    post<ManagementChatReply>('/management/chat', ask),
+
+  // Drops the omp child behind a conversation, so «Новий чат» starts with no history rather
+  // than a fresh transcript in front of a model that still remembers the old one.
+  resetManagementChat: (conversationId: string): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>('/management/chat/reset', { conversationId }),
+
+  // The chat is promoted onto a card the UI has already minted: `taskId` is that card, and
+  // the guard reads who may run it from its own token, never from this body.
   promoteChat: (id: string, taskId: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/promote`, { taskId }),
 
   sendMessage: (id: string, text: string, mode: MessageMode, images?: ImageInput[]): Promise<unknown> =>
     post(`/sessions/${id}/message`, { text, mode, images }),
+
+  setEffort: (id: string, level: ThinkingLevel): Promise<Session> =>
+    post<Session>(`/sessions/${id}/effort`, { level }),
 
   answerUi: (id: string, res: RpcExtensionUIResponse): Promise<unknown> =>
     post(`/sessions/${id}/answer`, { res }),
@@ -230,9 +251,15 @@ export const api = {
   fileDiff: (id: string, path: string): Promise<FileDiff> =>
     get<FileDiff>(`/sessions/${id}/diff?path=${encodeURIComponent(path)}`),
 
+  sessionTree: (id: string, path: string): Promise<TreeEntry[]> =>
+    get<TreeEntry[]>(`/sessions/${id}/tree${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+
+  sessionFile: (id: string, path: string): Promise<FileContent> =>
+    get<FileContent>(`/sessions/${id}/file?path=${encodeURIComponent(path)}`),
+
   finish: (
     id: string,
-  ): Promise<{ merged: boolean; into: string } | { conflict: boolean; files: string[] }> =>
+  ): Promise<{ merged: boolean; into: string; pushed?: boolean; reason?: string } | { conflict: boolean; files: string[] }> =>
     post(`/sessions/${id}/finish`, {}),
 
   createPr: (id: string): Promise<{ ok: boolean }> =>

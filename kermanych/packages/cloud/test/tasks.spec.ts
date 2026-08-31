@@ -91,6 +91,17 @@ describe("listTasks", () => {
     expect(queries).toHaveLength(0);
   });
 
+  it("maps a non-empty image_paths array to imagePaths and omits it when empty", async () => {
+    const withImages = { ...taskRow, image_paths: ["p1/a.png", "p1/b.png"] };
+    const { client } = fakeClient({ data: [withImages], error: null });
+    const [t] = await listTasks(client, ["p1"]);
+    expect(t!.imagePaths).toEqual(["p1/a.png", "p1/b.png"]);
+
+    const noImages = fakeClient({ data: [{ ...taskRow, image_paths: [] }], error: null });
+    const [t2] = await listTasks(noImages.client, ["p1"]);
+    expect(t2!.imagePaths).toBeUndefined();
+  });
+
   it("throws the postgrest message so the UI can toast an RLS refusal", async () => {
     const { client } = fakeClient({ data: null, error: { message: "permission denied for table tasks" } });
     await expect(listTasks(client, ["p1"])).rejects.toThrow(/permission denied/);
@@ -143,6 +154,23 @@ describe("createTask", () => {
       /task title is required/,
     );
     expect(queries).toHaveLength(0);
+  });
+
+  it("sends assignee_id and image_paths when supplied at creation", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null });
+
+    await createTask(client, {
+      projectId: "p1",
+      title: "T",
+      assigneeId: "u2",
+      imagePaths: ["p1/shot.png"],
+      createdBy: "u1",
+    });
+
+    expect(queries[0]!.ops[0]).toEqual([
+      "insert",
+      { project_id: "p1", created_by: "u1", title: "T", assignee_id: "u2", image_paths: ["p1/shot.png"] },
+    ]);
   });
 });
 

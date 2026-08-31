@@ -1,9 +1,10 @@
 // apps/api/src/worktree/worktree.service.ts
 import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { addedFileDiff, splitDiff, type SplitDiff } from "./split-diff";
+import type { TreeEntry, FileContent } from "@kermanych/core";
 
 export type ChangedFile = { path: string; added: number; removed: number };
 
@@ -225,6 +226,43 @@ export class WorktreeService {
     return { hunks: [], binary: false, truncated: false };
   }
 
+  // One level of the worktree tree, for the Файли tab's lazy expand. `rel` is
+  // worktree-relative ("" is the root) and travelled through the browser, so it is guarded
+  // the same way fileDiff's path is — no absolute path, no `..` hop out of the session's
+  // tree. `.git` is hidden (bookkeeping, never something to open); everything else is
+  // shown, folders first then files, each side alphabetical.
+  async listTree(dir: string, rel: string): Promise<TreeEntry[]> {
+    const p = rel.trim();
+    if (p.startsWith("/") || /^[a-zA-Z]:/.test(p) || p.split(/[\\/]/).includes("..")) {
+      throw new Error("invalid path");
+    }
+    const ents = await readdir(join(dir, p), { withFileTypes: true });
+    return ents
+      .filter((e) => e.name !== ".git")
+      .map((e) => ({ name: e.name, type: e.isDirectory() ? ("dir" as const) : ("file" as const) }))
+      .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1));
+  }
+
+  // A single file opened read-only in the Файли tab. Same guard as listTree, plus a
+  // non-empty check because this one must name a file. Binary or oversized content reports a
+  // flag and an empty body, exactly as untrackedDiff does for the same blobs — the viewer
+  // shows a notice instead of megabytes of bytes or mojibake.
+  async readFileContent(dir: string, rel: string): Promise<FileContent> {
+    const p = rel.trim();
+    if (!p || p.startsWith("/") || /^[a-zA-Z]:/.test(p) || p.split(/[\\/]/).includes("..")) {
+      throw new Error("invalid path");
+    }
+    const abs = join(dir, p);
+    const st = await stat(abs);
+    if (!st.isFile()) throw new Error("not a file");
+    if (st.size > MAX_COUNT_BYTES) return { path: p, content: "", binary: false, truncated: true };
+    const buf = await readFile(abs);
+    if (buf.subarray(0, BINARY_SNIFF_BYTES).includes(0)) {
+      return { path: p, content: "", binary: true, truncated: false };
+    }
+    return { path: p, content: buf.toString("utf8"), binary: false, truncated: false };
+  }
+
   // Merge branch into the repo's current HEAD (no-ff). On failure the merge is
   // aborted so the project tree stays clean; the result says whether it was a
   // content conflict (recoverable in the worktree) or a hard error (e.g. dirty tree).
@@ -240,10 +278,14 @@ export class WorktreeService {
     return { ok: false, conflict, message: r.out.trim() || "merge failed" };
   }
 
-  // Merge a ref INTO a worktree's branch, leaving conflict markers in place (no abort)
-  // so they can be resolved in an editor.
-  async mergeInto(dir: string, ref: string): Promise<void> {
-    await git(dir, ["merge", ref]);
+  // Merge a ref INTO a worktree's branch, leaving conflict markers in place (no abort) so
+  // they can be resolved in an editor. Reports whether it conflicted, so a caller can stop
+  // and hand the worktree to the operator rather than merging on.
+  async mergeInto(dir: string, ref: string): Promise<{ ok: true } | { ok: false; conflict: boolean; message: string }> {
+    const r = await git(dir, ["merge", ref]);
+    if (r.ok) return { ok: true };
+    const conflict = /CONFLICT|Automatic merge failed/i.test(r.out);
+    return { ok: false, conflict, message: r.out.trim() || "merge failed" };
   }
 
   // Unified diff of a worktree against where its branch forked from `base`. The
@@ -288,5 +330,31 @@ export class WorktreeService {
   // flow, which knows which branch it is publishing.
   async pull(repoDir: string): Promise<{ ok: boolean; out: string }> {
     return git(repoDir, ["pull", "--ff-only"]);
+  }
+
+  // True when `remote` is configured for the repo (a local-only project has none).
+  async hasRemote(repoDir: string, remote = "origin"): Promise<boolean> {
+    const r = await git(repoDir, ["remote"]);
+    return r.ok && r.out.split("\n").map((s) => s.trim()).includes(remote);
+  }
+
+  // True when `ref` resolves — tells whether a fetch actually produced `origin/<base>`.
+  async refExists(repoDir: string, ref: string): Promise<boolean> {
+    return (await git(repoDir, ["rev-parse", "--verify", "--quiet", ref])).ok;
+  }
+
+  // Fetch one branch from a remote. Best-effort: offline or a missing remote is reported as
+  // not-ok, never thrown, so a launch or finish degrades to local-only instead of failing.
+  async fetch(repoDir: string, remote: string, branch: string): Promise<{ ok: boolean; out: string }> {
+    return git(repoDir, ["fetch", remote, branch]);
+  }
+
+  // Push a branch to a remote. A non-fast-forward rejection (origin moved) is told apart from
+  // a hard error, so the caller can fetch-merge-retry once before giving up.
+  async push(repoDir: string, remote: string, branch: string): Promise<{ ok: true } | { ok: false; rejected: boolean; message: string }> {
+    const r = await git(repoDir, ["push", remote, `${branch}:${branch}`]);
+    if (r.ok) return { ok: true };
+    const rejected = /rejected|non-fast-forward|fetch first|Updates were rejected/i.test(r.out);
+    return { ok: false, rejected, message: r.out.trim() || "push failed" };
   }
 }

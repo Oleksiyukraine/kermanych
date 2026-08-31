@@ -9,6 +9,8 @@ import {
   listTasks as cloudListTasks,
   patchTask as cloudPatchTask,
   subscribeTasks as cloudSubscribeTasks,
+  uploadTaskImages as cloudUploadTaskImages,
+  TASK_IMAGE_BUCKET,
 } from '@kermanych/cloud';
 // Import from core's status module directly (not the barrel): @kermanych/core is a CJS
 // workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
@@ -186,19 +188,38 @@ export const useBoard = defineStore('board', () => {
     return next;
   }
 
-  async function createTask(input: TaskInsert): Promise<Task | undefined> {
+  // Images are uploaded to the private task-images bucket BEFORE the row, so the id the
+  // insert mints already carries their paths — one write, one Realtime echo. An upload
+  // needs the project id (the storage RLS keys on it), which the insert has anyway.
+  async function createTask(input: TaskInsert, images: File[] = []): Promise<Task | undefined> {
     const userId = auth.user?.id;
     if (!userId) {
       local.notify('Спочатку увійдіть у Kermanych', 'error');
       return undefined;
     }
+    let imagePaths: string[] = [];
+    try {
+      if (images.length) imagePaths = await cloudUploadTaskImages(auth.client, input.projectId, images);
+    } catch (e) {
+      fail(e);
+      return undefined;
+    }
     try {
       // No optimistic row here: the id is minted by Postgres. Realtime delivers the same
       // task moments later and upsert() dedupes it by id.
-      const created = await cloudCreateTask(auth.client, { ...input, createdBy: userId });
+      const created = await cloudCreateTask(auth.client, {
+        ...input,
+        ...(imagePaths.length ? { imagePaths } : {}),
+        createdBy: userId,
+      });
       upsert(created);
       return created;
     } catch (e) {
+      // The row never landed, so the objects it would have named are orphans — remove them
+      // rather than leave storage littered with images no task points at.
+      if (imagePaths.length) {
+        await auth.client.storage.from(TASK_IMAGE_BUCKET).remove(imagePaths).catch(() => {});
+      }
       fail(e);
       return undefined;
     }

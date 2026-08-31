@@ -1,5 +1,5 @@
 import type { RouteRecordRaw } from 'vue-router';
-import { MANAGEMENT_DEFAULT_SECTION, MANAGEMENT_SECTIONS } from '../lib/management';
+import { MANAGEMENT_DEFAULT_SECTION, MANAGEMENT_SECTIONS } from '@kermanych/core';
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -9,11 +9,13 @@ declare module 'vue-router' {
   }
 }
 
-// Which Менеджмент sections have a screen of their own. Labels and paths live in
-// lib/management.ts; the component belongs here, where the rest of the route
-// records keep theirs, so promoting a section is one entry in this map.
+// Which Менеджмент sections have a screen of their own. Labels, paths and what the
+// Менеджмент assistant may do with each live in @kermanych/core (management.ts); the
+// component belongs here, where the rest of the route records keep theirs, so promoting a
+// section is one entry in this map.
 const SECTION_PAGES: Record<string, RouteRecordRaw['component']> = {
   'management-integrations': () => import('pages/ManagementIntegrationsPage.vue'),
+  'management-risks': () => import('pages/ManagementRisksPage.vue'),
 };
 
 const routes: RouteRecordRaw[] = [

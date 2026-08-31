@@ -115,3 +115,23 @@ test("a legacy row gains the usage column, and a session's spend survives reopen
   expect(s.status).toBe("thinking");
   expect(s.usage).toEqual({ input: 8, output: 11, cacheRead: 1000, cacheWrite: 200, cost: 0.75 });
 });
+
+test("a legacy row gains the effort column, and an unreadable level degrades to no level", () => {
+  seedLegacyDb(file);
+
+  const first = new RegistryService(file);
+  // The column is additive, so an existing agent has no level — and «no level» is not `off`,
+  // which is a real setting the operator can choose.
+  expect(first.listSessions()[0]!.effort).toBeUndefined();
+  expect(first.updateSession("s-legacy", { effort: "xhigh" }).effort).toBe("xhigh");
+
+  const reopened = new RegistryService(file);
+  expect(reopened.listSessions()[0]!.effort).toBe("xhigh");
+
+  // A level this build has no word for — an older/newer schema, or a hand-edited row — must
+  // read as unknown rather than be typed as a ThinkingLevel and sent back into omp's argv.
+  const db = new Database(file);
+  db.prepare(`UPDATE sessions SET effort = ? WHERE id = ?`).run("ludicrous", "s-legacy");
+  db.close();
+  expect(new RegistryService(file).listSessions()[0]!.effort).toBeUndefined();
+});

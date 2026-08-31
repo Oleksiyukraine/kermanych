@@ -413,3 +413,74 @@ everyone else, and refuses even the owner any status other than `stopped`. It on
 corrects the board — it
 cannot stop a session on a machine you do not control, and if that machine is still alive
 it will simply push its real status again.
+
+## The Менеджмент tab and its assistant
+
+Менеджмент is the non-code half of the product: six workspace-scoped sections
+(`packages/core/src/management.ts` is the one table that names them) plus a chat
+field docked to the foot of the page.
+
+That field is a real assistant, and it is deliberately narrow:
+
+- **It only touches Менеджмент.** Its tools are the read-only subset
+  (`read`, `grep`, `glob`) — it can look at your repositories but it cannot edit a
+  file, create a branch or start a session. The only section it can WRITE is the one
+  the section table marks `read_write`: the Risk Registry. Everywhere else it reads,
+  explains and refuses, and says which it is doing.
+- **It keeps the risk register.** Ask it to file a risk and it emits a `risk.create`
+  action carrying that schema's own vocabulary — threat or opportunity, one of the
+  fourteen categories, cause·event·consequence, 1–5 probability × impact, a PMI
+  response strategy with the actions that make it one. `risk.update` changes a row you
+  name by its register code (`R-003`). The write runs in your browser under your own
+  JWT, so RLS decides whether it lands, and the line you read afterwards
+  («Ризик R-004 занесено…») is written by the app after Postgres answered — never by
+  the model. Every turn also carries the current register, so it updates R-004 instead
+  of filing it twice. Owners are not something it can set: `risk_owner` and
+  `action_owner` are profile ids, and those are assigned on the register screen.
+- **It spends the same subscription your agents spend.** It runs through the same
+  `omp` on your PATH, the same provider account and the same plan; there is no second
+  key to configure and no separate budget. The mono pill on the right of the field is
+  that plan's tightest rolling window, read from `omp usage` — the same figure the
+  sidebar shows.
+- **It is scoped to the Воркспейс, and so is the tab it lives in.** Every turn carries the
+  repositories of that Воркспейс — name, remote, default branch, conventions and
+  the local path where each is bound on this machine — so «which of our repos does this
+  affect» is answerable. Unbound projects are listed as unbound rather than guessed at.
+- **It says why when it cannot act.** Ask it to change Release Notes and it refuses
+  with that section's stated limitation. The refusal is not the model being polite: the
+  model reports only WHICH section was asked for, and the sentence you read is looked
+  up in the section table by the app (`ManagementAction` `unsupported`,
+  `packages/core/src/management-actions.ts`). A model that would rather agree with you
+  cannot make that sentence disappear.
+
+### Giving another section something it can write
+
+The Risk Registry is wired end to end; every other section is `none` or `read`, and the
+chat has no write path into them on purpose. Adding one is three edits, and they belong
+to the branch that owns the screen being written to:
+
+1. flip that section's row in `packages/core/src/management.ts` to `capability:
+   "read_write"` and drop its `limitation`;
+2. add the action kind to `ManagementAction` in
+   `packages/core/src/management-actions.ts`, with the vocabulary that section's table
+   actually enforces — `validateManagementAction` is what stops the model inventing a
+   value the database would reject, and the prompt in
+   `apps/api/src/management/management-prompt.ts` prints that same vocabulary so the
+   two cannot drift;
+3. give the executor in `apps/ui/src/stores/management-chat.ts` a branch for it.
+
+Step 3 stays in the **browser**, under your own JWT — the API must never gain a write
+path of its own. That is what makes RLS, rather than trust in the model, the thing that
+decides what lands: an action aimed at a workspace you are not a member of is refused by
+Postgres. The app refuses earlier too, and twice: an action block that does not
+type-check is reported in the chat and never executed, and an unknown `kind` is named
+back to you instead of silently dropped.
+
+### Its conversation
+
+One conversation per Воркспейс (`management:<workspaceId>`), held open as a git-free `omp`
+child in the first bound repository of the group — or in your home directory when none is
+bound — with no worktree, no branch and no row on the Агенти board. Switching workspace in
+the sidebar switches conversation; «Новий чат» drops the child so the next question starts
+from nothing. An idle conversation is stopped after a while, and the next message simply
+spawns a fresh one.

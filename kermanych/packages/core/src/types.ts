@@ -1,5 +1,6 @@
 import type { BranchPrefix } from "./worktree-names";
 import type { Platform } from "./platform";
+import type { ThinkingLevel } from "./thinking";
 
 export type SessionStatus =
   | "backlog" | "queued" | "thinking" | "tool" | "waiting_input" | "done" | "error" | "stopped" | "merged" | "conflict";
@@ -19,6 +20,14 @@ export type EnvFileView = { entries: EnvEntry[]; ignored: boolean };
 export type DirEntry = { name: string; isRepo: boolean };
 export type DirListing = { path: string; parent: string | null; entries: DirEntry[] };
 
+// A file-manager entry — one level of a session's worktree. `type` is all the tree needs
+// to draw a folder vs a file and to decide whether a click expands or opens.
+export type TreeEntry = { name: string; type: "file" | "dir" };
+
+// A file opened read-only in the Файли tab. `binary`/`truncated` mirror FileDiff: an
+// oversized or binary blob reports a flag instead of a body, never a partial one.
+export type FileContent = { path: string; content: string; binary: boolean; truncated: boolean };
+
 export type Session = {
   id: string; projectId: string; name: string; task: string;
   // The cloud task this session executes, when it was launched from the board.
@@ -30,6 +39,10 @@ export type Session = {
   // agent is born. Rows with this kind are pre-cutover backlog leftovers whose project is
   // not in the cloud, so lib/publish-backlog.ts could not move them; AgentsPage lists them
   // under «Задачі» as local-only until their project is published.
+  // How hard omp is told to think, as omp itself reports it (`get_state.thinkingLevel`) or as
+  // the operator set it from the composer. Absent means "not known yet" — a fresh child has
+  // not answered its first state poll — never "off", which is a real setting.
+  effort?: ThinkingLevel;
   kind: "agent" | "discussion" | "task" | "review" | "chat";
   parentSessionId?: string;
   ompSessionId?: string; ompSessionFile?: string;
@@ -43,6 +56,11 @@ export type Session = {
   lastActivityAt: string;
 };
 
+// The editable launch config the New-task launcher collects; startTask/updateTask patch
+// these onto a backlog row. All fields optional — it is a partial patch.
+export type TaskDraft = {
+  name?: string | undefined; task?: string | undefined; model?: string | undefined; prefix?: BranchPrefix | undefined; platform?: Platform | undefined; worktree?: boolean | undefined; baseBranch?: string | undefined; effort?: ThinkingLevel | undefined;
+};
 export type ImageInput = { data: string; mimeType: string };
 
 export type ToolStatus = "pending" | "ok" | "error";

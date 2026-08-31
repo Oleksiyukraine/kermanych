@@ -225,9 +225,19 @@ Skipped in the sidebar: **Витрати / Токени** (no backend) and the *
     model, branch, worktree, base; finish / review / pr / archive
     (`api.finishInfo/finish/reviewSession/createPr/mergeBranch/archiveSession`).
   - `KComposer`: model + worktree + token count wired to existing state
-    (`session.model`, `contextPercent`). Reasoning and "Авто-правки" selects are
+    (`session.model`, `session.usage`). Reasoning and "Авто-правки" selects are
     wired **only if** a direct omp RPC exists (verify against omp during Phase
     3); otherwise display-only or omitted, per the Hybrid rule.
+    **Verified:** reasoning effort IS settable (`set_thinking_level`, and
+    `get_state.thinkingLevel` reads it back), so it ships as a live picker
+    (`Session.effort` → `POST /sessions/:id/effort` → `omp --thinking` /
+    `set_thinking_level`). "Авто-правки" has no RPC and is OMITTED — a caret
+    over a setting nothing can change is worse than no chip.
+    The composer's chip row is the session's ONE readout of what it is running as:
+    vendor mark + model id, effort, worktree, then `N токенів · $X` on the right.
+    `KStatusRow` above it therefore keeps only what the row cannot show — context
+    budget and the live action/silence heartbeat — because the same model and the
+    same spend printed twice, one floor apart, read as two disagreeing figures.
 
 ### Дошка (team board)
 
@@ -287,8 +297,9 @@ the chat's nature, not a new mode.
 
 ## Risks & to-verify
 
-- **omp composer capabilities** — whether reasoning effort / auto-edit are
-  settable via RPC. Verify during Phase 3; omit if absent.
+- **omp composer capabilities** — RESOLVED: reasoning effort is settable via RPC
+  (`set_thinking_level` / `--thinking`) and is wired; auto-edit has no RPC and
+  is omitted.
 - **`KTable` usages** — confirm no non-board tabular consumer before retiring it.
 - **`finishInfo` extension** — adding changed files must not slow the existing
   finish flow (bound the `git diff --numstat`).

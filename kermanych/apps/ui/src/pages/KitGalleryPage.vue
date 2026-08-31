@@ -113,10 +113,16 @@
           placeholder="Усі воркспейси"
         />
       </div>
+      <div class="kit__row kit__row--fields">
+        <KDateField v-model="galleryDate" label="Дата (свій календар)" />
+        <KDateField v-model="galleryDate" label="Заблокована дата" disabled />
+      </div>
       <div class="kit__caption mono">
         branch={{ branch }} · select(рядки)={{ galleryBranch }} · select(пари)={{ galleryWorkspace || '—' }}
+        · date={{ galleryDate || '—' }}
         — праворуч у списку видно назву, а модель тримає id: фільтр за назвою ламається,
-        щойно зʼявиться другий воркспейс із такою самою назвою.
+        щойно зʼявиться другий воркспейс із такою самою назвою. Дата живе в моделі як
+        YYYY-MM-DD, а показує себе як дд.мм.рррр — і те й те можна вписати руками.
       </div>
     </section>
 
@@ -130,6 +136,7 @@
           @stop="onStop"
           @delete="onDelete"
           @expand-all="onGalleryExpandAll"
+          @effort="onPanelEffort"
         >
           <KLogBlock v-for="(e, i) in panelLog" :key="i" :entry="e" session-id="kit-demo" :expand-all="galleryExpandAll" />
         </KPanel>
@@ -299,11 +306,32 @@
       <div class="kit__row" style="margin-top: var(--k-sp-3)">
         <KSubNav v-model="subNav" :items="subNavItems" aria-label="Демо розділів" />
       </div>
+      <!-- No `icon` here: the leading mark is a MINIFIED-rail affordance, and the layout
+           hides it whenever the labels are on screen. Passing one would document a
+           combination the app never renders. -->
       <div class="kit__sidebar">
         <KNavItem label="Активні" :count="3" :active="navActive === 'active'" @click="navActive = 'active'" />
         <KNavItem label="Задачі" :count="5" :active="navActive === 'tasks'" @click="navActive = 'tasks'" />
         <KNavItem label="Відкладені" :count="12" :active="navActive === 'archived'" @click="navActive = 'archived'" />
         <KNavItem label="Історія" :active="navActive === 'history'" @click="navActive = 'history'" />
+      </div>
+      <div class="kit__caption mono">
+        рядок рейки: лейбл + лічильник — і той самий рядок із другим рядком тексту
+        (секційна рейка Менеджменту)
+      </div>
+      <div class="kit__sidebar">
+        <KNavItem
+          label="Skills"
+          hint="бібліотека скілів"
+          :active="navStacked === 'skills'"
+          @click="navStacked = 'skills'"
+        />
+        <KNavItem
+          label="Integrations"
+          hint="Linear, Jira, Slack"
+          :active="navStacked === 'integrations'"
+          @click="navStacked = 'integrations'"
+        />
       </div>
     </section>
 
@@ -360,12 +388,16 @@
       <div class="kit__label">07 · Дошка (kanban)</div>
       <div class="kit__kanban">
         <KKanbanColumn label="Беклог" :count="2">
-          <KKanbanCard title="ротація ключів у Keychain" branch="feature/keychain-rotate" project="Backend-core" time="1 дн" status="backlog" />
+          <KKanbanCard title="ротація ключів у Keychain" branch="feature/keychain-rotate" project="Backend-core" time="1 дн" status="backlog" :assignee="{ name: 'oleksii-motornyi' }" />
           <KKanbanCard title="скорочення шляху в топбарі" branch="chore/path-ellipsis" project="FE-kit" time="4 дн" status="backlog" />
         </KKanbanColumn>
         <KKanbanColumn label="В роботі" :count="1">
-          <KKanbanCard title="rate limiting на /v1/messages" branch="feature/rate-limit" project="Backend-core" time="2 хв" status="thinking" />
+          <KKanbanCard title="rate limiting на /v1/messages" branch="feature/rate-limit" project="Backend-core" time="2 хв" status="thinking" :assignee="{ name: 'Дарʼя Ковальчук', avatarUrl: sampleAvatar }" />
         </KKanbanColumn>
+      </div>
+      <div class="kit__caption mono">
+        виконавець — квадратна аватарка праворуч у рядку назви: фото, або ініціали без фото,
+        або пунктирна рамка «—», коли задача нікому не призначена
       </div>
     </section>
 
@@ -382,7 +414,16 @@
     <!-- composer -->
     <section class="kit__section">
       <div class="kit__label">09 · Композер</div>
-      <KComposer v-model="composerDraft" model="opus-5" :worktree="true" :token-count="31600" @send="() => {}" />
+      <KComposer
+        v-model="composerDraft"
+        model="opus-5"
+        :effort="composerEffort"
+        :worktree="true"
+        :context="14"
+        :usage="{ input: 18_400, output: 9_200, cacheRead: 214_000, cacheWrite: 620, cost: 0.62 }"
+        @send="() => {}"
+        @effort="(level) => (composerEffort = level)"
+      />
     </section>
 
     <!-- file diff -->
@@ -407,7 +448,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import type {
-  SessionStatus, Session, TranscriptEntry, RpcExtensionUIResponse, Usage,
+  SessionStatus, Session, TranscriptEntry, RpcExtensionUIResponse, ThinkingLevel, Usage,
 } from '@kermanych/core';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import KBtn from 'components/kit/KBtn.vue';
@@ -422,6 +463,7 @@ import KLogBlock from 'components/kit/KLogBlock.vue';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KWorkspaceRow from 'components/kit/KWorkspaceRow.vue';
 import KSelect from 'components/kit/KSelect.vue';
+import KDateField from 'components/kit/KDateField.vue';
 import KUserButton from 'components/kit/KUserButton.vue';
 import KStatusBar from 'components/kit/KStatusBar.vue';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
@@ -452,6 +494,7 @@ const subNavItems = [
   { value: 'releases', label: 'Release Notes' },
 ];
 const navActive = ref('active');
+const navStacked = ref('skills');
 const detailTab = ref('log');
 const detailTabs = [
   { value: 'log', label: 'Лог' },
@@ -459,6 +502,9 @@ const detailTabs = [
   { value: 'session', label: 'Сесія' },
 ];
 const composerDraft = ref('');
+// The gallery has no session behind the chip, so the pick is held locally — the point here is
+// that the menu opens upward inside the row and reports the level it landed on.
+const composerEffort = ref<ThinkingLevel>('high');
 const diffOpen = ref(true);
 // Every row shape at once: context, a paired replacement, a one-sided addition and a
 // one-sided removal — the four cases the two columns have to keep aligned.
@@ -526,7 +572,7 @@ function mkSession(over: Partial<Session>): Session {
     worktreePath: '', worktree: true, branch: 'main', kind: 'agent', status: 'thinking', createdAt: now, lastActivityAt: now, ...over,
   };
 }
-const runningSession = mkSession({ id: 's1', status: 'thinking', branch: 'main', model: 'opus-5', contextPercent: 42, usage: { input: 18_400, output: 9_200, cacheRead: 1_240_000, cacheWrite: 62_000, cost: 3.18 } });
+const runningSession = mkSession({ id: 's1', status: 'thinking', branch: 'main', model: 'opus-5', effort: 'high', contextPercent: 42, usage: { input: 18_400, output: 9_200, cacheRead: 1_240_000, cacheWrite: 62_000, cost: 3.18 } });
 const stalledSession = mkSession({ id: 's3', status: 'thinking', branch: 'feat/wedged', lastEventAt: Date.now() - 90_000 });
 const waitingSession = mkSession({
   id: 's2', status: 'waiting_input', branch: 'feat/schema',
@@ -564,6 +610,15 @@ const sampleImage =
   '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="110">' +
   '<rect width="180" height="110" fill="%232a2724"/>' +
   '<text x="14" y="60" fill="%238f8b88" font-family="monospace" font-size="11">session.png</text></svg>';
+// Same rule for the assignee's picture: inline SVG, so the face on a card is not one more
+// avatar url that can 404 in a catalogue. A member with no picture (the Беклог card above)
+// falls back to initials, which is the state this one is contrasted against.
+const sampleAvatar =
+  'data:image/svg+xml;utf8,' +
+  '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80">' +
+  '<rect width="80" height="80" fill="%23c4643a"/>' +
+  '<circle cx="40" cy="32" r="14" fill="%23f2e6dc"/>' +
+  '<rect x="14" y="52" width="52" height="30" rx="14" fill="%23f2e6dc"/></svg>';
 const panelLog: TranscriptEntry[] = [
   { kind: 'user_text', id: '0', at: nowMs, text: 'Зведи ротацію токенів в один запит.' },
   {
@@ -695,6 +750,9 @@ const galleryBranches = ['main', 'develop', 'feat/schema'];
 const galleryBranch = ref('main');
 const galleryWorkspaceOptions = galleryWorkspaces.map((w) => ({ value: w.id, label: w.name }));
 const galleryWorkspace = ref('');
+// Seeded rather than empty: a calendar showcase whose only state is «нічого не вибрано»
+// shows neither the selected day nor the today ring.
+const galleryDate = ref('2026-09-20');
 const lastAction = ref('');
 // The gallery panels carry the real detail toolbar, so it drives a real command here too
 // — a showcase with a dead button showcases the wrong thing.
@@ -707,6 +765,10 @@ function onAnswer(res: RpcExtensionUIResponse) { lastAction.value = `answer: ${J
 function onStop() { lastAction.value = 'stop'; }
 function onDelete() { lastAction.value = 'delete'; }
 function onRestart() { lastAction.value = 'restart'; }
+// The panel demo carries a live effort chip, so the pick is reported like every other action
+// here: these sample sessions are plain objects, and a chip that swallowed the choice would
+// be showing a control that does nothing.
+function onPanelEffort(level: ThinkingLevel) { lastAction.value = `effort: ${level}`; }
 </script>
 
 <style scoped lang="scss">

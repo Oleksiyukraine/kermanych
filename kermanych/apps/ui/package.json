@@ -6,8 +6,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "quasar dev",
-    "build": "quasar build",
+    "//deps": "The UI imports RUNTIME values from @kermanych/cloud (stores/projects.ts) and resolves it through `main: dist/index.js`, so a worktree with no build output serves a broken app. `<pkg>^...` builds this package's workspace deps in topological order, never itself. Extra pnpm args (`-m electron`) land on the LAST command, i.e. on quasar.",
+    "dev": "pnpm --filter '@kermanych/ui^...' build && quasar dev",
+    "build": "pnpm --filter '@kermanych/ui^...' build && quasar build",
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
     "postinstall": "quasar prepare --silent || true"
@@ -19,6 +20,7 @@
     "@kermanych/tokens": "workspace:*",
     "@supabase/supabase-js": "^2",
     "@quasar/extras": "^1.16.0",
+    "highlight.js": "^11.11.1",
     "markdown-it": "^14.1.0",
     "pinia": "^2.1.0",
     "quasar": "^2.16.0",

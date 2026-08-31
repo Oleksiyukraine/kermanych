@@ -84,9 +84,13 @@
       <div class="chat__composer">
         <KComposer
           v-model="draft"
-          :model="chatModel"
+          :model="chatSession?.model"
+          :effort="chatSession?.effort"
+          :context="chatSession?.contextPercent"
+          :usage="chatSession?.usage"
           placeholder="запитай або опиши, що потрібно зробити…"
           @send="onSend"
+          @effort="onEffort"
         />
       </div>
     </div>
@@ -100,7 +104,7 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { buildChatBlocks, taskNameFromText } from '@kermanych/core';
-import type { ImageInput } from '@kermanych/core';
+import type { ImageInput, ThinkingLevel } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useBoard } from 'stores/board';
 import { useAuth } from 'stores/auth';
@@ -140,9 +144,17 @@ const blocks = computed(() =>
   chatId.value ? buildChatBlocks(store.transcripts[chatId.value] ?? []) : [],
 );
 
-const chatModel = computed(
-  () => store.sessions.find((s) => s.id === chatId.value)?.model,
-);
+// The composer's effort chip. A chat thinks as hard as it is told to, same as an agent; the
+// api answers with the saved row, so a refusal from omp must surface rather than pass silently.
+async function onEffort(level: ThinkingLevel): Promise<void> {
+  const id = chatId.value;
+  if (!id) return;
+  try {
+    await store.setEffort(id, level);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
 
 function toggleThought(id: string): void {
   if (openThoughts.has(id)) openThoughts.delete(id);

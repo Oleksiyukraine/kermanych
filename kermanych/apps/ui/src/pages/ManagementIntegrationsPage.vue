@@ -1,8 +1,8 @@
 <template>
   <section class="int">
     <p class="int__lead">
-      Підключіть зовнішні сервіси до проєкту
-      <span class="int__lead-project mono">{{ projectName }}</span>
+      Підключіть зовнішні сервіси до воркспейсу
+      <span class="int__lead-workspace mono">{{ workspaceName }}</span>
     </p>
 
     <div class="int__grid">
@@ -19,11 +19,16 @@
         </span>
         <h3 class="int__name">{{ brand.name }}</h3>
         <p class="int__blurb">{{ brand.blurb }}</p>
-        <div class="int__foot">
+        <!-- The bubble hangs on the ROW, not on the button: `v-tip` binds mouseenter/focusin,
+             and Chromium dispatches neither on a disabled control — the same dead-tooltip
+             constraint AgentsPage and MainLayout document. The row is the cursor's target on
+             the way to «Підключити» and reads correctly for the state chip beside it too.
+             It replaces a native `title`, which drew the OS rectangle in a rounded UI. -->
+        <div v-tip="'У розробці'" class="int__foot">
           <span class="int__state mono">
             <i class="int__state-dot" aria-hidden="true"></i>не підключено
           </span>
-          <button class="int__cta" type="button" disabled title="У розробці">Підключити</button>
+          <button class="int__cta" type="button" disabled>Підключити</button>
         </div>
       </article>
     </div>
@@ -36,9 +41,9 @@
 // Slack, every «Підключити» is disabled, and no state is stored. The tiles exist
 // so the shape of the feature can be judged before it is built.
 //
-// It takes the same props every section gets from ManagementPage, so the project
+// It takes the same props every section gets from ManagementPage, so the workspace
 // it would connect to is already named for it.
-defineProps<{ projectId: string; projectName: string }>();
+defineProps<{ workspaceId: string; workspaceName: string }>();
 
 type Brand = {
   id: string;
@@ -96,7 +101,7 @@ const BRANDS: readonly Brand[] = [
   color: var(--k-muted);
 }
 
-.int__lead-project {
+.int__lead-workspace {
   color: var(--k-text);
 }
 

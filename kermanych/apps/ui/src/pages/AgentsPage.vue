@@ -158,6 +158,7 @@
             @reopen="onReopenSelected"
             @newTask="openTaskFromText"
             @expand-all="onExpandAll"
+            @effort="onEffort"
           >
             <template v-if="blocks.length">
               <KRequestBlock
@@ -214,6 +215,30 @@
             <p v-else class="agents__log-empty mono">Немає змінених файлів.</p>
           </template>
         </div>
+        <div v-if="detailTab === 'files'" class="agents__tabpane agents__files">
+          <p v-if="treeLoading" class="agents__log-empty mono">Готую…</p>
+          <p v-else-if="treeError" class="agents__error" role="alert">{{ treeError }}</p>
+          <template v-else>
+            <KFileView
+              v-if="openTreeFile"
+              class="agents__file-view"
+              :path="openTreeFile"
+              :file="treeFile"
+              :loading="treeFileLoading"
+              :error="treeFileError"
+              @close="closeTreeFile"
+            />
+            <KFileTree
+              v-show="!openTreeFile"
+              class="agents__tree"
+              :entries="treeRoot"
+              base=""
+              :selected="openTreeFile"
+              :load="loadTreeLevel"
+              @open="openTreeFileAt"
+            />
+          </template>
+        </div>
         <div v-if="detailTab === 'session'" class="agents__tabpane agents__session">
           <dl class="agents__meta">
             <div class="agents__meta-row">
@@ -245,8 +270,8 @@
             </div>
             <div class="agents__meta-row">
               <dt
+                v-tip="SKILLS_HINT"
                 class="agents__meta-label"
-                title="Скіли з усього завантаженого транскрипту цієї сесії — разом із турами, перебраними від батька, якщо гілку відгалужено. Скіл, узятий субагентом, тут не видно."
               >Скіли</dt>
               <dd class="agents__meta-value mono">{{ usedSkills.join(', ') || '—' }}</dd>
             </div>
@@ -603,7 +628,10 @@ import {
   type Session,
   type SessionStatus,
   type TranscriptEntry,
+  type ThinkingLevel,
   type RpcExtensionUIResponse,
+  type TreeEntry,
+  type FileContent,
 } from '@kermanych/core';
 import { createTask as cloudCreateTask } from '@kermanych/cloud';
 import type { Task } from '@kermanych/cloud';
@@ -623,6 +651,8 @@ import KStatusDot from 'components/kit/KStatusDot.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KDiffView from 'components/kit/KDiffView.vue';
+import KFileTree from 'components/kit/KFileTree.vue';
+import KFileView from 'components/kit/KFileView.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
@@ -860,6 +890,11 @@ const PUBLISH_FIRST_HINT =
 // row carries exactly one projectId. Rendered as visible text beside the disabled button, not
 // as its tooltip — see the template.
 const PICK_PROJECT_HINT = 'Нова задача належить одному проєкту — виберіть проєкт у лівій панелі.';
+// The one explanatory bubble in the meta list. `v-tip`, not the native `title` it used to
+// be: that one drew the OS rectangle after a ~1s delay, the single square bubble left in a
+// rounded UI. A <dt> is neither focusable nor disabled, so the directive fires on it.
+const SKILLS_HINT =
+  'Скіли з усього завантаженого транскрипту цієї сесії — разом із турами, перебраними від батька, якщо гілку відгалужено. Скіл, узятий субагентом, тут не видно.';
 const isBound = computed(() => !!launchProject.value?.localRepoPath);
 
 // Row-level check: the board can show sessions of an orphan project whose row is still here
@@ -992,6 +1027,7 @@ watch(
 const detailTabs = [
   { value: 'log', label: 'Лог' },
   { value: 'changes', label: 'Зміни' },
+  { value: 'files', label: 'Файли' },
   { value: 'session', label: 'Сесія' },
 ];
 const detailTab = ref('log');
@@ -999,7 +1035,8 @@ watch(
   () => store.selectedSessionId,
   (id) => {
     const saved = id ? localStorage.getItem(`kermanych.agents.tab.${id}`) : null;
-    detailTab.value = saved === 'changes' || saved === 'session' ? saved : 'log';
+    detailTab.value =
+      saved === 'changes' || saved === 'session' || saved === 'files' ? saved : 'log';
   },
   { immediate: true },
 );
@@ -1093,12 +1130,72 @@ async function loadChanges(id: string, reset: boolean): Promise<void> {
   }
 }
 
+// ── Файли tab: the worktree file tree + a read-only viewer ──────────────────
+// The root level loads when the tab opens; deeper levels lazy-load per folder through
+// loadTreeLevel, which KFileTree calls on expand. Opening a file fetches its body into the
+// viewer, ordered by treeFileRun so a slow read cannot overwrite a newer one.
+const treeRoot = ref<TreeEntry[]>([]);
+const treeLoading = ref(false);
+const treeError = ref<string | null>(null);
+const openTreeFile = ref<string | null>(null);
+const treeFile = ref<FileContent | null>(null);
+const treeFileLoading = ref(false);
+const treeFileError = ref<string | null>(null);
+let treeFileRun = 0;
+
+function loadTreeLevel(path: string): Promise<TreeEntry[]> {
+  const id = store.selectedSessionId;
+  return id ? store.sessionTree(id, path) : Promise.resolve([]);
+}
+
+async function loadTreeRoot(id: string): Promise<void> {
+  treeError.value = null;
+  treeLoading.value = true;
+  try {
+    treeRoot.value = await store.sessionTree(id, '');
+  } catch (e) {
+    treeError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    treeLoading.value = false;
+  }
+}
+
+async function openTreeFileAt(path: string): Promise<void> {
+  const id = store.selectedSessionId;
+  if (!id) return;
+  const run = ++treeFileRun;
+  openTreeFile.value = path;
+  treeFile.value = null;
+  treeFileError.value = null;
+  treeFileLoading.value = true;
+  try {
+    const f = await store.sessionFile(id, path);
+    if (run !== treeFileRun) return;
+    treeFile.value = f;
+  } catch (e) {
+    if (run !== treeFileRun) return;
+    treeFileError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    if (run === treeFileRun) treeFileLoading.value = false;
+  }
+}
+
+function closeTreeFile(): void {
+  openTreeFile.value = null;
+  treeFile.value = null;
+  treeFileError.value = null;
+  treeFileLoading.value = false;
+  treeFileRun++;
+}
+
 watch(
   [() => store.selectedSessionId, detailTab],
   ([id, tab]) => {
     // Another session (or a trip through another tab) invalidates whatever file was open.
     closeFile();
+    closeTreeFile();
     if (tab === 'changes' && id) void loadChanges(id, true);
+    if (tab === 'files' && id) void loadTreeRoot(id);
   },
   { immediate: true },
 );
@@ -1610,6 +1707,19 @@ async function onRestart(): Promise<void> {
   }
 }
 
+// The composer's effort chip. omp refuses a level its provider cannot run, and the api
+// reports that refusal rather than writing the row — so a failure has to be shown, or the
+// chip would snap back with no explanation.
+async function onEffort(level: ThinkingLevel): Promise<void> {
+  const s = selectedSession.value;
+  if (!s) return;
+  try {
+    await store.setEffort(s.id, level);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
 // Reopen a merged session: the server re-forks its worktree/branch from the base; jump to
 // Активні and select it so the operator can continue and finish again.
 async function onReopen(s: Session): Promise<void> {
@@ -1784,6 +1894,11 @@ async function submitFinish(): Promise<void> {
     } else {
       finishConflict.value = null;
       finishOpen.value = false;
+      // Merged, but the push back to origin did not land — say so, because the work is only
+      // local until the operator pulls and pushes it.
+      if ('pushed' in res && res.pushed === false) {
+        store.notify(`«${s.name}» злито локально, але push у origin заблоковано: ${res.reason ?? 'origin зрушив'}. Зроби git pull та push.`, 'error');
+      }
     }
   } catch (e) {
     finishError.value = e instanceof Error ? e.message : String(e);
@@ -1812,11 +1927,16 @@ async function submitPr(): Promise<void> {
 // ── Live preview (per-session worktree app on a free port) ─────────────────
 const LOADING_HTML =
   '<p style="font:14px system-ui;padding:24px;color:#888">Піднімаю превʼю гілки… (перший раз довше — встановлення залежностей).</p>';
-const DEFAULT_WEB_CMD = 'cd kermanych && pnpm --filter @kermanych/ui dev';
-// Fresh worktrees carry no build output (dist is gitignored), so build the shared
-// core and the api before starting it — otherwise `node dist/main.js` is MODULE_NOT_FOUND.
+// A fresh worktree carries no dependencies and no build output (`dist` is gitignored), so
+// each command installs first and then runs the package script — which builds that
+// package's workspace deps itself (see apps/*/package.json). Naming the deps here instead
+// is what broke this: the old api command built @kermanych/core only, and the api also
+// imports @kermanych/cloud, so `nest build` died with TS2307 before the preview ever
+// listened. The web command must stand on its own too — a project may configure no api
+// command at all, and the UI needs @kermanych/cloud built to load.
+const DEFAULT_WEB_CMD = 'cd kermanych && pnpm install && pnpm --filter @kermanych/ui dev';
 const DEFAULT_API_CMD =
-  'cd kermanych && pnpm install && pnpm --filter @kermanych/core build && pnpm --filter @kermanych/api build && pnpm --filter @kermanych/api start';
+  'cd kermanych && pnpm install && pnpm --filter @kermanych/api build && pnpm --filter @kermanych/api start';
 const previewCfgOpen = ref(false);
 const previewCfgSession = ref<Session | null>(null);
 const draftWebCmd = ref('');
@@ -2088,13 +2208,16 @@ async function submitPreviewConfig(): Promise<void> {
 }
 
 // ── Detail column ─────────────────────────────────────────────────────────
+// No top padding, unlike the board next to it: the first thing in this column is a title
+// bar with its own rule, and 16px of background above it read as slack in the bar rather
+// than as a margin — the title and the ✕ then sit low in a 50px strip instead of centred
+// in a 34px one. The bar is flush with the column's top edge and centres its own content.
 .agents__detail {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  padding-top: var(--k-sp-4);
 }
 
 .agents__detail-blank {
@@ -2106,13 +2229,25 @@ async function submitPreviewConfig(): Promise<void> {
   font-size: var(--k-fs-sm);
 }
 
+// THE CHAT COLUMN'S GUTTER. This bar, the tabs under it, both other panes and every floor
+// of KPanel below them (header, tools, log, status row, composer) inset their content by
+// 12px on each side, and the trailing control sits 6px in — one left edge and one control
+// column for the whole stack. They used to disagree by 2px, which is enough to see when
+// five rules sit on top of each other in one narrow column.
 .agents__detail-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   height: 34px;
-  padding: 0 6px 0 14px;
+  // `height` is border-box, so the 2px rule below is taken out of the interior and
+  // `align-items: center` then centres the title and the ✕ in the 32px ABOVE the rule —
+  // 1px high in a bar the eye reads as its full 34px, which measures as 10.8px of air over
+  // the glyphs and 14px under them. The 2px of top padding is that rule's counterweight:
+  // the content centres on the strip's own middle, and the ~0.5px that remains is the
+  // font's ink bias (a line box centres 5px over the baseline, cap ink 4.5px), which every
+  // centred label in the app shares.
+  padding: 2px 6px 0 12px;
   background: var(--k-bg);
   border-bottom: 2px solid var(--k-line-strong);
   flex: none;
@@ -2177,9 +2312,12 @@ async function submitPreviewConfig(): Promise<void> {
   white-space: nowrap;
 }
 
+// The house 28px glyph box (KIconButton's size), so this ✕ centres on the same column as
+// the panel controls in the bar right below it; borderless, because a title bar is not an
+// actions cluster. A 24px box put it 2px off that column.
 .agents__close {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2221,7 +2359,7 @@ async function submitPreviewConfig(): Promise<void> {
 // ── Detail tabs + panes ────────────────────────────────────────────────────
 .agents__detail-tabs {
   flex: none;
-  padding: 0 14px;
+  padding: 0 12px;
 }
 
 .agents__tabpane {
@@ -2235,7 +2373,7 @@ async function submitPreviewConfig(): Promise<void> {
 .agents__session {
   overflow-y: auto;
   gap: 14px;
-  padding: 16px 14px;
+  padding: 16px 12px;
 }
 
 .agents__changes-summary {
@@ -2258,6 +2396,24 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-accent);
 }
 .agents__conflict-head { list-style: none; margin-left: -18px; }
+
+// The Файли pane fills the panel: the tree scrolls on its own, and an open file's viewer
+// takes the whole height with its own internal scroll.
+.agents__files {
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+.agents__tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 6px;
+}
+.agents__file-view {
+  flex: 1;
+  min-height: 0;
+}
 
 .agents__file-list {
   margin: 0;

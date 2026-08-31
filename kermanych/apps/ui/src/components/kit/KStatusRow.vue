@@ -1,10 +1,6 @@
 <template>
-  <div class="k-sr mono">
-    <span v-if="session.model" class="k-sr__model">{{ session.model }}</span>
-    <span v-if="session.model && metrics" class="k-sr__sep">·</span>
-    <span v-if="metrics">{{ metrics }}</span>
-    <span class="k-sr__spacer"></span>
-    <span v-if="live" class="k-sr__live">◆ {{ live }}<template v-if="silence"> · тиша {{ silence }}</template></span>
+  <div v-if="live" class="k-sr mono">
+    <span class="k-sr__live">◆ {{ live }}<template v-if="silence"> · тиша {{ silence }}</template></span>
   </div>
 </template>
 
@@ -12,33 +8,18 @@
 import { computed } from 'vue';
 import type { Session } from '@kermanych/core';
 import { dur } from '../../lib/time';
-import { usd } from '../../lib/format';
 import { useNow } from '../../composables/useNow';
 
-// The one row that never disappears: model, context budget, accumulated spend and — on
-// the right — what the agent is doing right now. Every figure here is either true or
-// absent; a rounded-down zero would be a claim the project does not let this row make.
+// The live lane: what the agent is doing right now, pinned between the plan lane and the
+// composer. Everything countable about the session — model, effort, isolation, context
+// budget, tokens, spend — lives one floor below in the composer's chip row (`KComposer`),
+// printed once: two readouts of the same session a few pixels apart looked like two
+// disagreeing instruments. So this row carries only the transient fact that has no place
+// among static chips, and is absent entirely while the agent is idle (same rule as
+// `KTodoLane`) rather than holding an empty strip open.
 const props = defineProps<{ session: Session }>();
 
 const now = useNow(1000);
-
-// The machine metrics, assembled the way KRequestBlock's `summary` is: an array filtered
-// of the facts we do not have, then joined. Gating each separator on the field that
-// follows it is what produces a row opening with a dangling `·` — a chat has no model,
-// so that was the default rendering.
-const metrics = computed(() => {
-  const pc = props.session.contextPercent;
-  return [
-    // Sub-half-percent context is still context loaded; `toFixed(0)` would call it 0%.
-    // An exact 0 is not rounded from anything — the supervisor assigns omp's raw reading
-    // or nothing, with no `?? 0` anywhere — so it keeps `0%`; flooring that too would be
-    // the mirror-image lie, hiding a true zero behind a `<`. Do not "tidy" this guard.
-    pc == null ? '' : pc > 0 && pc < 0.5 ? '<1%' : `${pc.toFixed(0)}%`,
-    // The session's own lifetime spend, as the api counted it — not a sum over the loaded
-    // transcript, which for a forked branch opens with turns its parent paid for.
-    usd(props.session.usage?.cost ?? 0),
-  ].filter(Boolean).join(' · ');
-});
 
 const live = computed(() =>
   props.session.status === 'tool' ? (props.session.currentTool ?? 'виконує')
@@ -66,6 +47,7 @@ const silence = computed(() => {
 .k-sr {
   flex: none;
   display: flex;
+  justify-content: flex-end;
   align-items: center;
   gap: 8px;
   padding: 5px 12px;
@@ -75,9 +57,5 @@ const silence = computed(() => {
   white-space: nowrap;
   overflow: hidden;
 }
-// A long model id is the only field that survives truncation with its meaning intact,
-// so it is the one that shrinks; the live indicator must never be what gets clipped.
-.k-sr__model { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.k-sr__spacer { margin-left: auto; }
 .k-sr__live { flex: none; color: var(--k-accent); }
 </style>

@@ -37,6 +37,7 @@ export {
   type BranchPrefix,
 } from "./worktree-names";
 export { PLATFORMS, type Platform } from "./platform";
+export { THINKING_LEVELS, isThinkingLevel, type ThinkingLevel } from "./thinking";
 export {
   ASSIGNED_BLOCK_HEADER,
   DEFAULT_SKILLS,
@@ -67,3 +68,47 @@ export {
   type BlockSummary,
   type ChatBlock,
 } from "./chat-blocks";
+export {
+  MANAGEMENT_SECTIONS,
+  MANAGEMENT_DEFAULT_SECTION,
+  managementSection,
+  type ManagementCapability,
+  type ManagementSection,
+} from "./management";
+export {
+  RISK_KIND_VALUES,
+  RISK_CATEGORY_VALUES,
+  RISK_RESPONSE_VALUES,
+  RISK_STATUS_VALUES,
+  RISK_RESPONSES_BY_KIND,
+  RISK_SCORE_MIN,
+  RISK_SCORE_MAX,
+  isRiskKind,
+  isRiskCategory,
+  isRiskResponse,
+  isRiskStatus,
+  isTerminalRiskStatus,
+  type RiskKind,
+  type RiskCategory,
+  type RiskResponse,
+  type RiskStatus,
+} from "./risks";
+export {
+  MANAGEMENT_ACTION_FENCE,
+  parseManagementReply,
+  validateManagementAction,
+  type ManagementAction,
+  type ManagementActionKind,
+  type ManagementUnsupported,
+  type ManagementRiskCreate,
+  type ManagementRiskUpdate,
+  type ManagementRiskFields,
+  type ManagementRiskPatch,
+  type ManagementRiskRow,
+  type ManagementRepo,
+  type ManagementWorkspaceProject,
+  type ManagementContext,
+  type ManagementChatAsk,
+  type ManagementChatReply,
+  type ParsedManagementReply,
+} from "./management-actions";

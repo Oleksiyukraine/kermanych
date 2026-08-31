@@ -7,6 +7,7 @@ import type {
   Project,
   Session,
   TranscriptEntry,
+  ThinkingLevel,
   ServerEvent,
   RpcExtensionUIResponse,
 } from '@kermanych/core';
@@ -190,6 +191,12 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.sendMessage(id, text, mode, images);
   }
 
+  // The composer's effort chip. No optimistic patch: the api answers with the saved row AND
+  // broadcasts `session_update`, so the chip follows what omp actually accepted.
+  function setEffort(id: string, level: ThinkingLevel) {
+    return api.setEffort(id, level);
+  }
+
   function answerUi(id: string, res: RpcExtensionUIResponse) {
     return api.answerUi(id, res);
   }
@@ -273,6 +280,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.fileDiff(id, path);
   }
 
+  function sessionTree(id: string, path: string) {
+    return api.sessionTree(id, path);
+  }
+
+  function sessionFile(id: string, path: string) {
+    return api.sessionFile(id, path);
+  }
+
   async function finishSession(id: string) {
     const res = await api.finish(id);
     // preview is stopped server-side on finish; drop its local url too.
@@ -334,6 +349,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     createChat,
     promoteChat,
     sendMessage,
+    setEffort,
     answerUi,
     stopSession,
     deleteSession,
@@ -355,6 +371,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     saveEnv,
     finishInfo,
     fileDiff,
+    sessionTree,
+    sessionFile,
     finishSession,
     createPr,
     archiveSession,
