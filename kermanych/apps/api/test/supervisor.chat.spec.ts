@@ -35,8 +35,23 @@ vi.mock("../src/rpc/rpc-session", () => {
   return { RpcSession: FakeRpc };
 });
 
+// Fake cloud: the promote trigger is the one place apps/api writes `tasks`, so `createTask`
+// is the only export these tests need. Mocked wholesale (no importOriginal) so this unit
+// test never needs packages/cloud built; any other cloud call from this path would fail
+// loudly as an undefined export rather than reach the network.
+const createdCards: Record<string, unknown>[] = [];
+vi.mock("@kermanych/cloud", () => ({
+  createTask: async (_client: unknown, input: Record<string, unknown>) => {
+    createdCards.push(input);
+    return { ...input, id: `card-${createdCards.length}` };
+  },
+}));
+
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
+import type { SkillsService } from "../src/skills/skills.service";
+import type { AuthService } from "../src/auth/auth.service";
+import type { ProjectTrigger } from "@kermanych/cloud";
 import { offlineAuth } from "./offline-auth";
 import { stubSkills } from "./skills-stub";
 
@@ -61,6 +76,7 @@ function make() {
 beforeEach(() => {
   started.length = 0;
   prompts.length = 0;
+  createdCards.length = 0;
 });
 
 // A chat that has already been talked to: a live omp child, a recorded session file, and its
@@ -108,7 +124,7 @@ describe("promoteChatToAgent", () => {
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await discussedChat(sup, g.id, "Додати експорт у CSV");
 
-    const agent = await sup.promoteChatToAgent(chat.id);
+    const agent = await sup.promoteChatToAgent(chat.id, "card-1");
 
     expect(agent.id).toBe(chat.id); // the same task, matured — not a twin row
     expect(registry.listSessions(g.id)).toHaveLength(1);
@@ -123,7 +139,7 @@ describe("promoteChatToAgent", () => {
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await discussedChat(sup, g.id, "Додати експорт у CSV\nдеталі нижче");
 
-    const agent = await sup.promoteChatToAgent(chat.id);
+    const agent = await sup.promoteChatToAgent(chat.id, "card-1");
 
     expect(agent.name).toBe("Додати експорт у CSV");
     expect(agent.branch).toBe("feature/dodaty-eksport-u-csv");
@@ -134,7 +150,7 @@ describe("promoteChatToAgent", () => {
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await sup.createChat(g.id);
 
-    const agent = await sup.promoteChatToAgent(chat.id);
+    const agent = await sup.promoteChatToAgent(chat.id, "card-1");
 
     expect(agent.name).toBe("чат 1");
     expect(agent.branch).toBe("feature/chat-1");
@@ -145,7 +161,7 @@ describe("promoteChatToAgent", () => {
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const chat = await discussedChat(sup, g.id, "Додати експорт у CSV");
 
-    const agent = await sup.promoteChatToAgent(chat.id);
+    const agent = await sup.promoteChatToAgent(chat.id, "card-1");
 
     const opts = started.at(-1)!;
     expect(opts).toMatchObject({ cwd: agent.worktreePath, fork: "/tmp/chat.jsonl" });
@@ -163,13 +179,29 @@ describe("promoteChatToAgent", () => {
     const chat = await discussedChat(sup, g.id, "Додати експорт у CSV");
     worktree.addWorktree.mockRejectedValueOnce(new Error("worktree add failed"));
 
-    await expect(sup.promoteChatToAgent(chat.id)).rejects.toThrow(/worktree add failed/);
+    await expect(sup.promoteChatToAgent(chat.id, "card-1")).rejects.toThrow(/worktree add failed/);
 
     const row = registry.listSessions(g.id).find((s) => s.id === chat.id)!;
     expect(row.kind).toBe("chat");
     expect(row.branch).toBe("");
     expect(row.worktreePath).toBe("");
     expect(registry.listSessions(g.id)).toHaveLength(1);
+  });
+
+  // The row must not keep the card either. CloudSyncService mirrors any session that carries
+  // a taskId, so a linked-but-restored chat would keep flipping its orphaned card to
+  // done/thinking on the shared board — work nobody did, on a card nobody can open.
+  it("unlinks the cloud card when the launch fails", async () => {
+    const { sup, registry, worktree } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const chat = await discussedChat(sup, g.id, "Додати експорт у CSV");
+    worktree.addWorktree.mockRejectedValueOnce(new Error("worktree add failed"));
+
+    await expect(sup.promoteChatToAgent(chat.id, "card-1")).rejects.toThrow(/worktree add failed/);
+
+    const row = registry.listSessions(g.id).find((s) => s.id === chat.id)!;
+    expect(row.kind).toBe("chat");
+    expect(row.taskId).toBeUndefined();
   });
 
   it("rejects promotion before the chat has an omp session", async () => {
@@ -179,6 +211,87 @@ describe("promoteChatToAgent", () => {
       projectId: g.id, name: "чат 1", task: "", worktreePath: "", branch: "",
       worktree: false, kind: "chat",
     });
-    await expect(sup.promoteChatToAgent(chat.id)).rejects.toThrow(/omp session/i);
+    await expect(sup.promoteChatToAgent(chat.id, "card-1")).rejects.toThrow(/omp session/i);
+  });
+
+  // Without this the promoted row has no cloud identity, and CloudSyncService drops every
+  // status it emits on its first line (`if (!s.taskId) return`).
+  it("stamps the cloud task id on the row before launching", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const chat = await discussedChat(sup, g.id, "Додати експорт у CSV");
+
+    const agent = await sup.promoteChatToAgent(chat.id, "card-1");
+
+    expect(agent.taskId).toBe("card-1");
+    expect(registry.listSessions(g.id).find((s) => s.id === chat.id)!.taskId).toBe("card-1");
+  });
+});
+
+// A `promote` trigger fires with no human in the loop and no UI to mint a card, so the api
+// mints it. Without that the whole trigger target would be dead: a chat row never carries a
+// taskId, and the promotion now refuses to run without one.
+describe("trigger-driven promotion", () => {
+  const USER = "11111111-1111-1111-1111-111111111111";
+  const trigger: ProjectTrigger = {
+    projectId: "p1", id: "start", label: "Берись", enabled: true, source: "operator",
+    pattern: "берись за роботу", pathGlobs: [], action: "agent", target: "promote",
+    mode: "remind", repeat: "once",
+  };
+
+  // Same worktree stubs as make(), but signed in and with the trigger armed, which is what
+  // sendMessage matches against before the text ever reaches the child.
+  function makeTriggered() {
+    const registry = new RegistryService(":memory:");
+    const worktree = {
+      isGitRepo: vi.fn().mockResolvedValue(true),
+      addWorktree: vi.fn().mockResolvedValue(undefined),
+      removeWorktree: vi.fn().mockResolvedValue(undefined),
+      removeBranch: vi.fn().mockResolvedValue(undefined),
+      createBranchHere: vi.fn().mockResolvedValue(undefined),
+      checkout: vi.fn().mockResolvedValue(undefined),
+      currentBranch: vi.fn().mockResolvedValue("main"),
+      hasUncommitted: vi.fn().mockResolvedValue(false),
+    };
+    const auth = {
+      current: () => ({ userId: USER, accessToken: "token" }),
+      cloudClient: () => ({}),
+    } as unknown as AuthService;
+    const skills = {
+      ...stubSkills(),
+      operatorTriggers: async () => [trigger],
+      assignedForNames: async (_p: string, names: readonly string[]) => ({ block: "", view: [], missing: [...names] }),
+    } as unknown as SkillsService;
+    const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, skills);
+    return { sup, registry };
+  }
+
+  it("mints the card the promotion needs and stamps it on the row", async () => {
+    const { sup, registry } = makeTriggered();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const chat = await discussedChat(sup, g.id, "Додати експорт у CSV");
+
+    await sup.sendMessage(chat.id, "берись за роботу", "prompt");
+
+    expect(createdCards).toHaveLength(1);
+    expect(createdCards[0]).toMatchObject({
+      projectId: g.id, title: "Додати експорт у CSV", description: "Додати експорт у CSV",
+      prefix: "feature", worktree: true, assigneeId: USER, createdBy: USER,
+    });
+    const row = registry.listSessions(g.id).find((s) => s.id === chat.id)!;
+    expect(row.taskId).toBe("card-1");
+    expect(row.kind).toBe("agent");
+  });
+
+  it("reuses the card a chat already carries instead of minting a second", async () => {
+    const { sup, registry } = makeTriggered();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const chat = await discussedChat(sup, g.id, "Додати експорт у CSV");
+    registry.updateSession(chat.id, { taskId: "existing" });
+
+    await sup.sendMessage(chat.id, "берись за роботу", "prompt");
+
+    expect(createdCards).toHaveLength(0);
+    expect(registry.listSessions(g.id).find((s) => s.id === chat.id)!.taskId).toBe("existing");
   });
 });

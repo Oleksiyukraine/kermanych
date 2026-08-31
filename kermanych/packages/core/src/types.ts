@@ -35,6 +35,10 @@ export type Session = {
   worktreePath: string; branch: string;
   worktree: boolean; baseBranch?: string;
   model?: string; prefix?: BranchPrefix; platform?: Platform;
+  // "task" is no longer produced: a task is a cloud card and `from-task` is the only way an
+  // agent is born. Rows with this kind are pre-cutover backlog leftovers whose project is
+  // not in the cloud, so lib/publish-backlog.ts could not move them; AgentsPage lists them
+  // under «Задачі» as local-only until their project is published.
   // How hard omp is told to think, as omp itself reports it (`get_state.thinkingLevel`) or as
   // the operator set it from the composer. Absent means "not known yet" — a fresh child has
   // not answered its first state poll — never "off", which is a real setting.
@@ -57,7 +61,6 @@ export type Session = {
 export type TaskDraft = {
   name?: string | undefined; task?: string | undefined; model?: string | undefined; prefix?: BranchPrefix | undefined; platform?: Platform | undefined; worktree?: boolean | undefined; baseBranch?: string | undefined; effort?: ThinkingLevel | undefined;
 };
-
 export type ImageInput = { data: string; mimeType: string };
 
 export type ToolStatus = "pending" | "ok" | "error";

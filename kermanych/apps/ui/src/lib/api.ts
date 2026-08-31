@@ -1,8 +1,6 @@
 // apps/ui/src/lib/api.ts
 // Typed REST helpers against the Kermanych API (NestJS, global prefix "api").
 import type {
-  BranchPrefix,
-  Platform,
   DirListing,
   ImageInput,
   ManagementChatAsk,
@@ -12,7 +10,6 @@ import type {
   Session,
   SubscriptionUsage,
   ProjectSkillsPayload,
-  TaskDraft,
   TranscriptEntry,
   ThinkingLevel,
   ToolLine,
@@ -162,27 +159,13 @@ export const api = {
   syncProjects: (projects: CloudProject[], prune = false): Promise<Project[]> =>
     post<Project[]>('/projects/sync', { projects, prune }),
 
-  createSession: (
-    projectId: string,
-    name: string,
-    task: string,
-    model?: string,
-    images?: ImageInput[],
-    worktree = true,
-    prefix: BranchPrefix = 'feature',
-    asTask = false,
-    platform?: Platform,
-    baseBranch?: string,
-  ): Promise<Session> =>
-    post<Session>('/sessions', { projectId, name, task, model, images, worktree, prefix, platform, asTask, baseBranch }),
-
   createChat: (projectId: string): Promise<Session> =>
     post<Session>('/sessions/chat', { projectId }),
 
   // The user is NOT sent: the api takes it from the guard's cached token, so a board
   // client cannot launch a task on somebody else's behalf.
-  createSessionFromTask: (taskId: string): Promise<Session> =>
-    post<Session>('/sessions/from-task', { taskId }),
+  createSessionFromTask: (taskId: string, images?: ImageInput[]): Promise<Session> =>
+    post<Session>('/sessions/from-task', { taskId, images }),
 
   // How many status pushes THIS machine still owes the cloud. Only the local process can
   // see that, so the board polls it (see the api controller for why it is not an event).
@@ -206,8 +189,10 @@ export const api = {
   resetManagementChat: (conversationId: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>('/management/chat/reset', { conversationId }),
 
-  promoteChat: (id: string): Promise<Session> =>
-    post<Session>(`/sessions/${id}/promote`, {}),
+  // The chat is promoted onto a card the UI has already minted: `taskId` is that card, and
+  // the guard reads who may run it from its own token, never from this body.
+  promoteChat: (id: string, taskId: string): Promise<Session> =>
+    post<Session>(`/sessions/${id}/promote`, { taskId }),
 
   sendMessage: (id: string, text: string, mode: MessageMode, images?: ImageInput[]): Promise<unknown> =>
     post(`/sessions/${id}/message`, { text, mode, images }),
@@ -309,15 +294,6 @@ export const api = {
 
   mergeBranch: (id: string, summary?: string): Promise<{ merged: boolean }> =>
     post<{ merged: boolean }>(`/sessions/${id}/merge`, { summary }),
-
-  startTask: (id: string, draft: TaskDraft & { images?: ImageInput[] } = {}): Promise<Session> =>
-    post<Session>(`/sessions/${id}/start`, draft),
-
-  updateTask: (id: string, draft: TaskDraft): Promise<Session> =>
-    patchJson<Session>(`/sessions/${id}`, draft),
-
-  moveTask: (id: string, projectId: string): Promise<Session> =>
-    post<Session>(`/sessions/${id}/move`, { projectId }),
 
   // Token handoff to the local api. POST is @Public() on the server (the UI has
   // no bearer to present yet); DELETE and GET are guarded like everything else.

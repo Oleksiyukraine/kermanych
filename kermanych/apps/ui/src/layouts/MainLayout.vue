@@ -274,15 +274,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import type { SessionStatus } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
+import { useBoard } from 'stores/board';
 import { IS_PREVIEW } from '../lib/preview';
 import { MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
+import { myBacklogTasks } from '../lib/tasks-view';
 import { theme, toggleTheme } from '../lib/theme';
 import { isMoveRefusal, MOVE_REFUSAL } from '../lib/cloud-errors';
 import { percent, planWindow } from '../lib/format';
@@ -307,6 +309,7 @@ import KUserButton from 'components/kit/KUserButton.vue';
 const store = useOrchestrator();
 const projects = useProjects();
 const auth = useAuth();
+const board = useBoard();
 const route = useRoute();
 const router = useRouter();
 
@@ -475,6 +478,23 @@ onMounted(async () => {
   }
 });
 
+// The board store is app-wide now: Агенти renders my backlog cards from it and the sidebar
+// counts them, so it must be live on every route, not only on /#/board. subscribe() is
+// idempotent — BoardPage no longer owns this.
+onMounted(() => void board.subscribe());
+onUnmounted(() => board.unsubscribe());
+
+// 0 → n only, and it has to live here for the same reason the mount call does: the store
+// rebuilds a channel on every project-set change but SKIPS a set that never had one
+// (stores/board.ts:287, `!unsubscribeChannel`), so a user whose first cloud project
+// appears mid-session would otherwise get no channel until a reload.
+watch(
+  () => projects.projects.length,
+  (count, prev) => {
+    if (count && !prev) void board.subscribe();
+  },
+);
+
 // A session is "running" while it is queued or actively working; waiting means it is blocking
 // on an interactive UI request; done is terminal-success.
 const RUNNING: readonly SessionStatus[] = ['queued', 'thinking', 'tool'];
@@ -580,6 +600,11 @@ const bucketCounts = computed(() => {
     else if (s.status === 'merged' || s.status === 'done' || s.status === 'stopped') c.history++;
     else c.active++;
   }
+  // «Задачі» shows two things now: my cloud backlog cards, and any stranded pre-cutover
+  // local row. The badge counts both, because a count that disagrees with the list it counts
+  // is worse than no count (lib/buckets.ts:2-4). myBacklogTasks applies the same scope, so
+  // the set is passed to it rather than re-tested here.
+  c.tasks += myBacklogTasks(board.tasks, auth.user?.id ?? '', [...inScope]).length;
   return c;
 });
 

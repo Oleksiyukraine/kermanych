@@ -90,6 +90,9 @@ owner's call too.
 | rename or delete a workspace; invite or remove a member | the workspace owner |
 | create a project, edit its config, work the board | any workspace member |
 | delete a project | the workspace owner |
+| create a task | any workspace member |
+| claim an unassigned task | any workspace member |
+| hand over or release an assigned task | its assignee, or the workspace owner |
 | force a stuck task to `stopped` | its assignee, or the workspace owner |
 | move a project to another workspace | a member of **both** |
 
@@ -100,10 +103,19 @@ settings. Both paths require membership of the source *and* the destination, and
 it is the database that enforces that, not the UI.
 
 **Clicking in the sidebar never navigates; it sets the scope.** A workspace scopes
-the board to the tasks of every project it holds. A project scopes it the same way
-but arrives with the «Проєкти» filter already set to that project. The board's
-other filter, «Виконавці», narrows by assignee and offers «Не призначено» for
-unclaimed cards.
+the board to the tasks of every project it holds, and «Агенти» to the sessions and
+cards of those same projects. A project scopes both the same way but the board
+arrives with the «Проєкти» filter already set to that project. The board's other
+filter, «Виконавці», narrows by assignee and offers «Не призначено» for unclaimed
+cards.
+
+**«Задачі» in «Агенти» is your inbox, not a local list.** It shows the cloud cards in
+`backlog` assigned to you within the current scope — including the ones a colleague
+filed for you. Unclaimed team cards are deliberately absent: they live on «Дошка»
+until somebody claims one. The one exception is a pre-cutover local backlog row that
+could not be published because its project exists only on this machine; it stays in
+the list under the note «Лише на цій машині: проєкт цих задач ще не у хмарі, тому
+команда їх не бачить».
 
 ### Why the backend is in the repository
 
@@ -334,14 +346,19 @@ framework, layout, build, and state plumbing.
 A **task** is a card in the shared cloud board; a **session** is its execution on one
 developer's machine. The direction is always task → session.
 
-1. **Create** — any member of the project's workspace creates a task on the board
-   (`/#/board`) with a title, a description and optional launch params (model,
-   branch prefix, platform, base branch). It starts in `backlog`, which exists
-   only in the cloud.
-2. **Assign** — the author assigns it to a member, or a member presses «Запустити» on an
-   unassigned task, which self-assigns it atomically. Only the assignee can run it; an
-   active task (`queued`, `thinking`, `tool`, `waiting_input`) can be neither reassigned
-   nor deleted.
+1. **Create** — any member of the project's workspace creates a task, from the board
+   (`/#/board`) or from «Агенти» / «Чат», with a title, a description and optional launch
+   params (model, branch prefix, platform, base branch). A card filed from the board is
+   unassigned unless its author picks someone; a card filed from «Агенти» or «Чат» is
+   assigned to its author, because that is the machine about to run it. Either way it is a
+   row in the cloud `tasks` — there is no local-only task — so the whole workspace sees it.
+   It starts in `backlog`, which exists only in the cloud.
+2. **Assign** — the assignee may hand a card over or release it, and the workspace owner
+   may take one back from someone who is gone. Anyone may claim an UNASSIGNED card, and
+   pressing «Запустити» on one self-assigns it atomically. Taking a card assigned to
+   somebody else is refused by the database, not just by the UI — which is why the control
+   is greyed out before the attempt rather than explaining afterwards. An active task
+   (`queued`, `thinking`, `tool`, `waiting_input`) can be neither reassigned nor deleted.
 3. **Bind** — a cloud project has no idea where its repo lives on your disk. The first
    «Запустити» for an unbound project asks for the local git repository and stores that
    path locally (it never reaches the cloud).
@@ -366,9 +383,10 @@ Local work never waits for the cloud:
 - A session that already exists keeps running, answering, merging and finishing with no
   network at all — the local `projects` row caches the project config, so nothing on
   that path reads the cloud.
-- STARTING a board task is the one step that needs the cloud: Kermanych has to read the
-  task and claim it for you. Offline, «Запустити» fails with a clear error; the tasks you
-  already started are unaffected.
+- CREATING a task and STARTING one are the two steps that need the cloud: a task is a cloud
+  card, so Kermanych has to write it and claim it for you. Offline, «Нова задача» and
+  «Запустити» fail with a clear error; chats, the sessions you already started, and every
+  merge and finish keep working with no network at all.
 - Every status change is written to a local `status_outbox` table (SQLite) before it is
   pushed. The pusher retries with exponential backoff (~2 s, doubling to a 60 s cap) and
   also retries immediately after a re-login, so a queue parked on an expired token

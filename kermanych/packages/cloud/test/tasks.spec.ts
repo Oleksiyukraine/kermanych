@@ -56,6 +56,7 @@ const taskRow = {
   platform: null,
   kind: null,
   branch: "main",
+  worktree: true,
   created_at: "2026-08-21T00:00:00.000Z",
   updated_at: "2026-08-21T00:10:00.000Z",
 };
@@ -65,7 +66,6 @@ describe("listTasks", () => {
     const { client, queries } = fakeClient({ data: [taskRow], error: null });
 
     const [t] = await listTasks(client, ["p1", "p2"]);
-
     expect(t).toEqual({
       id: "t1",
       projectId: "p1",
@@ -76,6 +76,7 @@ describe("listTasks", () => {
       model: "opus-5",
       prefix: "feature",
       branch: "main",
+      worktree: true,
       createdAt: "2026-08-21T00:00:00.000Z",
       updatedAt: "2026-08-21T00:10:00.000Z",
     });
@@ -170,6 +171,52 @@ describe("createTask", () => {
       "insert",
       { project_id: "p1", created_by: "u1", title: "T", assignee_id: "u2", image_paths: ["p1/shot.png"] },
     ]);
+  });
+});
+
+describe("worktree on a task", () => {
+  it("maps the column even when false, unlike the optional text columns", async () => {
+    const { client } = fakeClient({ data: { ...taskRow, worktree: false }, error: null });
+    const t = await getTask(client, "t1");
+    expect(t!.worktree).toBe(false);
+  });
+
+  it("sends worktree:false on create — an in-place card is not a blank field", async () => {
+    const { client, queries } = fakeClient({ data: { ...taskRow, worktree: false }, error: null });
+
+    await createTask(client, { projectId: "p1", title: "T", worktree: false, createdBy: "u1" });
+
+    expect(queries[0]!.ops[0]).toEqual([
+      "insert",
+      { project_id: "p1", created_by: "u1", title: "T", worktree: false },
+    ]);
+  });
+
+  it("patches worktree without touching anything else", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null });
+    await patchTask(client, "t1", { worktree: true });
+    expect(queries[0]!.ops[0]).toEqual(["update", { worktree: true }]);
+  });
+});
+
+describe("createTask with an explicit id", () => {
+  // The one-time publication of local backlog rows reuses the local session id, so a second
+  // pass collides on the primary key instead of minting a duplicate card.
+  it("sends the id when the caller supplies one", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null });
+
+    await createTask(client, { id: "s-1", projectId: "p1", title: "T", createdBy: "u1" });
+
+    expect(queries[0]!.ops[0]).toEqual([
+      "insert",
+      { id: "s-1", project_id: "p1", created_by: "u1", title: "T" },
+    ]);
+  });
+
+  it("omits the id key entirely when absent", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null });
+    await createTask(client, { projectId: "p1", title: "T", createdBy: "u1" });
+    expect(Object.keys((queries[0]!.ops[0] as [string, Record<string, unknown>])[1])).not.toContain("id");
   });
 });
 

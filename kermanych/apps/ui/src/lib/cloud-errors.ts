@@ -38,6 +38,35 @@ export const MOVE_REFUSAL =
   'Хмара відмовила: переносити проєкт можна лише між воркспейсами, у яких ви учасник';
 
 /**
+ * tasks_guard()'s two ASSIGNMENT refusals
+ * (20260830090000_tasks_assignment.sql:45,81), in Ukrainian.
+ *
+ * Both sentences reach the UI through more than one door: the local API
+ * re-raises `task assigned to someone else` from POST /sessions/from-task, and
+ * the guard itself raises either one at a board assign or at a create carrying
+ * an assignee who is not in the project's workspace. One copy here for the same
+ * reason as everything else in this module — two copies of a refusal text is how
+ * one of them silently stops matching the sentence Postgres actually sends.
+ */
+export const ASSIGNMENT_REFUSALS: Record<string, string> = {
+  'task assigned to someone else': 'Задача призначена іншому учаснику — запустити її може лише він.',
+  'assignee is not a workspace member': 'Цей користувач не входить у воркспейс задачі.',
+};
+
+/**
+ * The same two refusals as a WRITE delivers them: Postgres raises the sentence
+ * and the cloud client rethrows `error.message`. Matched by SUBSTRING rather
+ * than by key, for the same reason stores/board.ts's forceStop branch matches
+ * `only the assignee can change status` that way — what the caller receives is
+ * the guard's sentence inside whatever the server wrapped it in, and an exact
+ * lookup that stops matching fails silently, in English, in a Ukrainian pane.
+ * `undefined` means «not one of ours», i.e. show the raw text.
+ */
+export function assignmentRefusalText(raw: string): string | undefined {
+  return Object.entries(ASSIGNMENT_REFUSALS).find(([refusal]) => raw.includes(refusal))?.[1];
+}
+
+/**
  * The refusals a workspace MEMBERSHIP write really produces. The first two come
  * from inviteMember / the cloud client, the third from
  * invite_workspace_member's own owner check. Removal needs no branch: a DELETE

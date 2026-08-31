@@ -68,6 +68,17 @@ function make() {
   return { sup, registry, seen };
 }
 
+// A live child without a cloud round-trip. `createSessionFromTask` is the only fresh birth
+// path and it needs the cloud; resuming a retired row spawns the very child the effort chip
+// talks to, which is all these tests need. The row starts effort-free, so the resume adds
+// nothing to `levelsSet` before setEffort runs.
+async function liveSession(sup: SupervisorService, registry: RegistryService, projectId: string) {
+  const s = registry.createSession({ projectId, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", model: "opus-5" });
+  registry.updateSession(s.id, { ompSessionFile: "/tmp/s.jsonl", status: "done" });
+  await sup.sendMessage(s.id, "go", "follow_up");
+  return s;
+}
+
 beforeEach(() => {
   emit = () => {};
   reportedLevel = undefined;
@@ -80,7 +91,7 @@ describe("session effort", () => {
   it("tells the live child first, then records the level and broadcasts it", async () => {
     const { sup, registry, seen } = make();
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
-    const s = await sup.createSession(g.id, "AAA", "t", "opus-5");
+    const s = await liveSession(sup, registry, g.id);
 
     const out = await sup.setEffort(s.id, "max");
 
@@ -96,7 +107,7 @@ describe("session effort", () => {
   it("leaves the row untouched when the child refuses the level", async () => {
     const { sup, registry } = make();
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
-    const s = await sup.createSession(g.id, "AAA", "t", "opus-5");
+    const s = await liveSession(sup, registry, g.id);
     await sup.setEffort(s.id, "low");
     refuse = true;
 
@@ -109,7 +120,10 @@ describe("session effort", () => {
   it("records the level on a backlog task without spawning anything", async () => {
     const { sup, registry } = make();
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
-    const task = await sup.createSession(g.id, "AAA", "t", "opus-5", undefined, true, "feature", true);
+    // A dormant row with no live child: the merged birth path always spawns, so a backlog
+    // leftover is minted straight on the registry — setEffort has nothing to wake.
+    const task = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "", branch: "", model: "opus-5" });
+    registry.updateSession(task.id, { status: "backlog" });
 
     const out = await sup.setEffort(task.id, "medium");
 
@@ -118,23 +132,12 @@ describe("session effort", () => {
     expect(registry.listSessions().find((x) => x.id === task.id)?.status).toBe("backlog");
   });
 
-  // A backlog row's saved effort survives the edit path, so «Start» launches at the level the
-  // operator picked rather than at omp's default.
-  it("carries a task's saved effort through an unrelated edit", async () => {
-    const { sup, registry } = make();
-    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
-    const task = await sup.createSession(g.id, "AAA", "t", "opus-5", undefined, true, "feature", true);
-    await sup.setEffort(task.id, "xhigh");
-
-    expect(sup.updateTask(task.id, { name: "BBB" }).effort).toBe("xhigh");
-  });
-
   // Effort is live state, not a launch parameter: omp's own UI can change it mid-session on a
   // shared session file, so the poll reconciles rather than settling once like the model does.
   it("adopts the level omp reports when it was changed outside Kermanych", async () => {
     const { sup, registry } = make();
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
-    const s = await sup.createSession(g.id, "AAA", "t", "opus-5");
+    const s = await liveSession(sup, registry, g.id);
     await sup.setEffort(s.id, "low");
     reportedLevel = "minimal";
 

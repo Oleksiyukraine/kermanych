@@ -6,6 +6,9 @@ import type { CloudProject, Task } from "@kermanych/cloud";
 
 // Capture every spawned RpcSession so a test can prove whether a launch happened.
 const started: unknown[] = [];
+// launch() delivers the opening message as rpc.prompt(text, images); the attachments are
+// only observable here.
+const prompts: unknown[][] = [];
 vi.mock("../src/rpc/rpc-session", () => {
   class FakeRpc {
     constructor(opts: unknown) {
@@ -21,7 +24,9 @@ vi.mock("../src/rpc/rpc-session", () => {
       return [];
     }
     async stop() {}
-    prompt() {}
+    prompt(...args: unknown[]) {
+      prompts.push(args);
+    }
     followUp() {}
     steer() {}
   }
@@ -95,6 +100,7 @@ function task(over: Partial<Task> = {}): Task {
     createdBy: OTHER,
     createdAt: NOW,
     updatedAt: NOW,
+    worktree: true,
     ...over,
   };
   cloudTasks.set(t.id, t);
@@ -122,6 +128,7 @@ function bind(registry: RegistryService, localRepoPath = "/tmp/proj"): void {
 
 beforeEach(() => {
   started.length = 0;
+  prompts.length = 0;
   cloudTasks.clear();
   cloudProjects.length = 0;
   claimWins = true;
@@ -304,5 +311,42 @@ describe("createSessionFromTask", () => {
 
     await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("fatal: invalid reference");
     expect(cloudTasks.get("task-1")!.assigneeId).toBe(USER);
+  });
+
+  it("runs in place when the card's own author asks for it", async () => {
+    const { sup, registry, worktree } = make();
+    bind(registry);
+    task({ assigneeId: USER, createdBy: USER, worktree: false });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    expect(session.worktree).toBe(false);
+    expect(worktree.addWorktree).not.toHaveBeenCalled();
+  });
+
+  // The invariant the old hardcoded `true` stated: a shared card must never commandeer
+  // another developer's checkout.
+  it("forces a worktree when the runner did not file the card", async () => {
+    const { sup, registry, worktree } = make();
+    bind(registry);
+    task({ assigneeId: USER, createdBy: OTHER, worktree: false });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    expect(session.worktree).toBe(true);
+    expect(worktree.addWorktree).toHaveBeenCalled();
+  });
+
+  it("forwards the launcher's images into the first prompt", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, createdBy: USER });
+
+    await sup.createSessionFromTask("task-1", USER, [{ data: "aGk=", mimeType: "image/png" }]);
+
+    expect(prompts.at(-1)).toEqual([
+      "wire GitHub OAuth",
+      [{ data: "aGk=", mimeType: "image/png" }],
+    ]);
   });
 });

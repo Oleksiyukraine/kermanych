@@ -21,6 +21,7 @@ import { useAuth } from './auth';
 import { useProjects } from './projects';
 import { useOrchestrator } from './orchestrator';
 import { installReconcile, type ReconcileOptions } from '../lib/reconcile';
+import { assignmentRefusalText } from '../lib/cloud-errors';
 import { useDelayedTrue } from '../composables/useDelayedTrue';
 import { IS_PREVIEW } from '../lib/preview';
 
@@ -92,7 +93,10 @@ export const useBoard = defineStore('board', () => {
   }
 
   function fail(e: unknown): void {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
+    const raw = e instanceof Error ? e.message : String(e);
+    // tasks_guard's refusals are sentences a user should be able to read; everything
+    // else falls through as-is (lib/cloud-errors.ts owns the single copy of each text).
+    local.notify(assignmentRefusalText(raw) ?? raw, 'error');
   }
 
   // The task query is scoped by project, so the cloud project list is a hard prerequisite.

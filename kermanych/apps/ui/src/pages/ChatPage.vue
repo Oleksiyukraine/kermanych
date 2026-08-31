@@ -106,7 +106,11 @@ import { useRouter } from 'vue-router';
 import { buildChatBlocks, taskNameFromText } from '@kermanych/core';
 import type { ImageInput, ThinkingLevel } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
+import { useBoard } from 'stores/board';
+import { useAuth } from 'stores/auth';
+import { useProjects } from 'stores/projects';
 import { renderMarkdown } from '../lib/markdown';
+import { taskInsertFromDraft } from '../lib/tasks-view';
 import { EXPAND_ALL_NONE } from '../lib/expand-all';
 import KChatMessage from 'components/kit/KChatMessage.vue';
 import KThoughtToggle from 'components/kit/KThoughtToggle.vue';
@@ -116,6 +120,9 @@ import KStatusDot from 'components/kit/KStatusDot.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 
 const store = useOrchestrator();
+const board = useBoard();
+const auth = useAuth();
+const projects = useProjects();
 
 const draft = ref('');
 const chatId = ref<string | undefined>(undefined);
@@ -195,14 +202,41 @@ async function onSend(text: string, images: ImageInput[]): Promise<void> {
   }
 }
 
-// Promote the chat into a real task: omp gets a worktree + full tools, and we jump to the
-// Агенти view where the now-running agent lives.
+// Promotion grows a worktree and starts building, so it is agent work and needs a card —
+// otherwise its status mirrors nowhere and the team never sees the run. The card is minted
+// first and its id travels into the promotion, which stamps it on the row.
 async function promote(): Promise<void> {
+  // The button's `:disabled` is not a guarantee: keyboard and programmatic activation
+  // reach here regardless, and a second run would mint a second card.
+  if (promoting.value) return;
   const id = chatId.value;
-  if (!id || promoting.value || !isBound.value) return;
+  const pid = store.selectedProjectId;
+  const userId = auth.user?.id;
+  if (!id || !pid || !userId) return;
+  const seed = chatSession.value?.task?.trim() ?? '';
+  if (!projects.byId.has(pid)) {
+    store.notify('Проєкт ще не у хмарі — опублікуйте його, щоб підняти агента.', 'error');
+    return;
+  }
+  // The other half of what the disabled button says: promotion grows a worktree, so without
+  // a local binding the card would be minted and then refused server-side, orphaning it.
+  if (!isBound.value) {
+    store.notify(BIND_HINT, 'error');
+    return;
+  }
   promoting.value = true;
   try {
-    await store.promoteChat(id);
+    const card = await board.createTask({
+      projectId: pid,
+      title: taskNameFromText(seed) || chatSession.value?.name || 'чат',
+      description: seed,
+      ...(chatSession.value?.model ? { model: chatSession.value.model } : {}),
+      prefix: 'feature',
+      worktree: true,
+      assigneeId: userId,
+    });
+    if (!card) return; // the store has already said why
+    await store.promoteChat(id, card.id);
     store.setBucket('active');
     store.selectSession(id);
     void router.push({ name: 'agents' });
@@ -213,12 +247,14 @@ async function promote(): Promise<void> {
   }
 }
 
-// Park the chat's opening ask as a backlog task (name from its first line); it can be
-// refined later from the Агенти backlog.
+// «В беклог» files a CLOUD card assigned to me, so a thought parked in a chat is visible to
+// the team exactly like anything else on the board. The card's name comes from the opening
+// ask's first line and can be refined later from the Агенти backlog.
 async function toBacklog(): Promise<void> {
   const id = chatId.value;
   const pid = store.selectedProjectId;
-  if (!id || !pid) return;
+  const userId = auth.user?.id;
+  if (!id || !pid || !userId) return;
   const seed =
     (
       (store.transcripts[id] ?? []).find((e) => e.kind === 'user_text') as
@@ -229,12 +265,27 @@ async function toBacklog(): Promise<void> {
     store.notify('Порожній чат — нема що зберігати в беклог.', 'error');
     return;
   }
+  if (!projects.byId.has(pid)) {
+    store.notify('Проєкт ще не у хмарі — опублікуйте його, щоб створювати задачі.', 'error');
+    return;
+  }
   try {
-    await store.createSession(
-      pid, taskNameFromText(seed), seed, chatSession.value?.model, [], true, 'feature', true, undefined, undefined,
+    const card = await board.createTask(
+      taskInsertFromDraft(
+        {
+          name: taskNameFromText(seed),
+          task: seed,
+          model: chatSession.value?.model,
+          prefix: 'feature',
+          worktree: true,
+        },
+        pid,
+        userId,
+      ),
     );
+    if (!card) return; // the store has already said why
     store.setBucket('tasks');
-    store.notify('Збережено в беклог.');
+    void router.push({ name: 'agents' });
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
