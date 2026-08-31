@@ -106,6 +106,7 @@ import { useBoard } from 'stores/board';
 import { useAuth } from 'stores/auth';
 import { useProjects } from 'stores/projects';
 import { renderMarkdown } from '../lib/markdown';
+import { taskInsertFromDraft } from '../lib/tasks-view';
 import { EXPAND_ALL_NONE } from '../lib/expand-all';
 import KChatMessage from 'components/kit/KChatMessage.vue';
 import KThoughtToggle from 'components/kit/KThoughtToggle.vue';
@@ -234,12 +235,14 @@ async function promote(): Promise<void> {
   }
 }
 
-// Park the chat's opening ask as a backlog task (name from its first line); it can be
-// refined later from the Агенти backlog.
+// «В беклог» files a CLOUD card assigned to me, so a thought parked in a chat is visible to
+// the team exactly like anything else on the board. The card's name comes from the opening
+// ask's first line and can be refined later from the Агенти backlog.
 async function toBacklog(): Promise<void> {
   const id = chatId.value;
   const pid = store.selectedProjectId;
-  if (!id || !pid) return;
+  const userId = auth.user?.id;
+  if (!id || !pid || !userId) return;
   const seed =
     (
       (store.transcripts[id] ?? []).find((e) => e.kind === 'user_text') as
@@ -250,12 +253,27 @@ async function toBacklog(): Promise<void> {
     store.notify('Порожній чат — нема що зберігати в беклог.', 'error');
     return;
   }
+  if (!projects.byId.has(pid)) {
+    store.notify('Проєкт ще не у хмарі — опублікуйте його, щоб створювати задачі.', 'error');
+    return;
+  }
   try {
-    await store.createSession(
-      pid, taskNameFromText(seed), seed, chatSession.value?.model, [], true, 'feature', true, undefined, undefined,
+    const card = await board.createTask(
+      taskInsertFromDraft(
+        {
+          name: taskNameFromText(seed),
+          task: seed,
+          model: chatSession.value?.model,
+          prefix: 'feature',
+          worktree: true,
+        },
+        pid,
+        userId,
+      ),
     );
+    if (!card) return; // the store has already said why
     store.setBucket('tasks');
-    store.notify('Збережено в беклог.');
+    void router.push({ name: 'agents' });
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
