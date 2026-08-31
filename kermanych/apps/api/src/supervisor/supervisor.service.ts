@@ -425,14 +425,6 @@ export class SupervisorService implements OnModuleDestroy {
     if (live && (live.state.status === "thinking" || live.state.status === "tool"))
       throw new Error("wait for the chat to finish its turn before starting implementation");
 
-    // The cloud identity arrives with the promotion: the caller mints the card — the UI on
-    // the human path, the supervisor itself for a trigger-driven promotion — and hands the
-    // id over here, so the row starts mirroring status the moment it stops being a chat.
-    // Written BEFORE the launch so a failure leaves a row
-    // that is still a chat but already linked — harmless — rather than a running agent the
-    // board cannot see.
-    this.registry.updateSession(chatId, { taskId });
-
     // Everything the launcher used to ask for is derived: the chat's opening message is the
     // task, its first line the name, and the rest are the project's defaults.
     const name = taskNameFromText(chat.task) || chat.name;
@@ -448,16 +440,24 @@ export class SupervisorService implements OnModuleDestroy {
       this.toolDetails.dropSession(chatId);
       this.skillLabels.delete(chatId);
     }
+    // The cloud identity arrives with the promotion: the caller mints the card — the UI on
+    // the human path, the supervisor itself for a trigger-driven promotion — and hands the id
+    // over here. It is stamped by the SAME write that turns the row into an agent, and still
+    // BEFORE the launch, so a running agent always carries it and the board can see it. Not
+    // earlier: CloudSyncService mirrors any session that carries a taskId, so a row that is
+    // (or becomes) a chat again must not hold the link — otherwise every later chat turn
+    // would flip an orphaned card to done/thinking on the shared board. A throw before this
+    // point therefore never links the chat at all, and the catch below unlinks it again.
     const session = this.registry.updateSession(chatId, {
-      name, kind: "agent", worktree: true, branch, baseBranch, worktreePath: "", prefix: "feature", status: "queued",
+      taskId, name, kind: "agent", worktree: true, branch, baseBranch, worktreePath: "", prefix: "feature", status: "queued",
     });
     try {
       return await this.launch(session, project, { fork: chatFile, firstPrompt: prompt });
     } catch (err) {
-      // Back to being a chat: the row keeps its conversation, and the next message resumes its
-      // read-only omp child through doResume.
+      // Back to being a chat, and back to being unlinked: the row keeps its conversation, and
+      // the next message resumes its read-only omp child through doResume.
       this.registry.updateSession(chatId, {
-        name: chat.name, kind: "chat", worktree: false, branch: "", baseBranch: undefined,
+        taskId: undefined, name: chat.name, kind: "chat", worktree: false, branch: "", baseBranch: undefined,
         worktreePath: "", prefix: undefined, status: "done",
       });
       this.pushUpdate(chatId);

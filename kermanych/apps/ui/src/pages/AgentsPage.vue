@@ -40,10 +40,16 @@
         <div v-if="showTasks && taskCards.length" class="agents__cards">
           <template v-for="g in taskGroups" :key="g.projectId">
             <div v-if="groupByProject" class="agents__group-label mono">{{ g.name }}</div>
+            <!-- `branch` is deliberately EMPTY here, and must stay empty: KSessionCard heads
+                 the card with `branch || title`, so anything passed wins over the title. A
+                 card's `t.branch` is its BASE branch («Базова гілка»), seeded from the
+                 project default — passing it made every card in the inbox read «main» and
+                 hid the title in the ✕ tooltip. A BACKLOG card has no branch of its own to
+                 name; the session cards below do, which is why they pass theirs. -->
             <KSessionCard
               v-for="t in g.rows"
               :key="t.id"
-              :branch="t.branch ?? ''"
+              :branch="''"
               :title="t.title"
               :time="relativeTime(t.updatedAt, now)"
               :status="t.status"

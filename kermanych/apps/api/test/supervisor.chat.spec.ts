@@ -188,6 +188,22 @@ describe("promoteChatToAgent", () => {
     expect(registry.listSessions(g.id)).toHaveLength(1);
   });
 
+  // The row must not keep the card either. CloudSyncService mirrors any session that carries
+  // a taskId, so a linked-but-restored chat would keep flipping its orphaned card to
+  // done/thinking on the shared board — work nobody did, on a card nobody can open.
+  it("unlinks the cloud card when the launch fails", async () => {
+    const { sup, registry, worktree } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const chat = await discussedChat(sup, g.id, "Додати експорт у CSV");
+    worktree.addWorktree.mockRejectedValueOnce(new Error("worktree add failed"));
+
+    await expect(sup.promoteChatToAgent(chat.id, "card-1")).rejects.toThrow(/worktree add failed/);
+
+    const row = registry.listSessions(g.id).find((s) => s.id === chat.id)!;
+    expect(row.kind).toBe("chat");
+    expect(row.taskId).toBeUndefined();
+  });
+
   it("rejects promotion before the chat has an omp session", async () => {
     const { sup, registry } = make();
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });

@@ -22,7 +22,7 @@ function session(over: Partial<Session> & { id: string }): Session {
 
 describe('planBacklogPublication', () => {
   it('publishes a local backlog row under its own id so a repeat pass collides', () => {
-    const row = session({ id: 's-1', name: 'Add login', task: 'wire OAuth', baseBranch: 'develop', model: 'opus-5', prefix: 'fix' });
+    const row = session({ id: 's-1', name: 'Add login', task: 'wire OAuth', baseBranch: 'develop', model: 'opus-5', prefix: 'fix', platform: 'web' });
 
     const plan = planBacklogPublication([row], new Set(['p1']), ME);
 
@@ -37,6 +37,7 @@ describe('planBacklogPublication', () => {
           description: 'wire OAuth',
           model: 'opus-5',
           prefix: 'fix',
+          platform: 'web',
           worktree: true,
           branch: 'develop',
           assigneeId: ME,

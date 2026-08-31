@@ -36,6 +36,7 @@ export function planBacklogPublication(
         description: s.task,
         ...(s.model ? { model: s.model } : {}),
         ...(s.prefix ? { prefix: s.prefix } : {}),
+        ...(s.platform ? { platform: s.platform } : {}),
         worktree: s.worktree,
         ...(s.worktree && s.baseBranch ? { branch: s.baseBranch } : {}),
         assigneeId,
