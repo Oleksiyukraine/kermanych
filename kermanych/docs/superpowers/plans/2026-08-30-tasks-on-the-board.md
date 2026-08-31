@@ -703,22 +703,73 @@ and immediately before the branch/worktree work (after the `chatFile` and turn-i
     post<Session>(`/sessions/${id}/promote`, { taskId }),
 ```
 
-`apps/ui/src/stores/orchestrator.ts` — widen `promoteChat` the same way (`function promoteChat(id: string, taskId: string)`), forwarding both arguments. The single UI call site (`ChatPage.vue:193`) is fixed in Task 8; leave it failing typecheck only if Task 8 lands in the same session — otherwise pass a temporary card in Task 8 and keep this task's typecheck green by updating that call site to `store.promoteChat(id, taskId)` there.
+`apps/ui/src/stores/orchestrator.ts` — widen `promoteChat` the same way
+(`function promoteChat(id: string, taskId: string)`), forwarding both arguments.
 
-- [ ] **Step 4: Run**
+- [ ] **Step 4: Mint the card at the only call site**
+
+This task owns the promote path end to end, so that no commit leaves `apps/ui` failing
+typecheck. `ChatPage.vue:187-203` currently calls `store.promoteChat(id)`; a promotion's
+card fields are fixed, so the insert is written literally here and needs nothing from
+Task 5:
+
+```ts
+// Promotion grows a worktree and starts building, so it is agent work and needs a card —
+// otherwise its status mirrors nowhere and the team never sees the run. The card is minted
+// first and its id travels into the promotion, which stamps it on the row.
+async function promote(): Promise<void> {
+  const id = chatId.value;
+  const pid = store.selectedProjectId;
+  const userId = auth.user?.id;
+  if (!id || !pid || !userId) return;
+  const seed = chatSession.value?.task?.trim() ?? '';
+  if (!projects.byId.has(pid)) {
+    store.notify('Проєкт ще не у хмарі — опублікуйте його, щоб підняти агента.', 'error');
+    return;
+  }
+  promoting.value = true;
+  try {
+    const card = await board.createTask({
+      projectId: pid,
+      title: taskNameFromText(seed) || chatSession.value?.name || 'чат',
+      description: seed,
+      ...(chatSession.value?.model ? { model: chatSession.value.model } : {}),
+      prefix: 'feature',
+      worktree: true,
+      assigneeId: userId,
+    });
+    if (!card) return; // the store has already said why
+    await store.promoteChat(id, card.id);
+    store.setBucket('active');
+    store.selectSession(id);
+    void router.push({ name: 'agents' });
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    promoting.value = false;
+  }
+}
+```
+
+`board` (`useBoard()`), `auth` (`useAuth()`) and `projects` (`useProjects()`) are store
+instances the page may not have yet — add whichever are missing next to the existing
+`store`. Keep the existing `promoting` ref and the button wiring; only this body changes.
+
+- [ ] **Step 5: Run**
 
 ```bash
 cd kermanych
 pnpm --filter @kermanych/api test
 pnpm --filter @kermanych/api typecheck
+pnpm --filter @kermanych/ui typecheck
 ```
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add kermanych/apps/api kermanych/apps/ui/src/lib/api.ts kermanych/apps/ui/src/stores/orchestrator.ts
-git commit -m "feat(api): promote a chat onto a cloud task"
+git add kermanych/apps/api kermanych/apps/ui
+git commit -m "feat: promote a chat onto a cloud task"
 ```
 
 ---
@@ -1512,14 +1563,17 @@ git add kermanych/apps/ui
 git commit -m "feat(ui): Агенти creates and lists cloud task cards"
 ```
 
-### Task 8: chat → backlog and chat → agent write cards
+### Task 8: «В беклог» in the chat writes a card
 
 **Files:**
-- Modify: `kermanych/apps/ui/src/pages/ChatPage.vue:147-231`
+- Modify: `kermanych/apps/ui/src/pages/ChatPage.vue:205-231`
 
 **Interfaces:**
-- Consumes: `board.createTask`, `taskInsertFromDraft` (Task 5), `api.promoteChat(id, taskId)` (Task 4).
+- Consumes: `board.createTask`, `taskInsertFromDraft` (Task 5).
 - Produces: nothing new.
+
+The chat's OTHER cloud write — promote — is Task 4's, which owns that path end to end so no
+commit leaves the UI failing typecheck. Do not touch `promote()` here.
 
 - [ ] **Step 1: Implement `toBacklog`**
 
@@ -1550,54 +1604,15 @@ async function toBacklog(): Promise<void> {
 
 Keep the existing error handling shape of the function it replaces (`ChatPage.vue:205-231`), including its `try/catch` notify.
 
-- [ ] **Step 2: Implement `promote`**
-
-```ts
-// Promotion grows a worktree and starts building, so it is agent work and needs a card. The
-// card is minted first and its id travels into the promotion, which stamps it on the row so
-// status starts mirroring immediately.
-async function promote(): Promise<void> {
-  const id = chatId.value;
-  const pid = store.selectedProjectId;
-  const userId = auth.user?.id;
-  const seed = chatSession.value?.task?.trim() ?? '';
-  if (!id || !pid || !userId) return;
-  if (!cloud.byId.has(pid)) {
-    store.notify('Проєкт ще не у хмарі — опублікуйте його, щоб підняти агента.', 'error');
-    return;
-  }
-  promoting.value = true;
-  try {
-    const card = await board.createTask(
-      taskInsertFromDraft(
-        { name: taskNameFromText(seed) || chatSession.value?.name || 'чат', task: seed, model: chatSession.value?.model, prefix: 'feature', worktree: true },
-        pid,
-        userId,
-      ),
-    );
-    if (!card) return;
-    await store.promoteChat(id, card.id);
-    store.setBucket('active');
-    store.selectSession(id);
-    void router.push({ name: 'agents' });
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    promoting.value = false;
-  }
-}
-```
-
-Keep the existing `promoting` ref and button wiring; only the body changes.
-
-- [ ] **Step 3: Typecheck and smoke**
+- [ ] **Step 2: Typecheck and smoke**
 
 ```bash
 cd kermanych && pnpm --filter @kermanych/ui typecheck
 ```
-Then `pnpm dev:app`: in «Чат» send a message, press ⊕ («Зберегти як задачу в беклог») → the card is on the board assigned to me. Press the promote button on another chat → an agent starts and its card is on the board, leaving `backlog` as the session moves.
+Then `pnpm dev:app`: in «Чат» send a message, press ⊕ («Зберегти як задачу в беклог») → the
+card is on the board assigned to me, and «Задачі» in «Агенти» shows it.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add kermanych/apps/ui/src/pages/ChatPage.vue
