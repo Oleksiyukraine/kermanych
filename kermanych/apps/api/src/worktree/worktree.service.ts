@@ -278,10 +278,14 @@ export class WorktreeService {
     return { ok: false, conflict, message: r.out.trim() || "merge failed" };
   }
 
-  // Merge a ref INTO a worktree's branch, leaving conflict markers in place (no abort)
-  // so they can be resolved in an editor.
-  async mergeInto(dir: string, ref: string): Promise<void> {
-    await git(dir, ["merge", ref]);
+  // Merge a ref INTO a worktree's branch, leaving conflict markers in place (no abort) so
+  // they can be resolved in an editor. Reports whether it conflicted, so a caller can stop
+  // and hand the worktree to the operator rather than merging on.
+  async mergeInto(dir: string, ref: string): Promise<{ ok: true } | { ok: false; conflict: boolean; message: string }> {
+    const r = await git(dir, ["merge", ref]);
+    if (r.ok) return { ok: true };
+    const conflict = /CONFLICT|Automatic merge failed/i.test(r.out);
+    return { ok: false, conflict, message: r.out.trim() || "merge failed" };
   }
 
   // Unified diff of a worktree against where its branch forked from `base`. The
@@ -326,5 +330,31 @@ export class WorktreeService {
   // flow, which knows which branch it is publishing.
   async pull(repoDir: string): Promise<{ ok: boolean; out: string }> {
     return git(repoDir, ["pull", "--ff-only"]);
+  }
+
+  // True when `remote` is configured for the repo (a local-only project has none).
+  async hasRemote(repoDir: string, remote = "origin"): Promise<boolean> {
+    const r = await git(repoDir, ["remote"]);
+    return r.ok && r.out.split("\n").map((s) => s.trim()).includes(remote);
+  }
+
+  // True when `ref` resolves — tells whether a fetch actually produced `origin/<base>`.
+  async refExists(repoDir: string, ref: string): Promise<boolean> {
+    return (await git(repoDir, ["rev-parse", "--verify", "--quiet", ref])).ok;
+  }
+
+  // Fetch one branch from a remote. Best-effort: offline or a missing remote is reported as
+  // not-ok, never thrown, so a launch or finish degrades to local-only instead of failing.
+  async fetch(repoDir: string, remote: string, branch: string): Promise<{ ok: boolean; out: string }> {
+    return git(repoDir, ["fetch", remote, branch]);
+  }
+
+  // Push a branch to a remote. A non-fast-forward rejection (origin moved) is told apart from
+  // a hard error, so the caller can fetch-merge-retry once before giving up.
+  async push(repoDir: string, remote: string, branch: string): Promise<{ ok: true } | { ok: false; rejected: boolean; message: string }> {
+    const r = await git(repoDir, ["push", remote, `${branch}:${branch}`]);
+    if (r.ok) return { ok: true };
+    const rejected = /rejected|non-fast-forward|fetch first|Updates were rejected/i.test(r.out);
+    return { ok: false, rejected, message: r.out.trim() || "push failed" };
   }
 }

@@ -1365,7 +1365,7 @@ export class SupervisorService implements OnModuleDestroy {
   // worktree + branch and keep the session as `merged` history. On a content conflict
   // it instead pulls the target into the worktree (leaving markers to resolve in an
   // editor) and marks the session `conflict`; re-running after a resolve merges cleanly.
-  async finishSession(id: string): Promise<{ merged: true; into: string } | { conflict: true; files: string[] }> {
+  async finishSession(id: string): Promise<{ merged: true; into: string; pushed?: boolean; reason?: string } | { conflict: true; files: string[] }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
@@ -1374,19 +1374,40 @@ export class SupervisorService implements OnModuleDestroy {
 
     if (s.worktree) {
       if (!s.worktreePath) throw new Error("session has no worktree");
-      const target = await this.worktree.currentBranch(g.localRepoPath);
-      if (!target) throw new Error("project repo has a detached HEAD - checkout a branch first");
-      if (target === s.branch) throw new Error("project repo is on the session branch itself");
+      // Finish targets the branch the session forked from, not whatever the project repo is
+      // checked out on — merging a session into an unrelated branch is how work used to land
+      // in the wrong place. Fall back to the current branch only for a row that predates
+      // baseBranch being recorded.
+      const base = (s.baseBranch || (await this.worktree.currentBranch(g.localRepoPath))).trim();
+      if (!base) throw new Error("project repo has a detached HEAD - checkout a branch first");
+      if (base === s.branch) throw new Error("project repo is on the session branch itself");
+      const cur = await this.worktree.currentBranch(g.localRepoPath);
+      if (cur !== base)
+        throw new Error(`project repo is on ${cur || "detached HEAD"}, not the session's base ${base} - checkout ${base} first`);
       // A prior conflict left the worktree mid-merge — it must be resolved before retrying.
       if ((await this.worktree.unmergedFiles(s.worktreePath)).length)
         throw new Error("worktree has unresolved conflicts - resolve them in the editor first");
       if (await this.worktree.hasUncommitted(s.worktreePath))
         await this.worktree.commitAll(s.worktreePath, `session work: ${s.name}`);
+
+      // Fold the team's latest into the worktree FIRST, so `base` never receives a conflicted
+      // merge and a conflict is resolved in the agent's own tree (re-finish continues after).
+      const remote = await this.worktree.hasRemote(g.localRepoPath);
+      if (remote) {
+        await this.worktree.fetch(g.localRepoPath, "origin", base);
+        const down = await this.worktree.mergeInto(s.worktreePath, `origin/${base}`);
+        if (down.ok === false && down.conflict) {
+          this.registry.updateSession(id, { status: "conflict" });
+          this.pushUpdate(id);
+          return { conflict: true, files: await this.worktree.unmergedFiles(s.worktreePath) };
+        }
+      }
+
       const res = await this.worktree.mergeBranch(g.localRepoPath, s.branch, `merge session: ${s.name}`);
       if (!res.ok) {
         if (!res.conflict) throw new Error(res.message); // e.g. dirty project tree
-        // Pull the target into the worktree so the conflict can be resolved there.
-        await this.worktree.mergeInto(s.worktreePath, target);
+        // Pull the base into the worktree so the conflict can be resolved there.
+        await this.worktree.mergeInto(s.worktreePath, base);
         this.registry.updateSession(id, { status: "conflict" });
         this.pushUpdate(id);
         return { conflict: true, files: await this.worktree.unmergedFiles(s.worktreePath) };
@@ -1397,7 +1418,14 @@ export class SupervisorService implements OnModuleDestroy {
       await this.worktree.removeBranch(g.localRepoPath, s.branch);
       this.registry.updateSession(id, { status: "merged", worktreePath: "" });
       this.pushUpdate(id);
-      return { merged: true, into: target };
+      // Publish the merged base so local and origin never drift. On a race retry once inside
+      // pushBase; a persistent block leaves the merge local and is reported to the caller.
+      if (remote) {
+        const pushed = await this.pushBase(g.localRepoPath, base);
+        this.pushUpdate(id);
+        return { merged: true, into: base, ...pushed };
+      }
+      return { merged: true, into: base };
     }
 
     // In-place: the local repo is checked out on the session branch. Merge it into base.
@@ -1428,6 +1456,22 @@ export class SupervisorService implements OnModuleDestroy {
     this.registry.updateSession(id, { status: "merged" });
     this.pushUpdate(id);
     return { merged: true, into: base };
+  }
+
+  // Publish `base` to origin after a finish. A non-fast-forward rejection means origin moved
+  // since our fetch: fold it into the local base and retry once. A second rejection, or a
+  // conflict folding origin in, leaves the merge standing locally and reports the block — the
+  // operator pulls and pushes rather than the finish looping.
+  private async pushBase(repoDir: string, base: string): Promise<{ pushed: true } | { pushed: false; reason: string }> {
+    let p = await this.worktree.push(repoDir, "origin", base);
+    if (p.ok) return { pushed: true };
+    if (!p.rejected) return { pushed: false, reason: p.message };
+    await this.worktree.fetch(repoDir, "origin", base);
+    const m = await this.worktree.mergeBranch(repoDir, `origin/${base}`, `merge origin/${base}`);
+    if (!m.ok)
+      return { pushed: false, reason: m.conflict ? `origin/${base} has conflicting changes — pull and resolve` : m.message };
+    p = await this.worktree.push(repoDir, "origin", base);
+    return p.ok ? { pushed: true } : { pushed: false, reason: "origin moved again — pull and push" };
   }
 
   // Reopen a merged (retired) worktree agent: fork a fresh branch + worktree from the base

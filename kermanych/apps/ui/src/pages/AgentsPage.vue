@@ -1714,6 +1714,11 @@ async function submitFinish(): Promise<void> {
     } else {
       finishConflict.value = null;
       finishOpen.value = false;
+      // Merged, but the push back to origin did not land — say so, because the work is only
+      // local until the operator pulls and pushes it.
+      if ('pushed' in res && res.pushed === false) {
+        store.notify(`«${s.name}» злито локально, але push у origin заблоковано: ${res.reason ?? 'origin зрушив'}. Зроби git pull та push.`, 'error');
+      }
     }
   } catch (e) {
     finishError.value = e instanceof Error ? e.message : String(e);
