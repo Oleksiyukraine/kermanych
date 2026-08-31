@@ -1349,13 +1349,18 @@ async function submitLauncher(asTask: boolean): Promise<void> {
       if (!created) return; // the store has already said why
       cardId = created.id;
     }
-    launcherOpen.value = false;
-    clearLaunchImages();
     if (asTask) {
+      launcherOpen.value = false;
+      clearLaunchImages();
       store.setBucket('tasks');
       return;
     }
+    // The launch can still fail (omp down, project unbound, network), and its error belongs
+    // in the launcher the operator is looking at — so the modal closes only after from-task
+    // resolves. The card is already saved either way.
     const session = await api.createSessionFromTask(cardId, images);
+    launcherOpen.value = false;
+    clearLaunchImages();
     store.setBucket('active');
     store.selectSession(session.id);
   } catch (e) {
