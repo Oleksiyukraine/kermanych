@@ -177,8 +177,8 @@ export const api = {
 
   // The user is NOT sent: the api takes it from the guard's cached token, so a board
   // client cannot launch a task on somebody else's behalf.
-  createSessionFromTask: (taskId: string): Promise<Session> =>
-    post<Session>('/sessions/from-task', { taskId }),
+  createSessionFromTask: (taskId: string, images?: ImageInput[]): Promise<Session> =>
+    post<Session>('/sessions/from-task', { taskId, images }),
 
   // How many status pushes THIS machine still owes the cloud. Only the local process can
   // see that, so the board polls it (see the api controller for why it is not an event).

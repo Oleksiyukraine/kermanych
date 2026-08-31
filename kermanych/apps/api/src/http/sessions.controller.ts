@@ -42,12 +42,13 @@ export class SessionsController {
   // A literal segment, so it MUST be declared above the `:id` block — Nest matches in
   // declaration order and `:id/...` would otherwise swallow `from-task` (same reason
   // `@Post("chat")` sits above `@Post(":id/start")`).
-  // The task id is the ONLY input: who may run it comes from the guard's cached token,
-  // never from the request body.
+  // The task id is the ONLY identity input: who may run it comes from the guard's cached
+  // token, never from the request body. `images` are the first prompt's attachments; they
+  // stay on this machine and never reach the cloud.
   @Post("from-task")
-  async createFromTask(@Body() b: { taskId: string }, @Req() req: { user: { id: string } }) {
+  async createFromTask(@Body() b: { taskId: string; images?: ImageInput[] }, @Req() req: { user: { id: string } }) {
     try {
-      return await this.sup.createSessionFromTask(b.taskId, req.user.id);
+      return await this.sup.createSessionFromTask(b.taskId, req.user.id, b.images);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }

@@ -305,7 +305,7 @@ export class SupervisorService implements OnModuleDestroy {
   // atomic claim) and owns the project config; SQLite owns where the repo lives locally.
   // From `registry.createSession` onward this is byte-for-byte the ordinary launch path, so
   // a task-born session behaves exactly like a locally created one — including offline.
-  async createSessionFromTask(taskId: string, userId: string): Promise<Session> {
+  async createSessionFromTask(taskId: string, userId: string, images?: ImageInput[]): Promise<Session> {
     const client = this.auth.cloudClient();
 
     const task = await getTask(client, taskId);
@@ -358,12 +358,18 @@ export class SupervisorService implements OnModuleDestroy {
       ? (task.platform as Session["platform"])
       : undefined;
 
-    // Always a worktree: a cloud task must never commandeer the developer's checkout.
+    // A shared card must never commandeer another developer's checkout, which is what the
+    // hardcoded `true` here used to guarantee. The in-place option is personal, so it
+    // survives exactly for the person who filed the card — for anybody else the card is
+    // isolated, whatever it says.
+    const inPlace = task.worktree === false && task.createdBy === userId;
+    const worktree = !inPlace;
+
     const { branch, baseBranch } = await this.resolveLaunchParams(
       project,
       task.title,
       prefix,
-      true,
+      worktree,
       undefined,
       task.branch ?? project.defaultBranch,
     );
@@ -374,14 +380,14 @@ export class SupervisorService implements OnModuleDestroy {
       task: task.description ?? task.title,
       worktreePath: "",
       branch,
-      worktree: true,
+      worktree,
       baseBranch,
       model: task.model,
       prefix,
       platform,
     });
     try {
-      return await this.launch(session, project);
+      return await this.launch(session, project, { images });
     } catch (err) {
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
