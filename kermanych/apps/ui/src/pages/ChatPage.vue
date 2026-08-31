@@ -102,6 +102,9 @@ import { useRouter } from 'vue-router';
 import { buildChatBlocks, taskNameFromText } from '@kermanych/core';
 import type { ImageInput } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
+import { useBoard } from 'stores/board';
+import { useAuth } from 'stores/auth';
+import { useProjects } from 'stores/projects';
 import { renderMarkdown } from '../lib/markdown';
 import { EXPAND_ALL_NONE } from '../lib/expand-all';
 import KChatMessage from 'components/kit/KChatMessage.vue';
@@ -112,6 +115,9 @@ import KStatusDot from 'components/kit/KStatusDot.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 
 const store = useOrchestrator();
+const board = useBoard();
+const auth = useAuth();
+const projects = useProjects();
 
 const draft = ref('');
 const chatId = ref<string | undefined>(undefined);
@@ -183,14 +189,35 @@ async function onSend(text: string, images: ImageInput[]): Promise<void> {
   }
 }
 
-// Promote the chat into a real task: omp gets a worktree + full tools, and we jump to the
-// Агенти view where the now-running agent lives.
+// Promotion grows a worktree and starts building, so it is agent work and needs a card —
+// otherwise its status mirrors nowhere and the team never sees the run. The card is minted
+// first and its id travels into the promotion, which stamps it on the row.
 async function promote(): Promise<void> {
+  // The button's `:disabled` is not a guarantee: keyboard and programmatic activation
+  // reach here regardless, and a second run would mint a second card.
+  if (promoting.value) return;
   const id = chatId.value;
-  if (!id || promoting.value || !isBound.value) return;
+  const pid = store.selectedProjectId;
+  const userId = auth.user?.id;
+  if (!id || !pid || !userId) return;
+  const seed = chatSession.value?.task?.trim() ?? '';
+  if (!projects.byId.has(pid)) {
+    store.notify('Проєкт ще не у хмарі — опублікуйте його, щоб підняти агента.', 'error');
+    return;
+  }
   promoting.value = true;
   try {
-    await store.promoteChat(id);
+    const card = await board.createTask({
+      projectId: pid,
+      title: taskNameFromText(seed) || chatSession.value?.name || 'чат',
+      description: seed,
+      ...(chatSession.value?.model ? { model: chatSession.value.model } : {}),
+      prefix: 'feature',
+      worktree: true,
+      assigneeId: userId,
+    });
+    if (!card) return; // the store has already said why
+    await store.promoteChat(id, card.id);
     store.setBucket('active');
     store.selectSession(id);
     void router.push({ name: 'agents' });

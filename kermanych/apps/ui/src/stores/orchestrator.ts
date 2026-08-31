@@ -200,8 +200,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.createChat(projectId);
   }
 
-  function promoteChat(id: string) {
-    return api.promoteChat(id);
+  function promoteChat(id: string, taskId: string) {
+    return api.promoteChat(id, taskId);
   }
 
   function startTask(id: string, draft?: TaskDraft & { images?: ImageInput[] }) {

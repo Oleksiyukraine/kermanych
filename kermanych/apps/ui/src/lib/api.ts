@@ -190,8 +190,8 @@ export const api = {
   subscriptionUsage: (): Promise<SubscriptionUsage> =>
     get<SubscriptionUsage>('/usage/subscription'),
 
-  promoteChat: (id: string): Promise<Session> =>
-    post<Session>(`/sessions/${id}/promote`, {}),
+  promoteChat: (id: string, taskId: string): Promise<Session> =>
+    post<Session>(`/sessions/${id}/promote`, { taskId }),
 
   sendMessage: (id: string, text: string, mode: MessageMode, images?: ImageInput[]): Promise<unknown> =>
     post(`/sessions/${id}/message`, { text, mode, images }),

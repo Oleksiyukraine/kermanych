@@ -67,11 +67,12 @@ export class SessionsController {
     }
   }
 
-  // No body: a chat carries everything the promotion needs (its conversation, its opening ask).
+  // A chat carries everything else the promotion needs (its conversation, its opening ask);
+  // the task id is the card the UI has just minted for it.
   @Post(":id/promote")
-  async promote(@Param("id") id: string) {
+  async promote(@Param("id") id: string, @Body() b: { taskId: string }) {
     try {
-      return await this.sup.promoteChatToAgent(id);
+      return await this.sup.promoteChatToAgent(id, b.taskId);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }

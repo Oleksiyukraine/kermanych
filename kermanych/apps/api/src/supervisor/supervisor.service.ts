@@ -39,7 +39,7 @@ import {
   type ToolLine,
   type TranscriptEntry,
 } from "@kermanych/core";
-import { claimTask, getTask, listProjects, patchTask, type CloudProject, type ProjectTrigger } from "@kermanych/cloud";
+import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type ProjectTrigger } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 
 type Live = {
@@ -515,7 +515,7 @@ export class SupervisorService implements OnModuleDestroy {
   // with the full toolset, and is immediately told to build what was just discussed. One thing
   // that goes from "we're talking about it" to "it's being built"; there is no second row and
   // nothing to fill in, so the operator's click is the whole ceremony.
-  async promoteChatToAgent(chatId: string): Promise<Session> {
+  async promoteChatToAgent(chatId: string, taskId: string): Promise<Session> {
     const chat = this.registry.listSessions().find((x) => x.id === chatId);
     if (!chat) throw new Error("session not found");
     if (chat.kind !== "chat") throw new Error("not a chat session");
@@ -532,6 +532,13 @@ export class SupervisorService implements OnModuleDestroy {
     const live = this.map.get(chatId);
     if (live && (live.state.status === "thinking" || live.state.status === "tool"))
       throw new Error("wait for the chat to finish its turn before starting implementation");
+
+    // The cloud identity arrives with the promotion: the UI mints the card (it is the only
+    // writer of `tasks`) and hands the id over here, so the row starts mirroring status the
+    // moment it stops being a chat. Written BEFORE the launch so a failure leaves a row
+    // that is still a chat but already linked — harmless — rather than a running agent the
+    // board cannot see.
+    this.registry.updateSession(chatId, { taskId });
 
     // Everything the launcher used to ask for is derived: the chat's opening message is the
     // task, its first line the name, and the rest are the project's defaults.
@@ -1160,7 +1167,7 @@ export class SupervisorService implements OnModuleDestroy {
       // The four agents a trigger can run. `finish` and `summary` are automations with no
       // model and no session of their own, so they are not reachable from here.
       if (trigger.target === "review") await this.reviewSession(id);
-      else if (trigger.target === "promote") await this.promoteChatToAgent(id);
+      else if (trigger.target === "promote") await this.promoteChatToAgent(id, await this.promotionCard(id));
       else if (trigger.target === "pull-request") await this.createPullRequest(id);
       else if (trigger.target === "resolve-conflict") await this.resolveConflict(id);
       else throw new Error(`агента «${trigger.target}» не існує`);
@@ -1172,6 +1179,29 @@ export class SupervisorService implements OnModuleDestroy {
       );
       return false;
     }
+  }
+
+  // A trigger promotes with no human in the loop, so there is no UI to mint the card:
+  // this is the ONE place apps/api creates a `tasks` row (it already claims, patches and
+  // pushes status on them). Same fields the ChatPage promotion writes, and the same owner
+  // — the machine's signed-in user, whose worktree is about to run it.
+  private async promotionCard(id: string): Promise<string> {
+    const chat = this.registry.listSessions().find((x) => x.id === id);
+    if (!chat) throw new Error("session not found");
+    if (chat.taskId) return chat.taskId;
+    const userId = this.auth.current()?.userId;
+    if (!userId) throw new Error("not signed in");
+    const card = await createTask(this.auth.cloudClient(), {
+      projectId: chat.projectId,
+      title: taskNameFromText(chat.task) || chat.name,
+      description: chat.task,
+      ...(chat.model ? { model: chat.model } : {}),
+      prefix: "feature",
+      worktree: true,
+      assigneeId: userId,
+      createdBy: userId,
+    });
+    return card.id;
   }
 
   // AI conflict resolution: resume the session's agent in its mid-merge worktree and
