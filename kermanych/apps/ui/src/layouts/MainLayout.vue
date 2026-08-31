@@ -283,6 +283,7 @@ import { useBoard } from 'stores/board';
 import { IS_PREVIEW } from '../lib/preview';
 import { MANAGEMENT_DEFAULT_SECTION } from '../lib/management';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
+import { myBacklogTasks } from '../lib/tasks-view';
 import { theme, toggleTheme } from '../lib/theme';
 import { isMoveRefusal, MOVE_REFUSAL } from '../lib/cloud-errors';
 import { percent, planWindow } from '../lib/format';
@@ -569,6 +570,11 @@ const bucketCounts = computed(() => {
     else if (s.status === 'merged' || s.status === 'done' || s.status === 'stopped') c.history++;
     else c.active++;
   }
+  // «Задачі» shows two things now: my cloud backlog cards, and any stranded pre-cutover
+  // local row. The badge counts both, because a count that disagrees with the list it counts
+  // is worse than no count (lib/buckets.ts:2-4). myBacklogTasks applies the same scope, so
+  // the set is passed to it rather than re-tested here.
+  c.tasks += myBacklogTasks(board.tasks, auth.user?.id ?? '', [...inScope]).length;
   return c;
 });
 

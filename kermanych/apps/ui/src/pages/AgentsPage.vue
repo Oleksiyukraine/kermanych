@@ -12,7 +12,7 @@
         <header class="agents__board-head">
           <div class="agents__board-title">
             <span class="agents__bucket-label">{{ bucketLabel }}</span>
-            <span class="agents__bucket-count mono">{{ boardRows.length }}</span>
+            <span class="agents__bucket-count mono">{{ boardCount }}</span>
           </div>
           <div class="agents__board-controls">
             <!-- Creating anything needs ONE project (a session row carries a projectId), so
@@ -35,6 +35,28 @@
           <p v-if="outsideScopeNote" class="agents__note">{{ outsideScopeNote }}</p>
         </div>
 
+        <!-- «Задачі» is my cloud backlog: the cards assigned to me, above whatever stranded
+             pre-cutover local rows the session list below still holds. -->
+        <div v-if="showTasks && taskCards.length" class="agents__cards">
+          <template v-for="g in taskGroups" :key="g.projectId">
+            <div v-if="groupByProject" class="agents__group-label mono">{{ g.name }}</div>
+            <KSessionCard
+              v-for="t in g.rows"
+              :key="t.id"
+              :branch="t.branch ?? ''"
+              :title="t.title"
+              :time="relativeTime(t.updatedAt, now)"
+              :status="t.status"
+              :status-line="t.description ?? ''"
+              :model="t.model"
+              :selected="false"
+              removable
+              :remove-title="`Видалити задачу «${t.title}»`"
+              @click="openLauncher(t)"
+              @remove="onDeleteCard(t)"
+            />
+          </template>
+        </div>
         <div v-if="boardRows.length" class="agents__cards">
           <template v-for="g in boardGroups" :key="g.projectId">
             <div v-if="groupByProject" class="agents__group-label mono">{{ g.name }}</div>
@@ -50,13 +72,13 @@
               :usage="s.usage"
               :selected="store.selectedSessionId === s.id"
               :removable="s.kind === 'task'"
-              :remove-title="`Видалити задачу «${s.name}»`"
+              :remove-title="`Видалити локальну задачу «${s.name}»`"
               @click="onRowClick(s)"
-              @remove="onDeleteTask(s)"
+              @remove="onDeleteStranded(s)"
             />
           </template>
         </div>
-        <div v-else class="agents__empty mono">{{ emptyText }}</div>
+        <div v-else-if="!showTasks || !taskCards.length" class="agents__empty mono">{{ emptyText }}</div>
       </section>
 
       <!-- RESIZER — drag the seam to widen / narrow the chat section -->
@@ -409,13 +431,32 @@
         </div>
       </div>
 
+      <!-- The way out of a local-only project: a card lives in the cloud, so the project has
+           to get there first. Below the form, above the controls, so it reads as the reason
+           «В беклог» would refuse rather than as another launch option. -->
+      <div v-if="needsPublish" class="agents-launcher__publish">
+        <p class="agents__hint mono">{{ PUBLISH_FIRST_HINT }}</p>
+        <KSelect
+          v-model="publishInto"
+          label="Воркспейс"
+          :options="workspaceOptions"
+          placeholder="виберіть воркспейс"
+        />
+        <KBtn :disabled="!publishInto || publishing" @click="publishAndFile">
+          Опублікувати і створити задачу
+        </KBtn>
+        <p v-if="!workspaceOptions.length" class="agents__hint mono">
+          Спершу створіть воркспейс у лівій панелі.
+        </p>
+      </div>
+
       <template #controls>
         <div class="agents-launcher__foot">
           <!-- Destructive, so it sits alone on the far side of the spacer instead of beside
                «Запустити». Only while editing: there is nothing to delete before the task
                exists, and this modal is the task's only detail view — the board's cards
                carry a ✕, but a task opened for editing must be closable from here too. -->
-          <KBtn v-if="editingTask" variant="ghost" @click="onDeleteTask(editingTask)">
+          <KBtn v-if="editingTask" variant="ghost" @click="onDeleteCard(editingTask)">
             Видалити
           </KBtn>
           <span v-if="launcherError" class="agents__error" role="alert">{{ launcherError }}</span>
@@ -574,12 +615,16 @@ import {
   type TranscriptEntry,
   type RpcExtensionUIResponse,
 } from '@kermanych/core';
+import type { Task } from '@kermanych/cloud';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useRouter } from 'vue-router';
 import { useProjects } from 'stores/projects';
-import type { FileDiff, MessageMode } from '../lib/api';
+import { useBoard } from 'stores/board';
+import { useAuth } from 'stores/auth';
+import { api, type FileDiff, type MessageMode } from '../lib/api';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import { sessionScopedProjectIds } from '../lib/scope';
+import { myBacklogTasks, taskInsertFromDraft, taskPatchFromDraft } from '../lib/tasks-view';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
@@ -592,7 +637,7 @@ import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KSelect from 'components/kit/KSelect.vue';
-import type { BranchPrefix, Platform } from '@kermanych/core';
+import { BRANCH_PREFIXES, PLATFORMS, type BranchPrefix, type Platform } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useNow } from '../composables/useNow';
 import { relativeTime } from '../lib/time';
@@ -608,6 +653,11 @@ const store = useOrchestrator();
 // a local-only edit would not survive the next sync — and the cloud project list, which is
 // the authority on which projects a selected workspace holds (see `scopedIds`).
 const projects = useProjects();
+// The shared board's task cards. «Нова задача» files one here — a card is the only form of
+// task a teammate can ever see — and «Задачі» lists the ones assigned to me.
+const board = useBoard();
+// The card's assignee is the person filing it, so the launcher needs to know who that is.
+const auth = useAuth();
 
 const now = useNow();
 
@@ -735,6 +785,33 @@ const boardGroups = computed<BoardGroup[]>(() => {
   return [...groups.values()].sort((a, b) => a.rank - b.rank);
 });
 
+// My backlog inbox: the cards I have to work, in the same scope the session list uses, so
+// one sidebar click narrows both. Unclaimed team cards live on Дошка by design.
+const taskCards = computed(() => myBacklogTasks(board.tasks, auth.user?.id ?? '', scopedIds.value));
+
+type TaskGroup = { projectId: string; name: string; rows: Task[] };
+// Cards are all `backlog`, so there is no STATUS_RANK to order groups by: project name is
+// the only stable order available, and it matches what the rail shows.
+const taskGroups = computed<TaskGroup[]>(() => {
+  const groups = new Map<string, TaskGroup>();
+  for (const t of taskCards.value) {
+    let group = groups.get(t.projectId);
+    if (!group) {
+      group = { projectId: t.projectId, name: projectName(t.projectId), rows: [] };
+      groups.set(t.projectId, group);
+    }
+    group.rows.push(t);
+  }
+  return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
+});
+
+// The header counts what the column RENDERS, and under «Задачі» that is the cards plus any
+// stranded pre-cutover local row — the same sum the rail's badge shows. A header reading 0
+// above a list of cards would be the disagreement MainLayout.bucketCounts exists to avoid.
+const boardCount = computed(
+  () => boardRows.value.length + (showTasks.value ? taskCards.value.length : 0),
+);
+
 // Active agents the current scope hides — an agent that is running, or waiting for an answer,
 // and left the screen because the operator clicked elsewhere in the rail. The page must not
 // do that quietly, and it does not widen the scope by itself either (the rail owns
@@ -782,6 +859,11 @@ const launchProject = computed(() =>
 // nothing that touches the repo may run. `BIND_HINT` is the same string MainLayout uses; both
 // copies are the operator's next action, not an apology.
 const BIND_HINT = 'Прив’яжіть локальну теку репозиторію';
+// A card lives in the cloud, and `tasks.project_id` is what tasks_insert_member checks
+// membership against — so a project that never left this machine has nothing to hang one on.
+// The way out is the publish hatch in the launcher, which this line points at.
+const PUBLISH_FIRST_HINT =
+  'Цей проєкт живе лише на цій машині — опублікуйте його у воркспейсі, і тоді задача стане видимою команді.';
 // A workspace is not a place a session can be created: it holds several projects and a session
 // row carries exactly one projectId. Rendered as visible text beside the disabled button, not
 // as its tooltip — see the template.
@@ -1105,9 +1187,12 @@ const launcherOpen = ref(false);
 const draftName = ref('');
 const draftTask = ref('');
 const draftModel = ref('opus-5');
-const prefixOptions: BranchPrefix[] = ['feature', 'fix', 'refactoring', 'chore'];
+// The segmented pickers offer core's vocabularies verbatim — the same constants openLauncher
+// validates a card's free-text launch params against, so a prefix added to core cannot show
+// up as accepted-but-unpickable here.
+const prefixOptions = BRANCH_PREFIXES;
 const draftPrefix = ref<BranchPrefix>('feature');
-const platformOptions: Platform[] = ['backend', 'web', 'mobile'];
+const platformOptions = PLATFORMS;
 const modelOptions = ['opus-5', 'sonnet-4.5', 'haiku'];
 const draftPlatform = ref<Platform | undefined>(undefined);
 const draftWorktree = ref(true);
@@ -1115,11 +1200,10 @@ const nameEdited = ref(false);
 const draftBaseBranch = ref('');
 const launchBranches = ref<string[]>([]);
 const editingTaskId = ref<string | null>(null);
-// The row `editingTaskId` points at. Resolved from the store rather than snapshotted when
-// the modal opens, so a task deleted from another window (`session_removed` drops it here)
-// takes its «Видалити» with it instead of leaving a button that deletes nothing.
-const editingTask = computed(() =>
-  editingTaskId.value ? store.sessions.find((s) => s.id === editingTaskId.value) : undefined,
+// The card `editingTaskId` points at, resolved from the store rather than snapshotted, so a
+// realtime edit to the card being edited is not lost behind the modal.
+const editingTask = computed<Task | undefined>(() =>
+  editingTaskId.value ? board.tasks.find((t) => t.id === editingTaskId.value) : undefined,
 );
 const branchPreview = computed(() =>
   draftName.value.trim()
@@ -1194,20 +1278,27 @@ async function loadLaunchBranches(preferred: string | undefined): Promise<void> 
   }
 }
 
-function openLauncher(task?: Session): void {
-  // Before loadLaunchBranches(), which reads it. A task being edited stays in its own
+function openLauncher(card?: Task): void {
+  // Before loadLaunchBranches(), which reads it. A card being edited stays in its own
   // project; a new one lands in the selected project, and the «Нова задача» button is
   // disabled unless there is one.
-  launchProjectId.value = task?.projectId ?? store.selectedProjectId;
-  editingTaskId.value = task?.id ?? null;
-  draftName.value = task?.name ?? '';
-  draftTask.value = task?.task ?? '';
-  draftModel.value = task?.model ?? 'opus-5';
-  draftPrefix.value = task?.prefix ?? 'feature';
-  draftPlatform.value = task?.platform;
-  draftWorktree.value = task?.worktree ?? true;
-  void loadLaunchBranches(task?.baseBranch);
-  nameEdited.value = !!task;
+  launchProjectId.value = card?.projectId ?? store.selectedProjectId;
+  editingTaskId.value = card?.id ?? null;
+  draftName.value = card?.title ?? '';
+  draftTask.value = card?.description ?? '';
+  draftModel.value = card?.model ?? 'opus-5';
+  // The cloud stores launch params as free text; the local vocabularies are the authority,
+  // exactly as createSessionFromTask validates them server-side.
+  draftPrefix.value = (BRANCH_PREFIXES as readonly string[]).includes(card?.prefix ?? '')
+    ? (card!.prefix as BranchPrefix)
+    : 'feature';
+  draftPlatform.value = (PLATFORMS as readonly string[]).includes(card?.platform ?? '')
+    ? (card!.platform as Platform)
+    : undefined;
+  draftWorktree.value = card?.worktree ?? true;
+  // `tasks.branch` IS the base branch (the board labels it «Базова гілка»).
+  void loadLaunchBranches(card?.branch);
+  nameEdited.value = !!card;
   launcherError.value = null;
   clearLaunchImages();
   launcherOpen.value = true;
@@ -1240,72 +1331,132 @@ function openTaskFromText(text: string): void {
   void nextTick(() => nameField.value?.focus());
 }
 
+// Both buttons write a CLOUD card; «Запустити» then launches it on this machine. Creating
+// the card FIRST is what makes the task visible to the team with an assignee, and it also
+// means a failed launch loses nothing: the card is saved, assigned to me, and can be retried
+// from here or from the board. (It also means from-task's claim rollback never fires on this
+// path — the card is already mine, so `claimed` stays false there.)
 async function submitLauncher(asTask: boolean): Promise<void> {
   const projectId = launchProjectId.value;
+  const userId = auth.user?.id;
   if (!projectId || !canLaunch.value) return;
-  // Saving to the backlog is allowed unbound; starting an agent is not, and the api would
-  // refuse it with `project not bound` anyway.
+  if (!userId) {
+    launcherError.value = 'Спочатку увійдіть у Kermanych';
+    return;
+  }
+  // A card may be filed for an unbound project — it is a saved plan. Launching may not, and
+  // the api would refuse it with `project not bound` anyway.
   if (!asTask && !isBound.value) {
     launcherError.value = BIND_HINT;
     return;
   }
-  const model = draftModel.value.trim() || undefined;
-  const images = launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));
+  // A card needs a project the cloud can check membership against; the publish hatch below
+  // is the way out of a local-only project.
+  if (projects.listRead && !projects.byId.has(projectId)) {
+    launcherError.value = PUBLISH_FIRST_HINT;
+    return;
+  }
   const draft = {
     name: draftName.value.trim(),
     task: draftTask.value.trim(),
-    model,
+    model: draftModel.value.trim() || undefined,
     prefix: draftPrefix.value,
     platform: draftPlatform.value,
     worktree: draftWorktree.value,
-    baseBranch: draftWorktree.value ? (draftBaseBranch.value || undefined) : undefined,
+    baseBranch: draftBaseBranch.value || undefined,
   };
+  const images = launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));
   launcherError.value = null;
   try {
-    let session: Session | undefined;
+    let cardId: string;
     if (editingTaskId.value) {
-      // Editing a backlog task: "Зберегти" keeps it in the backlog; "Запустити" launches it now.
-      session = asTask
-        ? await store.updateTask(editingTaskId.value, draft)
-        : await store.startTask(editingTaskId.value, { ...draft, images });
+      if (!(await board.updateTaskFields(editingTaskId.value, taskPatchFromDraft(draft)))) return;
+      cardId = editingTaskId.value;
     } else {
-      session = await store.createSession(
-        projectId, draft.name, draft.task, model, images, draft.worktree, draft.prefix, asTask, draft.platform, draft.baseBranch,
-      );
+      const created = await board.createTask(taskInsertFromDraft(draft, projectId, userId));
+      if (!created) return; // the store has already said why
+      cardId = created.id;
+      // The card exists now, so a retry after a failed launch must PATCH it, not mint a
+      // second one: the modal stays open on that path by design (see below). From here the
+      // launcher is in edit mode for this card — its footer offers «Видалити», which is
+      // honest, and a retry carries any edit made in between into the same card.
+      editingTaskId.value = created.id;
     }
+    if (asTask) {
+      launcherOpen.value = false;
+      clearLaunchImages();
+      store.setBucket('tasks');
+      return;
+    }
+    // The launch can still fail (omp down, project unbound, network), and its error belongs
+    // in the launcher the operator is looking at — so the modal closes only after from-task
+    // resolves. The card is already saved either way.
+    const session = await api.createSessionFromTask(cardId, images);
     launcherOpen.value = false;
     clearLaunchImages();
-    // Saved to the backlog → surface it under the Задачі tab; launched → jump to Активні + open its chat.
-    if (asTask) {
-      store.setBucket('tasks');
-    } else {
-      store.setBucket('active');
-      if (session?.id) store.selectSession(session.id);
-    }
+    store.setBucket('active');
+    store.selectSession(session.id);
   } catch (e) {
-    // Keep the launcher open so the task/name are not lost; show the reason.
+    // Keep the launcher open so the name and body are not lost. The card, if it was created,
+    // is already safe on the board.
     launcherError.value = e instanceof Error ? e.message : String(e);
   }
 }
 
-// Both ways out of a backlog task: the ✕ on its card and «Видалити» in its editor. Deleting
-// a backlog task is a registry row and nothing else — it owns no branch, no worktree and no
-// omp child — so there is no work to lose and one confirm is the whole guard.
-async function onDeleteTask(s: Session): Promise<void> {
-  if (!window.confirm(`Видалити задачу «${s.name}»?`)) return;
+// ── Publish-and-file: the way out of a local-only project ─────────────────
+// `listRead` guards the same false positive BoardPage's `unpublished` guards: until the cloud
+// project list is an ANSWER, every project looks local-only.
+const needsPublish = computed(
+  () => !!launchProjectId.value && projects.listRead && !projects.byId.has(launchProjectId.value),
+);
+const publishInto = ref('');
+const publishing = ref(false);
+const workspaceOptions = computed(() =>
+  projects.workspaces.map((w) => ({ value: w.id, label: w.name })),
+);
+
+// A publish is permanent, so it is asked for explicitly rather than guessed from the
+// current scope. It reuses the LOCAL project id, so bindings, sessions and worktrees
+// survive (stores/projects.ts publish()).
+async function publishAndFile(): Promise<void> {
+  const row = store.projects.find((p) => p.id === launchProjectId.value);
+  if (!row || !publishInto.value || publishing.value) return;
+  publishing.value = true;
+  launcherError.value = null;
+  try {
+    await projects.publish(row, publishInto.value);
+    await submitLauncher(true);
+  } catch (e) {
+    launcherError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    publishing.value = false;
+  }
+}
+
+// Deleting a card is a cloud row and nothing else — it owns no branch, no worktree and no
+// omp child — so one confirm is the whole guard; tasks_guard refuses an active card anyway.
+async function onDeleteCard(card: Task): Promise<void> {
+  if (!window.confirm(`Видалити задачу «${card.title}»?`)) return;
+  if (!(await board.deleteTask(card.id))) return;
+  // The editor is this card's only detail view; it must not outlive the row it edits.
+  if (editingTaskId.value === card.id) launcherOpen.value = false;
+}
+
+// A stranded pre-cutover row: local SQLite and nothing else, so this stays a plain delete.
+async function onDeleteStranded(s: Session): Promise<void> {
+  if (!window.confirm(`Видалити локальну задачу «${s.name}»?`)) return;
   try {
     await store.deleteSession(s.id);
-    // The editor is this task's only detail view; it must not outlive the row it edits.
-    if (editingTaskId.value === s.id) launcherOpen.value = false;
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
 }
 
 function onRowClick(s: Session): void {
-  // A backlog task has no chat to open — clicking it edits the task instead.
-  if (s.kind === 'task') openLauncher(s);
-  else store.selectSession(s.id);
+  // A stranded backlog row has no chat to open and no cloud card to edit — the note above
+  // the list says what to do with it (publish its project).
+  if (s.kind === 'task') return;
+  store.selectSession(s.id);
 }
 
 // ── Detail panel emits → store actions ───────────────────────────────────
@@ -2259,6 +2410,23 @@ async function submitPreviewConfig(): Promise<void> {
   gap: 20px;
   padding: 22px 24px;
   background: var(--k-surface);
+}
+
+// The flush body supplies no padding of its own, so this strip carries the launcher's own
+// gutter and a rule that separates it from the two columns above.
+.agents-launcher__publish {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--k-sp-3);
+  padding: 16px 24px;
+  border-top: 1px solid var(--k-line);
+  background: var(--k-surface);
+}
+// The prose states the situation and the controls answer it, so each explanation takes a
+// row of its own instead of squeezing the select and the button off the end.
+.agents-launcher__publish > p {
+  flex: 1 0 100%;
 }
 
 .agents-launcher__label {
