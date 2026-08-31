@@ -57,6 +57,13 @@
             />
           </template>
         </div>
+        <!-- Whatever survived the publication pass: rows whose project has no cloud row at
+             all, so there is nothing for a card to point at. Only under «Задачі» — in every
+             other bucket these are ordinary local sessions. -->
+        <p v-if="showTasks && boardRows.length" class="agents__note agents__note--stranded mono">
+          Лише на цій машині: проєкт цих задач ще не у хмарі, тому команда їх не бачить.
+          Опублікуйте проєкт — і вони переїдуть на дошку.
+        </p>
         <div v-if="boardRows.length" class="agents__cards">
           <template v-for="g in boardGroups" :key="g.projectId">
             <div v-if="groupByProject" class="agents__group-label mono">{{ g.name }}</div>
@@ -615,6 +622,7 @@ import {
   type TranscriptEntry,
   type RpcExtensionUIResponse,
 } from '@kermanych/core';
+import { createTask as cloudCreateTask } from '@kermanych/cloud';
 import type { Task } from '@kermanych/cloud';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useRouter } from 'vue-router';
@@ -625,6 +633,7 @@ import { api, type FileDiff, type MessageMode } from '../lib/api';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import { sessionScopedProjectIds } from '../lib/scope';
 import { myBacklogTasks, taskInsertFromDraft, taskPatchFromDraft } from '../lib/tasks-view';
+import { planBacklogPublication } from '../lib/publish-backlog';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
@@ -1452,6 +1461,74 @@ async function onDeleteStranded(s: Session): Promise<void> {
   }
 }
 
+// ── One-time publication of pre-cutover local backlog rows ────────────────
+// Spec §Migrating existing local backlog rows: before this change «В беклог» filed a LOCAL
+// SQLite session and nothing else, so every machine holds a few tasks the team has never
+// seen. The pass runs when the cloud project list is an ANSWER — `listRead` guards the same
+// false positive `needsPublish` does, and before that every project looks local-only and
+// every row would look stranded.
+//
+// cloudCreateTask is called DIRECTLY rather than through board.createTask, because that
+// wrapper reports failures with a toast and the duplicate-key collision below is an
+// expected, silent outcome — not something to greet the user with. The direct function
+// wants `createdBy` spelled out.
+let publishedPass = false;
+
+async function publishLegacyBacklog(): Promise<void> {
+  const userId = auth.user?.id;
+  if (publishedPass || !userId || !projects.listRead || projects.offlineError) return;
+  publishedPass = true;
+  const plan = planBacklogPublication(
+    store.sessions,
+    new Set(projects.projects.map((p) => p.id)),
+    userId,
+  );
+  // A plan with neither half is not «nothing to do» — it is «the local session list has not
+  // arrived yet», because the snapshot ServerEvent is what fills store.sessions and it has
+  // no read flag to guard on. Latching here would strand every leftover row for the rest of
+  // the run, so the pass un-arms itself and waits for the sessions count to move it again.
+  if (!plan.publish.length && !plan.stranded.length) {
+    publishedPass = false;
+    return;
+  }
+  for (const { sessionId, insert } of plan.publish) {
+    try {
+      await cloudCreateTask(auth.client, { ...insert, createdBy: userId });
+    } catch (e) {
+      // A primary-key collision means an earlier pass already published this row — the card
+      // id IS the local session id — so the local row is safe to drop. Anything else is a
+      // real failure: leave the row alone and let a later pass retry rather than deleting
+      // work nobody else can see yet.
+      const message = e instanceof Error ? e.message : String(e);
+      if (!/duplicate key|already exists/i.test(message)) {
+        publishedPass = false;
+        continue;
+      }
+    }
+    // The card is safe now, so the local row is redundant — but this is the local API and it
+    // can fail on its own (Electron restarting). Nobody awaits this pass, so a throw here
+    // would surface as an unhandled rejection and skip the rows behind it; re-arm instead and
+    // let a later run hit the collision branch above.
+    try {
+      await store.deleteSession(sessionId);
+    } catch {
+      publishedPass = false;
+    }
+  }
+}
+
+// `plan.stranded` needs no state: a row that cannot move stays a local backlog session, and
+// «Задачі» already renders exactly those. The note above that list explains them.
+//
+// The session COUNT is in the source on purpose, and is not redundant with the three cloud
+// values next to it: the local snapshot can land after the cloud list has been read, and
+// without it a pass that saw an empty session list would never be retried.
+watch(
+  () => [auth.user?.id, projects.listRead, projects.offlineError, store.sessions.length] as const,
+  () => void publishLegacyBacklog(),
+  { immediate: true },
+);
+
 function onRowClick(s: Session): void {
   // A stranded backlog row has no chat to open and no cloud card to edit — the note above
   // the list says what to do with it (publish its project).
@@ -2034,6 +2111,12 @@ async function submitPreviewConfig(): Promise<void> {
   font-size: var(--k-fs-xs);
   line-height: 1.5;
   color: var(--k-muted);
+}
+
+// Standalone, unlike the scope notices: it introduces the card list right below it and gets
+// no spacing from .agents__notes, so it carries its own.
+.agents__note--stranded {
+  margin-bottom: var(--k-sp-2);
 }
 
 // Which project a run of cards belongs to; rendered only under a workspace scope. The
