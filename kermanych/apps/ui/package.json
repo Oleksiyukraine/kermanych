@@ -20,6 +20,7 @@
     "@kermanych/tokens": "workspace:*",
     "@supabase/supabase-js": "^2",
     "@quasar/extras": "^1.16.0",
+    "highlight.js": "^11.11.1",
     "markdown-it": "^14.1.0",
     "pinia": "^2.1.0",
     "quasar": "^2.16.0",

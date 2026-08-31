@@ -17,6 +17,8 @@ import type {
   ThinkingLevel,
   ToolLine,
   RpcExtensionUIResponse,
+  TreeEntry,
+  FileContent,
 } from '@kermanych/core';
 import type { CloudProject } from '@kermanych/cloud';
 
@@ -263,6 +265,12 @@ export const api = {
 
   fileDiff: (id: string, path: string): Promise<FileDiff> =>
     get<FileDiff>(`/sessions/${id}/diff?path=${encodeURIComponent(path)}`),
+
+  sessionTree: (id: string, path: string): Promise<TreeEntry[]> =>
+    get<TreeEntry[]>(`/sessions/${id}/tree${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+
+  sessionFile: (id: string, path: string): Promise<FileContent> =>
+    get<FileContent>(`/sessions/${id}/file?path=${encodeURIComponent(path)}`),
 
   finish: (
     id: string,

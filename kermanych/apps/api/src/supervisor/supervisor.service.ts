@@ -35,6 +35,8 @@ import {
   type RpcExtensionUIResponse,
   type ServerEvent,
   type Session,
+  type TreeEntry,
+  type FileContent,
   type TaskDraft,
   type ThinkingLevel,
   type ToolLine,
@@ -1337,6 +1339,26 @@ export class SupervisorService implements OnModuleDestroy {
     const dir = s.worktreePath || g.localRepoPath;
     const target = s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : (s.baseBranch ?? "");
     return this.worktree.fileDiff(dir, target, path);
+  }
+
+  // The Файли tab's two reads. Same directory resolution as fileDiff — the worktree, or the
+  // project repo for an in-place session — and the path guard lives in the worktree service.
+  async sessionTree(id: string, path: string): Promise<TreeEntry[]> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    const g = this.boundProject(s.projectId);
+    if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
+    const dir = s.worktreePath || g.localRepoPath;
+    return this.worktree.listTree(dir, path);
+  }
+
+  async sessionFile(id: string, path: string): Promise<FileContent> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    const g = this.boundProject(s.projectId);
+    if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
+    const dir = s.worktreePath || g.localRepoPath;
+    return this.worktree.readFileContent(dir, path);
   }
 
   // Merge the session's branch into the project's current branch, then retire the
