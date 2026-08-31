@@ -4,7 +4,7 @@
 
 **Goal:** Make the cloud `tasks` row the only task store, so every task created anywhere in a workspace appears on that workspace's board with an assignee, and make «who may take this card» a database rule instead of a client convention.
 
-**Architecture:** Supabase `tasks` is the single source of truth for a task; the local SQLite `sessions` table only ever holds executions. `POST /sessions/from-task` becomes the one birth path of an agent session. Assignment rules move into `tasks_guard()`: `null → X` is open (that is the claim), `X → anything` belongs to `X` or to the workspace owner, and an assignee must be a member of the task's workspace. The UI mints cards (it is the only cloud writer for `tasks`), and «Агенти» renders my backlog cards instead of local backlog rows.
+**Architecture:** Supabase `tasks` is the single source of truth for a task; the local SQLite `sessions` table only ever holds executions. `POST /sessions/from-task` becomes the one birth path of an agent session. Assignment rules move into `tasks_guard()`: `null → X` is open (that is the claim), `X → anything` belongs to `X` or to the workspace owner, and an assignee must be a member of the task's workspace. The UI mints cards on every human path — the one exception is a project trigger whose target is `promote`, which fires with no human in the loop and therefore mints its card server-side (`apps/api` already claims, patches and pushes status on `tasks`). «Агенти» renders my backlog cards instead of local backlog rows.
 
 **Tech Stack:** Supabase/Postgres (RLS + plpgsql triggers), TypeScript, NestJS (`apps/api`), Quasar/Vue 3 + Pinia (`apps/ui`), vitest, better-sqlite3.
 
@@ -674,9 +674,10 @@ Expected: FAIL — `promoteChatToAgent` takes one argument.
 and immediately before the branch/worktree work (after the `chatFile` and turn-in-progress guards, i.e. after the current line 528):
 
 ```ts
-    // The cloud identity arrives with the promotion: the UI mints the card (it is the only
-    // writer of `tasks`) and hands the id over here, so the row starts mirroring status the
-    // moment it stops being a chat. Written BEFORE the launch so a failure leaves a row
+    // The cloud identity arrives with the promotion: the caller mints the card — the UI on
+    // the human path, the supervisor itself for a trigger-driven promotion — and hands the
+    // id over here, so the row starts mirroring status the moment it stops being a chat.
+    // Written BEFORE the launch so a failure leaves a row
     // that is still a chat but already linked — harmless — rather than a running agent the
     // board cannot see.
     this.registry.updateSession(chatId, { taskId });
