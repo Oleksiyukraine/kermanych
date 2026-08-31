@@ -1348,6 +1348,9 @@ async function submitLauncher(asTask: boolean): Promise<void> {
       const created = await board.createTask(taskInsertFromDraft(draft, projectId, userId));
       if (!created) return; // the store has already said why
       cardId = created.id;
+      // The card exists now, so a retry after a failed launch must PATCH it rather than mint
+      // a second one — the modal deliberately stays open on that path.
+      editingTaskId.value = created.id;
     }
     if (asTask) {
       launcherOpen.value = false;
