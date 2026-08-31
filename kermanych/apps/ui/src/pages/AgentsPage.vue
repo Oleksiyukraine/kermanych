@@ -180,6 +180,30 @@
             <p v-else class="agents__log-empty mono">Немає змінених файлів.</p>
           </template>
         </div>
+        <div v-if="detailTab === 'files'" class="agents__tabpane agents__files">
+          <p v-if="treeLoading" class="agents__log-empty mono">Готую…</p>
+          <p v-else-if="treeError" class="agents__error" role="alert">{{ treeError }}</p>
+          <template v-else>
+            <KFileView
+              v-if="openTreeFile"
+              class="agents__file-view"
+              :path="openTreeFile"
+              :file="treeFile"
+              :loading="treeFileLoading"
+              :error="treeFileError"
+              @close="closeTreeFile"
+            />
+            <KFileTree
+              v-show="!openTreeFile"
+              class="agents__tree"
+              :entries="treeRoot"
+              base=""
+              :selected="openTreeFile"
+              :load="loadTreeLevel"
+              @open="openTreeFileAt"
+            />
+          </template>
+        </div>
         <div v-if="detailTab === 'session'" class="agents__tabpane agents__session">
           <dl class="agents__meta">
             <div class="agents__meta-row">
@@ -575,6 +599,8 @@ import {
   type TranscriptEntry,
   type ThinkingLevel,
   type RpcExtensionUIResponse,
+  type TreeEntry,
+  type FileContent,
 } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useRouter } from 'vue-router';
@@ -588,6 +614,8 @@ import KStatusDot from 'components/kit/KStatusDot.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KDiffView from 'components/kit/KDiffView.vue';
+import KFileTree from 'components/kit/KFileTree.vue';
+import KFileView from 'components/kit/KFileView.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
@@ -925,6 +953,7 @@ watch(
 const detailTabs = [
   { value: 'log', label: 'Лог' },
   { value: 'changes', label: 'Зміни' },
+  { value: 'files', label: 'Файли' },
   { value: 'session', label: 'Сесія' },
 ];
 const detailTab = ref('log');
@@ -932,7 +961,8 @@ watch(
   () => store.selectedSessionId,
   (id) => {
     const saved = id ? localStorage.getItem(`kermanych.agents.tab.${id}`) : null;
-    detailTab.value = saved === 'changes' || saved === 'session' ? saved : 'log';
+    detailTab.value =
+      saved === 'changes' || saved === 'session' || saved === 'files' ? saved : 'log';
   },
   { immediate: true },
 );
@@ -1026,12 +1056,72 @@ async function loadChanges(id: string, reset: boolean): Promise<void> {
   }
 }
 
+// ── Файли tab: the worktree file tree + a read-only viewer ──────────────────
+// The root level loads when the tab opens; deeper levels lazy-load per folder through
+// loadTreeLevel, which KFileTree calls on expand. Opening a file fetches its body into the
+// viewer, ordered by treeFileRun so a slow read cannot overwrite a newer one.
+const treeRoot = ref<TreeEntry[]>([]);
+const treeLoading = ref(false);
+const treeError = ref<string | null>(null);
+const openTreeFile = ref<string | null>(null);
+const treeFile = ref<FileContent | null>(null);
+const treeFileLoading = ref(false);
+const treeFileError = ref<string | null>(null);
+let treeFileRun = 0;
+
+function loadTreeLevel(path: string): Promise<TreeEntry[]> {
+  const id = store.selectedSessionId;
+  return id ? store.sessionTree(id, path) : Promise.resolve([]);
+}
+
+async function loadTreeRoot(id: string): Promise<void> {
+  treeError.value = null;
+  treeLoading.value = true;
+  try {
+    treeRoot.value = await store.sessionTree(id, '');
+  } catch (e) {
+    treeError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    treeLoading.value = false;
+  }
+}
+
+async function openTreeFileAt(path: string): Promise<void> {
+  const id = store.selectedSessionId;
+  if (!id) return;
+  const run = ++treeFileRun;
+  openTreeFile.value = path;
+  treeFile.value = null;
+  treeFileError.value = null;
+  treeFileLoading.value = true;
+  try {
+    const f = await store.sessionFile(id, path);
+    if (run !== treeFileRun) return;
+    treeFile.value = f;
+  } catch (e) {
+    if (run !== treeFileRun) return;
+    treeFileError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    if (run === treeFileRun) treeFileLoading.value = false;
+  }
+}
+
+function closeTreeFile(): void {
+  openTreeFile.value = null;
+  treeFile.value = null;
+  treeFileError.value = null;
+  treeFileLoading.value = false;
+  treeFileRun++;
+}
+
 watch(
   [() => store.selectedSessionId, detailTab],
   ([id, tab]) => {
     // Another session (or a trip through another tab) invalidates whatever file was open.
     closeFile();
+    closeTreeFile();
     if (tab === 'changes' && id) void loadChanges(id, true);
+    if (tab === 'files' && id) void loadTreeRoot(id);
   },
   { immediate: true },
 );
@@ -2115,6 +2205,24 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-accent);
 }
 .agents__conflict-head { list-style: none; margin-left: -18px; }
+
+// The Файли pane fills the panel: the tree scrolls on its own, and an open file's viewer
+// takes the whole height with its own internal scroll.
+.agents__files {
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+.agents__tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 6px;
+}
+.agents__file-view {
+  flex: 1;
+  min-height: 0;
+}
 
 .agents__file-list {
   margin: 0;

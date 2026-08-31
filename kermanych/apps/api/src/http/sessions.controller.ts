@@ -212,6 +212,26 @@ export class SessionsController {
     }
   }
 
+  // The Файли tab: one level of the worktree tree, and one file read-only. GETs with the
+  // path in the query, the same shape as :id/diff above.
+  @Get(":id/tree")
+  async tree(@Param("id") id: string, @Query("path") path?: string) {
+    try {
+      return await this.sup.sessionTree(id, path ?? "");
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  @Get(":id/file")
+  async file(@Param("id") id: string, @Query("path") path?: string) {
+    try {
+      return await this.sup.sessionFile(id, path ?? "");
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Post(":id/finish")
   async finish(@Param("id") id: string) {
     try {

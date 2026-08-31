@@ -20,6 +20,14 @@ export type EnvFileView = { entries: EnvEntry[]; ignored: boolean };
 export type DirEntry = { name: string; isRepo: boolean };
 export type DirListing = { path: string; parent: string | null; entries: DirEntry[] };
 
+// A file-manager entry — one level of a session's worktree. `type` is all the tree needs
+// to draw a folder vs a file and to decide whether a click expands or opens.
+export type TreeEntry = { name: string; type: "file" | "dir" };
+
+// A file opened read-only in the Файли tab. `binary`/`truncated` mirror FileDiff: an
+// oversized or binary blob reports a flag instead of a body, never a partial one.
+export type FileContent = { path: string; content: string; binary: boolean; truncated: boolean };
+
 export type Session = {
   id: string; projectId: string; name: string; task: string;
   // The cloud task this session executes, when it was launched from the board.
