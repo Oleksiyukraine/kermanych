@@ -97,9 +97,9 @@
               >
                 <span
                   class="mgmt__log-caret"
-                  :class="{ 'mgmt__log-caret--collapsed': collapsed }"
+                  :class="{ 'mgmt__log-caret--open': !collapsed }"
                   aria-hidden="true"
-                >▾</span>
+                ></span>
                 <span class="mgmt__log-title mono">Асистент менеджменту</span>
                 <span v-if="collapsed && chat.busy" class="mgmt__log-busy mono" aria-live="polite">думає…</span>
               </button>
@@ -663,20 +663,32 @@ const workspaceColor = computed(() => {
   &:hover .mgmt__log-title {
     color: var(--k-muted);
   }
+
+  &:hover .mgmt__log-caret {
+    color: var(--k-text);
+  }
 }
 
 // Points down when the transcript is open, right when it is folded — the app's one
-// disclosure idiom. A transform, not two glyphs, so the turn is a rotation the eye tracks.
+// disclosure idiom, shared with the workspace tree's fold marker. A transform, not two
+// glyphs, so the turn is a rotation the eye tracks.
+//
+// DRAWN, not typed: as a ▾ glyph at 10px it was a faint hairline that read as punctuation
+// beside the uppercase title, and `--k-font-ui` carries no geometric-shapes glyph, so the
+// fallback face also hung it below the title's centre line. A clipped box has no baseline
+// to drift and its ink IS its box — same 6x10 footprint as `.k-ws__caret`, at `--k-muted`
+// so the control is legible before it is hovered.
 .mgmt__log-caret {
   flex: none;
-  display: inline-block;
-  font-size: 10px;
-  line-height: 1;
-  color: var(--k-faint);
-  transition: transform 0.15s ease;
+  width: 6px;
+  height: 10px;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+  color: var(--k-muted);
+  transition: transform 0.15s ease, color 0.12s;
 }
-.mgmt__log-caret--collapsed {
-  transform: rotate(-90deg);
+.mgmt__log-caret--open {
+  transform: rotate(90deg);
 }
 
 // The heartbeat, hoisted to the header while folded: with the transcript hidden this is the
