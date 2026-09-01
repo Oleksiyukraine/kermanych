@@ -8,6 +8,7 @@ import {
   listWorkspaces,
   patchWorkspace,
   removeMember,
+  setMemberRole,
   toWorkspace,
 } from "../src/workspaces";
 
@@ -58,7 +59,7 @@ const workspaceRow = {
 const memberRow = {
   workspace_id: "w1",
   user_id: "u2",
-  role: "member" as const,
+  role: "developer" as const,
   added_at: "2026-08-27T01:00:00.000Z",
   profiles: { id: "u2", github_username: "octocat", display_name: "Octo Cat", avatar_url: null },
 };
@@ -119,7 +120,7 @@ describe("listMembers", () => {
     expect(m).toEqual({
       workspaceId: "w1",
       userId: "u2",
-      role: "member",
+      role: "developer",
       addedAt: "2026-08-27T01:00:00.000Z",
       profile: { id: "u2", githubUsername: "octocat", displayName: "Octo Cat" },
     });
@@ -168,6 +169,34 @@ describe("removeMember", () => {
     expect(queries[0]!.ops[0]).toEqual(["delete"]);
     expect(queries[0]!.ops[1]).toEqual(["eq", "workspace_id", "w1"]);
     expect(queries[0]!.ops[2]).toEqual(["eq", "user_id", "u2"]);
+  });
+});
+
+describe("setMemberRole", () => {
+  it("calls the rpc then re-reads for the joined profile", async () => {
+    const { client, queries } = fakeClient(
+      { data: { user_id: "u2" }, error: null },
+      { data: { ...memberRow, role: "manager" }, error: null },
+    );
+    const m = await setMemberRole(client, "w1", "u2", "manager");
+    expect(queries[0]!.table).toBe("rpc:set_workspace_member_role");
+    expect(queries[0]!.ops[0]).toEqual([
+      "rpc",
+      { p_workspace_id: "w1", p_user_id: "u2", p_role: "manager" },
+    ]);
+    expect(queries[1]!.table).toBe("workspace_members");
+    expect(m.role).toBe("manager");
+    expect(m.profile?.githubUsername).toBe("octocat");
+  });
+
+  it("surfaces the rpc's refusal message unchanged", async () => {
+    const { client } = fakeClient({
+      data: null,
+      error: { message: "only the workspace owner can change roles" },
+    });
+    await expect(setMemberRole(client, "w1", "u2", "developer")).rejects.toThrow(
+      "only the workspace owner can change roles",
+    );
   });
 });
 

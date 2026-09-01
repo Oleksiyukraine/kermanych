@@ -4,7 +4,7 @@
 // owns the snake_case <-> camelCase boundary and every call runs under the caller's
 // JWT, so RLS is the authorization surface and refusals arrive as thrown messages.
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Profile, Workspace, WorkspaceMember } from "./types";
+import type { AssignableRole, Profile, Workspace, WorkspaceMember, WorkspaceRole } from "./types";
 
 const WORKSPACE_COLUMNS = "id, name, color, owner_id, created_at";
 const PROFILE_COLUMNS = "id, github_username, display_name, avatar_url";
@@ -28,7 +28,7 @@ type ProfileRow = {
 type MemberRow = {
   workspace_id: string;
   user_id: string;
-  role: "owner" | "member";
+  role: WorkspaceRole;
   added_at: string;
   profiles: ProfileRow | null;
 };
@@ -172,6 +172,36 @@ export async function removeMember(client: SupabaseClient, workspaceId: string, 
     .eq("workspace_id", workspaceId)
     .eq("user_id", userId);
   if (error) throw new Error(error.message);
+}
+
+// Change a member's role to 'manager' or 'developer'. Owner-only and refused for the
+// owner's own seat — enforced INSIDE set_workspace_member_role, a `security definer` rpc,
+// because workspace_members has no UPDATE grant (the deliberate no-forgery invariant from
+// 20260827100000_workspaces.sql). A refusal RAISES here, unlike the silent zero-rows
+// DELETE, so callers get a thrown message rather than a re-read. Re-reads for the joined
+// profile, exactly like inviteMember.
+export async function setMemberRole(
+  client: SupabaseClient,
+  workspaceId: string,
+  userId: string,
+  role: AssignableRole,
+): Promise<WorkspaceMember> {
+  const updated = await client.rpc("set_workspace_member_role", {
+    p_workspace_id: workspaceId,
+    p_user_id: userId,
+    p_role: role,
+  });
+  if (updated.error) throw new Error(updated.error.message);
+  const row = updated.data as { user_id: string } | null;
+  if (!row) throw new Error(`role change for ${userId} returned no membership row`);
+  const { data, error } = await client
+    .from("workspace_members")
+    .select(MEMBER_COLUMNS)
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", userId)
+    .single();
+  if (error) throw new Error(error.message);
+  return toWorkspaceMember(data as unknown as MemberRow);
 }
 
 // Owner-only by policy (workspaces_delete_owner), AND refused by the FK from
