@@ -10,7 +10,7 @@ import {
   type ManagementRiskRow,
   type Project,
 } from "@kermanych/core";
-import { buildManagementTurn, managementCwd, managementRepos } from "../src/management/management-prompt";
+import { buildManagementTurn, managementCwd, managementRepos, todayIso } from "../src/management/management-prompt";
 
 function project(p: Partial<Project> & { id: string }): Project {
   return { name: p.id, localRepoPath: "", createdAt: "2026-08-30T00:00:00.000Z", ...p };
@@ -21,6 +21,11 @@ const context: ManagementContext = {
   section: "management-risks",
   risks: [],
 };
+
+// A fixed «today». The context block now anchors relative periods («реліз-ноти за останній
+// тиждень») to this date, so a test that read the real clock would assert a different string
+// tomorrow.
+const TODAY = "2026-09-01";
 
 describe("managementRepos", () => {
   it("keeps the requested order and drops ids the local registry does not know", () => {
@@ -67,7 +72,7 @@ describe("buildManagementTurn", () => {
   ];
 
   it("states every section's limitation on the first turn", () => {
-    const out = buildManagementTurn({ first: true, repos, context, text: "що тут?" });
+    const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "що тут?" });
     for (const s of MANAGEMENT_SECTIONS) {
       expect(out).toContain(`${s.name} · ${s.label} · capability=${s.capability}`);
       // Verbatim: the refusal the user reads must be the sentence the section table owns.
@@ -81,7 +86,7 @@ describe("buildManagementTurn", () => {
   // drifts from @kermanych/core is how the assistant starts filing risks that are refused
   // one round trip later, or — worse — stops offering a category the register needs.
   it("teaches the write protocol from the register's own vocabulary", () => {
-    const out = buildManagementTurn({ first: true, repos, context, text: "?" });
+    const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
     expect(out).toContain('"kind": "risk.create"');
     expect(out).toContain('"kind": "risk.update"');
     for (const c of RISK_CATEGORY_VALUES) expect(out).toContain(c);
@@ -94,7 +99,7 @@ describe("buildManagementTurn", () => {
   });
 
   it("omits the contract on a follow-up but keeps the context and the message", () => {
-    const later = buildManagementTurn({ first: false, repos, context, text: "а тепер поясни" });
+    const later = buildManagementTurn({ first: false, repos, context, today: TODAY, text: "а тепер поясни" });
     expect(later).not.toContain("ПРОТОКОЛ ДІЙ");
     expect(later).not.toContain("```kermanych-action");
     expect(later).toContain("── КОНТЕКСТ ──");
@@ -102,24 +107,56 @@ describe("buildManagementTurn", () => {
     // The contract is ~2 KB of rules; re-sending it every turn would debit the plan for
     // text the same omp child already has.
     expect(later.length).toBeLessThan(
-      buildManagementTurn({ first: true, repos, context, text: "а тепер поясни" }).length,
+      buildManagementTurn({ first: true, repos, context, today: TODAY, text: "а тепер поясни" }).length,
     );
   });
 
   it("renders every repository of the workspace, bound and unbound", () => {
-    const out = buildManagementTurn({ first: false, repos, context, text: "?" });
+    const out = buildManagementTurn({ first: false, repos, context, today: TODAY, text: "?" });
     expect(out).toContain("- Альфа · /repos/alpha · гілка: main");
     expect(out).toContain("- Бета · не привʼязаний на цій машині");
-    // The Risk Registry is the one section with a store behind it, so it is the one section
-    // the assistant may write — and the context says so in the token the rules compare against.
+    // The active section is named in the token rule (б) compares against, so the model can
+    // tell «may write» from «may only describe» without translating a word.
     expect(out).toContain("Активний розділ: management-risks (Risk Registry, capability=read_write)");
     expect(out.trimEnd().endsWith("?")).toBe(true);
+  });
+
+  // The release protocol must describe EXACTLY what `validateManagementAction` accepts, for
+  // the same reason the risk one must: the two fields a wrong action costs real money for are
+  // the project (the wrong repository writes about somebody else's work) and the range (prose
+  // left in a date field is refused a round trip later).
+  it("teaches the release-notes action and anchors relative periods to today", () => {
+    const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
+    expect(out).toContain('"kind": "release.notes"');
+    expect(out).toContain("рівно чотири форми");
+    expect(out).toContain('"rangeFrom": "РРРР-ММ-ДД"');
+    // The anchor itself, re-sent every turn because the answer changes at midnight.
+    expect(out).toContain(`Сьогодні: ${TODAY}`);
+    expect(buildManagementTurn({ first: false, repos, context, today: TODAY, text: "?" })).toContain(
+      `Сьогодні: ${TODAY}`,
+    );
+    // Ambiguity is a question, never a guess: one branch of one repository is what gets read.
+    expect(out).toContain("спитай прозою, не вгадуй");
+    // The operations that stayed on the screen say so here, because a writable row carries no
+    // `limitation` for the ui to print.
+    expect(out).toContain("Редагувати, копіювати чи видаляти вже збережену нотатку ти не можеш");
+  });
+
+  // Rule (а) names the writable sections, and it must name them from the table. The sentence
+  // it replaced («сьогодні це лише management-risks») was true for exactly as long as one
+  // section had a store, and the drift showed up as the assistant refusing a section it could
+  // in fact write.
+  it("names every writable section in the rules, from the table", () => {
+    const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
+    const writable = MANAGEMENT_SECTIONS.filter((s) => s.capability === "read_write").map((s) => s.name);
+    expect(writable).toContain("management-releases");
+    expect(out).toContain(`capability=read_write (${writable.join(", ")})`);
   });
 
   // The register is state, not contract: it is re-sent every turn, because the assistant
   // filing R-004 on turn two must see R-004 on turn three instead of filing it again.
   it("sends the register with every turn, empty or not", () => {
-    const empty = buildManagementTurn({ first: false, repos, context, text: "?" });
+    const empty = buildManagementTurn({ first: false, repos, context, today: TODAY, text: "?" });
     expect(empty).toContain("Реєстр ризиків воркспейсу (0)");
     expect(empty).toContain("- реєстр порожній");
 
@@ -135,7 +172,13 @@ describe("buildManagementTurn", () => {
         status: "open",
       },
     ];
-    const filled = buildManagementTurn({ first: false, repos, context: { ...context, risks }, text: "?" });
+    const filled = buildManagementTurn({
+      first: false,
+      repos,
+      context: { ...context, risks },
+      today: TODAY,
+      text: "?",
+    });
     expect(filled).toContain("Реєстр ризиків воркспейсу (1)");
     expect(filled).toContain("- R-001 · threat · external · «рахунки не оплачуються» · 4×5=20 · reduce · open");
   });
@@ -145,8 +188,18 @@ describe("buildManagementTurn", () => {
   // longer has, and the assistant would answer as if one project of the group were «the»
   // subject.
   it("names the workspace and never a project", () => {
-    const out = buildManagementTurn({ first: false, repos, context, text: "?" });
+    const out = buildManagementTurn({ first: false, repos, context, today: TODAY, text: "?" });
     expect(out).not.toContain("Проєкт:");
     expect(out).toContain("Воркспейс: Acme");
+  });
+});
+
+// The anchor the model resolves «за останній тиждень» against. LOCAL, not UTC: the range a
+// person means is the one on their own wall calendar, and a UTC date is a day off for half
+// the planet for part of every day — which would silently shift a release note's period.
+describe("todayIso", () => {
+  it("formats the local calendar date, zero-padded", () => {
+    expect(todayIso(new Date(2026, 8, 1, 23, 30))).toBe("2026-09-01");
+    expect(todayIso(new Date(2026, 11, 31, 0, 5))).toBe("2026-12-31");
   });
 });

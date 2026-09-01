@@ -13,6 +13,12 @@
 // clock and the cloud write are all read off `jobs` below, and the toast at the end finds
 // the operator wherever they walked to.
 //
+// Two callers START a generation and neither owns it: the section screen's form, and the
+// management assistant's `release.notes` action (./management-chat.ts) for an operator who
+// typed the request into the chat field instead of opening that form. Both hand `generate`
+// one job and walk away, which is what makes «все, що згенеровано, зберігається у
+// воркспейсі» true however it was asked for.
+//
 // Every cloud read and write still goes through the same client, so what a member can read
 // or edit is decided by RLS, never by this code.
 //

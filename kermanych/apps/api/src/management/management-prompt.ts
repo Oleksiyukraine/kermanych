@@ -77,6 +77,12 @@ function contract(): string {
     const head = `- ${s.name} · ${s.label} · capability=${s.capability}`;
     return s.limitation === undefined ? head : `${head} · обмеження: ${s.limitation}`;
   }).join("\n");
+  // Read off the table rather than typed into rule (а). «Сьогодні це лише management-risks»
+  // was true for exactly as long as one section had a store behind it, and a hand-kept list
+  // in a rule is the drift this whole file exists to prevent.
+  const writable = MANAGEMENT_SECTIONS.filter((s) => s.capability === "read_write")
+    .map((s) => s.name)
+    .join(", ");
 
   const fence = "```" + MANAGEMENT_ACTION_FENCE;
   return [
@@ -90,19 +96,22 @@ function contract(): string {
     "ПРОТОКОЛ ДІЙ. Розділ Менеджменту ніколи не змінюється прозою — тільки блоком дії у твоїй відповіді:",
     "",
     fence,
-    '{ "kind": "unsupported", "section": "management-releases", "request": "додати нотатку релізу 2.1" }',
+    '{ "kind": "unsupported", "section": "management-capacity", "request": "додати людину в команду" }',
     "```",
     "",
-    "Усередині блоку — один JSON-обʼєкт або масив обʼєктів. Дозволені рівно три форми:",
+    "Усередині блоку — один JSON-обʼєкт або масив обʼєктів. Дозволені рівно чотири форми:",
     '  { "kind": "unsupported", "section": <назва розділу>, "request": <що просили зробити> }',
     '  { "kind": "risk.create", "risk": { … } }',
     '  { "kind": "risk.update", "code": "R-003", "patch": { … } }',
+    '  { "kind": "release.notes", "project": "…", "branch": "…", "rangeFrom": "РРРР-ММ-ДД", "rangeTo": "РРРР-ММ-ДД" }',
     "Не вигадуй інші `kind` — вони відкидаються без виконання.",
     "",
     riskProtocol(),
     "",
+    releaseProtocol(),
+    "",
     "ПРАВИЛА:",
-    '(а) якщо просять ЗМІНИТИ розділ з capability=read_write (сьогодні це лише management-risks) — віддай відповідний блок дії. Дію виконує застосунок, не ти: у прозі опиши, ЩО саме заносиш, і не пиши, що це вже зроблено — результат («Ризик R-004 занесено…») чат покаже сам;',
+    `(а) якщо просять ЗМІНИТИ розділ з capability=read_write (${writable}) — віддай відповідний блок дії. Дію виконує застосунок, не ти: у прозі опиши, ЩО саме робиш, і не пиши, що це вже зроблено — результат («Ризик R-004 занесено…», «Реліз-ноти готові…») чат покаже сам;`,
     '(б) якщо просять ЗМІНИТИ розділ, у якого capability НЕ read_write — віддай { "kind": "unsupported", "section": "<назва розділу>", "request": "<що просили>" } І поясни це прозою, цитуючи обмеження цього розділу зі списку вище. Ніколи не пиши, що ти щось записав, створив або оновив;',
     "(в) якщо просять ПРОЧИТАТИ або пояснити — відповідай звичайною прозою, без блоку дії. Ти можеш читати репозиторії воркспейсу (див. контекст) своїми read/grep/glob;",
     "(г) ніколи не викликай інтерактивний інструмент або запит, який чекає відповіді в інтерфейсі: за цим маршрутом немає жодного інтерфейсу, який міг би відповісти, і запит просто зависне. Будь-яке уточнення — прозою;",
@@ -116,7 +125,7 @@ function contract(): string {
 function riskProtocol(): string {
   const strategies = RISK_KIND_VALUES.map((k) => `${k} → ${RISK_RESPONSES_BY_KIND[k].join(", ")}`).join("; ");
   return [
-    "РЕЄСТР РИЗИКІВ (management-risks) — єдиний розділ, у який ти можеш писати. Поля `risk` та `patch` однакові:",
+    "РЕЄСТР РИЗИКІВ (management-risks). Поля `risk` та `patch` однакові:",
     `  kind: ${RISK_KIND_VALUES.join(" | ")}`,
     `  category: ${RISK_CATEGORY_VALUES.join(", ")}`,
     "  cause, event, consequence — три частини формулювання (через що · що станеться · з якими наслідками). Порожніх немає.",
@@ -131,6 +140,34 @@ function riskProtocol(): string {
     "Не передавай code, exposure, emv, дати аудиту чи власників (riskOwner, actionOwner) — код і розрахунки присвоює база, а власників призначають на екрані.",
     "У risk.update поле code бери СУВОРО зі списку реєстру в контексті; patch містить лише те, що змінюється.",
     "Перед створенням звірся з реєстром у контексті: якщо такий ризик уже є — онови його, а не дублюй.",
+  ].join("\n");
+}
+
+// The Release Notes vocabulary. The section is writable, but through exactly ONE verb — a
+// generation — so this block spends most of its words on the two things a wrong action here
+// costs real money for: the project (the wrong repository produces a document about
+// somebody else's work) and the range (a model that leaves «за останній тиждень» in a date
+// field gets refused by validateManagementAction one round trip later).
+//
+// It also states which of the section's operations stayed on the screen. `MANAGEMENT_SECTIONS`
+// carries no `limitation` for a writable row — a limitation is printed as a refusal — so the
+// boundary belongs here, exactly as riskProtocol says owners are assigned on the screen.
+function releaseProtocol(): string {
+  return [
+    "РЕЛІЗ-НОТИ (management-releases). Одна дія — згенерувати НОВУ нотатку:",
+    '  { "kind": "release.notes", "project": "…", "branch": "…", "rangeFrom": "РРРР-ММ-ДД", "rangeTo": "РРРР-ММ-ДД" }',
+    "  project — назва проєкту РІВНО так, як вона стоїть у списку репозиторіїв контексту (не id і не шлях).",
+    "    Якщо у воркспейсі кілька проєктів і користувач не сказав, про який ідеться — спитай прозою, не вгадуй:",
+    "    нотатка пишеться з git-історії одного конкретного репозиторію.",
+    "  branch — гілка того самого репозиторію: або зі слів користувача, або поле «гілка» цього репозиторію в контексті.",
+    "    Назв не вигадуй — гілки, якої немає локально, застосунок не знайде і скаже це.",
+    "  rangeFrom, rangeTo — включний період, обидві дати РРРР-ММ-ДД, rangeFrom не пізніше rangeTo.",
+    "    Відносний період («за останній тиждень», «за серпень», «з минулого релізу») перекладай у конкретні дати сам,",
+    "    відлічуючи від дати «Сьогодні» з контексту. Слова замість дати відкидаються без виконання.",
+    "Далі застосунок сам: читає коміти цієї гілки за цей період на ЦІЙ машині, пише документ окремим викликом моделі",
+    "й зберігає його у воркспейсі. Це триває десятки секунд. У прозі скажи, для якого проєкту, гілки й періоду ти це",
+    "запускаєш — і не переказуй змісту нотатки, якого ти ще не бачив.",
+    "Редагувати, копіювати чи видаляти вже збережену нотатку ти не можеш — це операції на екрані розділу.",
   ].join("\n");
 }
 
@@ -151,7 +188,7 @@ function riskLine(r: ManagementRiskRow): string {
   return `- ${r.code} · ${r.kind} · ${r.category} · «${r.event}» · ${r.probability}×${r.impact}=${r.probability * r.impact} · ${r.response} · ${r.status}`;
 }
 
-function contextBlock(repos: ManagementRepo[], c: ManagementContext): string {
+function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: string): string {
   const s = managementSection(c.section);
   // An unresolved section name is still printed: the model must be able to say WHICH
   // screen it was asked about even when the ui sent a name this build does not know.
@@ -159,6 +196,10 @@ function contextBlock(repos: ManagementRepo[], c: ManagementContext): string {
   const risks = c.risks;
   return [
     "── КОНТЕКСТ ──",
+    // The operator's calendar date, and the anchor every relative period is resolved
+    // against: «реліз-ноти за останній тиждень» has to become a pair of YYYY-MM-DD dates
+    // before it can reach `git log`, and a model with no date guesses a year.
+    `Сьогодні: ${today}`,
     `Воркспейс: ${c.workspaceName}`,
     `Активний розділ: ${section}`,
     "Репозиторії воркспейсу (шлях абсолютний — читай їх саме за ним):",
@@ -184,9 +225,24 @@ export function buildManagementTurn(input: {
   first: boolean;
   repos: ManagementRepo[];
   context: ManagementContext;
+  // Today, YYYY-MM-DD, from the CALLER — see `todayIso` below.
+  today: string;
   text: string;
 }): string {
   const parts = input.first ? [contract(), ""] : [];
-  parts.push(contextBlock(input.repos, input.context), "", "── ПОВІДОМЛЕННЯ КОРИСТУВАЧА ──", input.text);
+  parts.push(
+    contextBlock(input.repos, input.context, input.today),
+    "",
+    "── ПОВІДОМЛЕННЯ КОРИСТУВАЧА ──",
+    input.text,
+  );
   return parts.join("\n");
+}
+
+// The operator's LOCAL calendar date, YYYY-MM-DD. Local and not UTC because the range a
+// person means by «за останній тиждень» is the one on their own wall calendar, and the api
+// runs on their machine. Kept out of `buildManagementTurn` so that function stays a pure
+// function of its input — the only reason its wording is testable without spawning omp.
+export function todayIso(at: Date = new Date()): string {
+  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
 }

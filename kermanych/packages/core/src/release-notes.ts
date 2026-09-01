@@ -19,6 +19,21 @@ export type ReleaseCommit = {
   body: string;
 };
 
+// A calendar date the way the range speaks it — strict to the month and day bounds, not
+// merely to the shape. `rangeFrom`/`rangeTo` reach `git log --since/--until` verbatim, and
+// git parses junk like `2026-08-32` permissively into a period nobody picked, which then
+// surfaces as a baffling «немає комітів» about dates that do not exist.
+//
+// Exported because three parties must agree on it and a third copy of the regex would
+// drift: the action validator (management-actions.ts, so a model's bad date is refused as
+// a sentence in the browser rather than as a 400 one round trip later) and the endpoint
+// itself (apps/api/src/http/management.controller.ts).
+const RELEASE_DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+export function isReleaseDate(v: string): boolean {
+  return RELEASE_DATE_RE.test(v);
+}
+
 // What the browser sends to POST /management/release-notes. The split mirrors the
 // management chat's: the browser names the project by id and says what only the cloud
 // knows (the workspace's name); the api resolves the id against ITS local registry for

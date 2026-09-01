@@ -127,7 +127,7 @@
               class="mgmt__c-input"
               rows="1"
               :disabled="chat.busy"
-              placeholder="Запитайте про менеджмент — ризики, статуси, рішення"
+              placeholder="Запитайте про менеджмент — ризики, реліз-ноти, статуси"
               aria-label="Повідомлення асистенту менеджменту"
               @input="autoGrow"
               @keydown="onKeydown"

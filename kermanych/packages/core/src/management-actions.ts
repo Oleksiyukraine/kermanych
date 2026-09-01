@@ -7,7 +7,7 @@
 // inside its answer and the app parses it out:
 //
 //     ```kermanych-action
-//     { "kind": "unsupported", "section": "management-releases", "request": "додай нотатку" }
+//     { "kind": "unsupported", "section": "management-capacity", "request": "додай людину" }
 //     ```
 //
 // Two rules make that safe rather than merely convenient:
@@ -18,13 +18,16 @@
 //     what a given member may actually change. A hallucinated action is refused by
 //     Postgres, not by trust in the model.
 //
-// There are three action kinds. `unsupported` writes nothing and is the whole of the
+// There are four action kinds. `unsupported` writes nothing and is the whole of the
 // requirement «if the assistant cannot act on a page, it must say why» — every section
 // whose ./management row is not `read_write` can only be answered with it. `risk.create`
-// and `risk.update` are the write path into the ONE section that has a store behind it,
-// the Risk Registry (`workspace_risks`); they carry that schema's vocabulary, validated here
-// against ./risks, so a category Postgres never heard of is refused in the browser with a
-// sentence naming it rather than as a 400 from PostgREST.
+// and `risk.update` are the write path into the Risk Registry (`workspace_risks`); they
+// carry that schema's vocabulary, validated here against ./risks, so a category Postgres
+// never heard of is refused in the browser with a sentence naming it rather than as a 400
+// from PostgREST. `release.notes` is the write path into Release Notes, and the one action
+// that is not a row insert: it asks the LOCAL api to write a document from a branch's git
+// history and the browser then stores it, so what is validated here is the ask — a project,
+// a branch and an inclusive calendar range.
 import {
   isRiskCategory,
   isRiskKind,
@@ -41,6 +44,7 @@ import {
   type RiskResponse,
   type RiskStatus,
 } from "./risks";
+import { isReleaseDate } from "./release-notes";
 import type { Usage } from "./types";
 
 // The fence info string. Distinct from `json` on purpose: a model quoting example JSON in
@@ -97,12 +101,20 @@ export type ManagementAction =
   | { kind: "risk.create"; risk: ManagementRiskFields }
   // Change one, named by the register code the operator sees (`R-003`) — never by uuid,
   // which the model has no honest way to know and every way to invent.
-  | { kind: "risk.update"; code: string; patch: ManagementRiskPatch };
+  | { kind: "risk.update"; code: string; patch: ManagementRiskPatch }
+  // Write a new release note for one project of the workspace and store it. The project is
+  // named the way the model was shown it — by NAME, in the prompt's repository list — for
+  // the reason `risk.update` names a register code: a uuid is something the model has no
+  // honest way to know and every way to invent, and the browser holds the list to resolve
+  // it against. The branch and the inclusive range are the operator's own words, so this
+  // action carries nothing the chat could not have been told.
+  | { kind: "release.notes"; project: string; branch: string; rangeFrom: string; rangeTo: string };
 
 export type ManagementActionKind = ManagementAction["kind"];
 export type ManagementUnsupported = Extract<ManagementAction, { kind: "unsupported" }>;
 export type ManagementRiskCreate = Extract<ManagementAction, { kind: "risk.create" }>;
 export type ManagementRiskUpdate = Extract<ManagementAction, { kind: "risk.update" }>;
+export type ManagementReleaseNotes = Extract<ManagementAction, { kind: "release.notes" }>;
 
 // ── Ask / reply ───────────────────────────────────────────────────────────────
 
@@ -385,6 +397,36 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
     if (isFail(p)) return p;
     if (Object.keys(p).length === 0) return { error: `risk.update ${code} нічого не змінює` };
     return { kind: "risk.update", code, patch: p };
+  }
+  if (kind === "release.notes") {
+    // Named, not guessed: a workspace of five repositories has five different release
+    // histories, and a note generated against the wrong one spends a model turn to produce
+    // a document about somebody else's work. The prompt tells the model to ask in prose
+    // when the project is ambiguous, and this is the refusal if it did not.
+    const project = str(o.project);
+    if (project === undefined)
+      return { error: "release.notes без проєкту — назви його так, як він стоїть у списку репозиторіїв" };
+    const branch = str(o.branch);
+    if (branch === undefined) return { error: `release.notes для «${project}» без гілки` };
+    const rangeFrom = str(o.rangeFrom);
+    const rangeTo = str(o.rangeTo);
+    if (rangeFrom === undefined || rangeTo === undefined)
+      return { error: `release.notes для «${project}» без періоду — потрібні rangeFrom і rangeTo` };
+    // The offending value is named, because «за останній тиждень» left as prose in a date
+    // field is the mistake a model actually makes here, and the operator can only re-ask if
+    // they can see it.
+    for (const [field, value] of [
+      ["rangeFrom", rangeFrom],
+      ["rangeTo", rangeTo],
+    ] as const)
+      if (!isReleaseDate(value))
+        return { error: `release.notes: ${field}=${JSON.stringify(value)} — це не дата у форматі РРРР-ММ-ДД` };
+    // Lexicographic IS chronological for YYYY-MM-DD, so no Date parsing that could disagree
+    // with git. Refused here rather than at the endpoint: the same check exists there, but a
+    // reversed range costs a round trip to hear about it.
+    if (rangeFrom > rangeTo)
+      return { error: `release.notes: початок періоду (${rangeFrom}) пізніший за його кінець (${rangeTo})` };
+    return { kind: "release.notes", project, branch, rangeFrom, rangeTo };
   }
   return { error: `невідома дія ${JSON.stringify(o.kind)}` };
 }
