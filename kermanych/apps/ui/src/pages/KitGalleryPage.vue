@@ -308,10 +308,9 @@
            combination the app never renders. -->
       <div class="kit__sidebar">
         <KNavItem label="Активні" :count="3" :active="navActive === 'active'" @click="navActive = 'active'" />
-        <KNavItem label="Очікують" :count="2" :active="navActive === 'waiting'" @click="navActive = 'waiting'" />
-        <KNavItem label="Завершені" :count="12" :active="navActive === 'completed'" @click="navActive = 'completed'" />
-        <KNavItem label="Помилки" :count="1" :active="navActive === 'errors'" @click="navActive = 'errors'" />
         <KNavItem label="Задачі" :count="5" :active="navActive === 'tasks'" @click="navActive = 'tasks'" />
+        <KNavItem label="Відкладені" :count="12" :active="navActive === 'archived'" @click="navActive = 'archived'" />
+        <KNavItem label="Історія" :active="navActive === 'history'" @click="navActive = 'history'" />
       </div>
       <div class="kit__caption mono">
         рядок рейки: лейбл + лічильник — і той самий рядок із другим рядком тексту
