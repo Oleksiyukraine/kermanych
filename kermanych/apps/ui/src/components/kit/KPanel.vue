@@ -33,23 +33,9 @@
           @click="emit('stop')"
         >■</KIconButton>
         <KIconButton
-          v-if="session.status !== 'merged' && session.kind === 'agent'"
-          title="Завершити (merge гілки в проєкт)"
-          @click="emit('finish')"
-        >✓</KIconButton>
-        <KIconButton
-          v-if="session.status === 'merged' && session.kind === 'agent'"
-          title="Відновити (підняти worktree заново, щоб продовжити)"
-          @click="emit('reopen')"
-        >↻</KIconButton>
-        <KIconButton
           title="Відкрити в редакторі"
           @click="emit('editor')"
         >⧉</KIconButton>
-        <KIconButton
-          title="Видалити"
-          @click="emit('delete')"
-        >✕</KIconButton>
       </div>
     </header>
 
@@ -235,13 +221,13 @@ const props = withDefaults(
   { placeholder: 'напиши наступний крок…', promoting: false, refreshing: false, models: () => [] },
 );
 
+// `finish`, `reopen` and `delete` are NOT declared here: завершити / відновити / видалити are
+// session-level actions that live in the agent's top nav (AgentsPage `.agents__detail-bar`),
+// reachable from every tab; a second copy in this header stacked the same ✓/✕ two rows apart.
 const emit = defineEmits<{
   stop: [];
-  delete: [];
   send: [text: string, images: ImageInput[]];
   answer: [res: RpcExtensionUIResponse];
-  finish: [];
-  reopen: [];
   editor: [];
   branch: [];
   restart: [];
