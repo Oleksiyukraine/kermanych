@@ -23,7 +23,7 @@ import {
 import { RpcSession } from "../rpc/rpc-session";
 import { RegistryService } from "../registry/registry.service";
 import { reduceRpcEvents, sumTurnUsage } from "../supervisor/transcript-reducer";
-import { buildManagementTurn, managementCwd, managementRepos } from "./management-prompt";
+import { buildManagementTurn, managementCwd, managementRepos, todayIso } from "./management-prompt";
 
 // Read-only, and not a setting: a management chat that can write to the repository is a
 // different — and far more dangerous — product than one that reads it to answer about
@@ -153,7 +153,13 @@ export class ManagementChatService implements OnModuleDestroy {
     // the operator's text in the contract and the context markers, so by the time the child
     // reads it a leading `/el10` is no longer leading and would expand nowhere.
     const helped = expandHelpers(input.text);
-    const message = buildManagementTurn({ first, repos, context: input.context, text: helped.text });
+    const message = buildManagementTurn({
+      first,
+      repos,
+      context: input.context,
+      today: todayIso(),
+      text: helped.text,
+    });
     const { events, notices } = await this.drive(key, live, message);
     // First, because it describes the message that produced everything after it.
     if (helped.used.length) notices.unshift(helperNotice(helped.used));

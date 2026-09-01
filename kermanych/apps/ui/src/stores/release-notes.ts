@@ -3,11 +3,14 @@
 // section is a screen you open for one workspace, and a shared list would flash the
 // previous workspace's notes for the length of a fetch every time the sidebar moved.
 //
-// Generation is NOT here: the screen asks the local api to write the document
+// Generation is NOT here: the caller asks the local api to write the document
 // (api.generateReleaseNotes — git history and omp live behind that call), then hands the
-// result to `create` below, which stores it in `workspace_release_notes` under the
-// operator's own JWT. This store only ever talks to the cloud, so every note a member can
-// read or edit is decided by RLS, never by this code.
+// result to `create` below, which stores it in `workspace_release_notes` under the operator's
+// own JWT. There are two such callers — the section screen's form and the management
+// assistant's `release.notes` action (./management-chat.ts) — and both end here, which is
+// what makes «все, що згенеровано, зберігається у воркспейсі» true however it was asked for.
+// This store only ever talks to the cloud, so every note a member can read or edit is
+// decided by RLS, never by this code.
 //
 // Deliberately no Realtime channel (`workspace_release_notes` is not in the
 // supabase_realtime publication): a note is generated a handful of times per release cycle

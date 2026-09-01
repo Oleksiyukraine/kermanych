@@ -12,12 +12,12 @@ function block(body: string): string {
 test("an unsupported block is parsed out and the prose survives without it", () => {
   const r = parseManagementReply(
     "Цей розділ ще не реалізований.\n\n" +
-      block('{"kind":"unsupported","section":"management-releases","request":"додай нотатку релізу"}') +
+      block('{"kind":"unsupported","section":"management-capacity","request":"додай людину в команду"}') +
       "\n\nМожу натомість почитати репозиторії.",
   );
   expect(r.rejected).toEqual([]);
   expect(r.actions).toEqual([
-    { kind: "unsupported", section: "management-releases", request: "додай нотатку релізу" },
+    { kind: "unsupported", section: "management-capacity", request: "додай людину в команду" },
   ]);
   expect(r.text).toBe("Цей розділ ще не реалізований.\n\nМожу натомість почитати репозиторії.");
   expect(r.text).not.toContain("kermanych-action");
@@ -37,9 +37,9 @@ test("an indented block inside a list item is still recognised", () => {
 
 test("one block may carry an array of refusals", () => {
   const r = parseManagementReply(
-    block('[{"kind":"unsupported","section":"storage"},{"kind":"unsupported","section":"management-releases"}]'),
+    block('[{"kind":"unsupported","section":"storage"},{"kind":"unsupported","section":"management-capacity"}]'),
   );
-  expect(r.actions.map((a) => a.section)).toEqual(["storage", "management-releases"]);
+  expect(r.actions.map((a) => a.section)).toEqual(["storage", "management-capacity"]);
 });
 
 test("a fence that is not ours is left alone, quoted JSON included", () => {
@@ -175,6 +175,60 @@ test("an unknown kind is named in the rejection", () => {
   expect(r.rejected).toEqual(['невідома дія "release.publish"']);
 });
 
+// ── release.notes ─────────────────────────────────────────────────────────────
+// The Release Notes write path. What is validated is an ASK, not a row: a project of the
+// workspace, one of its branches and an inclusive calendar range. Everything a wrong value
+// here costs is real — a generation reads git history and spends a model turn — so each
+// refusal names the value that was wrong.
+
+const RANGE = { project: "Альфа", branch: "main", rangeFrom: "2026-08-01", rangeTo: "2026-08-31" } as const;
+
+test("a release.notes carries a project, a branch and an inclusive range", () => {
+  const r = parseManagementReply(
+    ["Готую реліз-ноти за серпень.", block(JSON.stringify({ kind: "release.notes", ...RANGE }))].join("\n\n"),
+  );
+  expect(r.actions).toEqual([{ kind: "release.notes", ...RANGE }]);
+  expect(r.rejected).toEqual([]);
+  expect(r.text).toBe("Готую реліз-ноти за серпень.");
+});
+
+// The project is named the way the model was SHOWN it — by name, never by id — so a missing
+// name is the one field that cannot be recovered from anywhere else.
+test("a release.notes without a project or a branch is refused, not guessed", () => {
+  expect(validateManagementAction({ kind: "release.notes", ...RANGE, project: "  " })).toEqual({
+    error: "release.notes без проєкту — назви його так, як він стоїть у списку репозиторіїв",
+  });
+  expect(validateManagementAction({ kind: "release.notes", ...RANGE, branch: undefined })).toEqual({
+    error: "release.notes для «Альфа» без гілки",
+  });
+});
+
+// A model asked for «за останній тиждень» writes exactly that into a date field often enough
+// that the refusal has to quote it back — the operator can only re-ask if they can see it.
+// And the bounds are the month's and the day's, not merely the shape: git parses `2026-08-32`
+// permissively into a period nobody picked.
+test("a release.notes range must be two real calendar dates in order", () => {
+  expect(validateManagementAction({ kind: "release.notes", ...RANGE, rangeFrom: "останній тиждень" })).toEqual({
+    error: 'release.notes: rangeFrom="останній тиждень" — це не дата у форматі РРРР-ММ-ДД',
+  });
+  expect(validateManagementAction({ kind: "release.notes", ...RANGE, rangeTo: "2026-08-32" })).toEqual({
+    error: 'release.notes: rangeTo="2026-08-32" — це не дата у форматі РРРР-ММ-ДД',
+  });
+  expect(validateManagementAction({ kind: "release.notes", ...RANGE, rangeFrom: "2026-13-01" })).toEqual({
+    error: 'release.notes: rangeFrom="2026-13-01" — це не дата у форматі РРРР-ММ-ДД',
+  });
+  expect(validateManagementAction({ kind: "release.notes", ...RANGE, rangeTo: undefined })).toEqual({
+    error: "release.notes для «Альфа» без періоду — потрібні rangeFrom і rangeTo",
+  });
+  expect(
+    validateManagementAction({ kind: "release.notes", ...RANGE, rangeFrom: "2026-08-31", rangeTo: "2026-08-01" }),
+  ).toEqual({ error: "release.notes: початок періоду (2026-08-31) пізніший за його кінець (2026-08-01)" });
+  // A single day is a legitimate release period, so the comparison is `>` and not `>=`.
+  expect(
+    validateManagementAction({ kind: "release.notes", ...RANGE, rangeFrom: "2026-08-31", rangeTo: "2026-08-31" }),
+  ).toEqual({ kind: "release.notes", project: "Альфа", branch: "main", rangeFrom: "2026-08-31", rangeTo: "2026-08-31" });
+});
+
 test("a section resolves by route name, url segment or label", () => {
   expect(managementSection("management-risks")?.label).toBe("Risk Registry");
   expect(managementSection("risk-registry")?.name).toBe("management-risks");
@@ -187,7 +241,7 @@ test("a section resolves by route name, url segment or label", () => {
 // and a section that CAN must not carry a reason it would never show.
 test("exactly the sections with a store are writable, and the rest state why not", () => {
   const writable = MANAGEMENT_SECTIONS.filter((s) => s.capability === "read_write");
-  expect(writable.map((s) => s.name)).toEqual(["management-risks"]);
+  expect(writable.map((s) => s.name)).toEqual(["management-risks", "management-releases"]);
   for (const s of MANAGEMENT_SECTIONS) {
     if (s.capability === "read_write") expect(s.limitation, `${s.name} needs no excuse`).toBeUndefined();
     else expect(s.limitation, `${s.name} must explain itself`).toBeTruthy();

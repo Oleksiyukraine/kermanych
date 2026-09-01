@@ -21,10 +21,13 @@
 // could only ever show a slice of its own subject.
 
 // What the assistant may do with a section.
-//   read_write — it has a store and a table; the assistant may read it and change it.
-//   read       — a screen exists, but the assistant may describe it only: either nothing
-//                persists behind it, or (Release Notes) the store is written by the screen
-//                itself and the assistant has no action vocabulary for it.
+//   read_write — it has a store the assistant can reach and an action vocabulary in
+//                ./management-actions for reaching it. The vocabulary need not cover the
+//                whole screen: Release Notes is writable through exactly one verb
+//                (generate a new note), and the protocol printed into the prompt is what
+//                states which of a section's operations stayed on the screen.
+//   read       — a screen exists, but the assistant may describe it only: nothing persists
+//                behind it, so there is nothing an action could change.
 //   none       — a placeholder; there is nothing to read and nothing to write.
 export type ManagementCapability = "read_write" | "read" | "none";
 
@@ -52,10 +55,10 @@ const NOT_BUILT = "розділ ще не реалізований — за ни
 export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
   { name: "management-home", path: "home", label: "Home", hint: "огляд воркспейсу", capability: "none", limitation: NOT_BUILT },
   { name: "management-storage", path: "storage", label: "Storage", hint: "файли й артефакти", capability: "none", limitation: NOT_BUILT },
-  // The one section the assistant can WRITE, because it is the one section with a real store
-  // behind it: `workspace_risks` (threat vs opportunity, cause·event·consequence, 1-5
-  // probability × impact, PMI response strategies, an append-only event log). Three pieces
-  // make that true and all three must stay true for this row to say `read_write`:
+  // A section the assistant can WRITE, because it has a real store behind it:
+  // `workspace_risks` (threat vs opportunity, cause·event·consequence, 1-5 probability ×
+  // impact, PMI response strategies, an append-only event log). Three pieces make that true
+  // and all three must stay true for this row to say `read_write`:
   //   * ./management-actions carries `risk.create` / `risk.update` in THAT schema's
   //     vocabulary (note: it has no `client` or `financial` category — an unpaid invoice is
   //     `external`);
@@ -71,18 +74,28 @@ export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
     hint: "ризики й мітигації",
     capability: "read_write",
   },
-  // A real screen and a real store (`workspace_release_notes`), but still not writable from
-  // the chat: generating a note reads git history on THIS machine and spawns its own omp
-  // child — a pipeline the action executor does not carry. The limitation says where the
-  // pen actually is, so the refusal reads as directions rather than as a shrug.
+  // The second writable section, and the one whose write is not a plain row insert:
+  // generating a note reads git history on THIS machine, spends its own one-shot omp child
+  // and only then stores the document in `workspace_release_notes`. The chat drives exactly
+  // that pipeline —
+  //   * ./management-actions carries `release.notes` (project by NAME, branch, an inclusive
+  //     YYYY-MM-DD range validated against ./release-notes `isReleaseDate`);
+  //   * apps/api/src/management/management-prompt.ts prints that vocabulary, plus today's
+  //     date so a relative period («за останній тиждень») can be resolved into dates;
+  //   * apps/ui/src/stores/management-chat.ts calls POST /management/release-notes for the
+  //     document and `useReleaseNotes().create(workspaceId, …)` to store it, in the browser
+  //     under the operator's own JWT — so RLS decides who may add one.
+  //
+  // No `limitation`: the row is writable. That the OTHER operations on a stored note —
+  // editing, copying — remain screen work is stated by the release protocol in the prompt,
+  // where it belongs; a `limitation` here would be shown as a refusal for a section that
+  // does in fact accept an action.
   {
     name: "management-releases",
     path: "release-notes",
     label: "Release Notes",
     hint: "зміни по релізах",
-    capability: "read",
-    limitation:
-      "реліз-ноти генеруються, редагуються й копіюються на самому екрані розділу — асистент може лише розповісти про вже збережені",
+    capability: "read_write",
   },
   { name: "management-capacity", path: "team-capacity", label: "Team Capacity", hint: "навантаження команди", capability: "none", limitation: NOT_BUILT },
   {

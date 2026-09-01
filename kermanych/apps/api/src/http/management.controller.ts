@@ -1,6 +1,7 @@
 // apps/api/src/http/management.controller.ts
 import { BadRequestException, Body, Controller, Post } from "@nestjs/common";
 import {
+  isReleaseDate,
   isRiskCategory,
   isRiskKind,
   isRiskResponse,
@@ -14,12 +15,6 @@ import {
 } from "@kermanych/core";
 import { ManagementChatService } from "../management/management-chat.service";
 import { ReleaseNotesService } from "../management/release-notes.service";
-
-// A calendar date the way the release-note range speaks it. Strict to the month and day
-// bounds, not just the shape: `--since`/`--until` are handed to git verbatim, and git
-// parses junk like `2026-08-32` permissively into a range the operator never picked —
-// which then surfaces as a baffling «немає комітів» about a period that does not exist.
-const ISO_DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
 // The register as the browser sent it, kept only where every field is one this build knows.
 // `project_risks` is behind RLS and the api has no credentials for it, so this list cannot be
@@ -117,6 +112,12 @@ export class ManagementController {
   // Generate — NOT store: the reply is a document the browser then saves into
   // `workspace_release_notes` under the operator's own JWT. Guarded like the chat, and for
   // the same reason: a generation spends the operator's provider plan.
+  //
+  // Two callers, one contract: the section screen's own form, and the management assistant's
+  // `release.notes` action (stores/management-chat.ts). The bounds below are re-checked for
+  // both — `isReleaseDate` is the same predicate @kermanych/core validates that action with,
+  // so the chat refuses a bad range without a round trip and this endpoint still refuses it
+  // if anything else asks.
   @Post("release-notes")
   async releaseNotes(@Body() b: ReleaseNotesAsk): Promise<ReleaseNotesReply> {
     const projectId = typeof b?.projectId === "string" ? b.projectId.trim() : "";
@@ -125,7 +126,7 @@ export class ManagementController {
     if (!branch) throw new BadRequestException("не вказано гілку");
     const rangeFrom = typeof b?.rangeFrom === "string" ? b.rangeFrom.trim() : "";
     const rangeTo = typeof b?.rangeTo === "string" ? b.rangeTo.trim() : "";
-    if (!ISO_DATE.test(rangeFrom) || !ISO_DATE.test(rangeTo))
+    if (!isReleaseDate(rangeFrom) || !isReleaseDate(rangeTo))
       throw new BadRequestException("період має бути парою дат у форматі YYYY-MM-DD");
     // Lexicographic IS chronological for YYYY-MM-DD — no Date parsing to disagree with git.
     if (rangeFrom > rangeTo) throw new BadRequestException("початок періоду пізніший за його кінець");

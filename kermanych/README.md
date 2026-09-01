@@ -424,9 +424,9 @@ That field is a real assistant, and it is deliberately narrow:
 
 - **It only touches Менеджмент.** Its tools are the read-only subset
   (`read`, `grep`, `glob`) — it can look at your repositories but it cannot edit a
-  file, create a branch or start a session. The only section it can WRITE is the one
-  the section table marks `read_write`: the Risk Registry. Everywhere else it reads,
-  explains and refuses, and says which it is doing.
+  file, create a branch or start a session. The sections it can WRITE are the ones the
+  section table marks `read_write`: the Risk Registry and Release Notes. Everywhere else
+  it reads, explains and refuses, and says which it is doing.
 - **It keeps the risk register.** Ask it to file a risk and it emits a `risk.create`
   action carrying that schema's own vocabulary — threat or opportunity, one of the
   fourteen categories, cause·event·consequence, 1–5 probability × impact, a PMI
@@ -437,6 +437,23 @@ That field is a real assistant, and it is deliberately narrow:
   the model. Every turn also carries the current register, so it updates R-004 instead
   of filing it twice. Owners are not something it can set: `risk_owner` and
   `action_owner` are profile ids, and those are assigned on the register screen.
+- **It writes release notes from the chat.** Type «зроби реліз-ноти по main за останній
+  тиждень» into that field and it emits a `release.notes` action naming the project, the
+  branch and the period — there is no button to press and no form to fill. A relative
+  period is resolved by the model against the `Сьогодні:` line every turn carries, and a
+  date that is not a date («останній тиждень» left in the field) is refused in your browser
+  with the value quoted back, not as a 400 one round trip later. The project is named the
+  way the prompt showed it to you — by NAME, never by id — and an ambiguous name is a
+  question rather than a guess, because a note generated against the wrong repository is a
+  document about somebody else's work. What happens next is the same pipeline the section
+  screen's own form runs: the local API reads that branch's commits on THIS machine (it is
+  the only party that can) and spends a second, one-shot `omp` child to write the document;
+  your browser then stores it in `workspace_release_notes` under your own JWT, so it is on
+  the Release Notes screen for every member. The line you read afterwards names the title
+  and the commit count — a note written from three commits reads very differently from one
+  written from ninety, and that number is your first clue the range or the branch was not
+  the one you meant. Editing, copying and deleting a stored note stay on the screen; the
+  assistant has no verb for them and the prompt says so.
 - **It spends the same subscription your agents spend.** It runs through the same
   `omp` on your PATH, the same provider account and the same plan; there is no second
   key to configure and no separate budget. The mono pill on the right of the field is
@@ -446,18 +463,20 @@ That field is a real assistant, and it is deliberately narrow:
   repositories of that Воркспейс — name, remote, default branch, conventions and
   the local path where each is bound on this machine — so «which of our repos does this
   affect» is answerable. Unbound projects are listed as unbound rather than guessed at.
-- **It says why when it cannot act.** Ask it to change Release Notes and it refuses
-  with that section's stated limitation. The refusal is not the model being polite: the
-  model reports only WHICH section was asked for, and the sentence you read is looked
+- **It says why when it cannot act.** Ask it to change Team Capacity or Integrations and it
+  refuses with that section's stated limitation. The refusal is not the model being polite:
+  the model reports only WHICH section was asked for, and the sentence you read is looked
   up in the section table by the app (`ManagementAction` `unsupported`,
   `packages/core/src/management-actions.ts`). A model that would rather agree with you
-  cannot make that sentence disappear.
+  cannot make that sentence disappear — and a refusal aimed at a section that IS writable
+  is reported as the prompt malfunction it is, not dressed in a limitation the table does
+  not have.
 
 ### Giving another section something it can write
 
-The Risk Registry is wired end to end; every other section is `none` or `read`, and the
-chat has no write path into them on purpose. Adding one is three edits, and they belong
-to the branch that owns the screen being written to:
+The Risk Registry and Release Notes are wired end to end; every remaining section is `none`
+or `read`, and the chat has no write path into them on purpose. Adding one is three edits,
+and they belong to the branch that owns the screen being written to:
 
 1. flip that section's row in `packages/core/src/management.ts` to `capability:
    "read_write"` and drop its `limitation`;
@@ -468,6 +487,12 @@ to the branch that owns the screen being written to:
    `apps/api/src/management/management-prompt.ts` prints that same vocabulary so the
    two cannot drift;
 3. give the executor in `apps/ui/src/stores/management-chat.ts` a branch for it.
+
+Release Notes is the worked example of a write that is not a row insert: its executor
+branch calls the local API for the document before it stores anything, and its protocol
+block states which of the screen's operations it deliberately does NOT have. A `read_write`
+row carries no `limitation` — a limitation is printed as a refusal — so a partial vocabulary
+has to say so in the prompt instead.
 
 Step 3 stays in the **browser**, under your own JWT — the API must never gain a write
 path of its own. That is what makes RLS, rather than trust in the model, the thing that

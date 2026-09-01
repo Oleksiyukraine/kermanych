@@ -38,6 +38,7 @@ export {
 } from "./worktree-names";
 export { PLATFORMS, type Platform } from "./platform";
 export {
+  isReleaseDate,
   type ReleaseCommit,
   type ReleaseNotesAsk,
   type ReleaseNotesReply,
@@ -115,6 +116,7 @@ export {
   type ManagementUnsupported,
   type ManagementRiskCreate,
   type ManagementRiskUpdate,
+  type ManagementReleaseNotes,
   type ManagementRiskFields,
   type ManagementRiskPatch,
   type ManagementRiskRow,

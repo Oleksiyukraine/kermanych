@@ -111,12 +111,12 @@ describe("ManagementChatService", () => {
     const svc = make();
     turns = [
       reply(
-        'Цей розділ ще не працює.\n\n```kermanych-action\n{"kind":"unsupported","section":"management-releases","request":"додати нотатку релізу"}\n```',
+        'Цей розділ ще не працює.\n\n```kermanych-action\n{"kind":"unsupported","section":"management-capacity","request":"додати людину в команду"}\n```',
       ),
     ];
-    const r = await svc.ask(ask("додай нотатку релізу 2.1"));
+    const r = await svc.ask(ask("додай людину в Team Capacity"));
     expect(r.actions).toEqual([
-      { kind: "unsupported", section: "management-releases", request: "додати нотатку релізу" },
+      { kind: "unsupported", section: "management-capacity", request: "додати людину в команду" },
     ]);
     expect(r.text).toBe("Цей розділ ще не працює.");
     expect(r.rejected).toEqual([]);
