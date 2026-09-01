@@ -36,10 +36,11 @@ describe("buildReleaseNotesPrompt", () => {
     expect(prompt).not.toContain("Платформа");
   });
 
-  // The whole feature request in one assertion: the reader is not an engineer.
-  it("demands plain language for a non-technical reader, in Ukrainian", () => {
+  // The whole feature request in one assertion: the reader is not an engineer, and the
+  // document is written in English by default.
+  it("demands plain language for a non-technical reader, in English", () => {
     expect(prompt).toContain("без технічної освіти");
-    expect(prompt).toContain("Пиши українською");
+    expect(prompt).toContain("Пиши англійською");
   });
 
   it("carries each commit's subject and its indented body", () => {
