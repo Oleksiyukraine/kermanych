@@ -131,14 +131,70 @@
             </template>
             <span class="agents__detail-label mono">{{ selectedSession.name }}</span>
           </div>
-          <button
-            type="button"
-            class="agents__close"
-            v-tip="'Закрити'"
-            aria-label="Закрити"
-            @click="store.selectSession(undefined)"
-          >✕</button>
+          <!-- WHAT CAN BE DONE TO THIS SESSION, and the way out. Moved out of the «Сесія»
+               pane's foot so every session-level action — preview above all — is on screen in
+               Лог, Зміни and Сесія alike, one control column that outlives the tab choice. -->
+          <div class="agents__detail-controls">
+            <div class="agents__actions">
+              <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
+                <KIconButton
+                  v-if="selectedSession.status !== 'merged'"
+                  :title="selectedSession.kind === 'review' ? 'Віддати висновок ревізора виконавцю' : 'Влити висновок у батьківського агента'"
+                  @click="openMerge(selectedSession)"
+                >⤴</KIconButton>
+                <KIconButton
+                  :title="selectedSession.kind === 'review' ? 'Викинути ревізію' : 'Викинути гілку'"
+                  @click="onDiscardRow(selectedSession)"
+                >✕</KIconButton>
+              </template>
+              <template v-else-if="!showArchived">
+                <!-- `title` names the action even while disabled, and never explains the
+                     disabling: KIconButton feeds it to BOTH v-tip and aria-label, and a
+                     disabled button dispatches no mouseenter/focusin and cannot take focus, so
+                     a reason parked there is unreachable — while an aria-label holding an
+                     instruction gives the control no name at all. The reason is the visible
+                     line under this bar. -->
+                <KIconButton
+                  :active="!!store.previews[selectedSession.id]"
+                  :disabled="!isBoundFor(selectedSession.projectId)"
+                  :title="store.previews[selectedSession.id] ? 'Зупинити превʼю' : 'Превʼю гілки в браузері'"
+                  @click="togglePreview(selectedSession)"
+                >{{ store.previews[selectedSession.id] ? '◼' : '▶' }}</KIconButton>
+                <KIconButton
+                  v-if="canReview(selectedSession)"
+                  title="Запросити ревізора (незалежний аудит гілки)"
+                  @click="onReview(selectedSession)"
+                >⚖</KIconButton>
+                <KIconButton
+                  v-if="selectedSession.status !== 'merged'"
+                  title="Завершити (merge гілки в проєкт)"
+                  @click="openFinish(selectedSession)"
+                >✓</KIconButton>
+                <KIconButton
+                  v-if="selectedSession.status === 'merged'"
+                  title="Відновити (підняти worktree заново, щоб продовжити)"
+                  @click="onReopen(selectedSession)"
+                >↻</KIconButton>
+                <KIconButton title="Відкласти" @click="onArchive(selectedSession)">⤓</KIconButton>
+                <KIconButton title="Видалити агента" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
+              </template>
+              <template v-else>
+                <KIconButton title="Повернути в активні" @click="onUnarchive(selectedSession)">⤒</KIconButton>
+                <KIconButton title="Видалити агента" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
+              </template>
+            </div>
+            <button
+              type="button"
+              class="agents__close"
+              v-tip="'Закрити'"
+              aria-label="Закрити"
+              @click="store.selectSession(undefined)"
+            >✕</button>
+          </div>
         </div>
+        <!-- The reason the ▶ above is down, on its own strip so it shows in every tab the
+             disabled button is — a disabled control carries no reachable tooltip. -->
+        <p v-if="previewBlocked" class="agents__detail-note">{{ PREVIEW_BIND_HINT }}</p>
         <KTabs v-model="detailTab" :tabs="detailTabs" class="agents__detail-tabs" />
         <div v-show="detailTab === 'log'" class="agents__tabpane agents__tabpane--log">
           <KPanel
@@ -147,16 +203,13 @@
             :refreshing="refreshingId === selectedSession.id"
             :models="store.models"
             @stop="onStop"
-            @delete="onDelete"
             @send="onSend"
             @answer="onAnswer"
-            @finish="onFinish"
             @editor="onEditor"
             @branch="onBranch"
             @restart="onRestart"
             @refresh="onRefreshChat"
             @summary="onSummary"
-            @reopen="onReopenSelected"
             @newTask="openTaskFromText"
             @expand-all="onExpandAll"
             @effort="onEffort"
@@ -300,55 +353,6 @@
               <dd class="agents__meta-value mono">{{ costLabel || '—' }}</dd>
             </div>
           </dl>
-          <div class="agents__actions">
-            <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
-              <KIconButton
-                v-if="selectedSession.status !== 'merged'"
-                :title="selectedSession.kind === 'review' ? 'Віддати висновок ревізора виконавцю' : 'Влити висновок у батьківського агента'"
-                @click="openMerge(selectedSession)"
-              >⤴</KIconButton>
-              <KIconButton
-                :title="selectedSession.kind === 'review' ? 'Викинути ревізію' : 'Викинути гілку'"
-                @click="onDiscardRow(selectedSession)"
-              >✕</KIconButton>
-            </template>
-            <template v-else-if="!showArchived">
-              <!-- `title` names the action even while disabled, and never explains the
-                   disabling: KIconButton feeds it to BOTH v-tip and aria-label, and a
-                   disabled button dispatches no mouseenter/focusin and cannot take focus, so
-                   a reason parked there is unreachable — while an aria-label holding an
-                   instruction gives the control no name at all. The reason is the visible
-                   line under this cluster. -->
-              <KIconButton
-                :active="!!store.previews[selectedSession.id]"
-                :disabled="!isBoundFor(selectedSession.projectId)"
-                :title="store.previews[selectedSession.id] ? 'Зупинити превʼю' : 'Превʼю гілки в браузері'"
-                @click="togglePreview(selectedSession)"
-              >{{ store.previews[selectedSession.id] ? '◼' : '▶' }}</KIconButton>
-              <KIconButton
-                v-if="canReview(selectedSession)"
-                title="Запросити ревізора (незалежний аудит гілки)"
-                @click="onReview(selectedSession)"
-              >⚖</KIconButton>
-              <KIconButton
-                v-if="selectedSession.status !== 'merged'"
-                title="Завершити (merge гілки в проєкт)"
-                @click="openFinish(selectedSession)"
-              >✓</KIconButton>
-              <KIconButton
-                v-if="selectedSession.status === 'merged'"
-                title="Відновити (підняти worktree заново, щоб продовжити)"
-                @click="onReopen(selectedSession)"
-              >↻</KIconButton>
-              <KIconButton title="Відкласти" @click="onArchive(selectedSession)">⤓</KIconButton>
-              <KIconButton title="Видалити агента" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
-            </template>
-            <template v-else>
-              <KIconButton title="Повернути в активні" @click="onUnarchive(selectedSession)">⤒</KIconButton>
-              <KIconButton title="Видалити агента" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
-            </template>
-          </div>
-          <p v-if="previewBlocked" class="agents__note">{{ PREVIEW_BIND_HINT }}</p>
         </div>
         </template>
         <div v-else class="agents__detail-blank mono">Виберіть сесію зі списку.</div>
@@ -1789,16 +1793,6 @@ async function onReopen(s: Session): Promise<void> {
   }
 }
 
-function onReopenSelected(): void {
-  const s = selectedSession.value;
-  if (s) void onReopen(s);
-}
-
-async function onDelete(): Promise<void> {
-  const s = selectedSession.value;
-  if (s) await onDeleteAgent(s);
-}
-
 // Physical delete (archive teardown + removal): stops the omp process, removes the
 // worktree/branch and the registry row, cascading to child branches. Works on any
 // status, unlike archive which refuses active agents.
@@ -1870,11 +1864,6 @@ async function openFinish(s: Session): Promise<void> {
   } catch (e) {
     finishError.value = e instanceof Error ? e.message : String(e);
   }
-}
-
-function onFinish(): void {
-  const s = selectedSession.value;
-  if (s) void openFinish(s);
 }
 
 function onEditor(): void {
@@ -2422,6 +2411,27 @@ async function submitPreviewConfig(): Promise<void> {
   }
 }
 
+// The bar's right half: the session's action glyphs, then the way out. `flex: none` so the
+// cluster keeps its width and the ellipsised name yields instead.
+.agents__detail-controls {
+  display: flex;
+  align-items: center;
+  // Wider than the 6px INSIDE the cluster, so «Закрити» reads as a separate thing from the
+  // action it sits next to — «Видалити агента», the other ✕ in this bar.
+  gap: 10px;
+  flex: none;
+}
+
+// The preview-blocked reason, on its own strip below the bar so it is on screen in every tab
+// the disabled ▶ is — a disabled control carries no reachable tooltip.
+.agents__detail-note {
+  flex: none;
+  margin: 0;
+  padding: 5px 12px 0;
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
+}
+
 .agents__panel {
   flex: 1;
   min-height: 0;
@@ -2579,12 +2589,12 @@ async function submitPreviewConfig(): Promise<void> {
   text-align: right;
   overflow-wrap: anywhere;
 }
+// No wrapping: the bar is 34px and a second row of glyphs would grow it. At most five fit
+// beside an ellipsised name at the detail pane's min width.
 .agents__actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
-  padding-top: 12px;
-  border-top: 1px solid var(--k-line);
 }
 
 .agents__log-empty {

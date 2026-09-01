@@ -134,7 +134,6 @@
           :session="runningSession"
           @send="onSend"
           @stop="onStop"
-          @delete="onDelete"
           @expand-all="onGalleryExpandAll"
           @effort="onPanelEffort"
         >
@@ -145,7 +144,6 @@
           @send="onSend"
           @answer="onAnswer"
           @stop="onStop"
-          @delete="onDelete"
           @expand-all="onGalleryExpandAll"
         >
           <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" session-id="kit-demo" :expand-all="galleryExpandAll" />
@@ -155,7 +153,6 @@
           @send="onSend"
           @restart="onRestart"
           @stop="onStop"
-          @delete="onDelete"
           @expand-all="onGalleryExpandAll"
         >
           <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" session-id="kit-demo" :expand-all="galleryExpandAll" />
@@ -776,7 +773,6 @@ function onGalleryExpandAll(on: boolean): void {
 function onSend(text: string) { lastAction.value = `send: ${text}`; }
 function onAnswer(res: RpcExtensionUIResponse) { lastAction.value = `answer: ${JSON.stringify(res)}`; }
 function onStop() { lastAction.value = 'stop'; }
-function onDelete() { lastAction.value = 'delete'; }
 function onRestart() { lastAction.value = 'restart'; }
 // The panel demo carries a live effort chip, so the pick is reported like every other action
 // here: these sample sessions are plain objects, and a chip that swallowed the choice would
