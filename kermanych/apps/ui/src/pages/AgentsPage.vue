@@ -1375,7 +1375,11 @@ function openLauncher(card?: Task): void {
   editingTaskId.value = card?.id ?? null;
   draftName.value = card?.title ?? '';
   draftTask.value = card?.description ?? '';
-  draftModel.value = card?.model ?? 'opus-5';
+  // A NEW card inherits the project's «за замовчуванням» model (Запуск задач settings); a card
+  // being EDITED keeps its own. `launchProjectId` is set just above, and the LOCAL row carries
+  // the synced default so this works offline like the rest of the launch path.
+  const launchDefault = card ? undefined : store.projects.find((p) => p.id === launchProjectId.value);
+  draftModel.value = card?.model ?? launchDefault?.defaultModel ?? 'opus-5';
   // The cloud stores launch params as free text; the local vocabularies are the authority,
   // exactly as createSessionFromTask validates them server-side.
   draftPrefix.value = (BRANCH_PREFIXES as readonly string[]).includes(card?.prefix ?? '')
@@ -1408,7 +1412,9 @@ function openTaskFromText(text: string): void {
   editingTaskId.value = null;
   draftName.value = taskNameFromText(text);
   draftTask.value = text;
-  draftModel.value = 'opus-5';
+  // New task from a selection: same project default model as openLauncher's new-task branch.
+  const textDefault = store.projects.find((p) => p.id === launchProjectId.value);
+  draftModel.value = textDefault?.defaultModel ?? 'opus-5';
   draftPrefix.value = 'feature';
   draftPlatform.value = undefined;
   draftWorktree.value = true;
