@@ -6,7 +6,7 @@ function member(userId: string, profile?: Profile): WorkspaceMember {
   return {
     workspaceId: 'w1',
     userId,
-    role: 'member',
+    role: 'developer',
     addedAt: '2026-01-01T00:00:00.000Z',
     ...(profile ? { profile } : {}),
   };

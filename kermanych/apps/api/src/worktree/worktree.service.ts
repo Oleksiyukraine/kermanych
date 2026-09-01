@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { addedFileDiff, splitDiff, type SplitDiff } from "./split-diff";
-import type { TreeEntry, FileContent } from "@kermanych/core";
+import type { TreeEntry, FileContent, ReleaseCommit } from "@kermanych/core";
 
 export type ChangedFile = { path: string; added: number; removed: number };
 
@@ -101,6 +101,35 @@ export class WorktreeService {
   async currentBranch(repoDir: string): Promise<string> {
     const r = await git(repoDir, ["symbolic-ref", "--short", "HEAD"]);
     return r.ok ? r.out.trim() : "";
+  }
+
+  // The commits a release note is generated from: one branch, an inclusive date range,
+  // merges excluded (a merge restates the commits it carries). Newest first, as git hands
+  // them out. NUL-framed records with unit-separator fields, because a commit body is free
+  // text that can contain any line-based delimiter this method could otherwise pick.
+  //
+  // `gitStdout`, not `git`: the output is CONTENT — a stray stderr warning merged into the
+  // stream would be parsed as part of somebody's commit message.
+  async logRange(repoDir: string, branch: string, from: string, to: string): Promise<ReleaseCommit[]> {
+    const r = await gitStdout(repoDir, [
+      "log",
+      branch,
+      "--no-merges",
+      "--date=short",
+      `--since=${from} 00:00:00`,
+      `--until=${to} 23:59:59`,
+      "--pretty=format:%x00%ad%x1f%an%x1f%s%x1f%b",
+    ]);
+    if (!r.ok) return [];
+    return r.out
+      .split("\0")
+      .filter((rec) => rec.length > 0)
+      .map((rec) => {
+        const [date = "", author = "", subject = "", ...body] = rec.split("\x1f");
+        // `%b` cannot contain \x1f only by convention; re-joining the tail keeps a body
+        // that somehow does from silently losing everything after it.
+        return { date, author, subject, body: body.join("\x1f").trim() };
+      });
   }
 
   async hasUncommitted(dir: string): Promise<boolean> {

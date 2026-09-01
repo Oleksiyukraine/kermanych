@@ -9,6 +9,8 @@ export type {
   Profile,
   Workspace,
   WorkspaceMember,
+  WorkspaceRole,
+  AssignableRole,
   CloudProject,
   Task,
   TaskInsert,
@@ -29,6 +31,10 @@ export type {
   WorkspaceRiskInsert,
   WorkspaceRiskPatch,
   WorkspaceRiskEvent,
+  ReleasePlatform,
+  WorkspaceReleaseNote,
+  WorkspaceReleaseNoteInsert,
+  WorkspaceReleaseNotePatch,
 } from "./types";
 
 export type { SupabaseClient, CloudEnv, CloudClientOptions } from "./client";
@@ -57,6 +63,7 @@ export {
   listMembers,
   inviteMember,
   removeMember,
+  setMemberRole,
 } from "./workspaces";
 
 export type { TaskChange, TaskChannelState } from "./tasks";
@@ -104,3 +111,10 @@ export {
   patchWorkspaceRisk,
   listRiskEvents,
 } from "./risks";
+
+export {
+  toWorkspaceReleaseNote,
+  listWorkspaceReleaseNotes,
+  createWorkspaceReleaseNote,
+  patchWorkspaceReleaseNote,
+} from "./release-notes";

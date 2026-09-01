@@ -19,11 +19,10 @@ import {
   type ManagementChatReply,
   type ManagementRepo,
   type RpcEvent,
-  type Usage,
 } from "@kermanych/core";
 import { RpcSession } from "../rpc/rpc-session";
 import { RegistryService } from "../registry/registry.service";
-import { hasTurnMeta, reduceRpcEvents, turnEntry } from "../supervisor/transcript-reducer";
+import { reduceRpcEvents, sumTurnUsage } from "../supervisor/transcript-reducer";
 import { buildManagementTurn, managementCwd, managementRepos } from "./management-prompt";
 
 // Read-only, and not a setting: a management chat that can write to the repository is a
@@ -31,7 +30,7 @@ import { buildManagementTurn, managementCwd, managementRepos } from "./managemen
 // risks. The same subset the quick chats run with (supervisor.service.ts CHAT_TOOLS),
 // which is the existing proof that omp is happy in a bare project directory with no git
 // and no edit tools.
-const MANAGEMENT_TOOLS = ["read", "grep", "glob"] as const;
+export const MANAGEMENT_TOOLS = ["read", "grep", "glob"] as const;
 
 // `omp --mode rpc` loads its config, its skill library and the provider client before it
 // emits `ready`; cold on a laptop that is a couple of seconds, and the slowest observed
@@ -65,8 +64,9 @@ type Live = { rpc: RpcSession; greeted: boolean; lastAt: number; turn?: Turn };
 // RpcSession bounds its command round trips (`commandTimeoutMs`) but neither `start()` nor
 // a turn, and neither does omp bound a provider request that never answers. Without this
 // the http request would stay open until the browser gave up, with nothing the operator
-// could read or act on.
-async function limit<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+// could read or act on. Exported for the release-notes generator, which bounds the same
+// two waits over the same kind of child.
+export async function limit<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
@@ -168,31 +168,9 @@ export class ManagementChatService implements OnModuleDestroy {
       else if (e.kind === "notice") notices.push(e.text);
     }
 
-    let usage: Usage | undefined;
-    let model: string | undefined;
-    for (const e of events) {
-      if (e.type !== "message_end") continue;
-      // RpcEvent carries an index-signature fallback member; Extract recovers the concrete
-      // typed member, exactly as transcript-reducer.ts does for the same frame.
-      const m = (e as Extract<RpcEvent, { type: "message_end" }>).message;
-      if (m?.role !== "assistant" || !hasTurnMeta(m)) continue;
-      const t = turnEntry("turn", startedAt, m);
-      if (t.model !== undefined) model = t.model;
-      // Summed across the turn's assistant messages: a turn that called three tools
-      // closes four messages, and reporting only the last one would tell the operator a
-      // long turn was nearly free.
-      const u = t.usage;
-      if (!u) continue;
-      usage = usage
-        ? {
-            input: usage.input + u.input,
-            output: usage.output + u.output,
-            cacheRead: usage.cacheRead + u.cacheRead,
-            cacheWrite: usage.cacheWrite + u.cacheWrite,
-            cost: usage.cost + u.cost,
-          }
-        : u;
-    }
+    // Summed across the turn's assistant messages by the shared helper, so this reply and
+    // the release-notes generator report a turn's spend with the same arithmetic.
+    const { usage, model } = sumTurnUsage(events, startedAt);
 
     const parsed = parseManagementReply(texts.join("\n\n"));
     return {

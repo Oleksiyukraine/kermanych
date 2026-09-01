@@ -21,6 +21,7 @@ import { CloudController } from "./cloud/cloud.controller";
 import { CloudSyncService } from "./cloud/cloud-sync.service";
 import { SkillsService } from "./skills/skills.service";
 import { ManagementChatService } from "./management/management-chat.service";
+import { ReleaseNotesService } from "./management/release-notes.service";
 import { ModelsService } from "./models/models.service";
 
 @Module({
@@ -37,6 +38,10 @@ import { ModelsService } from "./models/models.service";
     // workspace's local repo paths and drives its own omp children, and it deliberately
     // knows nothing about SupervisorService — this chat has no session, branch or worktree.
     ManagementChatService,
+    // The Release Notes generator: one one-shot omp child per request, reading the bound
+    // repo's git history through { RegistryService, WorktreeService }. Like the chat it
+    // knows nothing about SupervisorService — a generation has no session and no worktree.
+    ReleaseNotesService,
     // Dependency direction, stated once: CloudSyncService → { SupervisorService,
     // RegistryService, AuthService }. The supervisor never knows the mirror exists — it is
     // a pure `events$` subscriber, like EventsGateway.

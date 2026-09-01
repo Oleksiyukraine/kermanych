@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus, ThinkingLevel } from "@kermanych/core";
+import type { ReleasePlatform, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same ten labels.
@@ -44,10 +44,16 @@ export type CloudProject = {
   createdAt: string;
 };
 
+export type WorkspaceRole = "owner" | "manager" | "developer";
+
+// The roles the owner may assign through set_workspace_member_role. 'owner' is
+// excluded: it is the creator's seat (workspaces.owner_id) and transfer is out of scope.
+export type AssignableRole = Exclude<WorkspaceRole, "owner">;
+
 export type WorkspaceMember = {
   workspaceId: string;
   userId: string;
-  role: "owner" | "member";
+  role: WorkspaceRole;
   addedAt: string;
   profile?: Profile; // joined when the caller asks for it
 };
@@ -283,4 +289,49 @@ export type WorkspaceRiskEvent = {
   kind: RiskEventKind;
   fromValue: string;
   toValue: string;
+};
+
+// Same re-export rule as the risk enums above: the platform vocabulary lives in core
+// (release-notes.ts) beside the wire types the api validates with, and the CHECK
+// constraint in Postgres carries the same four values.
+export type { ReleasePlatform } from "@kermanych/core";
+
+// One generated release note. Everything except `title` and `bodyMd` is fixed at
+// generation time — the trigger workspace_release_notes_touch() freezes the provenance
+// columns on update — which is why the patch type below carries only those two.
+export type WorkspaceReleaseNote = {
+  id: string;
+  workspaceId: string;
+  // Absent when the project row was deleted after the note was generated; `projectName`
+  // is the snapshot that keeps the header readable then.
+  projectId?: string;
+  projectName: string;
+  platform: ReleasePlatform;
+  branch: string;
+  // Inclusive ISO dates (YYYY-MM-DD): the range is a calendar answer, like `proximity`.
+  rangeFrom: string;
+  rangeTo: string;
+  title: string;
+  bodyMd: string;
+  createdAt: string;
+  createdBy?: string;
+  updatedAt: string;
+  updatedBy?: string;
+};
+
+export type WorkspaceReleaseNoteInsert = {
+  workspaceId: string;
+  projectId?: string;
+  projectName: string;
+  platform: ReleasePlatform;
+  branch: string;
+  rangeFrom: string;
+  rangeTo: string;
+  title: string;
+  bodyMd: string;
+};
+
+export type WorkspaceReleaseNotePatch = {
+  title?: string;
+  bodyMd?: string;
 };

@@ -54,8 +54,16 @@ describe('refusalText', () => {
   it('quotes the limitation the section table owns', () => {
     const line = refusalText({ kind: 'unsupported', section: 'management-releases', request: 'додай нотатку' });
     expect(line).toContain('«Release Notes»');
-    expect(line).toContain('розділ ще не реалізований');
+    // The section is real now, so the reason changed with it: the pen is on the screen.
+    expect(line).toContain('генеруються, редагуються й копіюються на самому екрані розділу');
     expect(line).not.toContain('додай нотатку');
+  });
+
+  // A section that is still a placeholder keeps the not-built sentence.
+  it('quotes the not-built limitation for a placeholder section', () => {
+    const line = refusalText({ kind: 'unsupported', section: 'management-capacity', request: 'додай людину' });
+    expect(line).toContain('«Team Capacity»');
+    expect(line).toContain('розділ ще не реалізований');
   });
 
   it('resolves a section by its url segment as well as its route name', () => {

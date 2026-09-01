@@ -1,6 +1,7 @@
 // apps/api/src/http/management.controller.ts
 import { BadRequestException, Body, Controller, Post } from "@nestjs/common";
 import {
+  isReleasePlatform,
   isRiskCategory,
   isRiskKind,
   isRiskResponse,
@@ -9,8 +10,17 @@ import {
   type ManagementChatReply,
   type ManagementContext,
   type ManagementRiskRow,
+  type ReleaseNotesAsk,
+  type ReleaseNotesReply,
 } from "@kermanych/core";
 import { ManagementChatService } from "../management/management-chat.service";
+import { ReleaseNotesService } from "../management/release-notes.service";
+
+// A calendar date the way the release-note range speaks it. Strict to the month and day
+// bounds, not just the shape: `--since`/`--until` are handed to git verbatim, and git
+// parses junk like `2026-08-32` permissively into a range the operator never picked —
+// which then surfaces as a baffling «немає комітів» about a period that does not exist.
+const ISO_DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
 // The register as the browser sent it, kept only where every field is one this build knows.
 // `project_risks` is behind RLS and the api has no credentials for it, so this list cannot be
@@ -46,7 +56,10 @@ function riskRows(v: unknown): ManagementRiskRow[] {
 // operator's own provider plan and must not be drivable by anything else on the machine.
 @Controller("management")
 export class ManagementController {
-  constructor(private chat: ManagementChatService) {}
+  constructor(
+    private chat: ManagementChatService,
+    private releases: ReleaseNotesService,
+  ) {}
 
   @Post("chat")
   async ask(@Body() b: ManagementChatAsk): Promise<ManagementChatReply> {
@@ -98,6 +111,32 @@ export class ManagementController {
     try {
       return await this.chat.reset(conversationId);
     } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  // Generate — NOT store: the reply is a document the browser then saves into
+  // `workspace_release_notes` under the operator's own JWT. Guarded like the chat, and for
+  // the same reason: a generation spends the operator's provider plan.
+  @Post("release-notes")
+  async releaseNotes(@Body() b: ReleaseNotesAsk): Promise<ReleaseNotesReply> {
+    const projectId = typeof b?.projectId === "string" ? b.projectId.trim() : "";
+    if (!projectId) throw new BadRequestException("не вказано проєкт");
+    if (!isReleasePlatform(b?.platform)) throw new BadRequestException("не вказано платформу");
+    const branch = typeof b?.branch === "string" ? b.branch.trim() : "";
+    if (!branch) throw new BadRequestException("не вказано гілку");
+    const rangeFrom = typeof b?.rangeFrom === "string" ? b.rangeFrom.trim() : "";
+    const rangeTo = typeof b?.rangeTo === "string" ? b.rangeTo.trim() : "";
+    if (!ISO_DATE.test(rangeFrom) || !ISO_DATE.test(rangeTo))
+      throw new BadRequestException("період має бути парою дат у форматі YYYY-MM-DD");
+    // Lexicographic IS chronological for YYYY-MM-DD — no Date parsing to disagree with git.
+    if (rangeFrom > rangeTo) throw new BadRequestException("початок періоду пізніший за його кінець");
+    const workspaceName = typeof b?.workspaceName === "string" ? b.workspaceName.trim() : "";
+    try {
+      return await this.releases.generate({ projectId, workspaceName, platform: b.platform, branch, rangeFrom, rangeTo });
+    } catch (err) {
+      // Unbound project, unknown branch, an empty range and a dead omp are all
+      // operator-actionable sentences; a 500 would bury every one of them.
       throw new BadRequestException((err as Error).message);
     }
   }

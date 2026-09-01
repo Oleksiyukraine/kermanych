@@ -330,7 +330,16 @@
               <span class="set__member-name mono">
                 @{{ m.profile?.githubUsername ?? m.profile?.displayName ?? m.userId.slice(0, 8) }}
               </span>
-              <KTag>{{ isOwnerSeat(m.userId) ? 'власник' : 'учасник' }}</KTag>
+              <KTag v-if="isOwnerSeat(m.userId)">власник</KTag>
+              <KSelect
+                v-else-if="isOwnerOfWorkspace"
+                class="set__role"
+                :model-value="m.role"
+                :options="ROLE_OPTIONS"
+                :disabled="roleBusy === m.userId"
+                @update:model-value="(role: string) => changeRole(m, role as AssignableRole)"
+              />
+              <KTag v-else>{{ ROLE_LABELS[m.role] }}</KTag>
               <KIconButton
                 v-if="isOwnerOfWorkspace && !isOwnerSeat(m.userId)"
                 title="Вилучити з воркспейсу"
@@ -587,7 +596,6 @@
 // written (which command runs the preview? which branch does the agent leave from?),
 // and a dialog cannot be left open beside the work it describes, cannot be deep
 // linked, and has no Back button.
-//
 // WHAT IS DELIBERATELY ABSENT. Everything drawn here is backed by a real read and
 // a real write. Provider API keys, spend caps, a parallel-agent limit, a
 // context-warning threshold, harness paths and remappable keys
@@ -596,7 +604,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import type { EnvFileView, ThinkingLevel } from '@kermanych/core';
-import type { WorkspaceMember } from '@kermanych/cloud';
+import type { AssignableRole, WorkspaceMember, WorkspaceRole } from '@kermanych/cloud';
 import type { KTheme } from '@kermanych/tokens';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
@@ -625,7 +633,7 @@ import {
 import KTopNav from 'components/kit/KTopNav.vue';
 import KCount from 'components/kit/KCount.vue';
 import KField from 'components/kit/KField.vue';
-import KSelect from 'components/kit/KSelect.vue';
+import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KColorPicker from 'components/kit/KColorPicker.vue';
 import KEnvEditor from 'components/kit/KEnvEditor.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
@@ -699,6 +707,21 @@ const isOwnerOfWorkspace = computed(
 function isOwnerSeat(userId: string): boolean {
   return workspace.value?.ownerId === userId;
 }
+
+// Role labels for the roster, and the two roles the owner may hand out. 'owner' is
+// the creator's seat — shown but never offered, since transfer is out of scope.
+const ROLE_LABELS: Record<WorkspaceRole, string> = {
+  owner: 'власник',
+  manager: 'менеджер',
+  developer: 'розробник',
+};
+const ROLE_OPTIONS: KSelectOption[] = [
+  { value: 'developer', label: 'розробник' },
+  { value: 'manager', label: 'менеджер' },
+];
+// The user id whose role change is in flight, so its select disables without freezing
+// the whole roster.
+const roleBusy = ref<string | null>(null);
 
 // The FK from projects.workspace_id is `on delete restrict`, so a group still
 // holding projects cannot go. Read off the same array useProjects.removeWorkspace
@@ -961,6 +984,24 @@ async function removeMember(m: WorkspaceMember): Promise<void> {
     store.notify(`@${who} вилучено з воркспейсу — разом з усіма його проєктами`);
   } catch (e) {
     store.notify(memberErrorText(e), 'error', 6000);
+  }
+}
+
+async function changeRole(m: WorkspaceMember, role: AssignableRole): Promise<void> {
+  const ws = workspace.value;
+  if (!ws || m.role === role) return;
+  const who = m.profile?.githubUsername ?? m.userId;
+  roleBusy.value = m.userId;
+  try {
+    // The rpc RAISES on refusal (unlike the silent zero-rows delete), and the store
+    // updates the roster only on success — so a failure leaves the select showing the
+    // old role with nothing to roll back.
+    await projects.setMemberRole(ws.id, m.userId, role);
+    store.notify(`@${who} — тепер ${ROLE_LABELS[role]}`);
+  } catch (e) {
+    store.notify(memberErrorText(e), 'error', 6000);
+  } finally {
+    roleBusy.value = null;
   }
 }
 
@@ -1655,6 +1696,13 @@ const badges = computed<Record<string, number | undefined>>(() => ({
   & + & {
     border-top: var(--k-rule-thin) solid var(--k-line);
   }
+}
+
+// The role picker sits where the «власник/учасник» tag used to — kept narrow so the
+// member name keeps the row's stretch, not the control.
+.set__role {
+  flex: none;
+  width: 140px;
 }
 
 .set__avatar {
