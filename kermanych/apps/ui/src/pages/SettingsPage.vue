@@ -195,13 +195,20 @@
           <KSelect
             v-model="draft.defaultModel"
             label="Модель"
-            :options="defaultModelOptions"
+            :options="defaultModelPickOptions"
+            placeholder="за замовчуванням"
+            :disabled="cloudLocked"
+          />
+          <KSelect
+            v-model="draft.defaultEffort"
+            label="Рівень роздумів"
+            :options="defaultEffortPickOptions"
             placeholder="за замовчуванням"
             :disabled="cloudLocked"
           />
           <p class="set__note">
-            Підставляється в поле «Модель» попапа «Нова задача». Кожну задачу все одно можна
-            запустити з іншою — це лише те, з чого форма стартує.
+            Підставляються в поля «Модель» і «Рівень роздумів» попапа «Нова задача». Кожну
+            задачу все одно можна запустити з іншими — це лише те, з чого форма стартує.
           </p>
           <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
         </div>
@@ -587,11 +594,13 @@
 // lib/settings.ts. A panel for them would be a control that silently forgets.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
-import type { EnvFileView } from '@kermanych/core';
+import type { EnvFileView, ThinkingLevel } from '@kermanych/core';
 import type { WorkspaceMember } from '@kermanych/cloud';
 import type { KTheme } from '@kermanych/tokens';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
+import { modelOptions, effortOptions } from '../lib/models';
+import { EFFORT_OPTIONS } from '../lib/effort';
 import { useAuth } from 'stores/auth';
 import { api } from '../lib/api';
 import { theme, toggleTheme } from '../lib/theme';
@@ -735,6 +744,7 @@ interface ProjectDraft {
   gitRemoteUrl: string;
   defaultBranch: string;
   defaultModel: string;
+  defaultEffort: ThinkingLevel | '';
   conventions: string;
   previewCommand: string;
   apiCommand: string;
@@ -761,6 +771,7 @@ function seedProject(): void {
     gitRemoteUrl: c?.gitRemoteUrl ?? '',
     defaultBranch: c?.defaultBranch ?? row?.defaultBranch ?? '',
     defaultModel: c?.defaultModel ?? row?.defaultModel ?? '',
+    defaultEffort: c?.defaultEffort ?? row?.defaultEffort ?? '',
     conventions: c?.conventions ?? row?.conventions ?? '',
     previewCommand: c?.previewCommand ?? row?.previewCommand ?? '',
     apiCommand: c?.apiCommand ?? row?.apiCommand ?? '',
@@ -808,9 +819,14 @@ function addCarryFile(): void {
   draft.value.carryFiles.push(path);
 }
 
-// The «Запуск задач» pane's model picker. The same fixed list the launcher and the board
-// editor offer on this build; «за замовчуванням» (the placeholder) leaves the choice to omp.
-const defaultModelOptions = ['opus-5', 'sonnet-4.5', 'haiku'];
+// The «Запуск задач» pane's model and effort pickers, from the same omp catalog the launcher
+// and the board editor read; «за замовчуванням» (the placeholder) leaves the choice to omp.
+// The effort ladder narrows to the chosen model's own, exactly as the launcher's does.
+const defaultModelPickOptions = computed(() => modelOptions(store.models));
+const defaultEffortPickOptions = computed(() => {
+  const allowed = effortOptions(store.models, draft.value?.defaultModel || undefined);
+  return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value));
+});
 
 // ── ENV ─────────────────────────────────────────────────────────────────────
 // `entries` is the file as loaded — the baseline every edit is diffed against and
@@ -1001,6 +1017,7 @@ async function saveProject(): Promise<void> {
       gitRemoteUrl: d.gitRemoteUrl,
       defaultBranch: d.defaultBranch,
       defaultModel: d.defaultModel,
+      defaultEffort: d.defaultEffort,
       conventions: d.conventions,
       previewCommand: d.previewCommand,
       apiCommand: d.apiCommand,

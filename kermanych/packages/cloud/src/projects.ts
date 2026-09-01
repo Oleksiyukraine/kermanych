@@ -5,9 +5,10 @@
 // surface; refusals surface as thrown postgrest messages.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CloudProject } from "./types";
+import type { ThinkingLevel } from "@kermanych/core";
 
 const PROJECT_COLUMNS =
-  "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, carry_files, env_keys, color, created_at";
+  "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, default_effort, carry_files, env_keys, color, created_at";
 
 type ProjectRow = {
   id: string;
@@ -19,6 +20,7 @@ type ProjectRow = {
   api_command: string | null;
   default_branch: string | null;
   default_model: string | null;
+  default_effort: string | null;
   carry_files: string[] | null;
   env_keys: string[] | null;
   color: string | null;
@@ -33,7 +35,7 @@ export type CloudProjectPatch = Partial<
     CloudProject,
     "name" | "workspaceId" | "gitRemoteUrl" | "conventions" | "previewCommand" | "apiCommand" | "defaultBranch" | "defaultModel" | "carryFiles" | "envKeys" | "color"
   >
->;
+> & { defaultEffort?: ThinkingLevel | "" };
 
 export function toCloudProject(row: ProjectRow): CloudProject {
   const p: CloudProject = {
@@ -54,6 +56,7 @@ export function toCloudProject(row: ProjectRow): CloudProject {
   if (row.api_command !== null) p.apiCommand = row.api_command;
   if (row.default_branch !== null) p.defaultBranch = row.default_branch;
   if (row.default_model !== null) p.defaultModel = row.default_model;
+  if (row.default_effort !== null) p.defaultEffort = row.default_effort as ThinkingLevel;
   if (row.color !== null) p.color = row.color;
   return p;
 }
@@ -73,6 +76,7 @@ export function toProjectRow(patch: CloudProjectPatch): Record<string, unknown> 
   if (patch.apiCommand !== undefined) row.api_command = patch.apiCommand.trim() || null;
   if (patch.defaultBranch !== undefined) row.default_branch = patch.defaultBranch.trim() || null;
   if (patch.defaultModel !== undefined) row.default_model = patch.defaultModel.trim() || null;
+  if (patch.defaultEffort !== undefined) row.default_effort = patch.defaultEffort.trim() || null;
   if (patch.carryFiles !== undefined) row.carry_files = patch.carryFiles;
   if (patch.envKeys !== undefined) row.env_keys = patch.envKeys;
   if (patch.color !== undefined) row.color = patch.color.trim() || null;

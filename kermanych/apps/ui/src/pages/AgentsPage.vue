@@ -1389,7 +1389,7 @@ function openLauncher(card?: Task): void {
   // the synced default so this works offline like the rest of the launch path.
   const launchDefault = card ? undefined : store.projects.find((p) => p.id === launchProjectId.value);
   draftModel.value = card?.model ?? launchDefault?.defaultModel ?? '';
-  draftEffort.value = card?.effort ?? '';
+  draftEffort.value = card?.effort ?? launchDefault?.defaultEffort ?? '';
   // The cloud stores launch params as free text; the local vocabularies are the authority,
   // exactly as createSessionFromTask validates them server-side.
   draftPrefix.value = (BRANCH_PREFIXES as readonly string[]).includes(card?.prefix ?? '')
@@ -1425,7 +1425,7 @@ function openTaskFromText(text: string): void {
   // New task from a selection: same project default model as openLauncher's new-task branch.
   const textDefault = store.projects.find((p) => p.id === launchProjectId.value);
   draftModel.value = textDefault?.defaultModel ?? '';
-  draftEffort.value = '';
+  draftEffort.value = textDefault?.defaultEffort ?? '';
   draftPrefix.value = 'feature';
   draftPlatform.value = undefined;
   draftWorktree.value = true;
