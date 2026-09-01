@@ -23,10 +23,9 @@ create table public.workspace_release_notes (
   project_id   uuid references public.projects(id) on delete set null,
   project_name text not null check (length(trim(project_name)) > 0),
 
-  -- The shape the release ships in, in the reader's vocabulary — «що нового в iOS?».
-  -- The list is RELEASE_PLATFORMS in @kermanych/core (release-notes.ts); this CHECK is the
-  -- same list, and the api validates against the same constant before generating.
-  platform     text not null check (platform in ('frontend', 'backend', 'ios', 'android')),
+  -- No `platform` column: a note covers one project, and a project already IS one shipping
+  -- shape (packages/core/src/release-notes.ts says why), so `project_name` above is the
+  -- whole answer to «що це за реліз?».
 
   -- What was generated FROM: the branch whose log was read, and the inclusive date range
   -- the commits were taken over. Facts about the generation, kept so the list can answer
@@ -86,7 +85,6 @@ begin
     new.workspace_id := old.workspace_id;
     new.project_id   := old.project_id;
     new.project_name := old.project_name;
-    new.platform     := old.platform;
     new.branch       := old.branch;
     new.range_from   := old.range_from;
     new.range_to     := old.range_to;

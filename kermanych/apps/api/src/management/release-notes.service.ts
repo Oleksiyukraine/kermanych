@@ -15,7 +15,6 @@
 // must not grow any.
 import { Injectable, Logger } from "@nestjs/common";
 import type { ReleaseNotesAsk, ReleaseNotesReply, RpcEvent } from "@kermanych/core";
-import { RELEASE_PLATFORM_LABELS } from "@kermanych/core";
 import { RpcSession } from "../rpc/rpc-session";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
@@ -72,7 +71,6 @@ export class ReleaseNotesService {
     const prompt = buildReleaseNotesPrompt({
       workspaceName: ask.workspaceName,
       projectName: project.name,
-      platform: ask.platform,
       branch: ask.branch,
       rangeFrom: ask.rangeFrom,
       rangeTo: ask.rangeTo,
@@ -83,10 +81,7 @@ export class ReleaseNotesService {
     const { usage, model } = generated.spend;
 
     return {
-      title: titleOf(
-        generated.text,
-        `Реліз-ноти ${RELEASE_PLATFORM_LABELS[ask.platform]} · ${ask.rangeFrom} — ${ask.rangeTo}`,
-      ),
+      title: titleOf(generated.text, `Реліз-ноти ${project.name} · ${ask.rangeFrom} — ${ask.rangeTo}`),
       markdown: generated.text,
       commitCount: commits.length,
       ...(usage === undefined ? {} : { usage }),

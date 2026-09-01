@@ -1,7 +1,6 @@
 // apps/api/src/http/management.controller.ts
 import { BadRequestException, Body, Controller, Post } from "@nestjs/common";
 import {
-  isReleasePlatform,
   isRiskCategory,
   isRiskKind,
   isRiskResponse,
@@ -122,7 +121,6 @@ export class ManagementController {
   async releaseNotes(@Body() b: ReleaseNotesAsk): Promise<ReleaseNotesReply> {
     const projectId = typeof b?.projectId === "string" ? b.projectId.trim() : "";
     if (!projectId) throw new BadRequestException("не вказано проєкт");
-    if (!isReleasePlatform(b?.platform)) throw new BadRequestException("не вказано платформу");
     const branch = typeof b?.branch === "string" ? b.branch.trim() : "";
     if (!branch) throw new BadRequestException("не вказано гілку");
     const rangeFrom = typeof b?.rangeFrom === "string" ? b.rangeFrom.trim() : "";
@@ -133,7 +131,7 @@ export class ManagementController {
     if (rangeFrom > rangeTo) throw new BadRequestException("початок періоду пізніший за його кінець");
     const workspaceName = typeof b?.workspaceName === "string" ? b.workspaceName.trim() : "";
     try {
-      return await this.releases.generate({ projectId, workspaceName, platform: b.platform, branch, rangeFrom, rangeTo });
+      return await this.releases.generate({ projectId, workspaceName, branch, rangeFrom, rangeTo });
     } catch (err) {
       // Unbound project, unknown branch, an empty range and a dead omp are all
       // operator-actionable sentences; a 500 would bury every one of them.

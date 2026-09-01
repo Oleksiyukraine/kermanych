@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { ReleasePlatform, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus, ThinkingLevel } from "@kermanych/core";
+import type { RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same ten labels.
@@ -291,10 +291,8 @@ export type WorkspaceRiskEvent = {
   toValue: string;
 };
 
-// Same re-export rule as the risk enums above: the platform vocabulary lives in core
-// (release-notes.ts) beside the wire types the api validates with, and the CHECK
-// constraint in Postgres carries the same four values.
-export type { ReleasePlatform } from "@kermanych/core";
+// No `platform` column beside these: a release note covers one project, and a project is
+// already one shipping shape (core/release-notes.ts says why).
 
 // One generated release note. Everything except `title` and `bodyMd` is fixed at
 // generation time — the trigger workspace_release_notes_touch() freezes the provenance
@@ -306,7 +304,6 @@ export type WorkspaceReleaseNote = {
   // is the snapshot that keeps the header readable then.
   projectId?: string;
   projectName: string;
-  platform: ReleasePlatform;
   branch: string;
   // Inclusive ISO dates (YYYY-MM-DD): the range is a calendar answer, like `proximity`.
   rangeFrom: string;
@@ -323,7 +320,6 @@ export type WorkspaceReleaseNoteInsert = {
   workspaceId: string;
   projectId?: string;
   projectName: string;
-  platform: ReleasePlatform;
   branch: string;
   rangeFrom: string;
   rangeTo: string;

@@ -38,10 +38,6 @@ export {
 } from "./worktree-names";
 export { PLATFORMS, type Platform } from "./platform";
 export {
-  RELEASE_PLATFORMS,
-  RELEASE_PLATFORM_LABELS,
-  isReleasePlatform,
-  type ReleasePlatform,
   type ReleaseCommit,
   type ReleaseNotesAsk,
   type ReleaseNotesReply,

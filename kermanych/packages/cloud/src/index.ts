@@ -31,7 +31,6 @@ export type {
   WorkspaceRiskInsert,
   WorkspaceRiskPatch,
   WorkspaceRiskEvent,
-  ReleasePlatform,
   WorkspaceReleaseNote,
   WorkspaceReleaseNoteInsert,
   WorkspaceReleaseNotePatch,
