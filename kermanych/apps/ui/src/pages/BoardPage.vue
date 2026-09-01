@@ -126,7 +126,15 @@
           :rows="6"
         />
         <div class="board__form-row">
-          <KSelect v-model="draftModel" label="Модель" :options="modelPickOptions" placeholder="за замовчуванням" />
+          <!-- `searchable` on the model picker only: same ~26-row catalog as the local
+               launcher's, and the same reason typing beats scrolling it. -->
+          <KSelect
+            v-model="draftModel"
+            label="Модель"
+            :options="modelPickOptions"
+            placeholder="за замовчуванням"
+            searchable
+          />
           <KSelect v-model="draftEffort" label="Рівень роздумів" :options="effortPickOptions" placeholder="за замовчуванням" />
           <KSelect v-model="draftPrefix" label="Тип" :options="PREFIX_OPTIONS" placeholder="feature" />
           <KSelect
