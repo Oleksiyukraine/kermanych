@@ -147,7 +147,7 @@
                   @click="onDiscardRow(selectedSession)"
                 >✕</KIconButton>
               </template>
-              <template v-else-if="!showArchived">
+              <template v-else-if="!selectedSession.archived">
                 <!-- `title` names the action even while disabled, and never explains the
                      disabling: KIconButton feeds it to BOTH v-tip and aria-label, and a
                      disabled button dispatches no mouseenter/focusin and cannot take focus, so
@@ -659,6 +659,7 @@ import { useAuth } from 'stores/auth';
 import { api, type FileDiff, type MessageMode } from '../lib/api';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import { sessionScopedProjectIds } from '../lib/scope';
+import type { Bucket } from '../lib/buckets';
 import { myBacklogTasks, taskInsertFromDraft, taskPatchFromDraft } from '../lib/tasks-view';
 import { planBacklogPublication } from '../lib/publish-backlog';
 import KPanel from 'components/kit/KPanel.vue';
@@ -703,18 +704,20 @@ const now = useNow();
 
 const router = useRouter();
 
-// Board buckets mirror the sidebar (MainLayout.bucketCounts): archived wins, then
-// backlog → Задачі, then merged/done/stopped → Історія, everything else → Активні
-// (error/conflict count as active — they need attention). Driven by store.selectedBucket.
-const HISTORY_STATUSES: readonly SessionStatus[] = ['merged', 'done', 'stopped'];
-// Active = an agent whose process is alive or is blocked on the operator. Beside
-// HISTORY_STATUSES because it is the same shape of question, and shared: archiving refuses
-// these (the API re-checks with core's ACTIVE_STATUSES) and the out-of-scope note counts
-// exactly them.
+// Board buckets mirror the sidebar (lib/buckets.ts): completed (merged or set aside) wins,
+// then backlog → Задачі, error/conflict → Помилки, done/stopped → Очікують, everything else
+// → Активні. Driven by store.selectedBucket.
+const WAITING_STATUSES: readonly SessionStatus[] = ['done', 'stopped'];
+const ERROR_STATUSES: readonly SessionStatus[] = ['error', 'conflict'];
+// Active = an agent whose process is alive or is blocked on the operator. Shared: archiving
+// refuses these (the API re-checks with core's ACTIVE_STATUSES) and the out-of-scope note
+// counts exactly them.
 const ACTIVE_STATUSES: readonly SessionStatus[] = ['queued', 'thinking', 'tool', 'waiting_input'];
-const showArchived = computed(() => store.selectedBucket === 'archived');
+// The one bucket whose ACTIONS differ (unarchive vs. the full control set) keys off the
+// session's own `archived` flag, not this — a merged agent shares the «Завершені» view but
+// keeps its reopen/delete controls.
+const showCompleted = computed(() => store.selectedBucket === 'completed');
 const showTasks = computed(() => store.selectedBucket === 'tasks');
-const showHistory = computed(() => store.selectedBucket === 'history');
 // Row order for the agents table. Sessions are bucketed into status tiers and
 // sorted by creation time within each tier. Ranking by tier — not by the live
 // status — is what stops rows from jumping while agents run: every "process
@@ -757,11 +760,12 @@ const projectSessions = computed(() =>
   store.sessions
     .filter((s) => {
       if (!inScope.value.has(s.projectId)) return false;
-      if (store.selectedBucket === 'archived') return !!s.archived;
+      if (store.selectedBucket === 'completed') return !!s.archived || s.status === 'merged';
       if (s.archived) return false;
       if (store.selectedBucket === 'tasks') return s.status === 'backlog';
-      if (store.selectedBucket === 'history') return HISTORY_STATUSES.includes(s.status);
-      return s.status !== 'backlog' && !HISTORY_STATUSES.includes(s.status);
+      if (store.selectedBucket === 'errors') return ERROR_STATUSES.includes(s.status);
+      if (store.selectedBucket === 'waiting') return WAITING_STATUSES.includes(s.status);
+      return ACTIVE_STATUSES.includes(s.status);
     })
     .sort((a, b) => {
       const byStatus = STATUS_RANK[a.status] - STATUS_RANK[b.status];
@@ -770,7 +774,7 @@ const projectSessions = computed(() =>
 );
 
 // Board order: each discussion child immediately follows its parent (a one-level
-// tree). Orphans (parent filtered out by the archived/project view) still render.
+// tree). Orphans (parent filtered out by the completed/project view) still render.
 const boardRows = computed<Session[]>(() => {
   const all = projectSessions.value.filter((s) => s.kind !== 'chat');
   const parents = all.filter((s) => !s.parentSessionId);
@@ -925,7 +929,7 @@ const selectedSession = computed(() =>
 );
 
 // A session whose worktree has been retired keeps `worktree: true` but loses its
-// `worktreePath` — this is every finished/merged agent sitting in Історія. The two
+// `worktreePath` — this is every finished/merged agent now in «Завершені» or «Очікують». The two
 // git-backed panes (Зміни, Файли) have no directory to read then, so instead of firing a
 // request that comes back «session has no worktree» / ENOENT and painting the pane with a
 // red error, they show a calm empty-state. Derived, so both panes agree on when it applies.
@@ -949,7 +953,7 @@ const parentOfSelected = computed<Session | undefined>(() =>
 const PREVIEW_BIND_HINT = `${BIND_HINT}, щоб відкривати превʼю гілки.`;
 const previewBlocked = computed(() => {
   const s = selectedSession.value;
-  if (!s || showArchived.value) return false;
+  if (!s || s.archived) return false;
   // Matches the branch that renders the preview toggle, so the line cannot appear beside a
   // cluster that has no such button (a discussion, a review, or the archived view).
   if (s.kind === 'discussion' || s.kind === 'review') return false;
@@ -1011,23 +1015,23 @@ const {
     contentEl.value ? contentEl.value.clientWidth - MIN_DETAIL : Number.POSITIVE_INFINITY,
 });
 
-const bucketLabel = computed(() =>
-  store.selectedBucket === 'tasks'
-    ? 'Задачі'
-    : store.selectedBucket === 'archived'
-      ? 'Відкладені'
-      : store.selectedBucket === 'history'
-        ? 'Історія'
-        : 'Активні',
-);
+const BUCKET_LABELS: Record<Bucket, string> = {
+  active: 'Активні',
+  waiting: 'Очікують',
+  completed: 'Завершені',
+  errors: 'Помилки',
+  tasks: 'Задачі',
+};
+const bucketLabel = computed(() => BUCKET_LABELS[store.selectedBucket]);
 
 // The empty list, per bucket. The two creatable buckets split again on scope, because
 // «Нова задача» is disabled under a workspace scope and an invitation to press it would be a
 // dead end there. The click that unblocks it is NOT repeated here — PICK_PROJECT_HINT is
 // already on screen a few pixels above, and saying it twice reads as two different problems.
 const emptyText = computed(() => {
-  if (showArchived.value) return 'Немає відкладених агентів.';
-  if (showHistory.value) return 'Історія порожня.';
+  if (showCompleted.value) return 'Немає завершених агентів.';
+  if (store.selectedBucket === 'waiting') return 'Немає агентів, що очікують.';
+  if (store.selectedBucket === 'errors') return 'Немає помилок.';
   const pickFirst = !store.selectedProjectId;
   if (showTasks.value) {
     return pickFirst ? 'Беклог порожній.' : 'Беклог порожній. Створи задачу через «Нова задача».';

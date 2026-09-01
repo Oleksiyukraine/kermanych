@@ -19,6 +19,7 @@ import { shouldNotify } from '@kermanych/core/status';
 import { connectSocket } from '../lib/socket';
 import { api, type MessageMode } from '../lib/api';
 import { applyTranscriptUpdate } from './transcript-update';
+import type { Bucket } from '../lib/buckets';
 
 export type Toast = { id: string; message: string; kind: 'error' | 'info' };
 
@@ -49,11 +50,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // The omp model catalog for THIS machine (see loadModels). Empty until it lands — and empty
   // for good if omp cannot be read — so every picker built on it degrades to «за замовчуванням».
   const models = ref<ModelOption[]>([]);
-  // Which Агенти bucket the sidebar shows (v3). Lives here because the sidebar (MainLayout)
-  // sets it while the filter lives in AgentsPage. active = live agents; tasks = backlog;
-  // archived = set aside; history = merged/done/stopped.
-  const selectedBucket = ref<'active' | 'tasks' | 'archived' | 'history'>('active');
-  function setBucket(b: 'active' | 'tasks' | 'archived' | 'history'): void { selectedBucket.value = b; }
+  // Which Агенти bucket the sidebar shows. Lives here because the sidebar (MainLayout) sets
+  // it while the filter lives in AgentsPage. See lib/buckets.ts for what each bucket holds.
+  const selectedBucket = ref<Bucket>('active');
+  function setBucket(b: Bucket): void { selectedBucket.value = b; }
 
   let socket: Socket | undefined;
 

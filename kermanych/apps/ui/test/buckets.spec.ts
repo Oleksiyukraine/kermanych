@@ -25,24 +25,32 @@ function resolver(...rows: Session[]) {
 }
 
 describe('bucketOf', () => {
-  it('files an agent by its own state, archived first', () => {
+  it('files an agent by its own state, completed first', () => {
     const live = session({ id: 'a', status: 'thinking' });
     const backlog = session({ id: 'b', status: 'backlog', kind: 'task' });
-    const settled = session({ id: 'c', status: 'merged' });
+    const merged = session({ id: 'c', status: 'merged' });
     const aside = session({ id: 'd', status: 'done', archived: true });
-    const find = resolver(live, backlog, settled, aside);
+    const find = resolver(live, backlog, merged, aside);
     expect(bucketOf(live, find)).toBe('active');
     expect(bucketOf(backlog, find)).toBe('tasks');
-    expect(bucketOf(settled, find)).toBe('history');
-    expect(bucketOf(aside, find)).toBe('archived');
+    expect(bucketOf(merged, find)).toBe('completed');
+    expect(bucketOf(aside, find)).toBe('completed');
   });
 
-  it('counts an agent needing attention as active', () => {
+  it('files a finished-but-unclosed agent as waiting', () => {
+    const done = session({ id: 'a', status: 'done' });
+    const stopped = session({ id: 'b', status: 'stopped' });
+    const find = resolver(done, stopped);
+    expect(bucketOf(done, find)).toBe('waiting');
+    expect(bucketOf(stopped, find)).toBe('waiting');
+  });
+
+  it('files an agent needing attention under errors', () => {
     const err = session({ id: 'a', status: 'error' });
     const conflict = session({ id: 'b', status: 'conflict' });
     const find = resolver(err, conflict);
-    expect(bucketOf(err, find)).toBe('active');
-    expect(bucketOf(conflict, find)).toBe('active');
+    expect(bucketOf(err, find)).toBe('errors');
+    expect(bucketOf(conflict, find)).toBe('errors');
   });
 
   // The point of the rule: branchSession settles a fresh fork at `done` immediately, so on
@@ -56,19 +64,19 @@ describe('bucketOf', () => {
   it('follows the parent out of Активні when it settles', () => {
     const parent = session({ id: 'p', status: 'merged' });
     const fork = session({ id: 'f', status: 'thinking', kind: 'review', parentSessionId: 'p' });
-    expect(bucketOf(fork, resolver(parent, fork))).toBe('history');
+    expect(bucketOf(fork, resolver(parent, fork))).toBe('completed');
   });
 
-  it('follows the parent into Відкладені', () => {
+  it('follows the parent into Завершені', () => {
     const parent = session({ id: 'p', status: 'done', archived: true });
     const fork = session({ id: 'f', status: 'done', kind: 'discussion', parentSessionId: 'p' });
-    expect(bucketOf(fork, resolver(parent, fork))).toBe('archived');
+    expect(bucketOf(fork, resolver(parent, fork))).toBe('completed');
   });
 
   // A fork outlives its parent only if a delete raced the socket update; it must still be
   // reachable in some bucket rather than dropping out of every list.
   it('falls back to its own status when the parent is gone', () => {
     const fork = session({ id: 'f', status: 'stopped', kind: 'discussion', parentSessionId: 'p' });
-    expect(bucketOf(fork, resolver(fork))).toBe('history');
+    expect(bucketOf(fork, resolver(fork))).toBe('waiting');
   });
 });
