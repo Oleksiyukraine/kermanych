@@ -18,14 +18,16 @@
 
 -- ── the role vocabulary ───────────────────────────────────────────────────────
 -- The inline check from the workspaces migration is auto-named
--- workspace_members_role_check. Drop it and widen to the three-role set. 'developer'
--- replaces the former default 'member'; the backfill below carries every existing
--- plain member across.
+-- workspace_members_role_check. Drop it, backfill the former default 'member' across to
+-- 'developer', THEN re-add it widened to the three-role set. The order is load-bearing: a
+-- CHECK is validated against every existing row the instant it is added, so re-adding it
+-- before the backfill trips on the plain-member rows it is meant to carry across.
 alter table public.workspace_members drop constraint if exists workspace_members_role_check;
-alter table public.workspace_members
-  add constraint workspace_members_role_check check (role in ('owner','manager','developer'));
 
 update public.workspace_members set role = 'developer' where role = 'member';
+
+alter table public.workspace_members
+  add constraint workspace_members_role_check check (role in ('owner','manager','developer'));
 
 -- ── invite now seats a developer ──────────────────────────────────────────────
 -- Verbatim reproduction of 20260827100000_workspaces.sql's body with ONE change: the
