@@ -8,7 +8,7 @@
 
     <div v-else class="agents__content" ref="contentEl" :class="{ 'agents__content--resizing': resizing }">
       <!-- BOARD — one card per session in scope: one project, or every project of a workspace -->
-      <section class="agents__board" :style="{ width: detailWidth + 'px' }">
+      <section class="agents__board" ref="boardEl" :style="{ width: detailWidth + 'px' }" @scroll="onBoardScroll">
         <header class="agents__board-head">
           <div class="agents__board-title">
             <span class="agents__bucket-label">{{ bucketLabel }}</span>
@@ -27,6 +27,18 @@
           </div>
         </header>
 
+        <!-- Search + scroll pagination for a long session list. Sticky so it stays reachable
+             while a bucket like «Відкладені» loads more cards on scroll. -->
+        <div class="agents__search">
+          <input
+            v-model="search"
+            class="agents__search-input mono"
+            type="search"
+            placeholder="Пошук за назвою або гілкою"
+            aria-label="Пошук агентів"
+          />
+        </div>
+
         <!-- Muted lines about the SCOPE, above the cards the scope decided. Both state
              something the operator can act on; the rule beneath keeps the cards reading as a
              separate list rather than as their continuation. -->
@@ -37,7 +49,7 @@
 
         <!-- «Задачі» is my cloud backlog: the cards assigned to me, above whatever stranded
              pre-cutover local rows the session list below still holds. -->
-        <div v-if="showTasks && taskCards.length" class="agents__cards">
+        <div v-if="showTasks && filteredTaskCards.length" class="agents__cards">
           <template v-for="g in taskGroups" :key="g.projectId">
             <div v-if="groupByProject" class="agents__group-label mono">{{ g.name }}</div>
             <!-- `branch` is deliberately EMPTY here, and must stay empty: KSessionCard heads
@@ -66,11 +78,11 @@
         <!-- Whatever survived the publication pass: rows whose project has no cloud row at
              all, so there is nothing for a card to point at. Only under «Задачі» — in every
              other bucket these are ordinary local sessions. -->
-        <p v-if="showTasks && boardRows.length" class="agents__note agents__note--stranded mono">
+        <p v-if="showTasks && filteredRows.length" class="agents__note agents__note--stranded mono">
           Лише на цій машині: проєкт цих задач ще не у хмарі, тому команда їх не бачить.
           Опублікуйте проєкт — і вони переїдуть на дошку.
         </p>
-        <div v-if="boardRows.length" class="agents__cards">
+        <div v-if="visibleRows.length" class="agents__cards">
           <template v-for="g in boardGroups" :key="g.projectId">
             <div v-if="groupByProject" class="agents__group-label mono">{{ g.name }}</div>
             <KSessionCard
@@ -91,7 +103,10 @@
             />
           </template>
         </div>
-        <div v-else-if="!showTasks || !taskCards.length" class="agents__empty mono">{{ emptyText }}</div>
+        <div v-else-if="!showTasks || !filteredTaskCards.length" class="agents__empty mono">{{ emptyText }}</div>
+        <div v-if="visibleRows.length < filteredRows.length" class="agents__more mono">
+          Показано {{ visibleRows.length }} з {{ filteredRows.length }} — гортайте, щоб завантажити ще
+        </div>
       </section>
 
       <!-- RESIZER — drag the seam to widen / narrow the chat section -->
@@ -147,7 +162,7 @@
                   @click="onDiscardRow(selectedSession)"
                 >✕</KIconButton>
               </template>
-              <template v-else-if="!showArchived">
+              <template v-else-if="!selectedSession.archived">
                 <!-- `title` names the action even while disabled, and never explains the
                      disabling: KIconButton feeds it to BOTH v-tip and aria-label, and a
                      disabled button dispatches no mouseenter/focusin and cannot take focus, so
@@ -659,7 +674,9 @@ import { useAuth } from 'stores/auth';
 import { api, type FileDiff, type MessageMode } from '../lib/api';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import { sessionScopedProjectIds } from '../lib/scope';
+import type { Bucket } from '../lib/buckets';
 import { myBacklogTasks, taskInsertFromDraft, taskPatchFromDraft } from '../lib/tasks-view';
+import { searchSessions } from '../lib/session-search';
 import { planBacklogPublication } from '../lib/publish-backlog';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
@@ -703,18 +720,20 @@ const now = useNow();
 
 const router = useRouter();
 
-// Board buckets mirror the sidebar (MainLayout.bucketCounts): archived wins, then
-// backlog → Задачі, then merged/done/stopped → Історія, everything else → Активні
-// (error/conflict count as active — they need attention). Driven by store.selectedBucket.
-const HISTORY_STATUSES: readonly SessionStatus[] = ['merged', 'done', 'stopped'];
-// Active = an agent whose process is alive or is blocked on the operator. Beside
-// HISTORY_STATUSES because it is the same shape of question, and shared: archiving refuses
-// these (the API re-checks with core's ACTIVE_STATUSES) and the out-of-scope note counts
-// exactly them.
+// Board buckets mirror the sidebar (lib/buckets.ts): completed (merged or set aside) wins,
+// then backlog → Задачі, error/conflict → Помилки, done/stopped → Очікують, everything else
+// → Активні. Driven by store.selectedBucket.
+const WAITING_STATUSES: readonly SessionStatus[] = ['done', 'stopped'];
+const ERROR_STATUSES: readonly SessionStatus[] = ['error', 'conflict'];
+// Active = an agent whose process is alive or is blocked on the operator. Shared: archiving
+// refuses these (the API re-checks with core's ACTIVE_STATUSES) and the out-of-scope note
+// counts exactly them.
 const ACTIVE_STATUSES: readonly SessionStatus[] = ['queued', 'thinking', 'tool', 'waiting_input'];
-const showArchived = computed(() => store.selectedBucket === 'archived');
+// The one bucket whose ACTIONS differ (unarchive vs. the full control set) keys off the
+// session's own `archived` flag, not this — a merged agent shares the «Завершені» view but
+// keeps its reopen/delete controls.
+const showCompleted = computed(() => store.selectedBucket === 'completed');
 const showTasks = computed(() => store.selectedBucket === 'tasks');
-const showHistory = computed(() => store.selectedBucket === 'history');
 // Row order for the agents table. Sessions are bucketed into status tiers and
 // sorted by creation time within each tier. Ranking by tier — not by the live
 // status — is what stops rows from jumping while agents run: every "process
@@ -757,11 +776,12 @@ const projectSessions = computed(() =>
   store.sessions
     .filter((s) => {
       if (!inScope.value.has(s.projectId)) return false;
-      if (store.selectedBucket === 'archived') return !!s.archived;
+      if (store.selectedBucket === 'completed') return !!s.archived || s.status === 'merged';
       if (s.archived) return false;
       if (store.selectedBucket === 'tasks') return s.status === 'backlog';
-      if (store.selectedBucket === 'history') return HISTORY_STATUSES.includes(s.status);
-      return s.status !== 'backlog' && !HISTORY_STATUSES.includes(s.status);
+      if (store.selectedBucket === 'errors') return ERROR_STATUSES.includes(s.status);
+      if (store.selectedBucket === 'waiting') return WAITING_STATUSES.includes(s.status);
+      return ACTIVE_STATUSES.includes(s.status);
     })
     .sort((a, b) => {
       const byStatus = STATUS_RANK[a.status] - STATUS_RANK[b.status];
@@ -769,8 +789,17 @@ const projectSessions = computed(() =>
     }),
 );
 
+// Search + incremental reveal for the session list. A long bucket («Відкладені» can hold
+// dozens) renders 20 rows and grows by 20 as the board scrolls near its end, so the first
+// paint stays cheap and the operator can still narrow by name or branch. `visibleCount`
+// resets to one page whenever the query, bucket, or scope changes (watch below).
+const PAGE_SIZE = 20;
+const search = ref('');
+const visibleCount = ref(PAGE_SIZE);
+const boardEl = ref<HTMLElement | null>(null);
+
 // Board order: each discussion child immediately follows its parent (a one-level
-// tree). Orphans (parent filtered out by the archived/project view) still render.
+// tree). Orphans (parent filtered out by the completed/project view) still render.
 const boardRows = computed<Session[]>(() => {
   const all = projectSessions.value.filter((s) => s.kind !== 'chat');
   const parents = all.filter((s) => !s.parentSessionId);
@@ -782,6 +811,32 @@ const boardRows = computed<Session[]>(() => {
   for (const s of all) if (!out.includes(s)) out.push(s);
   return out;
 });
+
+// The query narrows the tree-ordered rows on name or branch — the two strings a card shows.
+const filteredRows = computed<Session[]>(() => searchSessions(boardRows.value, search.value));
+// What actually renders: at most `visibleCount` of the matched rows. Slicing the flat,
+// tree-ordered list (not the groups) keeps a child beside its parent up to the page edge.
+const visibleRows = computed<Session[]>(() => filteredRows.value.slice(0, visibleCount.value));
+
+// Grow the page as the board nears its bottom. 200px of lead time means the next 20 are in
+// before the last row is reached, so the scroll never visibly stalls at the seam.
+function onBoardScroll(): void {
+  const el = boardEl.value;
+  if (!el) return;
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200 && visibleCount.value < filteredRows.value.length) {
+    visibleCount.value += PAGE_SIZE;
+  }
+}
+
+// A new query, bucket, or scope is a new list: start from the top and one page again, so a
+// search never opens already scrolled past its first matches.
+watch(
+  [search, () => store.selectedBucket, () => store.selectedProjectId, () => store.selectedWorkspaceId],
+  () => {
+    visibleCount.value = PAGE_SIZE;
+    if (boardEl.value) boardEl.value.scrollTop = 0;
+  },
+);
 
 // One resolver for a project's label: the LOCAL row's name, which the last successful sync
 // mirrored from the cloud — so it is the name the online tree shows, and it still reads with
@@ -812,7 +867,7 @@ const groupByProject = computed(() => !store.selectedProjectId);
 type BoardGroup = { projectId: string; name: string; rank: number; rows: Session[] };
 const boardGroups = computed<BoardGroup[]>(() => {
   const groups = new Map<string, BoardGroup>();
-  for (const s of boardRows.value) {
+  for (const s of visibleRows.value) {
     let group = groups.get(s.projectId);
     if (!group) {
       group = { projectId: s.projectId, name: projectName(s.projectId), rank: Number.MAX_SAFE_INTEGER, rows: [] };
@@ -828,13 +883,20 @@ const boardGroups = computed<BoardGroup[]>(() => {
 // My backlog inbox: the cards I have to work, in the same scope the session list uses, so
 // one sidebar click narrows both. Unclaimed team cards live on Дошка by design.
 const taskCards = computed(() => myBacklogTasks(board.tasks, auth.user?.id ?? '', scopedIds.value));
+// The same query narrows the backlog inbox, so «Задачі» filters in step with the session
+// list beside it. These cards are few, so they need no paging — only the filter.
+const filteredTaskCards = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  if (!q) return taskCards.value;
+  return taskCards.value.filter((t) => t.title.toLowerCase().includes(q));
+});
 
 type TaskGroup = { projectId: string; name: string; rows: Task[] };
 // Cards are all `backlog`, so there is no STATUS_RANK to order groups by: project name is
 // the only stable order available, and it matches what the rail shows.
 const taskGroups = computed<TaskGroup[]>(() => {
   const groups = new Map<string, TaskGroup>();
-  for (const t of taskCards.value) {
+  for (const t of filteredTaskCards.value) {
     let group = groups.get(t.projectId);
     if (!group) {
       group = { projectId: t.projectId, name: projectName(t.projectId), rows: [] };
@@ -849,7 +911,7 @@ const taskGroups = computed<TaskGroup[]>(() => {
 // stranded pre-cutover local row — the same sum the rail's badge shows. A header reading 0
 // above a list of cards would be the disagreement MainLayout.bucketCounts exists to avoid.
 const boardCount = computed(
-  () => boardRows.value.length + (showTasks.value ? taskCards.value.length : 0),
+  () => filteredRows.value.length + (showTasks.value ? filteredTaskCards.value.length : 0),
 );
 
 // Active agents the current scope hides — an agent that is running, or waiting for an answer,
@@ -925,7 +987,7 @@ const selectedSession = computed(() =>
 );
 
 // A session whose worktree has been retired keeps `worktree: true` but loses its
-// `worktreePath` — this is every finished/merged agent sitting in Історія. The two
+// `worktreePath` — this is every finished/merged agent now in «Завершені» or «Очікують». The two
 // git-backed panes (Зміни, Файли) have no directory to read then, so instead of firing a
 // request that comes back «session has no worktree» / ENOENT and painting the pane with a
 // red error, they show a calm empty-state. Derived, so both panes agree on when it applies.
@@ -949,7 +1011,7 @@ const parentOfSelected = computed<Session | undefined>(() =>
 const PREVIEW_BIND_HINT = `${BIND_HINT}, щоб відкривати превʼю гілки.`;
 const previewBlocked = computed(() => {
   const s = selectedSession.value;
-  if (!s || showArchived.value) return false;
+  if (!s || s.archived) return false;
   // Matches the branch that renders the preview toggle, so the line cannot appear beside a
   // cluster that has no such button (a discussion, a review, or the archived view).
   if (s.kind === 'discussion' || s.kind === 'review') return false;
@@ -1011,23 +1073,23 @@ const {
     contentEl.value ? contentEl.value.clientWidth - MIN_DETAIL : Number.POSITIVE_INFINITY,
 });
 
-const bucketLabel = computed(() =>
-  store.selectedBucket === 'tasks'
-    ? 'Задачі'
-    : store.selectedBucket === 'archived'
-      ? 'Відкладені'
-      : store.selectedBucket === 'history'
-        ? 'Історія'
-        : 'Активні',
-);
+const BUCKET_LABELS: Record<Bucket, string> = {
+  active: 'Активні',
+  waiting: 'Очікують',
+  completed: 'Завершені',
+  errors: 'Помилки',
+  tasks: 'Задачі',
+};
+const bucketLabel = computed(() => BUCKET_LABELS[store.selectedBucket]);
 
 // The empty list, per bucket. The two creatable buckets split again on scope, because
 // «Нова задача» is disabled under a workspace scope and an invitation to press it would be a
 // dead end there. The click that unblocks it is NOT repeated here — PICK_PROJECT_HINT is
 // already on screen a few pixels above, and saying it twice reads as two different problems.
 const emptyText = computed(() => {
-  if (showArchived.value) return 'Немає відкладених агентів.';
-  if (showHistory.value) return 'Історія порожня.';
+  if (showCompleted.value) return 'Немає завершених агентів.';
+  if (store.selectedBucket === 'waiting') return 'Немає агентів, що очікують.';
+  if (store.selectedBucket === 'errors') return 'Немає помилок.';
   const pickFirst = !store.selectedProjectId;
   if (showTasks.value) {
     return pickFirst ? 'Беклог порожній.' : 'Беклог порожній. Створи задачу через «Нова задача».';
@@ -2167,6 +2229,41 @@ async function submitPreviewConfig(): Promise<void> {
   min-width: 0;
   overflow-y: auto;
   padding: var(--k-sp-4);
+}
+
+// Pinned to the top of the scrolling board so the field stays reachable while more cards
+// load below. Its background matches the board (--k-bg) so rows scroll cleanly underneath;
+// spacing to the cards is padding, not margin, so no row peeks through a transparent gap.
+.agents__search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: var(--k-sp-3);
+  background: var(--k-bg);
+}
+.agents__search-input {
+  width: 100%;
+  background: var(--k-bg);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-r);
+  color: var(--k-text);
+  font-family: var(--k-font-mono);
+  font-size: 13px;
+  padding: 9px 11px;
+  outline: none;
+}
+.agents__search-input::placeholder {
+  color: var(--k-muted);
+}
+.agents__search-input:focus {
+  border-color: var(--k-accent);
+}
+// The «loaded X of Y» line under the cards: it names why the list stops before the count in
+// the header, and doubles as the scroll target that pulls the next page in.
+.agents__more {
+  padding: var(--k-sp-3) 2px var(--k-sp-1);
+  font-size: var(--k-fs-xs);
+  color: var(--k-faint);
 }
 
 .agents__board-head {

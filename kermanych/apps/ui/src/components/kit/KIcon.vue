@@ -4,7 +4,7 @@
 // mean. This component exists for the one place where a mark stands alone and must carry
 // the meaning by itself: the minified sidebar rail, where the bucket labels are gone.
 //
-// Unicode has no legible mark for «Задачі» or «Історія» — the nearest glyphs (☰, ↺) read as
+// Unicode has no legible mark for «Задачі» or «Очікують» — the nearest glyphs (☰, ⧗) read as
 // «menu» and «reload», which is exactly the misreading this replaces. Drawn paths also hold
 // their weight at 18px, where a font-rendered triangle or arrow thins out.
 //
@@ -19,8 +19,9 @@
 export type KIconName =
   | 'activity'
   | 'tasks'
-  | 'archive'
-  | 'history'
+  | 'waiting'
+  | 'done'
+  | 'alert'
   | 'home'
   | 'storage'
   | 'risks'
@@ -39,12 +40,25 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // Задачі — a checklist: queued work, not yet started. Two ticks and two lines read as a
   // list at 18px, where three rows would smear.
   tasks: ['M3 7.5l2 2 4-4', 'M13 8h8', 'M3 16.5l2 2 4-4', 'M13 17h8'],
-  // Відкладені — an archive box with its lid. Deliberately the only rectangular mark of the
-  // four, so «put aside» cannot be confused with the round clock-like one.
-  archive: ['M3 4h18v5H3z', 'M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9', 'M10 13.5h4'],
-  // Історія — a clock wound backwards. The standard mark for «what already happened»; the
-  // hands are what separate it from a plain reload arrow.
-  history: ['M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8', 'M3 3v5h5', 'M12 7.5v5l4 2'],
+  // Очікують — an hourglass. The agent finished but the task hangs, waiting on a merge or a
+  // PR; sand caught mid-fall is «settled but not over», which no clock or check would say.
+  waiting: [
+    'M5 22h14',
+    'M5 2h14',
+    'M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22',
+    'M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2',
+  ],
+  // Завершені — a check inside a circle. Says «closed out» for both the merged branch and the
+  // one the operator set aside; the ring keeps it from reading as the bare list tick above.
+  done: ['M22 11.08V12a10 10 0 1 1-5.93-9.14', 'm9 11 3 3L22 4'],
+  // Помилки — an octagon with a bar. The stop-sign silhouette is the one urgent mark here and
+  // deliberately NOT the warning triangle the Risk Registry rail already owns, so the two
+  // never blur in peripheral vision.
+  alert: [
+    'M2.586 16.726A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2h6.624a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586z',
+    'M12 8v4',
+    'M12 16h.01',
+  ],
 
   // Home — a house. The section is the workspace's front page, and the roof/door pair is
   // the one mark no other row in this rail could be mistaken for.
