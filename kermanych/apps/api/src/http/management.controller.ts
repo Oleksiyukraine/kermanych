@@ -113,11 +113,11 @@ export class ManagementController {
   // `workspace_release_notes` under the operator's own JWT. Guarded like the chat, and for
   // the same reason: a generation spends the operator's provider plan.
   //
-  // Two callers, one contract: the section screen's own form, and the management assistant's
-  // `release.notes` action (stores/management-chat.ts). The bounds below are re-checked for
-  // both — `isReleaseDate` is the same predicate @kermanych/core validates that action with,
-  // so the chat refuses a bad range without a round trip and this endpoint still refuses it
-  // if anything else asks.
+  // One browser caller — stores/release-notes.ts `generate` — reached two ways: the section
+  // screen's form and the management assistant's `release.notes` action. The bounds below are
+  // re-checked whoever asked: `isReleaseDate` is the same predicate @kermanych/core validates
+  // that action with, so the chat refuses a bad range without a round trip and this endpoint
+  // still refuses it if anything else asks.
   @Post("release-notes")
   async releaseNotes(@Body() b: ReleaseNotesAsk): Promise<ReleaseNotesReply> {
     const projectId = typeof b?.projectId === "string" ? b.projectId.trim() : "";

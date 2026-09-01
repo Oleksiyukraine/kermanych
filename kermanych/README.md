@@ -445,15 +445,18 @@ That field is a real assistant, and it is deliberately narrow:
   with the value quoted back, not as a 400 one round trip later. The project is named the
   way the prompt showed it to you — by NAME, never by id — and an ambiguous name is a
   question rather than a guess, because a note generated against the wrong repository is a
-  document about somebody else's work. What happens next is the same pipeline the section
-  screen's own form runs: the local API reads that branch's commits on THIS machine (it is
-  the only party that can) and spends a second, one-shot `omp` child to write the document;
-  your browser then stores it in `workspace_release_notes` under your own JWT, so it is on
-  the Release Notes screen for every member. The line you read afterwards names the title
-  and the commit count — a note written from three commits reads very differently from one
-  written from ninety, and that number is your first clue the range or the branch was not
-  the one you meant. Editing, copying and deleting a stored note stay on the screen; the
-  assistant has no verb for them and the prompt says so.
+  document about somebody else's work. What happens next is literally the same job the
+  section screen's own form starts — the chat hands it to the same store — so the run
+  outlives the turn that asked for it: the local API reads that branch's commits on THIS
+  machine (it is the only party that can) and spends a second, one-shot `omp` child to write
+  the document; your browser then stores it in `workspace_release_notes` under your own JWT,
+  so it is on the Release Notes screen for every member. The chat does not sit and wait, and
+  neither do you: it records that it started the generation, and the toast at the end names
+  the title and the commit count wherever you have walked to — a note written from three
+  commits reads very differently from one written from ninety, and that number is your first
+  clue the range or the branch was not the one you meant. A failed run keeps a row on the
+  section screen with its reason and a retry. Editing, copying and deleting a stored note
+  stay on the screen; the assistant has no verb for them and the prompt says so.
 - **It spends the same subscription your agents spend.** It runs through the same
   `omp` on your PATH, the same provider account and the same plan; there is no second
   key to configure and no separate budget. The mono pill on the right of the field is

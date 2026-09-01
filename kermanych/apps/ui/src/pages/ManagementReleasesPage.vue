@@ -16,7 +16,7 @@
       Історія не прочиталась: {{ store.loadError }}
     </p>
 
-    <div v-else-if="!notes.length" class="rel__blank">
+    <div v-else-if="!notes.length && !jobs.length" class="rel__blank">
       <span class="rel__blank-eyebrow mono">РЕЛІЗ-НОТИ</span>
       <p class="rel__blank-text">
         Ще жодної нотатки. Оберіть проєкт, гілку й період — документ буде написано з
@@ -25,8 +25,35 @@
     </div>
 
     <!-- The history. One row per note, newest first — the answer to «що ми відвантажили
-         востаннє» is the first line on the screen. -->
+         востаннє» is the first line on the screen. Above it, one row per generation still
+         running (or failed): the run belongs to the workspace's history, not to a modal, so
+         it is placed where its result will appear. -->
     <ol v-else class="rel__list">
+      <li
+        v-for="j in jobs"
+        :key="j.id"
+        class="rel__row rel__row--job"
+        :class="{ 'rel__row--failed': !!j.error }"
+      >
+        <div class="rel__row-main">
+          <span class="rel__row-title">
+            <span v-if="!j.error" class="rel__row-pulse" aria-hidden="true">◆</span>
+            {{ j.error ? 'Реліз-ноти не згенерувались' : 'Пишемо реліз-ноти…' }}
+          </span>
+          <span class="rel__row-meta">
+            <KTag>{{ j.projectName }}</KTag>
+            <KTag>{{ j.branch }}</KTag>
+            <span class="rel__row-range mono">{{ j.rangeFrom }} — {{ j.rangeTo }}</span>
+          </span>
+          <span v-if="j.error" class="rel__row-error">{{ j.error }}</span>
+        </div>
+        <span v-if="!j.error" class="rel__row-when mono">{{ elapsed(j) }}</span>
+        <span v-else class="rel__row-actions">
+          <KBtn variant="secondary" @click="store.retry(j.id)">Повторити</KBtn>
+          <KBtn variant="ghost" @click="store.dismissJob(j.id)">Прибрати</KBtn>
+        </span>
+      </li>
+
       <li v-for="n in notes" :key="n.id" class="rel__row" @click="openNote(n)">
         <div class="rel__row-main">
           <span class="rel__row-title">{{ n.title }}</span>
@@ -41,9 +68,9 @@
     </ol>
 
     <!-- ── Generation form ─────────────────────────────────────────────────────
-         Persistent while a generation is in flight: an accidental backdrop click must not
-         orphan a running omp child with nobody left to receive its document. -->
-    <KModal v-model="genOpen" title="Згенерувати реліз-ноти" width="600px" :persistent="genBusy">
+         Never persistent, never busy: submitting hands the run to the store and closes,
+         so the form holds nothing anybody is waiting on. -->
+    <KModal v-model="genOpen" title="Згенерувати реліз-ноти" width="600px">
       <div class="rel__form">
         <!-- One picker, full width: the project IS the release's shape — its repository is
              the front-end, the back-end or an app — so naming it is the whole answer to
@@ -53,7 +80,6 @@
           label="Проєкт"
           :options="projectOptions"
           placeholder="— оберіть проєкт —"
-          :disabled="genBusy"
         />
         <div class="rel__form-row">
           <KSelect
@@ -61,30 +87,30 @@
             label="Гілка"
             :options="branches"
             :placeholder="branchPlaceholder"
-            :disabled="genBusy || !branches.length"
+            :disabled="!branches.length"
           />
           <div class="rel__form-range">
-            <KDateField v-model="gen.rangeFrom" label="Період з" :disabled="genBusy" />
-            <KDateField v-model="gen.rangeTo" label="по" :disabled="genBusy" />
+            <KDateField v-model="gen.rangeFrom" label="Період з" />
+            <KDateField v-model="gen.rangeTo" label="по" />
           </div>
         </div>
 
-        <!-- Where the material comes from, said before the button is pressed: the commits
-             are read from THIS machine's clone, and the writing spends the same provider
-             plan every agent spends. -->
+        <!-- Where the material comes from and what pressing the button costs, said before
+             it is pressed: the commits are read from THIS machine's clone, the writing
+             spends the same provider plan every agent spends, and it keeps going while the
+             operator does something else. -->
         <p class="rel__form-hint">
           Генерація читає git-історію привʼязаного репозиторію на цій машині й витрачає ту
           саму підписку, що й агенти. Гілку взято з налаштувань проєкту — за потреби
-          виберіть іншу.
+          виберіть іншу. Вікно можна закрити: нотатка зʼявиться у списку сама, коли буде
+          готова.
         </p>
-
-        <p v-if="genError" class="rel__form-error">{{ genError }}</p>
       </div>
 
       <template #controls>
-        <KBtn variant="ghost" :disabled="genBusy" @click="genOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" :disabled="!canGenerate" @click="generate">
-          {{ genLabel }}
+        <KBtn variant="ghost" @click="genOpen = false">Скасувати</KBtn>
+        <KBtn variant="primary" :disabled="!canGenerate" @click="submitGenerate">
+          Згенерувати
         </KBtn>
       </template>
     </KModal>
@@ -155,13 +181,13 @@
 // heading, the workspace chip and the «pick a workspace» gate, so this component renders
 // only the section itself and can assume a workspace.
 //
-// The feature is split across three parties and this component only wires them together:
-//   * the local api WRITES the document (api.generateReleaseNotes — git history and a
-//     one-shot omp child live behind that call, so generation needs the repo bound HERE);
-//   * stores/release-notes.ts STORES it in the workspace under the operator's own JWT,
-//     which is what makes the history below visible to every member on every machine;
-//   * this screen reads, copies and edits what is stored.
-import { computed, reactive, ref, watch } from 'vue';
+// The feature is split across two parties and this component only wires them together:
+//   * stores/release-notes.ts OWNS a generation end to end — the local api writes the
+//     document, the store lands it in the workspace under the operator's own JWT — which is
+//     what lets the operator leave this screen the moment they press the button;
+//   * this screen collects the parameters, renders the running job as a row in the history
+//     it will land in, and reads, copies and edits what is stored.
+import { computed, onUnmounted, reactive, ref, watch } from 'vue';
 import type { WorkspaceReleaseNote } from '@kermanych/cloud';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
@@ -169,10 +195,9 @@ import KDateField from 'components/kit/KDateField.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KTag from 'components/kit/KTag.vue';
-import { useReleaseNotes } from 'stores/release-notes';
+import { useReleaseNotes, type ReleaseNotesJob } from 'stores/release-notes';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
-import { api } from '../lib/api';
 import { renderMarkdown } from '../lib/markdown';
 import { relativeTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
@@ -219,9 +244,6 @@ function isoDaysAgo(days: number): string {
 }
 
 const genOpen = ref(false);
-const genBusy = ref(false);
-const genError = ref('');
-const genSec = ref(0);
 const gen = reactive({
   projectId: '',
   branch: '',
@@ -272,7 +294,6 @@ watch(
 );
 
 function openGenerate(): void {
-  genError.value = '';
   gen.rangeFrom = gen.rangeFrom || isoDaysAgo(30);
   gen.rangeTo = gen.rangeTo || isoDaysAgo(0);
   genOpen.value = true;
@@ -280,58 +301,65 @@ function openGenerate(): void {
 
 const canGenerate = computed(
   () =>
-    !genBusy.value &&
     gen.projectId !== '' &&
     gen.branch !== '' &&
     gen.rangeFrom !== '' &&
     gen.rangeTo !== '',
 );
 
-// Honest waiting: a generation legitimately runs for tens of seconds (the model may read
-// the code behind vague commits), and a frozen button label reads as a hang.
-const genLabel = computed(() => {
-  if (!genBusy.value) return 'Згенерувати';
-  return genSec.value < 3 ? 'Генеруємо…' : `Генеруємо… ${genSec.value} с`;
+// Hand the run to the store and close. Nothing is awaited here on purpose: this component
+// is unmounted the moment the operator opens another section, and the document must not
+// depend on it still being alive. Failures are not this function's business either — they
+// arrive as the job's own row, which is readable from any screen at any later moment.
+function submitGenerate(): void {
+  if (!canGenerate.value) return;
+  void store.generate({
+    workspaceId: props.workspaceId,
+    workspaceName: props.workspaceName,
+    projectId: gen.projectId,
+    projectName: projects.projects.find((p) => p.id === gen.projectId)?.name ?? gen.projectId,
+    branch: gen.branch,
+    rangeFrom: gen.rangeFrom,
+    rangeTo: gen.rangeTo,
+  });
+  genOpen.value = false;
+}
+
+// The running jobs of THIS workspace, rendered above its history.
+const jobs = computed<ReleaseNotesJob[]>(() =>
+  store.jobs.filter((j) => j.workspaceId === props.workspaceId),
+);
+
+// Honest waiting, now on the row instead of a button: a generation legitimately runs for
+// tens of seconds (the model may read the code behind vague commits), and a placeholder
+// with no clock reads as a stall. The ticker exists ONLY while something is running —
+// `startedAt` lives in the store, so leaving and returning resumes the same count instead
+// of restarting it, and an idle screen is not re-rendered once a second for nothing.
+const tick = ref(Date.now());
+let ticker: ReturnType<typeof setInterval> | undefined;
+
+watch(
+  () => jobs.value.some((j) => !j.error),
+  (running) => {
+    if (running === !!ticker) return;
+    if (running) {
+      tick.value = Date.now();
+      ticker = setInterval(() => (tick.value = Date.now()), 1000);
+    } else {
+      clearInterval(ticker);
+      ticker = undefined;
+    }
+  },
+  { immediate: true },
+);
+
+onUnmounted(() => {
+  if (ticker) clearInterval(ticker);
 });
 
-async function generate(): Promise<void> {
-  if (!canGenerate.value) return;
-  genBusy.value = true;
-  genError.value = '';
-  genSec.value = 0;
-  const startedAt = Date.now();
-  const timer = setInterval(() => (genSec.value = Math.round((Date.now() - startedAt) / 1000)), 1000);
-  try {
-    const reply = await api.generateReleaseNotes({
-      projectId: gen.projectId,
-      workspaceName: props.workspaceName,
-      branch: gen.branch,
-      rangeFrom: gen.rangeFrom,
-      rangeTo: gen.rangeTo,
-    });
-    // The document exists only in this browser until this line lands it in the workspace —
-    // which is the section's promise, so a failed save keeps the modal open and the error
-    // names the reason rather than quietly dropping a note that cost a model turn.
-    const projectName =
-      projects.projects.find((p) => p.id === gen.projectId)?.name ?? gen.projectId;
-    const created = await store.create(props.workspaceId, {
-      projectId: gen.projectId,
-      projectName,
-      branch: gen.branch,
-      rangeFrom: gen.rangeFrom,
-      rangeTo: gen.rangeTo,
-      title: reply.title,
-      bodyMd: reply.markdown,
-    });
-    genOpen.value = false;
-    openNote(created);
-    local.notify(`Реліз-ноти згенеровано з ${reply.commitCount} комітів`);
-  } catch (e) {
-    genError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    clearInterval(timer);
-    genBusy.value = false;
-  }
+function elapsed(job: ReleaseNotesJob): string {
+  const sec = Math.max(0, Math.round((tick.value - job.startedAt) / 1000));
+  return sec < 3 ? 'щойно' : `${sec} с`;
 }
 
 // ── One note ─────────────────────────────────────────────────────────────────
@@ -525,6 +553,56 @@ async function saveEdit(): Promise<void> {
   flex-shrink: 0;
   font-size: var(--k-fs-xs);
   color: var(--k-faint);
+}
+
+// A row for something that is not a document yet: dashed like the empty state, so the
+// history reads as «three notes and one being written» rather than four notes, and not
+// clickable, because there is nothing to open.
+.rel__row--job {
+  cursor: default;
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--k-accent) 40%, var(--k-line));
+
+  &:hover {
+    border-color: color-mix(in srgb, var(--k-accent) 40%, var(--k-line));
+  }
+}
+
+.rel__row--failed {
+  border-color: color-mix(in srgb, var(--k-danger) 45%, var(--k-line));
+
+  &:hover {
+    border-color: color-mix(in srgb, var(--k-danger) 45%, var(--k-line));
+  }
+}
+
+// The same pulsing marker a running tool row carries in the transcript (KToolRow): one
+// vocabulary for «this is happening right now» across the app. Scoped `@keyframes` names
+// are hash-rewritten per SFC, so the animation cannot be reused by name — this is it,
+// declared locally.
+.rel__row-pulse {
+  margin-right: var(--k-sp-1);
+  font-size: 10.5px;
+  color: var(--k-accent);
+  animation: rel-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes rel-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.rel__row-error {
+  font-size: var(--k-fs-xs);
+  line-height: 1.5;
+  color: var(--k-danger);
+}
+
+.rel__row-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--k-sp-2);
 }
 
 // ── Generation form ───────────────────────────────────────────────────────────

@@ -82,9 +82,11 @@ export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
   //     YYYY-MM-DD range validated against ./release-notes `isReleaseDate`);
   //   * apps/api/src/management/management-prompt.ts prints that vocabulary, plus today's
   //     date so a relative period («за останній тиждень») can be resolved into dates;
-  //   * apps/ui/src/stores/management-chat.ts calls POST /management/release-notes for the
-  //     document and `useReleaseNotes().create(workspaceId, …)` to store it, in the browser
-  //     under the operator's own JWT — so RLS decides who may add one.
+  //   * apps/ui/src/stores/management-chat.ts hands the ask to
+  //     `useReleaseNotes().generate(…)`, which posts to /management/release-notes for the
+  //     document and stores it — in the browser, under the operator's own JWT, so RLS decides
+  //     who may add one. That run is a job of the note store and outlives the chat turn, so a
+  //     generation asked for in the chat behaves exactly like one asked for on the screen.
   //
   // No `limitation`: the row is writable. That the OTHER operations on a stored note —
   // editing, copying — remain screen work is stated by the release protocol in the prompt,
