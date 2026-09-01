@@ -16,6 +16,7 @@ import type {
   RpcExtensionUIResponse,
   TreeEntry,
   FileContent,
+  ModelOption,
 } from '@kermanych/core';
 import type { CloudProject } from '@kermanych/cloud';
 
@@ -199,6 +200,17 @@ export const api = {
 
   setEffort: (id: string, level: ThinkingLevel): Promise<Session> =>
     post<Session>(`/sessions/${id}/effort`, { level }),
+
+  // The local omp catalog for this machine — GET /models. Empty when omp is unreadable, and
+  // the pickers degrade to «за замовчуванням» on their own.
+  models: (): Promise<ModelOption[]> => get<ModelOption[]>('/models'),
+
+  // Change a running (or dormant) session's model and/or effort. `provider` rides along so
+  // omp's set_model can address the model; the api answers with the updated session.
+  setSessionModel: (
+    id: string,
+    patch: { model?: string; provider?: string; effort?: ThinkingLevel },
+  ): Promise<Session> => post<Session>(`/sessions/${id}/model`, patch),
 
   answerUi: (id: string, res: RpcExtensionUIResponse): Promise<unknown> =>
     post(`/sessions/${id}/answer`, { res }),

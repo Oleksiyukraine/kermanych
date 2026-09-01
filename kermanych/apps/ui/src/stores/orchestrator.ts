@@ -10,6 +10,7 @@ import type {
   ThinkingLevel,
   ServerEvent,
   RpcExtensionUIResponse,
+  ModelOption,
 } from '@kermanych/core';
 // Import from core's status module directly (not the barrel): @kermanych/core is a CJS
 // workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
@@ -45,6 +46,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   const selectedSessionId = ref<string | undefined>(undefined);
   const previews = ref<Record<string, string>>({});
   const toasts = ref<Toast[]>([]);
+  // The omp model catalog for THIS machine (see loadModels). Empty until it lands — and empty
+  // for good if omp cannot be read — so every picker built on it degrades to «за замовчуванням».
+  const models = ref<ModelOption[]>([]);
   // Which Агенти bucket the sidebar shows (v3). Lives here because the sidebar (MainLayout)
   // sets it while the filter lives in AgentsPage. active = live agents; tasks = backlog;
   // archived = set aside; history = merged/done/stopped.
@@ -124,6 +128,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   function connect(): void {
     if (socket) return;
     socket = connectSocket(reduce);
+    // The catalog describes this machine's omp install, not registry state, so the connect
+    // that warms the store pulls it too.
+    void loadModels();
   }
 
   function setProjectWorkspaces(map: Record<string, string>): void {
@@ -195,6 +202,24 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // broadcasts `session_update`, so the chip follows what omp actually accepted.
   function setEffort(id: string, level: ThinkingLevel) {
     return api.setEffort(id, level);
+  }
+
+  // Fetched once: the catalog only changes when omp is upgraded or a provider credential
+  // appears, neither of which happens while the window is open. Failures are swallowed — the
+  // list is a convenience over omp's own default, and a «за замовчуванням»-only picker is fine.
+  async function loadModels() {
+    if (models.value.length) return;
+    try {
+      models.value = await api.models();
+    } catch {
+      // Left empty on purpose — see above.
+    }
+  }
+
+  // Change a running session's model/effort from the composer. Nothing swallowed: the api's
+  // 400 carries omp's own sentence and the caller has a form to keep open.
+  function setSessionModel(id: string, patch: { model?: string; provider?: string; effort?: ThinkingLevel }) {
+    return api.setSessionModel(id, patch);
   }
 
   function answerUi(id: string, res: RpcExtensionUIResponse) {
@@ -350,6 +375,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     promoteChat,
     sendMessage,
     setEffort,
+    models,
+    loadModels,
+    setSessionModel,
     answerUi,
     stopSession,
     deleteSession,

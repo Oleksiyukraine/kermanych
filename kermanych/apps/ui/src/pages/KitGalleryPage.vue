@@ -418,13 +418,15 @@
            `/` button in the controls row. -->
       <KComposer
         v-model="composerDraft"
-        model="opus-5"
+        :model="composerModel"
+        :models="composerModels"
         :effort="composerEffort"
         :worktree="true"
         :context="14"
         :usage="{ input: 18_400, output: 9_200, cacheRead: 214_000, cacheWrite: 620, cost: 0.62 }"
         @send="() => {}"
         @effort="(level) => (composerEffort = level)"
+        @set-model="(p) => (composerModel = p.model)"
       />
     </section>
 
@@ -450,7 +452,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import type {
-  SessionStatus, Session, TranscriptEntry, RpcExtensionUIResponse, ThinkingLevel, Usage,
+  SessionStatus, Session, TranscriptEntry, RpcExtensionUIResponse, ThinkingLevel, Usage, ModelOption,
 } from '@kermanych/core';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import KBtn from 'components/kit/KBtn.vue';
@@ -507,6 +509,15 @@ const composerDraft = ref('');
 // The gallery has no session behind the chip, so the pick is held locally — the point here is
 // that the menu opens upward inside the row and reports the level it landed on.
 const composerEffort = ref<ThinkingLevel>('high');
+// A stand-in omp catalogue so the composer's model chip renders as a picker here, with the
+// pick held locally (the gallery has no session behind it). An empty list degrades the chip
+// to a read-only label — the without-catalogue case.
+const composerModel = ref('opus-5');
+const composerModels: readonly ModelOption[] = [
+  { id: 'opus-5', name: 'Claude Opus 5', provider: 'anthropic', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'sonnet-4.5', name: 'Claude Sonnet 4.5', provider: 'anthropic', efforts: ['low', 'medium', 'high'] },
+  { id: 'gpt-5.2', name: 'GPT-5.2', provider: 'openai', efforts: ['minimal', 'low', 'medium', 'high'] },
+];
 const diffOpen = ref(true);
 // Every row shape at once: context, a paired replacement, a one-sided addition and a
 // one-sided removal — the four cases the two columns have to keep aligned.

@@ -155,6 +155,13 @@ export class RpcSession {
     if (!r.success) throw new Error(r.error ?? "switch_session failed");
   }
 
+  // Retune a live child's model. Addressed by provider + id (an id can exist under two
+  // providers); takes effect from the next turn, and `get_state` reports it back.
+  async setModel(provider: string, modelId: string): Promise<void> {
+    const r = await this.command("set_model", { provider, modelId });
+    if (!r.success) throw new Error(r.error ?? "set_model failed");
+  }
+
   // Retune a live child's reasoning effort. omp models effort as session state rather than a
   // per-prompt argument, so this is a command in its own right and takes effect from the next
   // turn on; `get_state` then reports the new level back.

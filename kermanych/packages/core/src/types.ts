@@ -61,6 +61,12 @@ export type Session = {
 export type TaskDraft = {
   name?: string | undefined; task?: string | undefined; model?: string | undefined; prefix?: BranchPrefix | undefined; platform?: Platform | undefined; worktree?: boolean | undefined; baseBranch?: string | undefined; effort?: ThinkingLevel | undefined;
 };
+
+// One selectable model, as the local omp catalog reports it (`omp models --json`): only
+// providers this machine has credentials for appear, so the list is what can actually run
+// here rather than everything a vendor publishes. `efforts` is the model's thinking ladder,
+// empty for a model without reasoning.
+export type ModelOption = { id: string; name: string; provider: string; efforts: ThinkingLevel[] };
 export type ImageInput = { data: string; mimeType: string };
 
 export type ToolStatus = "pending" | "ok" | "error";

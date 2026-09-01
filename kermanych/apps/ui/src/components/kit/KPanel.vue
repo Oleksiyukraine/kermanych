@@ -163,12 +163,14 @@
         v-model="draft"
         :placeholder="placeholder"
         :model="session.model"
+        :models="models"
         :effort="session.effort"
         :worktree="session.worktree"
         :context="session.contextPercent"
         :usage="session.usage"
         @send="(text, images) => emit('send', text, images)"
         @effort="(level) => emit('effort', level)"
+        @set-model="(p) => emit('setModel', p)"
       >
         <template #actions>
           <KIconButton
@@ -204,7 +206,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { Session, RpcExtensionUIResponse, ImageInput, ThinkingLevel } from '@kermanych/core';
+import type { Session, RpcExtensionUIResponse, ImageInput, ModelOption, ThinkingLevel } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KTag from './KTag.vue';
 import KBtn from './KBtn.vue';
@@ -227,8 +229,10 @@ const props = withDefaults(
     // The session is being rehydrated right now (omp respawn + history reload): the composer's
     // ↻ stays down until the server answers, so a second click cannot race the first.
     refreshing?: boolean;
+    // The omp model catalog, forwarded to the composer's model chip so it can offer a picker.
+    models?: readonly ModelOption[] | undefined;
   }>(),
-  { placeholder: 'напиши наступний крок…', promoting: false, refreshing: false },
+  { placeholder: 'напиши наступний крок…', promoting: false, refreshing: false, models: () => [] },
 );
 
 const emit = defineEmits<{
@@ -248,6 +252,7 @@ const emit = defineEmits<{
   promoteTask: [];
   expandAll: [value: boolean];
   effort: [level: ThinkingLevel];
+  setModel: [patch: { model: string; provider?: string }];
 }>();
 
 const draft = ref('');

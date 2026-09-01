@@ -45,6 +45,7 @@ import {
 } from "@kermanych/core";
 import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type ProjectTrigger } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
+import { ModelsService } from "../models/models.service";
 
 type Live = {
   rpc: RpcSession;
@@ -95,6 +96,7 @@ export class SupervisorService implements OnModuleDestroy {
     private worktree: WorktreeService,
     private auth: AuthService,
     private skills: SkillsService,
+    private models: ModelsService,
   ) {}
 
   // Lay out the project's skill library for one child and remember how to label its rows.
@@ -1132,6 +1134,31 @@ export class SupervisorService implements OnModuleDestroy {
     const l = this.map.get(id);
     if (l?.rpc.isAlive()) await l.rpc.setThinkingLevel(level);
     const saved = this.registry.updateSession(id, { effort: level });
+    this.pushUpdate(id);
+    return this.merge(saved);
+  }
+
+  // The composer's model/effort picker on a RUNNING session. omp addresses a model by
+  // provider + id (`set_model`), so a bare model needs the catalogue to resolve its provider;
+  // effort is a level in its own right. The live child is told first, then the row is written,
+  // so a refused command never leaves the UI naming a model the agent is not on. A dormant row
+  // is just persisted — launch/doResume apply it on the next spawn, and the poll reconciles.
+  async setSessionModel(id: string, patch: { model?: string; provider?: string; effort?: ThinkingLevel }): Promise<Session> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    const l = this.map.get(id);
+    if (l?.rpc.isAlive()) {
+      if (patch.model) {
+        const provider = patch.provider ?? (await this.models.provider(patch.model));
+        if (!provider) throw new Error(`провайдера для моделі «${patch.model}» не знайдено`);
+        await l.rpc.setModel(provider, patch.model);
+      }
+      if (patch.effort) await l.rpc.setThinkingLevel(patch.effort);
+    }
+    const saved = this.registry.updateSession(id, {
+      ...(patch.model ? { model: patch.model } : {}),
+      ...(patch.effort ? { effort: patch.effort } : {}),
+    });
     this.pushUpdate(id);
     return this.merge(saved);
   }
