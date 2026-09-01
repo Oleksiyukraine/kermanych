@@ -198,6 +198,7 @@
             :options="defaultModelPickOptions"
             placeholder="за замовчуванням"
             :disabled="cloudLocked"
+            searchable
           />
           <KSelect
             v-model="draft.defaultEffort"

@@ -490,7 +490,14 @@
 
           <div class="agents-launcher__block">
             <div class="agents-launcher__label">Модель</div>
-            <KSelect v-model="draftModel" :options="modelPickOptions" placeholder="за замовчуванням" />
+            <!-- `searchable`: the catalog is ~26 rows all named «Claude …», so the way to
+                 «Haiku» is to type it, not to scroll past twenty siblings. -->
+            <KSelect
+              v-model="draftModel"
+              :options="modelPickOptions"
+              placeholder="за замовчуванням"
+              searchable
+            />
           </div>
 
           <div class="agents-launcher__block">

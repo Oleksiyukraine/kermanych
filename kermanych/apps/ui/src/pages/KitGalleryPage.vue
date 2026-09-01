@@ -114,12 +114,21 @@
         />
       </div>
       <div class="kit__row kit__row--fields">
+        <KSelect
+          v-model="galleryModel"
+          label="Модель (пошук у списку)"
+          :options="galleryModelOptions"
+          placeholder="за замовчуванням"
+          searchable
+        />
+      </div>
+      <div class="kit__row kit__row--fields">
         <KDateField v-model="galleryDate" label="Дата (свій календар)" />
         <KDateField v-model="galleryDate" label="Заблокована дата" disabled />
       </div>
       <div class="kit__caption mono">
         branch={{ branch }} · select(рядки)={{ galleryBranch }} · select(пари)={{ galleryWorkspace || '—' }}
-        · date={{ galleryDate || '—' }}
+        · select(пошук)={{ galleryModel || '—' }} · date={{ galleryDate || '—' }}
         — праворуч у списку видно назву, а модель тримає id: фільтр за назвою ламається,
         щойно зʼявиться другий воркспейс із такою самою назвою. Дата живе в моделі як
         YYYY-MM-DD, а показує себе як дд.мм.рррр — і те й те можна вписати руками.
@@ -761,6 +770,16 @@ const galleryBranches = ['main', 'develop', 'feat/schema'];
 const galleryBranch = ref('main');
 const galleryWorkspaceOptions = galleryWorkspaces.map((w) => ({ value: w.id, label: w.name }));
 const galleryWorkspace = ref('');
+// The searchable form's reason to exist, in miniature: labels sharing every leading word, so
+// prefix type-ahead is useless and a substring search is the only way in. Real ids as values —
+// `filterByQuery` searches those too, which is how a pinned snapshot is found by its date.
+const galleryModelOptions = [
+  { value: 'claude-opus-4-1', label: 'Claude Opus 4.1' },
+  { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
+  { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+  { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5 · claude-haiku-4-5-20251001' },
+];
+const galleryModel = ref('');
 // Seeded rather than empty: a calendar showcase whose only state is «нічого не вибрано»
 // shows neither the selected day nor the today ring.
 const galleryDate = ref('2026-09-20');
