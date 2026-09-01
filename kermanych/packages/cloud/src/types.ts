@@ -30,6 +30,9 @@ export type CloudProject = {
   previewCommand?: string;
   apiCommand?: string;
   defaultBranch?: string;
+  // The «за замовчуванням» a new task/agent in this project pre-selects: `defaultModel` is an
+  // omp model id. Absent = leave the choice to omp, which is what an empty picker already means.
+  defaultModel?: string;
   carryFiles: string[];
   envKeys: string[]; // key NAMES only — values never leave the bound repo's .env
   color?: string;

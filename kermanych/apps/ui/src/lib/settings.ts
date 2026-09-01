@@ -66,6 +66,13 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
     blurb: 'Що Керманич запускає для прев’ю і що копіює в кожну робочу теку.',
   },
   {
+    key: 'project-defaults',
+    scope: 'project',
+    label: 'Запуск задач',
+    sub: 'модель за замовчуванням',
+    blurb: 'Яку модель підставляти в нову задачу за замовчуванням.',
+  },
+  {
     key: 'project-skills',
     scope: 'project',
     label: 'Бібліотека скілів',

@@ -93,6 +93,15 @@ describe('SETTINGS_CATEGORIES', () => {
     expect(triggers.scope).toBe('project');
     expect(triggers.label).toBe('Тригери');
   });
+
+  // The default launch model is per-project cloud config, written through the same projects
+  // patch as branches and conventions, so the pane lives at the project scope.
+  it('carries the launch defaults at the project scope', () => {
+    const defaults = settingsSection('project-defaults');
+    expect(defaults.key).toBe('project-defaults');
+    expect(defaults.scope).toBe('project');
+    expect(defaults.label).toBe('Запуск задач');
+  });
 });
 
 describe('changedFields', () => {
