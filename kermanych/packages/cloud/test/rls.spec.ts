@@ -101,9 +101,9 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     });
     if (seatedMember.error) throw seatedMember.error;
     const seatedRow = seatedMember.data as { user_id: string; role: string } | null;
-    if (seatedRow?.user_id !== member.id || seatedRow.role !== "member") {
+    if (seatedRow?.user_id !== member.id || seatedRow.role !== "developer") {
       throw new Error(
-        `invite_workspace_member seated ${JSON.stringify(seatedRow)}, expected ${member.id} as 'member'`,
+        `invite_workspace_member seated ${JSON.stringify(seatedRow)}, expected ${member.id} as 'developer'`,
       );
     }
 
@@ -769,12 +769,12 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
   it("nobody can insert a workspace member directly, not even the owner", async () => {
     const ownerTry = await owner.client
       .from("workspace_members")
-      .insert({ workspace_id: workspaceId, user_id: member.id, role: "member" });
+      .insert({ workspace_id: workspaceId, user_id: member.id, role: "developer" });
     expect(ownerTry.error?.code).toBe("42501");
 
     const outsiderTry = await outsider.client
       .from("workspace_members")
-      .insert({ workspace_id: workspaceId, user_id: outsider.id, role: "member" });
+      .insert({ workspace_id: workspaceId, user_id: outsider.id, role: "developer" });
     expect(outsiderTry.error?.code).toBe("42501");
   });
 
@@ -868,6 +868,62 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(data).toHaveLength(1);
   });
 
+  // set_workspace_member_role is the ONLY writer of workspace_members.role: the table
+  // has no UPDATE grant (20260901100000_workspace_member_roles.sql), so this rpc's
+  // owner check IS the authorization surface.
+  it("the owner sets a member's role, and it round-trips through the roster", async () => {
+    const toManager = await owner.client.rpc("set_workspace_member_role", {
+      p_workspace_id: workspaceId,
+      p_user_id: member.id,
+      p_role: "manager",
+    });
+    expect(toManager.error).toBeNull();
+    expect((toManager.data as { role: string } | null)?.role).toBe("manager");
+
+    const seen = await owner.client
+      .from("workspace_members")
+      .select("role")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", member.id)
+      .single();
+    expect(seen.data?.role).toBe("manager");
+
+    // Restore the fixture's default so later tests see `member` as they expect.
+    const back = await owner.client.rpc("set_workspace_member_role", {
+      p_workspace_id: workspaceId,
+      p_user_id: member.id,
+      p_role: "developer",
+    });
+    expect(back.error).toBeNull();
+  });
+
+  it("a plain member cannot change roles", async () => {
+    const denied = await member.client.rpc("set_workspace_member_role", {
+      p_workspace_id: workspaceId,
+      p_user_id: member.id,
+      p_role: "manager",
+    });
+    expect(denied.error?.message).toMatch(/only the workspace owner can change roles/);
+  });
+
+  it("the owner's own seat cannot be re-roled", async () => {
+    const denied = await owner.client.rpc("set_workspace_member_role", {
+      p_workspace_id: workspaceId,
+      p_user_id: owner.id,
+      p_role: "manager",
+    });
+    expect(denied.error?.message).toMatch(/owner keeps the owner role/);
+  });
+
+  it("owner cannot be handed out as a role", async () => {
+    const denied = await owner.client.rpc("set_workspace_member_role", {
+      p_workspace_id: workspaceId,
+      p_user_id: member.id,
+      p_role: "owner",
+    });
+    expect(denied.error?.message).toMatch(/role must be manager or developer/);
+  });
+
   it("workspaces_insert_own refuses a forged owner_id", async () => {
     const forged = await member.client
       .from("workspaces")
@@ -879,7 +935,7 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
 
   // Several things assume the owner is always a member, so the owner's seat is the one
   // row their own delete policy must refuse. There is no way back if it goes: no INSERT
-  // grant, and the invite rpc would re-seat them as 'member'. The other half of the
+  // grant, and the invite rpc would re-seat them as 'developer'. The other half of the
   // policy — that the owner CAN unseat someone else — is the test immediately below.
   it("the owner cannot delete their own seat", async () => {
     await owner.client

@@ -95,3 +95,31 @@ export function matchByPrefix(labels: readonly string[], prefix: string, from: n
   }
   return -1;
 }
+
+/** What a filterable row needs to expose: the text on screen and the value behind it. */
+export type MenuOption = { value: string; label: string };
+
+/**
+ * The rows of `items` a search box query keeps, for KSelect's searchable mode.
+ *
+ * SUBSTRING, not prefix (unlike `matchByPrefix`, which serves closed-list type-ahead): the
+ * model catalog is ~26 rows whose names all begin «Claude», so a prefix search over them
+ * filters nothing — «haiku» has to find «Claude Haiku 4.5».
+ *
+ * Whitespace splits the query into tokens that must ALL match, in any order, so «4.5 son»
+ * finds «Claude Sonnet 4.5» without the operator guessing the word order. The value is
+ * searched alongside the label because for a model the value IS meaningful text — the id
+ * omp resolves («claude-haiku-4-5-20251001»), which is how a pinned snapshot is told apart
+ * from its moving alias.
+ *
+ * An empty query returns the input array itself, not a copy: this runs on every keystroke
+ * and the common case is «nothing typed yet».
+ */
+export function filterByQuery<T extends MenuOption>(items: readonly T[], query: string): readonly T[] {
+  const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return items;
+  return items.filter((it) => {
+    const hay = `${it.label} ${it.value}`.toLowerCase();
+    return tokens.every((t) => hay.includes(t));
+  });
+}

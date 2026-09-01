@@ -3,6 +3,7 @@ import {
   MENU_EDGE_PX,
   MENU_GAP_PX,
   MENU_MAX_H_PX,
+  filterByQuery,
   matchByPrefix,
   placeMenu,
 } from '../src/lib/menu';
@@ -107,5 +108,52 @@ describe('matchByPrefix', () => {
     expect(matchByPrefix(LABELS, 'zz', 0)).toBe(-1);
     expect(matchByPrefix(LABELS, '', 0)).toBe(-1);
     expect(matchByPrefix([], 'o', 0)).toBe(-1);
+  });
+});
+
+// The searchable form's rows: the model catalog as modelOptions() shapes it — every label
+// starts «Claude», which is exactly why prefix type-ahead cannot serve this picker — plus the
+// «за замовчуванням» placeholder row, which is a real option with an empty value.
+const MODELS = [
+  { value: '', label: 'за замовчуванням' },
+  { value: 'claude-opus-4-1', label: 'Claude Opus 4.1' },
+  { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
+  { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+  { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5 · claude-haiku-4-5-20251001' },
+];
+
+const labelsOf = (rows: readonly { label: string }[]): string[] => rows.map((r) => r.label);
+
+describe('filterByQuery', () => {
+  it('matches a substring anywhere in the label, not just its start', () => {
+    expect(labelsOf(filterByQuery(MODELS, 'haiku'))).toEqual([
+      'Claude Haiku 4.5',
+      'Claude Haiku 4.5 · claude-haiku-4-5-20251001',
+    ]);
+    expect(labelsOf(filterByQuery(MODELS, 'SONNET'))).toEqual(['Claude Sonnet 4.5']);
+  });
+
+  it('requires every whitespace-separated token, in any order', () => {
+    expect(labelsOf(filterByQuery(MODELS, '4.5 son'))).toEqual(['Claude Sonnet 4.5']);
+    expect(labelsOf(filterByQuery(MODELS, 'opus sonnet'))).toEqual([]);
+  });
+
+  it('searches the value too — a pinned snapshot is found by its date', () => {
+    expect(labelsOf(filterByQuery(MODELS, '20251001'))).toEqual([
+      'Claude Haiku 4.5 · claude-haiku-4-5-20251001',
+    ]);
+  });
+
+  it('keeps the placeholder row reachable by its own text', () => {
+    expect(labelsOf(filterByQuery(MODELS, 'замов'))).toEqual(['за замовчуванням']);
+  });
+
+  it('returns the input array itself when nothing is typed — this runs per keystroke', () => {
+    expect(filterByQuery(MODELS, '')).toBe(MODELS);
+    expect(filterByQuery(MODELS, '   ')).toBe(MODELS);
+  });
+
+  it('reports an empty result rather than falling back to everything', () => {
+    expect(filterByQuery(MODELS, 'gpt')).toEqual([]);
   });
 });

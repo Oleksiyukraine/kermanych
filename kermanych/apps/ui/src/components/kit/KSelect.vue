@@ -5,9 +5,63 @@
          opens the list the way clicking a <select>'s label used to. -->
     <label v-if="label" :id="labelId" :for="triggerId" class="k-select__label">{{ label }}</label>
 
+    <!-- SEARCHABLE — the trigger is a real text input, so «Модель» can be found by typing
+         instead of scrolled through 26 rows. The input stays HERE, inside the component's
+         own subtree, rather than in the teleported list: a QDialog (KModal) re-grabs focus
+         from anything under <body>, so a search box parked in the popup would be unfocusable
+         inside the very form that needs it most — the «Нова задача» launcher. -->
+    <div
+      v-if="searchable"
+      ref="shellEl"
+      class="k-select__input k-select__shell"
+      :class="{ 'k-select__input--open': open, 'k-select__input--disabled': disabled }"
+    >
+      <span class="k-select__box">
+        <input
+          :id="triggerId"
+          ref="inputEl"
+          type="text"
+          class="k-select__text"
+          role="combobox"
+          aria-haspopup="listbox"
+          aria-autocomplete="list"
+          autocomplete="off"
+          spellcheck="false"
+          :aria-expanded="open"
+          :aria-controls="listId"
+          :aria-activedescendant="activeId"
+          :disabled="disabled"
+          :value="open ? query : current ? currentLabel : ''"
+          :placeholder="currentLabel"
+          @focus="onFieldFocus"
+          @click="openMenu()"
+          @input="onQuery"
+          @keydown="onKeydown"
+        />
+        <span class="k-select__sizer" aria-hidden="true">
+          <span v-for="(opt, i) in items" :key="i">{{ opt.label }}</span>
+        </span>
+      </span>
+      <!-- The one way to CLOSE the list by pointer without leaving the field: a click on the
+           input itself must place the caret, not toggle. Out of the tab order and out of the
+           a11y tree — the input beside it is the control. -->
+      <button
+        type="button"
+        class="k-select__toggle"
+        tabindex="-1"
+        aria-hidden="true"
+        :disabled="disabled"
+        @mousedown.prevent
+        @click="toggle"
+      >
+        <span class="k-select__caret" aria-hidden="true"></span>
+      </button>
+    </div>
+
     <button
+      v-else
       :id="triggerId"
-      ref="triggerEl"
+      ref="shellEl"
       type="button"
       class="k-select__input"
       :class="{ 'k-select__input--open': open, 'k-select__input--empty': showsPlaceholder }"
@@ -15,7 +69,7 @@
       aria-haspopup="listbox"
       :aria-expanded="open"
       :aria-controls="listId"
-      :aria-activedescendant="open && activeIndex >= 0 ? optionId(activeIndex) : undefined"
+      :aria-activedescendant="activeId"
       :aria-labelledby="label ? `${labelId} ${triggerId}` : undefined"
       :disabled="disabled"
       @click="toggle"
@@ -27,7 +81,9 @@
              option; a button sized to the CURRENT one would shift every control beside it on
              each pick (the board's filter strip is a bare flex row). These copies are
              measured and never painted, so the control keeps one width for its whole life.
-             Pages that cannot afford the widest option pin a measure and get an ellipsis. -->
+             Pages that cannot afford the widest option pin a measure and get an ellipsis.
+             The searchable variant above reserves the same width, for the same reason — and
+             so that filtering a list down to one row cannot resize the field. -->
         <span class="k-select__sizer" aria-hidden="true">
           <span v-for="(opt, i) in items" :key="i">{{ opt.label }}</span>
         </span>
@@ -49,7 +105,7 @@
         :aria-labelledby="label ? labelId : undefined"
       >
         <div
-          v-for="(opt, i) in items"
+          v-for="(opt, i) in visible"
           :id="optionId(i)"
           :key="i"
           class="k-select__opt"
@@ -69,7 +125,7 @@
           <span class="k-select__opt-label">{{ opt.label }}</span>
         </div>
 
-        <div v-if="!items.length" class="k-select__empty mono">(немає варіантів)</div>
+        <div v-if="!visible.length" class="k-select__empty mono">{{ emptyText }}</div>
       </div>
     </Teleport>
   </div>
@@ -89,7 +145,7 @@ let seq = 0;
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
-import { matchByPrefix, placeMenu } from '../../lib/menu';
+import { filterByQuery, matchByPrefix, placeMenu } from '../../lib/menu';
 
 // The app's dropdown. Styled like KField — label above, surface trigger, accent focus ring —
 // and the LIST is ours too: a `role="listbox"` panel with the kit's glass, radius and rules.
@@ -101,9 +157,10 @@ import { matchByPrefix, placeMenu } from '../../lib/menu';
 // also came from the OS (see the sizer in the template, which keeps the old sizing without
 // the old popup), and it could not carry anything but text.
 //
-// Keyboard model is the ARIA select-only combobox: focus never leaves the trigger, and the
-// active row is announced through `aria-activedescendant`. That keeps the list out of the
-// tab order and out of the focus traps it opens inside (KModal is a QDialog).
+// Keyboard model is the ARIA combobox: focus stays on the trigger — the button, or the search
+// input in `searchable` mode — and the active row is announced through
+// `aria-activedescendant`. That keeps the LIST out of the tab order and out of the focus traps
+// it opens inside (KModal is a QDialog, which re-grabs focus from anything under <body>).
 const props = defineProps<{
   label?: string;
   modelValue?: string;
@@ -112,6 +169,12 @@ const props = defineProps<{
   options: readonly string[] | readonly KSelectOption[];
   placeholder?: string;
   disabled?: boolean;
+  // Turns the trigger into a text field that filters the list as you type. For a picker whose
+  // rows are counted in dozens — the model catalog is ~26 entries all named «Claude …» —
+  // scrolling is the wrong instrument, and closed-list prefix type-ahead cannot help when
+  // every label shares its first word. Left off elsewhere: a four-row picker with a caret
+  // that suddenly takes a caret is a text box that looks editable and is not.
+  searchable?: boolean;
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
@@ -156,17 +219,45 @@ const items = computed<KSelectOption[]>(() =>
 );
 
 const current = computed(() => props.modelValue ?? '');
+// Indexes `items` (the FULL list), not `visible`: the field must keep naming what the control
+// holds while a query hides that row.
 const selectedIndex = computed(() => items.value.findIndex((o) => o.value === current.value));
 const currentLabel = computed(() => items.value[selectedIndex.value]?.label ?? EMPTY_LABEL);
 const showsPlaceholder = computed(() => !current.value);
+
+// The live search box, empty unless `searchable` and the operator has typed. Reset by
+// close(), so a reopened list always starts on the whole catalog.
+const query = ref('');
+// What the list actually renders. Every row index in this component — `activeIndex`,
+// `optionId`, `commit` — is an index into THIS array, not into `items`.
+const visible = computed<readonly KSelectOption[]>(() =>
+  props.searchable ? filterByQuery(items.value, query.value) : items.value,
+);
+// Told apart because the two states have different cures: an empty catalog is «nothing to
+// pick here», a query that matched nothing is «that word is not in this list».
+const emptyText = computed(() => (query.value ? '(нічого не знайдено)' : '(немає варіантів)'));
 
 const open = ref(false);
 // Placement runs after the panel is in the DOM (it has to be measured first), so the first
 // frame would otherwise paint at 0,0 before jumping into place.
 const placed = ref(false);
 const activeIndex = ref(-1);
-const triggerEl = ref<HTMLButtonElement | null>(null);
+const activeId = computed(() =>
+  open.value && activeIndex.value >= 0 && activeIndex.value < visible.value.length
+    ? optionId(activeIndex.value)
+    : undefined,
+);
+// Geometry and pointer containment: the whole control, which in `searchable` mode is the
+// shell around the input and its caret — measuring the inset input would hang the list 11px
+// off its field and a caret click would read as an outside click.
+const shellEl = ref<HTMLElement | null>(null);
+const inputEl = ref<HTMLInputElement | null>(null);
 const popEl = ref<HTMLElement | null>(null);
+
+// Where the keyboard lives: the search input when there is one, the button otherwise.
+function focusTrigger(): void {
+  (inputEl.value ?? shellEl.value)?.focus();
+}
 
 // The panel's UNCLAMPED height, measured once per open — and once more whenever `items`
 // changes (watched below). `place()` also runs on every scroll frame, and clearing
@@ -183,8 +274,11 @@ function toggle(): void {
 
 async function openMenu(): Promise<void> {
   if (props.disabled || open.value) return;
-  // Opening lands on the current value, so ↑/↓ continue from what the control holds.
-  activeIndex.value = selectedIndex.value >= 0 ? selectedIndex.value : 0;
+  // Opening lands on the current value, so ↑/↓ continue from what the control holds. Resolved
+  // against `visible`, because a query typed into the closed field opens the list already
+  // filtered — and the held value is usually not among the matches.
+  const at = visible.value.findIndex((o) => o.value === current.value);
+  activeIndex.value = at >= 0 ? at : 0;
   typed = '';
   naturalH = 0;
   open.value = true;
@@ -207,20 +301,23 @@ function close(): void {
   document.removeEventListener('click', onDocClick, true);
   window.removeEventListener('scroll', place, true);
   window.removeEventListener('resize', place);
+  // A reopened list starts on the whole catalog: a stale query is a list that silently hides
+  // rows the operator never asked to hide.
+  query.value = '';
 }
 
 function commit(i: number): void {
-  const opt = items.value[i];
+  const opt = visible.value[i];
   close();
   // Focus goes back to the control, not to <body>: a pick with the keyboard must leave the
   // next ↓ or Tab where the user left off.
-  triggerEl.value?.focus();
+  focusTrigger();
   if (!opt || opt.value === current.value) return;
   emit('update:modelValue', opt.value);
 }
 
 function place(): void {
-  const t = triggerEl.value;
+  const t = shellEl.value;
   const p = popEl.value;
   if (!t || !p) return;
   const r = t.getBoundingClientRect();
@@ -257,23 +354,42 @@ function scrollActiveIntoView(): void {
 }
 
 function moveTo(i: number): void {
-  if (!items.value.length) return;
-  const n = items.value.length;
+  const n = visible.value.length;
+  if (!n) return;
   activeIndex.value = ((i % n) + n) % n;
   scrollActiveIntoView();
+}
+
+// Every keystroke in the search field. The list opens on the first character typed into a
+// closed field — that is the whole point of the mode — and the active row resets to the top
+// match, so Enter takes the best hit without an ↓ first.
+function onQuery(e: Event): void {
+  query.value = (e.target as HTMLInputElement).value;
+  if (!open.value) void openMenu();
+  activeIndex.value = visible.value.length ? 0 : -1;
+}
+
+// Tab into a closed field and the whole label is SELECTED, so the first letter typed replaces
+// it instead of being spliced into it — the query is literally the field's text, and
+// «cClaude Opus 4.1» matches nothing. The other two ways in are already safe: a pointer open
+// empties the field (the value binding follows `open`), and a commit refocuses an input that
+// never lost focus (the rows prevent mousedown), so neither leaves a highlight behind.
+function onFieldFocus(e: FocusEvent): void {
+  (e.target as HTMLInputElement).select();
 }
 
 function onKeydown(e: KeyboardEvent): void {
   if (props.disabled) return;
 
   if (!open.value) {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || (e.key === ' ' && !props.searchable)) {
       e.preventDefault();
       void openMenu();
     }
     // No closed-state type-ahead on purpose: on a native select that CHANGED the value
     // without ever showing the alternatives, which is how a stray keystroke reassigned a
-    // task. Here a letter opens nothing and writes nothing.
+    // task. Here a letter opens nothing and writes nothing — except in `searchable` mode,
+    // where a letter is text and `onQuery` opens the list around it.
     return;
   }
 
@@ -290,7 +406,13 @@ function onKeydown(e: KeyboardEvent): void {
       close();
       return;
     case 'Enter':
+      e.preventDefault();
+      commit(activeIndex.value);
+      return;
     case ' ':
+      // A space is a word separator in a search query («4.5 son»), so only the button form
+      // treats it as «pick this row».
+      if (props.searchable) return;
       e.preventDefault();
       commit(activeIndex.value);
       return;
@@ -303,15 +425,21 @@ function onKeydown(e: KeyboardEvent): void {
       moveTo(activeIndex.value - 1);
       return;
     case 'Home':
+      // Left to the input in `searchable` mode: Home/End move the text caret there, and a
+      // list jump the operator cannot undo mid-word is worse than no shortcut.
+      if (props.searchable) return;
       e.preventDefault();
       moveTo(0);
       return;
     case 'End':
+      if (props.searchable) return;
       e.preventDefault();
-      moveTo(items.value.length - 1);
+      moveTo(visible.value.length - 1);
       return;
     default:
-      if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      // The search field does its own filtering through `onQuery`; prefix type-ahead is for
+      // the closed-list form, where typing has nowhere else to go.
+      if (!props.searchable && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         typeahead(e.key);
       }
@@ -347,8 +475,9 @@ function typeahead(ch: string): void {
 function onDocClick(e: MouseEvent): void {
   const target = e.target as Node | null;
   if (!target) return;
-  // The trigger is excluded so its own handler still toggles instead of closing twice.
-  if (popEl.value?.contains(target) || triggerEl.value?.contains(target)) return;
+  // The whole control is excluded — trigger, search input and caret — so its own handlers
+  // still toggle, or place a text caret, instead of closing twice.
+  if (popEl.value?.contains(target) || shellEl.value?.contains(target)) return;
   e.preventDefault();
   e.stopPropagation();
   close();
@@ -362,16 +491,20 @@ watch(
     if (off) close();
   },
 );
-watch(
-  () => items.value.length,
-  async (n) => {
-    if (!open.value) return;
-    if (!n) activeIndex.value = -1;
-    await nextTick();
-    naturalH = 0;
-    place();
-  },
-);
+// Watched by IDENTITY, not by length: `visible` is a new array on every query change, and a
+// filter that keeps the row COUNT can still change the panel's height (one label wraps, the
+// next does not). `filterByQuery` returns the input array unchanged when nothing is typed,
+// so an idle control never re-measures.
+watch(visible, async (rows) => {
+  if (!open.value) return;
+  if (!rows.length) activeIndex.value = -1;
+  await nextTick();
+  naturalH = 0;
+  place();
+  // The list may have been scrolled far down when the query narrowed it: the top match has
+  // to be on screen, not merely active.
+  scrollActiveIntoView();
+});
 
 onBeforeUnmount(close);
 </script>
@@ -412,7 +545,7 @@ onBeforeUnmount(close);
   cursor: pointer;
   transition: border-color 0.12s, box-shadow 0.12s, color 0.12s;
 
-  &:hover:not(:disabled) {
+  &:hover:not(:disabled):not(.k-select__input--disabled) {
     border-color: var(--k-accent);
   }
 
@@ -425,7 +558,8 @@ onBeforeUnmount(close);
     box-shadow: inset 0 0 0 1px var(--k-accent);
   }
 
-  &:disabled {
+  &:disabled,
+  &.k-select__input--disabled {
     opacity: 0.45;
     cursor: not-allowed;
   }
@@ -435,6 +569,62 @@ onBeforeUnmount(close);
 // value must not read the same as a prompt for one.
 .k-select__input--empty {
   color: var(--k-muted);
+}
+
+// ── Searchable variant ──────────────────────────────────────────────────────
+//
+// A <div> wearing the trigger's clothes, because the control it holds is an <input> and an
+// input cannot contain the caret button. Same surface, same frame; the ring comes from
+// `:focus-within` (the frame belongs to the shell, the keyboard to the input inside it) and
+// `:focus-visible` cannot serve here — a click into a text field must show its ring.
+.k-select__shell {
+  cursor: text;
+
+  &:focus-within {
+    border-color: var(--k-accent);
+    box-shadow: inset 0 0 0 1px var(--k-accent);
+  }
+}
+
+// Bare text on the shell's surface: every visual belongs to the shell, so the input keeps
+// only its caret and its own muted placeholder — which is where the CURRENT value is shown
+// while a query is being typed over it.
+.k-select__text {
+  grid-area: 1 / 1;
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  outline: none;
+  text-overflow: ellipsis;
+
+  &::placeholder {
+    color: var(--k-muted);
+    opacity: 1;
+  }
+
+  &:disabled {
+    color: inherit;
+    cursor: not-allowed;
+  }
+}
+
+.k-select__toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+
+  &:disabled {
+    cursor: not-allowed;
+  }
 }
 
 // One grid cell holding the visible value and the hidden width copies. `minmax(0, 1fr)`

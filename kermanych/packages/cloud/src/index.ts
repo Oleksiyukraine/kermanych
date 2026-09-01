@@ -9,6 +9,8 @@ export type {
   Profile,
   Workspace,
   WorkspaceMember,
+  WorkspaceRole,
+  AssignableRole,
   CloudProject,
   Task,
   TaskInsert,
@@ -61,6 +63,7 @@ export {
   listMembers,
   inviteMember,
   removeMember,
+  setMemberRole,
 } from "./workspaces";
 
 export type { TaskChange, TaskChannelState } from "./tasks";
