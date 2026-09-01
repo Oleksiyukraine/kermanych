@@ -83,7 +83,26 @@
             aria-label="Розмова з асистентом менеджменту"
           >
             <header class="mgmt__log-head">
-              <span class="mgmt__log-title mono">Асистент менеджменту</span>
+              <!-- The title doubles as the collapse control: pressing it folds the transcript
+                   to this bar and back. It is a VIEW toggle only — the turn in flight lives in
+                   the store (`chat.send`), so folding the window never touches the request. The
+                   heartbeat moves up here while collapsed so a working assistant still says so
+                   with its transcript hidden. -->
+              <button
+                class="mgmt__log-toggle"
+                type="button"
+                :aria-expanded="!collapsed"
+                :aria-label="collapsed ? 'Розгорнути розмову' : 'Згорнути розмову'"
+                @click="toggleCollapsed"
+              >
+                <span
+                  class="mgmt__log-caret"
+                  :class="{ 'mgmt__log-caret--collapsed': collapsed }"
+                  aria-hidden="true"
+                >▾</span>
+                <span class="mgmt__log-title mono">Асистент менеджменту</span>
+                <span v-if="collapsed && chat.busy" class="mgmt__log-busy mono" aria-live="polite">думає…</span>
+              </button>
               <button
                 v-tip="'Новий чат'"
                 class="mgmt__log-close mono"
@@ -93,7 +112,7 @@
                 @click="chat.reset()"
               >×</button>
             </header>
-            <div ref="logEl" class="mgmt__log-body">
+            <div v-show="!collapsed" ref="logEl" class="mgmt__log-body">
               <template v-for="e in chat.entries" :key="e.id">
                 <KChatMessage v-if="e.kind === 'user'" role="user">{{ e.text }}</KChatMessage>
                 <KChatMessage v-else-if="e.kind === 'assistant'" role="assistant">
@@ -241,6 +260,17 @@ const draft = ref('');
 const fieldEl = ref<HTMLTextAreaElement | null>(null);
 const logEl = ref<HTMLElement | null>(null);
 
+// Folds the transcript to its header bar and back. Purely a VIEW state held on the
+// component — the conversation and any turn in flight live in the store, so folding the
+// window never aborts `chat.send`; the model keeps working and the answer lands in the
+// transcript whether it is on screen or not. Expanding re-pins the newest entry, since the
+// body was display:none while folded and could not follow the log down.
+const collapsed = ref(false);
+function toggleCollapsed(): void {
+  collapsed.value = !collapsed.value;
+  if (!collapsed.value) scrollLog();
+}
+
 // The field grows with the text and then scrolls, so Shift+Enter newlines stay visible
 // instead of being clipped by a one-line input. 132px ≈ six lines of the pill's type.
 const MAX_FIELD_PX = 132;
@@ -270,6 +300,9 @@ function submit(): void {
   // the sent text invites sending it twice.
   draft.value = '';
   void nextTick(autoGrow);
+  // Sending a new turn re-opens a folded transcript, the same way the first message opens
+  // it: the operator is asking to watch this answer, not just to send it into a hidden log.
+  collapsed.value = false;
   void chat.send(text, activeSection.value);
 }
 
@@ -609,6 +642,53 @@ const workspaceColor = computed(() => {
   gap: var(--k-sp-2);
   padding: var(--k-sp-2) var(--k-sp-2) var(--k-sp-2) var(--k-sp-3);
   border-bottom: var(--k-rule-thin) solid var(--k-line);
+}
+
+// The title is a button now: pressing anywhere along the bar folds the transcript. It stays
+// visually a title — transparent, no chrome — so the affordance is the caret beside it and
+// the pointer cursor, not a second boxed control competing with the × on the right.
+.mgmt__log-toggle {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+  appearance: none;
+  border: none;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+
+  &:hover .mgmt__log-title {
+    color: var(--k-muted);
+  }
+}
+
+// Points down when the transcript is open, right when it is folded — the app's one
+// disclosure idiom. A transform, not two glyphs, so the turn is a rotation the eye tracks.
+.mgmt__log-caret {
+  flex: none;
+  display: inline-block;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--k-faint);
+  transition: transform 0.15s ease;
+}
+.mgmt__log-caret--collapsed {
+  transform: rotate(-90deg);
+}
+
+// The heartbeat, hoisted to the header while folded: with the transcript hidden this is the
+// only place left to say a turn is still in flight, so a folded window never looks idle
+// while the model works. Same muted pulse as `.mgmt__think` below.
+.mgmt__log-busy {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--k-fs-xs);
+  font-style: italic;
+  color: var(--k-muted);
+  animation: mgmt-think-pulse 1.4s ease-in-out infinite;
 }
 
 .mgmt__log-title {
