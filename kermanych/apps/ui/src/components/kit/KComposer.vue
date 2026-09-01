@@ -58,7 +58,15 @@
           :disabled="disabled"
           @click="fileInput?.click()"
         >📎</button>
-        <span v-if="model" class="k-composer__chip" v-tip="'Модель цієї сесії'">
+        <KChipSelect
+          v-if="model && modelChipOptions.length"
+          :model-value="model"
+          :options="modelChipOptions"
+          title="Модель цієї сесії"
+          :disabled="disabled"
+          @update:model-value="onModelPick"
+        />
+        <span v-else-if="model" class="k-composer__chip" v-tip="'Модель цієї сесії'">
           <KModelMark class="k-composer__chip-mark" :model="model" />
           <span class="mono">{{ model }}</span>
         </span>
@@ -100,7 +108,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import { prependHelper, type ImageInput, type ThinkingLevel, type Usage } from '@kermanych/core';
+import { prependHelper, type ImageInput, type ModelOption, type ThinkingLevel, type Usage } from '@kermanych/core';
 import KAttachStrip from './KAttachStrip.vue';
 import KChipSelect from './KChipSelect.vue';
 import KModelMark from './KModelMark.vue';
@@ -108,6 +116,7 @@ import KHelperPicker from './KHelperPicker.vue';
 import KTag from './KTag.vue';
 import { useImageAttach } from '../../composables/useImageAttach';
 import { EFFORT_OPTIONS } from '../../lib/effort';
+import { modelOptions } from '../../lib/models';
 import { tokens, usageTokens, usd } from '../../lib/format';
 
 // The composer atom: a mono textarea that grows with content up to a cap, plus a
@@ -124,6 +133,9 @@ const props = withDefaults(
     placeholder?: string | undefined;
     disabled?: boolean;
     model?: string | undefined;
+    // The omp catalog for this machine (empty when unreadable): with it the model chip is a
+    // picker, without it it degrades to a read-only label.
+    models?: readonly ModelOption[] | undefined;
     // omp's reasoning effort for this session, as the api last read it back. Absent means the
     // level is not known yet (a child that has not answered its first state poll), and the chip
     // stays away rather than naming a level the agent may not be running at.
@@ -138,16 +150,26 @@ const props = withDefaults(
     // caller from re-deriving the same two figures.
     usage?: Usage | undefined;
   }>(),
-  { placeholder: 'напиши наступний крок…', disabled: false, worktree: false },
+  { placeholder: 'напиши наступний крок…', disabled: false, worktree: false, models: () => [] },
 );
 
 const emit = defineEmits<{
   'update:modelValue': [value: string];
   send: [text: string, images: ImageInput[]];
   effort: [level: ThinkingLevel];
+  setModel: [patch: { model: string; provider?: string }];
 }>();
 
 const focused = ref(false);
+
+const modelChipOptions = computed(() => modelOptions(props.models));
+
+// The provider rides along so the api's set_model can address the model without a catalogue
+// round-trip; props.models is the catalogue the chip was built from.
+function onModelPick(id: string): void {
+  const provider = props.models?.find((m) => m.id === id)?.provider;
+  emit('setModel', provider ? { model: id, provider } : { model: id });
+}
 
 // Composer textarea: grows with content up to a cap, then scrolls, so
 // Shift+Enter newlines stay visible instead of being clipped by the input row.

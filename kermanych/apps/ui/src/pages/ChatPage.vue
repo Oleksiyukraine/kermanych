@@ -85,12 +85,14 @@
         <KComposer
           v-model="draft"
           :model="chatSession?.model"
+          :models="store.models"
           :effort="chatSession?.effort"
           :context="chatSession?.contextPercent"
           :usage="chatSession?.usage"
           placeholder="запитай або опиши, що потрібно зробити…"
           @send="onSend"
           @effort="onEffort"
+          @set-model="onSetModel"
         />
       </div>
     </div>
@@ -151,6 +153,17 @@ async function onEffort(level: ThinkingLevel): Promise<void> {
   if (!id) return;
   try {
     await store.setEffort(id, level);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+// The composer's model picker on the chat — mirror of onEffort.
+async function onSetModel(patch: { model: string; provider?: string }): Promise<void> {
+  const id = chatId.value;
+  if (!id) return;
+  try {
+    await store.setSessionModel(id, patch);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }

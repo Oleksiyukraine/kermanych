@@ -145,6 +145,7 @@
             class="agents__panel"
             :session="selectedSession"
             :refreshing="refreshingId === selectedSession.id"
+            :models="store.models"
             @stop="onStop"
             @delete="onDelete"
             @send="onSend"
@@ -159,6 +160,7 @@
             @newTask="openTaskFromText"
             @expand-all="onExpandAll"
             @effort="onEffort"
+            @set-model="onSetModel"
           >
             <template v-if="blocks.length">
               <KRequestBlock
@@ -455,21 +457,12 @@
 
           <div class="agents-launcher__block">
             <div class="agents-launcher__label">Модель</div>
-            <div class="agents-launcher__seg">
-              <button
-                v-for="opt in modelOptions"
-                :key="opt"
-                type="button"
-                class="agents-launcher__seg-btn mono"
-                :class="{ 'agents-launcher__seg-btn--active': opt === draftModel }"
-                @click="draftModel = opt"
-              >{{ opt }}</button>
-            </div>
+            <KSelect v-model="draftModel" :options="modelPickOptions" placeholder="за замовчуванням" />
           </div>
 
           <div class="agents-launcher__block">
             <div class="agents-launcher__label">Рівень роздумів</div>
-            <KSelect v-model="draftEffort" :options="EFFORT_OPTIONS" placeholder="за замовчуванням" />
+            <KSelect v-model="draftEffort" :options="effortPickOptions" placeholder="за замовчуванням" />
           </div>
         </div>
       </div>
@@ -670,6 +663,7 @@ import { useNow } from '../composables/useNow';
 import { relativeTime } from '../lib/time';
 import { tokens, usageTokens, usd } from '../lib/format';
 import { EFFORT_OPTIONS } from '../lib/effort';
+import { modelOptions, effortOptions } from '../lib/models';
 import { useResizableWidth } from '../composables/useResizableWidth';
 
 // The Агенти screen (design-system section 07): the board of session cards for whatever is
@@ -1281,7 +1275,7 @@ watch(
 const launcherOpen = ref(false);
 const draftName = ref('');
 const draftTask = ref('');
-const draftModel = ref('opus-5');
+const draftModel = ref('');
 // Reasoning effort for the launch, the other half of `model`. '' is «за замовчуванням» —
 // the card stores nothing and omp picks. A card being edited keeps its own.
 const draftEffort = ref<ThinkingLevel | ''>('');
@@ -1291,7 +1285,13 @@ const draftEffort = ref<ThinkingLevel | ''>('');
 const prefixOptions = BRANCH_PREFIXES;
 const draftPrefix = ref<BranchPrefix>('feature');
 const platformOptions = PLATFORMS;
-const modelOptions = ['opus-5', 'sonnet-4.5', 'haiku'];
+const modelPickOptions = computed(() => modelOptions(store.models));
+// The effort ladder narrows to the chosen model's own (empty for a non-reasoning model);
+// «за замовчуванням» or an unknown alias keeps the full ladder. Labels stay ours (lib/effort).
+const effortPickOptions = computed(() => {
+  const allowed = effortOptions(store.models, draftModel.value || undefined);
+  return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value));
+});
 const draftPlatform = ref<Platform | undefined>(undefined);
 const draftWorktree = ref(true);
 const nameEdited = ref(false);
@@ -1388,7 +1388,7 @@ function openLauncher(card?: Task): void {
   // being EDITED keeps its own. `launchProjectId` is set just above, and the LOCAL row carries
   // the synced default so this works offline like the rest of the launch path.
   const launchDefault = card ? undefined : store.projects.find((p) => p.id === launchProjectId.value);
-  draftModel.value = card?.model ?? launchDefault?.defaultModel ?? 'opus-5';
+  draftModel.value = card?.model ?? launchDefault?.defaultModel ?? '';
   draftEffort.value = card?.effort ?? '';
   // The cloud stores launch params as free text; the local vocabularies are the authority,
   // exactly as createSessionFromTask validates them server-side.
@@ -1424,7 +1424,7 @@ function openTaskFromText(text: string): void {
   draftTask.value = text;
   // New task from a selection: same project default model as openLauncher's new-task branch.
   const textDefault = store.projects.find((p) => p.id === launchProjectId.value);
-  draftModel.value = textDefault?.defaultModel ?? 'opus-5';
+  draftModel.value = textDefault?.defaultModel ?? '';
   draftEffort.value = '';
   draftPrefix.value = 'feature';
   draftPlatform.value = undefined;
@@ -1733,6 +1733,18 @@ async function onEffort(level: ThinkingLevel): Promise<void> {
   if (!s) return;
   try {
     await store.setEffort(s.id, level);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+// The composer's model picker on a running session — mirror of onEffort. The api's 400
+// carries omp's own refusal, so nothing is swallowed.
+async function onSetModel(patch: { model: string; provider?: string }): Promise<void> {
+  const s = selectedSession.value;
+  if (!s) return;
+  try {
+    await store.setSessionModel(s.id, patch);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }

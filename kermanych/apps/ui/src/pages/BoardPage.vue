@@ -126,8 +126,8 @@
           :rows="6"
         />
         <div class="board__form-row">
-          <KSelect v-model="draftModel" label="Модель" :options="MODEL_OPTIONS" placeholder="за замовчуванням" />
-          <KSelect v-model="draftEffort" label="Рівень роздумів" :options="EFFORT_OPTIONS" placeholder="за замовчуванням" />
+          <KSelect v-model="draftModel" label="Модель" :options="modelPickOptions" placeholder="за замовчуванням" />
+          <KSelect v-model="draftEffort" label="Рівень роздумів" :options="effortPickOptions" placeholder="за замовчуванням" />
           <KSelect v-model="draftPrefix" label="Тип" :options="PREFIX_OPTIONS" placeholder="feature" />
           <KSelect
             v-model="draftPlatform"
@@ -266,6 +266,7 @@ import { useNow } from '../composables/useNow';
 import { useDelayedTrue } from '../composables/useDelayedTrue';
 import { relativeTime } from '../lib/time';
 import { EFFORT_OPTIONS } from '../lib/effort';
+import { modelOptions, effortOptions } from '../lib/models';
 import { handleOf, resolveAssignee } from '../lib/members';
 import { api } from '../lib/api';
 import { installReconcile } from '../lib/reconcile';
@@ -895,7 +896,13 @@ async function confirmBinding(): Promise<void> {
 // ── Create / edit ─────────────────────────────────────────────────────────────
 // Same launch vocabulary as the local launcher (AgentsPage.vue:658-661), so a task born
 // on the board and an agent started by hand offer identical choices.
-const MODEL_OPTIONS = ['opus-5', 'sonnet-4.5', 'haiku'];
+const modelPickOptions = computed(() => modelOptions(local.models));
+// The effort ladder narrows to the chosen model's own (empty for a non-reasoning model);
+// «за замовчуванням» or an unknown alias keeps the full ladder. Labels stay ours (lib/effort).
+const effortPickOptions = computed(() => {
+  const allowed = effortOptions(local.models, draftModel.value || undefined);
+  return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value));
+});
 const PREFIX_OPTIONS = ['feature', 'fix', 'refactoring', 'chore'];
 const PLATFORM_OPTIONS = ['backend', 'web', 'mobile'];
 

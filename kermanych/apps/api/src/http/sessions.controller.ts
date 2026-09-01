@@ -1,7 +1,7 @@
 // apps/api/src/http/sessions.controller.ts
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from "@nestjs/common";
 import { isThinkingLevel } from "@kermanych/core";
-import type { BranchPrefix, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft } from "@kermanych/core";
+import type { BranchPrefix, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft, ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
@@ -70,6 +70,19 @@ export class SessionsController {
     if (!isThinkingLevel(b.level)) throw new BadRequestException(`unknown effort level ${JSON.stringify(b.level)}`);
     try {
       return await this.sup.setEffort(id, b.level);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  // Model and/or reasoning effort of an existing session. `provider` is required alongside a
+  // model because omp's set_model is addressed by provider + id, and the picker always has it
+  // from GET /models — a body without it is a caller that guessed.
+  @Post(":id/model")
+  async setModel(@Param("id") id: string, @Body() b: { model?: string; provider?: string; effort?: ThinkingLevel }) {
+    if (b.model && !b.provider) throw new BadRequestException("провайдер моделі не вказано");
+    try {
+      return await this.sup.setSessionModel(id, b);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }

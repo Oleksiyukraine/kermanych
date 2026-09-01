@@ -7,6 +7,7 @@ import { FsController } from "./http/fs.controller";
 import { UsageController } from "./http/usage.controller";
 import { SkillsController } from "./http/skills.controller";
 import { ManagementController } from "./http/management.controller";
+import { ModelsController } from "./http/models.controller";
 import { RegistryService } from "./registry/registry.service";
 import { WorktreeService } from "./worktree/worktree.service";
 import { SupervisorService } from "./supervisor/supervisor.service";
@@ -20,14 +21,18 @@ import { CloudController } from "./cloud/cloud.controller";
 import { CloudSyncService } from "./cloud/cloud-sync.service";
 import { SkillsService } from "./skills/skills.service";
 import { ManagementChatService } from "./management/management-chat.service";
+import { ModelsService } from "./models/models.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ModelsController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
     AuthService,
     SkillsService,
+    // The local omp model catalog (`omp models --json`), read by GET /models and by the
+    // supervisor when a running session's model is changed by provider + id.
+    ModelsService,
     // The Менеджмент assistant. Depends on RegistryService alone: it resolves the scoped
     // workspace's local repo paths and drives its own omp children, and it deliberately
     // knows nothing about SupervisorService — this chat has no session, branch or worktree.
