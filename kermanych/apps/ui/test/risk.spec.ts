@@ -18,7 +18,6 @@ import {
   needsEscalation,
   parseAmount,
   proximityOf,
-  registerGaps,
   responsesFor,
   reviewOverdue,
   sortRisks,
@@ -156,30 +155,6 @@ describe('topByExposure', () => {
       risk({ code: 'R-4', exposure: 25, status: 'closed', closureNote: 'x' }),
     ];
     expect(topByExposure(rows, 2).map((r) => r.code)).toEqual(['R-2', 'R-3']);
-  });
-});
-
-describe('registerGaps', () => {
-  it('names the mandatory IT categories with nothing live filed against them', () => {
-    const gaps = registerGaps([
-      risk({ code: 'R-1', category: 'security' }),
-      risk({ code: 'R-2', category: 'technical' }),
-    ]);
-    expect(gaps).not.toContain('security');
-    expect(gaps).toContain('data_migration');
-    expect(gaps).toContain('ai_model');
-    // `technical` is not one of the categories an audit forces in, so covering it proves
-    // nothing and its absence is never reported.
-    expect(gaps).not.toContain('technical');
-  });
-
-  // A closed risk is not coverage: the category was considered once and the register moved
-  // on, which is exactly the state worth re-checking.
-  it('does not let a closed row count as coverage', () => {
-    const gaps = registerGaps([
-      risk({ code: 'R-1', category: 'licensing', status: 'closed', closureNote: 'x' }),
-    ]);
-    expect(gaps).toContain('licensing');
   });
 });
 

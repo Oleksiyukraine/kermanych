@@ -81,24 +81,21 @@ export const REVIEW_CADENCE_DAYS = 7;
 
 export type Labelled<T extends string> = { value: T; label: string };
 
-// `mandatory` marks the IT-specific categories an audit expects to find considered in every
-// register. They are not required on every ROW — they are required to have been THOUGHT
-// about, which is what registerGaps() reports.
-export const RISK_CATEGORIES: readonly (Labelled<RiskCategory> & { mandatory: boolean })[] = [
-  { value: 'technical', label: 'Технічний', mandatory: false },
-  { value: 'security', label: 'Безпека та захист даних (GDPR)', mandatory: true },
-  { value: 'vendor', label: 'Постачальник, SaaS-залежність, vendor lock-in', mandatory: true },
-  { value: 'resource', label: 'Ресурси команди', mandatory: false },
-  { value: 'external', label: 'Зовнішні чинники', mandatory: false },
-  { value: 'compliance', label: 'Комплаєнс і регуляторика', mandatory: false },
-  { value: 'organizational', label: 'Організаційний', mandatory: false },
-  { value: 'legacy', label: 'Легасі-інтеграції та технічний борг', mandatory: true },
-  { value: 'key_person', label: 'Залежність від ключової людини', mandatory: true },
-  { value: 'infrastructure', label: 'Середовища та інфраструктура', mandatory: true },
-  { value: 'data_migration', label: 'Якість міграції даних', mandatory: true },
-  { value: 'performance', label: 'Нефункціональні вимоги, продуктивність', mandatory: true },
-  { value: 'licensing', label: 'Ліцензування', mandatory: true },
-  { value: 'ai_model', label: 'AI/модель і використання даних', mandatory: true },
+export const RISK_CATEGORIES: readonly Labelled<RiskCategory>[] = [
+  { value: 'technical', label: 'Технічний' },
+  { value: 'security', label: 'Безпека та захист даних (GDPR)' },
+  { value: 'vendor', label: 'Постачальник, SaaS-залежність, vendor lock-in' },
+  { value: 'resource', label: 'Ресурси команди' },
+  { value: 'external', label: 'Зовнішні чинники' },
+  { value: 'compliance', label: 'Комплаєнс і регуляторика' },
+  { value: 'organizational', label: 'Організаційний' },
+  { value: 'legacy', label: 'Легасі-інтеграції та технічний борг' },
+  { value: 'key_person', label: 'Залежність від ключової людини' },
+  { value: 'infrastructure', label: 'Середовища та інфраструктура' },
+  { value: 'data_migration', label: 'Якість міграції даних' },
+  { value: 'performance', label: 'Нефункціональні вимоги, продуктивність' },
+  { value: 'licensing', label: 'Ліцензування' },
+  { value: 'ai_model', label: 'AI/модель і використання даних' },
 ];
 
 export const RISK_KINDS: readonly Labelled<RiskKind>[] = [
@@ -240,15 +237,6 @@ export function topByExposure(risks: readonly WorkspaceRisk[], n: number): Works
         a.code.localeCompare(b.code),
     )
     .slice(0, n);
-}
-
-// The IT-specific categories with nothing live filed against them. Not an error — a project
-// may genuinely carry no licensing risk — but a register that has never once considered data
-// migration or key-person dependency is a register that has not been worked, and this is
-// what «force them into every register» looks like on a screen.
-export function registerGaps(risks: readonly WorkspaceRisk[]): RiskCategory[] {
-  const covered = new Set(risks.filter(isLive).map((r) => r.category));
-  return RISK_CATEGORIES.filter((c) => c.mandatory && !covered.has(c.value)).map((c) => c.value);
 }
 
 export const cellKey = (probability: number, impact: number): string => `${probability}:${impact}`;

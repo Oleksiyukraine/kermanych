@@ -66,28 +66,13 @@
       </article>
     </div>
 
-    <!-- The IT categories an audit expects every register to have considered. Clicking one
-         opens the editor already filed under it. -->
-    <div v-if="gaps.length" class="risk__gaps">
-      <span class="risk__gaps-label mono">не покрито жодним живим ризиком</span>
-      <button
-        v-for="c in gaps"
-        :key="c"
-        type="button"
-        class="risk__gap"
-        @click="createIn(c)"
-      >
-        {{ categoryLabel(c) }}
-      </button>
-    </div>
-
     <div class="risk__toolbar">
       <KField v-model="filter.query" placeholder="Пошук за формулюванням або номером" />
       <KSelect v-model="categoryModel" :options="CATEGORY_OPTIONS" placeholder="Усі категорії" />
       <KSelect v-model="statusModel" :options="STATUS_OPTIONS" />
       <KSelect v-model="sortModel" :options="SORT_OPTIONS" />
       <KCheckbox v-model="filter.aboveTolerance" label="Лише понад толерантність" />
-      <KBtn variant="primary" @click="createIn()">+ Новий ризик</KBtn>
+      <KBtn variant="primary" @click="create()">+ Новий ризик</KBtn>
     </div>
 
     <p v-if="store.loadError" class="risk__error">
@@ -199,7 +184,6 @@
       :workspace-id="workspaceId"
       :workspace-name="workspaceName"
       :risk="editing"
-      :initial-category="pendingCategory"
       :members="memberOptions"
     />
   </section>
@@ -212,8 +196,8 @@
 // workspace.
 //
 // It holds view state (filter, sort, which row is open) and nothing else: every rule it
-// applies — scoring, tolerance, review cadence, top-N, register gaps — comes from
-// lib/risk.ts, and every write goes through stores/risks.ts.
+// applies — scoring, tolerance, review cadence, top-N — comes from lib/risk.ts, and every
+// write goes through stores/risks.ts.
 import { computed, reactive, ref, watch } from 'vue';
 import type { RiskCategory, WorkspaceRisk } from '@kermanych/cloud';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
@@ -248,7 +232,6 @@ import {
   needsEscalation,
   proximityOf,
   quantifiedCount,
-  registerGaps,
   responseLabel,
   reviewOverdue,
   sortRisks,
@@ -334,7 +317,6 @@ const reserve = computed(() => contingencyReserve(all.value));
 const quantified = computed(() => quantifiedCount(all.value));
 const counts = computed(() => matrixCounts(all.value));
 const top = computed(() => topByExposure(all.value, 5));
-const gaps = computed(() => registerGaps(all.value));
 
 const rows = computed(() => sortRisks(filterRisks(all.value, filter), sort.value));
 
@@ -377,15 +359,10 @@ function edit(risk: WorkspaceRisk): void {
   editorOpen.value = true;
 }
 
-// A gap tag opens the editor already filed under the category it named, so closing a gap is
-// one click plus the statement.
-function createIn(category?: RiskCategory): void {
+function create(): void {
   editing.value = undefined;
-  pendingCategory.value = category;
   editorOpen.value = true;
 }
-
-const pendingCategory = ref<RiskCategory | undefined>(undefined);
 
 async function review(risk: WorkspaceRisk): Promise<void> {
   reviewing.value = risk.id;
@@ -583,44 +560,6 @@ function rowClass(risk: WorkspaceRisk): string | undefined {
 
 .risk__score--extreme {
   background: color-mix(in srgb, var(--k-danger) 40%, transparent);
-}
-
-.risk__gaps {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--k-sp-2);
-  padding: var(--k-sp-2) var(--k-sp-3);
-  background: color-mix(in srgb, var(--k-warning) 10%, transparent);
-  border-left: var(--k-rule-strong) solid var(--k-warning);
-  border-radius: 0 var(--k-r-sm) var(--k-r-sm) 0;
-}
-
-.risk__gaps-label {
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--k-muted);
-}
-
-.risk__gap {
-  appearance: none;
-  padding: 2px var(--k-sp-2);
-  font-family: var(--k-font-ui);
-  font-size: var(--k-fs-xs);
-  color: var(--k-text);
-  background: transparent;
-  border: var(--k-rule-thin) dashed var(--k-line-strong);
-  border-radius: var(--k-r-pill);
-  cursor: pointer;
-  transition:
-    border-color 0.16s ease,
-    background 0.16s ease;
-
-  &:hover {
-    border-style: solid;
-    background: color-mix(in srgb, var(--k-surface2) 70%, transparent);
-  }
 }
 
 .risk__toolbar {
