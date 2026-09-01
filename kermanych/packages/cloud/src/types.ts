@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus } from "@kermanych/core";
+import type { RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same ten labels.
@@ -62,6 +62,9 @@ export type Task = {
   createdBy?: string;
   // Launch params the assignee's machine feeds into registry.createSession().
   model?: string;
+  // omp reasoning effort, stored beside `model` and fed to the launch the same way. Free
+  // text in Postgres (omp owns the vocabulary), taken at its word here — see toTask().
+  effort?: ThinkingLevel;
   prefix?: string;
   platform?: string;
   // `tasks.worktree` is `not null default true`, so unlike every other launch param this
@@ -84,6 +87,7 @@ export type TaskInsert = {
   description?: string;
   assigneeId?: string;
   model?: string;
+  effort?: ThinkingLevel | ""; // "" from the board's shared create/edit form; toTaskRow nulls it
   prefix?: string;
   platform?: string;
   // Supplied ONLY by the one-time publication of pre-cutover local backlog rows, which
@@ -101,6 +105,7 @@ export type TaskPatch = {
   description?: string;
   assigneeId?: string | null; // null clears the assignee
   model?: string;
+  effort?: ThinkingLevel | ""; // "" clears the column (toTaskRow turns a blank into null)
   prefix?: string;
   platform?: string;
   worktree?: boolean;

@@ -6,7 +6,7 @@ import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import type { Task, TaskInsert, TaskPatch, TaskStatus } from "./types";
 
 const TASK_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, prefix, platform, kind, branch, worktree, image_paths, created_at, updated_at";
+  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, image_paths, created_at, updated_at";
 
 type TaskRow = {
   id: string;
@@ -18,6 +18,7 @@ type TaskRow = {
   // `on delete set null`: a task outlives the account that filed it.
   created_by: string | null;
   model: string | null;
+  effort: string | null;
   prefix: string | null;
   platform: string | null;
   worktree: boolean;
@@ -44,6 +45,7 @@ export function toTask(row: TaskRow): Task {
   if (row.assignee_id !== null) t.assigneeId = row.assignee_id;
   if (row.created_by !== null) t.createdBy = row.created_by;
   if (row.model !== null) t.model = row.model;
+  if (row.effort !== null) t.effort = row.effort as Task["effort"];
   if (row.prefix !== null) t.prefix = row.prefix;
   if (row.platform !== null) t.platform = row.platform;
   if (row.kind !== null) t.kind = row.kind;
@@ -64,6 +66,7 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   if (patch.description !== undefined) row.description = patch.description.trim() || null;
   if (patch.assigneeId !== undefined) row.assignee_id = patch.assigneeId;
   if (patch.model !== undefined) row.model = patch.model.trim() || null;
+  if (patch.effort !== undefined) row.effort = patch.effort.trim() || null;
   if (patch.prefix !== undefined) row.prefix = patch.prefix.trim() || null;
   if (patch.platform !== undefined) row.platform = patch.platform.trim() || null;
   // A boolean, so no trim/blank-to-null step: `false` is a value, not an empty field.
@@ -116,6 +119,7 @@ export async function createTask(
       description: input.description,
       assigneeId: input.assigneeId,
       model: input.model,
+      effort: input.effort,
       prefix: input.prefix,
       platform: input.platform,
       kind: input.kind,

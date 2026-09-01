@@ -127,6 +127,7 @@
         />
         <div class="board__form-row">
           <KSelect v-model="draftModel" label="Модель" :options="MODEL_OPTIONS" placeholder="за замовчуванням" />
+          <KSelect v-model="draftEffort" label="Рівень роздумів" :options="EFFORT_OPTIONS" placeholder="за замовчуванням" />
           <KSelect v-model="draftPrefix" label="Тип" :options="PREFIX_OPTIONS" placeholder="feature" />
           <KSelect
             v-model="draftPlatform"
@@ -246,7 +247,7 @@
 // on the assignee's own machine, which is why «Запустити» needs a local binding.
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { Project } from '@kermanych/core';
+import type { Project, ThinkingLevel } from '@kermanych/core';
 import type { Task, TaskStatus, WorkspaceMember } from '@kermanych/cloud';
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import { useAuth } from 'stores/auth';
@@ -264,6 +265,7 @@ import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
 import { useDelayedTrue } from '../composables/useDelayedTrue';
 import { relativeTime } from '../lib/time';
+import { EFFORT_OPTIONS } from '../lib/effort';
 import { handleOf, resolveAssignee } from '../lib/members';
 import { api } from '../lib/api';
 import { installReconcile } from '../lib/reconcile';
@@ -915,6 +917,7 @@ const draftProject = ref('');
 const draftTitle = ref('');
 const draftDescription = ref('');
 const draftModel = ref('');
+const draftEffort = ref<ThinkingLevel | ''>('');
 const draftPrefix = ref('');
 const draftPlatform = ref('');
 const draftBranch = ref('');
@@ -952,6 +955,7 @@ function openCreate(): void {
   // settings); an EDIT keeps the card's own. `draftProject` is set just above.
   const createDefault = cloud.byId.get(draftProject.value);
   draftModel.value = createDefault?.defaultModel ?? '';
+  draftEffort.value = '';
   draftPrefix.value = '';
   draftPlatform.value = '';
   draftBranch.value = '';
@@ -966,6 +970,7 @@ function openEdit(task: Task): void {
   draftTitle.value = task.title;
   draftDescription.value = task.description ?? '';
   draftModel.value = task.model ?? '';
+  draftEffort.value = task.effort ?? '';
   draftPrefix.value = task.prefix ?? '';
   draftPlatform.value = task.platform ?? '';
   draftBranch.value = task.branch ?? '';
@@ -984,6 +989,7 @@ async function submitEditor(): Promise<void> {
     title: draftTitle.value.trim(),
     description: draftDescription.value,
     model: draftModel.value,
+    effort: draftEffort.value,
     prefix: draftPrefix.value,
     platform: draftPlatform.value,
     branch: draftBranch.value,
