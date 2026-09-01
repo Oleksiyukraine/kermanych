@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import type { Project } from '@kermanych/core';
 import type {
+  AssignableRole,
   CloudProject,
   CloudProjectPatch,
   CloudWorkspacePatch,
@@ -21,6 +22,7 @@ import {
   patchProject as cloudPatchProject,
   patchWorkspace as cloudPatchWorkspace,
   removeMember as cloudRemoveMember,
+  setMemberRole as cloudSetMemberRole,
 } from '@kermanych/cloud';
 import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
@@ -346,6 +348,22 @@ export const useProjects = defineStore('projects', () => {
     };
   }
 
+  // The role change lands server-side (set_workspace_member_role rpc) and comes back
+  // with the joined profile; merge it in by user id. A refusal throws — the caller
+  // surfaces it — so there is nothing to roll back here.
+  async function setMemberRole(
+    workspaceId: string,
+    userId: string,
+    role: AssignableRole,
+  ): Promise<WorkspaceMember> {
+    const m = await cloudSetMemberRole(auth.client, workspaceId, userId, role);
+    members.value = {
+      ...members.value,
+      [workspaceId]: (members.value[workspaceId] ?? []).map((x) => (x.userId === m.userId ? m : x)),
+    };
+    return m;
+  }
+
   // Deleting a project is a CLOUD act — there is no local delete route. The local rows follow
   // through load()'s prune, which never drops a row that still owns sessions.
   async function remove(id: string): Promise<void> {
@@ -410,6 +428,7 @@ export const useProjects = defineStore('projects', () => {
     loadMembers,
     inviteMember,
     removeMember,
+    setMemberRole,
     isOwner,
     isWorkspaceOwner,
   };

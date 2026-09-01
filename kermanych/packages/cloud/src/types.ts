@@ -44,10 +44,16 @@ export type CloudProject = {
   createdAt: string;
 };
 
+export type WorkspaceRole = "owner" | "manager" | "developer";
+
+// The roles the owner may assign through set_workspace_member_role. 'owner' is
+// excluded: it is the creator's seat (workspaces.owner_id) and transfer is out of scope.
+export type AssignableRole = Exclude<WorkspaceRole, "owner">;
+
 export type WorkspaceMember = {
   workspaceId: string;
   userId: string;
-  role: "owner" | "member";
+  role: WorkspaceRole;
   addedAt: string;
   profile?: Profile; // joined when the caller asks for it
 };
