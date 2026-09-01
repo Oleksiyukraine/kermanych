@@ -352,6 +352,9 @@ export class SupervisorService implements OnModuleDestroy {
       worktree,
       baseBranch,
       model: task.model,
+      // Unvalidated, exactly like `model`: the board stores a free-text launch parameter and
+      // omp is the only authority on what it accepts — clamping happens there, not here.
+      effort: task.effort,
       prefix,
       platform,
     });

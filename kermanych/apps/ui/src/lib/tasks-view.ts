@@ -4,7 +4,7 @@
 // for real — their job is to grey a control out before the refusal, never to be the
 // refusal.
 import type { Task, TaskInsert, TaskPatch } from '@kermanych/cloud';
-import type { BranchPrefix, Platform } from '@kermanych/core';
+import type { BranchPrefix, Platform, ThinkingLevel } from '@kermanych/core';
 
 // The optional fields spell out `| undefined` because the launcher CLEARS a select by
 // assigning undefined, and exactOptionalPropertyTypes refuses that against a bare `?:`.
@@ -12,6 +12,7 @@ export type LauncherDraft = {
   name: string;
   task: string;
   model?: string | undefined;
+  effort?: ThinkingLevel | undefined;
   prefix: BranchPrefix;
   platform?: Platform | undefined;
   worktree: boolean;
@@ -32,6 +33,7 @@ export function taskInsertFromDraft(
     title: draft.name.trim(),
     description: draft.task.trim(),
     ...(draft.model ? { model: draft.model } : {}),
+    ...(draft.effort ? { effort: draft.effort } : {}),
     prefix: draft.prefix,
     ...(draft.platform ? { platform: draft.platform } : {}),
     worktree: draft.worktree,
@@ -48,6 +50,7 @@ export function taskPatchFromDraft(draft: LauncherDraft): TaskPatch {
     title: draft.name.trim(),
     description: draft.task.trim(),
     model: draft.model ?? '',
+    effort: draft.effort ?? '',
     prefix: draft.prefix,
     platform: draft.platform ?? '',
     worktree: draft.worktree,

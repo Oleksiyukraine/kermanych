@@ -466,6 +466,11 @@
               >{{ opt }}</button>
             </div>
           </div>
+
+          <div class="agents-launcher__block">
+            <div class="agents-launcher__label">Рівень роздумів</div>
+            <KSelect v-model="draftEffort" :options="EFFORT_OPTIONS" placeholder="за замовчуванням" />
+          </div>
         </div>
       </div>
 
@@ -664,6 +669,7 @@ import { useImageAttach } from '../composables/useImageAttach';
 import { useNow } from '../composables/useNow';
 import { relativeTime } from '../lib/time';
 import { tokens, usageTokens, usd } from '../lib/format';
+import { EFFORT_OPTIONS } from '../lib/effort';
 import { useResizableWidth } from '../composables/useResizableWidth';
 
 // The Агенти screen (design-system section 07): the board of session cards for whatever is
@@ -1276,6 +1282,9 @@ const launcherOpen = ref(false);
 const draftName = ref('');
 const draftTask = ref('');
 const draftModel = ref('opus-5');
+// Reasoning effort for the launch, the other half of `model`. '' is «за замовчуванням» —
+// the card stores nothing and omp picks. A card being edited keeps its own.
+const draftEffort = ref<ThinkingLevel | ''>('');
 // The segmented pickers offer core's vocabularies verbatim — the same constants openLauncher
 // validates a card's free-text launch params against, so a prefix added to core cannot show
 // up as accepted-but-unpickable here.
@@ -1380,6 +1389,7 @@ function openLauncher(card?: Task): void {
   // the synced default so this works offline like the rest of the launch path.
   const launchDefault = card ? undefined : store.projects.find((p) => p.id === launchProjectId.value);
   draftModel.value = card?.model ?? launchDefault?.defaultModel ?? 'opus-5';
+  draftEffort.value = card?.effort ?? '';
   // The cloud stores launch params as free text; the local vocabularies are the authority,
   // exactly as createSessionFromTask validates them server-side.
   draftPrefix.value = (BRANCH_PREFIXES as readonly string[]).includes(card?.prefix ?? '')
@@ -1415,6 +1425,7 @@ function openTaskFromText(text: string): void {
   // New task from a selection: same project default model as openLauncher's new-task branch.
   const textDefault = store.projects.find((p) => p.id === launchProjectId.value);
   draftModel.value = textDefault?.defaultModel ?? 'opus-5';
+  draftEffort.value = '';
   draftPrefix.value = 'feature';
   draftPlatform.value = undefined;
   draftWorktree.value = true;
@@ -1455,6 +1466,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     name: draftName.value.trim(),
     task: draftTask.value.trim(),
     model: draftModel.value.trim() || undefined,
+    effort: draftEffort.value || undefined,
     prefix: draftPrefix.value,
     platform: draftPlatform.value,
     worktree: draftWorktree.value,

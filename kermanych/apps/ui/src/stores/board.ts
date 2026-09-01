@@ -185,6 +185,12 @@ export const useBoard = defineStore('board', () => {
     if (patch.platform !== undefined) next.platform = patch.platform;
     if (patch.kind !== undefined) next.kind = patch.kind;
     if (patch.branch !== undefined) next.branch = patch.branch;
+    // '' is the «за замовчуванням» clear (toTaskRow nulls it), so drop the key rather than
+    // storing a blank that is not a valid ThinkingLevel.
+    if (patch.effort !== undefined) {
+      if (patch.effort) next.effort = patch.effort;
+      else delete next.effort;
+    }
     return next;
   }
 
