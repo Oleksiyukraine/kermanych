@@ -33,6 +33,8 @@ export type CloudProject = {
   // The «за замовчуванням» a new task/agent in this project pre-selects: `defaultModel` is an
   // omp model id. Absent = leave the choice to omp, which is what an empty picker already means.
   defaultModel?: string;
+  // `defaultEffort` an omp thinking level, the reasoning half of the same launch default.
+  defaultEffort?: ThinkingLevel;
   carryFiles: string[];
   envKeys: string[]; // key NAMES only — values never leave the bound repo's .env
   color?: string;

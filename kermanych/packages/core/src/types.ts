@@ -12,7 +12,7 @@ export type TodoPhase = { id: string; name: string; tasks: TodoTask[] };
 // `id` is the cloud project UUID, `localRepoPath` is THIS machine's binding ("" when
 // unbound), and the rest is an offline cache of the cloud config so launching never
 // needs the network (design D1 / Requirement 7).
-export type Project = { id: string; name: string; localRepoPath: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; defaultModel?: string; conventions?: string; createdAt: string };
+export type Project = { id: string; name: string; localRepoPath: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel; conventions?: string; createdAt: string };
 
 export type EnvEntry = { key: string; value: string };
 export type EnvFileView = { entries: EnvEntry[]; ignored: boolean };

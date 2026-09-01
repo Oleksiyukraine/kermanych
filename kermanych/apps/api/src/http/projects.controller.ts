@@ -1,6 +1,7 @@
 // apps/api/src/http/projects.controller.ts
 import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Put, Query } from "@nestjs/common";
 import type { CloudProject } from "@kermanych/cloud";
+import type { ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { RegistryService } from "../registry/registry.service";
 import { EnvFileService } from "../env/env-file.service";
@@ -35,7 +36,7 @@ export class ProjectsController {
   @Patch(":id")
   async update(
     @Param("id") id: string,
-    @Body() b: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; defaultModel?: string; conventions?: string },
+    @Body() b: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string },
   ) {
     try {
       return await this.sup.updateProject(id, b);
