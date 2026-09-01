@@ -37,6 +37,15 @@ export {
   type BranchPrefix,
 } from "./worktree-names";
 export { PLATFORMS, type Platform } from "./platform";
+export {
+  RELEASE_PLATFORMS,
+  RELEASE_PLATFORM_LABELS,
+  isReleasePlatform,
+  type ReleasePlatform,
+  type ReleaseCommit,
+  type ReleaseNotesAsk,
+  type ReleaseNotesReply,
+} from "./release-notes";
 export { THINKING_LEVELS, isThinkingLevel, type ThinkingLevel } from "./thinking";
 export {
   ASSIGNED_BLOCK_HEADER,

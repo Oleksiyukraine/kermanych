@@ -29,6 +29,10 @@ export type {
   WorkspaceRiskInsert,
   WorkspaceRiskPatch,
   WorkspaceRiskEvent,
+  ReleasePlatform,
+  WorkspaceReleaseNote,
+  WorkspaceReleaseNoteInsert,
+  WorkspaceReleaseNotePatch,
 } from "./types";
 
 export type { SupabaseClient, CloudEnv, CloudClientOptions } from "./client";
@@ -104,3 +108,10 @@ export {
   patchWorkspaceRisk,
   listRiskEvents,
 } from "./risks";
+
+export {
+  toWorkspaceReleaseNote,
+  listWorkspaceReleaseNotes,
+  createWorkspaceReleaseNote,
+  patchWorkspaceReleaseNote,
+} from "./release-notes";

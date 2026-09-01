@@ -22,7 +22,9 @@
 
 // What the assistant may do with a section.
 //   read_write — it has a store and a table; the assistant may read it and change it.
-//   read       — a screen exists but nothing persists, so the assistant may describe it only.
+//   read       — a screen exists, but the assistant may describe it only: either nothing
+//                persists behind it, or (Release Notes) the store is written by the screen
+//                itself and the assistant has no action vocabulary for it.
 //   none       — a placeholder; there is nothing to read and nothing to write.
 export type ManagementCapability = "read_write" | "read" | "none";
 
@@ -69,7 +71,19 @@ export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
     hint: "ризики й мітигації",
     capability: "read_write",
   },
-  { name: "management-releases", path: "release-notes", label: "Release Notes", hint: "зміни по релізах", capability: "none", limitation: NOT_BUILT },
+  // A real screen and a real store (`workspace_release_notes`), but still not writable from
+  // the chat: generating a note reads git history on THIS machine and spawns its own omp
+  // child — a pipeline the action executor does not carry. The limitation says where the
+  // pen actually is, so the refusal reads as directions rather than as a shrug.
+  {
+    name: "management-releases",
+    path: "release-notes",
+    label: "Release Notes",
+    hint: "зміни по релізах",
+    capability: "read",
+    limitation:
+      "реліз-ноти генеруються, редагуються й копіюються на самому екрані розділу — асистент може лише розповісти про вже збережені",
+  },
   { name: "management-capacity", path: "team-capacity", label: "Team Capacity", hint: "навантаження команди", capability: "none", limitation: NOT_BUILT },
   {
     name: "management-integrations",

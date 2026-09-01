@@ -8,6 +8,8 @@ import type {
   Project,
   EnvFileView,
   Session,
+  ReleaseNotesAsk,
+  ReleaseNotesReply,
   SubscriptionUsage,
   ProjectSkillsPayload,
   TranscriptEntry,
@@ -189,6 +191,12 @@ export const api = {
   // than a fresh transcript in front of a model that still remembers the old one.
   resetManagementChat: (conversationId: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>('/management/chat/reset', { conversationId }),
+
+  // Write release notes from the bound repo's git history — local-only for the same
+  // reason as the chat above. Generation only: the document comes back to the browser,
+  // and stores/release-notes.ts saves it to the cloud under the user's own JWT.
+  generateReleaseNotes: (ask: ReleaseNotesAsk): Promise<ReleaseNotesReply> =>
+    post<ReleaseNotesReply>('/management/release-notes', ask),
 
   // The chat is promoted onto a card the UI has already minted: `taskId` is that card, and
   // the guard reads who may run it from its own token, never from this body.

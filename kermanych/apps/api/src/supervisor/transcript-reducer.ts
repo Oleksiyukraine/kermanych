@@ -1,4 +1,4 @@
-import { clampLines, toolDisplay, type RpcEvent, type ToolLine, type TranscriptEntry } from "@kermanych/core";
+import { clampLines, toolDisplay, type RpcEvent, type ToolLine, type TranscriptEntry, type Usage } from "@kermanych/core";
 
 export type ToolEntry = Extract<TranscriptEntry, { kind: "tool" }>;
 export type TurnEntry = Extract<TranscriptEntry, { kind: "turn" }>;
@@ -30,6 +30,38 @@ export function turnEntry(id: string, at: number, m: TurnMeta): TurnEntry {
 // not produce a turn of zeros — that would assert the turn was free rather than unrecorded.
 export function hasTurnMeta(m: TurnMeta | undefined): m is TurnMeta {
   return m !== undefined && (m.model !== undefined || m.duration !== undefined || m.usage !== undefined);
+}
+
+// The plan spend of one whole turn, summed across its `message_end` frames: a turn that
+// called three tools closes four assistant messages, and reporting only the last one would
+// tell the operator a long turn was nearly free. Shared by the management chat and the
+// release-notes generator, so both report a turn's cost with the same arithmetic.
+export type TurnSpend = { usage?: Usage; model?: string };
+
+export function sumTurnUsage(events: RpcEvent[], at: number): TurnSpend {
+  let usage: Usage | undefined;
+  let model: string | undefined;
+  for (const e of events) {
+    if (e.type !== "message_end") continue;
+    // RpcEvent carries an index-signature fallback member; Extract recovers the concrete
+    // typed member, exactly as reduceRpcEvents does for the same frame.
+    const m = (e as Extract<RpcEvent, { type: "message_end" }>).message;
+    if (m?.role !== "assistant" || !hasTurnMeta(m)) continue;
+    const t = turnEntry("turn", at, m);
+    if (t.model !== undefined) model = t.model;
+    const u = t.usage;
+    if (!u) continue;
+    usage = usage
+      ? {
+          input: usage.input + u.input,
+          output: usage.output + u.output,
+          cacheRead: usage.cacheRead + u.cacheRead,
+          cacheWrite: usage.cacheWrite + u.cacheWrite,
+          cost: usage.cost + u.cost,
+        }
+      : u;
+  }
+  return { ...(usage === undefined ? {} : { usage }), ...(model === undefined ? {} : { model }) };
 }
 
 export type ReduceOpts = {
