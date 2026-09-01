@@ -90,6 +90,7 @@
           :project="projectName(task.projectId)"
           :time="relativeTime(task.updatedAt, now)"
           :status="task.status"
+          :assignee="resolveAssignee(task.assigneeId, membersOf(task.projectId))"
           @click="openEdit(task)"
         />
 
@@ -135,16 +136,26 @@
           />
         </div>
         <KField v-model="draftBranch" label="Базова гілка" placeholder="за замовчуванням проєкту" />
+        <!-- The label is hoisted OUT of KSelect so the avatar can be centred on the
+             control itself: inside the component the label and the input are one column,
+             and centring the face on that column parks it in the gap between them. -->
         <div v-if="editingTask" class="board__assign">
-          <img v-if="avatarOf(editingTask)" :src="avatarOf(editingTask)" class="board__avatar" alt="" />
-          <KSelect
-            label="Виконавець"
-            :model-value="editingTask.assigneeId ?? ''"
-            :options="editorAssigneeOptions"
-            placeholder="не призначено"
-            :disabled="isActiveTask(editingTask) || !canAssign(editingTask)"
-            @update:model-value="(id: string) => onAssign(editingTask!, id)"
-          />
+          <span class="board__assign-label">Виконавець</span>
+          <div class="board__assign-row">
+            <KAvatar
+              :name="editingAssignee?.name ?? 'Не призначено'"
+              :avatar-url="editingAssignee?.avatarUrl"
+              :empty="!editingAssignee"
+              :size="26"
+            />
+            <KSelect
+              :model-value="editingTask.assigneeId ?? ''"
+              :options="editorAssigneeOptions"
+              placeholder="не призначено"
+              :disabled="isActiveTask(editingTask) || !canAssign(editingTask)"
+              @update:model-value="(id: string) => onAssign(editingTask!, id)"
+            />
+          </div>
         </div>
         <!-- Creating: nobody holds the card yet, so tasks_guard has nobody to protect it
              from — any member may name any member, and «не призначено» stays the default. -->
@@ -248,10 +259,12 @@ import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KKanbanCard from 'components/kit/KKanbanCard.vue';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
+import KAvatar from 'components/kit/KAvatar.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
 import { useDelayedTrue } from '../composables/useDelayedTrue';
 import { relativeTime } from '../lib/time';
+import { handleOf, resolveAssignee } from '../lib/members';
 import { api } from '../lib/api';
 import { installReconcile } from '../lib/reconcile';
 import { UNASSIGNED, filterTasks, scopedProjectIds } from '../lib/scope';
@@ -692,16 +705,6 @@ function membersOf(projectId: string): WorkspaceMember[] {
   return workspaceId ? cloud.members[workspaceId] ?? [] : [];
 }
 
-// One fallback chain, shared by the «Виконавці» filter and the editor's picker: if they
-// diverged, the same person would appear under two different names in two dropdowns.
-function handleOf(m: WorkspaceMember): string {
-  return m.profile?.githubUsername ?? m.profile?.displayName ?? m.userId;
-}
-
-function avatarOf(task: Task): string | undefined {
-  return membersOf(task.projectId).find((m) => m.userId === task.assigneeId)?.profile?.avatarUrl;
-}
-
 function onAssign(task: Task, userId: string): void {
   // Id-keyed like both filters. '' is KSelect's placeholder, i.e. «не призначено».
   const next = userId || null;
@@ -900,6 +903,13 @@ const editorError = ref<string | null>(null);
 const editingTask = computed(() =>
   editingId.value ? board.tasks.find((t) => t.id === editingId.value) : undefined,
 );
+
+// The same face the card shows, beside the picker that changes it: a re-assign is confirmed
+// by the picture changing, without closing the modal.
+const editingAssignee = computed(() => {
+  const task = editingTask.value;
+  return task ? resolveAssignee(task.assigneeId, membersOf(task.projectId)) : null;
+});
 
 const draftProject = ref('');
 const draftTitle = ref('');
@@ -1135,6 +1145,18 @@ function onDelete(task: Task): void {
 
 .board__assign {
   display: flex;
+  flex-direction: column;
+  /* Same label-to-control gap KSelect uses, so a hoisted label sits where its own would. */
+  gap: 6px;
+}
+
+.board__assign-label {
+  font-size: 13px;
+  color: var(--k-text);
+}
+
+.board__assign-row {
+  display: flex;
   align-items: center;
   gap: var(--k-sp-2);
 }
@@ -1142,13 +1164,6 @@ function onDelete(task: Task): void {
 .board__stale-note {
   font-size: 11.5px;
   color: var(--k-warning);
-}
-
-.board__avatar {
-  width: 18px;
-  height: 18px;
-  border: 1px solid var(--k-line-strong);
-  object-fit: cover;
 }
 
 .board__blank {
