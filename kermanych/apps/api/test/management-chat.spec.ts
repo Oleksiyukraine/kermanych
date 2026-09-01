@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { DEFAULT_HELPERS } from "@kermanych/core";
 import type { ManagementChatAsk, RpcEvent, RpcExtensionUIResponse } from "@kermanych/core";
 
 // The same seam supervisor.chat.spec.ts uses: swap the transport, keep the service. Here it
@@ -181,5 +182,25 @@ describe("ManagementChatService", () => {
     const bad = await svc.ask(ask("і ще один"));
     expect(bad.actions).toEqual([]);
     expect(bad.rejected).toEqual(["risk.create без об'єкта risk"]);
+  });
+
+  // The Менеджмент turn is templated — contract, context markers, then the operator's text —
+  // so a leading `/el10` stops being leading by the time the child sees it. Expansion has to
+  // happen on this side of buildManagementTurn or the helper silently does nothing here.
+  it("expands a helper into the turn the child receives", async () => {
+    const svc = make();
+    turns = [reply("ок")];
+    await svc.ask(ask("/el10 що в нас із ризиками?"));
+    const el10 = DEFAULT_HELPERS.find((h) => h.name === "el10")!;
+    expect(sent[0]?.text).toContain(el10.body.trim());
+    expect(sent[0]?.text).toContain("що в нас із ризиками?");
+    expect(sent[0]?.text).not.toContain("/el10");
+  });
+
+  it("reports the helper it expanded", async () => {
+    const svc = make();
+    turns = [reply("ок")];
+    const r = await svc.ask(ask("/el10 що в нас із ризиками?"));
+    expect(r.notices).toContain("хелпер «/el10» додав настанову");
   });
 });

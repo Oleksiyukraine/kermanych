@@ -3,6 +3,10 @@
     class="k-composer"
     :class="{ 'k-composer--focused': focused, 'k-composer--disabled': disabled }"
   >
+    <!-- Anchored to the composer's own box, not to the form: the panel has to sit above the
+         whole control, attachment strip included. It prevents Enter itself, so mounting it
+         inside a form is safe too — ManagementPage does exactly that. -->
+    <KHelperPicker :open="pickerOpen" @select="onHelper" @close="closePicker" />
     <KAttachStrip
       v-if="attachImages.length"
       class="k-composer__attach"
@@ -38,6 +42,14 @@
            The model and worktree chips are readings, not controls — both are fixed when omp is
            spawned — so only effort carries a caret. -->
       <div class="k-composer__controls">
+        <button
+          type="button"
+          class="k-composer__attach-btn mono"
+          v-tip="'Хелпери — команди-настанови'"
+          aria-label="Хелпери"
+          :disabled="disabled"
+          @click="pickerOpen = !pickerOpen"
+        >/</button>
         <button
           type="button"
           class="k-composer__attach-btn"
@@ -88,10 +100,12 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import type { ImageInput, ThinkingLevel, Usage } from '@kermanych/core';
+import { prependHelper, type ImageInput, type ThinkingLevel, type Usage } from '@kermanych/core';
 import KAttachStrip from './KAttachStrip.vue';
 import KChipSelect from './KChipSelect.vue';
 import KModelMark from './KModelMark.vue';
+import KHelperPicker from './KHelperPicker.vue';
+import KTag from './KTag.vue';
 import { useImageAttach } from '../../composables/useImageAttach';
 import { EFFORT_OPTIONS } from '../../lib/effort';
 import { tokens, usageTokens, usd } from '../../lib/format';
@@ -154,10 +168,28 @@ function onInput(e: Event): void {
   autoGrow();
 }
 
+// Хелпери: `/` on an empty draft opens the picker instead of typing the slash, the way `:` opens
+// an emoji picker in a messenger. Only on an EMPTY draft — mid-sentence a slash is a path, and
+// the token would expand nowhere anyway (`prependHelper` explains why).
+const pickerOpen = ref(false);
+function closePicker(): void {
+  pickerOpen.value = false;
+  fieldEl.value?.focus();
+}
+function onHelper(name: string): void {
+  emit('update:modelValue', prependHelper(props.modelValue, name));
+}
+
 // Enter sends; Shift+Enter inserts a newline. Enter mid-IME-composition is
 // ignored so committing a candidate doesn't fire the message.
 function onComposerKeydown(e: KeyboardEvent): void {
-  if (props.disabled || e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+  if (props.disabled) return;
+  if (e.key === '/' && props.modelValue === '') {
+    e.preventDefault();
+    pickerOpen.value = true;
+    return;
+  }
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
   e.preventDefault();
   submit();
 }
@@ -216,6 +248,8 @@ function submit(): void {
 
 <style scoped lang="scss">
 .k-composer {
+  // The Хелпери panel is anchored to this box, above it.
+  position: relative;
   display: flex;
   flex-direction: column;
   padding: var(--k-sp-2) var(--k-sp-3) var(--k-sp-3);

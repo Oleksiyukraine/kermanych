@@ -120,6 +120,7 @@
             aria-label="Асистент менеджменту"
             @submit.prevent="submit"
           >
+            <KHelperPicker :open="pickerOpen" @select="onHelper" @close="closePicker" />
             <textarea
               ref="fieldEl"
               v-model="draft"
@@ -131,6 +132,14 @@
               @input="autoGrow"
               @keydown="onKeydown"
             ></textarea>
+            <button
+              v-tip="'Хелпери — команди-настанови'"
+              class="mgmt__c-helpers mono"
+              type="button"
+              aria-label="Хелпери"
+              :disabled="chat.busy"
+              @click="pickerOpen = !pickerOpen"
+            >/</button>
             <!-- The plan the turn is charged to. This chat runs through the same `omp`, the
                  same provider account and the same subscription as every agent, so a message
                  here is a message debited there — the figure sits in the composer because
@@ -168,7 +177,7 @@
 // WHETHER one renders and WHICH WORKSPACE it renders for; it never renders their content.
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { MANAGEMENT_SECTIONS } from '@kermanych/core';
+import { MANAGEMENT_SECTIONS, prependHelper } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useManagementChat } from 'stores/management-chat';
@@ -177,6 +186,7 @@ import { useManagementChat } from 'stores/management-chat';
 import KNavItem from 'components/kit/KNavItem.vue';
 import { type KIconName } from 'components/kit/KIcon.vue';
 import KChatMessage from 'components/kit/KChatMessage.vue';
+import KHelperPicker from 'components/kit/KHelperPicker.vue';
 import { renderMarkdown } from '../lib/markdown';
 import { percent, planWindow } from '../lib/format';
 import { until } from '../lib/time';
@@ -263,9 +273,27 @@ function submit(): void {
   void chat.send(text, activeSection.value);
 }
 
+// Хелпери. This page has its own textarea rather than KComposer, so the picker is wired
+// twice — the panel component is shared, the caret handling is three lines either side.
+const pickerOpen = ref(false);
+function closePicker(): void {
+  pickerOpen.value = false;
+  fieldEl.value?.focus();
+}
+function onHelper(name: string): void {
+  draft.value = prependHelper(draft.value, name);
+  void nextTick(autoGrow);
+}
+
 // Enter sends; Shift+Enter inserts a newline. Enter mid-IME-composition is ignored, so
-// committing a Ukrainian or CJK candidate does not fire the message.
+// committing a Ukrainian or CJK candidate does not fire the message. `/` on an empty draft
+// opens the picker instead of typing the slash, exactly as in KComposer.
 function onKeydown(e: KeyboardEvent): void {
+  if (e.key === '/' && draft.value === '') {
+    e.preventDefault();
+    pickerOpen.value = true;
+    return;
+  }
   if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
   e.preventDefault();
   submit();
@@ -676,6 +704,8 @@ const workspaceColor = computed(() => {
 }
 
 .mgmt__composer {
+  // The Хелпери panel is anchored to this pill, above it.
+  position: relative;
   display: flex;
   // Bottom-aligned, not centred: once the field grows to three lines the controls belong on
   // the baseline of the last one, the way they sit on the only line of a single-line pill.
@@ -742,6 +772,34 @@ const workspaceColor = computed(() => {
 
   &::selection {
     background: color-mix(in srgb, var(--k-accent) 28%, transparent);
+  }
+}
+
+// The Хелпери opener. A bare slash, because that is the token it inserts and the key that
+// opens the same panel from the keyboard.
+.mgmt__c-helpers {
+  flex: none;
+  align-self: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: var(--k-rule-thin) solid var(--k-line);
+  border-radius: var(--k-r-pill);
+  background: transparent;
+  color: var(--k-muted);
+  font-size: var(--k-fs-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+
+  &:hover:not(:disabled) {
+    border-color: var(--k-text);
+    color: var(--k-text);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
   }
 }
 

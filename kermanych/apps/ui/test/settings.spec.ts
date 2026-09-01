@@ -94,6 +94,15 @@ describe('SETTINGS_CATEGORIES', () => {
     expect(triggers.label).toBe('Тригери');
   });
 
+  // Хелпери are baked into the app exactly like `AGENTS`, so they sit beside the agent
+  // catalogue at the app scope: nothing here is per-project, and the pane is read-only.
+  it('carries the helper catalogue at the app scope', () => {
+    const helpers = settingsSection('app-helpers');
+    expect(helpers.key).toBe('app-helpers');
+    expect(helpers.scope).toBe('app');
+    expect(helpers.label).toBe('Хелпери');
+  });
+
   // The default launch model is per-project cloud config, written through the same projects
   // patch as branches and conventions, so the pane lives at the project scope.
   it('carries the launch defaults at the project scope', () => {

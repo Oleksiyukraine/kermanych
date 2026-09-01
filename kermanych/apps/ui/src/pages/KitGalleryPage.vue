@@ -414,6 +414,8 @@
     <!-- composer -->
     <section class="kit__section">
       <div class="kit__label">09 · Композер</div>
+      <!-- The Хелпери picker lives inside the composer: press `/` on the empty field, or the
+           `/` button in the controls row. -->
       <KComposer
         v-model="composerDraft"
         model="opus-5"
