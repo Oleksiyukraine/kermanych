@@ -190,6 +190,22 @@
           <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
         </div>
 
+        <!-- ── PROJECT · ЗАПУСК ЗАДАЧ ───────────────────────────────────────── -->
+        <div v-else-if="section.key === 'project-defaults' && draft" class="set__form">
+          <KSelect
+            v-model="draft.defaultModel"
+            label="Модель"
+            :options="defaultModelOptions"
+            placeholder="за замовчуванням"
+            :disabled="cloudLocked"
+          />
+          <p class="set__note">
+            Підставляється в поле «Модель» попапа «Нова задача». Кожну задачу все одно можна
+            запустити з іншою — це лише те, з чого форма стартує.
+          </p>
+          <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
+        </div>
+
         <!-- ── PROJECT · БІБЛІОТЕКА СКІЛІВ ──────────────────────────────────── -->
         <!-- Mounted, not inlined: the library is a screen's worth of list, modal and
              cloud writes of its own, and it moved here whole from Менеджмент. Same
@@ -559,7 +575,7 @@
 //
 // WHAT IS DELIBERATELY ABSENT. Everything drawn here is backed by a real read and
 // a real write. Provider API keys, spend caps, a parallel-agent limit, a
-// context-warning threshold, harness paths, a default model and remappable keys
+// context-warning threshold, harness paths and remappable keys
 // have no storage, no endpoint and no column anywhere in this repo — see
 // lib/settings.ts. A panel for them would be a control that silently forgets.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -710,6 +726,7 @@ interface ProjectDraft {
   workspaceId: string;
   gitRemoteUrl: string;
   defaultBranch: string;
+  defaultModel: string;
   conventions: string;
   previewCommand: string;
   apiCommand: string;
@@ -735,6 +752,7 @@ function seedProject(): void {
     workspaceId: c?.workspaceId ?? '',
     gitRemoteUrl: c?.gitRemoteUrl ?? '',
     defaultBranch: c?.defaultBranch ?? row?.defaultBranch ?? '',
+    defaultModel: c?.defaultModel ?? row?.defaultModel ?? '',
     conventions: c?.conventions ?? row?.conventions ?? '',
     previewCommand: c?.previewCommand ?? row?.previewCommand ?? '',
     apiCommand: c?.apiCommand ?? row?.apiCommand ?? '',
@@ -781,6 +799,10 @@ function addCarryFile(): void {
   if (!path || !draft.value || draft.value.carryFiles.includes(path)) return;
   draft.value.carryFiles.push(path);
 }
+
+// The «Запуск задач» pane's model picker. The same fixed list the launcher and the board
+// editor offer on this build; «за замовчуванням» (the placeholder) leaves the choice to omp.
+const defaultModelOptions = ['opus-5', 'sonnet-4.5', 'haiku'];
 
 // ── ENV ─────────────────────────────────────────────────────────────────────
 // `entries` is the file as loaded — the baseline every edit is diffed against and
@@ -970,6 +992,7 @@ async function saveProject(): Promise<void> {
       color: d.color,
       gitRemoteUrl: d.gitRemoteUrl,
       defaultBranch: d.defaultBranch,
+      defaultModel: d.defaultModel,
       conventions: d.conventions,
       previewCommand: d.previewCommand,
       apiCommand: d.apiCommand,

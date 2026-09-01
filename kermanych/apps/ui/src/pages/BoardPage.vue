@@ -938,7 +938,10 @@ function openCreate(): void {
   draftProject.value = projectFilter.value || (projectOptions.value[0]?.value ?? '');
   draftTitle.value = '';
   draftDescription.value = '';
-  draftModel.value = '';
+  // A NEW card seeds its Модель from the chosen project's «за замовчуванням» (Запуск задач
+  // settings); an EDIT keeps the card's own. `draftProject` is set just above.
+  const createDefault = cloud.byId.get(draftProject.value);
+  draftModel.value = createDefault?.defaultModel ?? '';
   draftPrefix.value = '';
   draftPlatform.value = '';
   draftBranch.value = '';

@@ -51,6 +51,7 @@ const projectRow = {
   preview_command: "pnpm dev",
   api_command: null,
   default_branch: "main",
+  default_model: "claude-opus-4-1",
   carry_files: [".env", ".env.local"],
   env_keys: ["GITHUB_TOKEN"],
   color: "#ff563c",
@@ -78,6 +79,7 @@ describe("listProjects", () => {
       gitRemoteUrl: "git@github.com:acme/web.git",
       previewCommand: "pnpm dev",
       defaultBranch: "main",
+      defaultModel: "claude-opus-4-1",
       carryFiles: [".env", ".env.local"],
       envKeys: ["GITHUB_TOKEN"],
       color: "#ff563c",
@@ -95,7 +97,7 @@ describe("listProjects", () => {
     await listProjects(client);
     expect(queries[0]!.ops[0]).toEqual([
       "select",
-      "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, carry_files, env_keys, color, created_at",
+      "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, carry_files, env_keys, color, created_at",
     ]);
   });
 
@@ -164,6 +166,7 @@ describe("createProject", () => {
       previewCommand: "pnpm dev",
       defaultBranch: "dev",
       conventions: "   ",
+      defaultModel: "claude-opus-4-1",
     });
 
     expect(queries[0]!.ops[0]).toEqual([
@@ -176,6 +179,7 @@ describe("createProject", () => {
         color: "#ff563c",
         preview_command: "pnpm dev",
         default_branch: "dev",
+        default_model: "claude-opus-4-1",
         conventions: null,
       },
     ]);
@@ -186,11 +190,11 @@ describe("patchProject", () => {
   it("sends only the provided columns, snake-cased, emptied strings as null", async () => {
     const { client, queries } = fakeClient({ data: projectRow, error: null });
 
-    await patchProject(client, "p1", { name: " New ", conventions: "   ", envKeys: ["A", "B"], previewCommand: "pnpm dev" });
+    await patchProject(client, "p1", { name: " New ", conventions: "   ", envKeys: ["A", "B"], previewCommand: "pnpm dev", defaultModel: "  " });
 
     expect(queries[0]!.ops[0]).toEqual([
       "update",
-      { name: "New", conventions: null, env_keys: ["A", "B"], preview_command: "pnpm dev" },
+      { name: "New", conventions: null, env_keys: ["A", "B"], preview_command: "pnpm dev", default_model: null },
     ]);
     expect(queries[0]!.ops[1]).toEqual(["eq", "id", "p1"]);
   });

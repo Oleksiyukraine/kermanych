@@ -197,7 +197,7 @@ export class SupervisorService implements OnModuleDestroy {
     this.events.next({ type: "project_removed", projectId: id });
   }
 
-  async updateProject(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string }): Promise<Project> {
+  async updateProject(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; defaultModel?: string; conventions?: string }): Promise<Project> {
     if (patch.name !== undefined) {
       const name = patch.name.trim();
       if (!name) throw new Error("project name cannot be empty");
@@ -233,6 +233,7 @@ export class SupervisorService implements OnModuleDestroy {
         apiCommand: c.apiCommand,
         carryFiles: c.carryFiles,
         defaultBranch: c.defaultBranch,
+        defaultModel: c.defaultModel,
         conventions: c.conventions,
       });
       this.events.next({ type: "project_update", project });
@@ -310,6 +311,7 @@ export class SupervisorService implements OnModuleDestroy {
           apiCommand: cloudProject.apiCommand,
           carryFiles: cloudProject.carryFiles,
           defaultBranch: cloudProject.defaultBranch,
+          defaultModel: cloudProject.defaultModel,
           conventions: cloudProject.conventions,
         })
       : local;

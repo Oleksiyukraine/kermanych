@@ -7,7 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CloudProject } from "./types";
 
 const PROJECT_COLUMNS =
-  "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, carry_files, env_keys, color, created_at";
+  "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, carry_files, env_keys, color, created_at";
 
 type ProjectRow = {
   id: string;
@@ -18,6 +18,7 @@ type ProjectRow = {
   preview_command: string | null;
   api_command: string | null;
   default_branch: string | null;
+  default_model: string | null;
   carry_files: string[] | null;
   env_keys: string[] | null;
   color: string | null;
@@ -30,7 +31,7 @@ type ProjectRow = {
 export type CloudProjectPatch = Partial<
   Pick<
     CloudProject,
-    "name" | "workspaceId" | "gitRemoteUrl" | "conventions" | "previewCommand" | "apiCommand" | "defaultBranch" | "carryFiles" | "envKeys" | "color"
+    "name" | "workspaceId" | "gitRemoteUrl" | "conventions" | "previewCommand" | "apiCommand" | "defaultBranch" | "defaultModel" | "carryFiles" | "envKeys" | "color"
   >
 >;
 
@@ -52,6 +53,7 @@ export function toCloudProject(row: ProjectRow): CloudProject {
   if (row.preview_command !== null) p.previewCommand = row.preview_command;
   if (row.api_command !== null) p.apiCommand = row.api_command;
   if (row.default_branch !== null) p.defaultBranch = row.default_branch;
+  if (row.default_model !== null) p.defaultModel = row.default_model;
   if (row.color !== null) p.color = row.color;
   return p;
 }
@@ -70,6 +72,7 @@ export function toProjectRow(patch: CloudProjectPatch): Record<string, unknown> 
   if (patch.previewCommand !== undefined) row.preview_command = patch.previewCommand.trim() || null;
   if (patch.apiCommand !== undefined) row.api_command = patch.apiCommand.trim() || null;
   if (patch.defaultBranch !== undefined) row.default_branch = patch.defaultBranch.trim() || null;
+  if (patch.defaultModel !== undefined) row.default_model = patch.defaultModel.trim() || null;
   if (patch.carryFiles !== undefined) row.carry_files = patch.carryFiles;
   if (patch.envKeys !== undefined) row.env_keys = patch.envKeys;
   if (patch.color !== undefined) row.color = patch.color.trim() || null;
