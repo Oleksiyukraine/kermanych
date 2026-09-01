@@ -236,7 +236,6 @@
 // anyone. A risk leaves the register through the status field, with a note.
 import { computed, nextTick, ref, useTemplateRef, watch } from 'vue';
 import type {
-  RiskCategory,
   RiskKind,
   RiskResponse,
   RiskStatus,
@@ -286,9 +285,6 @@ const props = defineProps<{
   workspaceName: string;
   // Absent = the «new risk» form. Present = editing that row.
   risk?: WorkspaceRisk | undefined;
-  // Which category a NEW risk starts in. The register-gaps strip uses it so closing a gap is
-  // one click plus a statement; ignored when `risk` is present.
-  initialCategory?: RiskCategory | undefined;
   // Workspace members, already shaped for KSelect by the page.
   members: KSelectOption[];
 }>();
@@ -332,9 +328,7 @@ watch(
       draft.value = draftOf(props.risk);
       void store.loadEvents(props.risk.id);
     } else {
-      const fresh = emptyDraft(Date.now());
-      if (props.initialCategory) fresh.category = props.initialCategory;
-      draft.value = fresh;
+      draft.value = emptyDraft(Date.now());
     }
     errors.value = [];
     tab.value = 'risk';
