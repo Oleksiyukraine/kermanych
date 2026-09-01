@@ -16,14 +16,13 @@ import type {
 // One string literal, not a concatenation: postgrest-js parses this at the TYPE level to
 // shape the response, and a `+`-joined value degrades to GenericStringError.
 const NOTE_COLUMNS =
-  "id, workspace_id, project_id, project_name, platform, branch, range_from, range_to, title, body_md, created_at, created_by, updated_at, updated_by";
+  "id, workspace_id, project_id, project_name, branch, range_from, range_to, title, body_md, created_at, created_by, updated_at, updated_by";
 
 type NoteRow = {
   id: string;
   workspace_id: string;
   project_id: string | null;
   project_name: string;
-  platform: WorkspaceReleaseNote["platform"];
   branch: string;
   range_from: string;
   range_to: string;
@@ -41,7 +40,6 @@ export function toWorkspaceReleaseNote(row: NoteRow): WorkspaceReleaseNote {
     workspaceId: row.workspace_id,
     ...(row.project_id === null ? {} : { projectId: row.project_id }),
     projectName: row.project_name,
-    platform: row.platform,
     branch: row.branch,
     rangeFrom: row.range_from,
     rangeTo: row.range_to,
@@ -79,7 +77,6 @@ export async function createWorkspaceReleaseNote(
       workspace_id: input.workspaceId,
       ...(input.projectId === undefined ? {} : { project_id: input.projectId }),
       project_name: input.projectName,
-      platform: input.platform,
       branch: input.branch,
       range_from: input.rangeFrom,
       range_to: input.rangeTo,

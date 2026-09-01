@@ -7,8 +7,7 @@
 // INTO the prompt rather than left for the model to dig out, because the child's tools are
 // read-only (no bash, so no `git log`) — but the tools still matter: a commit subject that
 // says nothing («fix», «wip») can be resolved by reading the code it touched.
-import type { ReleaseCommit, ReleasePlatform } from "@kermanych/core";
-import { RELEASE_PLATFORM_LABELS } from "@kermanych/core";
+import type { ReleaseCommit } from "@kermanych/core";
 
 // Upper bound on the commit block, in characters. A quarter's worth of a busy repo can be
 // megabytes of commit bodies; past this the tail is dropped and the prompt says so, which
@@ -42,7 +41,6 @@ export function commitsBlock(commits: ReleaseCommit[]): { block: string; include
 export function buildReleaseNotesPrompt(input: {
   workspaceName: string;
   projectName: string;
-  platform: ReleasePlatform;
   branch: string;
   rangeFrom: string;
   rangeTo: string;
@@ -52,7 +50,7 @@ export function buildReleaseNotesPrompt(input: {
   return [
     `Ти пишеш реліз-ноти для продукту «${input.workspaceName}».`,
     ``,
-    `Платформа: ${RELEASE_PLATFORM_LABELS[input.platform]}. Репозиторій: ${input.projectName}. Гілка: ${input.branch}. Період: ${input.rangeFrom} — ${input.rangeTo} включно.`,
+    `Репозиторій: ${input.projectName}. Гілка: ${input.branch}. Період: ${input.rangeFrom} — ${input.rangeTo} включно.`,
     ``,
     `Вимоги до документа:`,
     // The requirement the user set for this feature, stated first: the reader is NOT an
@@ -62,7 +60,7 @@ export function buildReleaseNotesPrompt(input: {
     `- Згрупуй зміни за смислом: «Нове», «Покращення», «Виправлення» (заголовки другого рівня; порожні групи пропусти). Споріднені коміти об'єднуй в один пункт.`,
     `- Дрібниці, які користувач не помітить (рефакторинг, залежності, CI), збери одним реченням наприкінці або пропусти.`,
     `- Якщо з коміта незрозуміло, що саме він змінює для користувача — відкрий код репозиторію (read/grep/glob) і розберися, перш ніж писати.`,
-    `- Перший рядок — заголовок першого рівня \`#\`, що називає продукт, платформу й період.`,
+    `- Перший рядок — заголовок першого рівня \`#\`, що називає продукт і період.`,
     `- У відповіді — ЛИШЕ готовий markdown-документ. Без преамбули, без коментарів поза документом, без запитань.`,
     ``,
     `Коміти за період (${included}${truncated ? ` з ${input.commits.length} — список обрізано за обсягом, узагальни решту обережно` : ""}):`,

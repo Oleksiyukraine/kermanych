@@ -19,8 +19,8 @@
     <div v-else-if="!notes.length" class="rel__blank">
       <span class="rel__blank-eyebrow mono">РЕЛІЗ-НОТИ</span>
       <p class="rel__blank-text">
-        Ще жодної нотатки. Оберіть проєкт, платформу, гілку й період — документ буде
-        написано з git-історії так, щоб його зрозуміла й нетехнічна людина.
+        Ще жодної нотатки. Оберіть проєкт, гілку й період — документ буде написано з
+        git-історії так, щоб його зрозуміла й нетехнічна людина.
       </p>
     </div>
 
@@ -31,7 +31,6 @@
         <div class="rel__row-main">
           <span class="rel__row-title">{{ n.title }}</span>
           <span class="rel__row-meta">
-            <KTag>{{ RELEASE_PLATFORM_LABELS[n.platform] }}</KTag>
             <KTag>{{ n.projectName }}</KTag>
             <KTag>{{ n.branch }}</KTag>
             <span class="rel__row-range mono">{{ n.rangeFrom }} — {{ n.rangeTo }}</span>
@@ -46,22 +45,16 @@
          orphan a running omp child with nobody left to receive its document. -->
     <KModal v-model="genOpen" title="Згенерувати реліз-ноти" width="600px" :persistent="genBusy">
       <div class="rel__form">
-        <div class="rel__form-row">
-          <KSelect
-            v-model="gen.projectId"
-            label="Проєкт"
-            :options="projectOptions"
-            placeholder="— оберіть репозиторій —"
-            :disabled="genBusy"
-          />
-          <KSelect
-            v-model="platformModel"
-            label="Платформа"
-            :options="PLATFORM_OPTIONS"
-            placeholder="— оберіть платформу —"
-            :disabled="genBusy"
-          />
-        </div>
+        <!-- One picker, full width: the project IS the release's shape — its repository is
+             the front-end, the back-end or an app — so naming it is the whole answer to
+             «which product does this note cover?». -->
+        <KSelect
+          v-model="gen.projectId"
+          label="Проєкт"
+          :options="projectOptions"
+          placeholder="— оберіть проєкт —"
+          :disabled="genBusy"
+        />
         <div class="rel__form-row">
           <KSelect
             v-model="gen.branch"
@@ -108,7 +101,6 @@
     >
       <template #head-meta>
         <span v-if="current" class="rel__doc-meta">
-          <KTag>{{ RELEASE_PLATFORM_LABELS[current.platform] }}</KTag>
           <KTag>{{ current.projectName }}</KTag>
           <KTag>{{ current.branch }}</KTag>
           <KTag>{{ current.rangeFrom }} — {{ current.rangeTo }}</KTag>
@@ -170,8 +162,6 @@
 //     which is what makes the history below visible to every member on every machine;
 //   * this screen reads, copies and edits what is stored.
 import { computed, reactive, ref, watch } from 'vue';
-import type { ReleasePlatform } from '@kermanych/core';
-import { RELEASE_PLATFORMS, RELEASE_PLATFORM_LABELS } from '@kermanych/core';
 import type { WorkspaceReleaseNote } from '@kermanych/cloud';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
@@ -223,11 +213,6 @@ function memberName(id: string | undefined): string {
 
 // ── Generation ────────────────────────────────────────────────────────────────
 
-const PLATFORM_OPTIONS: KSelectOption[] = RELEASE_PLATFORMS.map((p) => ({
-  value: p,
-  label: RELEASE_PLATFORM_LABELS[p],
-}));
-
 function isoDaysAgo(days: number): string {
   const d = new Date(Date.now() - days * 86_400_000);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -239,18 +224,9 @@ const genError = ref('');
 const genSec = ref(0);
 const gen = reactive({
   projectId: '',
-  platform: '' as ReleasePlatform | '',
   branch: '',
   rangeFrom: '',
   rangeTo: '',
-});
-
-// KSelect speaks strings; this narrows back to the platform union on the way in.
-const platformModel = computed({
-  get: () => gen.platform as string,
-  set: (v: string) => {
-    gen.platform = v as ReleasePlatform;
-  },
 });
 
 // The workspace's projects, with the binding state said IN the picker: an unbound project
@@ -306,7 +282,6 @@ const canGenerate = computed(
   () =>
     !genBusy.value &&
     gen.projectId !== '' &&
-    gen.platform !== '' &&
     gen.branch !== '' &&
     gen.rangeFrom !== '' &&
     gen.rangeTo !== '',
@@ -320,7 +295,7 @@ const genLabel = computed(() => {
 });
 
 async function generate(): Promise<void> {
-  if (!canGenerate.value || gen.platform === '') return;
+  if (!canGenerate.value) return;
   genBusy.value = true;
   genError.value = '';
   genSec.value = 0;
@@ -330,7 +305,6 @@ async function generate(): Promise<void> {
     const reply = await api.generateReleaseNotes({
       projectId: gen.projectId,
       workspaceName: props.workspaceName,
-      platform: gen.platform,
       branch: gen.branch,
       rangeFrom: gen.rangeFrom,
       rangeTo: gen.rangeTo,
@@ -343,7 +317,6 @@ async function generate(): Promise<void> {
     const created = await store.create(props.workspaceId, {
       projectId: gen.projectId,
       projectName,
-      platform: gen.platform,
       branch: gen.branch,
       rangeFrom: gen.rangeFrom,
       rangeTo: gen.rangeTo,

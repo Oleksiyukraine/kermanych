@@ -21,19 +21,19 @@ describe("buildReleaseNotesPrompt", () => {
   const prompt = buildReleaseNotesPrompt({
     workspaceName: "Acme",
     projectName: "мобільний-застосунок",
-    platform: "ios",
     branch: "release/2.4",
     rangeFrom: "2026-08-01",
     rangeTo: "2026-08-31",
     commits: [commit(), commit({ subject: "виправлено падіння на логіні", body: "Падало, коли токен протух." })],
   });
 
-  it("states the platform by its label and the branch and range verbatim", () => {
-    expect(prompt).toContain("iOS");
+  it("states the repository, the branch and the range verbatim, and no platform", () => {
     expect(prompt).toContain("release/2.4");
     expect(prompt).toContain("2026-08-01 — 2026-08-31");
     expect(prompt).toContain("«Acme»");
     expect(prompt).toContain("мобільний-застосунок");
+    // The project IS the shipping shape, so nothing in the prompt asks for a platform.
+    expect(prompt).not.toContain("Платформа");
   });
 
   // The whole feature request in one assertion: the reader is not an engineer.
