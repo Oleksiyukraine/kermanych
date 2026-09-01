@@ -84,5 +84,8 @@ export function memberErrorText(e: unknown): string {
   if (raw.includes('only the workspace owner can invite')) {
     return 'Хмара відмовила: запрошувати до воркспейсу може лише його власник';
   }
+  if (raw.includes('only the workspace owner can change roles')) {
+    return 'Хмара відмовила: змінювати ролі може лише власник воркспейсу';
+  }
   return raw;
 }
