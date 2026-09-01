@@ -229,7 +229,14 @@
           </KPanel>
         </div>
         <div v-if="detailTab === 'changes'" class="agents__tabpane agents__changes">
-          <p v-if="changesLoading" class="agents__log-empty mono">Готую…</p>
+          <div v-if="worktreeGone" class="agents__pane-blank">
+            <span class="agents__pane-blank-eyebrow mono">ІСТОРІЯ</span>
+            <p class="agents__pane-blank-text">
+              Робоче дерево цієї сесії прибрано — переглянути її зміни вже неможливо.
+              Відновіть сесію (↻ на вкладці «Сесія»), щоб підняти worktree знову.
+            </p>
+          </div>
+          <p v-else-if="changesLoading" class="agents__log-empty mono">Готую…</p>
           <p v-else-if="changesError" class="agents__error" role="alert">{{ changesError }}</p>
           <template v-else-if="changesInfo">
             <div class="agents__changes-summary mono">
@@ -271,7 +278,14 @@
           </template>
         </div>
         <div v-if="detailTab === 'files'" class="agents__tabpane agents__files">
-          <p v-if="treeLoading" class="agents__log-empty mono">Готую…</p>
+          <div v-if="worktreeGone" class="agents__pane-blank">
+            <span class="agents__pane-blank-eyebrow mono">ІСТОРІЯ</span>
+            <p class="agents__pane-blank-text">
+              Робоче дерево цієї сесії прибрано — її файлів на диску більше немає.
+              Відновіть сесію (↻ на вкладці «Сесія»), щоб підняти worktree знову.
+            </p>
+          </div>
+          <p v-else-if="treeLoading" class="agents__log-empty mono">Готую…</p>
           <p v-else-if="treeError" class="agents__error" role="alert">{{ treeError }}</p>
           <template v-else>
             <KFileView
@@ -910,6 +924,15 @@ const selectedSession = computed(() =>
   store.sessions.find((s) => s.id === store.selectedSessionId),
 );
 
+// A session whose worktree has been retired keeps `worktree: true` but loses its
+// `worktreePath` — this is every finished/merged agent sitting in Історія. The two
+// git-backed panes (Зміни, Файли) have no directory to read then, so instead of firing a
+// request that comes back «session has no worktree» / ENOENT and painting the pane with a
+// red error, they show a calm empty-state. Derived, so both panes agree on when it applies.
+const worktreeGone = computed(
+  () => !!selectedSession.value?.worktree && !selectedSession.value.worktreePath,
+);
+
 // The agent this session was forked off, when it is a branch. Read from the whole session
 // list, not the board: a branch stays open while its parent sits in another bucket, and the
 // way back up the tree has to work from there too — the board's elbow may be off screen.
@@ -1198,6 +1221,9 @@ watch(
     // Another session (or a trip through another tab) invalidates whatever file was open.
     closeFile();
     closeTreeFile();
+    // A retired worktree has nothing to read; the empty-state renders from `worktreeGone`
+    // instead, so neither pane issues a request that can only come back as an error.
+    if (worktreeGone.value) return;
     if (tab === 'changes' && id) void loadChanges(id, true);
     if (tab === 'files' && id) void loadTreeRoot(id);
   },
@@ -1212,7 +1238,7 @@ let changesTimer: ReturnType<typeof setTimeout> | undefined;
 watch(
   () => selectedSession.value?.lastActivityAt,
   () => {
-    if (detailTab.value !== 'changes' || changesTimer) return;
+    if (detailTab.value !== 'changes' || changesTimer || worktreeGone.value) return;
     changesTimer = setTimeout(() => {
       changesTimer = undefined;
       const id = store.selectedSessionId;
@@ -2246,6 +2272,35 @@ async function submitPreviewConfig(): Promise<void> {
   justify-content: center;
   color: var(--k-faint);
   font-size: var(--k-fs-sm);
+}
+
+// Worktree-gone empty-state for the git-backed panes (Зміни, Файли): a retired session
+// has no directory to read, so the pane invites reopening rather than surfacing the api's
+// error. Centred in the pane, mirroring the page-level blank states (mgmt__blank et al.).
+.agents__pane-blank {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--k-sp-2);
+  padding: 24px 12px;
+  text-align: center;
+}
+
+.agents__pane-blank-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--k-muted);
+}
+
+.agents__pane-blank-text {
+  margin: 0;
+  max-width: 44ch;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-sm);
+  line-height: 1.55;
+  color: var(--k-faint);
 }
 
 // THE CHAT COLUMN'S GUTTER. This bar, the tabs under it, both other panes and every floor
