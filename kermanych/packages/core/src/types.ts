@@ -1,6 +1,7 @@
 import type { BranchPrefix } from "./worktree-names";
 import type { Platform } from "./platform";
 import type { ThinkingLevel } from "./thinking";
+import type { NoticeCode } from "./i18n-codes";
 
 export type SessionStatus =
   | "backlog" | "queued" | "thinking" | "tool" | "waiting_input" | "done" | "error" | "stopped" | "merged" | "conflict";
@@ -127,7 +128,7 @@ export type TranscriptEntry =
       kind: "tool"; id: string; at: number; tool: string; status: ToolStatus;
       intent?: string; target?: string; stat?: string; count?: number; ms?: number; detail?: ToolDetail;
     }
-  | { kind: "notice"; id: string; at: number; level: "info" | "warn" | "error"; text: string }
+  | { kind: "notice"; id: string; at: number; level: "info" | "warn" | "error"; text: string; code?: NoticeCode; params?: Record<string, string> }
   | { kind: "turn"; id: string; at: number; model?: string; ms?: number; usage?: Usage };
 
 export type RpcExtensionUIRequest = {
