@@ -804,7 +804,7 @@ const isBound = computed(() => !!selectedProject.value?.localRepoPath);
 // Requirement 3: the binding is manual and per machine. Kermanych never clones — the path
 // must already be a git repo, and each teammate binds their own checkout. One string for
 // every disabled affordance, so the copy cannot drift.
-const BIND_HINT = t('common.nav.bindHint');
+const BIND_HINT = computed(() => t('common.nav.bindHint'));
 
 // The picker, its three refusals and the write itself moved to
 // pages/SettingsPage.vue with the rest of the project's «Основне»: the footer

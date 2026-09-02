@@ -139,7 +139,7 @@ const chatId = ref<string | undefined>(undefined);
 const messagesEl = ref<HTMLElement | null>(null);
 
 const router = useRouter();
-const BIND_HINT = t('chat.page.bindHint');
+const BIND_HINT = computed(() => t('chat.page.bindHint'));
 // Promotion spins up a worktree, so it is blocked until the project is bound.
 const promoting = ref(false);
 const selectedProject = computed(() => store.projects.find((p) => p.id === store.selectedProjectId));
@@ -242,7 +242,7 @@ async function promote(): Promise<void> {
   // The other half of what the disabled button says: promotion grows a worktree, so without
   // a local binding the card would be minted and then refused server-side, orphaning it.
   if (!isBound.value) {
-    store.notify(BIND_HINT, 'error');
+    store.notify(BIND_HINT.value, 'error');
     return;
   }
   promoting.value = true;
