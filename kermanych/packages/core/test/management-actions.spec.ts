@@ -250,17 +250,18 @@ test("exactly the sections with a store are writable, and the rest state why not
 
 // ── Tickets ───────────────────────────────────────────────────────────────────
 
-// The five slots a ticket from this surface has. Reused below so each test names only the
-// field it is about.
+// The five slots a ticket from this surface has. English, because that is the language the
+// prompt requires of a ticket whichever language it was asked for in. Reused below so each
+// test names only the field it is about.
 const TICKET = {
-  title: "Замовник бачить історію змін рахунку",
-  context: "Бухгалтерія не може довести клієнту, коли саме змінилася сума, і кожен спір іде в дзвінки.",
-  userFlow: ["Відкриває рахунок", "Перемикається на «Історія»", "Бачить, хто і коли змінив суму"],
+  title: "Customer sees the change history of an invoice",
+  context: "Accounting cannot show a client when the amount changed, so every dispute turns into a phone call.",
+  userFlow: ["Opens an invoice", "Switches to «Історія»", "Sees who changed the amount and when"],
   acceptanceCriteria: [
-    "На картці рахунку є вкладка «Історія»",
-    "Кожен запис показує автора, дату і попереднє значення суми",
+    "The invoice card has an «Історія» tab",
+    "Every entry shows the author, the date and the previous amount",
   ],
-  outOfScope: ["Експорт історії у файл"],
+  outOfScope: ["Exporting the history to a file"],
 };
 
 // The default board, and the whole of the routing rule: a request that did not name Jira is
@@ -344,30 +345,37 @@ test("a ticket carrying an open question is refused, whichever field hides it", 
     return "error" in r ? r.error : `дію прийнято, хоча вона мусила бути відхилена: ${JSON.stringify(r)}`;
   }
 
-  expect(refuse({ ...TICKET, acceptanceCriteria: ["Видно історію", "Права доступу — TBD"] })).toContain('"TBD"');
+  expect(refuse({ ...TICKET, acceptanceCriteria: ["History is visible", "Access rights — TBD"] })).toContain('"TBD"');
   expect(refuse({ ...TICKET, context: "Треба уточнити, чи це для всіх клієнтів" })).toContain("Треба уточн");
   expect(refuse({ ...TICKET, outOfScope: ["Експорт — на розсуд розробника"] })).toContain("на розсуд");
   expect(refuse({ ...TICKET, userFlow: [...TICKET.userFlow, "Далі незрозуміло"] })).toContain("незрозуміл");
-  expect(refuse({ ...TICKET, title: "Історія змін <назва>" })).toContain("<назва>");
+  expect(refuse({ ...TICKET, title: "Change history <назва>" })).toContain("<назва>");
+  // The same shapes in English, which is the language a ticket from this surface arrives in
+  // by default — a guard that only knew the Ukrainian forms would pass every one of these.
+  expect(refuse({ ...TICKET, context: "The retention period needs clarification" })).toContain("needs clarif");
+  expect(refuse({ ...TICKET, outOfScope: ["Export — at the developer's discretion"] })).toContain("discretion");
+  expect(refuse({ ...TICKET, userFlow: [...TICKET.userFlow, "The next step is unclear"] })).toContain("unclear");
+  expect(refuse({ ...TICKET, acceptanceCriteria: ["Archive access to be determined"] })).toContain("to be determined");
   // A criterion phrased as a question is not a criterion, and no marker catches it: it is a
   // perfectly formed sentence that simply cannot be checked off.
-  expect(refuse({ ...TICKET, acceptanceCriteria: ["Чи має адміністратор бачити архів?"] })).toContain(
-    "Чи має адміністратор бачити архів?",
+  expect(refuse({ ...TICKET, acceptanceCriteria: ["Should an administrator see the archive?"] })).toContain(
+    "Should an administrator see the archive?",
   );
   // A code fence is the assistant slipping out of the manager's voice — a technical decision
   // in the only form a string can hold one.
-  expect(refuse({ ...TICKET, context: "Додати ендпоінт:\n```ts\nget()\n```" })).toContain("```");
+  expect(refuse({ ...TICKET, context: "Add an endpoint:\n```ts\nget()\n```" })).toContain("```");
   // Every refusal points at the one action that IS allowed to carry a question.
   expect(refuse({ ...TICKET, context: "потрібно уточнити обсяг" })).toContain("ticket.questions");
 });
 
-// «уточнити» on its own is ordinary Ukrainian, and a rule that refused it would refuse
-// perfectly good tickets. The markers are deliberately narrow.
+// «уточнити» on its own is ordinary Ukrainian, and «clarify» on its own is ordinary English:
+// a rule that refused either would refuse perfectly good tickets. The markers are
+// deliberately narrow in both languages.
 test("ordinary prose that merely contains a question word is not an open question", () => {
   const ticket = {
     ...TICKET,
-    context: "Користувач може уточнити фільтр за датою, але історії змін не бачить взагалі.",
-    acceptanceCriteria: ["Фільтр за датою працює разом з історією"],
+    context: "The user can clarify the date filter, but cannot see the change history at all.",
+    acceptanceCriteria: ["The date filter works together with the history"],
   };
   expect(validateManagementAction({ kind: "ticket.create", project: "Альфа", ticket })).toEqual({
     kind: "ticket.create",
@@ -441,31 +449,33 @@ test("ticket.questions carries the blocked ticket and at least one question", ()
 
 // The app owns the shape of a ticket's body, not the model: the headings, their order and
 // their language are the same whichever turn — and whichever board — produced the ticket.
+// English, like the slots they head: a card whose body is English under Ukrainian headings is
+// one ticket written in two languages.
 test("renderTicketDescription writes the manager's sections in a fixed order", () => {
   expect(renderTicketDescription(TICKET)).toBe(
     [
-      "## Контекст",
+      "## Context",
       TICKET.context,
       "",
-      "## Користувацький сценарій",
-      "1. Відкриває рахунок",
-      "2. Перемикається на «Історія»",
-      "3. Бачить, хто і коли змінив суму",
+      "## User flow",
+      "1. Opens an invoice",
+      "2. Switches to «Історія»",
+      "3. Sees who changed the amount and when",
       "",
-      "## Критерії приймання",
-      "- [ ] На картці рахунку є вкладка «Історія»",
-      "- [ ] Кожен запис показує автора, дату і попереднє значення суми",
+      "## Acceptance criteria",
+      "- [ ] The invoice card has an «Історія» tab",
+      "- [ ] Every entry shows the author, the date and the previous amount",
       "",
-      "## Поза межами задачі",
-      "- Експорт історії у файл",
+      "## Out of scope",
+      "- Exporting the history to a file",
     ].join("\n"),
   );
 });
 
-// The optional sections vanish rather than rendering as empty headings — a «Поза межами»
+// The optional sections vanish rather than rendering as empty headings — an «Out of scope»
 // heading with nothing under it reads as a scope nobody stated.
 test("renderTicketDescription omits the sections a ticket does not have", () => {
-  expect(renderTicketDescription({ title: "Т", context: "К", acceptanceCriteria: ["Видно"] })).toBe(
-    ["## Контекст", "К", "", "## Критерії приймання", "- [ ] Видно"].join("\n"),
+  expect(renderTicketDescription({ title: "T", context: "C", acceptanceCriteria: ["Visible on the screen"] })).toBe(
+    ["## Context", "C", "", "## Acceptance criteria", "- [ ] Visible on the screen"].join("\n"),
   );
 });

@@ -89,11 +89,13 @@ vi.mock('../src/stores/release-notes', () => ({
   useReleaseNotes: () => ({ generate: vi.fn() }),
 }));
 
+// The ticket as the assistant is required to write it: English text, and the interface labels
+// it quotes left in the language the product shows them in.
 const TICKET = {
-  title: 'Замовник бачить історію змін рахунку',
-  context: 'Бухгалтерія не може довести клієнту, коли змінилася сума.',
-  userFlow: ['Відкриває рахунок', 'Перемикається на «Історія»'],
-  acceptanceCriteria: ['На картці рахунку є вкладка «Історія»', 'Кожен запис показує автора і дату'],
+  title: 'Customer sees the change history of an invoice',
+  context: 'Accounting cannot show a client when the amount changed.',
+  userFlow: ['Opens an invoice', 'Switches to «Історія»'],
+  acceptanceCriteria: ['The invoice card has an «Історія» tab', 'Every entry shows the author and the date'],
 };
 
 // One assistant turn carrying exactly the actions under test.
@@ -140,13 +142,13 @@ describe('ticket.create on the default board', () => {
     expect(input.prefix).toBe('feature');
     expect(input.platform).toBe('web');
     expect(input.title).toBe(TICKET.title);
-    expect(input.description).toContain('## Контекст');
-    expect(input.description).toContain('## Користувацький сценарій');
-    expect(input.description).toContain('- [ ] На картці рахунку є вкладка «Історія»');
+    expect(input.description).toContain('## Context');
+    expect(input.description).toContain('## User flow');
+    expect(input.description).toContain('- [ ] The invoice card has an «Історія» tab');
     // `status` is never sent: Postgres defaults it to backlog, and the line says where the
     // card actually is.
     expect(input.status).toBeUndefined();
-    expect(results(store.entries)).toEqual([expect.stringContaining('Тікет «Замовник бачить історію змін рахунку» створено')]);
+    expect(results(store.entries)).toEqual([expect.stringContaining('Тікет «Customer sees the change history of an invoice» створено')]);
     expect(results(store.entries)[0]).toContain('Kermanych UI');
   });
 
@@ -245,10 +247,10 @@ describe('jira.ticket.create on the mirrored board', () => {
     expect(draft.assigneeAccountId).toBe('acc-1');
     expect(draft.labels).toEqual(['billing']);
     expect(draft.summary).toBe(TICKET.title);
-    expect(draft.description).toContain('## Критерії приймання');
+    expect(draft.description).toContain('## Acceptance criteria');
     // Same rendered body as a native card: one renderer, so a ticket does not read
     // differently depending on which board it landed on.
-    expect(draft.description).toContain('## Контекст');
+    expect(draft.description).toContain('## Context');
     expect(jiraUpsert).toHaveBeenCalledWith(expect.objectContaining({ key: 'KRM-214' }));
     expect(results(store.entries)[0]).toContain('Тікет KRM-214');
     expect(results(store.entries)[0]).toContain('Kermanych board');

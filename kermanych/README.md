@@ -487,7 +487,7 @@ That field is a real assistant, and it is deliberately narrow:
   stay on the screen; the assistant has no verb for them and the prompt says so.
 - **It files tickets on «Дошка».** Say «створи тікет: …» and the ticket appears on the board
   — the board is not a Менеджмент section, so this works from any section, and «створи тікет»
-  is never answered with a refusal. Four rules make the ticket worth having:
+  is never answered with a refusal. Five rules make the ticket worth having:
   - **The default board is the workspace's own.** «Задачі» is the board that always exists,
     needs no integration and no personal token, so a request that does not name a board lands
     there (`ticket.create`). The mirrored Jira board is opt-in BY NAME: only «створи в Jira…»
@@ -504,13 +504,25 @@ That field is a real assistant, and it is deliberately narrow:
     team's. Before writing, the assistant reads the workspace's repositories to ground the
     ticket in what the product actually does today — but only the business conclusion reaches
     the card.
+  - **The ticket is written in English, whatever language you asked in.** A card is read by
+    whoever picks it up, and that is rarely only the person who dictated it — so the ticket's
+    own text (title, context, user flow, acceptance criteria, out of scope) is English, and
+    the app's headings above them are English for the same reason. Asking «створи тікет про
+    історію змін» gets you an English ticket, not a Ukrainian one: the language of the request
+    carries no instruction about the language of the card. Another language is opt-in BY NAME
+    — «тікет українською» — exactly like the second board. Interface labels the product shows
+    in Ukrainian stay quoted as they are («the «Історія» tab»), because a translated label is
+    a label nobody can find on the screen. The chat's own prose, and the questions below,
+    stay in your language: those you are the one reading.
   - **A ticket never ships an open question.** If something is missing that only you can
     decide — the scope, an edge case, the assignee, which project — the assistant emits
     `ticket.questions` instead: the chat prints the numbered questions and states that the
     ticket was NOT created. Answer in the next message and it files the ticket; do not answer
-    and there is no ticket. Belt and braces: a ticket whose text still contains «TBD»,
-    «потрібно уточнити», a `<placeholder>`, a code fence or an acceptance criterion phrased as
-    a question is refused in your browser with the offending fragment quoted back.
+    and there is no ticket. Belt and braces: a ticket whose text still contains «TBD», «to be
+    decided», «needs clarification», «at the developer's discretion» — or their Ukrainian
+    counterparts, for the tickets you asked in Ukrainian — a `<placeholder>`, a code fence or
+    an acceptance criterion phrased as a question is refused in your browser with the
+    offending fragment quoted back.
   - **Each board has its own people, and neither list is guessed.** They are not the same set
     and the assistant is shown both. For the workspace's own board, `tasks.assignee_id` is a
     profile id, so every turn carries the workspace roster by the same name the app shows you
