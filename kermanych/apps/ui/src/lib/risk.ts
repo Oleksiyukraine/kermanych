@@ -295,10 +295,16 @@ function clause(s: string): string {
 // cause -> event -> consequence, rendered as the one sentence a steering committee can read
 // without the register open. Composed rather than stored, so the three parts stay separately
 // editable and a row can never drift into an unscoreable «the API might be a problem».
-export function statementOf(r: Pick<WorkspaceRisk, 'kind' | 'cause' | 'event' | 'consequence'>): string {
-  const middle = r.kind === 'opportunity' ? 'існує можливість, що' : 'існує ризик, що';
-  const tail = r.kind === 'opportunity' ? 'що дало б' : 'що призвело б до';
-  return `Оскільки ${clause(r.cause)}, ${middle} ${clause(r.event)}, ${tail} ${clause(r.consequence)}.`;
+export type RiskStatement = {
+  key: 'risk.statement.risk' | 'risk.statement.opportunity';
+  params: { cause: string; event: string; consequence: string };
+};
+
+export function statementOf(r: Pick<WorkspaceRisk, 'kind' | 'cause' | 'event' | 'consequence'>): RiskStatement {
+  return {
+    key: r.kind === 'opportunity' ? 'risk.statement.opportunity' : 'risk.statement.risk',
+    params: { cause: clause(r.cause), event: clause(r.event), consequence: clause(r.consequence) },
+  };
 }
 
 // ── Dates and money ─────────────────────────────────────────────────────────────
@@ -326,15 +332,17 @@ export function daysUntil(date: string, nowMs: number): number | undefined {
 
 // A date with its distance from today attached, because «20.09.2026» alone does not tell a
 // reader whether it is this sprint's problem. Overdue is stated, not implied.
-export function dueLabel(date: string | undefined, nowMs: number): string {
-  if (!date) return '—';
+export type DueLabel = { key: string; params?: { n: number } };
+
+export function dueLabel(date: string | undefined, nowMs: number): DueLabel {
+  if (!date) return { key: 'risk.due.none' };
   const d = daysUntil(date, nowMs);
-  if (d === undefined) return '—';
-  if (d < 0) return `прострочено ${-d} дн`;
-  if (d === 0) return 'сьогодні';
-  if (d === 1) return 'завтра';
-  if (d <= 45) return `за ${d} дн`;
-  return `за ${Math.round(d / 30)} міс`;
+  if (d === undefined) return { key: 'risk.due.none' };
+  if (d < 0) return { key: 'risk.due.overdue', params: { n: -d } };
+  if (d === 0) return { key: 'risk.due.today' };
+  if (d === 1) return { key: 'risk.due.tomorrow' };
+  if (d <= 45) return { key: 'risk.due.days', params: { n: d } };
+  return { key: 'risk.due.months', params: { n: Math.round(d / 30) } };
 }
 
 // Money at the register's zoom level, on the same magnitude ladder the rest of the app uses
@@ -435,65 +443,78 @@ export function draftOf(r: WorkspaceRisk): RiskDraft {
 //
 // The Postgres CHECK constraints cover the same ground for any other writer; this exists so
 // the user gets an instant, readable answer instead of a round trip and a constraint name.
-export function validateDraft(d: RiskDraft): string[] {
-  const errors: string[] = [];
+export type RiskError =
+  | 'causeBlank'
+  | 'eventBlank'
+  | 'consequenceBlank'
+  | 'proximityBlank'
+  | 'responseKindMismatch'
+  | 'responseActionsBlank'
+  | 'actionOwnerBlank'
+  | 'actionDueBlank'
+  | 'riskOwnerBlank'
+  | 'earlyWarningBlank'
+  | 'residualIncomplete'
+  | 'residualHigher'
+  | 'treatedNeedsResidual'
+  | 'costNaN'
+  | 'costNegative'
+  | 'pctNaN'
+  | 'pctRange'
+  | 'emvNeedsBoth'
+  | 'closureNoteBlank'
+  | 'materializedNoteBlank';
+
+// Returns stable error CODES in field order; the editor maps each to `risk.validation.<code>`
+// via t(). The conditions and their order are the process rules — only the payload changed
+// from prose to code, so the list still reads top-to-bottom against the form.
+export function validateDraft(d: RiskDraft): RiskError[] {
+  const errors: RiskError[] = [];
   const blank = (s: string): boolean => s.trim() === '';
 
-  if (blank(d.cause)) errors.push('Причина порожня. Ризик записується як причина → подія → наслідок.');
-  if (blank(d.event)) errors.push('Подія порожня — саме її ймовірність ви оцінюєте.');
-  if (blank(d.consequence)) errors.push('Наслідок порожній. Без нього немає чого оцінювати за впливом.');
+  if (blank(d.cause)) errors.push('causeBlank');
+  if (blank(d.event)) errors.push('eventBlank');
+  if (blank(d.consequence)) errors.push('consequenceBlank');
 
-  if (blank(d.proximity)) {
-    errors.push('Вкажіть проксіміті: ризик через 8 місяців і ризик у цьому спринті керуються по-різному.');
-  }
+  if (blank(d.proximity)) errors.push('proximityBlank');
 
   if (!responsesFor(d.kind).some((r) => r.value === d.response)) {
-    errors.push('Стратегія не відповідає типу: загрози уникають, зменшують, передають, ескалюють або приймають.');
+    errors.push('responseKindMismatch');
   }
   if (d.response !== 'accept') {
-    if (blank(d.responseActions)) {
-      errors.push('Опишіть дії у відповідь. «Моніторити» — це не реакція.');
-    }
-    if (blank(d.actionOwner)) errors.push('У дій має бути виконавець.');
-    if (blank(d.actionDue)) errors.push('У дій має бути дедлайн.');
+    if (blank(d.responseActions)) errors.push('responseActionsBlank');
+    if (blank(d.actionOwner)) errors.push('actionOwnerBlank');
+    if (blank(d.actionDue)) errors.push('actionDueBlank');
   }
 
-  if (blank(d.riskOwner)) {
-    errors.push('Призначте власника ризику — одну людину з повноваженнями діяти, не команду.');
-  }
-  if (blank(d.earlyWarning)) {
-    errors.push('Вкажіть тригер: без раннього індикатора ризик помітять уже як проблему.');
-  }
+  if (blank(d.riskOwner)) errors.push('riskOwnerBlank');
+  if (blank(d.earlyWarning)) errors.push('earlyWarningBlank');
 
   const hasResidual = d.residualProbability > 0 || d.residualImpact > 0;
   if (hasResidual && (d.residualProbability === 0 || d.residualImpact === 0)) {
-    errors.push('Залишкова оцінка неповна: потрібні і ймовірність, і вплив.');
+    errors.push('residualIncomplete');
   }
   if (hasResidual && d.residualProbability * d.residualImpact > d.probability * d.impact) {
-    errors.push('Залишкова оцінка вища за початкову — реакція не може погіршувати ризик.');
+    errors.push('residualHigher');
   }
   if (d.status === 'treated' && !hasResidual) {
-    errors.push('Оброблений ризик потребує залишкової оцінки — інакше не видно, що дала реакція.');
+    errors.push('treatedNeedsResidual');
   }
 
   const cost = parseAmount(d.costImpact);
   const pct = parseAmount(d.probabilityPct);
-  if (Number.isNaN(cost)) errors.push('Вартість наслідку — не число.');
-  else if (cost !== undefined && cost < 0) errors.push('Вартість наслідку не може бути відʼємною.');
-  if (Number.isNaN(pct)) errors.push('Ймовірність у відсотках — не число.');
+  if (Number.isNaN(cost)) errors.push('costNaN');
+  else if (cost !== undefined && cost < 0) errors.push('costNegative');
+  if (Number.isNaN(pct)) errors.push('pctNaN');
   else if (pct !== undefined && (pct < 0 || pct > 100)) {
-    errors.push('Ймовірність у відсотках має бути в межах 0–100.');
+    errors.push('pctRange');
   }
   if (!Number.isNaN(cost) && !Number.isNaN(pct) && (cost === undefined) !== (pct === undefined)) {
-    errors.push('Для EMV потрібні обидва числа: вартість наслідку і ймовірність у відсотках.');
+    errors.push('emvNeedsBoth');
   }
 
   if ((d.status === 'closed' || d.status === 'materialized') && blank(d.closureNote)) {
-    errors.push(
-      d.status === 'closed'
-        ? 'Закриття потребує причини — рядки не видаляють, їх закривають із поясненням.'
-        : 'Ризик, що реалізувався, потребує плану усунення: це вже проблема, а не мітигація.',
-    );
+    errors.push(d.status === 'closed' ? 'closureNoteBlank' : 'materializedNoteBlank');
   }
 
   return errors;

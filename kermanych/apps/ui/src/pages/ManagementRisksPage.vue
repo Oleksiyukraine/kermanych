@@ -101,7 +101,7 @@
 
         <template #cell-statement="{ row }">
           <div class="risk__statement">
-            <span class="risk__statement-text">{{ statementOf(row) }}</span>
+            <span class="risk__statement-text">{{ statementText(row) }}</span>
             <span class="risk__statement-meta">
               <KTag>{{ t(categoryLabel(row.category)) }}</KTag>
               <KTag v-if="row.kind === 'opportunity'">{{ t('management.risks.kindOpportunity') }}</KTag>
@@ -130,7 +130,7 @@
 
         <template #cell-proximity="{ row }">
           <span class="risk__prox" :class="`risk__prox--${proximityOf(row.proximity, now)}`">
-            {{ dueLabel(row.proximity, now) }}
+            {{ dueText(row.proximity) }}
           </span>
         </template>
 
@@ -344,6 +344,17 @@ const sortModel = computed({
 function memberName(id: string | undefined): string {
   if (!id) return t('management.risks.memberUnassigned');
   return memberOptions.value.find((m) => m.value === id)?.label ?? id;
+}
+
+// statementOf/dueLabel are pure and i18n-blind: they return keys+params, rendered here.
+function statementText(row: WorkspaceRisk): string {
+  const s = statementOf(row);
+  return t(s.key, s.params);
+}
+
+function dueText(date: string | undefined): string {
+  const d = dueLabel(date, now.value);
+  return d.params ? t(d.key, d.params, d.params.n) : t(d.key);
 }
 
 // Clicking the cell you are already filtered to clears the filter — the same toggle the

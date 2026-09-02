@@ -1,14 +1,14 @@
 <template>
   <KModal
     :model-value="modelValue"
-    :title="risk ? `Ризик ${risk.code}` : 'Новий ризик'"
+    :title="risk ? t('risk.editor.titleEdit', { code: risk.code }) : t('risk.editor.titleNew')"
     width="760px"
     persistent
     @update:model-value="(v: boolean) => emit('update:modelValue', v)"
   >
     <template #head-meta>
       <span class="rform__meta">
-        <KTag v-if="risk">занесено {{ formatDate(risk.raisedAt) }}</KTag>
+        <KTag v-if="risk">{{ t('risk.editor.raisedAt', { date: formatDate(risk.raisedAt) }) }}</KTag>
         <KTag v-if="risk">{{ t(statusLabel(risk.status)) }}</KTag>
         <KTag v-else>{{ workspaceName }}</KTag>
       </span>
@@ -20,50 +20,50 @@
       <!-- 1 · What kind of uncertainty, and which bucket. The category list is the same one
            the register audits itself against, so filing here is what closes a gap. -->
       <div class="rform__row rform__row--2">
-        <KSelect v-model="kindModel" label="Тип" :options="KIND_OPTIONS" />
-        <KSelect v-model="draft.category" label="Категорія" :options="CATEGORY_OPTIONS" />
+        <KSelect v-model="kindModel" :label="t('risk.editor.kind')" :options="KIND_OPTIONS" />
+        <KSelect v-model="draft.category" :label="t('risk.editor.category')" :options="CATEGORY_OPTIONS" />
       </div>
 
       <!-- 2 · The statement, in the three parts that make it scoreable. Three fields rather
            than one box: a single «опис» is how «the API might be a problem» gets in. -->
       <section class="rform__block">
-        <h4 class="rform__legend">Формулювання · причина → подія → наслідок</h4>
+        <h4 class="rform__legend">{{ t('risk.editor.statementLegend') }}</h4>
         <div class="rform__row rform__row--3">
           <KField
             v-model="draft.cause"
-            label="Оскільки (причина)"
-            placeholder="пісочниця платіжного провайдера спільна з іншими клієнтами"
+            :label="t('risk.editor.causeLabel')"
+            :placeholder="t('risk.editor.causePlaceholder')"
             multiline
             :rows="3"
           />
           <KField
             v-model="draft.event"
-            :label="draft.kind === 'opportunity' ? 'є можливість, що (подія)' : 'є ризик, що (подія)'"
-            placeholder="інтеграційне тестування буде заблоковане на кілька днів"
+            :label="draft.kind === 'opportunity' ? t('risk.editor.eventLabelOpportunity') : t('risk.editor.eventLabelThreat')"
+            :placeholder="t('risk.editor.eventPlaceholder')"
             multiline
             :rows="3"
           />
           <KField
             v-model="draft.consequence"
-            label="що призведе до (наслідок)"
-            placeholder="UAT зсунеться за реліз-гейт"
+            :label="t('risk.editor.consequenceLabel')"
+            :placeholder="t('risk.editor.consequencePlaceholder')"
             multiline
             :rows="3"
           />
         </div>
-        <p class="rform__preview">{{ statementPreview }}</p>
+        <p class="rform__preview">{{ t(statementPreview.key, statementPreview.params) }}</p>
       </section>
 
       <!-- 3 · Inherent score. The anchors are shown beside the grid because a 4 that means
            «висока» to one person and «точно станеться» to another is not a scale. -->
       <section class="rform__block">
-        <h4 class="rform__legend">Початкова оцінка</h4>
+        <h4 class="rform__legend">{{ t('risk.editor.inherentLegend') }}</h4>
         <div class="rform__score">
           <RiskMatrix
             :probability="draft.probability"
             :impact="draft.impact"
             interactive
-            aria-label="Початкова оцінка"
+            :aria-label="t('risk.editor.inherentLegend')"
             @pick="setInherent"
           />
           <dl class="rform__anchors">
@@ -87,50 +87,50 @@
       <div class="rform__row rform__row--3">
         <KDateField
           v-model="draft.proximity"
-          label="Проксіміті — коли може вдарити"
+          :label="t('risk.editor.proximity')"
           :now-ms="now"
         />
         <KField
           v-model="draft.costImpact"
-          label="Вартість наслідку, $ (необовʼязково)"
+          :label="t('risk.editor.costImpact')"
           placeholder="40 000"
         />
         <KField
           v-model="draft.probabilityPct"
-          label="Ймовірність, % (для EMV)"
+          :label="t('risk.editor.probabilityPct')"
           placeholder="45"
         />
       </div>
-      <p v-if="emvPreview" class="rform__note mono">EMV = {{ emvPreview }} — піде в обґрунтування резерву</p>
+      <p v-if="emvPreview" class="rform__note mono">{{ t('risk.editor.emvNote', { value: emvPreview }) }}</p>
 
       <!-- 5 · The response. «Monitor» is not a response, so actions, an owner and a date are
            required for every strategy but «прийняти». -->
       <section class="rform__block">
-        <h4 class="rform__legend">Реакція</h4>
+        <h4 class="rform__legend">{{ t('risk.editor.responseLegend') }}</h4>
         <div class="rform__row rform__row--2">
-          <KSelect v-model="responseModel" label="Стратегія" :options="responseOptions" />
+          <KSelect v-model="responseModel" :label="t('risk.editor.strategy')" :options="responseOptions" />
           <KSelect
             v-model="draft.riskOwner"
-            label="Власник ризику — одна людина з повноваженнями"
+            :label="t('risk.editor.riskOwnerLabel')"
             :options="members"
-            placeholder="— оберіть людину —"
+            :placeholder="t('risk.editor.selectPerson')"
           />
         </div>
         <KField
           v-model="draft.responseActions"
-          :label="draft.response === 'accept' ? 'Обґрунтування прийняття' : 'Дії у відповідь'"
-          placeholder="замовити виділений sandbox-тенант і перенести інтеграційні тести на нього"
+          :label="draft.response === 'accept' ? t('risk.editor.responseActionsAccept') : t('risk.editor.responseActionsLabel')"
+          :placeholder="t('risk.editor.responseActionsPlaceholder')"
           multiline
           :rows="2"
         />
         <div class="rform__row rform__row--2">
           <KSelect
             v-model="draft.actionOwner"
-            label="Виконавець дій"
+            :label="t('risk.editor.actionOwner')"
             :options="members"
-            placeholder="— оберіть людину —"
+            :placeholder="t('risk.editor.selectPerson')"
           />
-          <KDateField v-model="draft.actionDue" label="Дедлайн дій" :now-ms="now" />
+          <KDateField v-model="draft.actionDue" :label="t('risk.editor.actionDue')" :now-ms="now" />
         </div>
       </section>
 
@@ -138,19 +138,17 @@
            actually bought — which is why the delta is spelled out rather than left to be
            subtracted in someone's head. -->
       <section class="rform__block">
-        <h4 class="rform__legend">Залишкова оцінка — після впровадження реакції</h4>
+        <h4 class="rform__legend">{{ t('risk.editor.residualLegend') }}</h4>
         <div class="rform__score">
           <RiskMatrix
             :probability="draft.residualProbability || undefined"
             :impact="draft.residualImpact || undefined"
             interactive
-            aria-label="Залишкова оцінка"
+            :aria-label="t('risk.editor.residualAria')"
             @pick="setResidual"
           />
           <div class="rform__anchors">
-            <p v-if="!hasResidual" class="rform__hint">
-              Не оцінено. Поки залишкової оцінки немає, ризик звітується за початковою.
-            </p>
+            <p v-if="!hasResidual" class="rform__hint">{{ t('risk.editor.residualUnset') }}</p>
             <template v-else>
               <p class="rform__hint">
                 <strong
@@ -160,8 +158,8 @@
                   {{ residualExposure }} · {{ t(bandLabel(bandOf(residualExposure))) }}
                 </strong>
               </p>
-              <p class="rform__hint">Реакція знімає {{ inherentExposure - residualExposure }} п. експозиції.</p>
-              <KBtn variant="ghost" @click="clearResidual">Скинути оцінку</KBtn>
+              <p class="rform__hint">{{ t('risk.editor.residualGain', { n: inherentExposure - residualExposure }) }}</p>
+              <KBtn variant="ghost" @click="clearResidual">{{ t('risk.editor.clearResidual') }}</KBtn>
             </template>
           </div>
         </div>
@@ -170,22 +168,18 @@
       <!-- 7 · The early-warning indicator and the lifecycle. -->
       <KField
         v-model="draft.earlyWarning"
-        label="Тригер / ранній індикатор — за чим видно, що ризик стає проблемою"
-        placeholder="черга в спільному sandbox довша за 30 хв два дні поспіль"
+        :label="t('risk.editor.earlyWarning')"
+        :placeholder="t('risk.editor.earlyWarningPlaceholder')"
         multiline
         :rows="2"
       />
 
       <div class="rform__row rform__row--2">
-        <KSelect v-model="statusModel" label="Статус" :options="STATUS_OPTIONS" />
+        <KSelect v-model="statusModel" :label="t('risk.editor.status')" :options="STATUS_OPTIONS" />
         <KField
           v-if="isTerminal"
           v-model="draft.closureNote"
-          :label="
-            draft.status === 'closed'
-              ? 'Причина закриття — рядки не видаляють'
-              : 'План усунення — ризик став проблемою, потрібна не мітигація, а розвʼязання'
-          "
+          :label="draft.status === 'closed' ? t('risk.editor.closureNoteClosed') : t('risk.editor.closureNoteMaterialized')"
           multiline
           :rows="2"
         />
@@ -194,19 +188,18 @@
       <!-- The tolerance line, stated where the decision is made rather than in a policy
            document nobody has open. -->
       <p v-if="overTolerance" class="rform__alert">
-        Експозиція {{ effective }} ≥ {{ ESCALATION_EXPOSURE }} — перевищує толерантність воркспейсу.
-        Ризик має піти спонсору, а не лишатися на менеджері.
+        {{ t('risk.editor.toleranceAlert', { effective, threshold: ESCALATION_EXPOSURE }) }}
       </p>
 
       <ul v-if="errors.length" ref="errorsEl" class="rform__errors">
-        <li v-for="(e, idx) in errors" :key="idx">{{ e }}</li>
+        <li v-for="(e, idx) in errors" :key="idx">{{ t('risk.validation.' + e) }}</li>
       </ul>
     </div>
 
     <!-- The audit trail. It is the whole reason a risk is closed rather than deleted, so it
          is one tab away from the row, not in a separate screen. -->
     <div v-if="risk" v-show="tab === 'history'" class="rform__history">
-      <p v-if="!events.length" class="rform__hint">Історія порожня.</p>
+      <p v-if="!events.length" class="rform__hint">{{ t('risk.editor.historyEmpty') }}</p>
       <article v-for="e in events" :key="e.id" class="rform__event">
         <span class="rform__event-kind">{{ t(eventLabel(e.kind)) }}</span>
         <span v-if="e.toValue" class="rform__event-values mono">
@@ -219,9 +212,9 @@
     </div>
 
     <template #controls>
-      <KBtn variant="ghost" :disabled="busy" @click="emit('update:modelValue', false)">Скасувати</KBtn>
+      <KBtn variant="ghost" :disabled="busy" @click="emit('update:modelValue', false)">{{ t('risk.editor.cancel') }}</KBtn>
       <KBtn variant="primary" :disabled="busy" @click="submit">
-        {{ busy ? 'Зберігаємо…' : risk ? 'Зберегти' : 'Занести в реєстр' }}
+        {{ busy ? t('risk.editor.saving') : risk ? t('risk.editor.save') : t('risk.editor.create') }}
       </KBtn>
     </template>
   </KModal>
@@ -281,6 +274,7 @@ import {
   statusLabel,
   validateDraft,
   type RiskDraft,
+  type RiskError,
 } from '../../lib/risk';
 
 const props = defineProps<{
@@ -301,10 +295,10 @@ const local = useOrchestrator();
 const now = useNow(30_000);
 const { t } = useI18n();
 
-const TABS = [
-  { value: 'risk', label: 'Ризик' },
-  { value: 'history', label: 'Історія' },
-];
+const TABS = computed(() => [
+  { value: 'risk', label: t('risk.editor.tabRisk') },
+  { value: 'history', label: t('risk.editor.tabHistory') },
+]);
 const KIND_OPTIONS = computed<KSelectOption[]>(() =>
   RISK_KINDS.map((value) => ({ value, label: t(kindLabel(value)) })),
 );
@@ -319,7 +313,7 @@ const tab = ref('risk');
 const busy = ref(false);
 // Empty until the first save attempt, then live: nagging about a blank cause while the user
 // is still typing it is how a form teaches people to ignore it.
-const errors = ref<string[]>([]);
+const errors = ref<RiskError[]>([]);
 const errorsEl = useTemplateRef<HTMLElement>('errorsEl');
 const draft = ref<RiskDraft>(emptyDraft(Date.now()));
 

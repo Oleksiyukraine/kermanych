@@ -233,7 +233,7 @@ describe('sortRisks', () => {
 });
 
 describe('statementOf', () => {
-  it('composes cause → event → consequence into one readable sentence', () => {
+  it('keys the statement by kind and clauses the three parts', () => {
     expect(
       statementOf({
         kind: 'threat',
@@ -241,16 +241,20 @@ describe('statementOf', () => {
         event: 'тестування буде заблоковане',
         consequence: 'UAT зсунеться за реліз-гейт',
       }),
-    ).toBe(
-      'Оскільки пісочниця провайдера спільна, існує ризик, що тестування буде заблоковане, ' +
-        'що призвело б до UAT зсунеться за реліз-гейт.',
-    );
+    ).toEqual({
+      key: 'risk.statement.risk',
+      params: {
+        cause: 'пісочниця провайдера спільна',
+        event: 'тестування буде заблоковане',
+        consequence: 'UAT зсунеться за реліз-гейт',
+      },
+    });
   });
 
-  it('switches to opportunity wording for an upside', () => {
-    const s = statementOf({ kind: 'opportunity', cause: 'a', event: 'b', consequence: 'c' });
-    expect(s).toContain('існує можливість, що');
-    expect(s).not.toContain('існує ризик');
+  it('switches to the opportunity key for an upside', () => {
+    expect(statementOf({ kind: 'opportunity', cause: 'a', event: 'b', consequence: 'c' }).key).toBe(
+      'risk.statement.opportunity',
+    );
   });
 });
 
@@ -284,11 +288,11 @@ describe('dates and money', () => {
   });
 
   it('states overdue rather than implying it', () => {
-    expect(dueLabel('2026-08-27', NOW)).toBe('прострочено 3 дн');
-    expect(dueLabel('2026-08-30', NOW)).toBe('сьогодні');
-    expect(dueLabel('2026-08-31', NOW)).toBe('завтра');
-    expect(dueLabel('2026-09-05', NOW)).toBe('за 6 дн');
-    expect(dueLabel('2027-02-28', NOW)).toBe('за 6 міс');
+    expect(dueLabel('2026-08-27', NOW)).toEqual({ key: 'risk.due.overdue', params: { n: 3 } });
+    expect(dueLabel('2026-08-30', NOW)).toEqual({ key: 'risk.due.today' });
+    expect(dueLabel('2026-08-31', NOW)).toEqual({ key: 'risk.due.tomorrow' });
+    expect(dueLabel('2026-09-05', NOW)).toEqual({ key: 'risk.due.days', params: { n: 6 } });
+    expect(dueLabel('2027-02-28', NOW)).toEqual({ key: 'risk.due.months', params: { n: 6 } });
   });
 
   // `todayIso` — the other half of this pair — moved to lib/calendar.ts with the date field
@@ -333,7 +337,7 @@ describe('validateDraft', () => {
   it('demands actions, an action owner and a due date for anything but accept', () => {
     const errors = validateDraft(draft({ responseActions: '', actionOwner: '', actionDue: '' }));
     expect(errors).toHaveLength(3);
-    expect(errors[0]).toContain('Моніторити');
+    expect(errors[0]).toBe('responseActionsBlank');
   });
 
   it('lets an accepted risk stand without actions', () => {
@@ -348,9 +352,9 @@ describe('validateDraft', () => {
   });
 
   it('requires a named owner, a trigger and a proximity date', () => {
-    expect(validateDraft(draft({ riskOwner: '' }))[0]).toContain('власника ризику');
-    expect(validateDraft(draft({ earlyWarning: '' }))[0]).toContain('тригер');
-    expect(validateDraft(draft({ proximity: '' }))[0]).toContain('проксіміті');
+    expect(validateDraft(draft({ riskOwner: '' }))[0]).toBe('riskOwnerBlank');
+    expect(validateDraft(draft({ earlyWarning: '' }))[0]).toBe('earlyWarningBlank');
+    expect(validateDraft(draft({ proximity: '' }))[0]).toBe('proximityBlank');
   });
 
   it('refuses half a residual score and a residual worse than the inherent one', () => {
@@ -363,7 +367,7 @@ describe('validateDraft', () => {
   // Steering committees need to see what the mitigation bought, so «treated» without a
   // residual is not a state the register accepts.
   it('requires a residual score once the risk is called treated', () => {
-    expect(validateDraft(draft({ status: 'treated' }))[0]).toContain('залишкової оцінки');
+    expect(validateDraft(draft({ status: 'treated' }))[0]).toBe('treatedNeedsResidual');
     expect(
       validateDraft(draft({ status: 'treated', residualProbability: 2, residualImpact: 2 })),
     ).toEqual([]);
@@ -379,8 +383,8 @@ describe('validateDraft', () => {
   // Never delete — close with a reason. A materialized risk needs a resolution plan, not a
   // mitigation, and the message says so.
   it('refuses a terminal status with no note, and names the right note for each', () => {
-    expect(validateDraft(draft({ status: 'closed' }))[0]).toContain('рядки не видаляють');
-    expect(validateDraft(draft({ status: 'materialized' }))[0]).toContain('плану усунення');
+    expect(validateDraft(draft({ status: 'closed' }))[0]).toBe('closureNoteBlank');
+    expect(validateDraft(draft({ status: 'materialized' }))[0]).toBe('materializedNoteBlank');
     expect(validateDraft(draft({ status: 'closed', closureNote: 'провайдер замінений' }))).toEqual([]);
   });
 });
