@@ -311,8 +311,8 @@ describe('dates and money', () => {
 
 describe('eventValueLabel', () => {
   it('translates the enum tokens the log stores and leaves a score pair alone', () => {
-    expect(eventValueLabel('status', 'treated')).toBe('Оброблений');
-    expect(eventValueLabel('response', 'transfer')).toBe('Передати');
+    expect(eventValueLabel('status', 'treated')).toBe('risk.statuses.treated');
+    expect(eventValueLabel('response', 'transfer')).toBe('risk.responses.transfer');
     expect(eventValueLabel('scored', '3x4 / 2x2')).toBe('3x4 / 2x2');
     expect(eventValueLabel('reviewed', '')).toBe('');
   });

@@ -9,7 +9,7 @@
     <template #head-meta>
       <span class="rform__meta">
         <KTag v-if="risk">занесено {{ formatDate(risk.raisedAt) }}</KTag>
-        <KTag v-if="risk">{{ statusLabel(risk.status) }}</KTag>
+        <KTag v-if="risk">{{ t(statusLabel(risk.status)) }}</KTag>
         <KTag v-else>{{ workspaceName }}</KTag>
       </span>
     </template>
@@ -68,13 +68,13 @@
           />
           <dl class="rform__anchors">
             <dt class="mono">P{{ draft.probability }}</dt>
-            <dd>{{ PROBABILITY_ANCHORS[draft.probability] }}</dd>
+            <dd>{{ t(probabilityAnchor(draft.probability)) }}</dd>
             <dt class="mono">I{{ draft.impact }}</dt>
-            <dd>{{ IMPACT_ANCHORS[draft.impact] }}</dd>
+            <dd>{{ t(impactAnchor(draft.impact)) }}</dd>
             <dt class="mono">P×I</dt>
             <dd>
               <strong class="rform__exposure" :class="`rform__exposure--${bandOf(inherentExposure)}`">
-                {{ inherentExposure }} · {{ BAND_LABELS[bandOf(inherentExposure)] }}
+                {{ inherentExposure }} · {{ t(bandLabel(bandOf(inherentExposure))) }}
               </strong>
             </dd>
           </dl>
@@ -157,7 +157,7 @@
                   class="rform__exposure"
                   :class="`rform__exposure--${bandOf(residualExposure)}`"
                 >
-                  {{ residualExposure }} · {{ BAND_LABELS[bandOf(residualExposure)] }}
+                  {{ residualExposure }} · {{ t(bandLabel(bandOf(residualExposure))) }}
                 </strong>
               </p>
               <p class="rform__hint">Реакція знімає {{ inherentExposure - residualExposure }} п. експозиції.</p>
@@ -208,10 +208,10 @@
     <div v-if="risk" v-show="tab === 'history'" class="rform__history">
       <p v-if="!events.length" class="rform__hint">Історія порожня.</p>
       <article v-for="e in events" :key="e.id" class="rform__event">
-        <span class="rform__event-kind">{{ RISK_EVENT_LABELS[e.kind] }}</span>
+        <span class="rform__event-kind">{{ t(eventLabel(e.kind)) }}</span>
         <span v-if="e.toValue" class="rform__event-values mono">
-          <template v-if="e.fromValue">{{ eventValueLabel(e.kind, e.fromValue) }} → </template>
-          {{ eventValueLabel(e.kind, e.toValue) }}
+          <template v-if="e.fromValue">{{ t(eventValueLabel(e.kind, e.fromValue)) }} → </template>
+          {{ t(eventValueLabel(e.kind, e.toValue)) }}
         </span>
         <span class="rform__event-who">{{ memberName(e.actor) }}</span>
         <span class="rform__event-at mono">{{ relativeTime(e.at, now) }}</span>
@@ -235,6 +235,7 @@
 // There is no delete control anywhere in here, on purpose: the table grants no `delete` to
 // anyone. A risk leaves the register through the status field, with a note.
 import { computed, nextTick, ref, useTemplateRef, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type {
   RiskKind,
   RiskResponse,
@@ -255,23 +256,26 @@ import { useOrchestrator } from 'stores/orchestrator';
 import { useNow } from '../../composables/useNow';
 import { relativeTime } from '../../lib/time';
 import {
-  BAND_LABELS,
   ESCALATION_EXPOSURE,
-  IMPACT_ANCHORS,
-  PROBABILITY_ANCHORS,
   RISK_CATEGORIES,
-  RISK_EVENT_LABELS,
   RISK_KINDS,
   RISK_STATUSES,
+  bandLabel,
   bandOf,
+  categoryLabel,
   draftOf,
   draftToInsert,
   draftToPatch,
   emptyDraft,
+  eventLabel,
   eventValueLabel,
   formatDate,
+  impactAnchor,
+  kindLabel,
   money,
   parseAmount,
+  probabilityAnchor,
+  responseLabel,
   responsesFor,
   statementOf,
   statusLabel,
@@ -295,20 +299,21 @@ const store = useRisks();
 // Toasts, for the one thing this dialog cannot show inline: a write the database refused.
 const local = useOrchestrator();
 const now = useNow(30_000);
+const { t } = useI18n();
 
 const TABS = [
   { value: 'risk', label: 'Ризик' },
   { value: 'history', label: 'Історія' },
 ];
-const KIND_OPTIONS: KSelectOption[] = RISK_KINDS.map((k) => ({ value: k.value, label: k.label }));
-const CATEGORY_OPTIONS: KSelectOption[] = RISK_CATEGORIES.map((c) => ({
-  value: c.value,
-  label: c.label,
-}));
-const STATUS_OPTIONS: KSelectOption[] = RISK_STATUSES.map((s) => ({
-  value: s.value,
-  label: s.label,
-}));
+const KIND_OPTIONS = computed<KSelectOption[]>(() =>
+  RISK_KINDS.map((value) => ({ value, label: t(kindLabel(value)) })),
+);
+const CATEGORY_OPTIONS = computed<KSelectOption[]>(() =>
+  RISK_CATEGORIES.map((value) => ({ value, label: t(categoryLabel(value)) })),
+);
+const STATUS_OPTIONS = computed<KSelectOption[]>(() =>
+  RISK_STATUSES.map((value) => ({ value, label: t(statusLabel(value)) })),
+);
 
 const tab = ref('risk');
 const busy = ref(false);
@@ -366,7 +371,7 @@ const statusModel = computed({
 });
 
 const responseOptions = computed<KSelectOption[]>(() =>
-  responsesFor(draft.value.kind).map((r) => ({ value: r.value, label: r.label })),
+  responsesFor(draft.value.kind).map((r) => ({ value: r.value, label: t(responseLabel(r.value)) })),
 );
 
 const inherentExposure = computed(() => draft.value.probability * draft.value.impact);

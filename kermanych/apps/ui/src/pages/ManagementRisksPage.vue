@@ -103,9 +103,9 @@
           <div class="risk__statement">
             <span class="risk__statement-text">{{ statementOf(row) }}</span>
             <span class="risk__statement-meta">
-              <KTag>{{ categoryLabel(row.category) }}</KTag>
+              <KTag>{{ t(categoryLabel(row.category)) }}</KTag>
               <KTag v-if="row.kind === 'opportunity'">{{ t('management.risks.kindOpportunity') }}</KTag>
-              <KTag>{{ responseLabel(row.response) }}</KTag>
+              <KTag>{{ t(responseLabel(row.response)) }}</KTag>
             </span>
           </div>
         </template>
@@ -145,7 +145,7 @@
         </template>
 
         <template #cell-status="{ row }">
-          <KTag plain>{{ statusLabel(row.status) }}</KTag>
+          <KTag plain>{{ t(statusLabel(row.status)) }}</KTag>
         </template>
 
         <template #cell-actions="{ row }">
@@ -215,6 +215,8 @@ import {
   RISK_CATEGORIES,
   SORTS,
   STATUS_FILTERS,
+  sortLabel,
+  statusFilterLabel,
   bandOf,
   categoryLabel,
   contingencyReserve,
@@ -259,15 +261,15 @@ const COLUMNS = computed<KTableColumn[]>(() => [
   { key: 'actions', label: '', align: 'right', width: '78px' },
 ]);
 
-const CATEGORY_OPTIONS: KSelectOption[] = RISK_CATEGORIES.map((c) => ({
-  value: c.value,
-  label: c.label,
-}));
-const STATUS_OPTIONS: KSelectOption[] = STATUS_FILTERS.map((s) => ({
-  value: s.value,
-  label: s.label,
-}));
-const SORT_OPTIONS: KSelectOption[] = SORTS.map((s) => ({ value: s.value, label: s.label }));
+const CATEGORY_OPTIONS = computed<KSelectOption[]>(() =>
+  RISK_CATEGORIES.map((value) => ({ value, label: t(categoryLabel(value)) })),
+);
+const STATUS_OPTIONS = computed<KSelectOption[]>(() =>
+  STATUS_FILTERS.map((value) => ({ value, label: t(statusFilterLabel(value)) })),
+);
+const SORT_OPTIONS = computed<KSelectOption[]>(() =>
+  SORTS.map((value) => ({ value, label: t(sortLabel(value)) })),
+);
 
 const filter = reactive({ ...EMPTY_FILTER });
 const sort = ref<RiskSort>('exposure');

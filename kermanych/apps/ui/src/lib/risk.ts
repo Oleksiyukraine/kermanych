@@ -33,30 +33,13 @@ export const SCALE = [1, 2, 3, 4, 5] as const;
 // Anchors, not adjectives. «Середня ймовірність» means nothing across two people; a band of
 // percentages means the same thing to both, which is the only way two risks scored by two
 // people end up comparable in one register.
-export const PROBABILITY_ANCHORS: Readonly<Record<number, string>> = {
-  1: 'Дуже низька — до 10%',
-  2: 'Низька — 10–30%',
-  3: 'Середня — 30–50%',
-  4: 'Висока — 50–75%',
-  5: 'Дуже висока — понад 75%',
-};
+export const probabilityAnchor = (score: number): string => `risk.probabilityAnchors.${score}`;
 
-export const IMPACT_ANCHORS: Readonly<Record<number, string>> = {
-  1: 'Незначний — поглинається спринтом',
-  2: 'Малий — зсув до 3 днів',
-  3: 'Помітний — зсув до 2 тижнів або перевитрата до 5%',
-  4: 'Серйозний — зсув реліз-гейта або перевитрата до 15%',
-  5: 'Критичний — зрив релізу, контракту або комплаєнсу',
-};
+export const impactAnchor = (score: number): string => `risk.impactAnchors.${score}`;
 
 export type RiskBand = 'low' | 'medium' | 'high' | 'extreme';
 
-export const BAND_LABELS: Readonly<Record<RiskBand, string>> = {
-  low: 'низький',
-  medium: 'середній',
-  high: 'високий',
-  extreme: 'критичний',
-};
+export const bandLabel = (band: RiskBand): string => `risk.bands.${band}`;
 
 // P × I on a 5×5 grid, cut where the management response changes: watched, planned for,
 // actively worked, and «not the PM's to sit on».
@@ -79,70 +62,50 @@ export const REVIEW_CADENCE_DAYS = 7;
 
 // ── Vocabulary ──────────────────────────────────────────────────────────────────
 
-export type Labelled<T extends string> = { value: T; label: string };
-
-export const RISK_CATEGORIES: readonly Labelled<RiskCategory>[] = [
-  { value: 'technical', label: 'Технічний' },
-  { value: 'security', label: 'Безпека та захист даних (GDPR)' },
-  { value: 'vendor', label: 'Постачальник, SaaS-залежність, vendor lock-in' },
-  { value: 'resource', label: 'Ресурси команди' },
-  { value: 'external', label: 'Зовнішні чинники' },
-  { value: 'compliance', label: 'Комплаєнс і регуляторика' },
-  { value: 'organizational', label: 'Організаційний' },
-  { value: 'legacy', label: 'Легасі-інтеграції та технічний борг' },
-  { value: 'key_person', label: 'Залежність від ключової людини' },
-  { value: 'infrastructure', label: 'Середовища та інфраструктура' },
-  { value: 'data_migration', label: 'Якість міграції даних' },
-  { value: 'performance', label: 'Нефункціональні вимоги, продуктивність' },
-  { value: 'licensing', label: 'Ліцензування' },
-  { value: 'ai_model', label: 'AI/модель і використання даних' },
+export const RISK_CATEGORIES: readonly RiskCategory[] = [
+  'technical',
+  'security',
+  'vendor',
+  'resource',
+  'external',
+  'compliance',
+  'organizational',
+  'legacy',
+  'key_person',
+  'infrastructure',
+  'data_migration',
+  'performance',
+  'licensing',
+  'ai_model',
 ];
 
-export const RISK_KINDS: readonly Labelled<RiskKind>[] = [
-  { value: 'threat', label: 'Загроза' },
-  { value: 'opportunity', label: 'Можливість' },
-];
+export const RISK_KINDS: readonly RiskKind[] = ['threat', 'opportunity'];
 
 // Which strategies are legal depends on the direction of the uncertainty. The Postgres
 // constraint workspace_risks_response_matches_kind enforces the same split, so the editor
 // filtering this list is a courtesy, not the guard.
-export const RISK_RESPONSES: readonly (Labelled<RiskResponse> & { kind: RiskKind | 'both' })[] = [
-  { value: 'avoid', label: 'Уникнути', kind: 'threat' },
-  { value: 'reduce', label: 'Зменшити', kind: 'threat' },
-  { value: 'transfer', label: 'Передати', kind: 'threat' },
-  { value: 'escalate', label: 'Ескалювати', kind: 'threat' },
-  { value: 'exploit', label: 'Використати', kind: 'opportunity' },
-  { value: 'enhance', label: 'Підсилити', kind: 'opportunity' },
-  { value: 'share', label: 'Розділити', kind: 'opportunity' },
-  { value: 'accept', label: 'Прийняти', kind: 'both' },
+export const RISK_RESPONSES: readonly { value: RiskResponse; kind: RiskKind | 'both' }[] = [
+  { value: 'avoid', kind: 'threat' },
+  { value: 'reduce', kind: 'threat' },
+  { value: 'transfer', kind: 'threat' },
+  { value: 'escalate', kind: 'threat' },
+  { value: 'exploit', kind: 'opportunity' },
+  { value: 'enhance', kind: 'opportunity' },
+  { value: 'share', kind: 'opportunity' },
+  { value: 'accept', kind: 'both' },
 ];
 
-export const RISK_STATUSES: readonly Labelled<RiskStatus>[] = [
-  { value: 'open', label: 'Відкритий' },
-  { value: 'treated', label: 'Оброблений' },
-  { value: 'closed', label: 'Закритий' },
-  { value: 'materialized', label: 'Реалізувався' },
-];
+export const RISK_STATUSES: readonly RiskStatus[] = ['open', 'treated', 'closed', 'materialized'];
 
-export const RISK_EVENT_LABELS: Readonly<Record<RiskEventKind, string>> = {
-  created: 'Занесено в реєстр',
-  scored: 'Переоцінено',
-  response: 'Реакція змінена',
-  status: 'Статус змінено',
-  reviewed: 'Переглянуто',
-  edited: 'Формулювання уточнено',
-};
+// The vocabulary is pure structure: every visible string is an i18n key derived from the
+// enum value (`risk.<group>.<value>`) and resolved at the callsite via t().
+export const categoryLabel = (value: RiskCategory): string => `risk.categories.${value}`;
+export const kindLabel = (value: RiskKind): string => `risk.kinds.${value}`;
+export const responseLabel = (value: RiskResponse): string => `risk.responses.${value}`;
+export const statusLabel = (value: RiskStatus): string => `risk.statuses.${value}`;
+export const eventLabel = (kind: RiskEventKind): string => `risk.events.${kind}`;
 
-function labelFrom<T extends string>(table: readonly Labelled<T>[], value: string): string {
-  return table.find((r) => r.value === value)?.label ?? value;
-}
-
-export const categoryLabel = (v: RiskCategory): string => labelFrom(RISK_CATEGORIES, v);
-export const kindLabel = (v: RiskKind): string => labelFrom(RISK_KINDS, v);
-export const responseLabel = (v: RiskResponse): string => labelFrom(RISK_RESPONSES, v);
-export const statusLabel = (v: RiskStatus): string => labelFrom(RISK_STATUSES, v);
-
-export function responsesFor(kind: RiskKind): readonly Labelled<RiskResponse>[] {
+export function responsesFor(kind: RiskKind): readonly { value: RiskResponse; kind: RiskKind | 'both' }[] {
   return RISK_RESPONSES.filter((r) => r.kind === kind || r.kind === 'both');
 }
 
@@ -190,13 +153,7 @@ export function reviewOverdue(r: WorkspaceRisk, nowMs: number): boolean {
 
 export type Proximity = 'unset' | 'passed' | 'immediate' | 'near' | 'far';
 
-export const PROXIMITY_LABELS: Readonly<Record<Proximity, string>> = {
-  unset: 'не визначено',
-  passed: 'вікно минуло',
-  immediate: 'цей спринт',
-  near: 'цей квартал',
-  far: 'далі',
-};
+export const proximityLabel = (proximity: Proximity): string => `risk.proximity.${proximity}`;
 
 // A high risk eight months out is not managed like one due next sprint, so proximity is a
 // dimension of its own rather than a date column nobody sorts on.
@@ -262,11 +219,10 @@ export function matrixCounts(risks: readonly WorkspaceRisk[]): Record<string, nu
 // closed is a register nobody scrolls.
 export type RiskStatusFilter = '' | 'active' | RiskStatus;
 
-export const STATUS_FILTERS: readonly Labelled<RiskStatusFilter>[] = [
-  { value: 'active', label: 'У роботі' },
-  { value: '', label: 'Усі статуси' },
-  ...RISK_STATUSES,
-];
+export const STATUS_FILTERS: readonly RiskStatusFilter[] = ['active', '', ...RISK_STATUSES];
+
+export const statusFilterLabel = (value: RiskStatusFilter): string =>
+  value === 'active' ? 'risk.statusFilters.active' : value === '' ? 'risk.statusFilters.all' : statusLabel(value);
 
 export type RiskFilter = {
   query: string;
@@ -305,12 +261,9 @@ export function filterRisks(risks: readonly WorkspaceRisk[], f: RiskFilter): Wor
 
 export type RiskSort = 'exposure' | 'proximity' | 'review' | 'code';
 
-export const SORTS: readonly Labelled<RiskSort>[] = [
-  { value: 'exposure', label: 'За експозицією' },
-  { value: 'proximity', label: 'За проксіміті' },
-  { value: 'review', label: 'За давністю перегляду' },
-  { value: 'code', label: 'За номером' },
-];
+export const SORTS: readonly RiskSort[] = ['exposure', 'proximity', 'review', 'code'];
+
+export const sortLabel = (value: RiskSort): string => `risk.sorts.${value}`;
 
 export function sortRisks(risks: readonly WorkspaceRisk[], sort: RiskSort): WorkspaceRisk[] {
   const out = risks.slice();
