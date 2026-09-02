@@ -113,6 +113,29 @@ export function todayIso(now = new Date()): string {
   return `${now.getFullYear()}-${month}-${day}`;
 }
 
+// ── logging work ──────────────────────────────────────────────────────────────
+
+// What `<input type="datetime-local">` reads and writes: the user's own wall clock, to the
+// minute, with NO zone — so it is built from the local getters, never from toISOString(),
+// which would offer a Kyiv afternoon as a UTC one.
+export function localDateTimeValue(now = new Date()): string {
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  return `${todayIso(now)}T${hours}:${minutes}`;
+}
+
+// The same value back into an INSTANT for the api, which re-spells it the way Jira's
+// worklog endpoint parses. `new Date('2026-09-02T14:30')` is LOCAL time per the spec, so
+// the zone the user is actually in travels with the entry.
+//
+// A blank picker means «now» — Jira's own default — and is passed as `undefined` rather
+// than as an instant computed here, so the moment logged is the one the api wrote at.
+export function worklogStartedInstant(localValue: string): string | undefined {
+  if (!localValue) return undefined;
+  const at = new Date(localValue);
+  return Number.isNaN(at.getTime()) ? undefined : at.toISOString();
+}
+
 // The card's date chip: what to show for a ticket's start/due pair, and whether it is
 // late. Jira's own emphasis rule — a DONE ticket is never overdue, however long its due
 // date has passed, because the work it was late for is finished.

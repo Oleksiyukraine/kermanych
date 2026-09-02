@@ -155,6 +155,111 @@ describe("JiraClient", () => {
     });
   });
 
+  it("posts a worklog with Jira's default estimate adjustment and no extra parameter", async () => {
+    const calls = mockFetch({ json: { id: "w1" } });
+    await client().addWorklog("KAN-1", {
+      timeSpent: "3h 20m",
+      started: "2026-09-02T11:30:00.000+0000",
+      adjust: { mode: "auto" },
+    });
+    expect(calls[0]!.url).toBe(
+      "https://team.atlassian.net/rest/api/3/issue/KAN-1/worklog?adjustEstimate=auto",
+    );
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      timeSpent: "3h 20m",
+      started: "2026-09-02T11:30:00.000+0000",
+    });
+  });
+
+  it("names each estimate adjustment with the parameter Jira reads it from", async () => {
+    const calls = mockFetch({ json: { id: "w1" } }, { json: { id: "w2" } }, { json: { id: "w3" } });
+    const c = client();
+    const entry = { timeSpent: "1h", started: "2026-09-02T11:30:00.000+0000" };
+    await c.addWorklog("KAN-1", { ...entry, adjust: { mode: "leave" } });
+    await c.addWorklog("KAN-1", { ...entry, adjust: { mode: "new", value: "2d" } });
+    await c.addWorklog("KAN-1", { ...entry, adjust: { mode: "manual", value: "30m" } });
+    expect(calls.map((c) => c.url.split("worklog?")[1])).toEqual([
+      "adjustEstimate=leave",
+      "adjustEstimate=new&newEstimate=2d",
+      "adjustEstimate=manual&reduceBy=30m",
+    ]);
+  });
+
+  it("sends the worklog note as the ADF the caller built, and omits it when there is none", async () => {
+    const calls = mockFetch({ json: { id: "w1" } }, { json: { id: "w2" } });
+    const c = client();
+    const doc = { type: "doc", version: 1, content: [] };
+    await c.addWorklog("KAN-1", {
+      timeSpent: "1h",
+      started: "2026-09-02T11:30:00.000+0000",
+      comment: doc,
+      adjust: { mode: "auto" },
+    });
+    await c.addWorklog("KAN-1", { timeSpent: "1h", started: "2026-09-02T11:30:00.000+0000", adjust: { mode: "auto" } });
+    expect(JSON.parse(String(calls[0]!.init.body)).comment).toEqual(doc);
+    expect("comment" in JSON.parse(String(calls[1]!.init.body))).toBe(false);
+  });
+
+  it("updates a worklog without a relative adjustment — Jira's PUT has no such parameter", async () => {
+    const calls = mockFetch({ json: { id: "w1" } });
+    await client().updateWorklog("KAN-1", "10100", {
+      timeSpent: "2h",
+      started: "2026-09-02T11:30:00.000+0000",
+      adjust: { mode: "new", value: "4h" },
+    });
+    expect(calls[0]!.url).toBe(
+      "https://team.atlassian.net/rest/api/3/issue/KAN-1/worklog/10100?adjustEstimate=new&newEstimate=4h",
+    );
+    expect(calls[0]!.init.method).toBe("PUT");
+  });
+
+  it("always sends a comment on an update, so an emptied note actually clears", async () => {
+    const calls = mockFetch({ json: { id: "w1" } });
+    await client().updateWorklog("KAN-1", "10100", {
+      timeSpent: "2h",
+      started: "2026-09-02T11:30:00.000+0000",
+      adjust: { mode: "auto" },
+    });
+    // Jira leaves an OMITTED comment alone; the empty doc is how it spells «no body».
+    expect(JSON.parse(String(calls[0]!.init.body)).comment).toEqual({ type: "doc", version: 1, content: [] });
+  });
+
+  it("refuses a relative adjustment the update endpoint cannot express", async () => {
+    mockFetch({ json: { id: "w1" } });
+    expect(() =>
+      client().updateWorklog("KAN-1", "10100", {
+        timeSpent: "2h",
+        started: "2026-09-02T11:30:00.000+0000",
+        adjust: { mode: "manual", value: "30m" },
+      }),
+    ).toThrow(/no relative estimate adjustment/);
+  });
+
+  it("deletes a worklog and gives the time back with increaseBy, not reduceBy", async () => {
+    const calls = mockFetch({ status: 204 }, { status: 204 });
+    const c = client();
+    await expect(c.deleteWorklog("KAN-1", "10100", { mode: "manual", value: "2h" })).resolves.toBeUndefined();
+    await c.deleteWorklog("KAN-1", "10100", { mode: "leave" });
+    expect(calls.map((call) => call.url.split("10100?")[1])).toEqual([
+      "adjustEstimate=manual&increaseBy=2h",
+      "adjustEstimate=leave",
+    ]);
+    expect(calls[0]!.init.method).toBe("DELETE");
+  });
+
+  it("asks for exactly the permissions it reads back and reports a missing one as false", async () => {
+    const calls = mockFetch({
+      json: { permissions: { WORKLOG_EDIT_OWN: { havePermission: true }, WORKLOG_DELETE_ALL: { havePermission: false } } },
+    });
+    const held = await client().myPermissions("KAN", ["WORKLOG_EDIT_OWN", "WORKLOG_DELETE_ALL", "WORKLOG_EDIT_ALL"]);
+    expect(calls[0]!.url).toBe(
+      "https://team.atlassian.net/rest/api/3/mypermissions?projectKey=KAN&permissions=WORKLOG_EDIT_OWN,WORKLOG_DELETE_ALL,WORKLOG_EDIT_ALL",
+    );
+    // A key Jira did not answer for is «no», never «unknown»: the caller draws controls
+    // from these booleans.
+    expect(held).toEqual({ WORKLOG_EDIT_OWN: true, WORKLOG_DELETE_ALL: false, WORKLOG_EDIT_ALL: false });
+  });
+
   it("tolerates Jira's empty 204 answers on transition", async () => {
     mockFetch({ status: 204 });
     await expect(client().transition("KAN-1", "31")).resolves.toBeUndefined();

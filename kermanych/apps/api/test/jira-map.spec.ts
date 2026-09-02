@@ -12,6 +12,7 @@ import {
   pickInProgressTransition,
   pickStartDateFieldId,
   toJiraDate,
+  toJiraStarted,
 } from "../src/jira/jira-map";
 import type { JiraFieldSummary, JiraRawIssue, JiraTransition } from "../src/jira/jira-client";
 
@@ -87,6 +88,15 @@ describe("mapIssue", () => {
     expect("assigneeName" in bare).toBe(false);
     expect("parentKey" in bare).toBe(false);
   });
+
+  it("mirrors all three time-tracking counters, because logging work moves two of them", () => {
+    const issue = mapIssue(integration, rawIssue);
+    expect(issue.originalEstimate).toBe("2d 4h");
+    expect(issue.remainingEstimate).toBe("1d");
+    // The payload holds no timeSpent yet — nothing has been logged — and a mirror that
+    // guessed one would disagree with Jira's own panel.
+    expect(issue.timeSpent).toBe("");
+  });
 });
 
 describe("dateOnly", () => {
@@ -116,6 +126,24 @@ describe("toJiraDate", () => {
   it("refuses a day Jira could only reject, instead of sending it", () => {
     expect(() => toJiraDate("30.09.2026")).toThrow(/invalid date/);
     expect(() => toJiraDate("2026-02-31")).toThrow(/invalid date/);
+  });
+});
+
+describe("toJiraStarted", () => {
+  it("re-spells an instant with the numeric zone the worklog endpoint parses", () => {
+    // The `Z` an ISO string carries is exactly what Jira's yyyy-MM-dd'T'HH:mm:ss.SSSZ
+    // pattern refuses, so the same moment leaves as «+0000».
+    expect(toJiraStarted("2026-09-02T11:30:00.000Z")).toBe("2026-09-02T11:30:00.000+0000");
+  });
+
+  it("carries an offset moment to the same instant in UTC", () => {
+    // 14:30 in Kyiv (+03:00) is 11:30 UTC — the entry must land on Jira's clock, not on
+    // the digits the picker showed.
+    expect(toJiraStarted("2026-09-02T14:30:00+03:00")).toBe("2026-09-02T11:30:00.000+0000");
+  });
+
+  it("refuses an unreadable start rather than logging the work at some other moment", () => {
+    expect(() => toJiraStarted("yesterday")).toThrow(/unreadable worklog start/);
   });
 });
 
@@ -179,6 +207,18 @@ describe("children mappers", () => {
     ]);
     expect(w.commentHtml).toBe("pair review");
     expect(w.seconds).toBe(7200);
+  });
+
+  it("keeps the worklog author's accountId, which is what «may I edit this?» is decided from", () => {
+    const [mine, orphan] = mapWorklogs([
+      { id: "w1", author: { accountId: "acc-me", displayName: "Andrii" }, timeSpent: "2h", started: "2026-09-01T08:00:00.000+0000" },
+      // Jira omits the author for a deleted account: blank, which every reader treats as
+      // «not mine» rather than as a match against another blank.
+      { id: "w2", timeSpent: "1h", started: "2026-09-01T09:00:00.000+0000" },
+    ]);
+    expect(mine!.authorAccountId).toBe("acc-me");
+    expect(mine!.authorName).toBe("Andrii");
+    expect(orphan!.authorAccountId).toBe("");
   });
 
   it("reads attachment metadata off the issue payload itself", () => {

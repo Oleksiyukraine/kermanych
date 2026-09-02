@@ -3,9 +3,11 @@ import {
   dateChip,
   issuesByColumn,
   launchDefaults,
+  localDateTimeValue,
   subtasksOf,
   todayIso,
   transitionChoiceForDrop,
+  worklogStartedInstant,
   type JiraTransitionView,
 } from '../src/lib/jira-view';
 import type { JiraColumn, JiraIssue } from '@kermanych/cloud';
@@ -32,6 +34,8 @@ function issue(over: Partial<JiraIssue>): JiraIssue {
     priorityIcon: '',
     labels: [],
     originalEstimate: '',
+    timeSpent: '',
+    remainingEstimate: '',
     startDate: '',
     dueDate: '',
     statusId: '1',
@@ -166,5 +170,25 @@ describe('todayIso', () => {
     // 00:30 local on the 2nd is the 2nd — through UTC in a +03:00 zone it would be the 1st.
     expect(todayIso(new Date(2026, 8, 2, 0, 30))).toBe('2026-09-02');
     expect(todayIso(new Date(2026, 0, 9, 23, 45))).toBe('2026-01-09');
+  });
+});
+
+describe('localDateTimeValue', () => {
+  it('offers the local wall clock to the minute, the way datetime-local reads it', () => {
+    expect(localDateTimeValue(new Date(2026, 8, 2, 14, 30))).toBe('2026-09-02T14:30');
+    expect(localDateTimeValue(new Date(2026, 0, 9, 9, 5))).toBe('2026-01-09T09:05');
+  });
+});
+
+describe('worklogStartedInstant', () => {
+  it('reads the picker as local time and hands back that instant', () => {
+    // Round trip through the same local calendar: whatever zone the test runs in, the
+    // instant sent is the moment the user picked on their own clock.
+    expect(worklogStartedInstant('2026-09-02T14:30')).toBe(new Date(2026, 8, 2, 14, 30).toISOString());
+  });
+
+  it('leaves an empty or unreadable picker to the api, which logs at now', () => {
+    expect(worklogStartedInstant('')).toBeUndefined();
+    expect(worklogStartedInstant('колись')).toBeUndefined();
   });
 });

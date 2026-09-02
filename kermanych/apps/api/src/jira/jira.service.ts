@@ -32,7 +32,13 @@ import { AuthService } from "../auth/auth.service";
 import { RegistryService } from "../registry/registry.service";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { JiraClient, JiraHttpError, normalizeSiteUrl } from "./jira-client";
-import type { JiraBoardSummary, JiraCredentials, JiraRawIssue, JiraTransition } from "./jira-client";
+import type {
+  JiraBoardSummary,
+  JiraCredentials,
+  JiraRawIssue,
+  JiraTransition,
+  JiraWorklogAdjust,
+} from "./jira-client";
 import {
   adfDoc,
   adfText,
@@ -44,6 +50,7 @@ import {
   mapWorklogs,
   pickStartDateFieldId,
   toJiraDate,
+  toJiraStarted,
 } from "./jira-map";
 
 // The lease staleness window. The UI ticks every ~30 s; 25 s means the previous holder's
@@ -82,6 +89,60 @@ export type JiraIssueDraft = {
 
 export type JiraLaunchResult = { session: Session; transitionError?: string };
 
+// The wire shape of «Log work» — Jira's own dialog, field for field. Everything but the
+// duration is optional the way Jira's defaults are: an omitted `started` means «now» and
+// an omitted `adjust` means Jira's own «subtract this from the remaining estimate».
+export type JiraWorklogDraft = {
+  // Jira's duration spelling («3h 20m»). Jira validates it; a refusal is its own sentence.
+  timeSpent: string;
+  // An ISO-8601 INSTANT (the UI converts the wall time the user picked). Absent = now.
+  started?: string;
+  comment?: string;
+  adjust?: JiraWorklogAdjust;
+};
+
+// The estimate adjustment as it arrives from a client: a mode string that must be one of
+// Jira's, and — for the modes that carry one — a duration. An unknown mode degrades to
+// Jira's own default rather than being forwarded as `adjustEstimate=garbage`, while a
+// «set to»/«by this much» with nothing to set is a refusal: silently writing the entry
+// with the estimate untouched would be a different action than the one asked for.
+//
+// `allowManual` is Jira's asymmetry, not a policy of ours: adding and deleting a worklog
+// take a relative move (`reduceBy`/`increaseBy`), UPDATING one does not. On the update
+// path a relative move is therefore not refused but read as what it is — «recalculate» —
+// which is the mode Jira's own edit dialog defaults to.
+function normalizeWorklogAdjust(
+  raw: JiraWorklogAdjust | undefined,
+  allowManual = true,
+): JiraWorklogAdjust {
+  if (!raw) return { mode: "auto" };
+  if (raw.mode === "leave") return { mode: "leave" };
+  if (raw.mode === "manual" && !allowManual) return { mode: "auto" };
+  if (raw.mode !== "new" && raw.mode !== "manual") return { mode: "auto" };
+  const value = raw.value?.trim();
+  if (!value) throw new Error("this estimate adjustment needs a duration");
+  return { mode: raw.mode, value };
+}
+
+// The four project permissions Jira gates a worklog write on. Named as constants because
+// `GET /mypermissions` REFUSES the whole request on an unrecognised key — the list asked
+// for and the flags read back must be the same four spellings.
+const WORKLOG_PERMISSIONS = [
+  "WORKLOG_EDIT_OWN",
+  "WORKLOG_EDIT_ALL",
+  "WORKLOG_DELETE_OWN",
+  "WORKLOG_DELETE_ALL",
+] as const;
+
+// «Own» and «all» stay separate all the way to the UI: a member may fix their own entry
+// and not somebody else's, which is one control shown and one hidden on the same list.
+export type JiraWorklogPermissions = {
+  editOwn: boolean;
+  editAll: boolean;
+  deleteOwn: boolean;
+  deleteAll: boolean;
+};
+
 @Injectable()
 export class JiraService {
   private lastFullSweep = new Map<string, number>();
@@ -108,10 +169,14 @@ export class JiraService {
 
   // Validated against /myself BEFORE storing: a mistyped token discovered here costs one
   // clear refusal instead of a read-only board with no explanation later.
+  //
+  // The same answer carries the token's Jira accountId, which is stored beside it — that
+  // is the identity every «is this worklog mine?» question is answered from, learned here
+  // for free rather than by asking Jira again on each dialog open.
   async setToken(siteUrl: string, email: string, apiToken: string, userId: string): Promise<{ displayName: string }> {
     const site = normalizeSiteUrl(siteUrl);
     const me = await this.clientFactory({ siteUrl: site, email, apiToken }).myself();
-    this.registry.setJiraToken(site, userId, email, apiToken);
+    this.registry.setJiraToken(site, userId, email, apiToken, me.accountId);
     return { displayName: me.displayName };
   }
 
@@ -319,6 +384,74 @@ export class JiraService {
     return this.refreshIssue(workspaceId, key, userId);
   }
 
+  // «Log work»: one worklog into Jira under the acting user's own token — so the entry
+  // carries THEIR name in Jira, exactly as if they had typed it there — followed by the
+  // usual refresh, which brings back both the new worklog row and the counters the write
+  // moved (timeSpent, remainingEstimate).
+  //
+  // The draft is off the wire, so the two things Jira would refuse in its own vocabulary
+  // are refused here in the user's: an empty duration, and an adjustment mode whose value
+  // is missing. The duration FORMAT stays Jira's to judge — it owns «3h 20m».
+  async logWork(workspaceId: string, key: string, draft: JiraWorklogDraft, userId: string): Promise<JiraIssue> {
+    const { client } = await this.withIntegration(workspaceId, userId);
+    const timeSpent = draft.timeSpent?.trim();
+    if (!timeSpent) throw new Error("timeSpent is required");
+    const adjust = normalizeWorklogAdjust(draft.adjust);
+    const comment = draft.comment?.trim();
+    await client.addWorklog(key, {
+      timeSpent,
+      started: toJiraStarted(draft.started ?? new Date().toISOString()),
+      ...(comment ? { comment: adfDoc(comment) } : {}),
+      adjust,
+    });
+    return this.refreshIssue(workspaceId, key, userId);
+  }
+
+  // Editing an existing entry: the same three inputs, against a worklog id. Jira decides
+  // whether this member may touch it (own vs all worklog permission) and its refusal is
+  // what the UI shows — the dialog only offers the controls Jira said yes to, so a
+  // refusal here means the permission changed under an open dialog.
+  //
+  // `started` is required rather than defaulted: an edit that omitted it would silently
+  // move the entry to now, and «I fixed the duration» must not restamp the day.
+  async editWorklog(
+    workspaceId: string,
+    key: string,
+    worklogId: string,
+    draft: JiraWorklogDraft,
+    userId: string,
+  ): Promise<JiraIssue> {
+    const { client } = await this.withIntegration(workspaceId, userId);
+    const timeSpent = draft.timeSpent?.trim();
+    if (!timeSpent) throw new Error("timeSpent is required");
+    if (!draft.started) throw new Error("started is required when editing a worklog");
+    const comment = draft.comment?.trim();
+    await client.updateWorklog(key, worklogId, {
+      timeSpent,
+      started: toJiraStarted(draft.started),
+      // Present even when blank: Jira leaves an omitted comment alone, and clearing the
+      // note is a legitimate edit (the client spells the empty doc).
+      ...(comment ? { comment: adfDoc(comment) } : {}),
+      // Jira's update endpoint has no relative move — normalised away, not forwarded.
+      adjust: normalizeWorklogAdjust(draft.adjust, false),
+    });
+    return this.refreshIssue(workspaceId, key, userId);
+  }
+
+  // Removing an entry. The adjustment's `manual` mode is Jira's `increaseBy` here: the
+  // time the entry claimed goes back onto the remaining estimate.
+  async deleteWorklog(
+    workspaceId: string,
+    key: string,
+    worklogId: string,
+    adjust: JiraWorklogAdjust | undefined,
+    userId: string,
+  ): Promise<JiraIssue> {
+    const { client } = await this.withIntegration(workspaceId, userId);
+    await client.deleteWorklog(key, worklogId, normalizeWorklogAdjust(adjust));
+    return this.refreshIssue(workspaceId, key, userId);
+  }
+
   // ── authoring ────────────────────────────────────────────────────────────────
 
   // The standard-fields subset, spelled the way POST/PUT /issue expects. Absent keys are
@@ -393,14 +526,59 @@ export class JiraService {
     // Whether this site HAS a start-date field at all. The editors show the control only
     // on `true`: offering an input whose every save is refused is worse than no input.
     startDateSupported: boolean;
+    // This token's own Jira accountId, and what Jira says it may do to worklogs in this
+    // project. Together they are the whole answer to «which entries wear Редагувати /
+    // Видалити»: an entry is mine when its author matches, and Jira gates own and
+    // others' entries on separate permissions.
+    myAccountId: string;
+    worklog: JiraWorklogPermissions;
   }> {
     const { integration, client } = await this.withIntegration(workspaceId, userId);
-    const [issueTypes, priorities, startDateFieldId] = await Promise.all([
+    const [issueTypes, priorities, startDateFieldId, myAccountId, worklog] = await Promise.all([
       client.projectIssueTypes(integration.projectKey),
       client.listPriorities(),
       this.startDateFieldId(integration.siteUrl, client),
+      this.myAccountId(integration.siteUrl, userId, client),
+      this.worklogPermissions(integration.projectKey, client),
     ]);
-    return { issueTypes, priorities, startDateSupported: !!startDateFieldId };
+    return { issueTypes, priorities, startDateSupported: !!startDateFieldId, myAccountId, worklog };
+  }
+
+  // The acting token's Jira identity. Read from the registry, where setToken put it; a
+  // token stored before that column existed is backfilled from /myself on this first ask,
+  // so the answer costs one Jira call once per stale token and none afterwards.
+  //
+  // Blank on failure, and that is a usable answer: nothing then matches as «mine», so the
+  // dialog offers only what an all-worklogs permission allows.
+  private async myAccountId(siteUrl: string, userId: string, client: JiraClient): Promise<string> {
+    const site = normalizeSiteUrl(siteUrl);
+    const stored = this.registry.getJiraToken(site, userId)?.accountId;
+    if (stored) return stored;
+    try {
+      const me = await client.myself();
+      this.registry.setJiraAccountId(site, userId, me.accountId);
+      return me.accountId;
+    } catch {
+      return "";
+    }
+  }
+
+  // Jira's own verdict on the four worklog permissions. A refusal (an older site, a token
+  // without browse-project) degrades to all-false: the dialog then shows the entries and
+  // offers no edit or delete control, which is exactly what a member who cannot write
+  // them should see.
+  private async worklogPermissions(projectKey: string, client: JiraClient): Promise<JiraWorklogPermissions> {
+    try {
+      const held = await client.myPermissions(projectKey, WORKLOG_PERMISSIONS);
+      return {
+        editOwn: held.WORKLOG_EDIT_OWN === true,
+        editAll: held.WORKLOG_EDIT_ALL === true,
+        deleteOwn: held.WORKLOG_DELETE_OWN === true,
+        deleteAll: held.WORKLOG_DELETE_ALL === true,
+      };
+    } catch {
+      return { editOwn: false, editAll: false, deleteOwn: false, deleteAll: false };
+    }
   }
 
   async assignableUsers(

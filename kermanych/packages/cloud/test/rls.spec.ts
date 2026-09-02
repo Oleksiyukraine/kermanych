@@ -1094,6 +1094,8 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
           priorityIcon: "",
           labels: ["a"],
           originalEstimate: "",
+          timeSpent: "",
+          remainingEstimate: "",
           startDate: "",
           dueDate: "2026-09-30",
           statusId: "1",

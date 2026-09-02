@@ -7,7 +7,7 @@ Date: 2026-09-02. Status: approved in brainstorming; review gate waived by the o
 Every workspace can connect exactly one Jira board. The board is mirrored 1:1 into
 Kermanych's «Дошка» — columns, statuses, labels, tickets, comments, worklogs,
 attachments — following Kermanych's UI. Interaction is two-way: an action taken in
-Kermanych (transition, comment, edit, create, delete, attach) is written to Jira
+Kermanych (transition, comment, log work, edit, create, delete, attach) is written to Jira
 immediately under the acting user's own Jira identity. A mirrored ticket can be
 launched like a native task: the launch creates a local agent session and moves the
 ticket to a user-chosen Jira status; when the session is merged, the user is prompted
@@ -32,14 +32,35 @@ to pick the ticket's next status.
    "don't move it"). On `merged`, a prompt lists the board's statuses and applies the
    chosen transition; skippable.
 5. **V1 scope.** Reads: columns, tickets (key, summary, type, priority, labels,
-   assignee, status, description, original estimate, start & due date), comments,
-   worklogs (read-only), attachment metadata + download. Writes: transitions (drag),
-   comments, create/edit/delete tickets, assignee, labels, standard fields, attachment
+   assignee, status, description, time tracking — original estimate, time spent,
+   remaining estimate — start & due date), comments, worklogs, attachment metadata +
+   download. Writes: transitions (drag), comments, **worklogs — log, edit, delete**,
+   create/edit/delete tickets, assignee, labels, standard fields, attachment
    upload, subtask creation.
    **Standard fields only are editable** (summary, description, type, priority,
    assignee, labels, original estimate, due date); other custom fields render
    read-only. Out of v1: custom field editing, sprint/backlog management, worklog
-   writing.
+   visibility restrictions.
+   **Time entries** are Jira's own dialogs, field for field: `timeSpent` in Jira's
+   duration spelling, `started` (defaulted to now when logging, REQUIRED when editing
+   so a correction cannot restamp the entry; sent as an instant and re-spelled for the
+   worklog endpoints' `yyyy-MM-dd'T'HH:mm:ss.SSSZ`), an optional ADF description, and
+   the remaining-estimate adjustment.
+   That adjustment is three vocabularies, because Jira's three endpoints differ and the
+   UI must not offer what one of them would refuse: POST takes
+   `auto|leave|new|manual` with `newEstimate`/**`reduceBy`**, DELETE takes the same four
+   with `newEstimate`/**`increaseBy`** (removing an entry gives the time back), and PUT
+   has **no relative form at all** — only `auto|leave|new`.
+   Every write is signed with the acting member's token, so the entry carries their name
+   in Jira, and the issue refetch that follows moves `time_spent`/`remaining_estimate`
+   in the mirror without waiting for the next poll.
+   **Who may touch an entry is Jira's answer, not ours.** `GET /rest/api/3/mypermissions`
+   is asked for `WORKLOG_EDIT_OWN`, `WORKLOG_EDIT_ALL`, `WORKLOG_DELETE_OWN` and
+   `WORKLOG_DELETE_ALL` in the board's project; an entry is «own» when its mirrored
+   `author_account_id` matches the token's own accountId (recorded from `/myself` when
+   the token is stored, backfilled on first need for tokens saved earlier). A refused or
+   unreadable permission answer degrades to all-false: the entries render, no edit or
+   delete control appears.
    The one exception is **start date**: Jira has no system field for it, so the api
    resolves the site's own «Start date» (or Advanced Roadmaps' «Target start») from
    `GET /rest/api/3/field`, caches the id per site, and mirrors/edits through it. A site
@@ -82,15 +103,18 @@ Supabase mirror → realtime/refetch → every member's UI (token or not)
   Jira board column maps several statuses).
 - `jira_issues` — card + detail body: Jira `issue_id`, `key`, `summary`,
   `description` (rendered), type/priority (name + icon URL), `labels text[]`,
-  `original_estimate`, `start_date` / `due_date` (Jira's `YYYY-MM-DD`, blank = unset),
+  `original_estimate` / `time_spent` / `remaining_estimate` (Jira's time tracking, its own
+  duration spelling; the last two move when work is logged),
+  `start_date` / `due_date` (Jira's `YYYY-MM-DD`, blank = unset),
   assignee/reporter (accountId, display name, avatar URL), `status_id`,
   `status_name`, `status_category` (`new`/`indeterminate`/`done`), `parent_key`,
   `jira_updated_at`; launch binding: `kermanych_project_id`, `task_id`. Upsert key
   `(integration_id, issue_id)`. Full resync deletes rows absent from Jira. Member
   RLS. Added to the `supabase_realtime` publication.
 - `jira_comments`, `jira_worklogs`, `jira_attachments` — child rows per issue;
-  attachments are metadata only (filename, size, mime, author, created). No
-  realtime; refetch on dialog open.
+  worklogs carry `author_account_id` (Jira's identifier, not a name — the own-versus-all
+  permission question is answered from it); attachments are metadata only (filename,
+  size, mime, author, created). No realtime; refetch on dialog open.
 
 ### Tasks table
 
@@ -102,7 +126,8 @@ the shadow task via `jira_issues.task_id` for a live agent-status chip.
 
 ### Registry SQLite (local)
 
-`jira_tokens(site_url, user_id, email, api_token)`.
+`jira_tokens(site_url, user_id, email, api_token, account_id)` — `account_id` is the
+token's own Jira identity from `/myself`, stored so «is this entry mine?» costs no call.
 
 ## Local API — `JiraModule`, `/jira/*`
 
@@ -117,6 +142,9 @@ the shadow task via `jira_issues.task_id` for a live agent-status chip.
   deletions and column-layout changes).
 - Issue ops (each = Jira call + mirror patch): create (subtask = create with
   parent), edit standard fields, delete, `GET .../transitions`, transition, comment,
+  `POST .../worklogs {timeSpent, started?, comment?, adjust?}` («Log work»),
+  `PUT .../worklogs/:worklogId` (started required), `DELETE .../worklogs/:worklogId`
+  with the estimate adjustment as `?adjust=&value=` query parameters,
   attachment upload (multipart), attachment download (streamed proxy).
 - Launch: `POST /jira/issues/:key/launch {projectId, transitionId?}` — shadow task →
   session via the existing supervisor path → transition. A failed transition never
@@ -139,10 +167,13 @@ the shadow task via `jira_issues.task_id` for a live agent-status chip.
   multi-status column pops a status picker. Optimistic move, snap back with the Jira
   refusal text. Tokenless: drag disabled with explanatory tooltip.
 - **Ticket detail dialog**: description, standard fields inline-editable for token
-  holders (priority, assignee, original estimate, start & due date), other custom
+  holders (priority, assignee, original estimate, start & due date), time spent and
+  remaining estimate shown read-only (only a worklog moves them), other custom
   fields read-only, subtasks list, attachments
-  (download/upload), comments tab (composer), worklogs tab (read-only). Actions:
-  «Запустити», «Редагувати», «Видалити».
+  (download/upload), comments tab (composer), worklogs tab: the list, per-entry
+  «Редагувати»/«Видалити» where Jira's permissions allow (the edit takes over the same
+  form; the delete asks its own estimate question in place), and the «Log work» form of
+  Decision 5. Actions: «Запустити», «Редагувати», «Видалити».
 - **Launch dialog**: project picker (pre-selected from sidebar scope) + target
   status picker per Decision 4.
 - **Merge prompt**: on a `jira_key` task hitting `merged` on this machine —

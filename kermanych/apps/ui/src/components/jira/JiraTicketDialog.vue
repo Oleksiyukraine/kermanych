@@ -90,8 +90,119 @@
               <span class="jtd__worklog-author">{{ w.authorName }}</span>
               <span class="jtd__worklog-when mono">{{ shortTime(w.startedAt) }}</span>
               <span v-if="w.commentHtml" class="jtd__worklog-note">{{ w.commentHtml }}</span>
+              <!-- Only the controls Jira said yes to: own-versus-all worklog permissions,
+                   answered per entry by whose accountId wrote it. -->
+              <span class="jtd__worklog-acts">
+                <button
+                  v-if="mayEditWorklog(w)"
+                  class="jtd__worklog-act"
+                  type="button"
+                  :disabled="logging"
+                  @click="startEditWorklog(w)"
+                >{{ editingWorklogId === w.worklogId ? 'Редагується' : 'Редагувати' }}</button>
+                <button
+                  v-if="mayDeleteWorklog(w)"
+                  class="jtd__worklog-act"
+                  type="button"
+                  :disabled="logging"
+                  @click="askDeleteWorklog(w.worklogId)"
+                >Видалити</button>
+              </span>
+
+              <!-- Jira asks the same estimate question when an entry goes away; here
+                   `manual` is «increase by», because deleting gives the time back. -->
+              <div v-if="deletingWorklogId === w.worklogId" class="jtd__worklog-confirm">
+                <p class="jtd__confirm">Видалити цей ворклог у Jira?</p>
+                <div class="jtd__logwork-row">
+                  <label class="jtd__field">
+                    <span class="jtd__field-label">Залишок оцінки</span>
+                    <KSelect
+                      :model-value="deleteAdjust"
+                      :options="DELETE_ADJUST_OPTIONS"
+                      :disabled="logging"
+                      @update:model-value="pickDeleteAdjust"
+                    />
+                  </label>
+                  <label v-if="deleteAdjustNeedsValue" class="jtd__field">
+                    <span class="jtd__field-label">{{ deleteAdjustValueLabel }}</span>
+                    <input
+                      v-model="deleteAdjustValue"
+                      class="jtd__estimate mono"
+                      placeholder="напр. 2h"
+                      :disabled="logging"
+                    />
+                  </label>
+                </div>
+                <div class="jtd__confirm-row">
+                  <KBtn variant="ghost" :disabled="logging" @click="deletingWorklogId = null">Ні</KBtn>
+                  <KBtn variant="secondary" :disabled="logging" @click="deleteWorklog(w.worklogId)">
+                    {{ logging ? '…' : 'Так, видалити' }}
+                  </KBtn>
+                </div>
+              </div>
             </div>
             <p v-if="!kids?.worklogs.length" class="jtd__empty mono">Ворклогів немає.</p>
+
+            <!-- Jira's «Log work», field for field: duration, when it started, what it did
+                 to the remaining estimate, and an optional note. The entry lands in Jira
+                 under this member's own name.
+
+                 The SAME form edits an existing entry — that is what Jira's own dialog is
+                 — with one difference Jira imposes: its update endpoint has no relative
+                 estimate move, so «Зменшити на» is not on offer while editing. -->
+            <div v-if="canAct" class="jtd__logwork">
+              <p v-if="editingWorklogId" class="jtd__logwork-mode mono">Редагування ворклогу</p>
+              <div class="jtd__logwork-row">
+                <label class="jtd__field">
+                  <span class="jtd__field-label">Витрачено</span>
+                  <input
+                    v-model="workTime"
+                    class="jtd__estimate mono"
+                    placeholder="напр. 3h 20m"
+                    :disabled="logging"
+                    v-tip="'Формат Jira: 3h 20m'"
+                  />
+                </label>
+                <label class="jtd__field">
+                  <span class="jtd__field-label">Початок</span>
+                  <input v-model="workStarted" type="datetime-local" class="jtd__date mono" :disabled="logging" />
+                </label>
+              </div>
+              <div class="jtd__logwork-row">
+                <label class="jtd__field">
+                  <span class="jtd__field-label">Залишок оцінки</span>
+                  <KSelect
+                    :model-value="workAdjust"
+                    :options="adjustOptions"
+                    :disabled="logging"
+                    @update:model-value="pickAdjust"
+                  />
+                </label>
+                <label v-if="adjustNeedsValue" class="jtd__field">
+                  <span class="jtd__field-label">{{ adjustValueLabel }}</span>
+                  <input
+                    v-model="workAdjustValue"
+                    class="jtd__estimate mono"
+                    placeholder="напр. 2h"
+                    :disabled="logging"
+                  />
+                </label>
+              </div>
+              <textarea
+                v-model="workComment"
+                class="jtd__composer-input"
+                rows="2"
+                placeholder="Опис роботи — піде в Jira від вашого імені"
+              ></textarea>
+              <div class="jtd__confirm-row">
+                <KBtn v-if="editingWorklogId" variant="ghost" :disabled="logging" @click="resetWorkDraft">
+                  Скасувати
+                </KBtn>
+                <KBtn variant="secondary" :disabled="!workTime.trim() || logging" @click="submitWork">
+                  {{ submitLabel }}
+                </KBtn>
+              </div>
+            </div>
           </template>
         </div>
       </div>
@@ -140,6 +251,11 @@
               <span v-else>{{ issue.originalEstimate || '—' }}</span>
             </dd>
           </div>
+          <!-- Jira's other two time-tracking counters, read-only because only a worklog
+               moves them: they appear once Jira actually holds one, so a ticket nobody has
+               logged against does not carry two blank rows. -->
+          <div v-if="issue.timeSpent"><dt>Витрачено</dt><dd class="mono">{{ issue.timeSpent }}</dd></div>
+          <div v-if="issue.remainingEstimate"><dt>Залишилось</dt><dd class="mono">{{ issue.remainingEstimate }}</dd></div>
           <!-- The start row appears only where there is something to show: a site without
                a «Start date» field would otherwise offer an input whose every save is a
                refusal, and a blank «Початок —» beside it. -->
@@ -239,15 +355,29 @@
 // mirror; a tokenless member sees everything and can touch nothing — each control says
 // why instead of hiding.
 import { computed, ref, watch } from 'vue';
-import type { JiraAttachment, JiraIssue } from '@kermanych/cloud';
+import type { JiraAttachment, JiraIssue, JiraWorklog } from '@kermanych/cloud';
 import KAvatar from 'components/kit/KAvatar.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import JiraStatusPickDialog from './JiraStatusPickDialog.vue';
-import { api, type JiraAssignableUser, type JiraEditorOptions, type JiraIssueDraftWire } from '../../lib/api';
+import {
+  api,
+  type JiraAssignableUser,
+  type JiraEditorOptions,
+  type JiraIssueDraftWire,
+  type JiraWorklogAdjustWire,
+  type JiraWorklogDraftWire,
+} from '../../lib/api';
 import { sanitizeJiraHtml } from '../../lib/sanitize-html';
-import { dateChip, subtasksOf, todayIso, type JiraTransitionView } from '../../lib/jira-view';
+import {
+  dateChip,
+  localDateTimeValue,
+  subtasksOf,
+  todayIso,
+  worklogStartedInstant,
+  type JiraTransitionView,
+} from '../../lib/jira-view';
 import { useJira } from 'stores/jira';
 import { useOrchestrator } from 'stores/orchestrator';
 
@@ -278,10 +408,58 @@ const transitionOpen = ref(false);
 const transitionOptions = ref<JiraTransitionView[]>([]);
 const transitioning = ref(false);
 
+// ── logging work ─────────────────────────────────────────────────────────────
+// Jira's «Log work» dialog reproduced: the duration, the moment it started, and what the
+// entry does to the remaining estimate — Jira's own four-way choice, whose two «by how
+// much» modes grow a second input. The same form edits an existing entry.
+//
+// Three option sets, because Jira's three worklog endpoints accept three different
+// vocabularies: logging can REDUCE the estimate by an amount, deleting can INCREASE it by
+// one (the entry's time comes back), and updating offers no relative move at all.
+const ADJUST_OPTIONS: KSelectOption[] = [
+  { value: 'auto', label: 'Скоротити автоматично' },
+  { value: 'leave', label: 'Не змінювати' },
+  { value: 'new', label: 'Встановити' },
+  { value: 'manual', label: 'Зменшити на' },
+];
+
+const EDIT_ADJUST_OPTIONS: KSelectOption[] = ADJUST_OPTIONS.filter((o) => o.value !== 'manual');
+
+const DELETE_ADJUST_OPTIONS: KSelectOption[] = [
+  { value: 'auto', label: 'Перерахувати автоматично' },
+  { value: 'leave', label: 'Не змінювати' },
+  { value: 'new', label: 'Встановити' },
+  { value: 'manual', label: 'Збільшити на' },
+];
+
+type AdjustMode = JiraWorklogAdjustWire['mode'];
+
+const workTime = ref('');
+const workStarted = ref('');
+const workComment = ref('');
+const workAdjust = ref<AdjustMode>('auto');
+const workAdjustValue = ref('');
+const logging = ref(false);
+// Which existing entry the form is editing (null = it is composing a new one), and which
+// one is asking to be deleted. Separate: a delete confirm is a per-row question, while
+// the edit takes over the one form at the bottom.
+const editingWorklogId = ref<string | null>(null);
+const deletingWorklogId = ref<string | null>(null);
+const deleteAdjust = ref<AdjustMode>('auto');
+const deleteAdjustValue = ref('');
+
 // ── inline facts editing: priority / assignee / estimate / start & due date ───
 // One-field drafts through PUT /jira/issues — the same endpoint the full editor uses,
 // so Jira's own validation (estimate format, screens) is the only validation.
-const editorOptions = ref<JiraEditorOptions>({ issueTypes: [], priorities: [], startDateSupported: false });
+const editorOptions = ref<JiraEditorOptions>({
+  issueTypes: [],
+  priorities: [],
+  startDateSupported: false,
+  // No identity and no permissions until the api answers — so no entry reads as «mine»
+  // and no edit/delete control is offered. The read-only default is the safe one.
+  myAccountId: '',
+  worklog: { editOwn: false, editAll: false, deleteOwn: false, deleteAll: false },
+});
 const assignable = ref<JiraAssignableUser[]>([]);
 const estimateDraft = ref('');
 const startDraft = ref('');
@@ -306,6 +484,42 @@ const canAct = computed(() => jira.tokenPresent);
 const kids = computed(() => jira.children[props.issue.issueId]);
 const descriptionHtml = computed(() => sanitizeJiraHtml(props.issue.descriptionHtml));
 const subtasks = computed(() => subtasksOf(jira.issues, props.issue.key));
+
+// «Встановити» and the relative move are the modes that carry a duration of their own;
+// the other two adjust the estimate without one.
+const adjustOptions = computed(() => (editingWorklogId.value ? EDIT_ADJUST_OPTIONS : ADJUST_OPTIONS));
+const adjustNeedsValue = computed(() => workAdjust.value === 'new' || workAdjust.value === 'manual');
+const adjustValueLabel = computed(() => (workAdjust.value === 'new' ? 'Новий залишок' : 'Зменшити на'));
+const submitLabel = computed(() => {
+  if (logging.value) return editingWorklogId.value ? 'Зберігаємо…' : 'Логуємо…';
+  return editingWorklogId.value ? 'Зберегти' : 'Залогувати роботу';
+});
+
+const deleteAdjustNeedsValue = computed(
+  () => deleteAdjust.value === 'new' || deleteAdjust.value === 'manual',
+);
+const deleteAdjustValueLabel = computed(() =>
+  deleteAdjust.value === 'new' ? 'Новий залишок' : 'Збільшити на',
+);
+
+// Whose entry it is, in Jira's terms — and therefore which of Jira's two permissions
+// applies. A blank author (a row mirrored before the column existed, or a deleted Jira
+// account) is NOT mine: it then needs the all-worklogs permission, which is the
+// conservative reading and self-heals on the next poll.
+function isMyWorklog(w: JiraWorklog): boolean {
+  const me = editorOptions.value.myAccountId;
+  return !!me && w.authorAccountId === me;
+}
+
+function mayEditWorklog(w: JiraWorklog): boolean {
+  const { editOwn, editAll } = editorOptions.value.worklog;
+  return isMyWorklog(w) ? editOwn || editAll : editAll;
+}
+
+function mayDeleteWorklog(w: JiraWorklog): boolean {
+  const { deleteOwn, deleteAll } = editorOptions.value.worklog;
+  return isMyWorklog(w) ? deleteOwn || deleteAll : deleteAll;
+}
 
 // The card's own verdict, reused so the dialog cannot disagree with the board about a
 // late ticket.
@@ -335,6 +549,8 @@ watch(
     estimateDraft.value = props.issue.originalEstimate;
     startDraft.value = props.issue.startDate;
     dueDraft.value = props.issue.dueDate;
+    resetWorkDraft();
+    deletingWorklogId.value = null;
     void jira.loadChildren(props.issue.issueId);
     void jira.refreshIssue(props.workspaceId, props.issue.key);
     if (canAct.value) void loadEditorLists();
@@ -444,6 +660,117 @@ async function sendComment(): Promise<void> {
     local.notify(e instanceof Error ? e.message : String(e), 'error');
   } finally {
     commenting.value = false;
+  }
+}
+
+// A fresh «Log work» form: blank duration and note, the start prefilled with now (Jira's
+// own default), the estimate left to Jira's automatic adjustment — and NOT editing
+// anything, so this doubles as «cancel the edit».
+function resetWorkDraft(): void {
+  editingWorklogId.value = null;
+  workTime.value = '';
+  workStarted.value = localDateTimeValue();
+  workComment.value = '';
+  workAdjust.value = 'auto';
+  workAdjustValue.value = '';
+}
+
+function pickAdjust(mode: string): void {
+  workAdjust.value = mode as AdjustMode;
+}
+
+function pickDeleteAdjust(mode: string): void {
+  deleteAdjust.value = mode as AdjustMode;
+}
+
+// The form takes over an existing entry: its own values, and Jira's automatic
+// recalculation as the estimate default — the same thing Jira's edit dialog opens with.
+// The stored start is an INSTANT, shown back on the user's own clock.
+function startEditWorklog(w: JiraWorklog): void {
+  deletingWorklogId.value = null;
+  editingWorklogId.value = w.worklogId;
+  workTime.value = w.timeSpent;
+  workStarted.value = localDateTimeValue(new Date(w.startedAt));
+  workComment.value = w.commentHtml;
+  workAdjust.value = 'auto';
+  workAdjustValue.value = '';
+}
+
+function askDeleteWorklog(worklogId: string): void {
+  deletingWorklogId.value = worklogId;
+  deleteAdjust.value = 'auto';
+  deleteAdjustValue.value = '';
+}
+
+// The estimate adjustment as the wire takes it, or `undefined` when the picked mode needs
+// a duration the user has not typed — the caller then says so instead of sending it.
+function wireAdjust(mode: AdjustMode, raw: string, needsValue: boolean): JiraWorklogAdjustWire | null {
+  if (!needsValue) return { mode: mode as 'auto' | 'leave' };
+  const value = raw.trim();
+  return value ? { mode: mode as 'new' | 'manual', value } : null;
+}
+
+// One worklog written to Jira under this member's token, then the refreshed issue into
+// the store: «Витрачено»/«Залишилось» move with the write, and the children refetch
+// brings the entry itself into the list. Creating and editing differ in one call.
+async function submitWork(): Promise<void> {
+  const timeSpent = workTime.value.trim();
+  if (!timeSpent) return;
+  // Said here rather than sent: an adjustment with nothing to adjust by would come back
+  // as Jira's own refusal about a query parameter the user never saw.
+  const adjust = wireAdjust(workAdjust.value, workAdjustValue.value, adjustNeedsValue.value);
+  if (!adjust) {
+    local.notify('Вкажіть тривалість для вибраної зміни залишку', 'error');
+    return;
+  }
+  const started = worklogStartedInstant(workStarted.value);
+  const comment = workComment.value.trim();
+  const editing = editingWorklogId.value;
+  // An edit must carry its start: an omitted one would restamp the entry to now, and
+  // «I fixed the duration» is not «this happened just now».
+  if (editing && !started) {
+    local.notify('Вкажіть початок ворклогу', 'error');
+    return;
+  }
+  const draft: JiraWorklogDraftWire = {
+    timeSpent,
+    ...(started ? { started } : {}),
+    ...(comment ? { comment } : {}),
+    adjust,
+  };
+  logging.value = true;
+  try {
+    jira.upsert(
+      editing
+        ? await api.jiraEditWorklog(props.workspaceId, props.issue.key, editing, draft)
+        : await api.jiraLogWork(props.workspaceId, props.issue.key, draft),
+    );
+    resetWorkDraft();
+    await jira.loadChildren(props.issue.issueId);
+  } catch (e) {
+    local.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    logging.value = false;
+  }
+}
+
+async function deleteWorklog(worklogId: string): Promise<void> {
+  const adjust = wireAdjust(deleteAdjust.value, deleteAdjustValue.value, deleteAdjustNeedsValue.value);
+  if (!adjust) {
+    local.notify('Вкажіть тривалість для вибраної зміни залишку', 'error');
+    return;
+  }
+  logging.value = true;
+  try {
+    jira.upsert(await api.jiraDeleteWorklog(props.workspaceId, props.issue.key, worklogId, adjust));
+    deletingWorklogId.value = null;
+    // A deleted entry must not stay loaded in the form behind it.
+    if (editingWorklogId.value === worklogId) resetWorkDraft();
+    await jira.loadChildren(props.issue.issueId);
+  } catch (e) {
+    local.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    logging.value = false;
   }
 }
 
@@ -731,6 +1058,9 @@ function shortTime(iso: string): string {
 
 .jtd__worklog {
   display: flex;
+  // Wraps because the delete confirm is a block INSIDE the row it is about — the question
+  // belongs beside the entry, not at the bottom of the tab.
+  flex-wrap: wrap;
   align-items: baseline;
   gap: var(--k-sp-2);
   font-family: var(--k-font-ui);
@@ -747,6 +1077,89 @@ function shortTime(iso: string): string {
 .jtd__worklog-note {
   color: var(--k-faint);
   font-size: var(--k-fs-xs);
+}
+
+// Per-entry actions: quiet until the row is hovered, because a worklog list is read far
+// more often than it is corrected.
+.jtd__worklog-acts {
+  display: flex;
+  gap: var(--k-sp-2);
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.12s;
+
+  .jtd__worklog:hover &,
+  .jtd__worklog:focus-within & {
+    opacity: 1;
+  }
+}
+
+.jtd__worklog-act {
+  padding: 0;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    color: var(--k-text);
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+}
+
+.jtd__worklog-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
+  width: 100%;
+  padding: var(--k-sp-2) 0;
+}
+
+// Which entry the form below is about — stated, because the form is the same one that
+// composes a new worklog.
+.jtd__logwork-mode {
+  align-self: flex-start;
+  font-size: var(--k-fs-xs);
+  color: var(--k-accent);
+}
+
+// The «Log work» form: two two-up rows of small labelled inputs above the note and the
+// button, so the whole of Jira's dialog fits under the worklog list without a modal of
+// its own. Same right-aligned action as the comment composer.
+.jtd__logwork {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
+  align-items: flex-end;
+  margin-top: var(--k-sp-3);
+  padding-top: var(--k-sp-3);
+  border-top: var(--k-rule-thin) solid var(--k-line);
+}
+
+.jtd__logwork-row {
+  display: flex;
+  gap: var(--k-sp-2);
+  width: 100%;
+}
+
+.jtd__field {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.jtd__field-label {
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-xs);
+  color: var(--k-faint);
 }
 
 // The two date pickers wear the estimate input's surface: same row, same weight — three

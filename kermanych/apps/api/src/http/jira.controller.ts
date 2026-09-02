@@ -23,8 +23,8 @@ import {
 } from "@nestjs/common";
 import { Buffer } from "node:buffer";
 import type { ImageInput } from "@kermanych/core";
-import { JiraService, type JiraIssueDraft } from "../jira/jira.service";
-import { JiraHttpError } from "../jira/jira-client";
+import { JiraService, type JiraIssueDraft, type JiraWorklogDraft } from "../jira/jira.service";
+import { JiraHttpError, type JiraWorklogAdjust } from "../jira/jira-client";
 // Structural, not `express`: @types/express is not a dependency here, and these three
 // members are the whole contract the streamed download uses.
 type StreamResponse = {
@@ -151,6 +151,68 @@ export class JiraController {
     if (!b?.body?.trim()) throw new BadRequestException("comment body is required");
     try {
       return await this.jira.addComment(ws, key, b.body.trim(), req.user.id);
+    } catch (err) {
+      rethrow(err);
+    }
+  }
+
+  // «Log work». The acting user is the guard's, never the body's — a worklog carries a
+  // name in Jira, and that name is whoever's token signs the call.
+  @Post("issues/:workspaceId/:key/worklogs")
+  async logWork(
+    @Param("workspaceId") ws: string,
+    @Param("key") key: string,
+    @Body() b: JiraWorklogDraft,
+    @Req() req: Authed,
+  ) {
+    if (!b?.timeSpent?.trim()) throw new BadRequestException("timeSpent is required");
+    try {
+      return await this.jira.logWork(ws, key, b, req.user.id);
+    } catch (err) {
+      rethrow(err);
+    }
+  }
+
+  // Editing and removing an entry. Whether this member MAY is Jira's call, made under
+  // their own token — the dialog only offers the controls GET /jira/editor-options said
+  // Jira would honour, and a refusal that still arrives is Jira's own sentence.
+  @Put("issues/:workspaceId/:key/worklogs/:worklogId")
+  async editWorklog(
+    @Param("workspaceId") ws: string,
+    @Param("key") key: string,
+    @Param("worklogId") worklogId: string,
+    @Body() b: JiraWorklogDraft,
+    @Req() req: Authed,
+  ) {
+    if (!b?.timeSpent?.trim()) throw new BadRequestException("timeSpent is required");
+    if (!b?.started) throw new BadRequestException("started is required");
+    try {
+      return await this.jira.editWorklog(ws, key, worklogId, b, req.user.id);
+    } catch (err) {
+      rethrow(err);
+    }
+  }
+
+  // The estimate adjustment travels as query parameters, not a body: a DELETE with a
+  // payload is the kind of thing proxies drop, and this is the shape the token routes
+  // already use for a delete that needs an argument.
+  @Delete("issues/:workspaceId/:key/worklogs/:worklogId")
+  async removeWorklog(
+    @Param("workspaceId") ws: string,
+    @Param("key") key: string,
+    @Param("worklogId") worklogId: string,
+    @Query("adjust") adjust: string | undefined,
+    @Query("value") value: string | undefined,
+    @Req() req: Authed,
+  ) {
+    try {
+      return await this.jira.deleteWorklog(
+        ws,
+        key,
+        worklogId,
+        adjust ? ({ mode: adjust, value: value ?? "" } as JiraWorklogAdjust) : undefined,
+        req.user.id,
+      );
     } catch (err) {
       rethrow(err);
     }

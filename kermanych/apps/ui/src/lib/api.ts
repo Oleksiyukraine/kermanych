@@ -113,6 +113,15 @@ async function del(path: string): Promise<void> {
   if (!r.ok) throw await toError(r);
 }
 
+// A DELETE whose answer matters: the Jira worklog route replies with the refreshed issue,
+// the same way every other Jira write does, so the caller can upsert the moved time
+// counters without a second round trip.
+async function delJson<T>(path: string): Promise<T> {
+  const r = await fetch(BASE + path, { method: 'DELETE', headers: authHeaders(false) });
+  if (!r.ok) throw await toError(r);
+  return (await r.json()) as T;
+}
+
 async function patchJson<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(BASE + path, {
     method: 'PATCH',
@@ -162,8 +171,31 @@ export type JiraEditorOptions = {
   issueTypes: { id: string; name: string; subtask: boolean }[];
   priorities: { id: string; name: string }[];
   startDateSupported: boolean;
+  // Who this machine's token is in Jira, and what Jira says it may do to worklogs in this
+  // project. An entry is «mine» when its authorAccountId matches `myAccountId`; Jira gates
+  // own and others' entries on separate permissions, so both halves travel.
+  myAccountId: string;
+  worklog: { editOwn: boolean; editAll: boolean; deleteOwn: boolean; deleteAll: boolean };
 };
 export type JiraAssignableUser = { accountId: string; displayName: string; avatar?: string };
+
+// Jira's «Log work» dialog on the wire. `started` is an ISO INSTANT (the picker's wall
+// time, converted through Date); omitted = now on a NEW entry, and required on an edit
+// (an omitted one would restamp the entry to now). `adjust` is Jira's own estimate
+// choice; omitted = its default «auto». `manual` means `reduceBy` when logging and
+// `increaseBy` when deleting — Jira's own asymmetry — and the update endpoint has no
+// relative form at all, so the edit form does not offer one.
+export type JiraWorklogAdjustWire =
+  | { mode: 'auto' }
+  | { mode: 'leave' }
+  | { mode: 'new'; value: string }
+  | { mode: 'manual'; value: string };
+export type JiraWorklogDraftWire = {
+  timeSpent: string;
+  started?: string;
+  comment?: string;
+  adjust?: JiraWorklogAdjustWire;
+};
 
 export const api = {
   // LOCAL project rows. Creation and deletion live in the cloud (see stores/projects.ts);
@@ -226,6 +258,33 @@ export const api = {
     post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/comments`, { body }),
   jiraRefreshIssue: (workspaceId: string, key: string): Promise<JiraIssue> =>
     post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/refresh`, {}),
+  jiraLogWork: (workspaceId: string, key: string, draft: JiraWorklogDraftWire): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/worklogs`, draft),
+  jiraEditWorklog: (
+    workspaceId: string,
+    key: string,
+    worklogId: string,
+    draft: JiraWorklogDraftWire,
+  ): Promise<JiraIssue> =>
+    put<JiraIssue>(
+      `/jira/issues/${workspaceId}/${encodeURIComponent(key)}/worklogs/${encodeURIComponent(worklogId)}`,
+      draft,
+    ),
+  // The estimate adjustment rides in the query string: a DELETE body is the kind of thing
+  // intermediaries drop, and this is the shape the token route already uses.
+  jiraDeleteWorklog: (
+    workspaceId: string,
+    key: string,
+    worklogId: string,
+    adjust?: JiraWorklogAdjustWire,
+  ): Promise<JiraIssue> => {
+    const q = adjust
+      ? `?adjust=${adjust.mode}${'value' in adjust ? `&value=${encodeURIComponent(adjust.value)}` : ''}`
+      : '';
+    return delJson<JiraIssue>(
+      `/jira/issues/${workspaceId}/${encodeURIComponent(key)}/worklogs/${encodeURIComponent(worklogId)}${q}`,
+    );
+  },
 
   jiraCreateIssue: (workspaceId: string, draft: JiraIssueDraftWire): Promise<JiraIssue> =>
     post<JiraIssue>(`/jira/issues/${workspaceId}`, draft),

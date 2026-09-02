@@ -247,3 +247,23 @@ test("removeProject deletes the project and its sessions", () => {
   expect(r.listProjects()).toHaveLength(0);
   expect(r.listSessions()).toHaveLength(0);
 });
+
+test("jira token keeps its Jira accountId, per site and user, and can be backfilled", () => {
+  const r = new RegistryService(":memory:");
+  r.setJiraToken("https://team.atlassian.net", "u1", "a@b.c", "tok", "acc-me");
+  expect(r.getJiraToken("https://team.atlassian.net", "u1")).toEqual({
+    email: "a@b.c",
+    apiToken: "tok",
+    accountId: "acc-me",
+  });
+
+  // A token stored before the identity was recorded: absent, not blank — that is what
+  // tells JiraService to ask /myself once instead of treating it as a real answer.
+  r.setJiraToken("https://other.atlassian.net", "u1", "a@b.c", "tok2");
+  expect(r.getJiraToken("https://other.atlassian.net", "u1")).toEqual({ email: "a@b.c", apiToken: "tok2" });
+
+  r.setJiraAccountId("https://other.atlassian.net", "u1", "acc-late");
+  expect(r.getJiraToken("https://other.atlassian.net", "u1")?.accountId).toBe("acc-late");
+  // Backfilling one site's identity leaves the other alone.
+  expect(r.getJiraToken("https://team.atlassian.net", "u1")?.accountId).toBe("acc-me");
+});
