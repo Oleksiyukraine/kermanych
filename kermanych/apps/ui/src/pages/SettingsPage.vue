@@ -412,6 +412,12 @@
               і за темним десктопом хоче різних відповідей.
             </p>
           </div>
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.appGeneral.language') }}</span>
+            <!-- Beside the theme: both are device-local screen preferences, not
+                 account settings, and both apply on click with no save bar. -->
+            <KLangToggle />
+          </div>
         </div>
 
         <!-- ── APP · ГАРЯЧІ КЛАВІШІ ─────────────────────────────────────────── -->
@@ -603,6 +609,7 @@
 // lib/settings.ts. A panel for them would be a control that silently forgets.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import type { EnvFileView, ThinkingLevel } from '@kermanych/core';
 import type { AssignableRole, WorkspaceMember, WorkspaceRole } from '@kermanych/cloud';
 import type { KTheme } from '@kermanych/tokens';
@@ -646,9 +653,11 @@ import AgentSkillsPanel from 'components/settings/AgentSkillsPanel.vue';
 import TriggersPanel from 'components/settings/TriggersPanel.vue';
 import AgentCatalogPanel from 'components/settings/AgentCatalogPanel.vue';
 import HelpersCatalogPanel from 'components/settings/HelpersCatalogPanel.vue';
+import KLangToggle from 'components/kit/KLangToggle.vue';
 
 const store = useOrchestrator();
 const projects = useProjects();
+const { t } = useI18n();
 const auth = useAuth();
 const route = useRoute();
 const router = useRouter();
