@@ -14,7 +14,7 @@
         />
         <p class="set__hint">{{ scopeHint }}</p>
       </div>
-      <nav class="set__cats" :aria-label="`Розділи налаштувань: ${scopeLabel}`">
+      <nav class="set__cats" :aria-label="t('settings.rail.categoriesAria', { scope: scopeLabel })">
         <button
           v-for="c in scopeCategories"
           :key="c.key"
@@ -47,7 +47,7 @@
           v-if="section.scope !== 'app'"
           class="set__saved"
           :class="{ 'set__saved--dirty': dirtyCount > 0 }"
-        >{{ dirtyCount > 0 ? 'не збережено' : 'збережено' }}</span>
+        >{{ dirtyCount > 0 ? t('settings.head.unsaved') : t('settings.head.saved') }}</span>
       </header>
 
       <div class="set__body">
@@ -55,25 +55,25 @@
              chosen in the sidebar there is no row to configure. Same invitation the
              Менеджмент tab shows, once per scope rather than once per section. -->
         <div v-if="section.scope === 'project' && !projectId" class="set__blank">
-          <span class="set__blank-eyebrow mono">КЕРМАНИЧ</span>
-          <p>Виберіть проєкт у лівій панелі, щоб налаштувати його.</p>
+          <span class="set__blank-eyebrow mono">{{ t('settings.blank.eyebrow') }}</span>
+          <p>{{ t('settings.blank.project') }}</p>
         </div>
         <div v-else-if="section.scope === 'workspace' && !workspace" class="set__blank">
-          <span class="set__blank-eyebrow mono">КЕРМАНИЧ</span>
-          <p>Виберіть воркспейс або проєкт у лівій панелі.</p>
+          <span class="set__blank-eyebrow mono">{{ t('settings.blank.eyebrow') }}</span>
+          <p>{{ t('settings.blank.workspace') }}</p>
         </div>
 
         <!-- ── PROJECT · ОСНОВНЕ ────────────────────────────────────────────── -->
         <div v-else-if="section.key === 'project-basics' && draft" class="set__form">
           <KField
             v-model="draft.name"
-            label="Назва проєкту"
+            :label="t('settings.project.name')"
             placeholder="my-project"
             :disabled="cloudLocked"
           />
           <KColorPicker
             v-model="draft.color"
-            label="Колір проєкту"
+            :label="t('settings.project.color')"
             :class="{ 'set__locked': cloudLocked }"
           />
           <!-- The non-mouse path to a move, and the only path to a COLLAPSED
@@ -81,13 +81,13 @@
                drop target at all. Same write as the drag: a patch of workspace_id. -->
           <KSelect
             v-model="draft.workspaceId"
-            label="Воркспейс"
+            :label="t('settings.project.workspace')"
             :options="workspaceOptions"
             :disabled="cloudLocked"
           />
           <KField
             v-model="draft.gitRemoteUrl"
-            label="Git remote (лише довідково — Керманич нічого не клонує)"
+            :label="t('settings.project.gitRemote')"
             placeholder="git@github.com:org/repo.git"
             :disabled="cloudLocked"
           />
@@ -100,17 +100,14 @@
                outside the cloud-locked group above — it works for a project the
                cloud has never heard of. -->
           <div class="set__group">
-            <span class="set__label">Локальна тека цієї машини</span>
+            <span class="set__label">{{ t('settings.project.localFolder') }}</span>
             <div class="set__row">
               <span class="set__path mono" :class="{ 'set__path--empty': !boundPath }">
-                {{ boundPath || 'не прив’язано' }}
+                {{ boundPath || t('settings.project.notBound') }}
               </span>
-              <KBtn variant="secondary" @click="pickerOpen = true">Обрати…</KBtn>
+              <KBtn variant="secondary" @click="pickerOpen = true">{{ t('settings.project.choose') }}</KBtn>
             </div>
-            <p class="set__note">
-              Тека належить цій машині й не синхронізується між пристроями. Без неї агент не
-              може торкнутись репозиторію.
-            </p>
+            <p class="set__note">{{ t('settings.project.folderNote') }}</p>
           </div>
 
           <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
@@ -120,16 +117,16 @@
         <div v-else-if="section.key === 'project-git' && draft" class="set__form">
           <KSelect
             v-model="draft.defaultBranch"
-            label="Гілка за замовчуванням"
+            :label="t('settings.git.defaultBranch')"
             :options="branches"
             :disabled="cloudLocked || !isBound"
-            placeholder="— поточна гілка репозиторію —"
+            :placeholder="t('settings.git.branchPlaceholder')"
           />
-          <p v-if="!isBound" class="set__note">{{ BIND_HINT }} — без неї список гілок читати ні з чого.</p>
+          <p v-if="!isBound" class="set__note">{{ t('settings.git.branchBindHint') }}</p>
           <KField
             v-model="draft.conventions"
-            label="Конвенції PR і комітів (фолбек, якщо в репозиторії їх немає)"
-            placeholder="Порожнє — Керманич підставить власні дефолти"
+            :label="t('settings.git.conventions')"
+            :placeholder="t('settings.git.conventionsPlaceholder')"
             multiline
             :rows="8"
             :disabled="cloudLocked"
@@ -141,13 +138,13 @@
         <div v-else-if="section.key === 'project-commands' && draft" class="set__form">
           <KField
             v-model="draft.previewCommand"
-            label="Команда прев’ю (веб)"
+            :label="t('settings.commands.preview')"
             placeholder="pnpm dev --port $PORT"
             :disabled="cloudLocked"
           />
           <KField
             v-model="draft.apiCommand"
-            label="Команда прев’ю (API, необов’язково)"
+            :label="t('settings.commands.api')"
             placeholder="pnpm dev:api"
             :disabled="cloudLocked"
           />
@@ -155,7 +152,7 @@
           <div class="set__rule"></div>
 
           <div class="set__group">
-            <span class="set__label">Файли, що копіюються в кожну робочу теку</span>
+            <span class="set__label">{{ t('settings.commands.carryFiles') }}</span>
             <!-- Chips, not a comma-joined line: these are PATHS, and a list of
                  paths in one input is a string nobody can read back. The input
                  commits on Enter and on blur, so a typed path is never lost to a
@@ -166,7 +163,7 @@
                 <button
                   type="button"
                   class="set__chip-x"
-                  :aria-label="`Прибрати ${f}`"
+                  :aria-label="t('settings.commands.removeFile', { file: f })"
                   :disabled="cloudLocked"
                   @click="draft.carryFiles.splice(i, 1)"
                 >✕</button>
@@ -174,17 +171,15 @@
               <input
                 v-model="carryInput"
                 class="set__chip-input mono"
-                placeholder="додати шлях…"
+                :placeholder="t('settings.commands.addPathPlaceholder')"
                 :disabled="cloudLocked"
                 @keydown.enter.prevent="addCarryFile"
                 @blur="addCarryFile"
               />
             </div>
-            <p class="set__note">
-              Порожній перелік Керманич не зберігає: без файлів агент стартує в теці, де немає
-              навіть <span class="mono">.env</span>, тому список повернеться до
-              <span class="mono">.env</span>.
-            </p>
+            <i18n-t keypath="settings.commands.carryNote" tag="p" class="set__note">
+              <template #env><span class="mono">.env</span></template>
+            </i18n-t>
           </div>
 
           <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
@@ -194,23 +189,20 @@
         <div v-else-if="section.key === 'project-defaults' && draft" class="set__form">
           <KSelect
             v-model="draft.defaultModel"
-            label="Модель"
+            :label="t('settings.defaults.model')"
             :options="defaultModelPickOptions"
-            placeholder="за замовчуванням"
+            :placeholder="t('settings.defaults.placeholder')"
             :disabled="cloudLocked"
             searchable
           />
           <KSelect
             v-model="draft.defaultEffort"
-            label="Рівень роздумів"
+            :label="t('settings.defaults.effort')"
             :options="defaultEffortPickOptions"
-            placeholder="за замовчуванням"
+            :placeholder="t('settings.defaults.placeholder')"
             :disabled="cloudLocked"
           />
-          <p class="set__note">
-            Підставляються в поля «Модель» і «Рівень роздумів» попапа «Нова задача». Кожну
-            задачу все одно можна запустити з іншими — це лише те, з чого форма стартує.
-          </p>
+          <p class="set__note">{{ t('settings.defaults.note') }}</p>
           <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
         </div>
 
@@ -243,15 +235,17 @@
         <!-- ── PROJECT · ЗМІННІ СЕРЕДОВИЩА ──────────────────────────────────── -->
         <div v-else-if="section.key === 'project-env'" class="set__form set__form--wide">
           <p v-if="!isBound" class="set__note">
-            {{ BIND_HINT }} — <span class="mono">.env</span> читається з неї.
+            <i18n-t keypath="settings.env.bindHint" tag="span">
+              <template #env><span class="mono">.env</span></template>
+            </i18n-t>
           </p>
           <template v-else>
             <KEnvEditor v-model="envRows" :ignored="envFile.ignored" :flags-locked="cloudLocked" />
             <p v-if="missingRequired.length" class="set__error" role="alert">
-              Немає значень для обов’язкових ключів: {{ missingRequired.join(', ') }}
+              {{ t('settings.env.missingRequired', { keys: missingRequired.join(', ') }) }}
             </p>
             <p v-if="cloudLocked" class="set__note">
-              Позначку «обов’язковий» зберігати нікуди: {{ noCloudRowHint }}
+              {{ t('settings.env.requiredLocked', { hint: noCloudRowHint }) }}
             </p>
           </template>
         </div>
@@ -260,40 +254,33 @@
         <div v-else-if="section.key === 'project-danger'" class="set__form">
           <div class="set__danger">
             <span class="set__danger-text">
-              <span class="set__danger-title">Видалити проєкт із хмари</span>
-              <span class="set__note">
-                Проєкт зникне у ВСІХ учасників разом із задачами на дошці. Локальна тека й
-                репозиторій не змінюються; локальні сесії лишаються.
-              </span>
+              <span class="set__danger-title">{{ t('settings.danger.projectTitle') }}</span>
+              <span class="set__note">{{ t('settings.danger.projectNote') }}</span>
             </span>
             <KBtn
               variant="ghost"
               class="set__danger-btn"
               :disabled="!isOwnerOfProject"
               @click="deleteProjectOpen = true"
-            >Видалити</KBtn>
+            >{{ t('settings.danger.delete') }}</KBtn>
           </div>
-          <p v-if="!isOwnerOfProject" class="set__note">
-            Видалити проєкт може лише власник воркспейсу, у якому він живе.
-          </p>
+          <p v-if="!isOwnerOfProject" class="set__note">{{ t('settings.danger.projectOwnerOnly') }}</p>
         </div>
 
         <!-- ── WORKSPACE · ОСНОВНЕ ──────────────────────────────────────────── -->
         <div v-else-if="section.key === 'workspace-basics'" class="set__form">
           <KField
             v-model="wsDraft.name"
-            label="Назва воркспейсу"
+            :label="t('settings.workspace.name')"
             placeholder="AAA"
             :disabled="!isOwnerOfWorkspace"
           />
           <KColorPicker
             v-model="wsDraft.color"
-            label="Колір воркспейсу"
+            :label="t('settings.workspace.color')"
             :class="{ 'set__locked': !isOwnerOfWorkspace }"
           />
-          <p v-if="!isOwnerOfWorkspace" class="set__note">
-            Назву й колір воркспейсу змінює його власник.
-          </p>
+          <p v-if="!isOwnerOfWorkspace" class="set__note">{{ t('settings.workspace.ownerOnly') }}</p>
         </div>
 
         <!-- ── WORKSPACE · УЧАСНИКИ ─────────────────────────────────────────── -->
@@ -306,7 +293,7 @@
             <KField
               v-model="memberEmail"
               class="set__grow"
-              label="Запросити за імейлом"
+              :label="t('settings.members.inviteLabel')"
               placeholder="colleague@example.com"
               type="email"
             />
@@ -314,11 +301,11 @@
               variant="primary"
               :disabled="memberEmail.trim() === '' || memberBusy"
               @click="invite"
-            >{{ memberBusy ? 'Запрошуємо…' : 'Запросити' }}</KBtn>
+            >{{ memberBusy ? t('settings.members.inviting') : t('settings.members.invite') }}</KBtn>
           </div>
 
           <div class="set__table">
-            <div v-if="membersLoading" class="set__empty">Завантаження…</div>
+            <div v-if="membersLoading" class="set__empty">{{ t('settings.members.loading') }}</div>
             <div v-for="m in members" :key="m.userId" class="set__member">
               <img
                 v-if="m.profile?.avatarUrl"
@@ -330,7 +317,7 @@
               <span class="set__member-name mono">
                 @{{ m.profile?.githubUsername ?? m.profile?.displayName ?? m.userId.slice(0, 8) }}
               </span>
-              <KTag v-if="isOwnerSeat(m.userId)">власник</KTag>
+              <KTag v-if="isOwnerSeat(m.userId)">{{ t('settings.roles.owner') }}</KTag>
               <KSelect
                 v-else-if="isOwnerOfWorkspace"
                 class="set__role"
@@ -342,75 +329,60 @@
               <KTag v-else>{{ ROLE_LABELS[m.role] }}</KTag>
               <KIconButton
                 v-if="isOwnerOfWorkspace && !isOwnerSeat(m.userId)"
-                title="Вилучити з воркспейсу"
+                :title="t('settings.members.remove')"
                 @click="removeMember(m)"
               >✕</KIconButton>
             </div>
             <div v-if="!membersLoading && !members.length" class="set__empty">
-              Склад ще не прочитано.
+              {{ t('settings.members.empty') }}
             </div>
           </div>
 
-          <p class="set__note">
-            Одне запрошення відкриває доступ до ВСІХ проєктів воркспейсу — окремо запрошувати в
-            кожен не потрібно. Права в репозиторії налаштовуються на боці git-хостингу.
-          </p>
-          <p v-if="!isOwnerOfWorkspace" class="set__note">
-            Склад воркспейсу змінює його власник.
-          </p>
+          <p class="set__note">{{ t('settings.members.note') }}</p>
+          <p v-if="!isOwnerOfWorkspace" class="set__note">{{ t('settings.members.ownerOnly') }}</p>
         </div>
 
         <!-- ── WORKSPACE · НЕБЕЗПЕЧНА ЗОНА ──────────────────────────────────── -->
         <div v-else-if="section.key === 'workspace-danger'" class="set__form">
           <div class="set__danger">
             <span class="set__danger-text">
-              <span class="set__danger-title">Видалити воркспейс</span>
-              <span class="set__note">
-                Разом із ним зникає склад команди. Проєкти не видаляються — воркспейс можна
-                прибрати лише порожнім.
-              </span>
+              <span class="set__danger-title">{{ t('settings.danger.workspaceTitle') }}</span>
+              <span class="set__note">{{ t('settings.danger.workspaceNote') }}</span>
             </span>
             <KBtn
               variant="ghost"
               class="set__danger-btn"
               :disabled="!isOwnerOfWorkspace || workspaceHasProjects"
               @click="deleteWorkspaceOpen = true"
-            >Видалити</KBtn>
+            >{{ t('settings.danger.delete') }}</KBtn>
           </div>
           <!-- Why this is VISIBLE text and not the button's tooltip: a disabled
                <button> dispatches no mouseenter and takes no focus, so v-tip on it
                never shows — the reason has to live where it can be read. -->
-          <p v-if="isOwnerOfWorkspace && workspaceHasProjects" class="set__note">
-            У воркспейсі ще є проєкти: спершу перенесіть або видаліть їх.
-          </p>
-          <p v-if="!isOwnerOfWorkspace" class="set__note">
-            Видалити воркспейс може лише його власник.
-          </p>
+          <p v-if="isOwnerOfWorkspace && workspaceHasProjects" class="set__note">{{ t('settings.danger.workspaceHasProjects') }}</p>
+          <p v-if="!isOwnerOfWorkspace" class="set__note">{{ t('settings.danger.workspaceOwnerOnly') }}</p>
         </div>
 
         <!-- ── APP · ЗАГАЛЬНЕ ───────────────────────────────────────────────── -->
         <div v-else-if="section.key === 'app-general'" class="set__form">
           <div class="set__group">
-            <span class="set__label">Тема</span>
+            <span class="set__label">{{ t('settings.app.theme') }}</span>
             <!-- Applies on click, with no save bar: the theme is what you are
                  looking at, so a queued theme would be a preview of a preview.
                  `toggleTheme` gets the button's rect so its reveal grows from the
                  control that was pressed. -->
             <div class="set__seg">
               <button
-                v-for="t in THEMES"
-                :key="t.value"
+                v-for="th in THEMES"
+                :key="th.value"
                 type="button"
                 class="set__seg-btn"
-                :class="{ 'set__seg-btn--on': theme === t.value }"
-                :aria-pressed="theme === t.value"
-                @click="pickTheme(t.value, $event)"
-              >{{ t.label }}</button>
+                :class="{ 'set__seg-btn--on': theme === th.value }"
+                :aria-pressed="theme === th.value"
+                @click="pickTheme(th.value, $event)"
+              >{{ th.label }}</button>
             </div>
-            <p class="set__note">
-              Тема належить цьому екрану, а не акаунту: той самий оператор за яскравим ноутбуком
-              і за темним десктопом хоче різних відповідей.
-            </p>
+            <p class="set__note">{{ t('settings.app.themeNote') }}</p>
           </div>
           <div class="set__group">
             <span class="set__label">{{ t('settings.appGeneral.language') }}</span>
@@ -424,15 +396,12 @@
         <div v-else-if="section.key === 'app-keymap'" class="set__form set__form--wide">
           <div class="set__table">
             <div v-for="k in KEYMAP" :key="k.act" class="set__keyrow">
-              <span class="set__keyrow-act">{{ k.act }}</span>
+              <span class="set__keyrow-act">{{ t(k.act) }}</span>
               <KTag>{{ k.keys }}</KTag>
-              <span class="set__keyrow-where mono">{{ k.where }}</span>
+              <span class="set__keyrow-where mono">{{ t(k.where) }}</span>
             </div>
           </div>
-          <p class="set__note">
-            Це повний перелік — усе, що застосунок слухає сьогодні. Перепризначення немає:
-            жодна з цих клавіш ніде не зберігається, тому й змінювати нічого.
-          </p>
+          <p class="set__note">{{ t('settings.keymap.note') }}</p>
         </div>
 
         <!-- ── APP · ШІ КОМАНДА ─────────────────────────────────────────────── -->
@@ -454,7 +423,7 @@
         <!-- ── APP · АКАУНТ ─────────────────────────────────────────────────── -->
         <div v-else-if="section.key === 'app-account'" class="set__form">
           <div class="set__group">
-            <span class="set__label">Ви увійшли як</span>
+            <span class="set__label">{{ t('settings.account.loggedInAs') }}</span>
             <div class="set__row">
               <img
                 v-if="auth.profile?.avatarUrl"
@@ -475,13 +444,13 @@
           <div class="set__rule"></div>
 
           <div class="set__group">
-            <span class="set__label">План провайдера</span>
+            <span class="set__label">{{ t('settings.account.providerPlan') }}</span>
             <!-- Percent of a rolling window, because that is the only unit a
                  provider meters a plan in. There is no token figure to show here
                  and none is invented; the cap itself lives with the provider, not
                  with Керманич, so nothing on this screen can change it. -->
             <div v-if="!planLines.length" class="set__note">
-              omp ще не повідомив жодного вікна — або провайдер їх не віддає.
+              {{ t('settings.plan.noWindows') }}
             </div>
             <div v-for="p in planLines" :key="p.provider" class="set__plan">
               <span class="set__plan-prov">{{ p.provider }}</span>
@@ -492,14 +461,14 @@
           </div>
 
           <div class="set__group">
-            <span class="set__label">Черга статусів у хмару</span>
+            <span class="set__label">{{ t('settings.account.outboxLabel') }}</span>
             <p class="set__note">
               {{
                 outbox === null
-                  ? 'Локальний сервіс не відповів.'
+                  ? t('settings.account.outboxNoService')
                   : outbox === 0
-                    ? 'Порожня — усе, що ця машина мала надіслати, надіслано.'
-                    : `Чекає надсилання: ${outbox}. Відправиться, коли зв’язок відновиться.`
+                    ? t('settings.account.outboxEmpty')
+                    : t('settings.account.outboxPending', { count: outbox })
               }}
             </p>
           </div>
@@ -508,13 +477,10 @@
 
           <div class="set__danger">
             <span class="set__danger-text">
-              <span class="set__danger-title">Вийти з акаунта</span>
-              <span class="set__note">
-                Агенти, що вже працюють, і їхні робочі теки не зупиняються. Статуси, які не
-                встигли піти в хмару, чекають у черзі до наступного входу.
-              </span>
+              <span class="set__danger-title">{{ t('settings.account.signOutTitle') }}</span>
+              <span class="set__note">{{ t('settings.account.signOutNote') }}</span>
             </span>
-            <KBtn variant="ghost" class="set__danger-btn" @click="signOutOpen = true">Вийти</KBtn>
+            <KBtn variant="ghost" class="set__danger-btn" @click="signOutOpen = true">{{ t('settings.account.signOut') }}</KBtn>
           </div>
         </div>
 
@@ -525,11 +491,11 @@
       <div v-if="dirtyCount > 0" class="set__bar">
         <span class="set__bar-dot" aria-hidden="true"></span>
         <span class="set__bar-text">
-          {{ dirtyCount === 1 ? 'Змінено одне поле' : `Змінено полів: ${dirtyCount}` }}
+          {{ dirtyCount === 1 ? t('settings.bar.oneField') : t('settings.bar.manyFields', { count: dirtyCount }) }}
         </span>
-        <KBtn variant="ghost" :disabled="saving" @click="discard">Відкинути</KBtn>
+        <KBtn variant="ghost" :disabled="saving" @click="discard">{{ t('settings.bar.discard') }}</KBtn>
         <KBtn variant="primary" :disabled="saving" @click="save">
-          {{ saving ? 'Зберігаємо…' : 'Зберегти ⌘S' }}
+          {{ saving ? t('settings.bar.saving') : t('settings.bar.save') }}
         </KBtn>
       </div>
     </section>
@@ -538,50 +504,40 @@
          machine's binding for the selected project. -->
     <KDirPicker v-model="pickerOpen" :start="boundPath" @select="bindTo" />
 
-    <KModal v-model="deleteProjectOpen" :title="`Видалити проєкт · ${projectName}`">
+    <KModal v-model="deleteProjectOpen" :title="t('settings.deleteProject.title', { name: projectName })">
       <div class="set__modal">
-        <p class="set__error" role="alert">
-          Проєкт «{{ projectName }}» буде видалено у хмарі для ВСІХ учасників, разом з усіма
-          його задачами на дошці. Це не відкотити.
-        </p>
-        <p class="set__note">
-          Локальні сесії й робочі теки на цій машині нікуди не зникнуть: якщо в проєкта є сесії,
-          його локальний рядок залишиться як «поза хмарою», і агентів можна довести до кінця.
-          Порожній локальний рядок буде прибрано синхронізацією.
-        </p>
+        <p class="set__error" role="alert">{{ t('settings.deleteProject.warn', { name: projectName }) }}</p>
+        <p class="set__note">{{ t('settings.deleteProject.note') }}</p>
         <p v-if="deleteError" class="set__error" role="alert">{{ deleteError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="deleteProjectOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" :disabled="deleteBusy" @click="confirmDeleteProject">Видалити</KBtn>
+        <KBtn variant="ghost" @click="deleteProjectOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
+        <KBtn variant="primary" :disabled="deleteBusy" @click="confirmDeleteProject">{{ t('settings.danger.delete') }}</KBtn>
       </template>
     </KModal>
 
-    <KModal v-model="deleteWorkspaceOpen" :title="`Видалити воркспейс · ${workspaceName}`">
+    <KModal v-model="deleteWorkspaceOpen" :title="t('settings.deleteWorkspace.title', { name: workspaceName })">
       <div class="set__modal">
-        <p class="set__error" role="alert">
-          Воркспейс «{{ workspaceName }}» і його склад команди буде видалено. Це не відкотити.
-        </p>
+        <p class="set__error" role="alert">{{ t('settings.deleteWorkspace.warn', { name: workspaceName }) }}</p>
         <p v-if="deleteError" class="set__error" role="alert">{{ deleteError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="deleteWorkspaceOpen = false">Скасувати</KBtn>
+        <KBtn variant="ghost" @click="deleteWorkspaceOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
         <KBtn variant="primary" :disabled="deleteBusy" @click="confirmDeleteWorkspace">
-          Видалити
+          {{ t('settings.danger.delete') }}
         </KBtn>
       </template>
     </KModal>
 
-    <KModal v-model="signOutOpen" title="Вийти з акаунта?">
+    <KModal v-model="signOutOpen" :title="t('settings.signOutModal.title')">
       <div class="set__modal">
-        <p class="set__note">
-          Ви увійшли як <span class="mono">{{ accountName }}</span>. Вихід закриє сеанс на цій
-          машині й поверне вас на екран входу.
-        </p>
+        <i18n-t keypath="settings.signOutModal.body" tag="p" class="set__note">
+          <template #name><span class="mono">{{ accountName }}</span></template>
+        </i18n-t>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="signOutOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" :disabled="signOutBusy" @click="confirmSignOut">Вийти</KBtn>
+        <KBtn variant="ghost" @click="signOutOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
+        <KBtn variant="primary" :disabled="signOutBusy" @click="confirmSignOut">{{ t('settings.account.signOut') }}</KBtn>
       </template>
     </KModal>
   </main>
@@ -692,8 +648,6 @@ const projectName = computed(() => cloudRow.value?.name ?? localRow.value?.name 
 const boundPath = computed(() => localRow.value?.localRepoPath ?? '');
 const isBound = computed(() => !!localRow.value?.localRepoPath);
 
-const BIND_HINT = 'Прив’яжіть локальну теку репозиторію';
-
 // The workspace in SCOPE. Set both by a workspace-row click and by selecting a
 // project (selectProject resolves the group), so it is there whenever anything in
 // the tree is selected. Undefined for a workspace the cloud list no longer holds —
@@ -719,15 +673,15 @@ function isOwnerSeat(userId: string): boolean {
 
 // Role labels for the roster, and the two roles the owner may hand out. 'owner' is
 // the creator's seat — shown but never offered, since transfer is out of scope.
-const ROLE_LABELS: Record<WorkspaceRole, string> = {
-  owner: 'власник',
-  manager: 'менеджер',
-  developer: 'розробник',
-};
-const ROLE_OPTIONS: KSelectOption[] = [
-  { value: 'developer', label: 'розробник' },
-  { value: 'manager', label: 'менеджер' },
-];
+const ROLE_LABELS = computed<Record<WorkspaceRole, string>>(() => ({
+  owner: t('settings.roles.owner'),
+  manager: t('settings.roles.manager'),
+  developer: t('settings.roles.developer'),
+}));
+const ROLE_OPTIONS = computed<KSelectOption[]>(() => [
+  { value: 'developer', label: t('settings.roles.developer') },
+  { value: 'manager', label: t('settings.roles.manager') },
+]);
 // The user id whose role change is in flight, so its select disables without freezing
 // the whole roster.
 const roleBusy = ref<string | null>(null);
@@ -759,8 +713,8 @@ const cloudLocked = computed(() => !isInCloud.value);
 // we have not read yet or failed to read. Only the first has a way out to offer.
 const noCloudRowHint = computed(() =>
   projects.listRead
-    ? 'Цей проєкт існує лише на цій машині, тому спільні налаштування нікуди зберігати. Опублікуйте його в хмарі на дошці.'
-    : 'Хмара ще не відповіла, тому спільні налаштування зберігати нікуди.',
+    ? t('settings.project.noCloudRowLocal')
+    : t('settings.project.noCloudRowPending'),
 );
 
 const workspaceOptions = computed(() =>
@@ -950,7 +904,7 @@ watch(
     try {
       await projects.loadMembers(ws.id);
     } catch (e) {
-      paneError.value = `Не вдалось прочитати учасників: ${e instanceof Error ? e.message : String(e)}`;
+      paneError.value = t('settings.members.loadError', { error: e instanceof Error ? e.message : String(e) });
     } finally {
       membersLoading.value = false;
     }
@@ -968,7 +922,7 @@ async function invite(): Promise<void> {
     memberEmail.value = '';
     // Name WHO the address resolved to: the roster lists github handles, so this
     // is the caller's confirmation that the invite landed on the person they meant.
-    store.notify(`@${invited.profile?.githubUsername ?? email} у воркспейсі «${ws.name}»`);
+    store.notify(t('settings.members.invited', { handle: invited.profile?.githubUsername ?? email, workspace: ws.name }));
   } catch (e) {
     store.notify(memberErrorText(e), 'error', 6000);
   } finally {
@@ -987,10 +941,10 @@ async function removeMember(m: WorkspaceMember): Promise<void> {
     // cannot show a removal that never happened.
     const after = await projects.loadMembers(ws.id);
     if (after.some((x) => x.userId === m.userId)) {
-      store.notify('Хмара відмовила: керувати складом воркспейсу може лише його власник', 'error', 6000);
+      store.notify(t('settings.members.removeRefused'), 'error', 6000);
       return;
     }
-    store.notify(`@${who} вилучено з воркспейсу — разом з усіма його проєктами`);
+    store.notify(t('settings.members.removed', { handle: who }));
   } catch (e) {
     store.notify(memberErrorText(e), 'error', 6000);
   }
@@ -1006,7 +960,7 @@ async function changeRole(m: WorkspaceMember, role: AssignableRole): Promise<voi
     // updates the roster only on success — so a failure leaves the select showing the
     // old role with nothing to roll back.
     await projects.setMemberRole(ws.id, m.userId, role);
-    store.notify(`@${who} — тепер ${ROLE_LABELS[role]}`);
+    store.notify(t('settings.members.roleChanged', { handle: who, role: ROLE_LABELS.value[role] }));
   } catch (e) {
     store.notify(memberErrorText(e), 'error', 6000);
   } finally {
@@ -1039,7 +993,7 @@ async function saveProject(): Promise<void> {
   if (!id || !d) return;
   const name = d.name.trim();
   if (!name) {
-    paneError.value = 'Назва проєкту не може бути порожньою';
+    paneError.value = t('settings.project.nameRequired');
     return;
   }
   // LOCAL VALUES FIRST, then cloud config — the same order the env modal used, and
@@ -1096,7 +1050,7 @@ async function save(): Promise<void> {
       const name = wsDraft.value.name.trim();
       if (!ws) return;
       if (!name) {
-        paneError.value = 'Назва воркспейсу не може бути порожньою';
+        paneError.value = t('settings.workspace.nameRequired');
         return;
       }
       // patchWorkspace replaces the row in the store list and rewrites the tree
@@ -1105,7 +1059,7 @@ async function save(): Promise<void> {
       wsBase.value = { name, color: wsDraft.value.color };
       wsDraft.value = { ...wsBase.value };
     }
-    store.notify('Налаштування збережено');
+    store.notify(t('settings.save.saved'));
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
     if (scope === 'workspace') {
@@ -1113,7 +1067,7 @@ async function save(): Promise<void> {
       // surfaces as NO_ROWS rather than as anything mentioning RLS. Reachable
       // despite the locked fields: ownership can change under an open pane.
       paneError.value = NO_ROWS.test(raw)
-        ? 'Хмара відмовила: змінювати воркспейс може лише його власник'
+        ? t('settings.workspace.saveRefused')
         : raw;
     } else if (draft.value && draft.value.workspaceId !== cloudRow.value?.workspaceId && isMoveRefusal(raw)) {
       paneError.value = MOVE_REFUSAL;
@@ -1127,8 +1081,8 @@ async function save(): Promise<void> {
       if (draft.value) draft.value.workspaceId = cloudRow.value?.workspaceId ?? '';
     } else if (NO_ROWS.test(raw)) {
       paneError.value = envDirty.value
-        ? 'Значення збережено на цій машині, але спільні налаштування — ні: ви більше не учасник воркспейсу цього проєкту'
-        : 'Хмара відмовила: ви більше не учасник воркспейсу цього проєкту';
+        ? t('settings.save.envSavedNotCloud')
+        : t('settings.save.notMember');
     } else {
       paneError.value = raw;
     }
@@ -1156,7 +1110,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onSaveKey));
 // and a promise-based dialog here would mean parking the navigation in state.
 onBeforeRouteLeave(() => {
   if (dirtyCount.value === 0) return true;
-  return window.confirm('Незбережені зміни буде втрачено. Покинути налаштування?');
+  return window.confirm(t('settings.save.unsavedConfirm'));
 });
 
 // ── BINDING ─────────────────────────────────────────────────────────────────
@@ -1166,13 +1120,11 @@ const pickerOpen = ref(false);
 // two from bindProject, the third from registry.patchProject when this machine has
 // no row for the project at all. Anything else shows verbatim: the api's own
 // message beats a guess.
-const BIND_ERRORS: Record<string, string> = {
-  'local repo path cannot be empty': 'Шлях до теки не може бути порожнім',
-  'local repo path is not a git repo':
-    'Обрана тека не є git-репозиторієм — виберіть корінь репозиторію (той, що містить .git)',
-  'project not found':
-    'Цього проєкту немає в локальному реєстрі — перезапустіть Керманич, щоб синхронізувати список із хмари',
-};
+const BIND_ERRORS = computed<Record<string, string>>(() => ({
+  'local repo path cannot be empty': t('settings.binding.emptyPath'),
+  'local repo path is not a git repo': t('settings.binding.notGitRepo'),
+  'project not found': t('settings.binding.projectNotFound'),
+}));
 
 async function bindTo(path: string): Promise<void> {
   const id = projectId.value;
@@ -1181,10 +1133,10 @@ async function bindTo(path: string): Promise<void> {
     const bound = await store.setProjectBinding(id, path);
     // project_update streams back over the socket, so the path above and the
     // sidebar tile refresh themselves.
-    store.notify(`Проєкт прив’язано до ${bound.localRepoPath}`);
+    store.notify(t('settings.binding.bound', { path: bound.localRepoPath }));
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
-    store.notify(BIND_ERRORS[raw] ?? raw, 'error', 6000);
+    store.notify(BIND_ERRORS.value[raw] ?? raw, 'error', 6000);
   }
 }
 
@@ -1204,16 +1156,15 @@ async function confirmDeleteProject(): Promise<void> {
     deleteProjectOpen.value = false;
     // The prune emits project_removed over the socket, which clears the selection;
     // this pane then falls back to its «виберіть проєкт» state on its own.
-    store.notify('Проєкт видалено у хмарі');
+    store.notify(t('settings.deleteProject.done'));
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
     if (raw.startsWith('cloud delete unconfirmed')) {
       // The delete itself did not error; only the confirming re-read did. Do not
       // accuse the user of a refusal for something that most likely landed.
-      deleteError.value =
-        'Видалення надіслано, але підтвердити його не вдалося: хмара недоступна. Список оновиться, коли зв’язок відновиться';
+      deleteError.value = t('settings.deleteProject.unconfirmed');
     } else if (raw.startsWith('cloud refused the delete')) {
-      deleteError.value = 'Хмара відмовила: видалити проєкт може лише власник';
+      deleteError.value = t('settings.deleteProject.refused');
     } else {
       deleteError.value = raw;
     }
@@ -1232,7 +1183,7 @@ async function confirmDeleteWorkspace(): Promise<void> {
     // it was this group's, so nothing here navigates.
     await projects.removeWorkspace(ws.id);
     deleteWorkspaceOpen.value = false;
-    store.notify(`Воркспейс «${ws.name}» видалено`);
+    store.notify(t('settings.deleteWorkspace.done', { name: ws.name }));
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
     // The pre-check above and `workspaceHasProjects` both read the last cloud list
@@ -1240,7 +1191,7 @@ async function confirmDeleteWorkspace(): Promise<void> {
     // both: the button renders enabled and the `on delete restrict` FK is what
     // says no — in English. The database is the authority; translate it.
     deleteError.value = raw.includes('violates foreign key constraint')
-      ? 'Хмара відмовила: у цьому воркспейсі ще є проєкти — спершу перенесіть або видаліть їх'
+      ? t('settings.deleteWorkspace.hasProjects')
       : raw;
   } finally {
     deleteBusy.value = false;
@@ -1248,10 +1199,10 @@ async function confirmDeleteWorkspace(): Promise<void> {
 }
 
 // ── APP SCOPE ───────────────────────────────────────────────────────────────
-const THEMES: readonly { value: KTheme; label: string }[] = [
-  { value: 'dark', label: 'Темна' },
-  { value: 'light', label: 'Світла' },
-];
+const THEMES = computed<readonly { value: KTheme; label: string }[]>(() => [
+  { value: 'dark', label: t('settings.app.themeDark') },
+  { value: 'light', label: t('settings.app.themeLight') },
+]);
 
 function pickTheme(next: KTheme, e: MouseEvent): void {
   if (theme.value === next) return;
@@ -1266,15 +1217,15 @@ function pickTheme(next: KTheme, e: MouseEvent): void {
 // read-only sheet is the honest shape: none of these is stored anywhere, so there
 // is nothing a remap could write to.
 const KEYMAP: readonly { act: string; keys: string; where: string }[] = [
-  { act: 'Надіслати повідомлення агенту', keys: '⏎', where: 'композер' },
-  { act: 'Новий рядок у повідомленні', keys: '⇧⏎', where: 'композер' },
-  { act: 'Запустити задачу', keys: '⌘⏎', where: 'лаунчер Агентів' },
-  { act: 'Попереднє / наступне ваше повідомлення', keys: '⌥↑ ⌥↓', where: 'лог сесії' },
-  { act: 'Змінити ширину панелі (⇧ — утричі)', keys: '← →', where: 'розділювач' },
-  { act: 'Перемкнути сегмент навігації', keys: '← → ⇱ ⇲', where: 'смуги навігації' },
-  { act: 'Відкрити рядок таблиці', keys: '⏎', where: 'таблиці' },
-  { act: 'Зберегти налаштування', keys: '⌘S', where: 'цей екран' },
-  { act: 'Закрити вікно / підказку', keys: '⎋', where: 'усюди' },
+  { act: 'settings.keymap.acts.sendMsg', keys: '⏎', where: 'settings.keymap.where.composer' },
+  { act: 'settings.keymap.acts.newLine', keys: '⇧⏎', where: 'settings.keymap.where.composer' },
+  { act: 'settings.keymap.acts.runTask', keys: '⌘⏎', where: 'settings.keymap.where.agentLauncher' },
+  { act: 'settings.keymap.acts.prevNextMsg', keys: '⌥↑ ⌥↓', where: 'settings.keymap.where.sessionLog' },
+  { act: 'settings.keymap.acts.resizePane', keys: '← →', where: 'settings.keymap.where.divider' },
+  { act: 'settings.keymap.acts.switchNav', keys: '← → ⇱ ⇲', where: 'settings.keymap.where.navBars' },
+  { act: 'settings.keymap.acts.openRow', keys: '⏎', where: 'settings.keymap.where.tables' },
+  { act: 'settings.keymap.acts.saveSettings', keys: '⌘S', where: 'settings.keymap.where.thisScreen' },
+  { act: 'settings.keymap.acts.closeWindow', keys: '⎋', where: 'settings.keymap.where.everywhere' },
 ];
 
 const accountName = computed(() => {
@@ -1291,12 +1242,12 @@ const planLines = computed(() =>
     provider:
       p.provider[0]!.toUpperCase() +
       p.provider.slice(1) +
-      (p.accounts > 1 ? ` · ${p.accounts} акаунти, у середньому` : ''),
+      (p.accounts > 1 ? t('settings.plan.accountsAvg', { count: p.accounts }) : ''),
     windows: p.windows.map((w) => ({
       id: w.id,
       label: `${w.label} (${planWindow(w.id)})`,
       percent: percent(w.usedPercent),
-      resets: w.resetsAt ? `оновиться за ${until(w.resetsAt, planNow.value)}` : '',
+      resets: w.resetsAt ? t('settings.plan.resetsIn', { time: until(w.resetsAt, planNow.value) }) : '',
     })),
   })),
 );
@@ -1332,7 +1283,7 @@ async function confirmSignOut(): Promise<void> {
     await auth.signOut();
     signOutOpen.value = false;
   } catch (e) {
-    store.notify(`Не вдалося вийти: ${e instanceof Error ? e.message : String(e)}`, 'error');
+    store.notify(t('settings.account.signOutError', { error: e instanceof Error ? e.message : String(e) }), 'error');
   } finally {
     signOutBusy.value = false;
   }
@@ -1341,14 +1292,14 @@ async function confirmSignOut(): Promise<void> {
 // ── RAIL FURNITURE ──────────────────────────────────────────────────────────
 const scopeHint = computed(() => {
   if (section.value.scope === 'project') {
-    return projectName.value ? `Діє тільки для «${projectName.value}»` : 'Проєкт не вибрано';
+    return projectName.value ? t('settings.rail.projectScope', { name: projectName.value }) : t('settings.rail.noProject');
   }
   if (section.value.scope === 'workspace') {
     return workspaceName.value
-      ? `Діє для всіх проєктів воркспейсу «${workspaceName.value}»`
-      : 'Воркспейс не вибрано';
+      ? t('settings.rail.workspaceScope', { name: workspaceName.value })
+      : t('settings.rail.noWorkspace');
   }
-  return 'Діє для цієї машини, поза акаунтом і проєктами';
+  return t('settings.rail.appScope');
 });
 
 // Counts the rail can state without lying. Env is the file as LOADED, so it stays
