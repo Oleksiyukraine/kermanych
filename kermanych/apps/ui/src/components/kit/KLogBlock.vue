@@ -37,14 +37,16 @@
 
     <!-- notice — muted by default; warn and error lift into the accent -->
     <div v-else-if="entry.kind === 'notice'" class="k-log__notice" :class="`k-log__notice--${entry.level}`">
-      {{ entry.text }}
+      {{ noticeText }}
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { TranscriptEntry } from '@kermanych/core';
+import { localizeNotice } from '../../lib/i18n-coded';
 import { renderMarkdown } from '../../lib/markdown';
 import type { ExpandAllCommand } from '../../lib/expand-all';
 import { dur } from '../../lib/time';
@@ -54,6 +56,14 @@ import KToolRow from './KToolRow.vue';
 // One transcript block. Tool rows delegate to KToolRow; `turn` entries are ledger
 // data for block summaries and deliberately render nothing.
 const props = defineProps<{ entry: TranscriptEntry; sessionId: string; expandAll: ExpandAllCommand }>();
+
+const { t, te } = useI18n();
+
+// A notice carries the server's Ukrainian `text` and, when known, a stable `code`+`params`
+// the UI re-renders in the active locale (falls back to `text` for an unknown code).
+const noticeText = computed(() =>
+  props.entry.kind === 'notice' ? localizeNotice({ t, te }, props.entry) : '',
+);
 
 // assistant_text renders as Markdown (headings, lists, code, links). Output is a
 // controlled tag set (html:false), safe for v-html.

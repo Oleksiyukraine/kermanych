@@ -15,6 +15,7 @@ import {
 } from "@kermanych/core";
 import { ManagementChatService } from "../management/management-chat.service";
 import { ReleaseNotesService } from "../management/release-notes.service";
+import { CodedError, badRequest } from "../management/coded-error";
 
 // The register as the browser sent it, kept only where every field is one this build knows.
 // `project_risks` is behind RLS and the api has no credentials for it, so this list cannot be
@@ -58,11 +59,11 @@ export class ManagementController {
   @Post("chat")
   async ask(@Body() b: ManagementChatAsk): Promise<ManagementChatReply> {
     const conversationId = typeof b?.conversationId === "string" ? b.conversationId.trim() : "";
-    if (!conversationId) throw new BadRequestException("не вказано розмову (conversationId)");
+    if (!conversationId) throw badRequest("conversation_id_missing", "не вказано розмову (conversationId)");
     const text = typeof b?.text === "string" ? b.text.trim() : "";
     // A blank turn would still spawn omp and still cost a provider call, for a question
     // nobody asked.
-    if (!text) throw new BadRequestException("повідомлення порожнє");
+    if (!text) throw badRequest("message_empty", "повідомлення порожнє");
     // The one scope check this endpoint makes, and it replaced a registry-binding refusal
     // that turned away a workspace none of whose repositories are bound on this machine.
     // The honest scope question at this level is «is a workspace named»: a named workspace
@@ -71,7 +72,7 @@ export class ManagementController {
     // `ManagementChatService` reads the registry itself to resolve the repos it can name,
     // so dropping the old check lost nothing but a working chat it used to refuse.
     const workspaceId = typeof b?.workspaceId === "string" ? b.workspaceId.trim() : "";
-    if (!workspaceId) throw new BadRequestException("не вказано воркспейс");
+    if (!workspaceId) throw badRequest("workspace_missing", "не вказано воркспейс");
     // Only the two fields the browser is the authority on survive: the id, and the cloud
     // row's git remote. Anything else a client sent about a repository is ignored — the
     // paths come from this machine's registry and nowhere else.
@@ -80,7 +81,7 @@ export class ManagementController {
           .filter((x): x is { id: string; gitRemoteUrl?: string } => !!x && typeof x.id === "string" && x.id !== "")
           .map((x) => ({ id: x.id, ...(typeof x.gitRemoteUrl === "string" && x.gitRemoteUrl !== "" ? { gitRemoteUrl: x.gitRemoteUrl } : {}) }))
       : [];
-    if (!b?.context) throw new BadRequestException("не передано контекст розділу");
+    if (!b?.context) throw badRequest("section_context_missing", "не передано контекст розділу");
     // Rebuilt rather than forwarded: `risks` is printed into the prompt as the state the
     // write actions operate on, and the rest of the block is prose the model reads as fact.
     const context: ManagementContext = {
@@ -93,7 +94,9 @@ export class ManagementController {
     } catch (err) {
       // A missing `omp`, a start timeout or a turn timeout are all operator-actionable
       // sentences already; a 500 would hide every one of them behind "Internal Server
-      // Error" and the composer would have nothing to show.
+      // Error" and the composer would have nothing to show. A `CodedError` carries its
+      // stable code on to the body so the UI can localize it; anything else keeps its prose.
+      if (err instanceof CodedError) throw badRequest(err.code, err.message, err.params);
       throw new BadRequestException((err as Error).message);
     }
   }
@@ -101,10 +104,11 @@ export class ManagementController {
   @Post("chat/reset")
   async reset(@Body() b: { conversationId?: string }): Promise<{ ok: true }> {
     const conversationId = typeof b?.conversationId === "string" ? b.conversationId.trim() : "";
-    if (!conversationId) throw new BadRequestException("не вказано розмову (conversationId)");
+    if (!conversationId) throw badRequest("conversation_id_missing", "не вказано розмову (conversationId)");
     try {
       return await this.chat.reset(conversationId);
     } catch (err) {
+      if (err instanceof CodedError) throw badRequest(err.code, err.message, err.params);
       throw new BadRequestException((err as Error).message);
     }
   }
@@ -121,21 +125,23 @@ export class ManagementController {
   @Post("release-notes")
   async releaseNotes(@Body() b: ReleaseNotesAsk): Promise<ReleaseNotesReply> {
     const projectId = typeof b?.projectId === "string" ? b.projectId.trim() : "";
-    if (!projectId) throw new BadRequestException("не вказано проєкт");
+    if (!projectId) throw badRequest("project_missing", "не вказано проєкт");
     const branch = typeof b?.branch === "string" ? b.branch.trim() : "";
-    if (!branch) throw new BadRequestException("не вказано гілку");
+    if (!branch) throw badRequest("branch_missing", "не вказано гілку");
     const rangeFrom = typeof b?.rangeFrom === "string" ? b.rangeFrom.trim() : "";
     const rangeTo = typeof b?.rangeTo === "string" ? b.rangeTo.trim() : "";
     if (!isReleaseDate(rangeFrom) || !isReleaseDate(rangeTo))
-      throw new BadRequestException("період має бути парою дат у форматі YYYY-MM-DD");
+      throw badRequest("period_format_invalid", "період має бути парою дат у форматі YYYY-MM-DD");
     // Lexicographic IS chronological for YYYY-MM-DD — no Date parsing to disagree with git.
-    if (rangeFrom > rangeTo) throw new BadRequestException("початок періоду пізніший за його кінець");
+    if (rangeFrom > rangeTo) throw badRequest("period_start_after_end", "початок періоду пізніший за його кінець");
     const workspaceName = typeof b?.workspaceName === "string" ? b.workspaceName.trim() : "";
     try {
-      return await this.releases.generate({ projectId, workspaceName, branch, rangeFrom, rangeTo });
+      return await this.releases.generate({ projectId, workspaceName, branch, rangeFrom, rangeTo, locale: b?.locale });
     } catch (err) {
       // Unbound project, unknown branch, an empty range and a dead omp are all
-      // operator-actionable sentences; a 500 would bury every one of them.
+      // operator-actionable sentences; a 500 would bury every one of them. A `CodedError`
+      // relays its stable code to the body so the UI can localize it.
+      if (err instanceof CodedError) throw badRequest(err.code, err.message, err.params);
       throw new BadRequestException((err as Error).message);
     }
   }

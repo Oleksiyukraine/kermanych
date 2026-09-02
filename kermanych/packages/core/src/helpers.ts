@@ -16,6 +16,8 @@
  *   request, because omp only fires such a word when it stands alone in prose. These are the
  *   only helpers with a mechanical effect: `ultrathink` raises the turn's reasoning effort.
  */
+import type { Notice } from "./i18n-codes";
+
 export type HelperKind = "instruction" | "keyword";
 
 export type HelperDef = {
@@ -233,9 +235,10 @@ export function expandHelpers(text: string): { text: string; used: HelperDef[] }
  * What the transcript says about a message that carried helpers. The operator's row keeps the
  * slash they typed, so this line is the only record that the child was given more than that.
  */
-export function helperNotice(used: readonly HelperDef[]): string {
+export function helperNotice(used: readonly HelperDef[]): Notice {
   const names = used.map((h) => `«/${h.name}»`).join(", ");
-  return used.length === 1 ? `хелпер ${names} додав настанову` : `хелпери ${names} додали настанову`;
+  const text = used.length === 1 ? `хелпер ${names} додав настанову` : `хелпери ${names} додали настанову`;
+  return { text, code: "helper_added_instruction", params: { names, count: used.length } };
 }
 
 /**

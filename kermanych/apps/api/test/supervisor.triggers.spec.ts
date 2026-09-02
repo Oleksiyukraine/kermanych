@@ -148,9 +148,14 @@ describe("an operator trigger fires before the message is forwarded", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]!.text).toContain("A git merge is in progress");
     expect(sent[0]!.text).not.toContain("розберись із цим");
-    expect(notices(sup.getTranscript(chat.id))).toEqual([
-      "тригер «Хоче ПР» запускає «Вирішувач конфліктів»",
-    ]);
+    // The notice carries a stable code + the raw agent id; the api has no vue-i18n, so the
+    // fallback text names the id and the UI renders `t('agents.role.<id>')` from the param.
+    const launch = sup
+      .getTranscript(chat.id)
+      .find((r) => r.kind === "notice") as Extract<TranscriptEntry, { kind: "notice" }>;
+    expect(launch.code).toBe("trigger_launches_agent");
+    expect(launch.params).toEqual({ trigger: "Хоче ПР", agent: "resolve-conflict" });
+    expect(launch.text).toBe("тригер «Хоче ПР» запускає «resolve-conflict»");
   });
 
   it("never matches Kermanych's own prompt, so a fired agent cannot loop", async () => {

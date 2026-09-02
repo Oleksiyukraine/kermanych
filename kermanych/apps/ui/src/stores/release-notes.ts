@@ -41,6 +41,7 @@ import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { api } from '../lib/api';
 import { IS_PREVIEW } from '../lib/preview';
+import { locale } from '../lib/locale';
 
 // One generation in flight, or one that failed and still owes the operator a reason. Held
 // as plain data rather than a promise because the screen renders it: a row in the history
@@ -144,6 +145,9 @@ export const useReleaseNotes = defineStore('release-notes', () => {
         branch: job.branch,
         rangeFrom: job.rangeFrom,
         rangeTo: job.rangeTo,
+        // The note is written in the operator's active locale; the api's prompt body stays
+        // a Ukrainian template and only the language directive varies.
+        locale: locale.value,
       });
       await create(job.workspaceId, {
         projectId: job.projectId,

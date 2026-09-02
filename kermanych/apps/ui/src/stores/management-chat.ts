@@ -43,6 +43,9 @@ import type {
   ManagementWorkspaceProject,
   Usage,
 } from '@kermanych/core';
+import { globalTr } from '../boot/i18n';
+import { localizeNotice } from '../lib/i18n-coded';
+import { locale } from '../lib/locale';
 import { api } from '../lib/api';
 import { useOrchestrator } from './orchestrator';
 import { useProjects } from './projects';
@@ -74,6 +77,11 @@ function entryId(): string {
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
+
+// This store runs outside a component, so it localizes a reply's notices through the global
+// i18n adapter (`globalTr`) rather than `useI18n()`. Notices become static `result` lines
+// the moment they land — like every other line this transcript keeps — so they render in the
+// locale that was active when the turn answered, which is the locale the operator asked in.
 
 export const useManagementChat = defineStore('management-chat', () => {
   const store = useOrchestrator();
@@ -267,6 +275,9 @@ export const useManagementChat = defineStore('management-chat', () => {
           section,
           risks: riskDigest(workspaceId),
         },
+        // The model is told to answer in the operator's active locale (api rule ґ); the
+        // prompt body stays Ukrainian.
+        locale: locale.value,
       };
 
       const reply = await api.managementChat(ask);
@@ -284,7 +295,7 @@ export const useManagementChat = defineStore('management-chat', () => {
       // to a lost instruction, and an operator who believes something was recorded when it
       // was not is exactly how that ends. Notices are omp's own asides and rank below it.
       for (const line of reply.rejected) result(workspaceId, 'warn', line);
-      for (const line of reply.notices) result(workspaceId, 'info', line);
+      for (const line of reply.notices) result(workspaceId, 'info', localizeNotice(globalTr, line));
       // In order and one at a time: the model may file two risks in one turn, and the codes
       // Postgres mints depend on the order they arrive in. Awaited, so the transcript's
       // result lines follow the actions rather than racing them.

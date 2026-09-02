@@ -19,8 +19,12 @@ import type {
   TreeEntry,
   FileContent,
   ModelOption,
+  ApiErrorCode,
+  ApiErrorParams,
 } from '@kermanych/core';
 import type { CloudProject } from '@kermanych/cloud';
+import { globalTr } from '../boot/i18n';
+import { localizeError } from './i18n-coded';
 
 const BASE =
   (typeof window !== 'undefined' && window.kermanych?.apiBase) ||
@@ -50,31 +54,53 @@ function authHeaders(json: boolean): Record<string, string> {
 
 export type MessageMode = 'prompt' | 'follow_up' | 'steer';
 
-// Turn a non-2xx Response into an Error carrying the server's message. Nest
-// error bodies look like { statusCode, message, error }; message may be a
-// string or an array of validation strings. Fall back to statusText.
+// The error a failed request throws. A management endpoint carries `{ code, message, params }`
+// (apps/api/src/management/coded-error.ts): `message` is the server's Ukrainian sentence,
+// `code`+`params` let the UI re-render it in the active locale. `message` is the localized
+// line (falling back to `serverMessage` for an unknown code), so every existing `e.message`
+// call site shows localized prose with no change; `code`/`serverMessage` stay available.
+export class ApiError extends Error {
+  readonly code: ApiErrorCode | undefined;
+  readonly params: ApiErrorParams | undefined;
+  readonly serverMessage: string;
+  constructor(message: string, serverMessage: string, code?: ApiErrorCode, params?: ApiErrorParams) {
+    super(message);
+    this.name = 'ApiError';
+    this.serverMessage = serverMessage;
+    this.code = code;
+    this.params = params;
+  }
+}
+
+// Turn a non-2xx Response into an ApiError. Nest error bodies look like
+// { statusCode, message, error } — or, from a coded refusal, { code, message, params };
+// message may be a string or an array of validation strings. Fall back to statusText.
 async function toError(r: Response): Promise<Error> {
   // 401 means the cached token on the api no longer matches ours (expired
   // refresh, another machine signed out, api restarted with a cleared cache).
   // One hook, one place: every helper below funnels its failures through here.
   if (r.status === 401) onUnauthorized?.();
   const text = await r.text();
-  let message = r.statusText || `HTTP ${r.status}`;
+  let serverMessage = r.statusText || `HTTP ${r.status}`;
+  let code: ApiErrorCode | undefined;
+  let params: ApiErrorParams | undefined;
   if (text) {
     try {
       const body = JSON.parse(text) as {
         message?: string | string[];
         error?: string;
+        code?: ApiErrorCode;
+        params?: ApiErrorParams;
       };
-      const m = Array.isArray(body.message)
-        ? body.message.join(', ')
-        : body.message;
-      message = m || body.error || message;
+      const m = Array.isArray(body.message) ? body.message.join(', ') : body.message;
+      serverMessage = m || body.error || serverMessage;
+      code = body.code;
+      params = body.params;
     } catch {
-      message = text;
+      serverMessage = text;
     }
   }
-  return new Error(message);
+  return new ApiError(localizeError(globalTr, code, params, serverMessage), serverMessage, code, params);
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {

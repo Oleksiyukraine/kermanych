@@ -72,7 +72,7 @@
                   v-else-if="item.entry.kind === 'notice'"
                   class="chat__notice mono"
                   :class="`chat__notice--${item.entry.level}`"
-                >{{ item.entry.text }}</div>
+                >{{ noticeText(item.entry) }}</div>
               </template>
             </template>
           </template>
@@ -105,8 +105,10 @@
 // transcript through the shared `buildChatBlocks` grouping, and sends via the store.
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { buildChatBlocks, taskNameFromText } from '@kermanych/core';
-import type { ImageInput, ThinkingLevel } from '@kermanych/core';
+import type { ImageInput, ThinkingLevel, TranscriptEntry } from '@kermanych/core';
+import { localizeNotice } from '../lib/i18n-coded';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useBoard } from 'stores/board';
 import { useAuth } from 'stores/auth';
@@ -125,6 +127,12 @@ const store = useOrchestrator();
 const board = useBoard();
 const auth = useAuth();
 const projects = useProjects();
+const { t, te } = useI18n();
+
+// A transcript notice: server Ukrainian `text`, re-rendered from `code`+`params` when the
+// build knows the code (falls back to `text` otherwise). See lib/i18n-coded.ts.
+const noticeText = (entry: Extract<TranscriptEntry, { kind: 'notice' }>): string =>
+  localizeNotice({ t, te }, entry);
 
 const draft = ref('');
 const chatId = ref<string | undefined>(undefined);

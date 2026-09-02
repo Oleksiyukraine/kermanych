@@ -46,6 +46,7 @@ import {
 } from "./risks";
 import { isReleaseDate } from "./release-notes";
 import type { Usage } from "./types";
+import type { Locale, Notice } from "./i18n-codes";
 
 // The fence info string. Distinct from `json` on purpose: a model quoting example JSON in
 // its prose must not be mistaken for an instruction to act.
@@ -194,6 +195,10 @@ export type ManagementChatAsk = {
   workspaceProjects: ManagementWorkspaceProject[];
   text: string;
   context: ManagementContext;
+  // The operator's active UI locale, threaded into the model prompt so the answer is
+  // written in it (management-prompt.ts rule ґ). Optional and defaulting to uk: an old
+  // client that omits it keeps the previous behaviour.
+  locale?: Locale;
 };
 
 export type ManagementChatReply = {
@@ -205,7 +210,7 @@ export type ManagementChatReply = {
   rejected: string[];
   // omp notices raised during the turn (dropped frames, provider warnings, a cancelled
   // interactive prompt).
-  notices: string[];
+  notices: Notice[];
   // What the turn cost on the connected plan. This chat runs through the same `omp` binary,
   // the same provider account and the same subscription as every agent, so a turn here is a
   // turn debited there — and the composer says so.

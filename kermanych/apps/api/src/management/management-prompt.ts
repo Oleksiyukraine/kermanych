@@ -24,6 +24,7 @@ import {
   type ManagementRiskRow,
   type ManagementWorkspaceProject,
   type Project,
+  type Locale,
 } from "@kermanych/core";
 
 // The browser sends what only the cloud row knows (the project's id and its git remote); the
@@ -67,12 +68,24 @@ export function managementCwd(repos: ManagementRepo[]): string {
 
 const UNBOUND = "не привʼязаний на цій машині";
 
+// The one line that varies with the operator's locale. The prompt bodies stay Ukrainian
+// templates on purpose — they are the tested contract — so only the "answer in X" directive
+// is parameterised. Shared with the release-notes generator, which names the same language.
+// `localeDirective` defaults to uk (rule ґ: «за замовчуванням українською»), so a client
+// that sends no locale keeps the previous behaviour; the release-notes generator passes
+// its own default (en, its documented product default) explicitly.
+export const LANGUAGE_NAME: Record<Locale, string> = { uk: "українською", en: "англійською" };
+
+export function localeDirective(locale: Locale = "uk"): string {
+  return `Відповідай ${LANGUAGE_NAME[locale]} мовою (${locale}).`;
+}
+
 // The section table, rendered. `capability` is printed as the raw token, not a
 // translation: rule (б) below tells the model to compare it against `read_write`
 // literally, and a localised word would leave nothing to compare. The `limitation` is
 // quoted verbatim, because this exact sentence is what the ui shows when it refuses the
 // action — a paraphrase would make the chat's prose disagree with its own refusal notice.
-function contract(): string {
+function contract(locale: Locale | undefined): string {
   const sections = MANAGEMENT_SECTIONS.map((s) => {
     const head = `- ${s.name} · ${s.label} · capability=${s.capability}`;
     return s.limitation === undefined ? head : `${head} · обмеження: ${s.limitation}`;
@@ -115,7 +128,7 @@ function contract(): string {
     '(б) якщо просять ЗМІНИТИ розділ, у якого capability НЕ read_write — віддай { "kind": "unsupported", "section": "<назва розділу>", "request": "<що просили>" } І поясни це прозою, цитуючи обмеження цього розділу зі списку вище. Ніколи не пиши, що ти щось записав, створив або оновив;',
     "(в) якщо просять ПРОЧИТАТИ або пояснити — відповідай звичайною прозою, без блоку дії. Ти можеш читати репозиторії воркспейсу (див. контекст) своїми read/grep/glob;",
     "(г) ніколи не викликай інтерактивний інструмент або запит, який чекає відповіді в інтерфейсі: за цим маршрутом немає жодного інтерфейсу, який міг би відповісти, і запит просто зависне. Будь-яке уточнення — прозою;",
-    "(ґ) відповідай мовою користувача, за замовчуванням українською.",
+    `(ґ) ${localeDirective(locale)}`,
   ].join("\n");
 }
 
@@ -228,8 +241,12 @@ export function buildManagementTurn(input: {
   // Today, YYYY-MM-DD, from the CALLER — see `todayIso` below.
   today: string;
   text: string;
+  // The operator's active UI locale. Only the "answer in X" directive (rule ґ) reads it;
+  // the rest of the contract stays Ukrainian. Sent on the FIRST turn, which is the one that
+  // carries the contract — a later locale switch re-languages from the next new child.
+  locale?: Locale;
 }): string {
-  const parts = input.first ? [contract(), ""] : [];
+  const parts = input.first ? [contract(input.locale), ""] : [];
   parts.push(
     contextBlock(input.repos, input.context, input.today),
     "",

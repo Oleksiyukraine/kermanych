@@ -43,6 +43,22 @@ describe("buildReleaseNotesPrompt", () => {
     expect(prompt).toContain("Пиши англійською");
   });
 
+  // The operator's locale drives the note's language; the prompt body stays a Ukrainian
+  // template and only the language word varies. Absent locale keeps the English default.
+  it("writes the note in the operator's locale when one is given", () => {
+    const uk = buildReleaseNotesPrompt({
+      workspaceName: "Acme",
+      projectName: "мобільний-застосунок",
+      branch: "main",
+      rangeFrom: "2026-08-01",
+      rangeTo: "2026-08-31",
+      commits: [commit()],
+      locale: "uk",
+    });
+    expect(uk).toContain("Пиши українською");
+    expect(uk).not.toContain("Пиши англійською");
+  });
+
   it("carries each commit's subject and its indented body", () => {
     expect(prompt).toContain("2026-08-20 · Оля: додано експорт у PDF");
     expect(prompt).toContain("    Падало, коли токен протух.");
