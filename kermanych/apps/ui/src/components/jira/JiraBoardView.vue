@@ -279,10 +279,21 @@ onUnmounted(() => {
   overflow-x: auto;
 }
 
+// The Дошка parity fix: the wrapper div exists only for the drag handlers, but as a
+// plain block it let .k-kanban-col shrink to its content — the column background (which
+// KKanbanColumn owns) stopped right under the last card. Flex + flex:1 stretches the
+// column to the full grid row, exactly how the native board's direct grid child behaves.
 .jbv__column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   border-radius: var(--k-r-lg);
   transition: outline-color 0.12s ease;
   outline: 2px solid transparent;
+
+  :deep(.k-kanban-col) {
+    flex: 1;
+  }
 
   &--over {
     outline-color: var(--k-line-strong);

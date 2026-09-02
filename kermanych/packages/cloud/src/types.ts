@@ -396,6 +396,8 @@ export type JiraIssue = {
   priorityName: string;
   priorityIcon: string;
   labels: string[];
+  // Jira's own duration spelling («2w 3d 4h»); blank = no estimate set.
+  originalEstimate: string;
   assigneeAccountId?: string;
   assigneeName?: string;
   assigneeAvatar?: string;

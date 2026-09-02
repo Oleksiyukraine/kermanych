@@ -151,6 +151,7 @@ export type JiraIssueDraftWire = {
   priorityId?: string;
   labels?: string[];
   assigneeAccountId?: string | null;
+  originalEstimate?: string;
   parentKey?: string;
 };
 export type JiraEditorOptions = {

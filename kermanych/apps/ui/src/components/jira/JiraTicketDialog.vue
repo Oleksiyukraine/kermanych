@@ -111,8 +111,49 @@
             </dd>
           </div>
           <div v-if="issue.typeName"><dt>Тип</dt><dd class="jtd__fact-icon"><img v-if="issue.typeIcon" :src="issue.typeIcon" alt="" />{{ issue.typeName }}</dd></div>
-          <div v-if="issue.priorityName"><dt>Пріоритет</dt><dd class="jtd__fact-icon"><img v-if="issue.priorityIcon" :src="issue.priorityIcon" alt="" />{{ issue.priorityName }}</dd></div>
-          <div><dt>Виконавець</dt><dd>{{ issue.assigneeName ?? 'не призначено' }}</dd></div>
+          <div v-if="canAct || issue.priorityName">
+            <dt>Пріоритет</dt>
+            <dd v-if="canAct && priorityOptions.length">
+              <KSelect
+                :model-value="priorityCurrent"
+                :options="priorityOptions"
+                :disabled="savingField === 'priority'"
+                placeholder="—"
+                @update:model-value="pickPriority"
+              />
+            </dd>
+            <dd v-else class="jtd__fact-icon"><img v-if="issue.priorityIcon" :src="issue.priorityIcon" alt="" />{{ issue.priorityName || '—' }}</dd>
+          </div>
+          <div>
+            <dt>Оцінка</dt>
+            <dd>
+              <input
+                v-if="canAct"
+                v-model="estimateDraft"
+                class="jtd__estimate mono"
+                placeholder="напр. 2w 3d 4h"
+                :disabled="savingField === 'estimate'"
+                v-tip="'Original estimate — формат Jira: 2w 3d 4h'"
+                @keydown.enter.prevent="blurTarget($event)"
+                @blur="saveEstimate"
+              />
+              <span v-else>{{ issue.originalEstimate || '—' }}</span>
+            </dd>
+          </div>
+          <div>
+            <dt>Виконавець</dt>
+            <dd v-if="canAct && assigneeOptions.length > 1">
+              <KSelect
+                :model-value="assigneeCurrent"
+                :options="assigneeOptions"
+                :disabled="savingField === 'assignee'"
+                placeholder="не призначено"
+                searchable
+                @update:model-value="pickAssignee"
+              />
+            </dd>
+            <dd v-else>{{ issue.assigneeName ?? 'не призначено' }}</dd>
+          </div>
           <div v-if="issue.reporterName"><dt>Автор</dt><dd>{{ issue.reporterName }}</dd></div>
           <div v-if="issue.labels.length">
             <dt>Мітки</dt>
@@ -168,8 +209,9 @@ import type { JiraAttachment, JiraIssue } from '@kermanych/cloud';
 import KAvatar from 'components/kit/KAvatar.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KModal from 'components/kit/KModal.vue';
+import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import JiraStatusPickDialog from './JiraStatusPickDialog.vue';
-import { api } from '../../lib/api';
+import { api, type JiraAssignableUser, type JiraEditorOptions, type JiraIssueDraftWire } from '../../lib/api';
 import { sanitizeJiraHtml } from '../../lib/sanitize-html';
 import { subtasksOf, type JiraTransitionView } from '../../lib/jira-view';
 import { useJira } from 'stores/jira';
@@ -202,6 +244,28 @@ const transitionOpen = ref(false);
 const transitionOptions = ref<JiraTransitionView[]>([]);
 const transitioning = ref(false);
 
+// ── inline facts editing: priority / assignee / original estimate ─────────────
+// One-field drafts through PUT /jira/issues — the same endpoint the full editor uses,
+// so Jira's own validation (estimate format, screens) is the only validation.
+const editorOptions = ref<JiraEditorOptions>({ issueTypes: [], priorities: [] });
+const assignable = ref<JiraAssignableUser[]>([]);
+const estimateDraft = ref('');
+const savingField = ref<'priority' | 'assignee' | 'estimate' | null>(null);
+
+const priorityOptions = computed<KSelectOption[]>(() =>
+  editorOptions.value.priorities.map((p) => ({ value: p.id, label: p.name })),
+);
+// The mirror stores the NAME (Jira's payload does); the picker needs the id.
+const priorityCurrent = computed(
+  () => editorOptions.value.priorities.find((p) => p.name === props.issue.priorityName)?.id ?? '',
+);
+
+const assigneeOptions = computed<KSelectOption[]>(() => [
+  { value: '', label: 'не призначено' },
+  ...assignable.value.map((u) => ({ value: u.accountId, label: u.displayName })),
+]);
+const assigneeCurrent = computed(() => props.issue.assigneeAccountId ?? '');
+
 const canAct = computed(() => jira.tokenPresent);
 const kids = computed(() => jira.children[props.issue.issueId]);
 const descriptionHtml = computed(() => sanitizeJiraHtml(props.issue.descriptionHtml));
@@ -228,10 +292,67 @@ watch(
     if (!open) return;
     tab.value = 'comments';
     confirmingDelete.value = false;
+    estimateDraft.value = props.issue.originalEstimate;
     void jira.loadChildren(props.issue.issueId);
     void jira.refreshIssue(props.workspaceId, props.issue.key);
+    if (canAct.value) void loadEditorLists();
   },
 );
+
+// Realtime/refresh may change the issue under an open dialog; the estimate input must
+// follow unless the user is mid-save (their draft would be stomped by the pre-save row).
+watch(
+  () => props.issue,
+  (issue) => {
+    if (savingField.value !== 'estimate') estimateDraft.value = issue.originalEstimate;
+  },
+);
+
+// Failure degrades to the read-only facts — the selects render only on loaded lists.
+async function loadEditorLists(): Promise<void> {
+  try {
+    const [opts, users] = await Promise.all([
+      api.jiraEditorOptions(props.workspaceId),
+      api.jiraAssignableUsers(props.workspaceId, ''),
+    ]);
+    editorOptions.value = opts;
+    assignable.value = users;
+  } catch {
+    /* keep static facts */
+  }
+}
+
+async function saveField(
+  field: 'priority' | 'assignee' | 'estimate',
+  draft: JiraIssueDraftWire,
+): Promise<void> {
+  savingField.value = field;
+  try {
+    jira.upsert(await api.jiraEditIssue(props.workspaceId, props.issue.key, draft));
+  } catch (e) {
+    local.notify(e instanceof Error ? e.message : String(e), 'error');
+    estimateDraft.value = props.issue.originalEstimate;
+  } finally {
+    savingField.value = null;
+  }
+}
+
+function pickPriority(id: string): void {
+  if (id && id !== priorityCurrent.value) void saveField('priority', { priorityId: id });
+}
+
+function pickAssignee(id: string): void {
+  if (id !== assigneeCurrent.value) void saveField('assignee', { assigneeAccountId: id || null });
+}
+
+async function saveEstimate(): Promise<void> {
+  if (estimateDraft.value.trim() === props.issue.originalEstimate) return;
+  await saveField('estimate', { originalEstimate: estimateDraft.value.trim() });
+}
+
+function blurTarget(e: Event): void {
+  (e.target as HTMLElement).blur();
+}
 
 async function openTransition(): Promise<void> {
   try {
@@ -571,6 +692,29 @@ function shortTime(iso: string): string {
   font-size: var(--k-fs-xs);
 }
 
+.jtd__estimate {
+  width: 100%;
+  padding: 4px 8px;
+  font-size: var(--k-fs-sm);
+  color: var(--k-text);
+  background: var(--k-surface);
+  border: var(--k-rule-thin) solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  outline: none;
+  transition: border-color 0.12s;
+
+  &::placeholder {
+    color: var(--k-muted);
+  }
+
+  &:focus {
+    border-color: var(--k-accent);
+  }
+
+  &:disabled {
+    opacity: 0.45;
+  }
+}
 .jtd__side {
   display: flex;
   flex-direction: column;
