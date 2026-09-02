@@ -34,6 +34,15 @@ export type {
   WorkspaceReleaseNote,
   WorkspaceReleaseNoteInsert,
   WorkspaceReleaseNotePatch,
+  JiraStatusCategory,
+  JiraIntegration,
+  JiraIntegrationInsert,
+  JiraSyncState,
+  JiraColumn,
+  JiraIssue,
+  JiraComment,
+  JiraWorklog,
+  JiraAttachment,
 } from "./types";
 
 export type { SupabaseClient, CloudEnv, CloudClientOptions } from "./client";
@@ -117,3 +126,26 @@ export {
   createWorkspaceReleaseNote,
   patchWorkspaceReleaseNote,
 } from "./release-notes";
+
+export type { JiraIssueChange, JiraIssueChildren } from "./jira";
+export {
+  toJiraIntegration,
+  toJiraIssue,
+  toJiraIssueRow,
+  getJiraIntegration,
+  upsertJiraIntegration,
+  deleteJiraIntegration,
+  getJiraSyncState,
+  ensureJiraSyncState,
+  takeJiraSyncLease,
+  advanceJiraSyncCursor,
+  listJiraColumns,
+  replaceJiraColumns,
+  listJiraIssues,
+  upsertJiraIssues,
+  deleteJiraIssues,
+  patchJiraIssueBinding,
+  listJiraIssueChildren,
+  replaceJiraIssueChildren,
+  subscribeJiraIssues,
+} from "./jira";
