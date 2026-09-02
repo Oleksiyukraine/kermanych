@@ -109,6 +109,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         delete next[e.sessionId];
         previews.value = next;
       }
+      // Free the removed session's transcript too — previews above already do this. Left
+      // behind, the map kept every deleted/merged session's entries for the window's whole
+      // life, and a long-running board only ever added to it.
+      if (transcripts.value[e.sessionId]) {
+        const next = { ...transcripts.value };
+        delete next[e.sessionId];
+        transcripts.value = next;
+      }
     } else if (e.type === 'transcript_append') {
       transcripts.value = {
         ...transcripts.value,
