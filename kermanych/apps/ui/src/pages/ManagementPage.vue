@@ -146,7 +146,7 @@
               class="mgmt__c-input"
               rows="1"
               :disabled="chat.busy"
-              placeholder="Запитайте про менеджмент — ризики, реліз-ноти, статуси"
+              placeholder="Запитайте про менеджмент або «створи тікет…» — ризики, реліз-ноти, дошка"
               aria-label="Повідомлення асистенту менеджменту"
               @input="autoGrow"
               @keydown="onKeydown"

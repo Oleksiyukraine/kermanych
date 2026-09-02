@@ -302,6 +302,10 @@ async function removeToken(): Promise<void> {
   await refreshTokenState();
 }
 
+// Re-read the token alone, after THIS page changed it. `jira.probe` already reports the token
+// beside the integration row, so the two mount/watch calls below need nothing extra — but
+// saving or deleting a token must not re-fetch the integration to learn what this page just
+// did.
 async function refreshTokenState(): Promise<void> {
   const site = jira.integration?.siteUrl;
   if (!site) return;
@@ -332,12 +336,12 @@ async function disconnect(): Promise<void> {
 }
 
 onMounted(() => {
-  void jira.probe(props.workspaceId).then(refreshTokenState);
+  void jira.probe(props.workspaceId);
 });
 watch(
   () => props.workspaceId,
   (id) => {
-    void jira.probe(id).then(refreshTokenState);
+    void jira.probe(id);
   },
 );
 

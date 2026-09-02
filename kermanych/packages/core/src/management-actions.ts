@@ -46,6 +46,8 @@ import {
 } from "./risks";
 import { isReleaseDate } from "./release-notes";
 import type { Usage } from "./types";
+import { PLATFORMS, type Platform } from "./platform";
+import { BRANCH_PREFIXES, type BranchPrefix } from "./worktree-names";
 
 // The fence info string. Distinct from `json` on purpose: a model quoting example JSON in
 // its prose must not be mistaken for an instruction to act.
@@ -91,6 +93,68 @@ export type ManagementRiskFields = {
 // far more often than it means «erase this».
 export type ManagementRiskPatch = Partial<ManagementRiskFields>;
 
+// ── Tickets ───────────────────────────────────────────────────────────────────
+
+// One ticket, in the five slots a project manager's ticket actually has.
+//
+// The fields are NAMED rather than handed over as one `description` blob, and that split is
+// the whole mechanism behind the requirement that a ticket filed from this chat reads like a
+// senior manager wrote it:
+//
+//   * a blob satisfies «business context, user flow, acceptance criteria» on the turn it is
+//     asked for and forgets it on the next one, while a record with these slots cannot be
+//     filed at all without `context` and at least one acceptance criterion;
+//   * `renderTicketDescription` is the ONLY thing that turns them into prose, so the
+//     headings, their order and their language belong to the app — every ticket on the board
+//     therefore has the same shape whichever turn produced it;
+//   * every slot is business-facing by construction. There is no field for a design, a
+//     schema, a library or a migration, which is how «a ticket states no technical
+//     decisions» stops being an instruction the model may drift from and becomes a shape it
+//     cannot express.
+//
+// Voice is the one part of that requirement no type can hold, so it is stated in the prompt
+// (`ticketProtocol`) — and `openQuestion` below refuses the failure voice alone would let
+// through: a ticket that ships the assistant's own uncertainty to whoever picks it up.
+export type ManagementTicketFields = {
+  // One line. Not a summary of the body — the string that has to be recognisable in a
+  // kanban column.
+  title: string;
+  // WHY this work exists and for whom, in business terms. Required: a ticket without it is
+  // an instruction, and an instruction is what a manager's ticket is specifically not.
+  context: string;
+  // The user-visible flow, one step per entry. Optional, because not every ticket is a
+  // journey — «зібрати пакет рахунків за вересень» has no screens — and an invented flow is
+  // worse than an absent one.
+  userFlow?: string[];
+  // What must be observably true before the ticket may be closed. At least one, and each a
+  // statement somebody can check without reading code.
+  acceptanceCriteria: string[];
+  // What this ticket deliberately does NOT cover, so its scope is stated rather than
+  // assumed. Optional.
+  outOfScope?: string[];
+};
+
+// The body of a ticket, rendered once and identically for both boards.
+//
+// Markdown, because `tasks.description` is rendered as markdown on «Дошка»; the Jira path
+// feeds the same string to the api, which splits it into ADF paragraphs, so the headings
+// survive as lines there too. One renderer rather than two: a ticket that reads differently
+// depending on which board it landed on is the same defect as two section tables.
+export function renderTicketDescription(t: ManagementTicketFields): string {
+  const out: string[] = ["## Контекст", t.context];
+  if (t.userFlow?.length) {
+    out.push("", "## Користувацький сценарій");
+    t.userFlow.forEach((step, i) => out.push(`${i + 1}. ${step}`));
+  }
+  out.push("", "## Критерії приймання");
+  for (const c of t.acceptanceCriteria) out.push(`- [ ] ${c}`);
+  if (t.outOfScope?.length) {
+    out.push("", "## Поза межами задачі");
+    for (const s of t.outOfScope) out.push(`- ${s}`);
+  }
+  return out.join("\n");
+}
+
 export type ManagementAction =
   // The model was asked to change a section that cannot be changed. It reports WHICH
   // section and WHAT was asked; the reason shown to the user is read from the section
@@ -108,13 +172,71 @@ export type ManagementAction =
   // honest way to know and every way to invent, and the browser holds the list to resolve
   // it against. The branch and the inclusive range are the operator's own words, so this
   // action carries nothing the chat could not have been told.
-  | { kind: "release.notes"; project: string; branch: string; rangeFrom: string; rangeTo: string };
+  | { kind: "release.notes"; project: string; branch: string; rangeFrom: string; rangeTo: string }
+  // File one card on the workspace's own board — «Дошка» → «Задачі», which is `tasks` rows
+  // and therefore the DEFAULT board: it is the one that always exists, needs no integration
+  // and no personal token, and every member of the workspace can already see it. A request
+  // that does not name a board lands here, and `jira.ticket.create` is emitted only when the
+  // operator named Jira — that asymmetry is the routing rule, expressed as two kinds rather
+  // than one `board` field, because the two boards genuinely take different fields and a
+  // single kind with everything optional would validate to no discipline at all.
+  //
+  // `project` is a NAME from the prompt's repository list, for the reason `release.notes`
+  // names one: a card belongs to exactly one `projects` row, a uuid is something the model
+  // has no honest way to know and every way to invent, and the browser holds the list to
+  // resolve it against. `assignee` is likewise a name off the roster printed in the context
+  // block — `tasks.assignee_id` is a profile uuid, and a guessed one is either a
+  // foreign-key error or, worse, somebody else's queue.
+  //
+  // `prefix` and `platform` are the two launch hints a manager legitimately knows (this is
+  // a fix, this is mobile). Everything else the board's own form offers — model, effort,
+  // base branch, worktree — is a launch decision, which is exactly the kind of technical
+  // decision a ticket from this surface must not carry.
+  | {
+      kind: "ticket.create";
+      project: string;
+      ticket: ManagementTicketFields;
+      assignee?: string;
+      prefix?: BranchPrefix;
+      platform?: Platform;
+    }
+  // File one issue on the workspace's mirrored Jira board. No `project`: the Jira project
+  // key comes from the workspace's integration row, so there is nothing here for the model
+  // to choose or mistake. `issueType` and `priority` are NAMES («Task», «Bug», «High»)
+  // because their Jira ids are not mirrored — jira_issues keeps only the display name — so
+  // the browser resolves them against the live editor options; omitting them lets the Jira
+  // project's own defaults apply, which is the honest answer when the operator did not say.
+  | {
+      kind: "jira.ticket.create";
+      ticket: ManagementTicketFields;
+      issueType?: string;
+      priority?: string;
+      labels?: string[];
+      assignee?: string;
+      // An existing key on the mirrored board, when the operator asked for a subtask.
+      parentKey?: string;
+    }
+  // The ticket was NOT written, because writing it would have required the assistant to
+  // decide something only the operator can. Writes nothing — its whole job is to make the
+  // app state that, in the app's own voice, exactly as `unsupported` does for a section that
+  // cannot be changed.
+  //
+  // It exists because the requirement has two halves and prose only covers the first: an
+  // assistant with open questions must ASK them, and until they are answered the ticket must
+  // not be created. A question buried in a paragraph is easy to read past, and the operator
+  // then waits for a card that was never filed. This way the transcript carries one
+  // unmistakable line — «тікет не створено, очікую відповіді» — beside the numbered
+  // questions, and the next turn either answers them or the ticket stays unfiled.
+  | { kind: "ticket.questions"; forTicket: string; questions: string[] };
 
 export type ManagementActionKind = ManagementAction["kind"];
 export type ManagementUnsupported = Extract<ManagementAction, { kind: "unsupported" }>;
 export type ManagementRiskCreate = Extract<ManagementAction, { kind: "risk.create" }>;
 export type ManagementRiskUpdate = Extract<ManagementAction, { kind: "risk.update" }>;
 export type ManagementReleaseNotes = Extract<ManagementAction, { kind: "release.notes" }>;
+export type ManagementTicketCreate = Extract<ManagementAction, { kind: "ticket.create" }>;
+export type ManagementJiraTicketCreate = Extract<ManagementAction, { kind: "jira.ticket.create" }>;
+export type ManagementTicketQuestions = Extract<ManagementAction, { kind: "ticket.questions" }>;
 
 // ── Ask / reply ───────────────────────────────────────────────────────────────
 
@@ -165,6 +287,43 @@ export type ManagementRiskRow = {
   status: RiskStatus;
 };
 
+// One teammate of the scoped workspace, as the assistant is shown them: the name the app
+// itself renders (`lib/members.ts handleOf` — github handle, then display name, then the raw
+// id) and their role.
+//
+// It exists so a ticket can be ASSIGNED. `tasks.assignee_id` is a profile uuid and the model
+// has no honest way to know one, so the operator's «на Олю» has to be matched against a list
+// the assistant can actually see, and the browser resolves the name it picked back to the id
+// it never sent. The role travels because a manager assigns by it («віддай розробнику»), and
+// because it is one word.
+//
+// Like the register, it travels on the ASK rather than being read by the api:
+// `workspace_members` is behind RLS and the browser holds the JWT, so what the assistant may
+// see is exactly what the operator may see.
+export type ManagementMember = {
+  name: string;
+  // `owner | manager | developer` as the cloud spells it. A plain string here rather than
+  // the union, because that union lives in @kermanych/cloud, which depends on THIS package.
+  role: string;
+};
+
+// The workspace's mirrored Jira board, when it has one — the second board a ticket may be
+// filed on, and the only one that can be absent.
+//
+// Both flags matter and they fail differently. No integration row at all: there is no Jira
+// board in this workspace and the assistant must say so rather than quietly filing on the
+// native one. An integration but no personal token on THIS machine: the board is visible and
+// unwritable, because every Jira write is signed with the acting user's own token from the
+// local registry — and «I created it» would be a lie one round trip later.
+export type ManagementJiraBoard = {
+  // Jira's project key (`KRM`) — the prefix of every key on that board, so the assistant can
+  // recognise a key the operator quotes at it.
+  projectKey: string;
+  boardName: string;
+  // Whether this operator has a Jira token on this machine.
+  canWrite: boolean;
+};
+
 export type ManagementContext = {
   workspaceName: string;
   // Deliberately NO project name. Nothing on this surface states a «current project» any
@@ -180,6 +339,14 @@ export type ManagementContext = {
   // itself just wrote to it — and a stale copy is how it files a duplicate of R-004 or
   // updates a code that no longer means what it did.
   risks: ManagementRiskRow[];
+  // The workspace roster, for assigning a ticket. Re-sent every turn for the register's
+  // reason: membership changes, and a name the assistant remembers from turn one is a
+  // foreign-key error on turn nine.
+  members: ManagementMember[];
+  // The mirrored Jira board, absent when the workspace has none. Absent means the assistant
+  // may not offer Jira at all — which is also why this is context and not contract: an
+  // integration connected mid-conversation must reach the model on the next turn.
+  jira?: ManagementJiraBoard;
 };
 
 export type ManagementChatAsk = {
@@ -365,6 +532,118 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
 // genuinely optional; owners are not here because a model cannot know a profile uuid.
 const RISK_REQUIRED = ["kind", "category", "cause", "event", "consequence", "probability", "impact", "response"] as const;
 
+// ── Ticket validation ─────────────────────────────────────────────────────────
+
+// A title has to fit a kanban card and be recognisable in a column. The number is not a
+// database limit (`tasks.title` is `text`) — it is the line between a title and a paragraph,
+// and a model handed a slot called `title` will happily put the whole ticket in it.
+const TICKET_TITLE_MAX = 120;
+
+// A list field, as the model may state it. Blank entries are dropped rather than refused —
+// a trailing empty string in a JSON array is a formatting slip, not a wrong ticket — but the
+// key having the wrong TYPE is refused, because a `string` where a list belongs means the
+// model packed several criteria into one line and the ticket would lose their separation.
+function strList(v: unknown, field: string): string[] | Fail {
+  if (!Array.isArray(v)) return { error: `поле ${field} має бути списком рядків` };
+  const out: string[] = [];
+  for (const item of v) {
+    if (typeof item !== "string") return { error: `поле ${field} має містити лише рядки, а не ${JSON.stringify(item)}` };
+    const t = item.trim();
+    if (t !== "") out.push(t);
+  }
+  return out;
+}
+
+// The markers of an unanswered question, and the reason this is a hard refusal rather than a
+// line in the prompt: the rule is that a ticket which reaches a board contains NO open
+// questions. A model told that follows it most of the time, and the exception is exactly the
+// case that costs the most — a card whose acceptance criterion says «TBD» is unusable by
+// whoever picks it up, and nobody re-reads a ticket they were told was written for them.
+//
+// Each entry is a shape a model actually produces. Deliberately narrow: «уточнити» on its own
+// is ordinary Ukrainian («користувач може уточнити фільтр»), so only the forms that hand the
+// decision to somebody else are listed. The refusal quotes the fragment that matched, so a
+// false positive is visible and re-askable rather than mysterious.
+const OPEN_QUESTION_MARKERS: readonly RegExp[] = [
+  /\b(?:TBD|TBC|TODO|FIXME|XXX)\b/i,
+  /\?{2,}/,
+  /<\s*(?:\?|\.{2,}|тут|назва|значення|value|placeholder)\s*>/i,
+  /\[\s*(?:\?|\.{2,}|—|-)\s*\]/,
+  /(?:потрібно|потрібен|треба|потребує|варто|слід)\s+(?:буде\s+)?уточн/i,
+  /незрозуміл|під питанням|питання до|на розсуд|to be (?:defined|decided|confirmed)|open question/i,
+  // A code fence in a ticket is the assistant slipping out of the manager's voice: this
+  // surface files business tickets, and a snippet is a technical decision in the only form a
+  // string can hold one.
+  /```/,
+];
+
+// The offending fragment, or `undefined` when the ticket is answerable as written. Every
+// string the ticket carries is scanned — a question in a field nobody looked at is still a
+// question the person who picks the card up cannot answer.
+function openQuestion(t: ManagementTicketFields): string | undefined {
+  for (const line of [t.title, t.context, ...(t.userFlow ?? []), ...t.acceptanceCriteria, ...(t.outOfScope ?? [])])
+    for (const re of OPEN_QUESTION_MARKERS) {
+      const m = re.exec(line);
+      if (m) return m[0];
+    }
+  // No marker above catches «Чи має адміністратор бачити архів?» — a perfectly formed
+  // sentence that simply cannot be checked off or walked through. A step or a criterion that
+  // ends in a question mark IS the open question this whole rule is about.
+  return [...t.acceptanceCriteria, ...(t.userFlow ?? [])].find((l) => l.endsWith("?"));
+}
+
+// One ticket, validated into the five slots. Shared by both boards: a Jira issue and a board
+// card differ in where they go and in the vocabulary AROUND the ticket (issue type, branch
+// prefix), never in what makes the ticket readable — so there is one shape, one set of
+// refusals, and no board on which a worse ticket is acceptable.
+function ticketFields(v: unknown): ManagementTicketFields | Fail {
+  if (!isObj(v)) return { error: "дія без об'єкта ticket" };
+  const title = str(v.title);
+  if (title === undefined) return { error: "тікет без назви (title)" };
+  if (title.length > TICKET_TITLE_MAX)
+    return { error: `назва тікета довша за ${TICKET_TITLE_MAX} символів — це вже опис, а не назва` };
+  const context = str(v.context);
+  if (context === undefined)
+    return { error: `тікет «${title}» без бізнес-контексту (context) — навіщо ця робота і кому вона потрібна` };
+
+  const acceptanceCriteria = strList(has(v, "acceptanceCriteria") ? v.acceptanceCriteria : [], "acceptanceCriteria");
+  if (isFail(acceptanceCriteria)) return { error: `тікет «${title}»: ${acceptanceCriteria.error}` };
+  if (acceptanceCriteria.length === 0)
+    return { error: `тікет «${title}» без критеріїв приймання (acceptanceCriteria) — немає за чим його закривати` };
+
+  const t: ManagementTicketFields = { title, context, acceptanceCriteria };
+
+  if (has(v, "userFlow")) {
+    const flow = strList(v.userFlow, "userFlow");
+    if (isFail(flow)) return { error: `тікет «${title}»: ${flow.error}` };
+    if (flow.length) t.userFlow = flow;
+  }
+  if (has(v, "outOfScope")) {
+    const out = strList(v.outOfScope, "outOfScope");
+    if (isFail(out)) return { error: `тікет «${title}»: ${out.error}` };
+    if (out.length) t.outOfScope = out;
+  }
+
+  const open = openQuestion(t);
+  if (open !== undefined)
+    return {
+      error:
+        `тікет «${title}» містить відкрите питання (${JSON.stringify(open)}) — такий тікет не створюється. ` +
+        "Постав питання через ticket.questions і дочекайся відповіді.",
+    };
+
+  return t;
+}
+
+// A name off the roster, or off nothing at all. Absent is a legitimate ticket — an unassigned
+// card is the board's normal state — so this only refuses a value of the wrong TYPE.
+function ticketName(v: unknown, field: string): string | undefined | Fail {
+  if (!has(v as Record<string, unknown>, field)) return undefined;
+  const raw = (v as Record<string, unknown>)[field];
+  if (typeof raw !== "string") return { error: `поле ${field} має бути іменем-рядком, а не ${JSON.stringify(raw)}` };
+  return str(raw);
+}
+
 // One parsed block -> one action, or a sentence explaining why not. The sentence is user
 // facing, so it names the offending value rather than a schema path.
 export function validateManagementAction(raw: unknown): ManagementAction | { error: string } {
@@ -427,6 +706,70 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
     if (rangeFrom > rangeTo)
       return { error: `release.notes: початок періоду (${rangeFrom}) пізніший за його кінець (${rangeTo})` };
     return { kind: "release.notes", project, branch, rangeFrom, rangeTo };
+  }
+  if (kind === "ticket.create" || kind === "jira.ticket.create") {
+    const ticket = ticketFields(o.ticket);
+    if (isFail(ticket)) return ticket;
+
+    const assignee = ticketName(o, "assignee");
+    if (isFail(assignee)) return assignee;
+
+    if (kind === "ticket.create") {
+      // Named, not guessed — a card belongs to exactly one project, and the wrong one puts a
+      // ticket in front of a team that does not own the work. The prompt tells the model to
+      // ask in prose when the workspace has several and the operator named none; this is the
+      // refusal if it did not.
+      const project = str(o.project);
+      if (project === undefined)
+        return { error: `тікет «${ticket.title}» без проєкту — назви його так, як він стоїть у списку репозиторіїв` };
+      const a: ManagementTicketCreate = { kind: "ticket.create", project, ticket };
+      if (assignee !== undefined) a.assignee = assignee;
+      // The two launch hints a manager legitimately knows. Validated against the same core
+      // constants the board's own form offers, so a value Postgres would happily store but no
+      // screen can render is refused here with the list attached.
+      if (has(o, "prefix")) {
+        if (!BRANCH_PREFIXES.includes(o.prefix as BranchPrefix))
+          return { error: `невідомий тип задачі ${JSON.stringify(o.prefix)} (${BRANCH_PREFIXES.join(", ")})` };
+        a.prefix = o.prefix as BranchPrefix;
+      }
+      if (has(o, "platform")) {
+        if (!PLATFORMS.includes(o.platform as Platform))
+          return { error: `невідома платформа ${JSON.stringify(o.platform)} (${PLATFORMS.join(", ")})` };
+        a.platform = o.platform as Platform;
+      }
+      return a;
+    }
+
+    const a: ManagementJiraTicketCreate = { kind: "jira.ticket.create", ticket };
+    if (assignee !== undefined) a.assignee = assignee;
+    for (const field of ["issueType", "priority", "parentKey"] as const) {
+      const value = ticketName(o, field);
+      if (isFail(value)) return value;
+      if (value !== undefined) a[field] = value;
+    }
+    if (has(o, "labels")) {
+      const labels = strList(o.labels, "labels");
+      if (isFail(labels)) return labels;
+      // Jira refuses a label containing whitespace, and it does so as a 400 naming a field
+      // path. Refused here instead, with the offending label quoted.
+      const spaced = labels.find((l) => /\s/.test(l));
+      if (spaced !== undefined)
+        return { error: `мітка ${JSON.stringify(spaced)} містить пробіл — Jira такі мітки не приймає` };
+      if (labels.length) a.labels = labels;
+    }
+    return a;
+  }
+  if (kind === "ticket.questions") {
+    const forTicket = str(o.forTicket);
+    if (forTicket === undefined)
+      return { error: "ticket.questions без forTicket — назви тікет, який чекає на відповіді" };
+    const questions = strList(has(o, "questions") ? o.questions : [], "questions");
+    if (isFail(questions)) return questions;
+    // An empty list would render as «тікет не створено, питань немає», which is a state that
+    // cannot be acted on: either there are questions, or there is a ticket.
+    if (questions.length === 0)
+      return { error: `ticket.questions для «${forTicket}» без жодного питання — або питай, або створюй тікет` };
+    return { kind: "ticket.questions", forTicket, questions };
   }
   return { error: `невідома дія ${JSON.stringify(o.kind)}` };
 }

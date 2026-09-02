@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  adfDoc,
   adfText,
   dateOnly,
   fullJql,
@@ -219,5 +220,43 @@ describe("jql builders", () => {
 
   it("sweeps the whole project in updated order", () => {
     expect(fullJql("KAN")).toBe('project = "KAN" ORDER BY updated ASC');
+  });
+});
+
+// The whole reason `adfDoc` exists: a ticket written from the Менеджмент chat is several
+// lines, and ADF renders a `\n` inside a text node as nothing at all — so the single-node
+// description this replaced arrived in Jira as one run-on paragraph.
+describe("adfDoc", () => {
+  it("splits blank-line-separated blocks into paragraphs", () => {
+    const doc = adfDoc("## Контекст\nЗамовник не бачить історію\n\n## Критерії приймання\n- [ ] видно історію");
+    expect(doc.type).toBe("doc");
+    expect(doc.version).toBe(1);
+    // `adfDoc` returns `Record<string, unknown>` because that is what Jira's `fields` map
+    // takes; the ADF paragraph shape is not expressible there and this test is what asserts
+    // it, so the cast names what the assertions below then check node by node.
+    const content = doc.content as { type: string; content: { type: string; text?: string }[] }[];
+    expect(content).toHaveLength(2);
+    expect(content[0]?.content.map((n) => n.text ?? n.type)).toEqual([
+      "## Контекст",
+      "hardBreak",
+      "Замовник не бачить історію",
+    ]);
+    expect(content[1]?.content.map((n) => n.text ?? n.type)).toEqual([
+      "## Критерії приймання",
+      "hardBreak",
+      "- [ ] видно історію",
+    ]);
+  });
+
+  it("round-trips through adfText with the line structure preserved", () => {
+    // `adfText` concatenates text nodes only, so the two sides agree on the WORDS; the
+    // paragraph count above is what proves the structure survived.
+    expect(adfText(adfDoc("один\n\nдва"))).toBe("одиндва");
+  });
+
+  // Jira reads a present-but-empty description as «clear it», which is exactly what an empty
+  // string means here.
+  it("yields an empty document for blank text", () => {
+    expect(adfDoc("   \n  ").content).toEqual([]);
   });
 });

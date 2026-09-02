@@ -1,11 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { homedir } from "node:os";
 import {
+  BRANCH_PREFIXES,
   MANAGEMENT_SECTIONS,
+  PLATFORMS,
   RISK_CATEGORY_VALUES,
   RISK_RESPONSES_BY_KIND,
   RISK_STATUS_VALUES,
   type ManagementContext,
+  type ManagementMember,
   type ManagementRepo,
   type ManagementRiskRow,
   type Project,
@@ -20,6 +23,7 @@ const context: ManagementContext = {
   workspaceName: "Acme",
   section: "management-risks",
   risks: [],
+  members: [],
 };
 
 // A fixed «today». The context block now anchors relative periods («реліз-ноти за останній
@@ -128,7 +132,7 @@ describe("buildManagementTurn", () => {
   it("teaches the release-notes action and anchors relative periods to today", () => {
     const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
     expect(out).toContain('"kind": "release.notes"');
-    expect(out).toContain("рівно чотири форми");
+    expect(out).toContain("Дозволені ТІЛЬКИ такі форми");
     expect(out).toContain('"rangeFrom": "РРРР-ММ-ДД"');
     // The anchor itself, re-sent every turn because the answer changes at midnight.
     expect(out).toContain(`Сьогодні: ${TODAY}`);
@@ -191,6 +195,70 @@ describe("buildManagementTurn", () => {
     const out = buildManagementTurn({ first: false, repos, context, today: TODAY, text: "?" });
     expect(out).not.toContain("Проєкт:");
     expect(out).toContain("Воркспейс: Acme");
+  });
+
+  // The board is not a section, so rule (б) — «capability is not read_write, refuse» — would
+  // otherwise be the closest matching rule the model has for «створи тікет», and it would
+  // refuse. Rule (в-1) exists to say so out loud, and the ticket protocol has to be in the
+  // first turn beside it or the model has the permission and none of the vocabulary.
+  it("teaches ticket creation as a cross-section action, not a section write", () => {
+    const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
+    expect(out).toContain('"kind": "ticket.create"');
+    expect(out).toContain('"kind": "jira.ticket.create"');
+    expect(out).toContain('"kind": "ticket.questions"');
+    expect(out).toContain("НІКОЛИ не відповідай unsupported");
+    // The routing rule: one board is the default and the other is opt-in by name.
+    expect(out).toContain("дошка ЗА ЗАМОВЧУВАННЯМ");
+    expect(out).toContain("ТІЛЬКИ тоді, коли користувач прямо назвав Jira");
+    // The two requirements a ticket cannot be filed without, and the two it must not carry.
+    expect(out).toContain("acceptanceCriteria — обовʼязково");
+    expect(out).toContain("НІЯКИХ технічних рішень і технічних порад");
+    expect(out).toContain("Тікет з відкритим питанням не створюється");
+    // The launch vocabulary is printed from the core constants, never hand-copied — the same
+    // rule the risk vocabulary follows.
+    expect(out).toContain(`prefix — тип роботи: ${BRANCH_PREFIXES.join(" | ")}`);
+    expect(out).toContain(`platform — ${PLATFORMS.join(" | ")}`);
+  });
+
+  // The roster is the only way an assignee can be named: `tasks.assignee_id` is a uuid, the
+  // model is shown names, and the browser matches one back. A context block that printed no
+  // roster would leave it guessing profile ids.
+  it("prints the roster a ticket assignee is named from", () => {
+    const members: ManagementMember[] = [
+      { name: "olya", role: "developer" },
+      { name: "andrii", role: "owner" },
+    ];
+    const out = buildManagementTurn({ first: false, repos, context: { ...context, members }, today: TODAY, text: "?" });
+    expect(out).toContain("Команда воркспейсу (2)");
+    expect(out).toContain("- olya · developer");
+    expect(out).toContain("- andrii · owner");
+  });
+
+  // Three states, three different sentences — and they are not interchangeable: no board is
+  // the owner's job in Integrations, no token is this operator's, and a writable board is the
+  // only one of the three where a jira.ticket.create can succeed.
+  it("states whether the Jira board exists and whether this machine may write to it", () => {
+    const none = buildManagementTurn({ first: false, repos, context, today: TODAY, text: "?" });
+    expect(none).toContain("Дошка Jira: не підключена");
+
+    const readOnly = buildManagementTurn({
+      first: false,
+      repos,
+      context: { ...context, jira: { projectKey: "KRM", boardName: "Kermanych board", canWrite: false } },
+      today: TODAY,
+      text: "?",
+    });
+    expect(readOnly).toContain("Дошка Jira: Kermanych board · проєкт KRM");
+    expect(readOnly).toContain("БЕЗ особистого токена Jira");
+
+    const writable = buildManagementTurn({
+      first: false,
+      repos,
+      context: { ...context, jira: { projectKey: "KRM", boardName: "Kermanych board", canWrite: true } },
+      today: TODAY,
+      text: "?",
+    });
+    expect(writable).toContain("можна створювати тікети");
   });
 });
 

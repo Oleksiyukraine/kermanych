@@ -191,6 +191,33 @@ export function adfText(node: unknown): string {
   return parts.join("");
 }
 
+// The other direction: plain text into the ADF `doc` a POST/PUT /issue description takes.
+//
+// Line structure is the whole point. ADF renders a text node's `\n` as nothing at all, so a
+// multi-line body — which is what any ticket written as context + flow + acceptance criteria
+// is — used to arrive in Jira as one run-on paragraph. Blank lines therefore become paragraph
+// boundaries and single newlines become `hardBreak`s, which is how Jira's own editor stores
+// exactly the same typing.
+//
+// Empty content for a blank string, because Jira reads a present-but-empty description as
+// «clear it», and that is precisely what an empty description means.
+export function adfDoc(text: string): Record<string, unknown> {
+  const content = text
+    .trim()
+    .split(/\n[^\S\n]*\n+/)
+    .map((para) => para.split("\n").map((l) => l.trim()))
+    .filter((lines) => lines.some((l) => l !== ""))
+    .map((lines) => {
+      const nodes: Record<string, unknown>[] = [];
+      for (const line of lines) {
+        if (nodes.length) nodes.push({ type: "hardBreak" });
+        if (line !== "") nodes.push({ type: "text", text: line });
+      }
+      return { type: "paragraph", content: nodes };
+    });
+  return { type: "doc", version: 1, content };
+}
+
 export function mapWorklogs(raw: readonly JiraRawWorklog[]): MappedWorklog[] {
   return raw.map((w) => ({
     worklogId: w.id,

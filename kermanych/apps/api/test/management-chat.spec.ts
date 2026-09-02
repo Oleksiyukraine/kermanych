@@ -65,7 +65,7 @@ function ask(text: string): ManagementChatAsk {
     workspaceId: "w1",
     workspaceProjects: [{ id: "p1" }],
     text,
-    context: { workspaceName: "Acme", section: "management-risks", risks: [] },
+    context: { workspaceName: "Acme", section: "management-risks", risks: [], members: [] },
   };
 }
 
