@@ -5,8 +5,8 @@
       <button
         type="button"
         class="k-attach__remove"
-        v-tip="'Прибрати'"
-        aria-label="Прибрати"
+        v-tip="t('kit.attachStrip.remove')"
+        :aria-label="t('kit.attachStrip.remove')"
         @click="emit('remove', i)"
       >✕</button>
     </div>
@@ -14,12 +14,15 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
 import type { AttachedImage } from '../../lib/images';
 
 // Thumbnail strip for pending image attachments (composer + launcher). Each tile
 // shows the image with a corner ✕ to drop it before sending.
 defineProps<{ images: AttachedImage[] }>();
 const emit = defineEmits<{ remove: [index: number] }>();
+
+const { t } = useI18n();
 </script>
 
 <style scoped lang="scss">

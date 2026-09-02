@@ -17,7 +17,7 @@
     />
     <div v-else-if="open" class="k-tr__empty mono">
       <div v-if="entry.intent" class="k-tr__intent">{{ entry.intent }}</div>
-      <div>{{ note || 'Деталей немає.' }}</div>
+      <div>{{ note || t('kit.toolRow.noDetails') }}</div>
     </div>
   </div>
 </template>
@@ -81,11 +81,11 @@ watch(() => props.expandAll.seq, () => { open.value = props.expandAll.on; }, { i
 const glyph = computed(() => (props.entry.status === 'pending' ? '◆' : props.entry.status === 'ok' ? '✓' : '✗'));
 // The glyph alone reaches assistive technology as nothing, and no visible word follows it.
 const statusLabel = computed(() =>
-  props.entry.status === 'pending' ? 'виконується' : props.entry.status === 'ok' ? 'завершено' : 'помилка',
+  props.entry.status === 'pending' ? t('kit.toolRow.statusPending') : props.entry.status === 'ok' ? t('kit.toolRow.statusOk') : t('kit.toolRow.statusError'),
 );
 const shown = computed(() => fullLines.value ?? props.entry.detail?.lines ?? []);
 const total = computed(() => (fullLines.value ? fullLines.value.length : props.entry.detail?.totalLines ?? 0));
-const note = computed(() => error.value || (props.entry.detail?.truncatedUpstream ? 'віддано обрізаним' : ''));
+const note = computed(() => error.value || (props.entry.detail?.truncatedUpstream ? t('kit.toolRow.truncatedUpstream') : ''));
 
 function toggle(): void {
   open.value = !open.value;

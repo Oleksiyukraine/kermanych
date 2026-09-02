@@ -4,6 +4,7 @@
 // props — the same split KDiffView uses: the caller owns the request, while the path header
 // and the close control stay put through loading, an error and a binary file alike.
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import hljs from 'highlight.js/lib/common';
 import 'highlight.js/styles/github-dark.css';
 import type { FileContent } from '@kermanych/core';
@@ -16,6 +17,8 @@ const props = defineProps<{
   error?: string | null;
 }>();
 const emit = defineEmits<{ close: [] }>();
+
+const { t } = useI18n();
 
 // highlightAuto guesses the language from the body — no extension→language table to keep in
 // sync, and it degrades to plain text when it cannot tell. Its output is HTML-escaped by
@@ -33,17 +36,17 @@ const highlighted = computed(() => {
 </script>
 
 <template>
-  <section class="k-file-view" :aria-label="`Файл ${path}`">
+  <section class="k-file-view" :aria-label="t('kit.fileView.fileLabel', { path })">
     <header class="k-file-view__head">
       <span class="k-file-view__path mono">{{ path }}</span>
       <span class="k-file-view__spacer"></span>
-      <KIconButton title="Закрити файл" @click="emit('close')">✕</KIconButton>
+      <KIconButton :title="t('kit.fileView.close')" @click="emit('close')">✕</KIconButton>
     </header>
 
-    <p v-if="loading" class="k-file-view__msg mono">Читаю…</p>
+    <p v-if="loading" class="k-file-view__msg mono">{{ t('kit.fileView.loading') }}</p>
     <p v-else-if="error" class="k-file-view__msg k-file-view__msg--error mono" role="alert">{{ error }}</p>
-    <p v-else-if="file?.binary" class="k-file-view__msg mono">Бінарний файл — вмісту не показано.</p>
-    <p v-else-if="file?.truncated" class="k-file-view__msg mono">Файл завеликий для перегляду.</p>
+    <p v-else-if="file?.binary" class="k-file-view__msg mono">{{ t('kit.fileView.binary') }}</p>
+    <p v-else-if="file?.truncated" class="k-file-view__msg mono">{{ t('kit.fileView.tooLarge') }}</p>
     <pre v-else-if="file" class="k-file-view__body"><code v-if="highlighted" class="hljs" v-html="highlighted"></code><code v-else class="hljs">{{ file.content }}</code></pre>
   </section>
 </template>

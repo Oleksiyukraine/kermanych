@@ -11,7 +11,7 @@
       <span class="k-rb__bar" aria-hidden="true"></span>
       <!-- `.trim()`: a whitespace-only request is as empty as a missing one, and would
            otherwise render a blank header line instead of the attachment placeholder. -->
-      <span class="k-rb__tx" :class="{ 'k-rb__tx--full': shown }">{{ block.request.text.trim() || '(вкладення)' }}</span>
+      <span class="k-rb__tx" :class="{ 'k-rb__tx--full': shown }">{{ block.request.text.trim() || t('kit.requestBlock.attachment') }}</span>
       <span v-if="!shown" class="k-rb__sum mono">{{ summary }}</span>
       <span v-else class="k-rb__time mono">{{ clock }}</span>
     </button>
@@ -20,14 +20,14 @@
          this is the only place they can render; gated on `shown` to keep the collapsed row
          one line, and outside the header because a button may not contain images. -->
     <div v-if="shown && block.request?.images?.length" class="k-rb__imgs">
-      <img v-for="(src, n) in block.request.images" :key="n" :src="src" class="k-rb__img" alt="вкладення" />
+      <img v-for="(src, n) in block.request.images" :key="n" :src="src" class="k-rb__img" :alt="t('kit.requestBlock.attachmentAlt')" />
     </div>
 
     <template v-if="shown">
       <template v-for="(item, i) in rows" :key="i">
         <div v-if="item.kind === 'group'" class="k-rb__group">
           <button type="button" class="k-rb__grow" :aria-expanded="opened.has(i)" @click="toggle(i)">
-            <span class="k-rb__g" :class="`k-rb__g--${item.status}`" role="img" :aria-label="STATUS_LABEL[item.status]">{{ GLYPH[item.status] }}</span>
+            <span class="k-rb__g" :class="`k-rb__g--${item.status}`" role="img" :aria-label="statusLabel(item.status)">{{ GLYPH[item.status] }}</span>
             <span class="k-rb__gt">{{ item.tool }}</span>
             <span class="k-rb__gtg">{{ item.members.map((m) => m.target).filter(Boolean).join(', ') }}</span>
             <span class="k-rb__gx">×{{ item.members.length }}</span>
@@ -134,7 +134,9 @@ watch(
 // read behind a collapsed row. Glyphs and labels are KToolRow's, since the members render
 // as KToolRow rows right below and the aggregate must not invent a second vocabulary.
 const GLYPH = { pending: '◆', ok: '✓', error: '✗' } as const;
-const STATUS_LABEL = { pending: 'виконується', ok: 'завершено', error: 'помилка' } as const;
+function statusLabel(s: 'pending' | 'ok' | 'error'): string {
+  return s === 'pending' ? t('kit.requestBlock.statusPending') : s === 'ok' ? t('kit.requestBlock.statusOk') : t('kit.requestBlock.statusError');
+}
 function gStatus(members: ToolEntry[]): 'pending' | 'ok' | 'error' {
   if (members.some((m) => m.status === 'error')) return 'error';
   if (members.some((m) => m.status === 'pending')) return 'pending';
@@ -158,11 +160,11 @@ const summary = computed(() => {
   const s = props.block.summary;
   return [
     dur(s.ms),
-    s.calls ? `${s.calls} викликів` : '',
-    s.files ? `${s.files} файлів` : '',
+    s.calls ? t('kit.requestBlock.calls', { count: s.calls }) : '',
+    s.files ? t('kit.requestBlock.files', { count: s.files }) : '',
     // Reasoning under a second is latency, not a pause: `summary.thinkMs` sums even the
     // sub-threshold entries that render no chip, and they do not earn one of five slots.
-    s.thinkMs >= 1000 ? `роздуми ${dur(s.thinkMs)}` : '',
+    s.thinkMs >= 1000 ? t('kit.requestBlock.think', { value: dur(s.thinkMs) }) : '',
     usd(s.cost),
   ].filter(Boolean).join(' · ');
 });

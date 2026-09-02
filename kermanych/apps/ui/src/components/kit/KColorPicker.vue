@@ -18,8 +18,8 @@
         type="button"
         class="k-color__swatch k-color__swatch--none"
         :class="{ 'k-color__swatch--active': !modelValue }"
-        v-tip="'Без кольору'"
-        aria-label="Без кольору"
+        v-tip="t('kit.colorPicker.noColor')"
+        :aria-label="t('kit.colorPicker.noColor')"
         :aria-pressed="!modelValue"
         @click="emit('update:modelValue', '')"
       >×</button>
@@ -28,6 +28,7 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
 // Curated swatch palette for a project's accent color (design-system dark theme).
 // Stores a hex string; the trailing "×" clears the color (empty string). Radius 0.
 const PALETTE = [
@@ -37,6 +38,8 @@ const PALETTE = [
 
 defineProps<{ label?: string; modelValue?: string }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
+
+const { t } = useI18n();
 </script>
 
 <style scoped lang="scss">

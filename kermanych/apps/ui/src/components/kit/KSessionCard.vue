@@ -43,8 +43,8 @@
       v-if="removable"
       type="button"
       class="k-session-card__remove"
-      v-tip="removeTitle"
-      :aria-label="removeTitle"
+      v-tip="removeTitleLabel"
+      :aria-label="removeTitleLabel"
       @click="$emit('remove')"
     >✕</button>
   </div>
@@ -52,6 +52,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { SessionStatus, Usage } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import { tokens, usageTokens, usd } from '../../lib/format';
@@ -89,17 +90,20 @@ const props = withDefaults(
     removable?: boolean;
     removeTitle?: string;
   }>(),
-  { selected: false, fork: false, removable: false, removeTitle: 'Видалити' },
+  { selected: false, fork: false, removable: false },
 );
 
 defineEmits<{ click: []; remove: [] }>();
+
+const { t } = useI18n();
+const removeTitleLabel = computed(() => props.removeTitle ?? t('kit.sessionCard.remove'));
 
 // Same construction as the panel's status row: the facts we have, `·`-joined, so a missing
 // one leaves no dangling separator behind.
 const spend = computed(() => {
   const u = props.usage;
   if (!u) return '';
-  return [`${tokens(usageTokens(u))} ток`, usd(u.cost)].filter(Boolean).join(' · ');
+  return [t('kit.sessionCard.tokens', { count: tokens(usageTokens(u)) }), usd(u.cost)].filter(Boolean).join(' · ');
 });
 </script>
 

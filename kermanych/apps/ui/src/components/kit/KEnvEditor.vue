@@ -6,22 +6,22 @@
          pane's own blurb does it here), so this bar carries no prose. -->
     <div class="k-env__bar">
       <KBtn variant="secondary" @click="revealed = !revealed">
-        {{ revealed ? 'Приховати значення' : 'Показати значення' }}
+        {{ revealed ? t('kit.envEditor.hide') : t('kit.envEditor.show') }}
       </KBtn>
     </div>
 
     <p v-if="!ignored" class="k-env__warn" role="alert">
-      ⚠ <span class="mono">.env</span> не в <span class="mono">.gitignore</span> — його можуть
-      закомітити. Додайте <span class="mono">.env</span> до <span class="mono">.gitignore</span>.
+      ⚠ <span class="mono">.env</span> {{ t('kit.envEditor.warnNotIn') }} <span class="mono">.gitignore</span> {{ t('kit.envEditor.warnCommit') }}
+      <span class="mono">.env</span> {{ t('kit.envEditor.warnTo') }} <span class="mono">.gitignore</span>.
     </p>
 
     <div class="k-env__table">
       <div class="k-env__head">
-        <span>Ключ</span>
-        <span>Значення</span>
+        <span>{{ t('kit.envEditor.key') }}</span>
+        <span>{{ t('kit.envEditor.value') }}</span>
         <!-- Header for a column of toggles, so the pill below it does not have to
              explain itself in every row. -->
-        <span class="k-env__head-flag">Обов’язковий</span>
+        <span class="k-env__head-flag">{{ t('kit.envEditor.required') }}</span>
         <span></span>
       </div>
 
@@ -30,16 +30,16 @@
           class="k-env__cell mono"
           :value="row.key"
           placeholder="NEW_KEY"
-          aria-label="Ключ"
+          :aria-label="t('kit.envEditor.key')"
           @input="patch(i, { key: ($event.target as HTMLInputElement).value })"
         />
         <input
           class="k-env__cell mono"
           :value="row.value"
           :type="revealed ? 'text' : 'password'"
-          :placeholder="row.required && !row.value ? 'значення ще немає' : 'значення'"
+          :placeholder="row.required && !row.value ? t('kit.envEditor.valueEmpty') : t('kit.envEditor.valuePlaceholder')"
           :class="{ 'k-env__cell--missing': row.required && !row.value }"
-          aria-label="Значення"
+          :aria-label="t('kit.envEditor.value')"
           @input="patch(i, { value: ($event.target as HTMLInputElement).value })"
         />
         <!-- A TOGGLE, not a read-out. The names list is cloud config any workspace
@@ -59,21 +59,21 @@
           :aria-pressed="row.required"
           v-tip="
             flagsLocked
-              ? 'Перелік обов’язкових ключів живе у хмарі'
+              ? t('kit.envEditor.flagsLocked')
               : row.required
-                ? 'Прибрати з обов’язкових (хмара)'
-                : 'Позначити обов’язковим (хмара)'
+                ? t('kit.envEditor.unmarkRequired')
+                : t('kit.envEditor.markRequired')
           "
           @click="flagsLocked || patch(i, { required: !row.required })"
-        >{{ row.required ? '● потрібен' : '○ ні' }}</button>
-        <KIconButton title="Видалити рядок" @click="remove(i)">✕</KIconButton>
+        >{{ row.required ? t('kit.envEditor.needed') : t('kit.envEditor.notNeeded') }}</button>
+        <KIconButton :title="t('kit.envEditor.removeRow')" @click="remove(i)">✕</KIconButton>
       </div>
 
-      <div v-if="!modelValue.length" class="k-env__empty">Порожньо — жодної змінної.</div>
+      <div v-if="!modelValue.length" class="k-env__empty">{{ t('kit.envEditor.empty') }}</div>
     </div>
 
     <KBtn variant="secondary" @click="emit('update:modelValue', [...modelValue, BLANK])">
-      Додати змінну
+      {{ t('kit.envEditor.add') }}
     </KBtn>
   </div>
 </template>
@@ -84,6 +84,7 @@ export type { EnvRow } from '../../lib/settings';
 
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { EnvRow } from '../../lib/settings';
 import KBtn from './KBtn.vue';
 import KIconButton from './KIconButton.vue';
@@ -100,6 +101,8 @@ import KIconButton from './KIconButton.vue';
 // caller decides where each half goes.
 const props = defineProps<{ modelValue: EnvRow[]; ignored: boolean; flagsLocked?: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [rows: EnvRow[]] }>();
+
+const { t } = useI18n();
 
 const BLANK: EnvRow = { key: '', value: '', required: false };
 

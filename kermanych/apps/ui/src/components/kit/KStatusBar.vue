@@ -3,32 +3,33 @@
     <div class="k-statusbar__left">
       <span class="k-statusbar__agg k-statusbar__agg--running">
         <span class="k-statusbar__glyph" aria-hidden="true">●</span>
-        <span class="mono">{{ counts.running }}</span> працює
+        <span class="mono">{{ counts.running }}</span> {{ t('kit.statusBar.running') }}
       </span>
       <span class="k-statusbar__agg">
         <span class="k-statusbar__glyph" aria-hidden="true">◌</span>
-        <span class="mono">{{ counts.waiting }}</span> чекає
+        <span class="mono">{{ counts.waiting }}</span> {{ t('kit.statusBar.waiting') }}
       </span>
       <span class="k-statusbar__agg">
         <span class="k-statusbar__glyph" aria-hidden="true">✓</span>
-        <span class="mono">{{ counts.done }}</span> завершено
+        <span class="mono">{{ counts.done }}</span> {{ t('kit.statusBar.done') }}
       </span>
       <span v-if="counts.error" class="k-statusbar__agg k-statusbar__agg--error">
         <span class="k-statusbar__glyph" aria-hidden="true">✕</span>
-        <span class="mono">{{ counts.error }}</span> помилки
+        <span class="mono">{{ counts.error }}</span> {{ t('kit.statusBar.errors') }}
       </span>
     </div>
 
     <div class="k-statusbar__right">
       <span v-if="model" class="mono k-statusbar__tele">{{ model }}</span>
-      <span v-if="tokens != null" class="mono k-statusbar__tele">{{ tokenLabel }} токенів</span>
-      <span v-if="costLabel" class="mono k-statusbar__tele">{{ costLabel }} сьогодні</span>
+      <span v-if="tokens != null" class="mono k-statusbar__tele">{{ tokenLabel }} {{ t('kit.statusBar.tokens') }}</span>
+      <span v-if="costLabel" class="mono k-statusbar__tele">{{ costLabel }} {{ t('kit.statusBar.today') }}</span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 // Aliased: `tokens` is also the name of this component's prop.
 import { tokens as fmtTokens, usd } from '../../lib/format';
 
@@ -41,6 +42,8 @@ const props = defineProps<{
   tokens?: number;
   cost?: number;
 }>();
+
+const { t } = useI18n();
 
 const tokenLabel = computed(() => fmtTokens(props.tokens ?? 0));
 const costLabel = computed(() => usd(props.cost ?? 0));

@@ -16,7 +16,7 @@
           :key="i"
           :src="src"
           class="k-log__user-img"
-          alt="вкладення"
+          :alt="t('kit.logBlock.attachmentAlt')"
         />
       </div>
     </template>
@@ -100,11 +100,11 @@ const chip = computed(() => {
   // A zero or absent `ms` drops out entirely rather than claiming a measured span.
   const msLabel = props.entry.ms ? dur(props.entry.ms) : '';
   const tok = props.entry.tokens;
-  const tokLabel = tok === undefined ? '' : `${tokens(tok)} ток`;
+  const tokLabel = tok === undefined ? '' : t('kit.logBlock.tokens', { count: tokens(tok) });
   // `думав` is the label, not a metric: the dot only ever separates two metrics,
   // so a missing ms or tokens leaves no dangling separator behind.
   const parts = [msLabel, tokLabel].filter(Boolean);
-  return parts.length ? `думав ${parts.join(' · ')}` : 'думав';
+  return parts.length ? t('kit.logBlock.thoughtWith', { parts: parts.join(' · ') }) : t('kit.logBlock.thought');
 });
 </script>
 
