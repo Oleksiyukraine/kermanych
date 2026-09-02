@@ -117,6 +117,30 @@ could not be published because its project exists only on this machine; it stays
 the list under the note «Лише на цій машині: проєкт цих задач ще не у хмарі, тому
 команда їх не бачить».
 
+### Jira
+
+A workspace can mirror **one Jira Cloud board** onto «Дошка». The owner connects it
+in **Менеджмент → Integrations** (site → personal API token → board picker); after
+that the board page grows a «Задачі | Jira» switcher, and the «Jira» view reproduces
+the board's own columns, tickets, labels, comments, worklogs and attachment lists.
+
+- **Tokens are personal and local.** Every member who wants to *act* (drag a ticket
+  between columns, comment, create/edit/delete tickets, upload files) adds their own
+  Atlassian API token on the Integrations tab; it is stored in this machine's
+  registry SQLite and never reaches the cloud. Actions land in Jira under that
+  member's own account. A member without a token gets a read-only mirror.
+- **Jira is the source of truth.** The mirror lives in Supabase behind workspace
+  membership; whoever has the Jira view open polls Jira every ~30 s (a shared lease
+  keeps N open boards to one poller), and your own actions are written to Jira
+  immediately and reflected back at once.
+- **Tickets launch like tasks.** «Запустити» on a ticket asks which Kermanych
+  project (repo) to run in — pre-selected from the sidebar — and which Jira status
+  to move the ticket to (skipped when it is already in an In-Progress-category
+  status). The session runs through the ordinary pipeline on a hidden shadow task;
+  the ticket card wears the agent's live status chip. When the session is merged,
+  Kermanych asks where the ticket should go next and applies that transition in
+  Jira.
+
 ### Why the backend is in the repository
 
 The project URL and the publishable key are **public application configuration**,
