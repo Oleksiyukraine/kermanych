@@ -1,18 +1,18 @@
 <template>
   <div class="jbv">
     <div class="jbv__bar">
-      <span class="jbv__count mono">{{ jira.issues.length }} тікетів · {{ jira.integration?.boardName ?? '' }}</span>
+      <span class="jbv__count mono">{{ t('jira.boardView.count', { n: jira.issues.length, board: jira.integration?.boardName ?? '' }, jira.issues.length) }}</span>
       <span class="jbv__spacer"></span>
-      <span v-if="!jira.tokenPresent" class="jbv__readonly mono" v-tip="READ_ONLY_HINT">лише читання</span>
+      <span v-if="!jira.tokenPresent" class="jbv__readonly mono" v-tip="readOnlyHint">{{ t('jira.boardView.readOnly') }}</span>
       <KBtn
         :disabled="!jira.tokenPresent || jira.syncing"
-        :title="jira.tokenPresent ? SYNC_HINT : READ_ONLY_HINT"
+        :title="jira.tokenPresent ? syncHint : readOnlyHint"
         @click="jira.syncNow(workspaceId)"
       >
-        {{ jira.syncing ? 'Синхронізація…' : 'Синхронізувати' }}
+        {{ jira.syncing ? t('jira.boardView.syncing') : t('jira.boardView.sync') }}
       </KBtn>
-      <KBtn variant="primary" :disabled="!jira.tokenPresent" :title="jira.tokenPresent ? '' : READ_ONLY_HINT" @click="creatorOpen = true">
-        + Тікет
+      <KBtn variant="primary" :disabled="!jira.tokenPresent" :title="jira.tokenPresent ? '' : readOnlyHint" @click="creatorOpen = true">
+        {{ t('jira.boardView.newTicket') }}
       </KBtn>
     </div>
 
@@ -44,7 +44,7 @@
     </div>
 
     <p v-else-if="!jira.loading" class="jbv__error mono">
-      Дошка ще порожня — колонки зʼявляться після першої синхронізації.
+      {{ t('jira.boardView.emptyBoard') }}
     </p>
 
     <!-- TICKET DETAIL — mounted only with a subject, so `issue` is always real inside. -->
@@ -88,7 +88,7 @@
     <JiraStatusPickDialog
       v-model="dropPickOpen"
       :title="dropIssue ? `${dropIssue.key} → ${dropColumn?.name ?? ''}` : ''"
-      lead="У цій колонці кілька статусів — у який перенести?"
+      :lead="t('jira.boardView.dropLead')"
       :options="dropOptions"
       :busy="dropBusy"
       @pick="applyDrop"
@@ -116,9 +116,11 @@ import { issuesByColumn, transitionChoiceForDrop, type JiraTransitionView } from
 import { useBoard } from 'stores/board';
 import { useJira } from 'stores/jira';
 import { useOrchestrator } from 'stores/orchestrator';
+import { useI18n } from 'vue-i18n';
 
-const READ_ONLY_HINT = 'Додайте свій Jira-токен у Менеджмент → Integrations, щоб діяти';
-const SYNC_HINT = 'Опитати Jira зараз: підтягнути всі тікети, статуси й колонки дошки';
+const { t } = useI18n();
+const readOnlyHint = computed(() => t('jira.boardView.readOnlyHint'));
+const syncHint = computed(() => t('jira.boardView.syncHint'));
 
 const props = defineProps<{ workspaceId: string }>();
 
@@ -158,9 +160,9 @@ function agentStatusOf(issue: JiraIssue): SessionStatus | undefined {
 }
 
 function onLaunched(session: Session, transitionError?: string): void {
-  local.notify(`Сесію «${session.name}» запущено`, 'info');
+  local.notify(t('jira.boardView.sessionLaunched', { name: session.name }), 'info');
   if (transitionError) {
-    local.notify(`Сесія працює, але перенести тікет не вдалося: ${transitionError}`, 'error');
+    local.notify(t('jira.boardView.transitionFailedAfterLaunch', { error: transitionError }), 'error');
   }
   void jira.refreshIssue(props.workspaceId, openedIssue.value?.key ?? '');
 }
@@ -191,7 +193,7 @@ async function onDrop(column: JiraColumn): Promise<void> {
 
   const decision = transitionChoiceForDrop(column, transitions);
   if (decision.kind === 'none') {
-    local.notify(`Jira не дозволяє перенести ${issue.key} у «${column.name}» звідси`, 'error');
+    local.notify(t('jira.boardView.dropRefused', { key: issue.key, column: column.name }), 'error');
     return;
   }
   if (decision.kind === 'auto') {

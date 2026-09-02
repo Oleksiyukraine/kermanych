@@ -11,14 +11,14 @@
     <div class="jira-card__head">
       <span class="jira-card__key mono">{{ issue.key }}</span>
       <img v-if="issue.typeIcon" class="jira-card__icon" :src="issue.typeIcon" :alt="issue.typeName" v-tip="issue.typeName" />
-      <img v-if="issue.priorityIcon" class="jira-card__icon" :src="issue.priorityIcon" :alt="issue.priorityName" v-tip="`Пріоритет: ${issue.priorityName}`" />
+      <img v-if="issue.priorityIcon" class="jira-card__icon" :src="issue.priorityIcon" :alt="issue.priorityName" v-tip="t('jira.card.priorityTip', { name: issue.priorityName })" />
       <span class="jira-card__spacer"></span>
       <KStatusDot v-if="agentStatus" :status="agentStatus" />
       <KAvatar
         v-if="issue.assigneeName"
         :name="issue.assigneeName"
         :avatar-url="issue.assigneeAvatar"
-        :hint="`Виконавець у Jira: ${issue.assigneeName}`"
+        :hint="t('jira.card.assigneeTip', { name: issue.assigneeName })"
         :size="18"
       />
     </div>
@@ -30,7 +30,7 @@
         class="jira-card__dates mono"
         :class="`jira-card__dates--${dates.tone}`"
         v-tip="datesHint"
-      >{{ dates.text }}</span>
+      >{{ datesText }}</span>
     </div>
   </div>
 </template>
@@ -42,6 +42,7 @@
 // task runs — the SAME status dot a native card wears, so «агент працює на цьому тікеті»
 // reads identically on both views.
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { JiraIssue } from '@kermanych/cloud';
 import type { SessionStatus } from '@kermanych/core';
 import KAvatar from 'components/kit/KAvatar.vue';
@@ -58,12 +59,20 @@ const emit = defineEmits<{ click: []; dragstart: [] }>();
 
 // `today` is read per render rather than held: a board left open past midnight must not
 // keep yesterday's «прострочено» verdict.
+const { t } = useI18n();
+
 const dates = computed(() => dateChip(props.issue, todayIso()));
+const datesText = computed(() => {
+  const d = dates.value;
+  if (!d) return '';
+  if (d.start && d.due) return `${d.start} – ${d.due}`;
+  return d.due ? t('jira.card.dateBy', { due: d.due }) : t('jira.card.dateFrom', { start: d.start });
+});
 const datesHint = computed(() => {
   const parts: string[] = [];
-  if (props.issue.startDate) parts.push(`Початок: ${props.issue.startDate}`);
-  if (props.issue.dueDate) parts.push(`Дедлайн: ${props.issue.dueDate}`);
-  if (dates.value?.tone === 'overdue') parts.push('прострочено');
+  if (props.issue.startDate) parts.push(t('jira.card.start', { date: props.issue.startDate }));
+  if (props.issue.dueDate) parts.push(t('jira.card.due', { date: props.issue.dueDate }));
+  if (dates.value?.tone === 'overdue') parts.push(t('jira.card.overdue'));
   return parts.join(' · ');
 });
 

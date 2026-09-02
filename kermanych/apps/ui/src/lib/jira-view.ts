@@ -139,7 +139,7 @@ export function worklogStartedInstant(localValue: string): string | undefined {
 // The card's date chip: what to show for a ticket's start/due pair, and whether it is
 // late. Jira's own emphasis rule — a DONE ticket is never overdue, however long its due
 // date has passed, because the work it was late for is finished.
-export type JiraDateChip = { text: string; tone: 'plain' | 'soon' | 'overdue' };
+export type JiraDateChip = { start: string; due: string; tone: 'plain' | 'soon' | 'overdue' };
 
 export function dateChip(
   issue: Pick<JiraIssue, 'startDate' | 'dueDate' | 'statusCategory'>,
@@ -157,5 +157,5 @@ export function dateChip(
     if (issue.dueDate < today) tone = 'overdue';
     else if (issue.dueDate === today) tone = 'soon';
   }
-  return { text: start && due ? `${start} – ${due}` : due ? `до ${due}` : `з ${start}`, tone };
+  return { start, due, tone };
 }

@@ -260,7 +260,8 @@ export const useManagementChat = defineStore('management-chat', () => {
     const known = roster.map(handleOf).join(', ');
     return {
       error:
-        `У команді цього воркспейсу немає «${name}» — тікет не створено.` + (known ? ` Є: ${known}.` : ''),
+        globalTr.t('management.chat.ticketMemberMissing', { name }) +
+        (known ? globalTr.t('management.chat.releaseNotesKnownProjects', { known }) : ''),
     };
   }
 
@@ -280,7 +281,8 @@ export const useManagementChat = defineStore('management-chat', () => {
       result(
         workspaceId,
         'warn',
-        `У цьому воркспейсі немає проєкту «${action.project}» — тікет не створено.` + (known ? ` Є: ${known}.` : ''),
+        globalTr.t('management.chat.ticketProjectMissing', { project: action.project }) +
+          (known ? globalTr.t('management.chat.releaseNotesKnownProjects', { known }) : ''),
       );
       return;
     }
@@ -301,14 +303,19 @@ export const useManagementChat = defineStore('management-chat', () => {
       ...(action.platform ? { platform: action.platform } : {}),
     });
     if (!created) {
-      result(workspaceId, 'error', `Не вдалося створити тікет «${action.ticket.title}» — подробиці в повідомленні.`);
+      result(workspaceId, 'error', globalTr.t('management.chat.ticketCreateFailed', { title: action.ticket.title }));
       return;
     }
-    const who = assignee ? `, виконавець ${action.assignee}` : ', без виконавця';
     result(
       workspaceId,
       'info',
-      `Тікет «${created.title}» створено на дошці воркспейсу · проєкт ${project.name}${who}. Картка вже в колонці «Беклог».`,
+      assignee
+        ? globalTr.t('management.chat.ticketCreatedAssigned', {
+            title: created.title,
+            project: project.name,
+            assignee: action.assignee,
+          })
+        : globalTr.t('management.chat.ticketCreatedUnassigned', { title: created.title, project: project.name }),
     );
   }
 
@@ -328,7 +335,7 @@ export const useManagementChat = defineStore('management-chat', () => {
       result(
         workspaceId,
         'warn',
-        'До цього воркспейсу не підключено дошку Jira — тікет не створено. Підключити її може власник воркспейсу в розділі Integrations.',
+        globalTr.t('jira.notify.noBoardForTicket'),
       );
       return;
     }
@@ -336,7 +343,7 @@ export const useManagementChat = defineStore('management-chat', () => {
       result(
         workspaceId,
         'warn',
-        'Немає особистого токена Jira на цій машині — тікет у Jira не створено. Додайте токен у розділі Integrations: кожен запис у Jira підписується вашим власним доступом.',
+        globalTr.t('jira.notify.noTokenForTicket'),
       );
       return;
     }
@@ -359,7 +366,7 @@ export const useManagementChat = defineStore('management-chat', () => {
             result(
               workspaceId,
               'warn',
-              `На дошці Jira немає типу «${action.issueType}» — тікет не створено. Є: ${options.issueTypes.map((t) => t.name).join(', ')}.`,
+              globalTr.t('jira.notify.unknownType', { type: action.issueType, options: options.issueTypes.map((t) => t.name).join(', ') }),
             );
             return;
           }
@@ -371,7 +378,7 @@ export const useManagementChat = defineStore('management-chat', () => {
             result(
               workspaceId,
               'warn',
-              `На цій дошці Jira немає пріоритету «${action.priority}» — тікет не створено. Є: ${options.priorities.map((p) => p.name).join(', ')}.`,
+              globalTr.t('jira.notify.unknownPriority', { priority: action.priority, options: options.priorities.map((p) => p.name).join(', ') }),
             );
             return;
           }
@@ -404,8 +411,8 @@ export const useManagementChat = defineStore('management-chat', () => {
           result(
             workspaceId,
             'warn',
-            `Jira не знає виконавця «${action.assignee}» на цій дошці — тікет не створено.` +
-              (known ? ` Кому можна призначити: ${known}.` : ''),
+            globalTr.t('jira.notify.unknownAssignee', { assignee: action.assignee }) +
+              (known ? globalTr.t('jira.notify.assigneeHint', { known }) : ''),
           );
           return;
         }
@@ -416,12 +423,12 @@ export const useManagementChat = defineStore('management-chat', () => {
       result(
         workspaceId,
         'info',
-        `Тікет ${issue.key} «${issue.summary}» створено в Jira · ${row.boardName}. Він уже на вкладці «Jira» дошки.`,
+        globalTr.t('jira.notify.ticketCreated', { key: issue.key, summary: issue.summary, board: row.boardName }),
       );
     } catch (e) {
       // Verbatim: a dead token, a field the Jira project made mandatory and an unreachable
       // site are three different problems with three different fixes.
-      result(workspaceId, 'error', `Не вдалося створити тікет у Jira: ${errorText(e)}`);
+      result(workspaceId, 'error', globalTr.t('jira.notify.ticketCreateFailed', { error: errorText(e) }));
     }
   }
 
@@ -492,9 +499,10 @@ export const useManagementChat = defineStore('management-chat', () => {
       result(
         workspaceId,
         'warn',
-        `Тікет «${action.forTicket}» не створено — потрібні відповіді: ` +
-          action.questions.map((q, i) => `${i + 1}) ${q}`).join(' ') +
-          ' Відповідайте тут — тікет буде створено після цього.',
+        globalTr.t('management.chat.ticketNeedsAnswers', {
+          ticket: action.forTicket,
+          questions: action.questions.map((q, i) => `${i + 1}) ${q}`).join(' '),
+        }),
       );
       return;
     }

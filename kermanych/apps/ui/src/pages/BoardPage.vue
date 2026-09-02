@@ -10,14 +10,14 @@
         role="tab"
         :aria-selected="boardView === 'tasks'"
         @click="setBoardView('tasks')"
-      >Задачі</button>
+      >{{ t('board.viewSwitch.tasks') }}</button>
       <button
         class="board__view mono"
         :class="{ 'board__view--on': boardView === 'jira' }"
         role="tab"
         :aria-selected="boardView === 'jira'"
         @click="setBoardView('jira')"
-      >Jira</button>
+      >{{ t('board.viewSwitch.jira') }}</button>
     </div>
 
     <JiraBoardView
