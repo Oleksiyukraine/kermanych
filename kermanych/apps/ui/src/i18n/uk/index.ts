@@ -936,12 +936,12 @@ export const uk = {
       readOnlyFallback: 'розділ доступний лише для читання',
     },
     section: {
-      'management-home': { hint: 'огляд воркспейсу' },
-      'management-storage': { hint: 'файли й артефакти' },
+      'management-home': { hint: 'огляд воркспейсу', limitation: 'розділ ще не реалізований — за ним немає ні екрана, ні сховища даних' },
+      'management-storage': { hint: 'файли й артефакти', limitation: 'розділ ще не реалізований — за ним немає ні екрана, ні сховища даних' },
       'management-risks': { hint: 'ризики й мітигації' },
       'management-releases': { hint: 'зміни по релізах' },
-      'management-capacity': { hint: 'навантаження команди' },
-      'management-integrations': { hint: 'Linear, Jira, Slack' },
+      'management-capacity': { hint: 'навантаження команди', limitation: 'розділ ще не реалізований — за ним немає ні екрана, ні сховища даних' },
+      'management-integrations': { hint: 'Linear, Jira, Slack', limitation: 'розділ лише показує список провайдерів (Linear, Jira, Slack) — жодне підключення не зроблено і стан ніде не зберігається' },
     },
     placeholder: {
       text: 'Розділ у розробці.',

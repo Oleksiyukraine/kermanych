@@ -932,12 +932,12 @@ export const en: MessageSchema = {
       readOnlyFallback: 'the section is read-only',
     },
     section: {
-      'management-home': { hint: 'workspace overview' },
-      'management-storage': { hint: 'files and artifacts' },
+      'management-home': { hint: 'workspace overview', limitation: 'the section isn’t built yet — it has neither a screen nor a data store behind it' },
+      'management-storage': { hint: 'files and artifacts', limitation: 'the section isn’t built yet — it has neither a screen nor a data store behind it' },
       'management-risks': { hint: 'risks and mitigations' },
       'management-releases': { hint: 'changes by release' },
-      'management-capacity': { hint: 'team workload' },
-      'management-integrations': { hint: 'Linear, Jira, Slack' },
+      'management-capacity': { hint: 'team workload', limitation: 'the section isn’t built yet — it has neither a screen nor a data store behind it' },
+      'management-integrations': { hint: 'Linear, Jira, Slack', limitation: 'the section only lists providers (Linear, Jira, Slack) — no connection is set up and nothing is stored anywhere' },
     },
     placeholder: {
       text: 'Section under construction.',

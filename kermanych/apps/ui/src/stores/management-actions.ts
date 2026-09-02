@@ -66,6 +66,8 @@ export function refusalText(action: ManagementUnsupported): string {
     return globalTr.t('management.refusal.writableRefused', { section: section.label });
   return globalTr.t('management.refusal.readOnly', {
     section: section.label,
-    limitation: section.limitation ?? globalTr.t('management.refusal.readOnlyFallback'),
+    limitation: section.limitation
+      ? globalTr.t(`management.section.${section.name}.limitation`)
+      : globalTr.t('management.refusal.readOnlyFallback'),
   });
 }

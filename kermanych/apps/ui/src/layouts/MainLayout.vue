@@ -769,7 +769,7 @@ async function onDrop(workspaceId: string): Promise<void> {
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
     // 6000 like every other full-sentence refusal here (the bind error, both member
-    // errors): MOVE_REFUSAL is a 76-character sentence, and it is the one message a user
+    // errors): moveRefusalText() is a full sentence, and it is the one message a user
     // reads mid-gesture, with their attention on the pointer rather than on the corner of
     // the screen. notify's 4000 default is for confirmations, which are short.
     store.notify(isMoveRefusal(raw) ? moveRefusalText() : raw, 'error', 6000);
