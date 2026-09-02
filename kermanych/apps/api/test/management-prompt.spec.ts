@@ -220,6 +220,22 @@ describe("buildManagementTurn", () => {
     expect(out).toContain(`platform — ${PLATFORMS.join(" | ")}`);
   });
 
+  // The ticket's language is not the conversation's. Rule (ґ) tells the model to answer in the
+  // user's language, and with nothing else said a Ukrainian request produced a Ukrainian
+  // ticket — a card the rest of the team cannot read. Both halves are asserted: the ticket's
+  // fields are English, and the prose the operator reads is still his.
+  it("requires the ticket's own text in English regardless of the language of the request", () => {
+    const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "створи тікет" });
+    expect(out).toContain("МОВА ТІКЕТА — АНГЛІЙСЬКА");
+    expect(out).toContain("незалежно від мови розмови");
+    expect(out).toContain("ТІЛЬКИ якщо користувач попросив її прямо");
+    // The carve-out inside rule (ґ), without which the model has two rules that contradict.
+    expect(out).toContain("ВИНЯТОК — текст тікета");
+    // Chat prose and the questions stay the operator's language: a model told «English» once
+    // starts answering him in English too.
+    expect(out).toContain("питання ticket.questions читає користувач — їх пиши його мовою");
+  });
+
   // The roster is the only way an assignee on the NATIVE board can be named:
   // `tasks.assignee_id` is a uuid, the model is shown names, and the browser matches one
   // back. A context block that printed no roster would leave it guessing profile ids.

@@ -128,7 +128,7 @@ function contract(): string {
     "(в) якщо просять ПРОЧИТАТИ або пояснити — відповідай звичайною прозою, без блоку дії. Ти можеш читати репозиторії воркспейсу (див. контекст) своїми read/grep/glob;",
     "(в-1) СТВОРЕННЯ ТІКЕТА — окремий випадок: дошка задач не є розділом Менеджменту, тому тікет можна створити з будь-якого розділу, і на прохання «створи тікет» НІКОЛИ не відповідай unsupported. Дій за протоколом ТІКЕТІВ нижче;",
     "(г) ніколи не викликай інтерактивний інструмент або запит, який чекає відповіді в інтерфейсі: за цим маршрутом немає жодного інтерфейсу, який міг би відповісти, і запит просто зависне. Будь-яке уточнення — прозою;",
-    "(ґ) відповідай мовою користувача, за замовчуванням українською.",
+    "(ґ) відповідай мовою користувача, за замовчуванням українською. ВИНЯТОК — текст тікета: поля `ticket` завжди англійською, див. блок «МОВА ТІКЕТА» у протоколі ТІКЕТІВ.",
   ].join("\n");
 }
 
@@ -195,7 +195,7 @@ function releaseProtocol(): string {
 // `validateManagementAction` refuses the questions; the voice, the grounding and the choice
 // of board have nowhere to live but here.
 //
-// Two rules in it are the ones that cost the most when they are missing:
+// Three rules in it are the ones that cost the most when they are missing:
 //
 //   * the DEFAULT board. There are two boards and only one of them always exists, so a
 //     request that does not name Jira is a request for the native board. Left unstated, a
@@ -205,6 +205,13 @@ function releaseProtocol(): string {
 //     difference between «додати експорт» and a ticket the team can pick up. It is stated
 //     together with its boundary — read the code, write about the business — because the
 //     natural failure of a model that has just read code is to describe the code.
+//   * the LANGUAGE. A card is read by whoever picks it up — including people who do not
+//     speak the operator's language — so the ticket's own text is English, and the language
+//     of the REQUEST says nothing about it. Left to rule (ґ) alone («answer in the user's
+//     language»), a Ukrainian request produced a Ukrainian ticket: that is the default this
+//     block exists to invert, and only an explicit «write it in X» moves it back. The split
+//     from the chat's prose and from `ticket.questions` is stated inside the block, because
+//     a model told «English» once starts answering the operator in English too.
 function ticketProtocol(): string {
   return [
     "ТІКЕТИ (дошка задач). Дошка — це НЕ розділ Менеджменту: тікет можна створити з будь-якого розділу.",
@@ -216,6 +223,14 @@ function ticketProtocol(): string {
     "  ticket.create, навіть якщо ти щойно читав про Jira. Не питай «на яку дошку?»: замовчування вже є відповіддю.",
     "  Якщо Jira просять, а в контексті її немає (або немає особистого токена) — скажи це прозою і НЕ створюй тікет",
     "  на власній дошці замість неї: користувач назвав іншу дошку.",
+    "",
+    "МОВА ТІКЕТА — АНГЛІЙСЬКА. Поля `ticket` (title, context, userFlow, acceptanceCriteria, outOfScope) пиши",
+    "АНГЛІЙСЬКОЮ — завжди, на обох дошках, незалежно від мови розмови. Картку читає вся команда, і дошка в неї одна.",
+    "Те, що користувач написав українською, НЕ означає прохання про український тікет: мова запиту й мова тікета не",
+    "звʼязані. Інша мова в полях тікета — ТІЛЬКИ якщо користувач попросив її прямо («тікет українською»).",
+    "Власні назви не перекладай: назви проєктів, гілок, екранів, підписи інтерфейсу, імена виконавців, ключі Jira й",
+    "мітки цитуй так, як вони існують, усередині англійського речення (the «Історія» tab).",
+    "Це правило лише про ПОЛЯ ТІКЕТА. Прозу відповіді й питання ticket.questions читає користувач — їх пиши його мовою.",
     "",
     "ЯК ПИСАТИ ТІКЕТ. Ти пишеш як досвідчений керівник проєкту, а не як розробник:",
     "  • мова — бізнесова: користувач, його потреба, наслідок для роботи команди або клієнта;",

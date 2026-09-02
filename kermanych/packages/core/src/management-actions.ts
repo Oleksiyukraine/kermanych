@@ -106,7 +106,9 @@ export type ManagementRiskPatch = Partial<ManagementRiskFields>;
 //     filed at all without `context` and at least one acceptance criterion;
 //   * `renderTicketDescription` is the ONLY thing that turns them into prose, so the
 //     headings, their order and their language belong to the app — every ticket on the board
-//     therefore has the same shape whichever turn produced it;
+//     therefore has the same shape whichever turn produced it. They are English for the
+//     reason the slots they head are (`ticketProtocol`, «МОВА ТІКЕТА»): a card whose body is
+//     English under Ukrainian headings is one ticket written in two languages;
 //   * every slot is business-facing by construction. There is no field for a design, a
 //     schema, a library or a migration, which is how «a ticket states no technical
 //     decisions» stops being an instruction the model may drift from and becomes a shape it
@@ -141,15 +143,15 @@ export type ManagementTicketFields = {
 // survive as lines there too. One renderer rather than two: a ticket that reads differently
 // depending on which board it landed on is the same defect as two section tables.
 export function renderTicketDescription(t: ManagementTicketFields): string {
-  const out: string[] = ["## Контекст", t.context];
+  const out: string[] = ["## Context", t.context];
   if (t.userFlow?.length) {
-    out.push("", "## Користувацький сценарій");
+    out.push("", "## User flow");
     t.userFlow.forEach((step, i) => out.push(`${i + 1}. ${step}`));
   }
-  out.push("", "## Критерії приймання");
+  out.push("", "## Acceptance criteria");
   for (const c of t.acceptanceCriteria) out.push(`- [ ] ${c}`);
   if (t.outOfScope?.length) {
-    out.push("", "## Поза межами задачі");
+    out.push("", "## Out of scope");
     for (const s of t.outOfScope) out.push(`- ${s}`);
   }
   return out.join("\n");
@@ -579,17 +581,25 @@ function strList(v: unknown, field: string): string[] | Fail {
 // case that costs the most — a card whose acceptance criterion says «TBD» is unusable by
 // whoever picks it up, and nobody re-reads a ticket they were told was written for them.
 //
-// Each entry is a shape a model actually produces. Deliberately narrow: «уточнити» on its own
-// is ordinary Ukrainian («користувач може уточнити фільтр»), so only the forms that hand the
-// decision to somebody else are listed. The refusal quotes the fragment that matched, so a
-// false positive is visible and re-askable rather than mysterious.
+// Each entry is a shape a model actually produces, in BOTH languages a ticket can reach here
+// in: the ticket's own text is English by default (`ticketProtocol`, «МОВА ТІКЕТА») and
+// Ukrainian when the operator asked for it, so a list tuned to one of them would quietly stop
+// catching half the cases. Deliberately narrow on both sides: «уточнити» on its own is
+// ordinary Ukrainian («користувач може уточнити фільтр») and «clarify» on its own is ordinary
+// English, so only the forms that hand the decision to somebody else are listed. The refusal
+// quotes the fragment that matched, so a false positive is visible and re-askable rather than
+// mysterious.
 const OPEN_QUESTION_MARKERS: readonly RegExp[] = [
   /\b(?:TBD|TBC|TODO|FIXME|XXX)\b/i,
   /\?{2,}/,
   /<\s*(?:\?|\.{2,}|тут|назва|значення|value|placeholder)\s*>/i,
   /\[\s*(?:\?|\.{2,}|—|-)\s*\]/,
   /(?:потрібно|потрібен|треба|потребує|варто|слід)\s+(?:буде\s+)?уточн/i,
-  /незрозуміл|під питанням|питання до|на розсуд|to be (?:defined|decided|confirmed)|open question/i,
+  /незрозуміл|під питанням|питання до|на розсуд/i,
+  /to be (?:defined|decided|determined|discussed|confirmed|clarified|specified|agreed)/i,
+  /open question|\bunclear\b/i,
+  /(?:needs?|need to be|needed|requires?|pending)\s+(?:further\s+)?clarif/i,
+  /(?:at|left to)\s+(?:the\s+)?(?:\w+\s+)?discretion\b/i,
   // A code fence in a ticket is the assistant slipping out of the manager's voice: this
   // surface files business tickets, and a snippet is a technical decision in the only form a
   // string can hold one.
