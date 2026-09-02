@@ -211,6 +211,33 @@ describe("launch", () => {
   });
 });
 
+describe("editIssue", () => {
+  it("spells the estimate as timetracking and clears an emptied one with null", async () => {
+    // Two edits; each needs withIntegration + refreshIssue's own integration lookup.
+    const integrations = Array.from({ length: 4 }, () => ({ data: integrationRow, error: null }));
+    const { client } = fakeCloud({ workspace_jira_integrations: integrations });
+    const editIssue = vi.fn(async () => undefined);
+    const jira = scriptedJiraClient({ editIssue });
+    const svc = service(client, jira);
+
+    await svc.editIssue("w1", "KAN-42", { originalEstimate: "2d 4h" }, "u1");
+    expect(editIssue).toHaveBeenLastCalledWith("KAN-42", { timetracking: { originalEstimate: "2d 4h" } });
+
+    await svc.editIssue("w1", "KAN-42", { originalEstimate: "  " }, "u1");
+    expect(editIssue).toHaveBeenLastCalledWith("KAN-42", { timetracking: { originalEstimate: null } });
+  });
+
+  it("sends only the drafted fields — a one-field patch must not clear the rest", async () => {
+    const integrations = Array.from({ length: 2 }, () => ({ data: integrationRow, error: null }));
+    const { client } = fakeCloud({ workspace_jira_integrations: integrations });
+    const editIssue = vi.fn(async () => undefined);
+    const svc = service(client, scriptedJiraClient({ editIssue }));
+
+    await svc.editIssue("w1", "KAN-42", { priorityId: "2" }, "u1");
+    expect(editIssue).toHaveBeenLastCalledWith("KAN-42", { priority: { id: "2" } });
+  });
+});
+
 describe("setToken", () => {
   it("refuses to store a token /myself rejects", async () => {
     const { client } = fakeCloud({});
@@ -239,6 +266,7 @@ function mirrorIssueRow(issueId: string, key: string) {
     priority_name: "",
     priority_icon: "",
     labels: [],
+    original_estimate: "",
     assignee_account_id: null,
     assignee_name: null,
     assignee_avatar: null,

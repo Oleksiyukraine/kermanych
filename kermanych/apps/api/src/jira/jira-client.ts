@@ -54,6 +54,7 @@ export const ISSUE_FIELDS = [
   "reporter",
   "status",
   "parent",
+  "timetracking",
   "updated",
   "attachment",
 ] as const;

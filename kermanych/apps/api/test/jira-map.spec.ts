@@ -25,6 +25,7 @@ const rawIssue: JiraRawIssue = {
     reporter: { displayName: "Olha" },
     status: { id: "3", name: "In Progress", statusCategory: { key: "indeterminate" } },
     parent: { key: "KAN-40" },
+    timetracking: { originalEstimate: "2d 4h", remainingEstimate: "1d" },
     updated: "2026-09-02T10:00:00.000+0300",
     attachment: [
       { id: "att1", filename: "log.txt", mimeType: "text/plain", size: 123, author: { displayName: "Olha" }, created: "2026-09-01T09:00:00.000+0000" },
@@ -53,6 +54,7 @@ describe("mapIssue", () => {
       statusId: "3",
       statusCategory: "indeterminate",
       parentKey: "KAN-40",
+      originalEstimate: "2d 4h",
       jiraUpdatedAt: "2026-09-02T07:00:00.000Z",
     });
   });

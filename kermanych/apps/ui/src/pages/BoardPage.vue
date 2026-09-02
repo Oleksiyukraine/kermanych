@@ -9,14 +9,14 @@
         :class="{ 'board__view--on': boardView === 'tasks' }"
         role="tab"
         :aria-selected="boardView === 'tasks'"
-        @click="boardView = 'tasks'"
+        @click="setBoardView('tasks')"
       >Задачі</button>
       <button
         class="board__view mono"
         :class="{ 'board__view--on': boardView === 'jira' }"
         role="tab"
         :aria-selected="boardView === 'jira'"
-        @click="boardView = 'jira'"
+        @click="setBoardView('jira')"
       >Jira</button>
     </div>
 
@@ -323,23 +323,51 @@ const jiraStore = useJira();
 // Probed per scoped workspace; no integration (or no workspace scope at all — «Дошка
 // команди» across groups has no single Jira board to show) means no switcher and the
 // page is exactly what it was before the integration existed.
+//
+// The chosen tab IS the default: picking «Jira» persists per workspace (the
+// kermanych.agents.tab idiom), so the next visit opens on it — falling back to the
+// native board whenever the integration is gone.
 const boardView = ref<'tasks' | 'jira'>('tasks');
 const jiraAvailable = computed(() => !!local.selectedWorkspaceId && !!jiraStore.integration);
+
+const viewKey = (ws: string) => `kermanych.board-view.${ws}`;
+
+function setBoardView(v: 'tasks' | 'jira'): void {
+  boardView.value = v;
+  const ws = local.selectedWorkspaceId;
+  if (!ws) return;
+  try {
+    localStorage.setItem(viewKey(ws), v);
+  } catch {
+    /* storage unavailable — the choice still holds for this session */
+  }
+}
+
+function readBoardView(ws: string): 'tasks' | 'jira' {
+  try {
+    return localStorage.getItem(viewKey(ws)) === 'jira' ? 'jira' : 'tasks';
+  } catch {
+    return 'tasks';
+  }
+}
 
 watch(
   () => local.selectedWorkspaceId,
   (ws) => {
     if (ws) void jiraStore.probe(ws);
-    else boardView.value = 'tasks';
   },
   { immediate: true },
 );
 
-// A workspace switch away from the mirrored one, or a disconnect, folds the page back to
-// the native board rather than leaving a Jira tab selected with nothing behind it.
-watch(jiraAvailable, (ok) => {
-  if (!ok) boardView.value = 'tasks';
-});
+// The one owner of what the switcher shows: a workspace switch or a disconnect folds
+// back to the native board; a workspace whose remembered default is «Jira» opens on it.
+watch(
+  () => [local.selectedWorkspaceId, jiraAvailable.value] as const,
+  ([ws, ok]) => {
+    boardView.value = ok && ws ? readBoardView(ws) : 'tasks';
+  },
+  { immediate: true },
+);
 
 // Back to the LOCAL board of whatever the rail has selected. The named route, not '/', so
 // this stays the same hop the Агенти view's «Дошка команди» button makes in reverse.

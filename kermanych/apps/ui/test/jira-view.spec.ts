@@ -29,6 +29,7 @@ function issue(over: Partial<JiraIssue>): JiraIssue {
     priorityName: '',
     priorityIcon: '',
     labels: [],
+    originalEstimate: '',
     statusId: '1',
     statusName: 'To Do',
     statusCategory: 'new',
