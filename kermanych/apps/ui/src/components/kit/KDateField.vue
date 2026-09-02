@@ -20,7 +20,7 @@
         :aria-controls="popId"
         :aria-activedescendant="open ? cellId(activeIso) : undefined"
         :value="text"
-        :placeholder="placeholder ?? 'дд.мм.рррр'"
+        :placeholder="placeholder ?? t('kit.dateField.placeholder')"
         :disabled="disabled"
         @input="onInput"
         @blur="onBlur"
@@ -29,7 +29,7 @@
       <button
         type="button"
         class="k-date__toggle"
-        :aria-label="open ? 'Закрити календар' : 'Відкрити календар'"
+        :aria-label="open ? t('kit.dateField.close') : t('kit.dateField.open')"
         :aria-expanded="open"
         :disabled="disabled"
         tabindex="-1"
@@ -50,13 +50,13 @@
         class="k-date__pop"
         :class="{ 'k-date__pop--placed': placed }"
         role="dialog"
-        aria-label="Календар"
+        :aria-label="t('kit.dateField.calendar')"
       >
         <div class="k-date__head">
           <button
             type="button"
             class="k-date__step"
-            aria-label="Попередній місяць"
+            :aria-label="t('kit.dateField.prevMonth')"
             @mousedown.prevent
             @click="stepMonth(-1)"
           ><span class="k-date__chev k-date__chev--prev" aria-hidden="true"></span></button>
@@ -64,7 +64,7 @@
           <button
             type="button"
             class="k-date__step"
-            aria-label="Наступний місяць"
+            :aria-label="t('kit.dateField.nextMonth')"
             @mousedown.prevent
             @click="stepMonth(1)"
           ><span class="k-date__chev" aria-hidden="true"></span></button>
@@ -95,14 +95,14 @@
         </div>
 
         <div class="k-date__foot">
-          <button type="button" class="k-date__action" @mousedown.prevent @click="commit(today)">Сьогодні</button>
+          <button type="button" class="k-date__action" @mousedown.prevent @click="commit(today)">{{ t('kit.dateField.today') }}</button>
           <button
             type="button"
             class="k-date__action k-date__action--clear"
             :disabled="!modelValue"
             @mousedown.prevent
             @click="commit('')"
-          >Очистити</button>
+          >{{ t('kit.dateField.clear') }}</button>
         </div>
       </div>
     </Teleport>
@@ -117,6 +117,7 @@ let seq = 0;
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import {
   WEEKDAY_LABELS,
   formatIsoDate,
@@ -129,6 +130,8 @@ import {
   todayIso,
 } from '../../lib/calendar';
 import { placeMenu } from '../../lib/menu';
+
+const { t } = useI18n();
 
 // A date field with the app's own calendar. Styled like KField — label above, surface input,
 // accent focus ring — with a glass month grid on the same popup primitive as KSelect.

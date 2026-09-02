@@ -1,25 +1,25 @@
 <template>
-  <section class="k-diff" :aria-label="`Зміни у файлі ${path}`">
+  <section class="k-diff" :aria-label="t('kit.diff.fileChanges', { path })">
     <header class="k-diff__head">
       <span class="k-diff__path mono">{{ path }}</span>
       <span class="k-diff__spacer"></span>
       <span v-if="diff?.truncated" class="k-diff__note mono">
-        завеликий diff — показано перші {{ rowCount }} рядків
+        {{ t('kit.diff.truncated', { count: rowCount }) }}
       </span>
-      <KIconButton title="Згорнути diff" @click="emit('close')">✕</KIconButton>
+      <KIconButton :title="t('kit.diff.collapse')" @click="emit('close')">✕</KIconButton>
     </header>
 
-    <p v-if="loading" class="k-diff__msg mono">Готую diff…</p>
+    <p v-if="loading" class="k-diff__msg mono">{{ t('kit.diff.loading') }}</p>
     <p v-else-if="error" class="k-diff__msg k-diff__msg--error mono" role="alert">{{ error }}</p>
-    <p v-else-if="diff?.binary" class="k-diff__msg mono">Бінарний файл — порядкового diff немає.</p>
-    <p v-else-if="!diff?.hunks.length" class="k-diff__msg mono">Цей файл не відрізняється від бази.</p>
+    <p v-else-if="diff?.binary" class="k-diff__msg mono">{{ t('kit.diff.binary') }}</p>
+    <p v-else-if="!diff?.hunks.length" class="k-diff__msg mono">{{ t('kit.diff.noChanges') }}</p>
     <div v-else class="k-diff__body">
       <div class="k-diff__grid mono">
         <!-- The two sections. They are rows of ONE grid, not two panes: shared columns are
              what keeps a removed line opposite the added line that replaced it, with a
              single scrollbar for both. -->
-        <div class="k-diff__col-head">Оригінал</div>
-        <div class="k-diff__col-head k-diff__col-head--new">Зміни</div>
+        <div class="k-diff__col-head">{{ t('kit.diff.original') }}</div>
+        <div class="k-diff__col-head k-diff__col-head--new">{{ t('kit.diff.changes') }}</div>
         <template v-for="(hunk, hi) in diff.hunks" :key="hi">
           <div class="k-diff__hunk">{{ hunk.header }}</div>
           <template v-for="(row, ri) in hunk.rows" :key="`${hi}:${ri}`">
@@ -55,8 +55,11 @@
 // (and its refresh while the agent keeps editing), while the path + collapse control stay
 // visible through loading, an error and a binary file alike.
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { FileDiff } from '../../lib/api';
 import KIconButton from './KIconButton.vue';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   path: string;
