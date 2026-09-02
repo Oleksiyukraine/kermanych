@@ -113,3 +113,86 @@ export type ApiErrorParams = Record<string, string | number>;
 // The body an HTTP error carries. `message` is the server's Ukrainian sentence — shown
 // verbatim when the UI does not know `code` — and `code`/`params` localize it otherwise.
 export type ApiErrorBody = { code: ApiErrorCode; message: string; params?: ApiErrorParams };
+
+// Management action-rejections — one line per action block the assistant emitted that did
+// NOT validate (`ManagementChatReply.rejected`). Unlike a Notice, a rejection ALWAYS carries
+// a code: it is core-produced prose with no omp origin, so every site here is enumerated and
+// localizable. The Ukrainian `text` stays the fallback a build without the code shows. Each
+// member is backed by a `return { error }` site in management-actions.ts; extend by adding a
+// member here AND its uk/en `rejections.*` message (the catalog completeness test fails
+// otherwise) — the exhaustiveness assert below keeps the array in lockstep with the union.
+export type ManagementRejectionCode =
+  // riskPatch — one field of a risk, validated against ./risks and the register's CHECKs:
+  | "riskKindUnknown" // kind is neither threat nor opportunity (params: { value })
+  | "riskCategoryUnknown" // category is not a register category (params: { value, allowed })
+  | "riskResponseUnknown" // response is not a known strategy (params: { value })
+  | "riskStatusUnknown" // status is not a register status (params: { value, allowed })
+  | "riskFieldBlank" // cause/event/consequence sent blank (params: { field })
+  | "riskFieldNotText" // a free-text field sent as a non-string (params: { field })
+  | "riskScoreRange" // a 1–5 score out of range (params: { field, min, max, value })
+  | "probabilityPctRange" // probabilityPct outside 0–100 (params: { value })
+  | "costImpactNegative" // costImpact negative (params: { value })
+  | "riskDateFormat" // proximity/actionDue not YYYY-MM-DD (params: { field, value })
+  | "riskResponseKindMismatch" // response does not apply to kind (params: { response, kind, allowed })
+  | "riskClosureNoteRequired" // a terminal status arrived without a closure note (params: { status })
+  | "emvPairRequired" // costImpact and probabilityPct must arrive together (params: none)
+  | "residualPairRequired" // residualProbability and residualImpact must arrive together (params: none)
+  // validateManagementAction — the block as a whole, per kind:
+  | "actionNotObject" // the block body was not a JSON object (params: none)
+  | "unsupportedNoSection" // an unsupported block without a section (params: none)
+  | "riskCreateNoRisk" // a risk.create without its nested risk object (params: none)
+  | "riskCreateMissingFields" // a risk.create missing required fields (params: { missing })
+  | "riskResponseActionsRequired" // a non-accept strategy without responseActions (params: { response })
+  | "riskUpdateNoCode" // a risk.update without a register code (params: none)
+  | "riskUpdateNoPatch" // a risk.update without a patch object (params: { code })
+  | "riskUpdateEmpty" // a risk.update that changes nothing (params: { code })
+  | "releaseNoProject" // a release.notes without a project name (params: none)
+  | "releaseNoBranch" // a release.notes without a branch (params: { project })
+  | "releaseNoRange" // a release.notes without an inclusive range (params: { project })
+  | "releaseDateFormat" // a release.notes range bound that is not a date (params: { field, value })
+  | "releaseRangeReversed" // a release.notes range whose start is after its end (params: { from, to })
+  | "actionKindUnknown" // a block whose kind nobody implemented (params: { value })
+  // parseManagementReply — the block never parsed as JSON:
+  | "blockUnreadable"; // the fenced block was not readable JSON (params: { message })
+
+// Runtime mirror of the union above. MUST list every member exactly once.
+export const MANAGEMENT_REJECTION_CODES = [
+  "riskKindUnknown",
+  "riskCategoryUnknown",
+  "riskResponseUnknown",
+  "riskStatusUnknown",
+  "riskFieldBlank",
+  "riskFieldNotText",
+  "riskScoreRange",
+  "probabilityPctRange",
+  "costImpactNegative",
+  "riskDateFormat",
+  "riskResponseKindMismatch",
+  "riskClosureNoteRequired",
+  "emvPairRequired",
+  "residualPairRequired",
+  "actionNotObject",
+  "unsupportedNoSection",
+  "riskCreateNoRisk",
+  "riskCreateMissingFields",
+  "riskResponseActionsRequired",
+  "riskUpdateNoCode",
+  "riskUpdateNoPatch",
+  "riskUpdateEmpty",
+  "releaseNoProject",
+  "releaseNoBranch",
+  "releaseNoRange",
+  "releaseDateFormat",
+  "releaseRangeReversed",
+  "actionKindUnknown",
+  "blockUnreadable",
+] as const satisfies readonly ManagementRejectionCode[];
+
+type _ManagementRejectionExhaustive = AssertNever<
+  Exclude<ManagementRejectionCode, (typeof MANAGEMENT_REJECTION_CODES)[number]>
+>;
+
+// A management action-rejection as it crosses the wire. Like `Notice`, the server's
+// Ukrainian `text` is the fallback; `code`+`params` let the UI localize. Unlike `Notice`,
+// `code` is REQUIRED — every rejection is core-produced and enumerated above.
+export type ManagementRejection = { text: string; code: ManagementRejectionCode; params?: NoticeParams };

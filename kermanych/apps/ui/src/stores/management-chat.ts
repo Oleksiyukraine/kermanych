@@ -44,7 +44,7 @@ import type {
   Usage,
 } from '@kermanych/core';
 import { globalTr } from '../boot/i18n';
-import { localizeNotice } from '../lib/i18n-coded';
+import { localizeNotice, localizeRejection } from '../lib/i18n-coded';
 import { locale } from '../lib/locale';
 import { api } from '../lib/api';
 import { useOrchestrator } from './orchestrator';
@@ -304,7 +304,7 @@ export const useManagementChat = defineStore('management-chat', () => {
       // Rejections first, then notices: a block that did not validate is the closest thing
       // to a lost instruction, and an operator who believes something was recorded when it
       // was not is exactly how that ends. Notices are omp's own asides and rank below it.
-      for (const line of reply.rejected) result(workspaceId, 'warn', line);
+      for (const line of reply.rejected) result(workspaceId, 'warn', localizeRejection(globalTr, line));
       for (const line of reply.notices) result(workspaceId, 'info', localizeNotice(globalTr, line));
       // In order and one at a time: the model may file two risks in one turn, and the codes
       // Postgres mints depend on the order they arrive in. Awaited, so the transcript's

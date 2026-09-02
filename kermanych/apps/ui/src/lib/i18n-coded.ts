@@ -3,7 +3,7 @@
 // server always sends its Ukrainian `text`/`message` too, so a code this build has no
 // translation for degrades to that fallback rather than to a bare identifier — the whole
 // point of the `@kermanych/core` i18n-codes contract.
-import type { Notice, NoticeParams } from '@kermanych/core';
+import type { ManagementRejection, Notice, NoticeParams } from '@kermanych/core';
 
 // The two capabilities we need off a vue-i18n composer, named structurally so this module
 // works with both `useI18n()` (in a component) and the global `i18n.global` (in a store or
@@ -26,6 +26,17 @@ export function localizeNotice(tr: Translator, notice: Notice): string {
     if (tr.te(roleKey)) params.agent = tr.t(roleKey);
   }
   return typeof params.count === 'number' ? tr.t(key, params, params.count) : tr.t(key, params);
+}
+
+// A management action-rejection's localized line. Mirrors `localizeNotice`: resolve
+// `rejections.<code>` with the rejection's `params`, and FALL BACK to the server's Ukrainian
+// `text` when this build has no translation for the code — so a rejection is never shown as a
+// bare identifier. Unlike a notice, `code` is always present, but `te` is still checked
+// because an older UI bundle may not carry the newest code's message.
+export function localizeRejection(tr: Translator, rejection: ManagementRejection): string {
+  const key = `rejections.${rejection.code}`;
+  if (!tr.te(key)) return rejection.text;
+  return tr.t(key, { ...rejection.params });
 }
 
 // An HTTP error's localized message, falling back to the server's Ukrainian sentence when

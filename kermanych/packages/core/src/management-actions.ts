@@ -46,7 +46,7 @@ import {
 } from "./risks";
 import { isReleaseDate } from "./release-notes";
 import type { Usage } from "./types";
-import type { Locale, Notice } from "./i18n-codes";
+import type { Locale, ManagementRejection, Notice } from "./i18n-codes";
 
 // The fence info string. Distinct from `json` on purpose: a model quoting example JSON in
 // its prose must not be mistaken for an instruction to act.
@@ -205,9 +205,10 @@ export type ManagementChatReply = {
   // The model's prose, with the action blocks removed.
   text: string;
   actions: ManagementAction[];
-  // One line per action block that did not validate. Shown in the chat: a silently dropped
-  // instruction is how an operator ends up believing something was recorded.
-  rejected: string[];
+  // One entry per action block that did not validate. Shown in the chat: a silently dropped
+  // instruction is how an operator ends up believing something was recorded. Each carries a
+  // localizable `code`+`params` and the Ukrainian `text` as the fallback the UI degrades to.
+  rejected: ManagementRejection[];
   // omp notices raised during the turn (dropped frames, provider warnings, a cancelled
   // interactive prompt).
   notices: Notice[];
@@ -224,7 +225,7 @@ export type ManagementChatReply = {
 export type ParsedManagementReply = {
   text: string;
   actions: ManagementAction[];
-  rejected: string[];
+  rejected: ManagementRejection[];
 };
 
 // Fenced blocks whose info string is exactly our fence. `[^\S\n]*` rather than `\s*` so a
@@ -254,7 +255,10 @@ function num(v: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-type Fail = { error: string };
+// A validation failure. `error` is a full `ManagementRejection`: the Ukrainian sentence as
+// `text` (byte-identical to what the chat showed before codes existed, so it stays the
+// fallback), plus the `code`+`params` the UI localizes.
+type Fail = { error: ManagementRejection };
 
 function isFail(v: unknown): v is Fail {
   return typeof v === "object" && v !== null && "error" in v;
@@ -283,23 +287,47 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
   const p: ManagementRiskPatch = {};
 
   if (has(o, "kind")) {
-    if (!isRiskKind(o.kind)) return { error: `невідомий тип ризику ${JSON.stringify(o.kind)} (threat або opportunity)` };
+    if (!isRiskKind(o.kind))
+      return {
+        error: {
+          text: `невідомий тип ризику ${JSON.stringify(o.kind)} (threat або opportunity)`,
+          code: "riskKindUnknown",
+          params: { value: JSON.stringify(o.kind) },
+        },
+      };
     p.kind = o.kind;
   }
   if (has(o, "category")) {
     if (!isRiskCategory(o.category))
       return {
-        error: `невідома категорія ризику ${JSON.stringify(o.category)} — допустимі: ${RISK_CATEGORY_VALUES.join(", ")}`,
+        error: {
+          text: `невідома категорія ризику ${JSON.stringify(o.category)} — допустимі: ${RISK_CATEGORY_VALUES.join(", ")}`,
+          code: "riskCategoryUnknown",
+          params: { value: JSON.stringify(o.category), allowed: RISK_CATEGORY_VALUES.join(", ") },
+        },
       };
     p.category = o.category;
   }
   if (has(o, "response")) {
-    if (!isRiskResponse(o.response)) return { error: `невідома стратегія реагування ${JSON.stringify(o.response)}` };
+    if (!isRiskResponse(o.response))
+      return {
+        error: {
+          text: `невідома стратегія реагування ${JSON.stringify(o.response)}`,
+          code: "riskResponseUnknown",
+          params: { value: JSON.stringify(o.response) },
+        },
+      };
     p.response = o.response;
   }
   if (has(o, "status")) {
     if (!isRiskStatus(o.status))
-      return { error: `невідомий статус ризику ${JSON.stringify(o.status)} — допустимі: ${RISK_STATUS_VALUES.join(", ")}` };
+      return {
+        error: {
+          text: `невідомий статус ризику ${JSON.stringify(o.status)} — допустимі: ${RISK_STATUS_VALUES.join(", ")}`,
+          code: "riskStatusUnknown",
+          params: { value: JSON.stringify(o.status), allowed: RISK_STATUS_VALUES.join(", ") },
+        },
+      };
     p.status = o.status;
   }
 
@@ -308,7 +336,8 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
   for (const key of ["cause", "event", "consequence"] as const) {
     if (!has(o, key)) continue;
     const t = str(o[key]);
-    if (t === undefined) return { error: `поле ${key} не може бути порожнім` };
+    if (t === undefined)
+      return { error: { text: `поле ${key} не може бути порожнім`, code: "riskFieldBlank", params: { field: key } } };
     p[key] = t;
   }
 
@@ -316,7 +345,8 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
   // blank string is kept rather than refused.
   for (const key of ["responseActions", "earlyWarning", "closureNote"] as const) {
     if (!has(o, key)) continue;
-    if (typeof o[key] !== "string") return { error: `поле ${key} має бути текстом` };
+    if (typeof o[key] !== "string")
+      return { error: { text: `поле ${key} має бути текстом`, code: "riskFieldNotText", params: { field: key } } };
     p[key] = (o[key] as string).trim();
   }
 
@@ -324,26 +354,52 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
     if (!has(o, key)) continue;
     const n = num(o[key]);
     if (n === undefined || !Number.isInteger(n) || n < RISK_SCORE_MIN || n > RISK_SCORE_MAX)
-      return { error: `поле ${key} має бути цілим числом ${RISK_SCORE_MIN}–${RISK_SCORE_MAX}, а не ${JSON.stringify(o[key])}` };
+      return {
+        error: {
+          text: `поле ${key} має бути цілим числом ${RISK_SCORE_MIN}–${RISK_SCORE_MAX}, а не ${JSON.stringify(o[key])}`,
+          code: "riskScoreRange",
+          params: { field: key, min: RISK_SCORE_MIN, max: RISK_SCORE_MAX, value: JSON.stringify(o[key]) },
+        },
+      };
     p[key] = n;
   }
 
   if (has(o, "probabilityPct")) {
     const n = num(o.probabilityPct);
     if (n === undefined || !Number.isInteger(n) || n < 0 || n > 100)
-      return { error: `probabilityPct має бути цілим числом 0–100, а не ${JSON.stringify(o.probabilityPct)}` };
+      return {
+        error: {
+          text: `probabilityPct має бути цілим числом 0–100, а не ${JSON.stringify(o.probabilityPct)}`,
+          code: "probabilityPctRange",
+          params: { value: JSON.stringify(o.probabilityPct) },
+        },
+      };
     p.probabilityPct = n;
   }
   if (has(o, "costImpact")) {
     const n = num(o.costImpact);
-    if (n === undefined || n < 0) return { error: `costImpact має бути невідʼємним числом, а не ${JSON.stringify(o.costImpact)}` };
+    if (n === undefined || n < 0)
+      return {
+        error: {
+          text: `costImpact має бути невідʼємним числом, а не ${JSON.stringify(o.costImpact)}`,
+          code: "costImpactNegative",
+          params: { value: JSON.stringify(o.costImpact) },
+        },
+      };
     p.costImpact = n;
   }
 
   for (const key of ["proximity", "actionDue"] as const) {
     if (!has(o, key)) continue;
     const t = str(o[key]);
-    if (t === undefined || !DATE_RE.test(t)) return { error: `поле ${key} має бути датою РРРР-ММ-ДД, а не ${JSON.stringify(o[key])}` };
+    if (t === undefined || !DATE_RE.test(t))
+      return {
+        error: {
+          text: `поле ${key} має бути датою РРРР-ММ-ДД, а не ${JSON.stringify(o[key])}`,
+          code: "riskDateFormat",
+          params: { field: key, value: JSON.stringify(o[key]) },
+        },
+      };
     p[key] = t;
   }
 
@@ -351,17 +407,34 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
   // застосовується до можливості» instead of a Postgres constraint name.
   if (p.kind !== undefined && p.response !== undefined && !RISK_RESPONSES_BY_KIND[p.kind].includes(p.response))
     return {
-      error: `стратегія ${p.response} не застосовується до ${p.kind} — допустимі: ${RISK_RESPONSES_BY_KIND[p.kind].join(", ")}`,
+      error: {
+        text: `стратегія ${p.response} не застосовується до ${p.kind} — допустимі: ${RISK_RESPONSES_BY_KIND[p.kind].join(", ")}`,
+        code: "riskResponseKindMismatch",
+        params: { response: p.response, kind: p.kind, allowed: RISK_RESPONSES_BY_KIND[p.kind].join(", ") },
+      },
     };
   // workspace_risks_closure_note_required. Demanded from the SAME action that closes the risk:
   // a terminal status is the one write that must arrive with its reason attached.
   if (p.status !== undefined && isTerminalRiskStatus(p.status) && !(p.closureNote ?? ""))
-    return { error: `статус ${p.status} потребує closureNote — причини закриття або плану по інциденту` };
+    return {
+      error: {
+        text: `статус ${p.status} потребує closureNote — причини закриття або плану по інциденту`,
+        code: "riskClosureNoteRequired",
+        params: { status: p.status },
+      },
+    };
   // workspace_risks_emv_pair and workspace_risks_residual_pair: both halves or neither.
   if ((p.costImpact === undefined) !== (p.probabilityPct === undefined))
-    return { error: "costImpact і probabilityPct вказуються разом — EMV з половини пари є вигаданим числом" };
+    return {
+      error: {
+        text: "costImpact і probabilityPct вказуються разом — EMV з половини пари є вигаданим числом",
+        code: "emvPairRequired",
+      },
+    };
   if ((p.residualProbability === undefined) !== (p.residualImpact === undefined))
-    return { error: "residualProbability і residualImpact вказуються разом" };
+    return {
+      error: { text: "residualProbability і residualImpact вказуються разом", code: "residualPairRequired" },
+    };
 
   return p;
 }
@@ -372,35 +445,51 @@ const RISK_REQUIRED = ["kind", "category", "cause", "event", "consequence", "pro
 
 // One parsed block -> one action, or a sentence explaining why not. The sentence is user
 // facing, so it names the offending value rather than a schema path.
-export function validateManagementAction(raw: unknown): ManagementAction | { error: string } {
-  if (!isObj(raw)) return { error: "блок дії має бути JSON-об'єктом" };
+export function validateManagementAction(raw: unknown): ManagementAction | { error: ManagementRejection } {
+  if (!isObj(raw)) return { error: { text: "блок дії має бути JSON-об'єктом", code: "actionNotObject" } };
   const o = raw;
   const kind = str(o.kind);
   if (kind === "unsupported") {
     const section = str(o.section);
-    if (section === undefined) return { error: "unsupported без поля section" };
+    if (section === undefined) return { error: { text: "unsupported без поля section", code: "unsupportedNoSection" } };
     return { kind: "unsupported", section, request: str(o.request) ?? "" };
   }
   if (kind === "risk.create") {
     // Nested under `risk` and not flat, because a risk has a `kind` of its own
     // (threat/opportunity) and a flat block would have two fields fighting over that name.
-    if (!isObj(o.risk)) return { error: "risk.create без об'єкта risk" };
+    if (!isObj(o.risk)) return { error: { text: "risk.create без об'єкта risk", code: "riskCreateNoRisk" } };
     const p = riskPatch(o.risk);
     if (isFail(p)) return p;
     const missing = RISK_REQUIRED.filter((k) => p[k] === undefined);
-    if (missing.length) return { error: `risk.create без обов'язкових полів: ${missing.join(", ")}` };
+    if (missing.length)
+      return {
+        error: {
+          text: `risk.create без обов'язкових полів: ${missing.join(", ")}`,
+          code: "riskCreateMissingFields",
+          params: { missing: missing.join(", ") },
+        },
+      };
     // workspace_risks_actions_required — «спостерігати» is not a response.
     if (p.response !== "accept" && !(p.responseActions ?? ""))
-      return { error: `стратегія ${p.response} потребує responseActions — що саме буде зроблено` };
+      return {
+        error: {
+          text: `стратегія ${p.response} потребує responseActions — що саме буде зроблено`,
+          code: "riskResponseActionsRequired",
+          params: { response: String(p.response) },
+        },
+      };
     return { kind: "risk.create", risk: { responseActions: "", ...p } as ManagementRiskFields };
   }
   if (kind === "risk.update") {
     const code = str(o.code);
-    if (code === undefined) return { error: "risk.update без коду ризику (наприклад R-003)" };
-    if (!isObj(o.patch)) return { error: `risk.update ${code} без об'єкта patch` };
+    if (code === undefined)
+      return { error: { text: "risk.update без коду ризику (наприклад R-003)", code: "riskUpdateNoCode" } };
+    if (!isObj(o.patch))
+      return { error: { text: `risk.update ${code} без об'єкта patch`, code: "riskUpdateNoPatch", params: { code } } };
     const p = riskPatch(o.patch);
     if (isFail(p)) return p;
-    if (Object.keys(p).length === 0) return { error: `risk.update ${code} нічого не змінює` };
+    if (Object.keys(p).length === 0)
+      return { error: { text: `risk.update ${code} нічого не змінює`, code: "riskUpdateEmpty", params: { code } } };
     return { kind: "risk.update", code, patch: p };
   }
   if (kind === "release.notes") {
@@ -410,13 +499,25 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
     // when the project is ambiguous, and this is the refusal if it did not.
     const project = str(o.project);
     if (project === undefined)
-      return { error: "release.notes без проєкту — назви його так, як він стоїть у списку репозиторіїв" };
+      return {
+        error: {
+          text: "release.notes без проєкту — назви його так, як він стоїть у списку репозиторіїв",
+          code: "releaseNoProject",
+        },
+      };
     const branch = str(o.branch);
-    if (branch === undefined) return { error: `release.notes для «${project}» без гілки` };
+    if (branch === undefined)
+      return { error: { text: `release.notes для «${project}» без гілки`, code: "releaseNoBranch", params: { project } } };
     const rangeFrom = str(o.rangeFrom);
     const rangeTo = str(o.rangeTo);
     if (rangeFrom === undefined || rangeTo === undefined)
-      return { error: `release.notes для «${project}» без періоду — потрібні rangeFrom і rangeTo` };
+      return {
+        error: {
+          text: `release.notes для «${project}» без періоду — потрібні rangeFrom і rangeTo`,
+          code: "releaseNoRange",
+          params: { project },
+        },
+      };
     // The offending value is named, because «за останній тиждень» left as prose in a date
     // field is the mistake a model actually makes here, and the operator can only re-ask if
     // they can see it.
@@ -425,15 +526,27 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
       ["rangeTo", rangeTo],
     ] as const)
       if (!isReleaseDate(value))
-        return { error: `release.notes: ${field}=${JSON.stringify(value)} — це не дата у форматі РРРР-ММ-ДД` };
+        return {
+          error: {
+            text: `release.notes: ${field}=${JSON.stringify(value)} — це не дата у форматі РРРР-ММ-ДД`,
+            code: "releaseDateFormat",
+            params: { field, value: JSON.stringify(value) },
+          },
+        };
     // Lexicographic IS chronological for YYYY-MM-DD, so no Date parsing that could disagree
     // with git. Refused here rather than at the endpoint: the same check exists there, but a
     // reversed range costs a round trip to hear about it.
     if (rangeFrom > rangeTo)
-      return { error: `release.notes: початок періоду (${rangeFrom}) пізніший за його кінець (${rangeTo})` };
+      return {
+        error: {
+          text: `release.notes: початок періоду (${rangeFrom}) пізніший за його кінець (${rangeTo})`,
+          code: "releaseRangeReversed",
+          params: { from: rangeFrom, to: rangeTo },
+        },
+      };
     return { kind: "release.notes", project, branch, rangeFrom, rangeTo };
   }
-  return { error: `невідома дія ${JSON.stringify(o.kind)}` };
+  return { error: { text: `невідома дія ${JSON.stringify(o.kind)}`, code: "actionKindUnknown", params: { value: JSON.stringify(o.kind) } } };
 }
 
 // Split an assistant answer into the prose the user reads and the actions the app runs.
@@ -441,14 +554,19 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
 // NOTHING is executed on a guess.
 export function parseManagementReply(raw: string): ParsedManagementReply {
   const actions: ManagementAction[] = [];
-  const rejected: string[] = [];
+  const rejected: ManagementRejection[] = [];
   const text = raw
     .replace(BLOCK_RE, (_m, body: string) => {
       let parsed: unknown;
       try {
         parsed = JSON.parse(body);
       } catch (err) {
-        rejected.push(`не вдалося прочитати блок дії: ${(err as Error).message}`);
+        const message = (err as Error).message;
+        rejected.push({
+          text: `не вдалося прочитати блок дії: ${message}`,
+          code: "blockUnreadable",
+          params: { message },
+        });
         return "";
       }
       // A model that batches two refusals into one block is being helpful, not wrong.
