@@ -446,11 +446,12 @@ field docked to the foot of the page.
 
 That field is a real assistant, and it is deliberately narrow:
 
-- **It only touches Менеджмент.** Its tools are the read-only subset
-  (`read`, `grep`, `glob`) — it can look at your repositories but it cannot edit a
-  file, create a branch or start a session. The sections it can WRITE are the ones the
-  section table marks `read_write`: the Risk Registry and Release Notes. Everywhere else
-  it reads, explains and refuses, and says which it is doing.
+- **It only reads code, and it writes in exactly three places.** Its tools are the read-only
+  subset (`read`, `grep`, `glob`) — it can look at your repositories but it cannot edit a
+  file, create a branch or start a session. The Менеджмент sections it can WRITE are the ones
+  the section table marks `read_write`: the Risk Registry and Release Notes. Everywhere else
+  in Менеджмент it reads, explains and refuses, and says which it is doing. The third write
+  target is not a section at all — it is «Дошка», where it files tickets (below).
 - **It keeps the risk register.** Ask it to file a risk and it emits a `risk.create`
   action carrying that schema's own vocabulary — threat or opportunity, one of the
   fourteen categories, cause·event·consequence, 1–5 probability × impact, a PMI
@@ -481,6 +482,37 @@ That field is a real assistant, and it is deliberately narrow:
   clue the range or the branch was not the one you meant. A failed run keeps a row on the
   section screen with its reason and a retry. Editing, copying and deleting a stored note
   stay on the screen; the assistant has no verb for them and the prompt says so.
+- **It files tickets on «Дошка».** Say «створи тікет: …» and the ticket appears on the board
+  — the board is not a Менеджмент section, so this works from any section, and «створи тікет»
+  is never answered with a refusal. Four rules make the ticket worth having:
+  - **The default board is the workspace's own.** «Задачі» is the board that always exists,
+    needs no integration and no personal token, so a request that does not name a board lands
+    there (`ticket.create`). The mirrored Jira board is opt-in BY NAME: only «створи в Jira…»
+    routes to it (`jira.ticket.create`). Naming Jira in a workspace that has none — or on a
+    machine with no personal Jira token — is refused with the reason, and NOT quietly filed on
+    the native board instead: you named a board, and a card on the other one is a card you
+    will not find where you looked.
+  - **The ticket is written as a project manager writes one, and the app owns its shape.**
+    The action carries five named slots — a business context, an optional user flow,
+    acceptance criteria, an optional out-of-scope list, and the title — and
+    `renderTicketDescription` turns them into the card body. So every ticket from this chat
+    has the same headings in the same order, and there is no field in which a schema, an
+    endpoint or a library could be specified: WHAT and WHY are the ticket's, HOW stays the
+    team's. Before writing, the assistant reads the workspace's repositories to ground the
+    ticket in what the product actually does today — but only the business conclusion reaches
+    the card.
+  - **A ticket never ships an open question.** If something is missing that only you can
+    decide — the scope, an edge case, the assignee, which project — the assistant emits
+    `ticket.questions` instead: the chat prints the numbered questions and states that the
+    ticket was NOT created. Answer in the next message and it files the ticket; do not answer
+    and there is no ticket. Belt and braces: a ticket whose text still contains «TBD»,
+    «потрібно уточнити», a `<placeholder>`, a code fence or an acceptance criterion phrased as
+    a question is refused in your browser with the offending fragment quoted back.
+  - **Assignees are resolved, never guessed.** `tasks.assignee_id` is a profile id, so every
+    turn carries the workspace roster by the same name the app shows you and the browser
+    matches the name the ticket used back to that id. A name that matches nobody — or two
+    people — refuses the ticket and lists the roster, rather than filing a card into nobody's
+    queue. For Jira the same rule runs against Jira's own assignable users.
 - **It spends the same subscription your agents spend.** It runs through the same
   `omp` on your PATH, the same provider account and the same plan; there is no second
   key to configure and no separate budget. The mono pill on the right of the field is
