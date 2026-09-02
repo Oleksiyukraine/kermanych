@@ -9,7 +9,7 @@
     <!-- The badge vocabulary explained once, so each row's badge can stay one word. -->
     <ul class="ag__kinds">
       <li v-for="k in KINDS" :key="k.kind" class="ag__kind">
-        <span class="ag__badge" :class="`ag__badge--${k.kind}`">{{ agentKindLabel(k.kind) }}</span>
+        <span class="ag__badge" :class="`ag__badge--${k.kind}`">{{ t('settings.agentKind.' + k.kind) }}</span>
         <span class="ag__kind-what">{{ k.what }}</span>
       </li>
     </ul>
@@ -24,7 +24,7 @@
         <div class="ag__head">
           <span class="ag__name">{{ t(a.labelKey) }}</span>
           <span class="ag__id mono">{{ a.id }}</span>
-          <span class="ag__badge" :class="`ag__badge--${a.kind}`">{{ agentKindLabel(a.kind) }}</span>
+          <span class="ag__badge" :class="`ag__badge--${a.kind}`">{{ t('settings.agentKind.' + a.kind) }}</span>
         </div>
 
         <!-- The template EXACTLY as the model gets it: English, verbatim, holes unfilled.
@@ -58,7 +58,6 @@
 // at the top of packages/core/src/agents.ts, which is why they moved).
 import { AGENTS, type AgentKind } from '@kermanych/core';
 import { useI18n } from 'vue-i18n';
-import { agentKindLabel } from '../../lib/settings';
 
 const { t } = useI18n();
 

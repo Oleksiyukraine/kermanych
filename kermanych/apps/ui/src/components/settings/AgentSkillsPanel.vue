@@ -41,7 +41,7 @@
           <span class="as__name">{{ t(row.agent.labelKey) }}</span>
           <span class="as__id mono">{{ row.agent.id }}</span>
           <span class="as__badge" :class="`as__badge--${row.agent.kind}`">
-            {{ agentKindLabel(row.agent.kind) }}
+            {{ t('settings.agentKind.' + row.agent.kind) }}
           </span>
           <!-- `≥` and not the plain figure when a body's size is unknown: a name the
                repository alone defines is pasted in full, and this process cannot open that
@@ -132,7 +132,7 @@ import {
 import { api } from '../../lib/api';
 import { useAuth } from 'stores/auth';
 import { useProjects } from 'stores/projects';
-import { agentKindLabel, assignmentBadge, assignmentRows, ASSIGNED_BYTES_WARN } from '../../lib/settings';
+import { assignmentBadge, assignmentRows, ASSIGNED_BYTES_WARN } from '../../lib/settings';
 
 const props = defineProps<{ projectId: string; projectName: string }>();
 

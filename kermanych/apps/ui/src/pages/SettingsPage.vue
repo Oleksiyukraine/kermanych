@@ -9,7 +9,7 @@
         <KTopNav
           dense
           :model-value="section.scope"
-          :options="SETTINGS_SCOPES"
+          :options="scopeOptions"
           @update:model-value="goScope"
         />
         <p class="set__hint">{{ scopeHint }}</p>
@@ -25,8 +25,8 @@
           @click="goSection(c.key)"
         >
           <span class="set__cat-text">
-            <span class="set__cat-label">{{ c.label }}</span>
-            <span class="set__cat-sub">{{ c.sub }}</span>
+            <span class="set__cat-label">{{ t('settings.categories.' + c.key + '.label') }}</span>
+            <span class="set__cat-sub">{{ t('settings.categories.' + c.key + '.sub') }}</span>
           </span>
           <KCount v-if="badges[c.key] !== undefined" :value="badges[c.key]!" />
         </button>
@@ -40,8 +40,8 @@
     <section class="set__pane">
       <header class="set__head">
         <div class="set__head-text">
-          <h1 class="set__title">{{ section.label }}</h1>
-          <p class="set__blurb">{{ section.blurb }}</p>
+          <h1 class="set__title">{{ t('settings.categories.' + section.key + '.label') }}</h1>
+          <p class="set__blurb">{{ t('settings.categories.' + section.key + '.blurb') }}</p>
         </div>
         <span
           v-if="section.scope !== 'app'"
@@ -622,9 +622,10 @@ const section = computed(() => settingsSection(route.params.section));
 const scopeCategories = computed(() =>
   SETTINGS_CATEGORIES.filter((c) => c.scope === section.value.scope),
 );
-const scopeLabel = computed(
-  () => SETTINGS_SCOPES.find((s) => s.value === section.value.scope)?.label ?? '',
+const scopeOptions = computed(() =>
+  SETTINGS_SCOPES.map((s) => ({ value: s, label: t('settings.scope.' + s) })),
 );
+const scopeLabel = computed(() => t('settings.scope.' + section.value.scope));
 
 const paneError = ref<string | null>(null);
 const saving = ref(false);

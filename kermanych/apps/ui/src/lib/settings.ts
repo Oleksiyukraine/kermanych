@@ -19,7 +19,7 @@
 // a context-warning threshold and remappable keys have no storage, no endpoint and
 // no column anywhere in the repo, so they get no panel.
 
-import type { AgentDef, AgentKind, EnvEntry, SkillView } from '@kermanych/core';
+import type { AgentDef, EnvEntry, SkillView } from '@kermanych/core';
 import type { AgentSkill, TriggerSource } from '@kermanych/cloud';
 
 export type SettingsScope = 'project' | 'workspace' | 'app';
@@ -28,149 +28,34 @@ export interface SettingsCategory {
   /** URL segment under /settings AND the rail's nav value. */
   key: string;
   scope: SettingsScope;
-  label: string;
-  /** Second line in the rail — what the category actually contains. */
-  sub: string;
-  /** The pane's subtitle: why the operator would open this. */
-  blurb: string;
   /** Irreversible actions. Renders in the danger colour, sorts last. */
   danger?: boolean;
 }
 
-export const SETTINGS_SCOPES: readonly { value: SettingsScope; label: string }[] = [
-  { value: 'project', label: 'Проєкт' },
-  { value: 'workspace', label: 'Воркспейс' },
-  { value: 'app', label: 'Застосунок' },
-];
+// The rail label, its second line and the pane subtitle are NOT stored here: the
+// registry is pure structure, and every visible string is a key derived from `key`
+// (`settings.categories.<key>.{label,sub,blurb}`) resolved at the callsite via t().
+
+export const SETTINGS_SCOPES: readonly SettingsScope[] = ['project', 'workspace', 'app'];
 
 export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
-  {
-    key: 'project-basics',
-    scope: 'project',
-    label: 'Основне',
-    sub: 'назва, колір, тека',
-    blurb: 'Як проєкт називається, у якому воркспейсі живе й де його тека на цій машині.',
-  },
-  {
-    key: 'project-git',
-    scope: 'project',
-    label: 'Гілки й конвенції',
-    sub: 'база, PR і коміти',
-    blurb: 'Звідки агент відгалужується і за якими правилами пише коміти та PR.',
-  },
-  {
-    key: 'project-commands',
-    scope: 'project',
-    label: 'Команди',
-    sub: 'прев’ю, файли сесії',
-    blurb: 'Що Керманич запускає для прев’ю і що копіює в кожну робочу теку.',
-  },
-  {
-    key: 'project-defaults',
-    scope: 'project',
-    label: 'Запуск задач',
-    sub: 'модель за замовчуванням',
-    blurb: 'Яку модель підставляти в нову задачу за замовчуванням.',
-  },
-  {
-    key: 'project-skills',
-    scope: 'project',
-    label: 'Бібліотека скілів',
-    sub: 'знання для агентів',
-    blurb:
-      'Тексти, які агент бере сам, коли вважає за потрібне. Скіл із таким же імʼям у репозиторії завжди перемагає.',
-  },
-  {
-    key: 'project-agents',
-    scope: 'project',
-    label: 'Призначення',
-    sub: 'скіли для ролей',
-    blurb:
-      'Які скіли роль отримує обовʼязково, а не бере за власним рішенням. Змінює лише власник воркспейсу.',
-  },
-  {
-    key: 'project-triggers',
-    scope: 'project',
-    label: 'Тригери',
-    sub: 'коли вмикається саме',
-    blurb:
-      'Що має спрацювати без рішення моделі — на слова оператора, на її власні розмірковування або на виклик інструмента.',
-  },
-  {
-    key: 'project-env',
-    scope: 'project',
-    label: 'Змінні середовища',
-    sub: 'значення й обов’язкові ключі',
-    blurb:
-      'Значення живуть у файлі .env цієї машини. У хмарі Керманич тримає лише імена ключів.',
-  },
-  {
-    key: 'project-danger',
-    scope: 'project',
-    label: 'Небезпечна зона',
-    sub: 'видалення',
-    blurb: 'Дії, які неможливо відкотити з інтерфейсу.',
-    danger: true,
-  },
-  {
-    key: 'workspace-basics',
-    scope: 'workspace',
-    label: 'Основне',
-    sub: 'назва, колір',
-    blurb: 'Як воркспейс виглядає у списку проєктів. Змінює лише його власник.',
-  },
-  {
-    key: 'workspace-members',
-    scope: 'workspace',
-    label: 'Учасники',
-    sub: 'склад команди',
-    blurb: 'Одне запрошення відкриває доступ до всіх проєктів воркспейсу.',
-  },
-  {
-    key: 'workspace-danger',
-    scope: 'workspace',
-    label: 'Небезпечна зона',
-    sub: 'видалення',
-    blurb: 'Воркспейс можна видалити лише порожнім — і лише власнику.',
-    danger: true,
-  },
-  {
-    key: 'app-general',
-    scope: 'app',
-    label: 'Загальне',
-    sub: 'тема',
-    blurb: 'Вигляд застосунку на цій машині. Зберігається тут, не в акаунті.',
-  },
-  {
-    key: 'app-keymap',
-    scope: 'app',
-    label: 'Гарячі клавіші',
-    sub: 'наявні призначення',
-    blurb: 'Клавіші зашиті в застосунок — перепризначати їх поки нема де.',
-  },
-  {
-    key: 'app-agents',
-    scope: 'app',
-    label: 'ШІ команда',
-    sub: 'ролі та їхні інструкції',
-    blurb:
-      'Хто працює в команді Керманича і що саме кожна роль отримує на старті. Тексти зашиті в застосунок — тут їх лише видно.',
-  },
-  {
-    key: 'app-helpers',
-    scope: 'app',
-    label: 'Хелпери',
-    sub: 'команди-настанови для чату',
-    blurb:
-      'Короткі команди, які можна вкинути в будь-який чат — вони додають до повідомлення настанову для ШІ. Зашиті в застосунок: тут їх лише видно.',
-  },
-  {
-    key: 'app-account',
-    scope: 'app',
-    label: 'Акаунт',
-    sub: 'сеанс, план, черга',
-    blurb: 'Хто ви в Керманичі, що залишилось у плані провайдера і що не дійшло в хмару.',
-  },
+  { key: 'project-basics', scope: 'project' },
+  { key: 'project-git', scope: 'project' },
+  { key: 'project-commands', scope: 'project' },
+  { key: 'project-defaults', scope: 'project' },
+  { key: 'project-skills', scope: 'project' },
+  { key: 'project-agents', scope: 'project' },
+  { key: 'project-triggers', scope: 'project' },
+  { key: 'project-env', scope: 'project' },
+  { key: 'project-danger', scope: 'project', danger: true },
+  { key: 'workspace-basics', scope: 'workspace' },
+  { key: 'workspace-members', scope: 'workspace' },
+  { key: 'workspace-danger', scope: 'workspace', danger: true },
+  { key: 'app-general', scope: 'app' },
+  { key: 'app-keymap', scope: 'app' },
+  { key: 'app-agents', scope: 'app' },
+  { key: 'app-helpers', scope: 'app' },
+  { key: 'app-account', scope: 'app' },
 ];
 
 /** Where a bare /settings lands. */
@@ -190,22 +75,6 @@ export function settingsSection(key: unknown): SettingsCategory {
 /** The scope switcher's landing category — the first row of that scope. */
 export function settingsScopeEntry(scope: SettingsScope): SettingsCategory {
   return SETTINGS_CATEGORIES.find((c) => c.scope === scope) ?? settingsSection(undefined);
-}
-
-const AGENT_KIND_LABELS: Record<AgentKind, string> = {
-  session: 'власна сесія',
-  procedure: 'процедура',
-  automation: 'без ШІ',
-};
-
-/**
- * WHAT AN AGENT KIND MEANS FOR AN OPERATOR READING THE CATALOGUE. `kind` describes
- * where the agent runs, it does not switch behaviour (see the note on `AGENTS` in
- * core). The badge must never print the raw English enum, and the full sentence for
- * each kind lives in the pane's lead paragraph rather than in the badge.
- */
-export function agentKindLabel(kind: AgentKind): string {
-  return AGENT_KIND_LABELS[kind];
 }
 
 /**

@@ -382,6 +382,109 @@ export const en: MessageSchema = {
     appGeneral: {
       language: 'Language',
     },
+    scope: {
+      project: 'Project',
+      workspace: 'Workspace',
+      app: 'App',
+    },
+    categories: {
+      'project-basics': {
+        label: 'Basics',
+        sub: 'name, colour, folder',
+        blurb: 'What the project is called, which workspace it lives in, and where its folder is on this machine.',
+      },
+      'project-git': {
+        label: 'Branches & conventions',
+        sub: 'base, PRs and commits',
+        blurb: 'Where the agent branches from and the rules it follows when writing commits and PRs.',
+      },
+      'project-commands': {
+        label: 'Commands',
+        sub: 'preview, session files',
+        blurb: 'What Kermanych runs for the preview and what it copies into every working folder.',
+      },
+      'project-defaults': {
+        label: 'Task launch',
+        sub: 'default model',
+        blurb: 'Which model to preset in a new task by default.',
+      },
+      'project-skills': {
+        label: 'Skill library',
+        sub: 'knowledge for agents',
+        blurb:
+          'Texts the agent pulls in on its own when it sees fit. A skill with the same name in the repository always wins.',
+      },
+      'project-agents': {
+        label: 'Assignments',
+        sub: 'skills for roles',
+        blurb:
+          'Which skills a role gets by requirement rather than by its own choice. Only the workspace owner can change this.',
+      },
+      'project-triggers': {
+        label: 'Triggers',
+        sub: 'when it fires on its own',
+        blurb:
+          'What should fire without the model deciding — on the operator’s words, on its own reasoning, or on a tool call.',
+      },
+      'project-env': {
+        label: 'Environment variables',
+        sub: 'values and required keys',
+        blurb:
+          'Values live in this machine’s .env file. In the cloud Kermanych keeps only the key names.',
+      },
+      'project-danger': {
+        label: 'Danger zone',
+        sub: 'deletion',
+        blurb: 'Actions that cannot be undone from the interface.',
+      },
+      'workspace-basics': {
+        label: 'Basics',
+        sub: 'name, colour',
+        blurb: 'How the workspace appears in the project list. Only its owner can change it.',
+      },
+      'workspace-members': {
+        label: 'Members',
+        sub: 'team roster',
+        blurb: 'One invitation opens access to every project in the workspace.',
+      },
+      'workspace-danger': {
+        label: 'Danger zone',
+        sub: 'deletion',
+        blurb: 'A workspace can be deleted only when empty — and only by its owner.',
+      },
+      'app-general': {
+        label: 'General',
+        sub: 'theme',
+        blurb: 'The app’s appearance on this machine. Stored here, not in your account.',
+      },
+      'app-keymap': {
+        label: 'Keyboard shortcuts',
+        sub: 'current bindings',
+        blurb: 'The keys are wired into the app — there is nowhere to remap them yet.',
+      },
+      'app-agents': {
+        label: 'AI team',
+        sub: 'roles and their instructions',
+        blurb:
+          'Who works on Kermanych’s team and exactly what each role gets at launch. The texts are wired into the app — here you can only view them.',
+      },
+      'app-helpers': {
+        label: 'Helpers',
+        sub: 'chat instruction commands',
+        blurb:
+          'Short commands you can drop into any chat — they add an instruction for the AI to your message. Wired into the app: here you can only view them.',
+      },
+      'app-account': {
+        label: 'Account',
+        sub: 'session, plan, queue',
+        blurb: 'Who you are in Kermanych, what is left in your provider plan, and what has not reached the cloud.',
+      },
+    },
+    agentKind: {
+      session: 'own session',
+      procedure: 'procedure',
+      automation: 'no AI',
+    },
     rail: {
       categoriesAria: 'Settings sections: {scope}',
       projectScope: 'Applies only to “{name}”',
