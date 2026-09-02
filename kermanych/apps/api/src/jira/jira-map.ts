@@ -76,6 +76,7 @@ export function mapIssue(
   const assignee = (f.assignee ?? undefined) as UserField | undefined;
   const reporter = (f.reporter ?? undefined) as UserField | undefined;
   const parent = (f.parent ?? undefined) as { key?: string } | undefined;
+  const timetracking = (f.timetracking ?? {}) as { originalEstimate?: string };
 
   const issue: JiraIssue = {
     integrationId: integration.id,
@@ -91,6 +92,7 @@ export function mapIssue(
     priorityName: str(priority.name),
     priorityIcon: str(priority.iconUrl),
     labels: Array.isArray(f.labels) ? f.labels.filter((l): l is string => typeof l === "string") : [],
+    originalEstimate: str(timetracking.originalEstimate),
     statusId: str(status.id),
     statusName: str(status.name),
     statusCategory: toCategory(status.statusCategory?.key),

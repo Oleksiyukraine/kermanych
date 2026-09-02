@@ -1093,6 +1093,7 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
           priorityName: "",
           priorityIcon: "",
           labels: ["a"],
+          originalEstimate: "",
           statusId: "1",
           statusName: "To Do",
           statusCategory: "new",

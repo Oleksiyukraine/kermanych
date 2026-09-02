@@ -46,12 +46,16 @@ const LEASE_STALE_MS = 25_000;
 const FULL_SWEEP_EVERY_MS = 10 * 60_000;
 
 export type JiraIssueDraft = {
-  summary: string;
+  // Required on create (createIssue guards); an edit may send any subset — the ticket
+  // dialog's inline priority/assignee/estimate patches are one-field drafts.
+  summary?: string;
   description?: string;
   issueTypeId?: string;
   priorityId?: string;
   labels?: string[];
   assigneeAccountId?: string | null;
+  // Jira's own duration spelling («2w 3d 4h»); empty string clears the estimate.
+  originalEstimate?: string;
   parentKey?: string;
 };
 
@@ -284,6 +288,8 @@ export class JiraService {
     // null unassigns; undefined leaves the field out entirely.
     if (draft.assigneeAccountId !== undefined)
       fields.assignee = draft.assigneeAccountId === null ? null : { accountId: draft.assigneeAccountId };
+    if (draft.originalEstimate !== undefined)
+      fields.timetracking = { originalEstimate: draft.originalEstimate.trim() || null };
     if (draft.parentKey) fields.parent = { key: draft.parentKey };
     return fields;
   }
