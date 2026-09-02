@@ -3,10 +3,10 @@
     <section class="login__card">
       <h1 class="login__brand">KERMANYCH</h1>
       <p class="login__hint">
-        Спільна дошка задач команди. Увійдіть, щоб побачити проєкти та задачі.
+        {{ t('common.login.hint') }}
       </p>
       <KBtn variant="primary" :disabled="busy" @click="signIn">
-        {{ busy ? 'Входимо…' : 'Увійти через GitHub' }}
+        {{ busy ? t('common.login.signingIn') : t('common.login.signIn') }}
       </KBtn>
       <p v-if="error" class="login__error" role="alert">{{ error }}</p>
     </section>
@@ -18,12 +18,14 @@
 // provider: in the browser this redirects away and comes back signed in; in
 // Electron the store routes through the loopback bridge instead.
 import { ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useAuth } from 'stores/auth';
 import KBtn from 'components/kit/KBtn.vue';
 
 const auth = useAuth();
 const busy = ref(false);
 const error = ref<string | null>(null);
+const { t } = useI18n();
 
 async function signIn(): Promise<void> {
   busy.value = true;

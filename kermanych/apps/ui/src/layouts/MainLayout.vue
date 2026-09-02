@@ -7,21 +7,21 @@
           <KNavItem
             v-for="b in buckets"
             :key="b.key"
-            :label="b.label"
+            :label="t(b.label)"
             :icon="b.icon"
             :count="bucketCounts[b.key]"
-            :tip="minified ? b.label : undefined"
+            :tip="minified ? t(b.label) : undefined"
             :active="store.selectedBucket === b.key"
             @click="onBucket(b.key)"
           />
         </nav>
         <div class="shell__divider"></div>
         <div class="shell__side-label shell__side-label--row">
-          <span>Воркспейси</span>
+          <span>{{ t('common.nav.workspaces') }}</span>
           <button
             class="shell__label-add"
-            v-tip="'Новий воркспейс'"
-            aria-label="Новий воркспейс"
+            v-tip="t('common.nav.newWorkspace')"
+            :aria-label="t('common.nav.newWorkspace')"
             @click="openCreateWorkspace"
           >+</button>
         </div>
@@ -64,7 +64,7 @@
             <ul
               v-if="isExpanded(group.workspace.id)"
               class="shell__group-items"
-              :aria-label="`Проєкти воркспейсу «${group.workspace.name}»`"
+              :aria-label="t('common.nav.workspaceProjects', { name: group.workspace.name })"
             >
               <li v-for="p in sidebarProjects.byWorkspace.get(group.workspace.id) ?? []" :key="p.id">
                 <KRailItem
@@ -130,8 +130,8 @@
           </div>
           <button
             class="shell__toggle"
-            v-tip="collapsed ? 'Розгорнути панель' : 'Згорнути панель'"
-            :aria-label="collapsed ? 'Розгорнути панель' : 'Згорнути панель'"
+            v-tip="collapsed ? t('common.nav.expandPanel') : t('common.nav.collapsePanel')"
+            :aria-label="collapsed ? t('common.nav.expandPanel') : t('common.nav.collapsePanel')"
             @click="collapsed = !collapsed"
           >{{ collapsed ? '»' : '«' }}</button>
         </div>
@@ -146,7 +146,7 @@
           <path d="M244 214 L344 214 L642 512 L344 810 L244 810 L244 730 L462 512 L244 294 Z" fill="#ff563c" />
           <rect x="636" y="726" width="300" height="84" fill="#f3f2f2" />
         </svg>
-        <span class="shell__logo">КЕРМАНИЧ</span>
+        <span class="shell__logo">{{ t('common.nav.logo') }}</span>
         <span class="shell__ver mono">v0.1</span>
       </div>
       <KTopNav
@@ -172,7 +172,7 @@
              glare, and «Загальне» carries the same control for whoever looks for it
              where settings live. The glyph names the theme the click moves TO. -->
         <KIconButton
-          :title="theme === 'light' ? 'Темна тема' : 'Світла тема'"
+          :title="theme === 'light' ? t('common.nav.themeDark') : t('common.nav.themeLight')"
           @click="onThemeToggle"
         >{{ theme === 'light' ? '☾' : '☀' }}</KIconButton>
       </div>
@@ -191,7 +191,7 @@
         type="button"
         class="shell__foot-btn"
         :disabled="!isBound || syncing"
-        v-tip="isBound ? 'git pull (--ff-only) поточної гілки репозиторію проєкту' : BIND_HINT"
+        v-tip="isBound ? t('common.nav.pullTip') : BIND_HINT"
         aria-label="Pull"
         @click="gitPull"
       >↓ Pull</button>
@@ -205,8 +205,8 @@
         v-if="store.selectedProjectId"
         type="button"
         class="shell__foot-btn shell__foot-folder"
-        v-tip="isBound ? `${contextLabel} — змінити в налаштуваннях` : BIND_HINT"
-        :aria-label="isBound ? 'Змінити теку' : 'Прив’язати теку'"
+        v-tip="isBound ? t('common.nav.changeInSettings', { label: contextLabel }) : BIND_HINT"
+        :aria-label="isBound ? t('common.nav.changeFolder') : t('common.nav.bindFolder')"
         @click="goSettings('project-basics')"
       >
         <span class="shell__foot-folder-path mono">{{ contextLabel }}</span>
@@ -217,23 +217,22 @@
     <!-- CREATE-WORKSPACE MODAL — the sidebar's two «+» buttons create different things, so
          they get two modals. A workspace is the group AND the team: membership hangs off it,
          which is what the hint below says out loud. -->
-    <KModal v-model="createWorkspaceOpen" title="Новий воркспейс">
+    <KModal v-model="createWorkspaceOpen" :title="t('common.nav.newWorkspace')">
       <div class="shell__form">
-        <KField v-model="createWorkspaceName" label="Назва" placeholder="AAA" />
+        <KField v-model="createWorkspaceName" :label="t('common.nav.nameLabel')" placeholder="AAA" />
         <p class="shell__hint">
-          Воркспейс групує проєкти й тримає склад команди: одне запрошення відкриває
-          доступ до всіх його проєктів.
+          {{ t('common.nav.workspaceFormHint') }}
         </p>
         <p v-if="createError" class="shell__error" role="alert">{{ createError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="createWorkspaceOpen = false">Скасувати</KBtn>
+        <KBtn variant="ghost" @click="createWorkspaceOpen = false">{{ t('common.nav.cancel') }}</KBtn>
         <KBtn
           variant="primary"
           :disabled="!canCreateWorkspace || createBusy"
           @click="submitCreateWorkspace"
         >
-          {{ createBusy ? 'Створюємо…' : 'Створити' }}
+          {{ createBusy ? t('common.nav.creating') : t('common.nav.create') }}
         </KBtn>
       </template>
     </KModal>
@@ -244,26 +243,25 @@
          POST /api/projects/sync and starts out UNBOUND — no directory picker here. -->
     <KModal
       :model-value="createProjectFor !== undefined"
-      :title="`Новий проєкт у «${projects.workspaceById.get(createProjectFor ?? '')?.name ?? ''}»`"
+      :title="t('common.nav.newProjectIn', { name: projects.workspaceById.get(createProjectFor ?? '')?.name ?? '' })"
       @update:model-value="createProjectFor = undefined"
     >
       <div class="shell__form">
-        <KField v-model="createName" label="Назва" placeholder="my-project" />
+        <KField v-model="createName" :label="t('common.nav.nameLabel')" placeholder="my-project" />
         <KField
           v-model="createRemote"
-          label="Git remote (необовʼязково, лише довідково)"
+          :label="t('common.nav.gitRemoteLabel')"
           placeholder="git@github.com:org/repo.git"
         />
         <p class="shell__hint">
-          Проєкт створюється у хмарі й одразу видимий команді. Керманич нічого не клонує —
-          локальну теку цієї машини приєднаєте окремо.
+          {{ t('common.nav.projectFormHint') }}
         </p>
         <p v-if="createError" class="shell__error" role="alert">{{ createError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="createProjectFor = undefined">Скасувати</KBtn>
+        <KBtn variant="ghost" @click="createProjectFor = undefined">{{ t('common.nav.cancel') }}</KBtn>
         <KBtn variant="primary" :disabled="!canCreate || createBusy" @click="submitCreate">
-          {{ createBusy ? 'Створюємо…' : 'Створити' }}
+          {{ createBusy ? t('common.nav.creating') : t('common.nav.create') }}
         </KBtn>
       </template>
     </KModal>
@@ -276,6 +274,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import type { SessionStatus } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
@@ -312,6 +311,7 @@ const auth = useAuth();
 const board = useBoard();
 const route = useRoute();
 const router = useRouter();
+const { t } = useI18n();
 
 // The left sidebar collapses to give the board full width; the choice persists so a reload
 // keeps the operator's layout. breakpoint:0 means the drawer never self-closes, so this
@@ -471,7 +471,7 @@ onMounted(async () => {
   await projects.load();
   if (projects.offlineError) {
     store.notify(
-      `Хмара недоступна — працюємо з локальним кешем: ${projects.offlineError}`,
+      t('common.nav.notifyOffline', { error: projects.offlineError }),
       'error',
       6000,
     );
@@ -525,17 +525,17 @@ function runningCount(projectId: string): number {
 // the click pushes, which for Менеджмент is its default section (a named parent
 // with children would render the shell with an empty body).
 const VIEWS = [
-  { value: 'agents', label: 'Агенти', route: 'agents', section: 'agents' },
-  { value: 'board', label: 'Дошка', route: 'board', section: 'board' },
-  { value: 'chat', label: 'Чат', route: 'chat', section: 'chat' },
+  { value: 'agents', label: 'common.nav.viewAgents', route: 'agents', section: 'agents' },
+  { value: 'board', label: 'common.nav.viewBoard', route: 'board', section: 'board' },
+  { value: 'chat', label: 'common.nav.viewChat', route: 'chat', section: 'chat' },
   {
     value: 'management',
-    label: 'Менеджмент',
+    label: 'common.nav.viewManagement',
     route: MANAGEMENT_DEFAULT_SECTION,
     section: 'management',
   },
 ] as const;
-const topOptions = VIEWS.map((v) => ({ value: v.value, label: v.label }));
+const topOptions = computed(() => VIEWS.map((v) => ({ value: v.value, label: t(v.label) })));
 // Anything outside the table — /kit, /settings — selects NO segment. It used to
 // fall back to «Агенти», which put a highlight on a view the operator was not
 // looking at: on Налаштування that reads as «you are on Агенти», and the one
@@ -564,10 +564,10 @@ function onThemeToggle(e: MouseEvent): void {
 // opens — a job the text glyphs this replaced could not do: ◉ read as a radio button, ☰ as a
 // menu, ⤓ as a download and ↺ as a reload.
 const buckets = [
-  { key: 'active', label: 'Активні', icon: 'activity' },
-  { key: 'tasks', label: 'Задачі', icon: 'tasks' },
-  { key: 'archived', label: 'Відкладені', icon: 'archive' },
-  { key: 'history', label: 'Історія', icon: 'history' },
+  { key: 'active', label: 'common.nav.bucketActive', icon: 'activity' },
+  { key: 'tasks', label: 'common.nav.bucketTasks', icon: 'tasks' },
+  { key: 'archived', label: 'common.nav.bucketArchived', icon: 'archive' },
+  { key: 'history', label: 'common.nav.bucketHistory', icon: 'history' },
 ] as const;
 function onBucket(key: 'active' | 'tasks' | 'archived' | 'history'): void {
   store.setBucket(key);
@@ -699,7 +699,7 @@ const sidebarProjects = computed(() => {
 // «Лише на цій машині» there asserts something unchecked — on a cold offline start it used to
 // say it about the team's entire project list.
 const localOnlyLabel = computed(() =>
-  hasCloudList.value ? 'Лише на цій машині' : 'Воркспейс невідомий',
+  hasCloudList.value ? t('common.nav.localOnly') : t('common.nav.workspaceUnknown'),
 );
 
 // The group header's badge: what is running anywhere inside it, so a folded workspace still
@@ -765,7 +765,7 @@ async function onDrop(workspaceId: string): Promise<void> {
   const target = projects.workspaceById.get(workspaceId)?.name ?? '';
   try {
     await projects.moveProject(projectId, workspaceId);
-    store.notify(`«${name}» перенесено у «${target}»`);
+    store.notify(t('common.nav.notifyMoved', { name, target }));
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
     // 6000 like every other full-sentence refusal here (the bind error, both member
@@ -804,15 +804,15 @@ const isBound = computed(() => !!selectedProject.value?.localRepoPath);
 // Requirement 3: the binding is manual and per machine. Kermanych never clones — the path
 // must already be a git repo, and each teammate binds their own checkout. One string for
 // every disabled affordance, so the copy cannot drift.
-const BIND_HINT = 'Прив’яжіть локальну теку репозиторію';
+const BIND_HINT = t('common.nav.bindHint');
 
 // The picker, its three refusals and the write itself moved to
 // pages/SettingsPage.vue with the rest of the project's «Основне»: the footer
 // path below is a read-out that links there.
 
 const contextLabel = computed(() => {
-  if (!store.selectedProjectId) return 'Проєкт не вибрано';
-  return `${selectedName.value} · ${selectedProject.value?.localRepoPath || 'не прив’язано'}`;
+  if (!store.selectedProjectId) return t('common.nav.noProjectSelected');
+  return `${selectedName.value} · ${selectedProject.value?.localRepoPath || t('common.nav.notBound')}`;
 });
 
 // Two create modals, because the sidebar's two «+» buttons create different things. The
@@ -857,7 +857,7 @@ async function submitCreateWorkspace(): Promise<void> {
     createWorkspaceOpen.value = false;
     // Scope moves to the new group, so the next «+» on its row is the obvious next step.
     store.selectWorkspace(created.id);
-    store.notify(`Воркспейс «${created.name}» створено`);
+    store.notify(t('common.nav.notifyWorkspaceCreated', { name: created.name }));
   } catch (e) {
     createError.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -878,7 +878,7 @@ async function submitCreate(): Promise<void> {
     const created = await projects.create(workspaceId, createName.value.trim(), remote || undefined);
     createProjectFor.value = undefined;
     store.selectProject(created.id);
-    store.notify(`Проєкт «${created.name}» створено у хмарі`);
+    store.notify(t('common.nav.notifyProjectCreated', { name: created.name }));
   } catch (e) {
     // Keep the modal open. The two real refusals are `not signed in` (the session expired
     // between the router guard and this click) and an RLS refusal on a workspace this user
@@ -933,9 +933,9 @@ function openSettings(): void {
 // which keeps that name inside the accessible name (WCAG 2.5.3, Label in Name) —
 // what a voice-control user needs to ask for it.
 const settingsHint = computed(() => {
-  if (store.selectedProjectId) return `Налаштування проєкту «${selectedName.value}»`;
+  if (store.selectedProjectId) return t('common.nav.settingsProject', { name: selectedName.value });
   const ws = scopedWorkspace.value;
-  return ws ? `Налаштування воркспейсу «${ws.name}»` : 'Налаштування застосунку';
+  return ws ? t('common.nav.settingsWorkspace', { name: ws.name }) : t('common.nav.settingsApp');
 });
 
 // ACCOUNT — the rail tile and the sign-out modal name the same person: the GitHub handle
@@ -972,11 +972,11 @@ const planLines = computed(() =>
     // mean rather than one account's.
     hint: [
       p.provider[0]!.toUpperCase() + p.provider.slice(1),
-      ...(p.accounts > 1 ? [`${p.accounts} акаунти, у середньому`] : []),
+      ...(p.accounts > 1 ? [t('common.nav.accountsAvg', { count: p.accounts })] : []),
       ...p.windows.map(
         (w) =>
           `${w.label}: ${percent(w.usedPercent)}` +
-          (w.resetsAt ? ` — оновиться за ${until(w.resetsAt, planNow.value)}` : ''),
+          (w.resetsAt ? t('common.nav.resetsIn', { time: until(w.resetsAt, planNow.value) }) : ''),
       ),
     ].join(' · '),
   })),
@@ -988,7 +988,7 @@ const accountHint = computed(() => {
   const spend = planLines.value
     .flatMap((p) => p.windows.map((w) => `${w.short} ${w.percent}`))
     .join(' · ');
-  return [accountName.value, ...(spend ? [spend] : []), 'налаштування акаунта'].join(' · ');
+  return [accountName.value, ...(spend ? [spend] : []), t('common.nav.accountSettings')].join(' · ');
 });
 
 // Footer git pull for the selected project's bound repo. `syncing` gates the button so a
@@ -1000,8 +1000,8 @@ async function gitPull(): Promise<void> {
   syncing.value = true;
   try {
     const r = await store.pullProject(id);
-    if (r.ok) store.notify(`Pull: ${r.out.trim() || 'готово'}`);
-    else store.notify(`Pull: ${r.out.trim() || 'не вдалося'}`, 'error', 7000);
+    if (r.ok) store.notify(`Pull: ${r.out.trim() || t('common.nav.pullDone')}`);
+    else store.notify(`Pull: ${r.out.trim() || t('common.nav.pullFailed')}`, 'error', 7000);
   } catch (e) {
     store.notify(`Pull: ${e instanceof Error ? e.message : String(e)}`, 'error', 7000);
   } finally {

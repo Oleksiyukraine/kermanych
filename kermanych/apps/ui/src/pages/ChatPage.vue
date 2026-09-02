@@ -2,7 +2,7 @@
   <main class="chat">
     <!-- No project bound → nothing to chat about yet. -->
     <div v-if="!store.selectedProjectId" class="chat__blank mono">
-      Обери проєкт ліворуч, щоб почати чат.
+      {{ t('chat.page.blank') }}
     </div>
 
     <div v-else class="chat__card">
@@ -10,22 +10,22 @@
       <header class="chat__head">
         <div class="chat__head-title">
           <KStatusDot v-if="chatSession" :status="chatSession.status" />
-          <span>Чат</span>
+          <span>{{ t('chat.page.title') }}</span>
         </div>
         <div class="chat__head-actions">
           <KIconButton
             :disabled="!isBound || promoting || !chatId"
-            :title="promoting ? 'Готую worktree…' : !isBound ? BIND_HINT : 'Почати імплементацію обговореного (worktree + повний доступ)'"
+            :title="promoting ? t('chat.page.promoting') : !isBound ? BIND_HINT : t('chat.page.promoteTip')"
             @click="promote"
           >▶</KIconButton>
           <KIconButton
             :disabled="!chatId"
-            title="Зберегти як задачу в беклог"
+            :title="t('chat.page.toBacklogTip')"
             @click="toBacklog"
           >⊕</KIconButton>
           <KIconButton
             :disabled="!chatId"
-            title="Новий чат (видалити поточний)"
+            :title="t('chat.page.clearTip')"
             @click="clearChat"
           >✕</KIconButton>
         </div>
@@ -54,7 +54,7 @@
 
                 <KThoughtToggle
                   v-else-if="item.entry.kind === 'assistant_thinking'"
-                  :label="'Думав …'"
+                  :label="t('chat.page.thought')"
                   :open="openThoughts.has(item.entry.id)"
                   @toggle="toggleThought(item.entry.id)"
                 >
@@ -77,7 +77,7 @@
             </template>
           </template>
         </template>
-        <div v-else class="chat__empty mono">Порожній чат. Напиши перше повідомлення.</div>
+        <div v-else class="chat__empty mono">{{ t('chat.page.empty') }}</div>
       </div>
 
       <!-- composer pinned to the bottom -->
@@ -89,7 +89,7 @@
           :effort="chatSession?.effort"
           :context="chatSession?.contextPercent"
           :usage="chatSession?.usage"
-          placeholder="запитай або опиши, що потрібно зробити…"
+          :placeholder="t('chat.page.placeholder')"
           @send="onSend"
           @effort="onEffort"
           @set-model="onSetModel"
@@ -139,7 +139,7 @@ const chatId = ref<string | undefined>(undefined);
 const messagesEl = ref<HTMLElement | null>(null);
 
 const router = useRouter();
-const BIND_HINT = 'Прив’яжіть локальну теку репозиторію';
+const BIND_HINT = t('chat.page.bindHint');
 // Promotion spins up a worktree, so it is blocked until the project is bound.
 const promoting = ref(false);
 const selectedProject = computed(() => store.projects.find((p) => p.id === store.selectedProjectId));
@@ -236,7 +236,7 @@ async function promote(): Promise<void> {
   if (!id || !pid || !userId) return;
   const seed = chatSession.value?.task?.trim() ?? '';
   if (!projects.byId.has(pid)) {
-    store.notify('Проєкт ще не у хмарі — опублікуйте його, щоб підняти агента.', 'error');
+    store.notify(t('chat.page.notifyNotCloudAgent'), 'error');
     return;
   }
   // The other half of what the disabled button says: promotion grows a worktree, so without
@@ -249,7 +249,7 @@ async function promote(): Promise<void> {
   try {
     const card = await board.createTask({
       projectId: pid,
-      title: taskNameFromText(seed) || chatSession.value?.name || 'чат',
+      title: taskNameFromText(seed) || chatSession.value?.name || t('chat.page.defaultTaskName'),
       description: seed,
       ...(chatSession.value?.model ? { model: chatSession.value.model } : {}),
       prefix: 'feature',
@@ -283,11 +283,11 @@ async function toBacklog(): Promise<void> {
         | undefined
     )?.text?.trim() ?? '';
   if (!seed) {
-    store.notify('Порожній чат — нема що зберігати в беклог.', 'error');
+    store.notify(t('chat.page.notifyEmptyBacklog'), 'error');
     return;
   }
   if (!projects.byId.has(pid)) {
-    store.notify('Проєкт ще не у хмарі — опублікуйте його, щоб створювати задачі.', 'error');
+    store.notify(t('chat.page.notifyNotCloudTask'), 'error');
     return;
   }
   try {
@@ -316,7 +316,7 @@ async function toBacklog(): Promise<void> {
 async function clearChat(): Promise<void> {
   const id = chatId.value;
   if (!id) return;
-  if (!window.confirm('Видалити поточний чат і почати новий?')) return;
+  if (!window.confirm(t('chat.page.confirmClear'))) return;
   try {
     await store.deleteSession(id);
     chatId.value = undefined;

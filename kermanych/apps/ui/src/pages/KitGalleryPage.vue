@@ -1,7 +1,7 @@
 <template>
   <main class="kit">
     <header class="kit__masthead">
-      <div class="kit__eyebrow mono">ДИЗАЙН-СИСТЕМА · КЕРМАНИЧ</div>
+      <div class="kit__eyebrow mono">{{ t('kit.gallery.eyebrow') }}</div>
       <h1 class="kit__title">UI-kit</h1>
       <p class="kit__lede">
         Two themes on one token set. Single vermilion accent, rounded cards, mono for machine text.
@@ -10,7 +10,7 @@
 
     <!-- 00 — foundations (design system) -->
     <section class="kit__section">
-      <div class="kit__label">00 · Основи</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.basics') }}</div>
       <div class="kit__swatches">
         <div v-for="c in swatches" :key="c.var" class="kit__swatch">
           <span class="kit__chip" :style="{ background: `var(${c.var})` }"></span>
@@ -31,7 +31,7 @@
 
     <!-- 03 — agent statuses -->
     <section class="kit__section">
-      <div class="kit__label">03 · Статуси агента</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.statuses') }}</div>
       <div class="kit__row">
         <div v-for="s in statusSamples" :key="s.status" class="kit__status">
           <KStatusDot :status="s.status" />
@@ -43,12 +43,12 @@
 
     <!-- 04 — buttons -->
     <section class="kit__section">
-      <div class="kit__label">04 · Кнопки</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.buttons') }}</div>
       <div class="kit__row">
-        <KBtn variant="primary">+ Новий агент</KBtn>
-        <KBtn variant="secondary">Змінити шлях</KBtn>
-        <KBtn variant="ghost">Відновити</KBtn>
-        <KBtn variant="secondary" disabled>Застосувати</KBtn>
+        <KBtn variant="primary">{{ t('kit.gallery.btn.newAgent') }}</KBtn>
+        <KBtn variant="secondary">{{ t('kit.gallery.btn.changePath') }}</KBtn>
+        <KBtn variant="ghost">{{ t('kit.gallery.btn.restore') }}</KBtn>
+        <KBtn variant="secondary" disabled>{{ t('kit.gallery.btn.apply') }}</KBtn>
         <KBtn variant="icon">⊞</KBtn>
       </div>
       <div class="kit__caption mono">
@@ -58,86 +58,82 @@
 
     <!-- 04 — action icon buttons (dense, for icon clusters) -->
     <section class="kit__section">
-      <div class="kit__label">04 · Кнопки-дії (рядок таблиці, хедер панелі)</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.actionButtons') }}</div>
       <div class="kit__row">
-        <KIconButton title="Запустити">▶</KIconButton>
-        <KIconButton title="Редагувати">✎</KIconButton>
-        <KIconButton title="Форк у worktree">⑂</KIconButton>
-        <KIconButton title="Влити висновок">⤴</KIconButton>
-        <KIconButton title="Ревізор">⚖</KIconButton>
-        <KIconButton title="Завершити">✓</KIconButton>
-        <KIconButton title="Відкласти">⤓</KIconButton>
-        <KIconButton title="Видалити">✕</KIconButton>
-        <KIconButton active title="Превʼю активне">◼</KIconButton>
+        <KIconButton :title="t('kit.gallery.iconTip.run')">▶</KIconButton>
+        <KIconButton :title="t('kit.gallery.iconTip.edit')">✎</KIconButton>
+        <KIconButton :title="t('kit.gallery.iconTip.fork')">⑂</KIconButton>
+        <KIconButton :title="t('kit.gallery.iconTip.merge')">⤴</KIconButton>
+        <KIconButton :title="t('kit.gallery.iconTip.reviewer')">⚖</KIconButton>
+        <KIconButton :title="t('kit.gallery.iconTip.finish')">✓</KIconButton>
+        <KIconButton :title="t('kit.gallery.iconTip.archive')">⤓</KIconButton>
+        <KIconButton :title="t('kit.gallery.iconTip.delete')">✕</KIconButton>
+        <KIconButton active :title="t('kit.gallery.iconTip.previewActive')">◼</KIconButton>
       </div>
       <div class="kit__caption mono">
-        28×28 · щільний контроль для груп глиф-дій: рядок таблиці й хедер панелі (компактніший за KBtn variant="icon" 34×34). active = акцент. Підказка — власний тултіп (v-tip), не нативний title.
+        {{ t('kit.gallery.cap.actionButtons') }}
       </div>
     </section>
 
     <!-- 04 — tags & metadata -->
     <section class="kit__section">
-      <div class="kit__label">04 · Теги й метадані</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.tags') }}</div>
       <div class="kit__row">
         <KTag>⑂ main</KTag>
         <KTag>opus-5</KTag>
         <KTag>142k</KTag>
-        <KTag plain>завершено</KTag>
-        <KTag plain>чекає</KTag>
+        <KTag plain>{{ t('kit.gallery.tag.done') }}</KTag>
+        <KTag plain>{{ t('kit.gallery.tag.waiting') }}</KTag>
       </div>
     </section>
 
     <!-- 04 — toggles -->
     <section class="kit__section">
-      <div class="kit__label">04 · Перемикачі</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.toggles') }}</div>
       <div class="kit__row">
         <KToggle v-model="harness" :options="['OMP', 'zsh']" />
-        <KToggle v-model="view" :options="['Робочий простір', 'Історія']" />
+        <KToggle v-model="view" :options="[t('kit.gallery.toggle.workspace'), t('kit.gallery.toggle.history')]" />
       </div>
       <div class="kit__caption mono">harness={{ harness }} · view={{ view }}</div>
     </section>
 
     <!-- 04 — fields -->
     <section class="kit__section">
-      <div class="kit__label">04 · Поля</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.fields') }}</div>
       <div class="kit__row kit__row--fields">
-        <KField v-model="branch" label="Гілка" placeholder="feat/auth" />
-        <KField v-model="focused" label="У фокусі" placeholder="click to focus" />
+        <KField v-model="branch" :label="t('kit.gallery.field.branch')" placeholder="feat/auth" />
+        <KField v-model="focused" :label="t('kit.gallery.field.focused')" placeholder="click to focus" />
       </div>
       <div class="kit__row kit__row--fields">
-        <KSelect v-model="galleryBranch" label="Гілка (рядки)" :options="galleryBranches" />
+        <KSelect v-model="galleryBranch" :label="t('kit.gallery.field.branchRows')" :options="galleryBranches" />
         <KSelect
           v-model="galleryWorkspace"
-          label="Воркспейс (пари value/label)"
+          :label="t('kit.gallery.field.workspacePairs')"
           :options="galleryWorkspaceOptions"
-          placeholder="Усі воркспейси"
+          :placeholder="t('kit.gallery.field.allWorkspaces')"
         />
       </div>
       <div class="kit__row kit__row--fields">
         <KSelect
           v-model="galleryModel"
-          label="Модель (пошук у списку)"
+          :label="t('kit.gallery.field.modelSearch')"
           :options="galleryModelOptions"
-          placeholder="за замовчуванням"
+          :placeholder="t('kit.gallery.field.default')"
           searchable
         />
       </div>
       <div class="kit__row kit__row--fields">
-        <KDateField v-model="galleryDate" label="Дата (свій календар)" />
-        <KDateField v-model="galleryDate" label="Заблокована дата" disabled />
+        <KDateField v-model="galleryDate" :label="t('kit.gallery.field.dateCustom')" />
+        <KDateField v-model="galleryDate" :label="t('kit.gallery.field.dateLocked')" disabled />
       </div>
       <div class="kit__caption mono">
-        branch={{ branch }} · select(рядки)={{ galleryBranch }} · select(пари)={{ galleryWorkspace || '—' }}
-        · select(пошук)={{ galleryModel || '—' }} · date={{ galleryDate || '—' }}
-        — праворуч у списку видно назву, а модель тримає id: фільтр за назвою ламається,
-        щойно зʼявиться другий воркспейс із такою самою назвою. Дата живе в моделі як
-        YYYY-MM-DD, а показує себе як дд.мм.рррр — і те й те можна вписати руками.
+        {{ t('kit.gallery.cap.fields', { branch, branchSel: galleryBranch, wsSel: galleryWorkspace || '—', modelSel: galleryModel || '—', date: galleryDate || '—' }) }}
       </div>
     </section>
 
     <!-- 05 — agent panels -->
     <section class="kit__section">
-      <div class="kit__label">05 · Панель агента</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.panel') }}</div>
       <div class="kit__panels">
         <KPanel
           :session="runningSession"
@@ -167,12 +163,12 @@
           <KLogBlock v-for="(e, i) in waitingLog" :key="i" :entry="e" session-id="kit-demo" :expand-all="galleryExpandAll" />
         </KPanel>
       </div>
-      <div class="kit__caption mono">остання дія: {{ lastAction || '—' }}</div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.lastAction', { action: lastAction || '—' }) }}</div>
     </section>
 
     <!-- 06 — log blocks -->
     <section class="kit__section">
-      <div class="kit__label">06 · Блоки логу</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.logBlocks') }}</div>
       <div class="kit__logblocks">
         <KLogBlock v-for="(e, i) in logSamples" :key="i" :entry="e" session-id="kit-demo" :expand-all="galleryExpandAll" />
       </div>
@@ -180,7 +176,7 @@
 
     <!-- 07 — window chrome: rail & status bar -->
     <section class="kit__section">
-      <div class="kit__label">07 · Рейка та рядок стану</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.rail') }}</div>
       <div class="kit__rail">
         <KRailItem
           v-for="r in railProjects"
@@ -189,12 +185,10 @@
           :active="r.active"
           :count="r.count"
         />
-        <KUserButton label="oleksii-motornyi" title="@oleksii-motornyi · вийти" />
+        <KUserButton label="oleksii-motornyi" :title="t('kit.gallery.userTitle')" />
       </div>
       <div class="kit__caption mono">
-        Праворуч від проєкту — лічильник запущених агентів: зелена пігулка з числом, а коли
-        не працює жоден — червона крапка без числа. Плитка акаунта у підніжжі рейки (клік —
-        вихід із акаунта). Без картинки з GitHub — ініціали.
+        {{ t('kit.gallery.cap.rail') }}
       </div>
       <div class="kit__ws-tree">
         <template v-for="w in galleryWorkspaces" :key="w.id">
@@ -226,10 +220,7 @@
         </template>
       </div>
       <div class="kit__caption mono">
-        Три зони кліку в рядку воркспейса: шеврон лише згортає (скоуп не чіпає), «+» (видно
-        на наведення) створює проєкт усередині, решта рядка вмикає скоуп. Проєкти всередині
-        — з відступом і перетягуванням: тягніть на інший воркспейс, і той обведеться
-        акцентом. остання дія: {{ lastAction || '—' }}
+        {{ t('kit.gallery.cap.wsTree', { action: lastAction || '—' }) }}
       </div>
       <div class="kit__statusbar-wrap">
         <KStatusBar
@@ -243,28 +234,28 @@
 
     <!-- 08 — dialog -->
     <section class="kit__section">
-      <div class="kit__label">08 · Діалог</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.dialog') }}</div>
       <div class="kit__row">
-        <KBtn variant="primary" @click="modalOpen = true">Відкрити модалку</KBtn>
+        <KBtn variant="primary" @click="modalOpen = true">{{ t('kit.gallery.btn.openModal') }}</KBtn>
       </div>
-      <KModal v-model="modalOpen" title="Новий агент">
+      <KModal v-model="modalOpen" :title="t('kit.gallery.modal.title')">
         <template #head-meta>
           <KTag>⌘N</KTag>
         </template>
-        <KField v-model="branch" label="Гілка" placeholder="feat/auth" />
+        <KField v-model="branch" :label="t('kit.gallery.field.branch')" placeholder="feat/auth" />
         <p class="kit__modal-copy">
-          Окрема worktree буде створена під цю гілку. Порожні поля успадкують дефолти проєкту.
+          {{ t('kit.gallery.modal.copy') }}
         </p>
         <template #controls>
-          <KBtn variant="ghost" @click="modalOpen = false">Скасувати</KBtn>
-          <KBtn variant="primary" @click="modalOpen = false">Запустити</KBtn>
+          <KBtn variant="ghost" @click="modalOpen = false">{{ t('kit.gallery.btn.cancel') }}</KBtn>
+          <KBtn variant="primary" @click="modalOpen = false">{{ t('kit.gallery.btn.launch') }}</KBtn>
         </template>
       </KModal>
     </section>
 
     <!-- 09 — data table -->
     <section class="kit__section">
-      <div class="kit__label">09 · Таблиця агентів</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.table') }}</div>
       <KTable
         class="kit__table"
         :columns="agentColumns"
@@ -295,40 +286,39 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="kit__cell-actions">
-            <KIconButton title="Превʼю" @click.stop="onTableAction(row.id + ':preview')">▶</KIconButton>
-            <KIconButton title="Завершити" @click.stop="onTableAction(row.id + ':finish')">✓</KIconButton>
-            <KIconButton title="Відкласти" @click.stop="onTableAction(row.id + ':archive')">⤓</KIconButton>
+            <KIconButton :title="t('kit.gallery.iconTip.preview')" @click.stop="onTableAction(row.id + ':preview')">▶</KIconButton>
+            <KIconButton :title="t('kit.gallery.iconTip.finish')" @click.stop="onTableAction(row.id + ':finish')">✓</KIconButton>
+            <KIconButton :title="t('kit.gallery.iconTip.archive')" @click.stop="onTableAction(row.id + ':archive')">⤓</KIconButton>
           </div>
         </template>
       </KTable>
-      <div class="kit__caption mono">вибрано: {{ tableSelected }} · дія: {{ lastTableAction || '—' }}</div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.table', { selected: tableSelected, action: lastTableAction || '—' }) }}</div>
     </section>
 
     <!-- v3 navigation + tabs -->
     <section class="kit__section">
-      <div class="kit__label">05 · Навігація v3</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.navV3') }}</div>
       <div class="kit__row"><KTopNav v-model="topNav" :options="topNavOptions" /></div>
       <div class="kit__row" style="margin-top: var(--k-sp-3)"><KTabs v-model="detailTab" :tabs="detailTabs" /></div>
       <div class="kit__row" style="margin-top: var(--k-sp-3)">
-        <KSubNav v-model="subNav" :items="subNavItems" aria-label="Демо розділів" />
+        <KSubNav v-model="subNav" :items="subNavItems" :aria-label="t('kit.gallery.subNavAria')" />
       </div>
       <!-- No `icon` here: the leading mark is a MINIFIED-rail affordance, and the layout
            hides it whenever the labels are on screen. Passing one would document a
            combination the app never renders. -->
       <div class="kit__sidebar">
-        <KNavItem label="Активні" :count="3" :active="navActive === 'active'" @click="navActive = 'active'" />
-        <KNavItem label="Задачі" :count="5" :active="navActive === 'tasks'" @click="navActive = 'tasks'" />
-        <KNavItem label="Відкладені" :count="12" :active="navActive === 'archived'" @click="navActive = 'archived'" />
-        <KNavItem label="Історія" :active="navActive === 'history'" @click="navActive = 'history'" />
+        <KNavItem :label="t('kit.gallery.nav.active')" :count="3" :active="navActive === 'active'" @click="navActive = 'active'" />
+        <KNavItem :label="t('kit.gallery.nav.tasks')" :count="5" :active="navActive === 'tasks'" @click="navActive = 'tasks'" />
+        <KNavItem :label="t('kit.gallery.nav.archived')" :count="12" :active="navActive === 'archived'" @click="navActive = 'archived'" />
+        <KNavItem :label="t('kit.gallery.nav.history')" :active="navActive === 'history'" @click="navActive = 'history'" />
       </div>
       <div class="kit__caption mono">
-        рядок рейки: лейбл + лічильник — і той самий рядок із другим рядком тексту
-        (секційна рейка Менеджменту)
+        {{ t('kit.gallery.cap.navRow') }}
       </div>
       <div class="kit__sidebar">
         <KNavItem
           label="Skills"
-          hint="бібліотека скілів"
+          :hint="t('kit.gallery.skillsHint')"
           :active="navStacked === 'skills'"
           @click="navStacked = 'skills'"
         />
@@ -343,7 +333,7 @@
 
     <!-- session cards -->
     <section class="kit__section">
-      <div class="kit__label">06 · Картки сесій</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.sessionCards') }}</div>
       <div class="kit__cards">
         <KSessionCard
           v-for="(c, i) in sessionCards" :key="c.branch"
@@ -359,67 +349,66 @@
            it carry it on. The container leaves the gap the spine is drawn to cross. -->
       <div class="kit__cards kit__group">
         <KSessionCard
-          branch="feature/dark-theme" time="6 хв" status="waiting_input"
-          status-line="чекає · потрібне рішення" model="opus-5"
+          branch="feature/dark-theme" :time="t('kit.gallery.sessionCard.waitTime')" status="waiting_input"
+          :status-line="t('kit.gallery.sessionCard.s2Status')" model="opus-5"
           :usage="{ input: 9800, output: 4100, cacheRead: 480000, cacheWrite: 27000, cost: 1.41 }"
         />
         <KSessionCard
-          fork branch="" title="гілка: темна тема" time="2 хв" status="thinking"
-          status-line="обговорює · без інструментів" model="haiku"
+          fork branch="" :title="t('kit.gallery.sessionCard.forkTitle')" :time="t('kit.gallery.sessionCard.forkTime')" status="thinking"
+          :status-line="t('kit.gallery.sessionCard.forkStatus')" model="haiku"
           :usage="{ input: 410, output: 180, cacheRead: 6200, cacheWrite: 0, cost: 0.004 }"
         />
         <KSessionCard
-          fork branch="" title="ревізія: темна тема" time="1 хв" status="done"
-          status-line="готово · APPROVE" model="opus-5" selected
+          fork branch="" :title="t('kit.gallery.sessionCard.reviewTitle')" :time="t('kit.gallery.sessionCard.reviewTime')" status="done"
+          :status-line="t('kit.gallery.sessionCard.reviewStatus')" model="opus-5" selected
           :usage="{ input: 7400, output: 2900, cacheRead: 132000, cacheWrite: 9600, cost: 0.88 }"
         />
       </div>
-      <div class="kit__caption mono">форк: гілка та ревізія під батьківським агентом</div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionFork') }}</div>
 
       <!-- REMOVABLE — a backlog task, whose card click opens its editor and so cannot also
            be the way out. The ✕ appears under the cursor; its width is reserved in the top
            row, which is why the time sits a notch left of the cards above. -->
       <div class="kit__cards">
         <KSessionCard
-          removable branch="" title="перевести токени на 8pt" time="2 год" status="backlog"
-          status-line="в беклозі" model="opus-5"
-          remove-title="Видалити задачу «перевести токени на 8pt»"
+          removable branch="" :title="t('kit.gallery.sessionCard.removeTitle')" :time="t('kit.gallery.sessionCard.removeTime')" status="backlog"
+          :status-line="t('kit.gallery.sessionCard.removeStatus')" model="opus-5"
+          :remove-title="t('kit.gallery.sessionCard.removeTip')"
         />
       </div>
-      <div class="kit__caption mono">видаляється на місці: ✕ на ховері картки</div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionRemove') }}</div>
     </section>
 
     <!-- kanban -->
     <section class="kit__section">
-      <div class="kit__label">07 · Дошка (kanban)</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.kanban') }}</div>
       <div class="kit__kanban">
-        <KKanbanColumn label="Беклог" :count="2">
-          <KKanbanCard title="ротація ключів у Keychain" branch="feature/keychain-rotate" project="Backend-core" time="1 дн" status="backlog" :assignee="{ name: 'oleksii-motornyi' }" />
-          <KKanbanCard title="скорочення шляху в топбарі" branch="chore/path-ellipsis" project="FE-kit" time="4 дн" status="backlog" />
+        <KKanbanColumn :label="t('kit.gallery.kanbanCol.backlog')" :count="2">
+          <KKanbanCard :title="t('kit.gallery.kanbanCard.keychainTitle')" branch="feature/keychain-rotate" project="Backend-core" :time="t('kit.gallery.kanbanCard.keychainTime')" status="backlog" :assignee="{ name: 'oleksii-motornyi' }" />
+          <KKanbanCard :title="t('kit.gallery.kanbanCard.pathTitle')" branch="chore/path-ellipsis" project="FE-kit" :time="t('kit.gallery.kanbanCard.pathTime')" status="backlog" />
         </KKanbanColumn>
-        <KKanbanColumn label="В роботі" :count="1">
-          <KKanbanCard title="rate limiting на /v1/messages" branch="feature/rate-limit" project="Backend-core" time="2 хв" status="thinking" :assignee="{ name: 'Дарʼя Ковальчук', avatarUrl: sampleAvatar }" />
+        <KKanbanColumn :label="t('kit.gallery.kanbanCol.inProgress')" :count="1">
+          <KKanbanCard :title="t('kit.gallery.kanbanCard.rateTitle')" branch="feature/rate-limit" project="Backend-core" :time="t('kit.gallery.kanbanCard.rateTime')" status="thinking" :assignee="{ name: t('kit.gallery.kanbanCard.assignee'), avatarUrl: sampleAvatar }" />
         </KKanbanColumn>
       </div>
       <div class="kit__caption mono">
-        виконавець — квадратна аватарка праворуч у рядку назви: фото, або ініціали без фото,
-        або пунктирна рамка «—», коли задача нікому не призначена
+        {{ t('kit.gallery.cap.kanban') }}
       </div>
     </section>
 
     <!-- chat + thought -->
     <section class="kit__section">
-      <div class="kit__label">08 · Чат</div>
-      <KChatMessage role="user">Чому drag інколи падає не в ту клітинку?</KChatMessage>
-      <KThoughtToggle label="Думав 8с" :open="thoughtOpen" @toggle="thoughtOpen = !thoughtOpen">
-        Ціль дропа рахується проти геометрії на початку перетягування, а не поточної.
+      <div class="kit__label">{{ t('kit.gallery.sec.chat') }}</div>
+      <KChatMessage role="user">{{ t('kit.gallery.chat.user') }}</KChatMessage>
+      <KThoughtToggle :label="t('kit.gallery.chat.thought')" :open="thoughtOpen" @toggle="thoughtOpen = !thoughtOpen">
+        {{ t('kit.gallery.chat.thoughtBody') }}
       </KThoughtToggle>
-      <KChatMessage role="assistant">Дерево панелей ще старе на момент drop — перерахуй рамки на drag move.</KChatMessage>
+      <KChatMessage role="assistant">{{ t('kit.gallery.chat.assistant') }}</KChatMessage>
     </section>
 
     <!-- composer -->
     <section class="kit__section">
-      <div class="kit__label">09 · Композер</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.composer') }}</div>
       <!-- The Хелпери picker lives inside the composer: press `/` on the empty field, or the
            `/` button in the controls row. -->
       <KComposer
@@ -438,18 +427,16 @@
 
     <!-- file diff -->
     <section class="kit__section">
-      <div class="kit__label">10 · Diff файлу</div>
+      <div class="kit__label">{{ t('kit.gallery.sec.diff') }}</div>
       <KDiffView
         v-if="diffOpen"
         path="src/pages/grano/fields/field-overview.component.vue"
         :diff="diffSample"
         @close="diffOpen = false"
       />
-      <KBtn v-else variant="secondary" @click="diffOpen = true">Показати diff</KBtn>
+      <KBtn v-else variant="secondary" @click="diffOpen = true">{{ t('kit.gallery.btn.showDiff') }}</KBtn>
       <div class="kit__caption mono">
-        Клік на файлі в секції «Зміни» розкриває цей блок: оригінал ліворуч, версія агента
-        праворуч. Рядки в парі (mod) стоять один проти одного, одностороння правка лишає
-        протилежну колонку затемненою.
+        {{ t('kit.gallery.cap.diff') }}
       </div>
     </section>
   </main>
@@ -457,6 +444,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type {
   SessionStatus, Session, TranscriptEntry, RpcExtensionUIResponse, ThinkingLevel, Usage, ModelOption,
 } from '@kermanych/core';
@@ -490,11 +478,13 @@ import KComposer from 'components/kit/KComposer.vue';
 import KDiffView from 'components/kit/KDiffView.vue';
 import type { FileDiff } from '../lib/api';
 
+const { t } = useI18n();
+
 const topNav = ref('agents');
 const topNavOptions = [
-  { value: 'agents', label: 'Агенти' },
-  { value: 'board', label: 'Дошка' },
-  { value: 'chat', label: 'Чат' },
+  { value: 'agents', label: t('kit.gallery.topNav.agents') },
+  { value: 'board', label: t('kit.gallery.topNav.board') },
+  { value: 'chat', label: t('kit.gallery.topNav.chat') },
 ];
 const subNav = ref('storage');
 const subNavItems = [
@@ -507,9 +497,9 @@ const navActive = ref('active');
 const navStacked = ref('skills');
 const detailTab = ref('log');
 const detailTabs = [
-  { value: 'log', label: 'Лог' },
-  { value: 'changes', label: 'Зміни' },
-  { value: 'session', label: 'Сесія' },
+  { value: 'log', label: t('kit.gallery.detailTab.log') },
+  { value: 'changes', label: t('kit.gallery.detailTab.changes') },
+  { value: 'session', label: t('kit.gallery.detailTab.session') },
 ];
 const composerDraft = ref('');
 // The gallery has no session behind the chip, so the pick is held locally — the point here is
@@ -533,9 +523,9 @@ const diffSample: FileDiff = {
       header: '@@ -14,7 +14,8 @@ function statusWord(s: Session)',
       rows: [
         { kind: 'ctx', old: { no: 14, text: '  switch (s.status) {' }, new: { no: 14, text: '  switch (s.status) {' } },
-        { kind: 'mod', old: { no: 15, text: "    case 'tool': return 'працює';" }, new: { no: 15, text: "    case 'tool': return 'виконує';" } },
-        { kind: 'add', old: null, new: { no: 16, text: "    case 'queued': return 'у черзі';" } },
-        { kind: 'del', old: { no: 16, text: '    // TODO: решта статусів' }, new: null },
+        { kind: 'mod', old: { no: 15, text: t('kit.gallery.diffRow.modOld') }, new: { no: 15, text: t('kit.gallery.diffRow.modNew') } },
+        { kind: 'add', old: null, new: { no: 16, text: t('kit.gallery.diffRow.add') } },
+        { kind: 'del', old: { no: 16, text: t('kit.gallery.diffRow.del') }, new: null },
         { kind: 'ctx', old: { no: 17, text: '  }' }, new: { no: 17, text: '  }' } },
       ],
     },
@@ -547,10 +537,10 @@ const thoughtOpen = ref(false);
 // The last row deliberately carries neither model nor usage: an agent whose turns were
 // never counted drops the accounting line rather than printing a zero.
 const sessionCards: { branch: string; title: string; time: string; status: SessionStatus; statusLine: string; model?: string; usage?: Usage }[] = [
-  { branch: 'feature/rate-limit', title: 'rate limiting на /v1/messages', time: '2 хв', status: 'thinking', statusLine: 'працює · 12 кроків', model: 'opus-5', usage: { input: 18_400, output: 9_200, cacheRead: 1_240_000, cacheWrite: 62_000, cost: 3.18 } },
-  { branch: 'refactoring/session-store', title: 'обʼєднати сесії', time: '14 хв', status: 'waiting_input', statusLine: 'чекає · потрібне рішення', model: 'sonnet-4.5', usage: { input: 2_100, output: 640, cacheRead: 31_000, cacheWrite: 4_800, cost: 0.004 } },
-  { branch: 'fix/remove-button', title: 'remove + button', time: '1 год', status: 'merged', statusLine: 'влито · 2 файли +41 −12', model: 'haiku', usage: { input: 900, output: 310, cacheRead: 0, cacheWrite: 0, cost: 0.02 } },
-  { branch: 'chore/ci-node-22', title: 'node 22 в CI', time: '1 дн', status: 'done', statusLine: 'готово · без тесту' },
+  { branch: 'feature/rate-limit', title: t('kit.gallery.sessionCard.s1Title'), time: t('kit.gallery.sessionCard.s1Time'), status: 'thinking', statusLine: t('kit.gallery.sessionCard.s1Status'), model: 'opus-5', usage: { input: 18_400, output: 9_200, cacheRead: 1_240_000, cacheWrite: 62_000, cost: 3.18 } },
+  { branch: 'refactoring/session-store', title: t('kit.gallery.sessionCard.s2Title'), time: t('kit.gallery.sessionCard.s2Time'), status: 'waiting_input', statusLine: t('kit.gallery.sessionCard.s2Status'), model: 'sonnet-4.5', usage: { input: 2_100, output: 640, cacheRead: 31_000, cacheWrite: 4_800, cost: 0.004 } },
+  { branch: 'fix/remove-button', title: 'remove + button', time: t('kit.gallery.sessionCard.s3Time'), status: 'merged', statusLine: t('kit.gallery.sessionCard.s3Status'), model: 'haiku', usage: { input: 900, output: 310, cacheRead: 0, cacheWrite: 0, cost: 0.02 } },
+  { branch: 'chore/ci-node-22', title: t('kit.gallery.sessionCard.s4Title'), time: t('kit.gallery.sessionCard.s4Time'), status: 'done', statusLine: t('kit.gallery.sessionCard.s4Status') },
 ];
 
 const swatches = [
@@ -559,25 +549,25 @@ const swatches = [
   { var: '--k-accent' }, { var: '--k-success' }, { var: '--k-warning' }, { var: '--k-danger' },
 ];
 const typeScale = [
-  { var: '--k-fs-lg', label: 'Заголовок екрана 18' },
-  { var: '--k-fs-md', label: 'Заголовок 15' },
-  { var: '--k-fs-base', label: 'Основний текст 13' },
-  { var: '--k-fs-sm', label: 'Другорядний 12' },
-  { var: '--k-fs-xs', label: 'Мета 11' },
+  { var: '--k-fs-lg', label: t('kit.gallery.typeScale.lg') },
+  { var: '--k-fs-md', label: t('kit.gallery.typeScale.md') },
+  { var: '--k-fs-base', label: t('kit.gallery.typeScale.base') },
+  { var: '--k-fs-sm', label: t('kit.gallery.typeScale.sm') },
+  { var: '--k-fs-xs', label: t('kit.gallery.typeScale.xs') },
 ];
 const radii = [
   { var: '--k-r-sm' }, { var: '--k-r' }, { var: '--k-r-lg' }, { var: '--k-r-pill' },
 ];
 
 const statusSamples: { status: SessionStatus; name: string }[] = [
-  { status: 'thinking', name: 'працює' },
-  { status: 'waiting_input', name: 'чекає' },
-  { status: 'done', name: 'завершено' },
-  { status: 'queued', name: 'холодна' },
+  { status: 'thinking', name: t('kit.gallery.status.working') },
+  { status: 'waiting_input', name: t('kit.gallery.status.waiting') },
+  { status: 'done', name: t('kit.gallery.status.done') },
+  { status: 'queued', name: t('kit.gallery.status.cold') },
 ];
 
 const harness = ref('OMP');
-const view = ref('Робочий простір');
+const view = ref(t('kit.gallery.toggle.workspace'));
 const branch = ref('feat/auth');
 const focused = ref('');
 const modalOpen = ref(false);
@@ -597,16 +587,16 @@ const waitingSession = mkSession({
   id: 's2', status: 'waiting_input', branch: 'feat/schema',
   pendingUiRequest: {
     type: 'extension_ui_request', id: 'req-1', method: 'select',
-    title: 'Куди звести логіку сесії?',
-    options: ["Об'єднати в session.ts", 'Лишити як є, додати тест'],
+    title: t('kit.gallery.request.title'),
+    options: [t('kit.gallery.request.optMerge'), t('kit.gallery.request.optKeep')],
   },
 });
 const agentColumns: KTableColumn[] = [
-  { key: 'status', label: 'Статус', width: '132px' },
-  { key: 'name', label: 'Агент' },
-  { key: 'branch', label: 'Гілка', width: '150px' },
-  { key: 'ctx', label: 'Контекст', align: 'right', width: '96px', mono: true },
-  { key: 'activity', label: 'Активність' },
+  { key: 'status', label: t('kit.gallery.column.status'), width: '132px' },
+  { key: 'name', label: t('kit.gallery.column.name') },
+  { key: 'branch', label: t('kit.gallery.column.branch'), width: '150px' },
+  { key: 'ctx', label: t('kit.gallery.column.ctx'), align: 'right', width: '96px', mono: true },
+  { key: 'activity', label: t('kit.gallery.column.activity') },
   { key: 'actions', label: '', align: 'right', width: '96px' },
 ];
 const tableSessions: Session[] = [
@@ -639,7 +629,7 @@ const sampleAvatar =
   '<circle cx="40" cy="32" r="14" fill="%23f2e6dc"/>' +
   '<rect x="14" y="52" width="52" height="30" rx="14" fill="%23f2e6dc"/></svg>';
 const panelLog: TranscriptEntry[] = [
-  { kind: 'user_text', id: '0', at: nowMs, text: 'Зведи ротацію токенів в один запит.' },
+  { kind: 'user_text', id: '0', at: nowMs, text: t('kit.gallery.panelLog.user0') },
   {
     kind: 'tool', id: '1', at: nowMs, tool: 'edit', status: 'ok',
     target: 'auth/token.service.ts', stat: '+1 −0',
@@ -647,32 +637,32 @@ const panelLog: TranscriptEntry[] = [
   },
   {
     kind: 'tool', id: '2', at: nowMs, tool: 'bash', status: 'ok',
-    target: 'npm run test:e2e -- auth', stat: '8.4 с',
+    target: 'npm run test:e2e -- auth', stat: t('kit.gallery.panelLog.statSec84'),
     detail: {
       lines: [
         { t: 'head', text: '$ npm run test:e2e -- auth' },
         { t: 'ctx', text: '12 passed, 0 failed' },
-        { t: 'head', text: 'wall 8.4 с' },
+        { t: 'head', text: t('kit.gallery.panelLog.wall84') },
       ],
       totalLines: 3,
     },
   },
-  { kind: 'assistant_text', id: '3', at: nowMs, text: 'Готово. Ротація токенів зведена в один запит.' },
+  { kind: 'assistant_text', id: '3', at: nowMs, text: t('kit.gallery.panelLog.assistant3') },
   // Two operator turns on purpose (kept from dev): the panel's my-message navigation
   // (▲/▼) only appears above a second user message, and the gallery is where that
   // control is documented. It now targets `.k-rb__head`, so a second request block is
   // what makes it visible at all.
-  { kind: 'user_text', id: '4', at: nowMs, text: 'Додай тест на прострочений refresh.' },
+  { kind: 'user_text', id: '4', at: nowMs, text: t('kit.gallery.panelLog.user4') },
 ];
 const waitingLog: TranscriptEntry[] = [
-  { kind: 'user_text', id: '0', at: nowMs, text: 'Де саме зберігається сесія?' },
+  { kind: 'user_text', id: '0', at: nowMs, text: t('kit.gallery.waitingLog.user0') },
   { kind: 'tool', id: '1', at: nowMs, tool: 'read', status: 'pending', target: 'src/session.ts' },
-  { kind: 'assistant_text', id: '2', at: nowMs, text: 'Знайшов два місця, де зберігається сесія.' },
+  { kind: 'assistant_text', id: '2', at: nowMs, text: t('kit.gallery.waitingLog.assistant2') },
 ];
 const logSamples: TranscriptEntry[] = [
   {
     kind: 'user_text', id: '0', at: nowMs,
-    text: 'Ось скрин — зведи зберігання сесії в одне місце.',
+    text: t('kit.gallery.logSamples.user0'),
     images: [sampleImage],
   },
   // A partial read is one of exactly three tools that flag upstream truncation (`read`,
@@ -703,15 +693,15 @@ const logSamples: TranscriptEntry[] = [
     },
   },
   // A grep with no hits is the real detail-less row: expanding it shows the empty state.
-  { kind: 'tool', id: '3', at: nowMs, tool: 'grep', status: 'ok', target: '/useAuth/ src', stat: '0 збігів', count: 0 },
+  { kind: 'tool', id: '3', at: nowMs, tool: 'grep', status: 'ok', target: '/useAuth/ src', stat: t('kit.gallery.logSamples.grepStat'), count: 0 },
   {
     kind: 'tool', id: '4', at: nowMs, tool: 'bash', status: 'error',
-    target: 'pnpm test', stat: 'exit 1 · 3.2 с',
+    target: 'pnpm test', stat: t('kit.gallery.logSamples.bashStat'),
     detail: {
       lines: [
         { t: 'head', text: '$ pnpm test' },
         { t: 'ctx', text: '2 failing specs' },
-        { t: 'head', text: 'wall 3.2 с · exit 1' },
+        { t: 'head', text: t('kit.gallery.logSamples.bashWall') },
       ],
       totalLines: 3,
     },
@@ -719,14 +709,14 @@ const logSamples: TranscriptEntry[] = [
   // All three chip forms: both metrics, duration only, tokens only.
   {
     kind: 'assistant_thinking', id: '5', at: nowMs, ms: 12_400, tokens: 1840,
-    text: 'Сесія зберігається у двох місцях — треба звести.',
+    text: t('kit.gallery.logSamples.think5'),
   },
-  { kind: 'assistant_thinking', id: '5a', at: nowMs, ms: 4_200, text: 'Лише тривалість — без токенів.' },
-  { kind: 'assistant_thinking', id: '5b', at: nowMs, tokens: 320, text: 'Лише токени — без тривалості.' },
-  { kind: 'assistant_text', id: '6', at: nowMs, text: '## Знайшов два місця\n\nСесія зберігається у **двох** місцях — треба звести:\n\n- `session.ts` — запис у файл\n- `store.ts` — дубль у памʼяті\n\n```ts\nconst s = load();\n```' },
-  { kind: 'notice', id: '7', at: nowMs, level: 'info', text: 'Гілку перемкнено на feat/schema.' },
-  { kind: 'notice', id: '8', at: nowMs, level: 'warn', text: 'Контекст заповнено на 82% — скоро потрібне стиснення.' },
-  { kind: 'notice', id: '9', at: nowMs, level: 'error', text: 'Сесію зупинено: процес завершився з кодом 1.' },
+  { kind: 'assistant_thinking', id: '5a', at: nowMs, ms: 4_200, text: t('kit.gallery.logSamples.think5a') },
+  { kind: 'assistant_thinking', id: '5b', at: nowMs, tokens: 320, text: t('kit.gallery.logSamples.think5b') },
+  { kind: 'assistant_text', id: '6', at: nowMs, text: t('kit.gallery.logSamples.assistant6') },
+  { kind: 'notice', id: '7', at: nowMs, level: 'info', text: t('kit.gallery.logSamples.notice7') },
+  { kind: 'notice', id: '8', at: nowMs, level: 'warn', text: t('kit.gallery.logSamples.notice8') },
+  { kind: 'notice', id: '9', at: nowMs, level: 'error', text: t('kit.gallery.logSamples.notice9') },
   // `turn` is ledger data for block summaries — it renders nothing, by design.
   { kind: 'turn', id: '10', at: nowMs, model: 'claude-opus-5', ms: 21_300 },
 ];
@@ -739,8 +729,8 @@ const railProjects: { project: RailProject; active: boolean; count: number; work
 // One coloured, one not, so both dot states show. The ids are what KSelect's pair form
 // carries below — a filter keyed by the NAME breaks the day a second «Особисте» appears.
 const galleryWorkspaces = [
-  { id: 'w1', name: 'Керманич', color: '#ff563c', count: 12 },
-  { id: 'w2', name: 'Особисте', count: 1 },
+  { id: 'w1', name: t('kit.gallery.workspace.kermanych'), color: '#ff563c', count: 12 },
+  { id: 'w2', name: t('kit.gallery.workspace.personal'), count: 1 },
 ];
 const wsActive = ref('w1');
 const wsExpanded = ref(['w1', 'w2']);
