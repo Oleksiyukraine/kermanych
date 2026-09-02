@@ -113,6 +113,10 @@ export const en: MessageSchema = {
       weeks: '{n}w',
       monthly: 'mo',
     },
+    notify: {
+      signInFirst: 'Sign in to Kermanych first',
+      sessionExpired: 'Your session has ended. Sign in again.',
+    },
   },
   agents: {
     role: {
@@ -215,6 +219,12 @@ export const en: MessageSchema = {
       merged: 'merged',
       conflict: 'conflict',
       backlog: 'backlog',
+    },
+    sessionStatus: {
+      waiting_input: 'response needed',
+      error: 'error',
+      conflict: 'merge conflict',
+      done: 'done',
     },
     launcher: {
       esc: 'Esc — close',
@@ -429,6 +439,9 @@ export const en: MessageSchema = {
       published: 'Project “{name}” published — you can now create tasks here.',
       sessionStarted: 'Session “{name}” launched on this machine.',
       localUnreachable: 'The local Kermanych isn’t responding — check that it’s running.',
+      cannotReassignActive: 'An active task can’t be reassigned',
+      cannotDeleteActive: 'An active task can’t be deleted',
+      forceStopForbidden: 'Only its assignee or the project owner can mark a task stopped',
     },
     action: {
       cancel: 'Cancel',
@@ -901,6 +914,23 @@ export const en: MessageSchema = {
       accounts: '{count} accounts, on average',
       resetsIn: 'resets in {time}',
     },
+    chat: {
+      releaseNotesNoProject: 'This workspace has no project “{project}” — release notes were not generated.',
+      releaseNotesKnownProjects: ' Available: {known}.',
+      releaseNotesStarted: 'Started generating release notes: {project} · {branch} · {from} — {to}. This takes tens of seconds — a notification will report the result, and the note itself will appear in the Release Notes section.',
+      riskCreated: 'Risk {code} added to the register: {event} ({probability}×{impact})',
+      riskCreateFailed: 'Could not file the risk: {error}',
+      riskNotFound: 'This workspace register has no risk {code} — nothing was changed.',
+      riskUpdated: 'Risk {code} updated: {fields}',
+      riskUpdateFailed: 'Could not update risk {code}: {error}',
+      resetFailed: 'Could not reset the conversation: {error}',
+    },
+    refusal: {
+      unknownSection: 'The assistant named a section “{section}” that does not exist in Management.',
+      writableRefused: 'The assistant refused to change the “{section}” section even though it is writable — try asking again.',
+      readOnly: 'I can’t change the “{section}” section: {limitation}',
+      readOnlyFallback: 'the section is read-only',
+    },
     section: {
       'management-home': { hint: 'workspace overview' },
       'management-storage': { hint: 'files and artifacts' },
@@ -986,6 +1016,8 @@ export const en: MessageSchema = {
       save: 'Save',
       elapsedJustNow: 'just now',
       elapsedSec: '{sec} s',
+      notifyReady: 'Release notes “{title}” are ready — from {count} commits',
+      notifyFailed: 'Release notes were not generated: {error}',
     },
     integrations: {
       lead: 'Connect external services to workspace',
@@ -1627,6 +1659,9 @@ export const en: MessageSchema = {
     member_bad_email: 'That does not look like an email — we invite by the address a colleague signs into Kermanych with',
     member_not_owner_invite: 'The cloud refused: only the workspace owner can invite people to it',
     member_not_owner_roles: 'The cloud refused: only the workspace owner can change roles',
+    workspace_has_projects: 'move or delete this workspace’s projects first',
+    workspace_delete_not_owner: 'the cloud refused: only the owner can delete a workspace',
+    oauth_no_url: 'Supabase did not return an authorization URL',
     image: {
       unsupported: 'unsupported type: {mime} (need PNG/JPEG/GIF/WebP)',
       unknownMime: 'unknown',

@@ -172,8 +172,8 @@ export const useManagementChat = defineStore('management-chat', () => {
       result(
         workspaceId,
         'warn',
-        `У цьому воркспейсі немає проєкту «${action.project}» — реліз-ноти не згенеровано.` +
-          (known ? ` Є: ${known}.` : ''),
+        globalTr.t('management.chat.releaseNotesNoProject', { project: action.project }) +
+          (known ? globalTr.t('management.chat.releaseNotesKnownProjects', { known }) : ''),
       );
       return;
     }
@@ -191,7 +191,12 @@ export const useManagementChat = defineStore('management-chat', () => {
     result(
       workspaceId,
       'info',
-      `Запустив генерацію реліз-нот: ${project.name} · ${action.branch} · ${action.rangeFrom} — ${action.rangeTo}. Це триває десятки секунд — про результат скаже повідомлення, а сама нотатка зʼявиться в розділі Release Notes.`,
+      globalTr.t('management.chat.releaseNotesStarted', {
+        project: project.name,
+        branch: action.branch,
+        from: action.rangeFrom,
+        to: action.rangeTo,
+      }),
     );
   }
 
@@ -213,26 +218,31 @@ export const useManagementChat = defineStore('management-chat', () => {
         result(
           workspaceId,
           'info',
-          `Ризик ${created.code} занесено до реєстру: ${created.event} (${created.probability}×${created.impact})`,
+          globalTr.t('management.chat.riskCreated', {
+            code: created.code,
+            event: created.event,
+            probability: created.probability,
+            impact: created.impact,
+          }),
         );
       } catch (e) {
         // The reason, verbatim: an RLS refusal, a CHECK constraint and an unreachable
         // Supabase are three different problems with three different fixes.
-        result(workspaceId, 'error', `Не вдалося занести ризик: ${errorText(e)}`);
+        result(workspaceId, 'error', globalTr.t('management.chat.riskCreateFailed', { error: errorText(e) }));
       }
       return;
     }
     if (action.kind === 'risk.update') {
       const row = findRiskByCode(risks.byWorkspace[workspaceId] ?? [], action.code);
       if (!row) {
-        result(workspaceId, 'warn', `У реєстрі цього воркспейсу немає ризику ${action.code} — нічого не змінено.`);
+        result(workspaceId, 'warn', globalTr.t('management.chat.riskNotFound', { code: action.code }));
         return;
       }
       try {
         const saved = await risks.save(workspaceId, row.id, action.patch);
-        result(workspaceId, 'info', `Ризик ${saved.code} оновлено: ${Object.keys(action.patch).join(', ')}`);
+        result(workspaceId, 'info', globalTr.t('management.chat.riskUpdated', { code: saved.code, fields: Object.keys(action.patch).join(', ') }));
       } catch (e) {
-        result(workspaceId, 'error', `Не вдалося оновити ризик ${row.code}: ${errorText(e)}`);
+        result(workspaceId, 'error', globalTr.t('management.chat.riskUpdateFailed', { code: row.code, error: errorText(e) }));
       }
       return;
     }
@@ -322,7 +332,7 @@ export const useManagementChat = defineStore('management-chat', () => {
       // Reported, never thrown: the screen is already clear, and the operator needs to know
       // that the model's memory is not — otherwise the next answer refers to a conversation
       // that visibly never happened.
-      result(workspaceId, 'error', `Не вдалося скинути розмову: ${errorText(e)}`);
+      result(workspaceId, 'error', globalTr.t('management.chat.resetFailed', { error: errorText(e) }));
     }
   }
 

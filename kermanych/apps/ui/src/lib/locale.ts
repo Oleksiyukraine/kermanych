@@ -11,10 +11,14 @@ const KEY = 'kermanych.locale';
 const LOCALES: readonly Locale[] = ['uk', 'en'];
 
 export function readLocale(): Locale {
+  // Guarded for non-browser contexts (SSR, vitest's node env): boot/i18n reads this at
+  // module load, and `uk` is the fallback anyway, so a missing localStorage is not an error.
+  if (typeof localStorage === 'undefined') return 'uk';
   const v = localStorage.getItem(KEY);
   return (LOCALES as readonly string[]).includes(v ?? '') ? (v as Locale) : 'uk';
 }
 export function writeLocale(l: Locale): void {
+  if (typeof localStorage === 'undefined') return;
   localStorage.setItem(KEY, l);
 }
 

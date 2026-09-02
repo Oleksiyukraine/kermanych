@@ -117,6 +117,10 @@ export const uk = {
       weeks: '{n}тиж',
       monthly: 'міс',
     },
+    notify: {
+      signInFirst: 'Спочатку увійдіть у Kermanych',
+      sessionExpired: 'Сесія завершилася. Увійдіть знову.',
+    },
   },
   agents: {
     role: {
@@ -219,6 +223,12 @@ export const uk = {
       merged: 'влито',
       conflict: 'конфлікт',
       backlog: 'у беклозі',
+    },
+    sessionStatus: {
+      waiting_input: 'потрібна відповідь',
+      error: 'помилка',
+      conflict: 'конфлікт злиття',
+      done: 'завершено',
     },
     launcher: {
       esc: 'Esc — закрити',
@@ -433,6 +443,9 @@ export const uk = {
       published: 'Проєкт «{name}» опубліковано — тепер тут можна створювати задачі.',
       sessionStarted: 'Сесію «{name}» запущено на цій машині.',
       localUnreachable: 'Локальний Керманич не відповідає — перевір, чи він запущений.',
+      cannotReassignActive: 'Активну задачу не можна переасайнити',
+      cannotDeleteActive: 'Активну задачу не можна видалити',
+      forceStopForbidden: 'Позначити задачу зупиненою може лише її виконавець або власник проєкту',
     },
     action: {
       cancel: 'Скасувати',
@@ -905,6 +918,23 @@ export const uk = {
       accounts: '{count} акаунти, у середньому',
       resetsIn: 'оновиться за {time}',
     },
+    chat: {
+      releaseNotesNoProject: 'У цьому воркспейсі немає проєкту «{project}» — реліз-ноти не згенеровано.',
+      releaseNotesKnownProjects: ' Є: {known}.',
+      releaseNotesStarted: 'Запустив генерацію реліз-нот: {project} · {branch} · {from} — {to}. Це триває десятки секунд — про результат скаже повідомлення, а сама нотатка зʼявиться в розділі Release Notes.',
+      riskCreated: 'Ризик {code} занесено до реєстру: {event} ({probability}×{impact})',
+      riskCreateFailed: 'Не вдалося занести ризик: {error}',
+      riskNotFound: 'У реєстрі цього воркспейсу немає ризику {code} — нічого не змінено.',
+      riskUpdated: 'Ризик {code} оновлено: {fields}',
+      riskUpdateFailed: 'Не вдалося оновити ризик {code}: {error}',
+      resetFailed: 'Не вдалося скинути розмову: {error}',
+    },
+    refusal: {
+      unknownSection: 'Асистент назвав розділ «{section}», якого не існує в Менеджменті.',
+      writableRefused: 'Асистент відмовився змінити розділ «{section}», хоча цей розділ доступний для запису — спробуйте перепитати.',
+      readOnly: 'Не можу змінити розділ «{section}»: {limitation}',
+      readOnlyFallback: 'розділ доступний лише для читання',
+    },
     section: {
       'management-home': { hint: 'огляд воркспейсу' },
       'management-storage': { hint: 'файли й артефакти' },
@@ -990,6 +1020,8 @@ export const uk = {
       save: 'Зберегти',
       elapsedJustNow: 'щойно',
       elapsedSec: '{sec} с',
+      notifyReady: 'Реліз-ноти «{title}» готові — з {count} комітів',
+      notifyFailed: 'Реліз-ноти не згенерувались: {error}',
     },
     integrations: {
       lead: 'Підключіть зовнішні сервіси до воркспейсу',
@@ -1631,6 +1663,9 @@ export const uk = {
     member_bad_email: 'Це не схоже на імейл — запрошуємо за адресою, якою колега входить у Керманич',
     member_not_owner_invite: 'Хмара відмовила: запрошувати до воркспейсу може лише його власник',
     member_not_owner_roles: 'Хмара відмовила: змінювати ролі може лише власник воркспейсу',
+    workspace_has_projects: 'спершу перенесіть або видаліть проєкти цього воркспейсу',
+    workspace_delete_not_owner: 'хмара відмовила: видалити воркспейс може лише власник',
+    oauth_no_url: 'Supabase не повернув URL авторизації',
     image: {
       unsupported: 'непідтримуваний тип: {mime} (треба PNG/JPEG/GIF/WebP)',
       unknownMime: 'невідомо',

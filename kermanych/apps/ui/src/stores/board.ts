@@ -24,6 +24,7 @@ import { installReconcile, type ReconcileOptions } from '../lib/reconcile';
 import { assignmentRefusalText } from '../lib/cloud-errors';
 import { useDelayedTrue } from '../composables/useDelayedTrue';
 import { IS_PREVIEW } from '../lib/preview';
+import { globalTr } from '../boot/i18n';
 
 // The shared board's TASKS, and nothing else. Cloud projects and membership live in
 // stores/projects.ts; local sessions and the socket live in stores/orchestrator.ts. Writes
@@ -200,7 +201,7 @@ export const useBoard = defineStore('board', () => {
   async function createTask(input: TaskInsert, images: File[] = []): Promise<Task | undefined> {
     const userId = auth.user?.id;
     if (!userId) {
-      local.notify('Спочатку увійдіть у Kermanych', 'error');
+      local.notify(globalTr.t('common.notify.signInFirst'), 'error');
       return undefined;
     }
     let imagePaths: string[] = [];
@@ -238,7 +239,7 @@ export const useBoard = defineStore('board', () => {
     // whatever the UI allows — this exists so the user gets an instant, readable answer
     // instead of a round trip and a Postgres sentence.
     if (patch.assigneeId !== undefined && isActive(before)) {
-      local.notify('Активну задачу не можна переасайнити', 'error');
+      local.notify(globalTr.t('board.notify.cannotReassignActive'), 'error');
       return false;
     }
     upsert(applyPatch(before, patch));
@@ -264,7 +265,7 @@ export const useBoard = defineStore('board', () => {
     const before = tasks.value.find((t) => t.id === id);
     if (!before) return false;
     if (isActive(before)) {
-      local.notify('Активну задачу не можна видалити', 'error');
+      local.notify(globalTr.t('board.notify.cannotDeleteActive'), 'error');
       return false;
     }
     drop(id);
@@ -300,10 +301,7 @@ export const useBoard = defineStore('board', () => {
       // offline, a revoked membership, a row someone already deleted — is shown verbatim.
       const raw = e instanceof Error ? e.message : String(e);
       if (raw.includes('only the assignee can change status')) {
-        local.notify(
-          'Позначити задачу зупиненою може лише її виконавець або власник проєкту',
-          'error',
-        );
+        local.notify(globalTr.t('board.notify.forceStopForbidden'), 'error');
       } else fail(e);
       return false;
     }

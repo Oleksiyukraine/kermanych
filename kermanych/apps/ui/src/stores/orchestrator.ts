@@ -19,15 +19,17 @@ import { shouldNotify } from '@kermanych/core/status';
 import { connectSocket } from '../lib/socket';
 import { api, type MessageMode } from '../lib/api';
 import { applyTranscriptUpdate } from './transcript-update';
+import { globalTr } from '../boot/i18n';
 
 export type Toast = { id: string; message: string; kind: 'error' | 'info' };
 
-// Native-notification copy for the attention-worthy statuses shouldNotify() fires on.
-const STATUS_LABEL: Partial<Record<Session['status'], string>> = {
-  waiting_input: 'потрібна відповідь',
-  error: 'помилка',
-  conflict: 'конфлікт злиття',
-  done: 'завершено',
+// i18n keys for the attention-worthy statuses shouldNotify() fires on. Resolved through
+// globalTr at notification time (point-in-time copy), the same adapter the api client uses.
+const STATUS_LABEL_KEY: Partial<Record<Session['status'], string>> = {
+  waiting_input: 'agents.sessionStatus.waiting_input',
+  error: 'agents.sessionStatus.error',
+  conflict: 'agents.sessionStatus.conflict',
+  done: 'agents.sessionStatus.done',
 };
 
 export const useOrchestrator = defineStore('orchestrator', () => {
@@ -93,8 +95,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         !document.hasFocus() &&
         typeof Notification !== 'undefined'
       ) {
+        const key = STATUS_LABEL_KEY[e.session.status];
         const n = new Notification(e.session.name, {
-          body: STATUS_LABEL[e.session.status] ?? e.session.status,
+          body: key ? globalTr.t(key) : e.session.status,
         });
         n.onclick = () => {
           window.kermanych?.focus();

@@ -16,6 +16,7 @@ import {
 import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { IS_PREVIEW } from '../lib/preview';
+import { globalTr } from '../boot/i18n';
 
 // The workspace risk register. Keyed by WORKSPACE rather than held as one flat list: the
 // register is a screen you open for one workspace, and a shared list would flash the
@@ -90,7 +91,7 @@ export const useRisks = defineStore('risks', () => {
     workspaceId: string,
     input: Omit<WorkspaceRiskInsert, 'workspaceId'>,
   ): Promise<WorkspaceRisk> {
-    if (!auth.user) throw new Error('Спочатку увійдіть у Kermanych');
+    if (!auth.user) throw new Error(globalTr.t('common.notify.signInFirst'));
     const created = await cloudCreateRisk(auth.client, { workspaceId, ...input });
     upsert(workspaceId, created);
     return created;
