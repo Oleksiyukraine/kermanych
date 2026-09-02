@@ -220,10 +220,10 @@ describe("buildManagementTurn", () => {
     expect(out).toContain(`platform — ${PLATFORMS.join(" | ")}`);
   });
 
-  // The roster is the only way an assignee can be named: `tasks.assignee_id` is a uuid, the
-  // model is shown names, and the browser matches one back. A context block that printed no
-  // roster would leave it guessing profile ids.
-  it("prints the roster a ticket assignee is named from", () => {
+  // The roster is the only way an assignee on the NATIVE board can be named:
+  // `tasks.assignee_id` is a uuid, the model is shown names, and the browser matches one
+  // back. A context block that printed no roster would leave it guessing profile ids.
+  it("prints the roster a native-board assignee is named from", () => {
     const members: ManagementMember[] = [
       { name: "olya", role: "developer" },
       { name: "andrii", role: "owner" },
@@ -232,6 +232,55 @@ describe("buildManagementTurn", () => {
     expect(out).toContain("Команда воркспейсу (2)");
     expect(out).toContain("- olya · developer");
     expect(out).toContain("- andrii · owner");
+    // Named as the NATIVE board's list, because Jira's assignees are a different set and a
+    // model that read this line as «the people a ticket may be assigned to» refused every
+    // Jira assignee without a Kermanych account.
+    expect(out).toContain("на ВЛАСНІЙ дошці");
+  });
+
+  // The regression this whole field exists for: a Jira issue is assigned to an ATLASSIAN
+  // account, so the roster cannot answer it. With only the roster in the prompt the assistant
+  // refused «створи тікет у Jira на Марину» because Maryna has no Kermanych seat — while the
+  // same ticket filed by hand offers her, because Jira's own picker does.
+  it("prints Jira's own assignable users and tells the model not to use the roster for them", () => {
+    const out = buildManagementTurn({
+      first: false,
+      repos,
+      context: {
+        ...context,
+        members: [{ name: "olya", role: "developer" }],
+        jira: {
+          projectKey: "KRM",
+          boardName: "Kermanych board",
+          canWrite: true,
+          assignees: ["Maryna Koval", "Olya Petrenko"],
+        },
+      },
+      today: TODAY,
+      text: "?",
+    });
+    expect(out).toContain("Виконавці Jira (2)");
+    expect(out).toContain("- Maryna Koval");
+    expect(out).toContain("- Olya Petrenko");
+    expect(out).toContain("а НЕ командою воркспейсу");
+  });
+
+  // Empty is a FAILED READ (no token this turn, Jira unreachable), never «nobody is
+  // assignable». Read as the latter it becomes a refusal invented out of a network error —
+  // the exact failure this feature was reported for, one layer down.
+  it("says the Jira assignee list is unavailable rather than implying nobody is assignable", () => {
+    const out = buildManagementTurn({
+      first: false,
+      repos,
+      context: {
+        ...context,
+        jira: { projectKey: "KRM", boardName: "Kermanych board", canWrite: true, assignees: [] },
+      },
+      today: TODAY,
+      text: "?",
+    });
+    expect(out).toContain("Виконавці Jira (0)");
+    expect(out).toContain("список цього ходу недоступний");
   });
 
   // Three states, three different sentences — and they are not interchangeable: no board is
@@ -240,25 +289,50 @@ describe("buildManagementTurn", () => {
   it("states whether the Jira board exists and whether this machine may write to it", () => {
     const none = buildManagementTurn({ first: false, repos, context, today: TODAY, text: "?" });
     expect(none).toContain("Дошка Jira: не підключена");
+    expect(none).not.toContain("Виконавці Jira");
 
     const readOnly = buildManagementTurn({
       first: false,
       repos,
-      context: { ...context, jira: { projectKey: "KRM", boardName: "Kermanych board", canWrite: false } },
+      context: {
+        ...context,
+        jira: { projectKey: "KRM", boardName: "Kermanych board", canWrite: false, assignees: [] },
+      },
       today: TODAY,
       text: "?",
     });
     expect(readOnly).toContain("Дошка Jira: Kermanych board · проєкт KRM");
     expect(readOnly).toContain("БЕЗ особистого токена Jira");
+    // No token means no ticket to assign, so the list is not printed at all — an empty
+    // «Виконавці Jira» beside «створити тікет неможливо» is two sentences for one fact.
+    expect(readOnly).not.toContain("Виконавці Jira");
 
     const writable = buildManagementTurn({
       first: false,
       repos,
-      context: { ...context, jira: { projectKey: "KRM", boardName: "Kermanych board", canWrite: true } },
+      context: {
+        ...context,
+        jira: { projectKey: "KRM", boardName: "Kermanych board", canWrite: true, assignees: ["Maryna Koval"] },
+      },
       today: TODAY,
       text: "?",
     });
     expect(writable).toContain("можна створювати тікети");
+  });
+
+  // The contract half of the same fix. The rule the assistant follows must name TWO lists and
+  // say outright that absence from the workspace is not a reason to refuse a Jira assignee,
+  // otherwise the printed list above is one the model has no instruction to read.
+  it("gives each board its own assignee list and forbids judging a Jira assignee by the roster", () => {
+    const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
+    expect(out).toContain("У кожної дошки СВІЙ список людей");
+    expect(out).toContain("«Виконавці Jira»");
+    expect(out).toContain("НЕ причина відмовити чи спитати");
+    // Jira's list is page-capped, so a name the operator gave explicitly is passed through
+    // and checked against live Jira instead of being refused against a truncated list.
+    expect(out).toContain("все одно постав це імʼя в assignee");
+    // And a named assignee is never turned into a ticket.questions round trip.
+    expect(out).toContain("користувач НАЗВАВ, теж не питання");
   });
 });
 

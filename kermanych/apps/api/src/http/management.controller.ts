@@ -76,6 +76,14 @@ function jiraBoard(v: unknown): ManagementJiraBoard | undefined {
     // Write capability is never assumed: absent means «не можу створити», which is the safe
     // way round — the assistant says so instead of promising a ticket the api cannot sign.
     canWrite: x.canWrite === true,
+    // Jira's own assignable users, by display name. Read from the browser for `memberRows`'
+    // reason inverted: the api COULD ask Jira itself, but the browser already holds the list
+    // its ticket dialog renders, and a second fetch here would let the prompt name people
+    // the operator's own picker does not show. Blank entries are dropped — a blank name is
+    // an assignee nothing could resolve back to an accountId.
+    assignees: Array.isArray(x.assignees)
+      ? x.assignees.filter((n): n is string => typeof n === "string" && n.trim() !== "").map((n) => n.trim())
+      : [],
   };
 }
 

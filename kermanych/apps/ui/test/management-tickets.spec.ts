@@ -22,6 +22,7 @@ const jiraTokenStatus = vi.fn();
 const createTask = vi.fn();
 const loadMembers = vi.fn();
 const jiraUpsert = vi.fn();
+const jiraLoadAssignable = vi.fn();
 
 const members = [
   { workspaceId: 'w1', userId: 'u-olya', role: 'developer', addedAt: '', profile: { id: 'u-olya', githubUsername: 'olya', displayName: 'Оля Петренко' } },
@@ -31,6 +32,10 @@ const members = [
 const jiraState = {
   integration: null as { id: string; siteUrl: string; projectKey: string; boardName: string } | null | undefined,
   tokenPresent: false,
+  // Jira's OWN assignable users. Deliberately disjoint from `members` in the tests that use
+  // it: a Jira seat is not a Kermanych account, and treating the two as one list is the bug
+  // this file's Jira assignee tests exist for.
+  assignable: [] as { accountId: string; displayName: string }[],
 };
 
 vi.mock('../src/lib/api', () => ({
@@ -69,7 +74,11 @@ vi.mock('../src/stores/jira', () => ({
     get tokenPresent() {
       return jiraState.tokenPresent;
     },
+    get assignable() {
+      return jiraState.assignable;
+    },
     probe: vi.fn(),
+    loadAssignable: (ws: string) => jiraLoadAssignable(ws),
     upsert: (issue: unknown) => jiraUpsert(issue),
   }),
 }));
@@ -100,10 +109,13 @@ function results(entries: readonly MgmtChatEntry[]): string[] {
 
 beforeEach(() => {
   setActivePinia(createPinia());
-  for (const m of [managementChat, jiraCreateIssue, jiraEditorOptions, jiraAssignableUsers, jiraTokenStatus, createTask, loadMembers, jiraUpsert])
+  for (const m of [managementChat, jiraCreateIssue, jiraEditorOptions, jiraAssignableUsers, jiraTokenStatus, createTask, loadMembers, jiraUpsert, jiraLoadAssignable])
     m.mockReset();
   jiraState.integration = null;
   jiraState.tokenPresent = false;
+  jiraState.assignable = [];
+  // The store's own contract: cached, workspace-scoped, and degrading to an empty list.
+  jiraLoadAssignable.mockImplementation(async () => jiraState.assignable);
 });
 
 describe('ticket.create on the default board', () => {
@@ -317,6 +329,101 @@ describe('jira.ticket.create on the mirrored board', () => {
 
     expect(results(store.entries)[0]).toContain('customfield_10010');
   });
+
+  // THE reported bug, as behaviour. A Jira assignee is an Atlassian account: «Maryna Koval»
+  // has a Jira seat and no Kermanych account, so she is in Jira's picker and in no roster.
+  // The chat used to refuse her («немає в команді воркспейсу») while the same ticket filed by
+  // hand offered her, because the prompt only ever carried the workspace roster.
+  it('assigns a Jira user who is not a workspace member at all', async () => {
+    jiraState.integration = integration;
+    jiraState.tokenPresent = true;
+    jiraState.assignable = [
+      { accountId: 'acc-maryna', displayName: 'Maryna Koval' },
+      { accountId: 'acc-olya', displayName: 'Olya Petrenko' },
+    ];
+    jiraAssignableUsers.mockResolvedValue([{ accountId: 'acc-maryna', displayName: 'Maryna Koval' }]);
+    jiraCreateIssue.mockResolvedValue({ key: 'KRM-216', summary: TICKET.title, issueId: '10502' });
+    managementChat.mockResolvedValue(
+      reply([{ kind: 'jira.ticket.create', ticket: TICKET, assignee: 'Maryna Koval' }]),
+    );
+
+    const store = useManagementChat();
+    await store.send('створи тікет у Jira на Maryna Koval', 'management-home');
+
+    // Resolved against JIRA, not the roster — `members` has no Maryna and that is irrelevant.
+    expect(jiraAssignableUsers).toHaveBeenCalledWith('w1', 'Maryna Koval');
+    const draft = jiraCreateIssue.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(draft.assigneeAccountId).toBe('acc-maryna');
+    expect(results(store.entries)[0]).toContain('Тікет KRM-216');
+    // And the workspace board was never touched: the operator named Jira.
+    expect(createTask).not.toHaveBeenCalled();
+  });
+
+  // The other half of the fix: the model can only name a Jira assignee if it is SHOWN Jira's
+  // list. Without this the assistant had nothing but the roster and refused in prose before
+  // any action reached the executor above — which is why the executor's own resolution was
+  // already correct and the bug still happened.
+  it('sends Jira\u2019s own assignable names in the turn context, separately from the roster', async () => {
+    jiraState.integration = integration;
+    jiraState.tokenPresent = true;
+    jiraState.assignable = [
+      { accountId: 'acc-maryna', displayName: 'Maryna Koval' },
+      { accountId: 'acc-olya', displayName: 'Olya Petrenko' },
+    ];
+    managementChat.mockResolvedValue(reply([]));
+
+    const store = useManagementChat();
+    await store.send('кого можна поставити в Jira?', 'management-home');
+
+    expect(jiraLoadAssignable).toHaveBeenCalledWith('w1');
+    const ask = managementChat.mock.calls[0]?.[0] as { context: { jira?: { assignees: string[] }; members: { name: string }[] } };
+    expect(ask.context.jira?.assignees).toEqual(['Maryna Koval', 'Olya Petrenko']);
+    // Two distinct lists, never merged: the roster is still the native board's answer.
+    expect(ask.context.members.map((m) => m.name)).toEqual(['olya', 'andrii']);
+  });
+
+  // An unreadable list must not become «nobody is assignable»: the board is still writable and
+  // an unnamed assignee is a normal ticket, so the turn goes out with an empty list the prompt
+  // describes as unavailable rather than losing the whole ticket.
+  it('still files the ticket when Jira\u2019s assignable list could not be read', async () => {
+    jiraState.integration = integration;
+    jiraState.tokenPresent = true;
+    jiraLoadAssignable.mockResolvedValue([]);
+    jiraCreateIssue.mockResolvedValue({ key: 'KRM-217', summary: TICKET.title, issueId: '10503' });
+    managementChat.mockResolvedValue(reply([{ kind: 'jira.ticket.create', ticket: TICKET }]));
+
+    const store = useManagementChat();
+    await store.send('створи тікет у Jira', 'management-home');
+
+    const ask = managementChat.mock.calls[0]?.[0] as { context: { jira?: { assignees: string[]; canWrite: boolean } } };
+    expect(ask.context.jira?.assignees).toEqual([]);
+    expect(ask.context.jira?.canWrite).toBe(true);
+    expect(results(store.entries)[0]).toContain('Тікет KRM-217');
+  });
+
+  // The one refusal that survives: Jira itself does not know the name. It names who IS
+  // assignable, because a refusal that only states a negative leaves the operator no move.
+  it('refuses a name Jira does not know and lists who can be assigned instead', async () => {
+    jiraState.integration = integration;
+    jiraState.tokenPresent = true;
+    jiraState.assignable = [
+      { accountId: 'acc-maryna', displayName: 'Maryna Koval' },
+      { accountId: 'acc-olya', displayName: 'Olya Petrenko' },
+    ];
+    jiraAssignableUsers.mockResolvedValue([]);
+    managementChat.mockResolvedValue(
+      reply([{ kind: 'jira.ticket.create', ticket: TICKET, assignee: 'Хтось Невідомий' }]),
+    );
+
+    const store = useManagementChat();
+    await store.send('створи тікет у Jira на Когось', 'management-home');
+
+    expect(jiraCreateIssue).not.toHaveBeenCalled();
+    const line = results(store.entries)[0]!;
+    expect(line).toContain('Jira не знає виконавця «Хтось Невідомий»');
+    expect(line).toContain('Maryna Koval');
+    expect(line).toContain('Olya Petrenko');
+  });
 });
 
 // The requirement's second half: an assistant with open questions asks them AND files nothing,
@@ -349,11 +456,14 @@ describe('ticket.questions', () => {
 });
 
 // The context is what lets the model name an assignee and know the second board exists at all.
-// A turn that sent neither would have it guessing profile uuids and offering Jira blind.
+// A turn that sent neither would have it guessing profile uuids and offering Jira blind — and
+// each board carries its OWN people, because a Jira seat and a Kermanych account are not the
+// same thing.
 describe('the ticket context on the ask', () => {
-  it('carries the roster and the Jira board with every turn', async () => {
+  it('carries both rosters and the Jira board with every turn', async () => {
     jiraState.integration = { id: 'i1', siteUrl: 'https://acme.atlassian.net', projectKey: 'KRM', boardName: 'Kermanych board' };
     jiraState.tokenPresent = true;
+    jiraState.assignable = [{ accountId: 'acc-maryna', displayName: 'Maryna Koval' }];
     managementChat.mockResolvedValue(reply([]));
 
     const store = useManagementChat();
@@ -364,7 +474,12 @@ describe('the ticket context on the ask', () => {
       { name: 'olya', role: 'developer' },
       { name: 'andrii', role: 'owner' },
     ]);
-    expect(ask.context.jira).toEqual({ projectKey: 'KRM', boardName: 'Kermanych board', canWrite: true });
+    expect(ask.context.jira).toEqual({
+      projectKey: 'KRM',
+      boardName: 'Kermanych board',
+      canWrite: true,
+      assignees: ['Maryna Koval'],
+    });
   });
 
   it('omits the Jira board entirely when the workspace has none', async () => {

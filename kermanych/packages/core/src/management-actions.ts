@@ -322,6 +322,23 @@ export type ManagementJiraBoard = {
   boardName: string;
   // Whether this operator has a Jira token on this machine.
   canWrite: boolean;
+  // Who JIRA says may be assigned an issue on this project, by display name — Jira's own
+  // assignee picker, the same list the ticket dialog offers.
+  //
+  // Deliberately NOT `members`, and that distinction is the whole point of this field. A Jira
+  // assignee is an Atlassian account on that site; a `ManagementMember` is somebody who can
+  // sign into Kermanych. The two sets merely overlap, so naming a Jira assignee from the
+  // roster refuses exactly the people the operator can see in Jira — a designer with a Jira
+  // seat and no Kermanych account is assignable in Jira and absent from every roster.
+  //
+  // Names only, no `accountId`: the model is never given an opaque id it could invent, and
+  // the browser matches the name it chose back to an id against Jira's live list — the same
+  // shape as the roster, where the uuid never reaches the prompt either.
+  //
+  // Empty means the list could not be read this turn (no token on this machine, or Jira was
+  // unreachable), which the context block states rather than hides: an empty list read as
+  // «nobody is assignable» would be a refusal invented out of a network failure.
+  assignees: string[];
 };
 
 export type ManagementContext = {
@@ -339,9 +356,11 @@ export type ManagementContext = {
   // itself just wrote to it — and a stale copy is how it files a duplicate of R-004 or
   // updates a code that no longer means what it did.
   risks: ManagementRiskRow[];
-  // The workspace roster, for assigning a ticket. Re-sent every turn for the register's
-  // reason: membership changes, and a name the assistant remembers from turn one is a
-  // foreign-key error on turn nine.
+  // The workspace roster, for assigning a ticket on the NATIVE board — and only there.
+  // `tasks.assignee_id` is a profile uuid, so this is the set of people that board can name;
+  // a Jira issue is assigned from `jira.assignees` instead. Re-sent every turn for the
+  // register's reason: membership changes, and a name the assistant remembers from turn one
+  // is a foreign-key error on turn nine.
   members: ManagementMember[];
   // The mirrored Jira board, absent when the workspace has none. Absent means the assistant
   // may not offer Jira at all — which is also why this is context and not contract: an
