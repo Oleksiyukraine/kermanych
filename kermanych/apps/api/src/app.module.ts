@@ -23,9 +23,11 @@ import { SkillsService } from "./skills/skills.service";
 import { ManagementChatService } from "./management/management-chat.service";
 import { ReleaseNotesService } from "./management/release-notes.service";
 import { ModelsService } from "./models/models.service";
+import { JiraController } from "./http/jira.controller";
+import { JiraService } from "./jira/jira.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ModelsController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ModelsController, JiraController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -46,6 +48,10 @@ import { ModelsService } from "./models/models.service";
     // RegistryService, AuthService }. The supervisor never knows the mirror exists — it is
     // a pure `events$` subscriber, like EventsGateway.
     CloudSyncService,
+    // The Jira integration engine: per-user tokens (RegistryService), Jira HTTP under the
+    // acting user, mirror writes under their JWT (AuthService.cloudClient), and the launch
+    // path reusing SupervisorService.createSessionFromTask unchanged.
+    JiraService,
     // Global by design: the api binds 127.0.0.1 but was previously drivable by
     // anything on the machine, including GET /fs/list (arbitrary local directory
     // enumeration). Opt out per route with @Public(), never per module.
