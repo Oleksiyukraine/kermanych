@@ -4,7 +4,7 @@ import {
   triggerActionOptions,
   triggerAgentOptions,
   triggerMatches,
-  triggerSourceLabel,
+  triggerSourceLabelKey,
   triggerUsesRuleFile,
 } from '../src/lib/settings';
 
@@ -103,6 +103,6 @@ test('a short pattern matches substrings of unrelated words', () => {
 test('a source outside the union labels itself rather than rendering blank', () => {
   // Rows predating the DB constraint exist in the api's own tests (triggers.spec.ts keeps a
   // `reasoning` row). The list must name what it read instead of showing an empty cell.
-  expect(triggerSourceLabel('thinking')).toBe('розмірковування моделі');
-  expect(triggerSourceLabel('reasoning')).toBe('reasoning');
+  expect(triggerSourceLabelKey('thinking')).toBe('settings.logChannel.thinking');
+  expect(triggerSourceLabelKey('reasoning')).toBeUndefined();
 });

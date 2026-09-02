@@ -207,7 +207,7 @@
           {{ t(eventValueLabel(e.kind, e.toValue)) }}
         </span>
         <span class="rform__event-who">{{ memberName(e.actor) }}</span>
-        <span class="rform__event-at mono">{{ relativeTime(e.at, now) }}</span>
+        <span class="rform__event-at mono">{{ renderTime(t, relativeTime(e.at, now)) }}</span>
       </article>
     </div>
 
@@ -247,7 +247,7 @@ import RiskMatrix from './RiskMatrix.vue';
 import { useRisks } from 'stores/risks';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useNow } from '../../composables/useNow';
-import { relativeTime } from '../../lib/time';
+import { relativeTime, renderTime } from '../../lib/time';
 import {
   ESCALATION_EXPOSURE,
   RISK_CATEGORIES,

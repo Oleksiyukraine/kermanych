@@ -186,14 +186,12 @@ export function assignmentRows(
  * operator the project owns a text the repository actually supplies — and the repository
  * always wins the name.
  */
-export type AssignmentBadge = { kind: 'default' | 'project' | 'repo' | 'broken'; label: string };
+export type AssignmentBadge = { kind: 'default' | 'project' | 'repo' | 'broken' };
 
 export function assignmentBadge(skill: AssignedSkill): AssignmentBadge {
-  if (skill.broken) return { kind: 'broken', label: 'немає скіла' };
-  if (skill.shadowedByRepo) return { kind: 'repo', label: 'перекрито репо' };
-  return skill.source === 'default'
-    ? { kind: 'default', label: 'дефолт' }
-    : { kind: 'project', label: 'проєкт' };
+  if (skill.broken) return { kind: 'broken' };
+  if (skill.shadowedByRepo) return { kind: 'repo' };
+  return { kind: skill.source === 'default' ? 'default' : 'project' };
 }
 
 /**
@@ -217,11 +215,11 @@ export const ASSIGNED_BYTES_WARN = 8 * 1024;
  * That split is not cosmetic — it decides which actions are available and who compiles the
  * pattern.
  */
-export const TRIGGER_SOURCE_OPTIONS: readonly { value: TriggerSource; label: string }[] = [
-  { value: 'operator', label: 'слова оператора' },
-  { value: 'assistant', label: 'відповідь моделі' },
-  { value: 'thinking', label: 'розмірковування моделі' },
-  { value: 'tool', label: 'виклик інструмента' },
+export const TRIGGER_SOURCE_OPTIONS: readonly { value: TriggerSource; labelKey: string }[] = [
+  { value: 'operator', labelKey: 'settings.logChannel.operator' },
+  { value: 'assistant', labelKey: 'settings.logChannel.assistant' },
+  { value: 'thinking', labelKey: 'settings.logChannel.thinking' },
+  { value: 'tool', labelKey: 'settings.logChannel.tool' },
 ];
 
 /**
@@ -236,8 +234,8 @@ export const TRIGGER_SOURCE_OPTIONS: readonly { value: TriggerSource; label: str
  * `constructor`, and there is nothing here worth guarding with `Object.hasOwn` when the total
  * scan is the same four comparisons.
  */
-export function triggerSourceLabel(source: string): string {
-  return TRIGGER_SOURCE_OPTIONS.find((o) => o.value === source)?.label ?? source;
+export function triggerSourceLabelKey(source: string): string | undefined {
+  return TRIGGER_SOURCE_OPTIONS.find((o) => o.value === source)?.labelKey;
 }
 
 /**
@@ -265,9 +263,11 @@ export function triggerUsesRuleFile(source: string): boolean {
  * a check constraint (`project_triggers_agent_action_is_operator`), and this is what stops the
  * editor from offering an unsavable choice.
  */
-export function triggerActionOptions(source: TriggerSource): { value: 'skill' | 'agent'; label: string }[] {
-  const skill = { value: 'skill' as const, label: 'вкинути скіл' };
-  return source === 'operator' ? [skill, { value: 'agent' as const, label: 'запустити агента' }] : [skill];
+export function triggerActionOptions(source: TriggerSource): { value: 'skill' | 'agent'; labelKey: string }[] {
+  const skill = { value: 'skill' as const, labelKey: 'settings.sourceAction.skill' };
+  return source === 'operator'
+    ? [skill, { value: 'agent' as const, labelKey: 'settings.sourceAction.agent' }]
+    : [skill];
 }
 
 /**

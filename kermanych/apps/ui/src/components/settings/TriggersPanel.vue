@@ -34,7 +34,7 @@
           <div class="tg__head">
             <span class="tg__name">{{ t.label }}</span>
             <span class="tg__id mono">{{ t.id }}</span>
-            <span class="tg__badge">{{ triggerSourceLabel(t.source) }}</span>
+            <span class="tg__badge">{{ sourceLabel(t.source) }}</span>
             <!-- Only the deliberate choices are badged, and only where they are consumed. The
                  defaults — soft, once — are the ordinary case and a badge on every row would say
                  nothing; a stored `interrupt` on an OPERATOR row says nothing either, because
@@ -107,7 +107,7 @@
         <KSelect
           :model-value="draft.source"
           :label="translate('settings.triggers.sourceLabel')"
-          :options="TRIGGER_SOURCE_OPTIONS"
+          :options="sourceOptions"
           @update:model-value="onSource"
         />
 
@@ -229,7 +229,7 @@ import {
   triggerActionOptions,
   triggerAgentOptions,
   triggerMatches,
-  triggerSourceLabel,
+  triggerSourceLabelKey,
   triggerUsesRuleFile,
   TRIGGER_SOURCE_OPTIONS,
 } from '../../lib/settings';
@@ -297,7 +297,14 @@ function blankDraft(): Omit<ProjectTrigger, 'projectId' | 'pathGlobs'> {
 }
 const draft = reactive(blankDraft());
 
-const actionOptions = computed(() => triggerActionOptions(draft.source));
+const actionOptions = computed(() => triggerActionOptions(draft.source).map((o) => ({ value: o.value, label: translate(o.labelKey) })));
+// A stored source may predate the DB union; a known one resolves through the catalog, an
+// unknown legacy value shows itself rather than a blank cell.
+const sourceOptions = computed(() => TRIGGER_SOURCE_OPTIONS.map((o) => ({ value: o.value, label: translate(o.labelKey) })));
+function sourceLabel(source: string): string {
+  const key = triggerSourceLabelKey(source);
+  return key ? translate(key) : source;
+}
 const agentOptions = computed(() =>
   triggerAgentOptions(AGENTS).map((o) => ({ value: o.value, label: translate(o.labelKey) })),
 );

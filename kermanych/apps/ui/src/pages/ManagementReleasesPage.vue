@@ -61,7 +61,7 @@
             <span class="rel__row-range mono">{{ n.rangeFrom }} — {{ n.rangeTo }}</span>
           </span>
         </div>
-        <span class="rel__row-when mono">{{ relativeTime(n.createdAt, now) }}</span>
+        <span class="rel__row-when mono">{{ renderTime(t, relativeTime(n.createdAt, now)) }}</span>
       </li>
     </ol>
 
@@ -134,9 +134,9 @@
                controlled tag set — the same guarantee the assistant transcript relies on. -->
           <div class="k-log__markdown" v-html="renderMarkdown(current.bodyMd)"></div>
           <p class="rel__doc-audit mono">
-            {{ t('management.releases.auditGenerated') }} {{ memberName(current.createdBy) }} · {{ relativeTime(current.createdAt, now) }}
+            {{ t('management.releases.auditGenerated') }} {{ memberName(current.createdBy) }} · {{ renderTime(t, relativeTime(current.createdAt, now)) }}
             <template v-if="current.updatedAt !== current.createdAt">
-              · {{ t('management.releases.auditEdited') }} {{ memberName(current.updatedBy) }} · {{ relativeTime(current.updatedAt, now) }}
+              · {{ t('management.releases.auditEdited') }} {{ memberName(current.updatedBy) }} · {{ renderTime(t, relativeTime(current.updatedAt, now)) }}
             </template>
           </p>
         </div>
@@ -195,7 +195,7 @@ import { useReleaseNotes, type ReleaseNotesJob } from 'stores/release-notes';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
 import { renderMarkdown } from '../lib/markdown';
-import { relativeTime } from '../lib/time';
+import { relativeTime, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 
 const props = defineProps<{ workspaceId: string; workspaceName: string }>();

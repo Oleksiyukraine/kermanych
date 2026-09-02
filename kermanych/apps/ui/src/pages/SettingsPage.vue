@@ -576,11 +576,11 @@ import { EFFORT_OPTIONS } from '../lib/effort';
 import { useAuth } from 'stores/auth';
 import { api } from '../lib/api';
 import { theme, toggleTheme } from '../lib/theme';
-import { percent, planWindow } from '../lib/format';
-import { until } from '../lib/time';
+import { percent, planWindow, renderWindow } from '../lib/format';
+import { until, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
-import { isMoveRefusal, memberErrorText, MOVE_REFUSAL, NO_ROWS } from '../lib/cloud-errors';
+import { isMoveRefusal, memberErrorText, moveRefusalText, NO_ROWS } from '../lib/cloud-errors';
 import {
   buildEnvRows,
   changedFields,
@@ -813,7 +813,7 @@ function addCarryFile(): void {
 const defaultModelPickOptions = computed(() => modelOptions(store.models));
 const defaultEffortPickOptions = computed(() => {
   const allowed = effortOptions(store.models, draft.value?.defaultModel || undefined);
-  return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value));
+  return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value)).map((o) => ({ value: o.value, label: t(o.labelKey) }));
 });
 
 // ── ENV ─────────────────────────────────────────────────────────────────────
@@ -1071,7 +1071,7 @@ async function save(): Promise<void> {
         ? t('settings.workspace.saveRefused')
         : raw;
     } else if (draft.value && draft.value.workspaceId !== cloudRow.value?.workspaceId && isMoveRefusal(raw)) {
-      paneError.value = MOVE_REFUSAL;
+      paneError.value = moveRefusalText();
       // The write was refused, so nothing moved; re-read so the tree cannot keep
       // showing a membership the server has already taken away. That refetch also
       // removes the destination from `workspaceOptions` while the draft still
@@ -1246,9 +1246,9 @@ const planLines = computed(() =>
       (p.accounts > 1 ? t('settings.plan.accountsAvg', { count: p.accounts }) : ''),
     windows: p.windows.map((w) => ({
       id: w.id,
-      label: `${w.label} (${planWindow(w.id)})`,
+      label: `${w.label} (${renderWindow(t, planWindow(w.id))})`,
       percent: percent(w.usedPercent),
-      resets: w.resetsAt ? t('settings.plan.resetsIn', { time: until(w.resetsAt, planNow.value) }) : '',
+      resets: w.resetsAt ? t('settings.plan.resetsIn', { time: renderTime(t, until(w.resetsAt, planNow.value)) }) : '',
     })),
   })),
 );

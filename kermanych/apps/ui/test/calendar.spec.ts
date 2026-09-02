@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  WEEKDAY_LABELS,
+  WEEKDAY_KEYS,
   formatIsoDate,
   isoParts,
   monthGrid,
-  monthTitle,
+  monthNameKey,
   parseTypedDate,
   shiftDays,
   shiftMonths,
@@ -112,7 +112,7 @@ describe('shiftMonths', () => {
 
 describe('monthGrid', () => {
   it('is always six Monday-first weeks', () => {
-    expect(WEEKDAY_LABELS[0]).toBe('Пн');
+    expect(WEEKDAY_KEYS[0]).toBe('mon');
     const grid = monthGrid(2026, 9);
     expect(grid).toHaveLength(42);
     // 1 September 2026 is a Tuesday, so the row opens on 31 August.
@@ -136,8 +136,8 @@ describe('monthGrid', () => {
     expect(grid.some((c) => c.iso === '2028-02-29')).toBe(true);
   });
 
-  it('titles the month in the nominative', () => {
-    expect(monthTitle(2026, 9)).toBe('Вересень 2026');
-    expect(monthTitle(2026, 1)).toBe('Січень 2026');
+  it('names the month key in ladder order', () => {
+    expect(monthNameKey(9)).toBe('common.calendar.month.sep');
+    expect(monthNameKey(1)).toBe('common.calendar.month.jan');
   });
 });

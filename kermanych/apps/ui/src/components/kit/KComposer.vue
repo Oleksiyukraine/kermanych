@@ -73,7 +73,7 @@
         <KChipSelect
           v-if="effort"
           :model-value="effort"
-          :options="EFFORT_OPTIONS"
+          :options="effortChoices"
           icon="⚡"
           :title="t('kit.composer.effort')"
           :disabled="disabled"
@@ -121,6 +121,10 @@ import { modelOptions } from '../../lib/models';
 import { tokens, usageTokens, usd } from '../../lib/format';
 
 const { t } = useI18n();
+
+// The ladder's labels are catalog keys (lib/effort); map them through `t` in a computed so the
+// chip menu re-reads on a locale change instead of freezing the words at setup.
+const effortChoices = computed(() => EFFORT_OPTIONS.map((o) => ({ value: o.value, label: t(o.labelKey) })));
 
 // The composer atom: a mono textarea that grows with content up to a cap, plus a
 // v3 controls row — what this session is running as (model, reasoning effort, isolation),

@@ -71,7 +71,7 @@
         </div>
 
         <div class="k-date__week" aria-hidden="true">
-          <span v-for="w in WEEKDAY_LABELS" :key="w" class="k-date__wd">{{ w }}</span>
+          <span v-for="k in WEEKDAY_KEYS" :key="k" class="k-date__wd">{{ t('common.calendar.weekday.' + k) }}</span>
         </div>
 
         <div class="k-date__grid" role="grid">
@@ -119,11 +119,11 @@ let seq = 0;
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
-  WEEKDAY_LABELS,
+  WEEKDAY_KEYS,
   formatIsoDate,
   isoParts,
   monthGrid,
-  monthTitle,
+  monthNameKey,
   parseTypedDate,
   shiftDays,
   shiftMonths,
@@ -186,7 +186,7 @@ const today = computed(() => todayIso(props.nowMs ?? Date.now()));
 // piece of state — a separate «visible month» drifts out of step with the highlighted day.
 const view = computed(() => isoParts(activeIso.value) ?? isoParts(today.value)!);
 const cells = computed(() => monthGrid(view.value.year, view.value.month));
-const title = computed(() => monthTitle(view.value.year, view.value.month));
+const title = computed(() => t('common.calendar.monthTitle', { month: t(monthNameKey(view.value.month)), year: view.value.year }));
 
 let naturalH = 0;
 

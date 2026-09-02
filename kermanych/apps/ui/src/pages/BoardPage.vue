@@ -85,7 +85,7 @@
           :title="task.title"
           :branch="task.branch ?? ''"
           :project="projectName(task.projectId)"
-          :time="relativeTime(task.updatedAt, now)"
+          :time="renderTime(t, relativeTime(task.updatedAt, now))"
           :status="task.status"
           :assignee="resolveAssignee(task.assigneeId, membersOf(task.projectId))"
           @click="openEdit(task)"
@@ -263,7 +263,7 @@ import KAvatar from 'components/kit/KAvatar.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
 import { useDelayedTrue } from '../composables/useDelayedTrue';
-import { relativeTime } from '../lib/time';
+import { relativeTime, renderTime } from '../lib/time';
 import { EFFORT_OPTIONS } from '../lib/effort';
 import { modelOptions, effortOptions } from '../lib/models';
 import { handleOf, resolveAssignee } from '../lib/members';
@@ -819,7 +819,7 @@ const launchErrors = computed<Record<string, string>>(() => ({
   'task not found': t('board.launchError.notFound'),
   // tasks_guard's own two sentences, shared with every other surface that renders a refused
   // assignment so the wording cannot drift between them.
-  ...ASSIGNMENT_REFUSALS,
+  ...Object.fromEntries(Object.entries(ASSIGNMENT_REFUSALS).map(([raw, key]) => [raw, t(key)])),
   'task already claimed': t('board.launchError.claimed'),
   'task is already running': t('board.launchError.running'),
   'not signed in': t('board.launchError.notSignedIn'),
@@ -900,7 +900,7 @@ const modelPickOptions = computed(() => modelOptions(local.models));
 // «за замовчуванням» or an unknown alias keeps the full ladder. Labels stay ours (lib/effort).
 const effortPickOptions = computed(() => {
   const allowed = effortOptions(local.models, draftModel.value || undefined);
-  return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value));
+  return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value)).map((o) => ({ value: o.value, label: t(o.labelKey) }));
 });
 const PREFIX_OPTIONS = ['feature', 'fix', 'refactoring', 'chore'];
 const PLATFORM_OPTIONS = ['backend', 'web', 'mobile'];

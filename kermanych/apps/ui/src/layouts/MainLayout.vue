@@ -285,9 +285,9 @@ import { MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
 import { myBacklogTasks } from '../lib/tasks-view';
 import { theme, toggleTheme } from '../lib/theme';
-import { isMoveRefusal, MOVE_REFUSAL } from '../lib/cloud-errors';
-import { percent, planWindow } from '../lib/format';
-import { until } from '../lib/time';
+import { isMoveRefusal, moveRefusalText } from '../lib/cloud-errors';
+import { percent, planWindow, renderWindow } from '../lib/format';
+import { until, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
@@ -772,7 +772,7 @@ async function onDrop(workspaceId: string): Promise<void> {
     // errors): MOVE_REFUSAL is a 76-character sentence, and it is the one message a user
     // reads mid-gesture, with their attention on the pointer rather than on the corner of
     // the screen. notify's 4000 default is for confirmations, which are short.
-    store.notify(isMoveRefusal(raw) ? MOVE_REFUSAL : raw, 'error', 6000);
+    store.notify(isMoveRefusal(raw) ? moveRefusalText() : raw, 'error', 6000);
     // Nothing optimistic to undo — patch() throws before it touches projects.value. The
     // refetch is about the other direction: a refusal means the server's idea of this
     // tree differs from ours, and re-reading is how the tree stops lying. load() degrades
@@ -963,7 +963,7 @@ const planLines = computed(() =>
     provider: p.provider,
     windows: p.windows.map((w) => ({
       id: w.id,
-      short: planWindow(w.id),
+      short: renderWindow(t, planWindow(w.id)),
       percent: percent(w.usedPercent),
       used: w.usedPercent,
     })),
@@ -976,7 +976,7 @@ const planLines = computed(() =>
       ...p.windows.map(
         (w) =>
           `${w.label}: ${percent(w.usedPercent)}` +
-          (w.resetsAt ? t('common.nav.resetsIn', { time: until(w.resetsAt, planNow.value) }) : ''),
+          (w.resetsAt ? t('common.nav.resetsIn', { time: renderTime(t, until(w.resetsAt, planNow.value)) }) : ''),
       ),
     ].join(' · '),
   })),

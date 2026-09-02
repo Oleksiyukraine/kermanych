@@ -59,7 +59,7 @@
             :class="{ 'as__skill--broken': s.broken }"
           >
             <span class="as__skill-name mono">{{ s.name }}</span>
-            <span class="as__badge" :class="`as__badge--${s.badge.kind}`">{{ s.badge.label }}</span>
+            <span class="as__badge" :class="`as__badge--${s.badge.kind}`">{{ t('settings.skillStatus.' + s.badge.kind) }}</span>
             <!-- A dangling assignment: the row exists in the cloud and the launcher still
                  reads it, so it is shown with the one action that fixes it. -->
             <span v-if="s.broken" class="as__skill-note">{{ t('settings.agentSkills.brokenNote') }}</span>

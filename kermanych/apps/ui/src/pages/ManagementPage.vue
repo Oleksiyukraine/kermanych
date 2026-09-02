@@ -207,8 +207,8 @@ import { type KIconName } from 'components/kit/KIcon.vue';
 import KChatMessage from 'components/kit/KChatMessage.vue';
 import KHelperPicker from 'components/kit/KHelperPicker.vue';
 import { renderMarkdown } from '../lib/markdown';
-import { percent, planWindow } from '../lib/format';
-import { until } from '../lib/time';
+import { percent, planWindow, renderWindow } from '../lib/format';
+import { until, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
 
@@ -389,7 +389,7 @@ const planChip = computed(() => {
   );
   if (!tightest) return undefined;
   return {
-    short: planWindow(tightest.id),
+    short: renderWindow(t, planWindow(tightest.id)),
     percent: percent(tightest.usedPercent),
     // The detail the one-number chip drops, plus the sentence that explains why a
     // management chat shows a provider plan at all.
@@ -401,7 +401,7 @@ const planChip = computed(() => {
         ...p.windows.map(
           (w) =>
             `${w.label}: ${percent(w.usedPercent)}` +
-            (w.resetsAt ? ` — ${t('management.plan.resetsIn', { time: until(w.resetsAt, planNow.value) })}` : ''),
+            (w.resetsAt ? ` — ${t('management.plan.resetsIn', { time: renderTime(t, until(w.resetsAt, planNow.value)) })}` : ''),
         ),
       ]),
     ].join(' · '),

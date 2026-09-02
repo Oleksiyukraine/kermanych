@@ -140,7 +140,7 @@
 
         <template #cell-review="{ row }">
           <span :class="{ 'risk__stale': reviewOverdue(row, now) }">
-            {{ relativeTime(row.lastReviewedAt, now) }}
+            {{ renderTime(t, relativeTime(row.lastReviewedAt, now)) }}
           </span>
         </template>
 
@@ -207,7 +207,7 @@ import RiskEditor from 'components/risk/RiskEditor.vue';
 import { useRisks } from 'stores/risks';
 import { useProjects } from 'stores/projects';
 import { useNow } from '../composables/useNow';
-import { relativeTime } from '../lib/time';
+import { relativeTime, renderTime } from '../lib/time';
 import {
   EMPTY_FILTER,
   ESCALATION_EXPOSURE,

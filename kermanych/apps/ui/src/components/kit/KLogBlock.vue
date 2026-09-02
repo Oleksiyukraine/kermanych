@@ -49,7 +49,7 @@ import type { TranscriptEntry } from '@kermanych/core';
 import { localizeNotice } from '../../lib/i18n-coded';
 import { renderMarkdown } from '../../lib/markdown';
 import type { ExpandAllCommand } from '../../lib/expand-all';
-import { dur } from '../../lib/time';
+import { dur, renderTime } from '../../lib/time';
 import { tokens } from '../../lib/format';
 import KToolRow from './KToolRow.vue';
 
@@ -98,7 +98,7 @@ const chip = computed(() => {
   // the `роздуми` figure one press away describe the same quantity, so they must agree on
   // both the sub-second floor marker and the switch to minutes.
   // A zero or absent `ms` drops out entirely rather than claiming a measured span.
-  const msLabel = props.entry.ms ? dur(props.entry.ms) : '';
+  const msLabel = props.entry.ms ? renderTime(t, dur(props.entry.ms)) : '';
   const tok = props.entry.tokens;
   const tokLabel = tok === undefined ? '' : t('kit.logBlock.tokens', { count: tokens(tok) });
   // `думав` is the label, not a metric: the dot only ever separates two metrics,

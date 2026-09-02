@@ -8,7 +8,7 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '@kermanych/core';
-import { dur } from '../../lib/time';
+import { dur, renderTime } from '../../lib/time';
 import { useNow } from '../../composables/useNow';
 
 // The live lane: what the agent is doing right now, pinned between the plan lane and the
@@ -41,7 +41,7 @@ const live = computed(() =>
 // KPanel's `running`, so no banner could ever arrive to replace it.
 const silence = computed(() => {
   if (!live.value || !props.session.lastEventAt) return '';
-  return dur(Math.max(0, now.value - props.session.lastEventAt));
+  return renderTime(t, dur(Math.max(0, now.value - props.session.lastEventAt)));
 });
 </script>
 

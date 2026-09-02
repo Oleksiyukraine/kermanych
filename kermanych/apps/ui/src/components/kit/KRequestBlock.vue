@@ -56,7 +56,7 @@ import type { ChatBlock, GroupStat, ToolEntry } from '@kermanych/core';
 import KLogBlock from './KLogBlock.vue';
 import KToolRow from './KToolRow.vue';
 import type { ExpandAllCommand } from '../../lib/expand-all';
-import { dur } from '../../lib/time';
+import { dur, renderTime } from '../../lib/time';
 import { usd } from '../../lib/format';
 
 const props = defineProps<{ block: ChatBlock; sessionId: string; open: boolean; expandAll: ExpandAllCommand }>();
@@ -159,12 +159,12 @@ const clock = computed(() =>
 const summary = computed(() => {
   const s = props.block.summary;
   return [
-    dur(s.ms),
+    renderTime(t, dur(s.ms)),
     s.calls ? t('kit.requestBlock.calls', { count: s.calls }) : '',
     s.files ? t('kit.requestBlock.files', { count: s.files }) : '',
     // Reasoning under a second is latency, not a pause: `summary.thinkMs` sums even the
     // sub-threshold entries that render no chip, and they do not earn one of five slots.
-    s.thinkMs >= 1000 ? t('kit.requestBlock.think', { value: dur(s.thinkMs) }) : '',
+    s.thinkMs >= 1000 ? t('kit.requestBlock.think', { value: renderTime(t, dur(s.thinkMs)) }) : '',
     usd(s.cost),
   ].filter(Boolean).join(' · ');
 });

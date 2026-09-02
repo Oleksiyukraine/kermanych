@@ -51,7 +51,7 @@
               :key="card.id"
               :branch="''"
               :title="card.title"
-              :time="relativeTime(card.updatedAt, now)"
+              :time="renderTime(t, relativeTime(card.updatedAt, now))"
               :status="card.status"
               :status-line="card.description ?? ''"
               :model="card.model"
@@ -77,7 +77,7 @@
               :key="s.id"
               :branch="s.branch"
               :title="s.name"
-              :time="relativeTime(s.lastActivityAt, now)"
+              :time="renderTime(t, relativeTime(s.lastActivityAt, now))"
               :status="s.status"
               :status-line="activityOf(s) || statusWord(s)"
               :model="s.model"
@@ -681,7 +681,7 @@ import KSelect from 'components/kit/KSelect.vue';
 import { BRANCH_PREFIXES, PLATFORMS, type BranchPrefix, type Platform } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useNow } from '../composables/useNow';
-import { relativeTime } from '../lib/time';
+import { relativeTime, renderTime } from '../lib/time';
 import { tokens, usageTokens, usd } from '../lib/format';
 import { EFFORT_OPTIONS } from '../lib/effort';
 import { modelOptions, effortOptions } from '../lib/models';
@@ -1319,7 +1319,7 @@ const modelPickOptions = computed(() => modelOptions(store.models));
 // «за замовчуванням» or an unknown alias keeps the full ladder. Labels stay ours (lib/effort).
 const effortPickOptions = computed(() => {
   const allowed = effortOptions(store.models, draftModel.value || undefined);
-  return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value));
+  return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value)).map((o) => ({ value: o.value, label: t(o.labelKey) }));
 });
 const draftPlatform = ref<Platform | undefined>(undefined);
 const draftWorktree = ref(true);
