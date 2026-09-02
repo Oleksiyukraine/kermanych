@@ -1,13 +1,13 @@
 // apps/ui/src/stores/management-actions.ts
 // The decisions the management action executor makes that are worth making without a store:
-// which register row a model meant, which project it meant, and what to say when it asked
-// for something the Менеджмент surface cannot do. Split out of ./management-chat.ts for the
-// same reason ./transcript-update.ts is split out of the transcript store — the wiring needs
-// a pinia instance and a network, these rules need neither, and they are the part that can
-// be wrong.
+// which register row a model meant, which project or teammate it meant, and what to say when
+// it asked for something the Менеджмент surface cannot do. Split out of ./management-chat.ts
+// for the same reason ./transcript-update.ts is split out of the transcript store — the
+// wiring needs a pinia instance and a network, these rules need neither, and they are the
+// part that can be wrong.
 import { managementSection } from '@kermanych/core';
 import type { ManagementUnsupported } from '@kermanych/core';
-import type { WorkspaceRisk } from '@kermanych/cloud';
+import type { WorkspaceMember, WorkspaceRisk } from '@kermanych/cloud';
 import { globalTr } from '../boot/i18n';
 
 // The register code as a person writes it. `R-003`, `R-3` and `r3` are one row to everyone
@@ -47,6 +47,33 @@ export function findProjectByName<T extends { name: string }>(
     const n = p.name.trim().toLowerCase();
     return n.includes(wanted) || wanted.includes(n);
   });
+  return near.length === 1 ? near[0] : undefined;
+}
+
+// The teammate a ticket named, resolved to the roster row whose uuid the card actually
+// carries. The model is shown NAMES (`handleOf` — github handle, then display name, then the
+// raw id) and never `assignee_id`, for the reason it names a register code rather than a
+// uuid: a guessed uuid is either a foreign-key error or, worse, somebody else's queue.
+//
+// Three shapes match, because the operator types all three and the model relays what it was
+// typed: the handle as printed, the same handle in another case, and a first name out of a
+// display name («Оля» for «Оля Петренко»). An AMBIGUOUS fragment stays a miss on purpose —
+// with two Olyas, the honest answer is a question, not a coin flip.
+export function findMemberByName(
+  rows: readonly WorkspaceMember[],
+  name: string,
+): WorkspaceMember | undefined {
+  const wanted = name.trim().toLowerCase();
+  if (wanted === '') return undefined;
+  const names = (m: WorkspaceMember): string[] =>
+    [m.profile?.githubUsername, m.profile?.displayName, m.userId]
+      .filter((n): n is string => !!n)
+      .map((n) => n.toLowerCase());
+  const exact = rows.find((m) => names(m).includes(wanted));
+  if (exact) return exact;
+  // A word of a display name, or a display name the operator shortened. Whole words only:
+  // `includes` alone would match «Ол» against «Володимир».
+  const near = rows.filter((m) => names(m).some((n) => n.split(/[\s.@_-]+/).includes(wanted)));
   return near.length === 1 ? near[0] : undefined;
 }
 

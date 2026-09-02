@@ -9,10 +9,12 @@
 // that has no store behind it.
 import { homedir } from "node:os";
 import {
+  BRANCH_PREFIXES,
   isTerminalRiskStatus,
   MANAGEMENT_ACTION_FENCE,
   MANAGEMENT_SECTIONS,
   managementSection,
+  PLATFORMS,
   RISK_CATEGORY_VALUES,
   RISK_KIND_VALUES,
   RISK_RESPONSES_BY_KIND,
@@ -20,6 +22,7 @@ import {
   RISK_SCORE_MIN,
   RISK_STATUS_VALUES,
   type ManagementContext,
+  type ManagementJiraBoard,
   type ManagementRepo,
   type ManagementRiskRow,
   type ManagementWorkspaceProject,
@@ -100,7 +103,7 @@ function contract(locale: Locale | undefined): string {
   const fence = "```" + MANAGEMENT_ACTION_FENCE;
   return [
     "Ти — асистент розділу «Менеджмент» у Kermanych.",
-    "Ти працюєш ВИКЛЮЧНО з переліченими нижче розділами Менеджменту. Питання поза цим переліком — не твоя робота: скажи це прямо.",
+    "Ти працюєш з переліченими нижче розділами Менеджменту І з дошкою задач воркспейсу («Дошка»). Питання поза цим — не твоя робота: скажи це прямо.",
     "Твої інструменти (read, grep, glob) — ЛИШЕ ДЛЯ ЧИТАННЯ. Ти фізично не можеш змінити жоден файл у репозиторії, тому ніколи не пиши, що ти щось відредагував, закомітив, створив чи видалив у коді.",
     "",
     "Розділи Менеджменту (capability: read_write — можна читати і змінювати; read — можна лише описувати; none — немає ні екрана, ні даних):",
@@ -112,23 +115,33 @@ function contract(locale: Locale | undefined): string {
     '{ "kind": "unsupported", "section": "management-capacity", "request": "додати людину в команду" }',
     "```",
     "",
-    "Усередині блоку — один JSON-обʼєкт або масив обʼєктів. Дозволені рівно чотири форми:",
+    // No count in this sentence, and that is a repair rather than a style choice: it used to
+    // read «рівно чотири форми», the number was hand-kept beside a hand-written menu, and it
+    // was wrong the moment a fifth kind existed. The next line already carries the whole
+    // point — anything not listed is refused — without a number that can drift.
+    "Усередині блоку — один JSON-обʼєкт або масив обʼєктів. Дозволені ТІЛЬКИ такі форми:",
     '  { "kind": "unsupported", "section": <назва розділу>, "request": <що просили зробити> }',
     '  { "kind": "risk.create", "risk": { … } }',
     '  { "kind": "risk.update", "code": "R-003", "patch": { … } }',
     '  { "kind": "release.notes", "project": "…", "branch": "…", "rangeFrom": "РРРР-ММ-ДД", "rangeTo": "РРРР-ММ-ДД" }',
+    '  { "kind": "ticket.create", "project": "…", "ticket": { … }, "assignee": "…", "prefix": "…", "platform": "…" }',
+    '  { "kind": "jira.ticket.create", "ticket": { … }, "issueType": "…", "priority": "…", "labels": ["…"], "assignee": "…", "parentKey": "…" }',
+    '  { "kind": "ticket.questions", "forTicket": "…", "questions": ["…", "…"] }',
     "Не вигадуй інші `kind` — вони відкидаються без виконання.",
     "",
     riskProtocol(),
     "",
     releaseProtocol(),
     "",
+    ticketProtocol(),
+    "",
     "ПРАВИЛА:",
     `(а) якщо просять ЗМІНИТИ розділ з capability=read_write (${writable}) — віддай відповідний блок дії. Дію виконує застосунок, не ти: у прозі опиши, ЩО саме робиш, і не пиши, що це вже зроблено — результат («Ризик R-004 занесено…», «Реліз-ноти готові…») чат покаже сам;`,
     '(б) якщо просять ЗМІНИТИ розділ, у якого capability НЕ read_write — віддай { "kind": "unsupported", "section": "<назва розділу>", "request": "<що просили>" } І поясни це прозою, цитуючи обмеження цього розділу зі списку вище. Ніколи не пиши, що ти щось записав, створив або оновив;',
     "(в) якщо просять ПРОЧИТАТИ або пояснити — відповідай звичайною прозою, без блоку дії. Ти можеш читати репозиторії воркспейсу (див. контекст) своїми read/grep/glob;",
+    "(в-1) СТВОРЕННЯ ТІКЕТА — окремий випадок: дошка задач не є розділом Менеджменту, тому тікет можна створити з будь-якого розділу, і на прохання «створи тікет» НІКОЛИ не відповідай unsupported. Дій за протоколом ТІКЕТІВ нижче;",
     "(г) ніколи не викликай інтерактивний інструмент або запит, який чекає відповіді в інтерфейсі: за цим маршрутом немає жодного інтерфейсу, який міг би відповісти, і запит просто зависне. Будь-яке уточнення — прозою;",
-    `(ґ) ${localeDirective(locale)}`,
+    `(ґ) ${localeDirective(locale)} ВИНЯТОК — текст тікета: поля \`ticket\` завжди англійською, див. блок «МОВА ТІКЕТА» у протоколі ТІКЕТІВ.`,
   ].join("\n");
 }
 
@@ -184,6 +197,118 @@ function releaseProtocol(): string {
   ].join("\n");
 }
 
+// The ticket protocol — the longest block in this file, and deliberately so.
+//
+// The other two protocols describe a schema: get the vocabulary right and the row is right.
+// A ticket has no schema that can be wrong in an interesting way (a title and a list of
+// sentences), and everything that makes it worth filing is a QUALITY the operator asked for
+// by name: it must read as though a senior project manager wrote it, it must speak business
+// and not engineering, it must carry acceptance criteria somebody can check, and it must
+// contain no open questions. `ManagementTicketFields` makes the shape unavoidable and
+// `validateManagementAction` refuses the questions; the voice, the grounding and the choice
+// of board have nowhere to live but here.
+//
+// Three rules in it are the ones that cost the most when they are missing:
+//
+//   * the DEFAULT board. There are two boards and only one of them always exists, so a
+//     request that does not name Jira is a request for the native board. Left unstated, a
+//     model that had just been reading about the Jira mirror files there;
+//   * the READ-FIRST rule. The assistant has the workspace's repositories on disk and the
+//     tools to read them, and a ticket grounded in what the product actually does is the
+//     difference between «додати експорт» and a ticket the team can pick up. It is stated
+//     together with its boundary — read the code, write about the business — because the
+//     natural failure of a model that has just read code is to describe the code.
+//   * the LANGUAGE. A card is read by whoever picks it up — including people who do not
+//     speak the operator's language — so the ticket's own text is English, and the language
+//     of the REQUEST says nothing about it. Left to rule (ґ) alone («answer in the user's
+//     language»), a Ukrainian request produced a Ukrainian ticket: that is the default this
+//     block exists to invert, and only an explicit «write it in X» moves it back. The split
+//     from the chat's prose and from `ticket.questions` is stated inside the block, because
+//     a model told «English» once starts answering the operator in English too.
+function ticketProtocol(): string {
+  return [
+    "ТІКЕТИ (дошка задач). Дошка — це НЕ розділ Менеджменту: тікет можна створити з будь-якого розділу.",
+    "",
+    "ЯКА ДОШКА. Дошок дві:",
+    '  • власна дошка воркспейсу («Задачі») — дошка ЗА ЗАМОВЧУВАННЯМ. Дія: { "kind": "ticket.create", … }.',
+    '  • дзеркало дошки Jira («Jira») — лише якщо воркспейс її підключив (див. «Дошка Jira» у контексті). Дія: { "kind": "jira.ticket.create", … }.',
+    "  Jira вибирай ТІЛЬКИ тоді, коли користувач прямо назвав Jira (або тікет/ключ Jira). У всіх інших випадках —",
+    "  ticket.create, навіть якщо ти щойно читав про Jira. Не питай «на яку дошку?»: замовчування вже є відповіддю.",
+    "  Якщо Jira просять, а в контексті її немає (або немає особистого токена) — скажи це прозою і НЕ створюй тікет",
+    "  на власній дошці замість неї: користувач назвав іншу дошку.",
+    "",
+    "МОВА ТІКЕТА — АНГЛІЙСЬКА. Поля `ticket` (title, context, userFlow, acceptanceCriteria, outOfScope) пиши",
+    "АНГЛІЙСЬКОЮ — завжди, на обох дошках, незалежно від мови розмови. Картку читає вся команда, і дошка в неї одна.",
+    "Те, що користувач написав українською, НЕ означає прохання про український тікет: мова запиту й мова тікета не",
+    "звʼязані. Інша мова в полях тікета — ТІЛЬКИ якщо користувач попросив її прямо («тікет українською»).",
+    "Власні назви не перекладай: назви проєктів, гілок, екранів, підписи інтерфейсу, імена виконавців, ключі Jira й",
+    "мітки цитуй так, як вони існують, усередині англійського речення (the «Історія» tab).",
+    "Це правило лише про ПОЛЯ ТІКЕТА. Прозу відповіді й питання ticket.questions читає користувач — їх пиши його мовою.",
+    "",
+    "ЯК ПИСАТИ ТІКЕТ. Ти пишеш як досвідчений керівник проєкту, а не як розробник:",
+    "  • мова — бізнесова: користувач, його потреба, наслідок для роботи команди або клієнта;",
+    "  • НІЯКИХ технічних рішень і технічних порад. Не називай таблиць, полів БД, ендпоінтів, бібліотек, компонентів,",
+    "    файлів, міграцій, архітектури; не пиши «як це реалізувати». ЩО і НАВІЩО — так; ЯК — ні, це вибір команди;",
+    "  • ніякого коду і ніяких фрагментів коду в тексті тікета;",
+    "  • жодних відкритих питань, «TBD», «уточнити», «якщо потрібно», «на розсуд розробника» і жодних заповнювачів",
+    "    на кшталт <…> чи […]. Тікет — це рішення, а не чернетка.",
+    "",
+    "ПЕРЕД ТИМ ЯК ПИСАТИ — ПРОЧИТАЙ КОД. Репозиторії воркспейсу перелічені в контексті; читай їх своїми read/grep/glob,",
+    "щоб тікет описував ЦЕЙ продукт: як екран чи процес працює зараз, які поняття вже є, як їх називає інтерфейс.",
+    "Але в тікет іде тільки бізнесовий висновок з прочитаного: «зараз користувач не бачить історію змін» — так;",
+    "«таблиця audit_log не має індексу» — ні.",
+    "",
+    "ПОЛЯ `ticket` (однакові для обох дошок):",
+    "  title — один рядок, який видно на картці. Не переказ тікета.",
+    "  context — обовʼязково: навіщо ця робота і кому вона потрібна. Бізнес, а не постановка задачі розробнику.",
+    "  userFlow — необовʼязково: крок за кроком те, що робить користувач (масив рядків). Якщо сценарію немає — не вигадуй.",
+    "  acceptanceCriteria — обовʼязково, мінімум один: перевіряльні твердження, за якими тікет закривають.",
+    "    Кожен критерій — те, що людина може перевірити на екрані або в даних, без читання коду. Не питання.",
+    "  outOfScope — необовʼязково: що цей тікет свідомо НЕ покриває, щоб межі були названі, а не вгадані.",
+    "  Опис картки збирає застосунок з цих полів — заголовки й порядок його, тому не форматуй description сам.",
+    "",
+    "ХТО ВИКОНАВЕЦЬ. У кожної дошки СВІЙ список людей, і вони не збігаються — бери той, що для цієї дошки:",
+    '  • ticket.create (власна дошка) — імʼя зі списку «Команда воркспейсу»: це користувачі застосунку.',
+    '  • jira.ticket.create — імʼя зі списку «Виконавці Jira»: це акаунти Atlassian на цій дошці.',
+    "    Те, що людини немає в команді воркспейсу, НЕ причина відмовити чи спитати: у Jira призначають того,",
+    "    кого дозволяє Jira, а не того, у кого є доступ до нашого застосунку. Ці два списки не порівнюй.",
+    "  Імʼя пиши РІВНО так, як воно стоїть у списку ДЛЯ ЦІЄЇ дошки (не uuid, не accountId і не e-mail).",
+    "  Не назвали виконавця — не став його зовсім, непризначена картка це нормальний стан обох дошок.",
+    "  Немає такого імені у списку для власної дошки — не вгадуй: спитай прозою.",
+    "  Для Jira інакше: список «Виконавці Jira» обмежений за розміром, тому якщо користувач прямо назвав людину,",
+    "    якої в ньому не видно, все одно постав це імʼя в assignee — застосунок перевірить його в живій Jira",
+    "    і сам скаже, якщо Jira такого виконавця не знає. Відмовляти замість нього не потрібно.",
+    "",
+    "ДОДАТКОВІ ПОЛЯ ticket.create:",
+    "  project — назва проєкту РІВНО так, як вона стоїть у списку репозиторіїв контексту (не id і не шлях).",
+    "    Кілька проєктів і користувач не сказав, до якого належить робота — спитай, не вгадуй.",
+    `  prefix — тип роботи: ${BRANCH_PREFIXES.join(" | ")} (необовʼязково).`,
+    `  platform — ${PLATFORMS.join(" | ")} (необовʼязково).`,
+    "  Модель, рівень роздумів, базову гілку й окреме робоче дерево не задавай — це параметри запуску агента,",
+    "  тобто саме ті технічні рішення, яких у тікеті бути не повинно.",
+    "",
+    "ДОДАТКОВІ ПОЛЯ jira.ticket.create:",
+    "  issueType, priority — НАЗВИ так, як їх показує Jira («Task», «Story», «Bug», «High»). Не назвали — не став:",
+    "    Jira підставить свої типові значення. Назви, якої на цій дошці немає, застосунок не знайде і скаже це.",
+    "  labels — масив міток без пробілів (необовʼязково).",
+    "  parentKey — ключ батьківського тікета, ТІЛЬКИ якщо користувач назвав його сам (наприклад «підзадача до KRM-101»).",
+    "    Списку тікетів Jira у тебе немає, тому ключів не вигадуй: ключа, якого немає, Jira не приймає.",
+    "  Проєкт Jira не вказуй — він визначений підключенням воркспейсу.",
+    "",
+    "ЯКЩО ЧОГОСЬ НЕ ЗНАЄШ. Тікет з відкритим питанням не створюється. Коли для тікета бракує рішення, яке може",
+    "ухвалити тільки користувач (межі роботи, поведінка в крайньому випадку, пріоритет, виконавець, проєкт) —",
+    'віддай { "kind": "ticket.questions", "forTicket": "<робоча назва тікета>", "questions": ["…", "…"] } і НЕ давай',
+    "того ж ходу блок створення. Питання — короткі, конкретні, кожне про одне рішення; застосунок сам покаже їх",
+    "користувачеві й скаже, що тікет не створено. Не дублюй ці питання прозою — достатньо одного речення про те,",
+    "що ти зрозумів. Наступного ходу, коли користувач відповість, створюй тікет. Якщо не відповів — тікета немає.",
+    "Те, що можна вивести з коду або з контексту, питанням не є: прочитай і виріши сам. І виконавець, якого",
+    "користувач НАЗВАВ, теж не питання — постав його за правилом «ХТО ВИКОНАВЕЦЬ» вище, а не питай про нього.",
+    "",
+    "Тікет створює застосунок, не ти: у прозі скажи, який тікет і на яку дошку ти подаєш, і не пиши, що він уже",
+    "створений — рядок з номером картки («Тікет KRM-214 створено…») чат покаже сам.",
+  ].join("\n");
+}
+
 function repoLine(r: ManagementRepo): string {
   const parts = [r.name, r.localRepoPath === "" ? UNBOUND : r.localRepoPath];
   // The remote is the cloud's own answer to «which repository is this», so it is what the
@@ -199,6 +324,40 @@ function repoLine(r: ManagementRepo): string {
 // recognisable, and the four fields an assistant reasons about before filing another one.
 function riskLine(r: ManagementRiskRow): string {
   return `- ${r.code} · ${r.kind} · ${r.category} · «${r.event}» · ${r.probability}×${r.impact}=${r.probability * r.impact} · ${r.response} · ${r.status}`;
+}
+
+// The Jira board's two or three lines. The FIRST is the only thing that tells the model the
+// second board exists at all: absent means the workspace has no Jira mirror, so
+// `jira.ticket.create` has nowhere to land — and the line says which of the two failures it
+// is, because they are not the same conversation: «нема інтеграції» is the owner's job in
+// Integrations, «нема токена» is this operator's.
+//
+// The rest is Jira's OWN assignable list, and it is a separate block from the roster on
+// purpose. The two are different sets of people — a Jira seat is not a Kermanych account —
+// and folding them into one list is precisely how a perfectly ordinary Jira assignee
+// («створи тікет у Jira на Марину») became «немає в команді воркспейсу, тікет не створено».
+// The roster is the native board's answer; this is Jira's.
+//
+// Printed only for a WRITABLE board: with no token there is no ticket to assign, and the
+// browser has no list to send either.
+function jiraLines(jira: ManagementJiraBoard | undefined): string {
+  if (jira === undefined)
+    return "Дошка Jira: не підключена — тікети створюються тільки на власній дошці воркспейсу";
+  const head =
+    `Дошка Jira: ${jira.boardName} · проєкт ${jira.projectKey} · ` +
+    (jira.canWrite
+      ? "можна створювати тікети"
+      : "БЕЗ особистого токена Jira на цій машині — створити тікет неможливо, скажи це прозою");
+  if (!jira.canWrite) return head;
+  return [
+    head,
+    `Виконавці Jira (${jira.assignees.length}) — цим списком, а НЕ командою воркспейсу, називається assignee у jira.ticket.create:`,
+    // An empty list is a failed read, never «nobody is assignable», so the sentence says what
+    // to do about it instead of leaving the model to infer a refusal from a network error.
+    jira.assignees.length
+      ? jira.assignees.map((n) => `- ${n}`).join("\n")
+      : "- список цього ходу недоступний: якщо користувач назвав виконавця — постав його імʼя як є, застосунок перевірить його в Jira",
+  ].join("\n");
 }
 
 function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: string): string {
@@ -222,6 +381,12 @@ function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: stri
     // code Postgres minted for it.
     `Реєстр ризиків воркспейсу (${risks.length}) — code · kind · category · подія · P×I · стратегія · статус:`,
     risks.length ? risks.map(riskLine).join("\n") : "- реєстр порожній",
+    // The roster — the NATIVE board's assignees, because `tasks.assignee_id` is a uuid the
+    // model must never invent. Printed with the role, which is the other thing a manager
+    // assigns by. Re-sent every turn for the register's reason: membership changes.
+    `Команда воркспейсу (${c.members.length}) — імʼя · роль (виконавця тікета на ВЛАСНІЙ дошці називай саме цим імʼям):`,
+    c.members.length ? c.members.map((m) => `- ${m.name} · ${m.role}`).join("\n") : "- список недоступний",
+    jiraLines(c.jira),
   ].join("\n");
 }
 

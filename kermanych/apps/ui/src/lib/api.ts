@@ -22,7 +22,7 @@ import type {
   ApiErrorCode,
   ApiErrorParams,
 } from '@kermanych/core';
-import type { CloudProject } from '@kermanych/cloud';
+import type { CloudProject, JiraIntegration, JiraIssue } from '@kermanych/cloud';
 import { globalTr } from '../boot/i18n';
 import { localizeError } from './i18n-coded';
 
@@ -139,6 +139,15 @@ async function del(path: string): Promise<void> {
   if (!r.ok) throw await toError(r);
 }
 
+// A DELETE whose answer matters: the Jira worklog route replies with the refreshed issue,
+// the same way every other Jira write does, so the caller can upsert the moved time
+// counters without a second round trip.
+async function delJson<T>(path: string): Promise<T> {
+  const r = await fetch(BASE + path, { method: 'DELETE', headers: authHeaders(false) });
+  if (!r.ok) throw await toError(r);
+  return (await r.json()) as T;
+}
+
 async function patchJson<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(BASE + path, {
     method: 'PATCH',
@@ -160,6 +169,59 @@ export type DiffRow = {
 };
 export type DiffHunk = { header: string; rows: DiffRow[] };
 export type FileDiff = { hunks: DiffHunk[]; binary: boolean; truncated: boolean };
+
+// ── Jira (all proxied through the local api: Jira REST forbids browser CORS, and the
+// per-user token lives in this machine's registry, never in the browser) ────────────────
+export type JiraTokenStatus = { present: boolean; email?: string };
+export type JiraBoardOption = { id: number; name: string; type: string; projectKey?: string };
+export type JiraTransitionWire = {
+  id: string;
+  name: string;
+  to: { id: string; name: string; statusCategory: { key: string } };
+};
+export type JiraIssueDraftWire = {
+  summary?: string;
+  description?: string;
+  issueTypeId?: string;
+  priorityId?: string;
+  labels?: string[];
+  assigneeAccountId?: string | null;
+  originalEstimate?: string;
+  // YYYY-MM-DD, or '' to clear the date. `startDate` only where the site has a
+  // start-date field (JiraEditorOptions.startDateSupported).
+  startDate?: string;
+  dueDate?: string;
+  parentKey?: string;
+};
+export type JiraEditorOptions = {
+  issueTypes: { id: string; name: string; subtask: boolean }[];
+  priorities: { id: string; name: string }[];
+  startDateSupported: boolean;
+  // Who this machine's token is in Jira, and what Jira says it may do to worklogs in this
+  // project. An entry is «mine» when its authorAccountId matches `myAccountId`; Jira gates
+  // own and others' entries on separate permissions, so both halves travel.
+  myAccountId: string;
+  worklog: { editOwn: boolean; editAll: boolean; deleteOwn: boolean; deleteAll: boolean };
+};
+export type JiraAssignableUser = { accountId: string; displayName: string; avatar?: string };
+
+// Jira's «Log work» dialog on the wire. `started` is an ISO INSTANT (the picker's wall
+// time, converted through Date); omitted = now on a NEW entry, and required on an edit
+// (an omitted one would restamp the entry to now). `adjust` is Jira's own estimate
+// choice; omitted = its default «auto». `manual` means `reduceBy` when logging and
+// `increaseBy` when deleting — Jira's own asymmetry — and the update endpoint has no
+// relative form at all, so the edit form does not offer one.
+export type JiraWorklogAdjustWire =
+  | { mode: 'auto' }
+  | { mode: 'leave' }
+  | { mode: 'new'; value: string }
+  | { mode: 'manual'; value: string };
+export type JiraWorklogDraftWire = {
+  timeSpent: string;
+  started?: string;
+  comment?: string;
+  adjust?: JiraWorklogAdjustWire;
+};
 
 export const api = {
   // LOCAL project rows. Creation and deletion live in the cloud (see stores/projects.ts);
@@ -195,6 +257,104 @@ export const api = {
   // client cannot launch a task on somebody else's behalf.
   createSessionFromTask: (taskId: string, images?: ImageInput[]): Promise<Session> =>
     post<Session>('/sessions/from-task', { taskId, images }),
+
+  // ── Jira. The acting user comes from the guard's token; their Jira token from the
+  // machine's registry. Every write returns the refreshed mirror issue so the caller can
+  // upsert it without waiting for realtime.
+  jiraTokenStatus: (site: string): Promise<JiraTokenStatus> =>
+    get<JiraTokenStatus>(`/jira/token?site=${encodeURIComponent(site)}`),
+  jiraSetToken: (siteUrl: string, email: string, token: string): Promise<{ displayName: string }> =>
+    put<{ displayName: string }>('/jira/token', { siteUrl, email, token }),
+  jiraDeleteToken: (site: string): Promise<void> => del(`/jira/token?site=${encodeURIComponent(site)}`),
+
+  jiraBoards: (site: string): Promise<JiraBoardOption[]> =>
+    get<JiraBoardOption[]>(`/jira/boards?site=${encodeURIComponent(site)}`),
+  jiraConnect: (workspaceId: string, siteUrl: string, boardId: number): Promise<JiraIntegration> =>
+    post<JiraIntegration>('/jira/integrations', { workspaceId, siteUrl, boardId }),
+  jiraDisconnect: (workspaceId: string): Promise<void> => del(`/jira/integrations/${workspaceId}`),
+
+  jiraSync: (workspaceId: string, full = false): Promise<{ synced: boolean }> =>
+    post<{ synced: boolean }>(`/jira/sync/${workspaceId}`, { full }),
+
+  jiraTransitions: (workspaceId: string, key: string): Promise<JiraTransitionWire[]> =>
+    get<JiraTransitionWire[]>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/transitions`),
+  jiraTransition: (workspaceId: string, key: string, transitionId: string): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/transition`, { transitionId }),
+  jiraComment: (workspaceId: string, key: string, body: string): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/comments`, { body }),
+  jiraRefreshIssue: (workspaceId: string, key: string): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/refresh`, {}),
+  jiraLogWork: (workspaceId: string, key: string, draft: JiraWorklogDraftWire): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/worklogs`, draft),
+  jiraEditWorklog: (
+    workspaceId: string,
+    key: string,
+    worklogId: string,
+    draft: JiraWorklogDraftWire,
+  ): Promise<JiraIssue> =>
+    put<JiraIssue>(
+      `/jira/issues/${workspaceId}/${encodeURIComponent(key)}/worklogs/${encodeURIComponent(worklogId)}`,
+      draft,
+    ),
+  // The estimate adjustment rides in the query string: a DELETE body is the kind of thing
+  // intermediaries drop, and this is the shape the token route already uses.
+  jiraDeleteWorklog: (
+    workspaceId: string,
+    key: string,
+    worklogId: string,
+    adjust?: JiraWorklogAdjustWire,
+  ): Promise<JiraIssue> => {
+    const q = adjust
+      ? `?adjust=${adjust.mode}${'value' in adjust ? `&value=${encodeURIComponent(adjust.value)}` : ''}`
+      : '';
+    return delJson<JiraIssue>(
+      `/jira/issues/${workspaceId}/${encodeURIComponent(key)}/worklogs/${encodeURIComponent(worklogId)}${q}`,
+    );
+  },
+
+  jiraCreateIssue: (workspaceId: string, draft: JiraIssueDraftWire): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${workspaceId}`, draft),
+  jiraEditIssue: (workspaceId: string, key: string, draft: JiraIssueDraftWire): Promise<JiraIssue> =>
+    put<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}`, draft),
+  jiraDeleteIssue: (workspaceId: string, key: string): Promise<void> =>
+    del(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}`),
+
+  jiraEditorOptions: (workspaceId: string): Promise<JiraEditorOptions> =>
+    get<JiraEditorOptions>(`/jira/editor-options/${workspaceId}`),
+  jiraAssignableUsers: (workspaceId: string, q: string): Promise<JiraAssignableUser[]> =>
+    get<JiraAssignableUser[]>(`/jira/assignable/${workspaceId}?q=${encodeURIComponent(q)}`),
+
+  jiraUploadAttachment: (
+    workspaceId: string,
+    key: string,
+    filename: string,
+    data: string,
+    mimeType: string,
+  ): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/attachments`, { filename, data, mimeType }),
+
+  // A fetch, not an <a href>: the proxy route is behind the same bearer guard as
+  // everything else, so the bytes come back as a Blob the caller turns into an object
+  // URL for the actual save.
+  jiraDownloadAttachment: async (workspaceId: string, attachmentId: string): Promise<Blob> => {
+    const r = await fetch(`${BASE}/jira/attachments/${workspaceId}/${attachmentId}`, {
+      headers: authHeaders(false),
+    });
+    if (!r.ok) throw await toError(r);
+    return r.blob();
+  },
+
+  jiraLaunch: (
+    workspaceId: string,
+    key: string,
+    projectId: string,
+    transitionId?: string,
+    images?: ImageInput[],
+  ): Promise<{ session: Session; transitionError?: string }> =>
+    post<{ session: Session; transitionError?: string }>(
+      `/jira/issues/${workspaceId}/${encodeURIComponent(key)}/launch`,
+      { projectId, transitionId, images },
+    ),
 
   // How many status pushes THIS machine still owes the cloud. Only the local process can
   // see that, so the board polls it (see the api controller for why it is not an event).

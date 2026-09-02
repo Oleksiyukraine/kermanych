@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { WorkspaceRisk } from '@kermanych/cloud';
-import { findProjectByName, findRiskByCode, refusalText } from '../src/stores/management-actions';
+import type { WorkspaceMember, WorkspaceRisk } from '@kermanych/cloud';
+import {
+  findMemberByName,
+  findProjectByName,
+  findRiskByCode,
+  refusalText,
+} from '../src/stores/management-actions';
 
 function risk(code: string): WorkspaceRisk {
   return {
@@ -110,5 +115,54 @@ describe('findProjectByName', () => {
     expect(findProjectByName(rows, 'Бета')).toBeUndefined();
     expect(findProjectByName(rows, '   ')).toBeUndefined();
     expect(findProjectByName([], 'Kermanych UI')).toBeUndefined();
+  });
+});
+
+// The assignee a ticket named, resolved to the uuid the card carries. The model is shown the
+// same names the app renders (`handleOf`) and never `assignee_id`, so this match is the only
+// thing standing between «створи тікет на Олю» and a card in nobody's — or somebody else's —
+// queue.
+describe('findMemberByName', () => {
+  function member(userId: string, profile?: { githubUsername?: string; displayName?: string }): WorkspaceMember {
+    return {
+      workspaceId: 'w1',
+      userId,
+      role: 'developer',
+      addedAt: '2026-08-30T00:00:00.000Z',
+      ...(profile ? { profile: { id: userId, ...profile } } : {}),
+    };
+  }
+
+  const rows = [
+    member('u1', { githubUsername: 'olya', displayName: 'Оля Петренко' }),
+    member('u2', { githubUsername: 'andrii', displayName: 'Андрій Чесноков' }),
+    // The roster row whose profile the caller could not read: `handleOf` falls back to the
+    // raw uuid, so that uuid is the name the assistant was shown and must resolve.
+    member('u3'),
+  ];
+
+  it('matches the handle the prompt printed, in any casing', () => {
+    expect(findMemberByName(rows, 'olya')?.userId).toBe('u1');
+    expect(findMemberByName(rows, '  ANDRII ')?.userId).toBe('u2');
+    expect(findMemberByName(rows, 'Оля Петренко')?.userId).toBe('u1');
+    expect(findMemberByName(rows, 'u3')?.userId).toBe('u3');
+  });
+
+  // The operator says «на Олю», not «на Оля Петренко», and the model relays what it was told.
+  it('matches one word of a display name', () => {
+    expect(findMemberByName(rows, 'Оля')?.userId).toBe('u1');
+    expect(findMemberByName(rows, 'Чесноков')?.userId).toBe('u2');
+  });
+
+  // The one that matters: an ambiguous or absent name must stay a miss, because the executor
+  // turns a miss into a question and a wrong hit into somebody else's assignment.
+  it('refuses to pick between two candidates and never guesses', () => {
+    const twoOlyas = [...rows, member('u4', { displayName: 'Оля Коваль' })];
+    expect(findMemberByName(twoOlyas, 'Оля')).toBeUndefined();
+    expect(findMemberByName(rows, 'Марія')).toBeUndefined();
+    // A prefix is not a name: «Ол» must not reach «olya».
+    expect(findMemberByName(rows, 'Ол')).toBeUndefined();
+    expect(findMemberByName(rows, '   ')).toBeUndefined();
+    expect(findMemberByName([], 'olya')).toBeUndefined();
   });
 });

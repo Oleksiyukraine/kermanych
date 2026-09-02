@@ -34,12 +34,17 @@
 // section can only be answered with `unsupported`, and its refusal quotes the section table.
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import { findProjectByName, findRiskByCode, refusalText } from './management-actions';
+import { findMemberByName, findProjectByName, findRiskByCode, refusalText } from './management-actions';
+import { renderTicketDescription } from '@kermanych/core';
 import type {
   ManagementAction,
   ManagementChatAsk,
+  ManagementJiraBoard,
+  ManagementJiraTicketCreate,
+  ManagementMember,
   ManagementReleaseNotes,
   ManagementRiskRow,
+  ManagementTicketCreate,
   ManagementWorkspaceProject,
   Usage,
 } from '@kermanych/core';
@@ -47,6 +52,10 @@ import { globalTr } from '../boot/i18n';
 import { localizeNotice, localizeRejection } from '../lib/i18n-coded';
 import { locale } from '../lib/locale';
 import { api } from '../lib/api';
+import type { JiraIssueDraftWire } from '../lib/api';
+import { handleOf } from '../lib/members';
+import { useBoard } from './board';
+import { useJira } from './jira';
 import { useOrchestrator } from './orchestrator';
 import { useProjects } from './projects';
 import { useReleaseNotes } from './release-notes';
@@ -92,6 +101,12 @@ export const useManagementChat = defineStore('management-chat', () => {
   // The note store the release action lands in — and the same store the Release Notes screen
   // renders, so a note the assistant generated is in that list without a refetch.
   const releaseNotes = useReleaseNotes();
+  // The board the native ticket lands on — and the same store «Дошка» renders, so a card the
+  // assistant filed is on that screen without a refetch.
+  const board = useBoard();
+  // The Jira mirror: read for whether the second board exists and may be written, and
+  // upserted with the issue the api creates so the Jira view shows it before the next sync.
+  const jira = useJira();
 
   // Keyed by workspace id, because the conversation id is `management:<workspaceId>`: picking
   // another workspace in the sidebar switches the conversation the api talks to, so it has to
@@ -200,6 +215,216 @@ export const useManagementChat = defineStore('management-chat', () => {
     );
   }
 
+  // The roster as the assistant is shown it, and the list `findMemberByName` resolves an
+  // assignee against one moment later. Read from the SAME store the Risk Registry screen
+  // renders its owner pickers from, so the names in the prompt are the names on screen.
+  function memberDigest(workspaceId: string): ManagementMember[] {
+    return (projects.members[workspaceId] ?? []).map((m) => ({ name: handleOf(m), role: m.role }));
+  }
+
+  // The workspace's Jira board, or nothing — the only thing that tells the model the second
+  // board exists. `canWrite` is the token on THIS machine: a member who can SEE the mirror
+  // but has no personal token cannot create anything in Jira, because every Jira write is
+  // signed with the acting user's own credentials, and an assistant that offered a ticket
+  // there would be promising something the api refuses one round trip later.
+  //
+  // `assignees` is Jira's OWN list and is what makes a Jira ticket assignable at all. Without
+  // it the only names in the prompt were the workspace roster, so the assistant refused every
+  // Jira assignee who has no Kermanych account — which is most of them, and exactly the
+  // people the operator sees in Jira's own picker when they file the same ticket by hand.
+  // Fetched by `loadAssignable`, which degrades to an empty list; `jiraLines` in the prompt
+  // says so rather than reading empty as «nobody».
+  async function jiraDigest(workspaceId: string): Promise<ManagementJiraBoard | undefined> {
+    const row = jira.integration;
+    if (!row) return undefined;
+    return {
+      projectKey: row.projectKey,
+      boardName: row.boardName,
+      canWrite: jira.tokenPresent,
+      assignees: (await jira.loadAssignable(workspaceId)).map((u) => u.displayName),
+    };
+  }
+
+  // The assignee a ticket named, resolved to the uuid the row carries — or a refusal.
+  //
+  // A named-but-unresolvable assignee refuses the whole ticket rather than filing it
+  // unassigned, and that is the deliberate half: «створи тікет на Олю» has exactly one right
+  // outcome, and a card that silently lands in nobody's queue is the one failure the operator
+  // would not notice. Not naming an assignee is different and perfectly fine — an unassigned
+  // card is the board's normal state.
+  function resolveAssignee(workspaceId: string, name: string | undefined): string | undefined | { error: string } {
+    if (name === undefined) return undefined;
+    const roster = projects.members[workspaceId] ?? [];
+    const member = findMemberByName(roster, name);
+    if (member) return member.userId;
+    const known = roster.map(handleOf).join(', ');
+    return {
+      error:
+        `У команді цього воркспейсу немає «${name}» — тікет не створено.` + (known ? ` Є: ${known}.` : ''),
+    };
+  }
+
+  // One card on the workspace's own board — the DEFAULT board, and a plain `tasks` insert
+  // under the operator's own JWT, exactly like the board's own «Нова задача» form. `board`
+  // is the same store BoardPage renders, so a ticket filed here is on «Дошка» without a
+  // refetch.
+  //
+  // The description is NOT the model's prose: `renderTicketDescription` builds it from the
+  // five validated slots, so every ticket from this chat has the same headings in the same
+  // order whichever turn produced it.
+  async function createBoardTicket(workspaceId: string, action: ManagementTicketCreate): Promise<void> {
+    const rows = projects.projects.filter((p) => p.workspaceId === workspaceId);
+    const project = findProjectByName(rows, action.project);
+    if (!project) {
+      const known = rows.map((p) => p.name).join(', ');
+      result(
+        workspaceId,
+        'warn',
+        `У цьому воркспейсі немає проєкту «${action.project}» — тікет не створено.` + (known ? ` Є: ${known}.` : ''),
+      );
+      return;
+    }
+    const assignee = resolveAssignee(workspaceId, action.assignee);
+    if (assignee !== undefined && typeof assignee !== 'string') {
+      result(workspaceId, 'warn', assignee.error);
+      return;
+    }
+    // `createTask` reports its own failures through a toast and answers `undefined`; it never
+    // throws. The transcript still has to say the ticket did not land, because the operator
+    // asked for it here.
+    const created = await board.createTask({
+      projectId: project.id,
+      title: action.ticket.title,
+      description: renderTicketDescription(action.ticket),
+      ...(assignee ? { assigneeId: assignee } : {}),
+      ...(action.prefix ? { prefix: action.prefix } : {}),
+      ...(action.platform ? { platform: action.platform } : {}),
+    });
+    if (!created) {
+      result(workspaceId, 'error', `Не вдалося створити тікет «${action.ticket.title}» — подробиці в повідомленні.`);
+      return;
+    }
+    const who = assignee ? `, виконавець ${action.assignee}` : ', без виконавця';
+    result(
+      workspaceId,
+      'info',
+      `Тікет «${created.title}» створено на дошці воркспейсу · проєкт ${project.name}${who}. Картка вже в колонці «Беклог».`,
+    );
+  }
+
+  // One issue on the mirrored Jira board. Unlike every other action here this does NOT write
+  // through Supabase: the Jira token lives in this machine's registry and never reaches the
+  // browser, so the write goes out through the local api — the same route
+  // `JiraIssueEditor.vue` takes, followed by the same `jira.upsert` so the card is on the
+  // Jira view without waiting for the next 30-second sync.
+  //
+  // Both prerequisites are checked here rather than trusted from the prompt. The model is
+  // TOLD whether the board exists and whether it is writable (contextBlock prints both), but
+  // a turn can be answered from a conversation that started before the integration was
+  // removed, and «I created it» must never be said about a call that could not be signed.
+  async function createJiraTicket(workspaceId: string, action: ManagementJiraTicketCreate): Promise<void> {
+    const row = jira.integration;
+    if (!row) {
+      result(
+        workspaceId,
+        'warn',
+        'До цього воркспейсу не підключено дошку Jira — тікет не створено. Підключити її може власник воркспейсу в розділі Integrations.',
+      );
+      return;
+    }
+    if (!jira.tokenPresent) {
+      result(
+        workspaceId,
+        'warn',
+        'Немає особистого токена Jira на цій машині — тікет у Jira не створено. Додайте токен у розділі Integrations: кожен запис у Jira підписується вашим власним доступом.',
+      );
+      return;
+    }
+    try {
+      // The names the model was allowed to state, turned into the ids Jira's own API wants.
+      // `jira_issues` mirrors only the display name of a type and a priority, so the ids come
+      // from the live editor options — fetched only when the model actually named one, because
+      // this is two Jira calls and an unnamed type simply lets the project's default apply.
+      const draft: JiraIssueDraftWire = {
+        summary: action.ticket.title,
+        description: renderTicketDescription(action.ticket),
+        ...(action.labels ? { labels: action.labels } : {}),
+        ...(action.parentKey ? { parentKey: action.parentKey } : {}),
+      };
+      if (action.issueType !== undefined || action.priority !== undefined) {
+        const options = await api.jiraEditorOptions(workspaceId);
+        if (action.issueType !== undefined) {
+          const type = options.issueTypes.find((t) => t.name.toLowerCase() === action.issueType?.toLowerCase());
+          if (!type) {
+            result(
+              workspaceId,
+              'warn',
+              `На дошці Jira немає типу «${action.issueType}» — тікет не створено. Є: ${options.issueTypes.map((t) => t.name).join(', ')}.`,
+            );
+            return;
+          }
+          draft.issueTypeId = type.id;
+        }
+        if (action.priority !== undefined) {
+          const priority = options.priorities.find((p) => p.name.toLowerCase() === action.priority?.toLowerCase());
+          if (!priority) {
+            result(
+              workspaceId,
+              'warn',
+              `На цій дошці Jira немає пріоритету «${action.priority}» — тікет не створено. Є: ${options.priorities.map((p) => p.name).join(', ')}.`,
+            );
+            return;
+          }
+          draft.priorityId = priority.id;
+        }
+      }
+      // A Jira assignee is an ATLASSIAN account, not a Kermanych member, so the workspace
+      // roster has no say here at all: Jira itself is asked who may be assigned on this
+      // project, which is the same list the ticket dialog's picker shows. A Jira seat with no
+      // Kermanych account is a perfectly ordinary assignee and must resolve.
+      //
+      // The live query rather than `jira.assignable`: the cached list is capped by Jira's page
+      // size, so a large site can hold assignable people the prompt never printed, and a name
+      // the operator gave explicitly must still be resolvable. Same rule as the native board
+      // for the ONE case that stays a refusal — a name Jira itself does not know refuses the
+      // ticket instead of filing it into nobody's queue.
+      if (action.assignee !== undefined) {
+        const candidates = await api.jiraAssignableUsers(workspaceId, action.assignee);
+        const wanted = action.assignee.toLowerCase();
+        const user =
+          candidates.find((u) => u.displayName.toLowerCase() === wanted) ??
+          (candidates.length === 1 ? candidates[0] : undefined);
+        if (!user) {
+          // Jira's search matched nothing, so the near-misses are no help: name who IS
+          // assignable instead, from the list already in hand. Without it the refusal states
+          // a negative and leaves the operator with no next move.
+          const near = candidates.map((u) => u.displayName);
+          const all = near.length ? near : jira.assignable.map((u) => u.displayName);
+          const known = all.join(', ');
+          result(
+            workspaceId,
+            'warn',
+            `Jira не знає виконавця «${action.assignee}» на цій дошці — тікет не створено.` +
+              (known ? ` Кому можна призначити: ${known}.` : ''),
+          );
+          return;
+        }
+        draft.assigneeAccountId = user.accountId;
+      }
+      const issue = await api.jiraCreateIssue(workspaceId, draft);
+      jira.upsert(issue);
+      result(
+        workspaceId,
+        'info',
+        `Тікет ${issue.key} «${issue.summary}» створено в Jira · ${row.boardName}. Він уже на вкладці «Jira» дошки.`,
+      );
+    } catch (e) {
+      // Verbatim: a dead token, a field the Jira project made mandatory and an unreachable
+      // site are three different problems with three different fixes.
+      result(workspaceId, 'error', `Не вдалося створити тікет у Jira: ${errorText(e)}`);
+    }
+  }
+
   // One validated action -> one result line. Never throws: an action that fails must not
   // swallow the actions after it, and a batch where the second is refused still has to
   // report the others.
@@ -250,6 +475,29 @@ export const useManagementChat = defineStore('management-chat', () => {
       startReleaseNotes(workspaceId, action);
       return;
     }
+    if (action.kind === 'ticket.create') {
+      await createBoardTicket(workspaceId, action);
+      return;
+    }
+    if (action.kind === 'jira.ticket.create') {
+      await createJiraTicket(workspaceId, action);
+      return;
+    }
+    // Nothing was written, and that IS the outcome: the assistant needs a decision only the
+    // operator can make, so the ticket stays unfiled until the next turn answers. Stated in
+    // the app's own voice and numbered, because a question the operator reads past is a
+    // ticket they will keep waiting for. `warn`, not `info` — this is work that did not
+    // happen.
+    if (action.kind === 'ticket.questions') {
+      result(
+        workspaceId,
+        'warn',
+        `Тікет «${action.forTicket}» не створено — потрібні відповіді: ` +
+          action.questions.map((q, i) => `${i + 1}) ${q}`).join(' ') +
+          ' Відповідайте тут — тікет буде створено після цього.',
+      );
+      return;
+    }
     result(workspaceId, 'warn', refusalText(action));
   }
 
@@ -275,6 +523,29 @@ export const useManagementChat = defineStore('management-chat', () => {
       // IS the local copy — `useRisks().create/save` upsert into it — and refetching every
       // turn would flash the Risk Registry screen's loading state on each message.
       if (!risks.byWorkspace[workspaceId]) await risks.load(workspaceId);
+      // The two rosters and the Jira board are what a TICKET needs and nothing else on this
+      // surface does, so they are fetched here on the same once-per-workspace terms as the
+      // register, and each is cached by its own store. `probe` answers whether this machine
+      // holds a Jira token, which decides whether the assistant may offer the Jira board at
+      // all; `jiraDigest` then reads Jira's assignable users through it, which is the one
+      // genuine third-party call on this path — spent once per conversation, and only for a
+      // board this operator can actually write to.
+      //
+      // Sequential rather than parallel with the register on purpose: three requests fired at
+      // one Supabase project on the first keystroke of a conversation buys nothing a person
+      // can perceive, and the register is the one a majority of turns actually reads.
+      // `loadMembers` THROWS on a cloud failure — the membership screen wants to know — while
+      // this turn does not: an unreachable roster costs the assistant the ability to assign a
+      // ticket, not the ability to answer. Swallowed, and the context block then prints
+      // «список недоступний», which is the honest sentence for it.
+      if (!projects.members[workspaceId])
+        try {
+          await projects.loadMembers(workspaceId);
+        } catch {
+          /* no roster this turn */
+        }
+      if (jira.integration === undefined) await jira.probe(workspaceId);
+      const jiraBoard = await jiraDigest(workspaceId);
       const ask: ManagementChatAsk = {
         conversationId: conversationId(workspaceId),
         workspaceId,
@@ -284,6 +555,8 @@ export const useManagementChat = defineStore('management-chat', () => {
           workspaceName: projects.workspaceById.get(workspaceId)?.name ?? '',
           section,
           risks: riskDigest(workspaceId),
+          members: memberDigest(workspaceId),
+          ...(jiraBoard ? { jira: jiraBoard } : {}),
         },
         // The model is told to answer in the operator's active locale (api rule ґ); the
         // prompt body stays Ukrainian.

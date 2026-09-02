@@ -117,6 +117,42 @@ could not be published because its project exists only on this machine; it stays
 the list under the note «Лише на цій машині: проєкт цих задач ще не у хмарі, тому
 команда їх не бачить».
 
+### Jira
+
+A workspace can mirror **one Jira Cloud board** onto «Дошка». The owner connects it
+in **Менеджмент → Integrations** (site → personal API token → board picker); after
+that the board page grows a «Задачі | Jira» switcher, and the «Jira» view reproduces
+the board's own columns, tickets, labels, comments, worklogs and attachment lists.
+
+- **Tokens are personal and local.** Every member who wants to *act* (drag a ticket
+  between columns, comment, log work, create/edit/delete tickets, upload files) adds their own
+  Atlassian API token on the Integrations tab; it is stored in this machine's
+  registry SQLite and never reaches the cloud. Actions land in Jira under that
+  member's own account. A member without a token gets a read-only mirror.
+- **Jira is the source of truth.** The mirror lives in Supabase behind workspace
+  membership; whoever has the Jira view open polls Jira every ~30 s (a shared lease
+  keeps N open boards to one poller), and your own actions are written to Jira
+  immediately and reflected back at once.
+  «Синхронізувати» in the Jira view's toolbar forces that poll now: it skips the
+  shared lease and runs a full sweep, so tickets closed or moved in Jira — and any
+  change to the board's columns — land immediately instead of at the next tick.
+- **Work is logged where it is done.** The ticket dialog's «Ворклоги» tab reproduces
+  Jira's own «Log work»: time spent in Jira's spelling («3h 20m»), when it started,
+  an optional description, and what the entry does to the remaining estimate
+  (subtract automatically, leave alone, set to, reduce by). The worklog is written to
+  Jira under the acting member's own account — so it carries their name there — and
+  the ticket's «Витрачено»/«Залишилось» move with it. An existing entry can be
+  corrected or removed from the same list, with the estimate question Jira asks in
+  each case; the «Редагувати»/«Видалити» controls appear only on the entries Jira
+  says this member may touch (its own edit-own vs edit-all worklog permissions).
+- **Tickets launch like tasks.** «Запустити» on a ticket asks which Kermanych
+  project (repo) to run in — pre-selected from the sidebar — and which Jira status
+  to move the ticket to (skipped when it is already in an In-Progress-category
+  status). The session runs through the ordinary pipeline on a hidden shadow task;
+  the ticket card wears the agent's live status chip. When the session is merged,
+  Kermanych asks where the ticket should go next and applies that transition in
+  Jira.
+
 ### Why the backend is in the repository
 
 The project URL and the publishable key are **public application configuration**,
@@ -422,11 +458,12 @@ field docked to the foot of the page.
 
 That field is a real assistant, and it is deliberately narrow:
 
-- **It only touches Менеджмент.** Its tools are the read-only subset
-  (`read`, `grep`, `glob`) — it can look at your repositories but it cannot edit a
-  file, create a branch or start a session. The sections it can WRITE are the ones the
-  section table marks `read_write`: the Risk Registry and Release Notes. Everywhere else
-  it reads, explains and refuses, and says which it is doing.
+- **It only reads code, and it writes in exactly three places.** Its tools are the read-only
+  subset (`read`, `grep`, `glob`) — it can look at your repositories but it cannot edit a
+  file, create a branch or start a session. The Менеджмент sections it can WRITE are the ones
+  the section table marks `read_write`: the Risk Registry and Release Notes. Everywhere else
+  in Менеджмент it reads, explains and refuses, and says which it is doing. The third write
+  target is not a section at all — it is «Дошка», where it files tickets (below).
 - **It keeps the risk register.** Ask it to file a risk and it emits a `risk.create`
   action carrying that schema's own vocabulary — threat or opportunity, one of the
   fourteen categories, cause·event·consequence, 1–5 probability × impact, a PMI
@@ -457,6 +494,53 @@ That field is a real assistant, and it is deliberately narrow:
   clue the range or the branch was not the one you meant. A failed run keeps a row on the
   section screen with its reason and a retry. Editing, copying and deleting a stored note
   stay on the screen; the assistant has no verb for them and the prompt says so.
+- **It files tickets on «Дошка».** Say «створи тікет: …» and the ticket appears on the board
+  — the board is not a Менеджмент section, so this works from any section, and «створи тікет»
+  is never answered with a refusal. Five rules make the ticket worth having:
+  - **The default board is the workspace's own.** «Задачі» is the board that always exists,
+    needs no integration and no personal token, so a request that does not name a board lands
+    there (`ticket.create`). The mirrored Jira board is opt-in BY NAME: only «створи в Jira…»
+    routes to it (`jira.ticket.create`). Naming Jira in a workspace that has none — or on a
+    machine with no personal Jira token — is refused with the reason, and NOT quietly filed on
+    the native board instead: you named a board, and a card on the other one is a card you
+    will not find where you looked.
+  - **The ticket is written as a project manager writes one, and the app owns its shape.**
+    The action carries five named slots — a business context, an optional user flow,
+    acceptance criteria, an optional out-of-scope list, and the title — and
+    `renderTicketDescription` turns them into the card body. So every ticket from this chat
+    has the same headings in the same order, and there is no field in which a schema, an
+    endpoint or a library could be specified: WHAT and WHY are the ticket's, HOW stays the
+    team's. Before writing, the assistant reads the workspace's repositories to ground the
+    ticket in what the product actually does today — but only the business conclusion reaches
+    the card.
+  - **The ticket is written in English, whatever language you asked in.** A card is read by
+    whoever picks it up, and that is rarely only the person who dictated it — so the ticket's
+    own text (title, context, user flow, acceptance criteria, out of scope) is English, and
+    the app's headings above them are English for the same reason. Asking «створи тікет про
+    історію змін» gets you an English ticket, not a Ukrainian one: the language of the request
+    carries no instruction about the language of the card. Another language is opt-in BY NAME
+    — «тікет українською» — exactly like the second board. Interface labels the product shows
+    in Ukrainian stay quoted as they are («the «Історія» tab»), because a translated label is
+    a label nobody can find on the screen. The chat's own prose, and the questions below,
+    stay in your language: those you are the one reading.
+  - **A ticket never ships an open question.** If something is missing that only you can
+    decide — the scope, an edge case, the assignee, which project — the assistant emits
+    `ticket.questions` instead: the chat prints the numbered questions and states that the
+    ticket was NOT created. Answer in the next message and it files the ticket; do not answer
+    and there is no ticket. Belt and braces: a ticket whose text still contains «TBD», «to be
+    decided», «needs clarification», «at the developer's discretion» — or their Ukrainian
+    counterparts, for the tickets you asked in Ukrainian — a `<placeholder>`, a code fence or
+    an acceptance criterion phrased as a question is refused in your browser with the
+    offending fragment quoted back.
+  - **Each board has its own people, and neither list is guessed.** They are not the same set
+    and the assistant is shown both. For the workspace's own board, `tasks.assignee_id` is a
+    profile id, so every turn carries the workspace roster by the same name the app shows you
+    and the browser matches the name back to that id. For Jira the roster has no say at all: a
+    Jira assignee is an Atlassian account, so every turn carries **Jira's own assignable
+    users** — the same list the ticket dialog's picker offers — and someone with a Jira seat
+    and no Kermanych account is assigned there exactly as you would assign them by hand. A
+    name that matches nobody on the board it was named for refuses that ticket and lists who
+    can be assigned, rather than filing a card into nobody's queue.
 - **It spends the same subscription your agents spend.** It runs through the same
   `omp` on your PATH, the same provider account and the same plan; there is no second
   key to configure and no separate budget. The mono pill on the right of the field is

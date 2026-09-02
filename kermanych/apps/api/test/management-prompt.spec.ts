@@ -1,11 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { homedir } from "node:os";
 import {
+  BRANCH_PREFIXES,
   MANAGEMENT_SECTIONS,
+  PLATFORMS,
   RISK_CATEGORY_VALUES,
   RISK_RESPONSES_BY_KIND,
   RISK_STATUS_VALUES,
   type ManagementContext,
+  type ManagementMember,
   type ManagementRepo,
   type ManagementRiskRow,
   type Project,
@@ -20,6 +23,7 @@ const context: ManagementContext = {
   workspaceName: "Acme",
   section: "management-risks",
   risks: [],
+  members: [],
 };
 
 // A fixed «today». The context block now anchors relative periods («реліз-ноти за останній
@@ -140,7 +144,7 @@ describe("buildManagementTurn", () => {
   it("teaches the release-notes action and anchors relative periods to today", () => {
     const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
     expect(out).toContain('"kind": "release.notes"');
-    expect(out).toContain("рівно чотири форми");
+    expect(out).toContain("Дозволені ТІЛЬКИ такі форми");
     expect(out).toContain('"rangeFrom": "РРРР-ММ-ДД"');
     // The anchor itself, re-sent every turn because the answer changes at midnight.
     expect(out).toContain(`Сьогодні: ${TODAY}`);
@@ -203,6 +207,160 @@ describe("buildManagementTurn", () => {
     const out = buildManagementTurn({ first: false, repos, context, today: TODAY, text: "?" });
     expect(out).not.toContain("Проєкт:");
     expect(out).toContain("Воркспейс: Acme");
+  });
+
+  // The board is not a section, so rule (б) — «capability is not read_write, refuse» — would
+  // otherwise be the closest matching rule the model has for «створи тікет», and it would
+  // refuse. Rule (в-1) exists to say so out loud, and the ticket protocol has to be in the
+  // first turn beside it or the model has the permission and none of the vocabulary.
+  it("teaches ticket creation as a cross-section action, not a section write", () => {
+    const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
+    expect(out).toContain('"kind": "ticket.create"');
+    expect(out).toContain('"kind": "jira.ticket.create"');
+    expect(out).toContain('"kind": "ticket.questions"');
+    expect(out).toContain("НІКОЛИ не відповідай unsupported");
+    // The routing rule: one board is the default and the other is opt-in by name.
+    expect(out).toContain("дошка ЗА ЗАМОВЧУВАННЯМ");
+    expect(out).toContain("ТІЛЬКИ тоді, коли користувач прямо назвав Jira");
+    // The two requirements a ticket cannot be filed without, and the two it must not carry.
+    expect(out).toContain("acceptanceCriteria — обовʼязково");
+    expect(out).toContain("НІЯКИХ технічних рішень і технічних порад");
+    expect(out).toContain("Тікет з відкритим питанням не створюється");
+    // The launch vocabulary is printed from the core constants, never hand-copied — the same
+    // rule the risk vocabulary follows.
+    expect(out).toContain(`prefix — тип роботи: ${BRANCH_PREFIXES.join(" | ")}`);
+    expect(out).toContain(`platform — ${PLATFORMS.join(" | ")}`);
+  });
+
+  // The ticket's language is not the conversation's. Rule (ґ) tells the model to answer in the
+  // user's language, and with nothing else said a Ukrainian request produced a Ukrainian
+  // ticket — a card the rest of the team cannot read. Both halves are asserted: the ticket's
+  // fields are English, and the prose the operator reads is still his.
+  it("requires the ticket's own text in English regardless of the language of the request", () => {
+    const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "створи тікет" });
+    expect(out).toContain("МОВА ТІКЕТА — АНГЛІЙСЬКА");
+    expect(out).toContain("незалежно від мови розмови");
+    expect(out).toContain("ТІЛЬКИ якщо користувач попросив її прямо");
+    // The carve-out inside rule (ґ), without which the model has two rules that contradict.
+    expect(out).toContain("ВИНЯТОК — текст тікета");
+    // Chat prose and the questions stay the operator's language: a model told «English» once
+    // starts answering him in English too.
+    expect(out).toContain("питання ticket.questions читає користувач — їх пиши його мовою");
+  });
+
+  // The roster is the only way an assignee on the NATIVE board can be named:
+  // `tasks.assignee_id` is a uuid, the model is shown names, and the browser matches one
+  // back. A context block that printed no roster would leave it guessing profile ids.
+  it("prints the roster a native-board assignee is named from", () => {
+    const members: ManagementMember[] = [
+      { name: "olya", role: "developer" },
+      { name: "andrii", role: "owner" },
+    ];
+    const out = buildManagementTurn({ first: false, repos, context: { ...context, members }, today: TODAY, text: "?" });
+    expect(out).toContain("Команда воркспейсу (2)");
+    expect(out).toContain("- olya · developer");
+    expect(out).toContain("- andrii · owner");
+    // Named as the NATIVE board's list, because Jira's assignees are a different set and a
+    // model that read this line as «the people a ticket may be assigned to» refused every
+    // Jira assignee without a Kermanych account.
+    expect(out).toContain("на ВЛАСНІЙ дошці");
+  });
+
+  // The regression this whole field exists for: a Jira issue is assigned to an ATLASSIAN
+  // account, so the roster cannot answer it. With only the roster in the prompt the assistant
+  // refused «створи тікет у Jira на Марину» because Maryna has no Kermanych seat — while the
+  // same ticket filed by hand offers her, because Jira's own picker does.
+  it("prints Jira's own assignable users and tells the model not to use the roster for them", () => {
+    const out = buildManagementTurn({
+      first: false,
+      repos,
+      context: {
+        ...context,
+        members: [{ name: "olya", role: "developer" }],
+        jira: {
+          projectKey: "KRM",
+          boardName: "Kermanych board",
+          canWrite: true,
+          assignees: ["Maryna Koval", "Olya Petrenko"],
+        },
+      },
+      today: TODAY,
+      text: "?",
+    });
+    expect(out).toContain("Виконавці Jira (2)");
+    expect(out).toContain("- Maryna Koval");
+    expect(out).toContain("- Olya Petrenko");
+    expect(out).toContain("а НЕ командою воркспейсу");
+  });
+
+  // Empty is a FAILED READ (no token this turn, Jira unreachable), never «nobody is
+  // assignable». Read as the latter it becomes a refusal invented out of a network error —
+  // the exact failure this feature was reported for, one layer down.
+  it("says the Jira assignee list is unavailable rather than implying nobody is assignable", () => {
+    const out = buildManagementTurn({
+      first: false,
+      repos,
+      context: {
+        ...context,
+        jira: { projectKey: "KRM", boardName: "Kermanych board", canWrite: true, assignees: [] },
+      },
+      today: TODAY,
+      text: "?",
+    });
+    expect(out).toContain("Виконавці Jira (0)");
+    expect(out).toContain("список цього ходу недоступний");
+  });
+
+  // Three states, three different sentences — and they are not interchangeable: no board is
+  // the owner's job in Integrations, no token is this operator's, and a writable board is the
+  // only one of the three where a jira.ticket.create can succeed.
+  it("states whether the Jira board exists and whether this machine may write to it", () => {
+    const none = buildManagementTurn({ first: false, repos, context, today: TODAY, text: "?" });
+    expect(none).toContain("Дошка Jira: не підключена");
+    expect(none).not.toContain("Виконавці Jira");
+
+    const readOnly = buildManagementTurn({
+      first: false,
+      repos,
+      context: {
+        ...context,
+        jira: { projectKey: "KRM", boardName: "Kermanych board", canWrite: false, assignees: [] },
+      },
+      today: TODAY,
+      text: "?",
+    });
+    expect(readOnly).toContain("Дошка Jira: Kermanych board · проєкт KRM");
+    expect(readOnly).toContain("БЕЗ особистого токена Jira");
+    // No token means no ticket to assign, so the list is not printed at all — an empty
+    // «Виконавці Jira» beside «створити тікет неможливо» is two sentences for one fact.
+    expect(readOnly).not.toContain("Виконавці Jira");
+
+    const writable = buildManagementTurn({
+      first: false,
+      repos,
+      context: {
+        ...context,
+        jira: { projectKey: "KRM", boardName: "Kermanych board", canWrite: true, assignees: ["Maryna Koval"] },
+      },
+      today: TODAY,
+      text: "?",
+    });
+    expect(writable).toContain("можна створювати тікети");
+  });
+
+  // The contract half of the same fix. The rule the assistant follows must name TWO lists and
+  // say outright that absence from the workspace is not a reason to refuse a Jira assignee,
+  // otherwise the printed list above is one the model has no instruction to read.
+  it("gives each board its own assignee list and forbids judging a Jira assignee by the roster", () => {
+    const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
+    expect(out).toContain("У кожної дошки СВІЙ список людей");
+    expect(out).toContain("«Виконавці Jira»");
+    expect(out).toContain("НЕ причина відмовити чи спитати");
+    // Jira's list is page-capped, so a name the operator gave explicitly is passed through
+    // and checked against live Jira instead of being refused against a truncated list.
+    expect(out).toContain("все одно постав це імʼя в assignee");
+    // And a named assignee is never turned into a ticket.questions round trip.
+    expect(out).toContain("користувач НАЗВАВ, теж не питання");
   });
 });
 

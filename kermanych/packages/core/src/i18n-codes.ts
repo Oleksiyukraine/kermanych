@@ -152,6 +152,25 @@ export type ManagementRejectionCode =
   | "release_date_format" // a release.notes range bound that is not a date (params: { field, value })
   | "release_range_reversed" // a release.notes range whose start is after its end (params: { from, to })
   | "action_kind_unknown" // a block whose kind nobody implemented (params: { value })
+  // ticketFields / strList / ticketName — one field or shape of a ticket block:
+  | "field_not_string_list" // a list field arrived as a non-array (params: { field })
+  | "field_list_not_all_strings" // a list field held a non-string entry (params: { field, value })
+  | "ticket_not_object" // the ticket body was not a JSON object (params: none)
+  | "ticket_no_title" // a ticket without a title (params: none)
+  | "ticket_title_too_long" // a ticket title longer than the kanban limit (params: { max })
+  | "ticket_no_context" // a ticket without its business context (params: { title })
+  | "ticket_no_acceptance" // a ticket without any acceptance criterion (params: { title })
+  | "ticket_field_invalid" // a nested ticket list field failed validation (params: { title, detail })
+  | "ticket_open_question" // a ticket carries an unanswered open question (params: { title, value })
+  | "field_not_name_string" // a name field arrived as a non-string (params: { field, value })
+  // ticket.create / jira.ticket.create — the block as a whole, per board:
+  | "ticket_no_project" // a ticket.create without a project name (params: { title })
+  | "ticket_prefix_unknown" // a branch prefix nobody offers (params: { value, allowed })
+  | "ticket_platform_unknown" // a platform nobody offers (params: { value, allowed })
+  | "jira_label_has_space" // a Jira label containing whitespace (params: { value })
+  // ticket.questions — the unfiled-ticket questions block:
+  | "ticket_questions_no_target" // a ticket.questions without a forTicket (params: none)
+  | "ticket_questions_empty" // a ticket.questions with no questions (params: { forTicket })
   // parseManagementReply — the block never parsed as JSON:
   | "block_unreadable"; // the fenced block was not readable JSON (params: { message })
 
@@ -185,6 +204,22 @@ export const MANAGEMENT_REJECTION_CODES = [
   "release_date_format",
   "release_range_reversed",
   "action_kind_unknown",
+  "field_not_string_list",
+  "field_list_not_all_strings",
+  "ticket_not_object",
+  "ticket_no_title",
+  "ticket_title_too_long",
+  "ticket_no_context",
+  "ticket_no_acceptance",
+  "ticket_field_invalid",
+  "ticket_open_question",
+  "field_not_name_string",
+  "ticket_no_project",
+  "ticket_prefix_unknown",
+  "ticket_platform_unknown",
+  "jira_label_has_space",
+  "ticket_questions_no_target",
+  "ticket_questions_empty",
   "block_unreadable",
 ] as const satisfies readonly ManagementRejectionCode[];
 

@@ -85,6 +85,9 @@ export type Task = {
   // Storage object paths in the `task-images` bucket (private). The board mints signed
   // URLs from these on demand; the row never carries a URL. Absent when the task has none.
   imagePaths?: string[];
+  // The Jira ticket key («KAN-42») when this row is a shadow task minted by launching a
+  // mirrored ticket. The native board filters these out; the Jira view joins on them.
+  jiraKey?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -106,6 +109,7 @@ export type TaskInsert = {
   kind?: string;
   branch?: string;
   imagePaths?: string[];
+  jiraKey?: string;
 };
 
 export type TaskPatch = {
@@ -120,6 +124,7 @@ export type TaskPatch = {
   kind?: string;
   branch?: string;
   imagePaths?: string[];
+  jiraKey?: string;
 };
 
 // A per-project skill (the Kermanych UI's library). `enabled: false` on a row whose name
@@ -330,4 +335,131 @@ export type WorkspaceReleaseNoteInsert = {
 export type WorkspaceReleaseNotePatch = {
   title?: string;
   bodyMd?: string;
+};
+
+// ── Jira mirror ───────────────────────────────────────────────────────────────
+// One Jira board mirrored per workspace (spec 2026-09-02). These are the camelCase
+// shapes of the jira_* tables; jira.ts owns the snake_case boundary. Jira is the
+// source of truth — every row here is a cache overwritten from Jira, never merged.
+
+// Jira's own three-way status categorisation. The launch flow's «already in
+// progress — don't move it» rule reads THIS, never the free-form status name.
+export type JiraStatusCategory = "new" | "indeterminate" | "done";
+
+export type JiraIntegration = {
+  id: string;
+  workspaceId: string;
+  siteUrl: string;
+  projectKey: string;
+  boardId: number;
+  boardName: string;
+  connectedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type JiraIntegrationInsert = {
+  workspaceId: string;
+  siteUrl: string;
+  projectKey: string;
+  boardId: number;
+  boardName: string;
+};
+
+export type JiraSyncState = {
+  integrationId: string;
+  workspaceId: string;
+  lastSyncedAt?: string;
+  // High-water Jira `updated` timestamp; absent forces a full sweep.
+  syncCursor?: string;
+};
+
+export type JiraColumn = {
+  integrationId: string;
+  workspaceId: string;
+  position: number;
+  name: string;
+  // One Jira board column maps a SET of statuses — Jira's model, kept verbatim.
+  statusIds: string[];
+};
+
+export type JiraIssue = {
+  integrationId: string;
+  workspaceId: string;
+  issueId: string;
+  key: string;
+  summary: string;
+  // Jira's renderedFields HTML. Stored as Jira said it; the UI sanitizes on display.
+  descriptionHtml: string;
+  typeName: string;
+  typeIcon: string;
+  priorityName: string;
+  priorityIcon: string;
+  labels: string[];
+  // Jira's time tracking, all three in Jira's own duration spelling («2w 3d 4h»); blank =
+  // Jira holds none. `originalEstimate` is planned, `timeSpent` is the sum of the issue's
+  // worklogs, and `remainingEstimate` is what logging work adjusts.
+  originalEstimate: string;
+  timeSpent: string;
+  remainingEstimate: string;
+  // Jira's planning dates in Jira's own spelling (YYYY-MM-DD); blank = not set.
+  // `dueDate` is the system `duedate`; `startDate` is the site's «Start date» field,
+  // which a site may not have at all — then it stays blank and is not editable.
+  startDate: string;
+  dueDate: string;
+  assigneeAccountId?: string;
+  assigneeName?: string;
+  assigneeAvatar?: string;
+  reporterName?: string;
+  statusId: string;
+  statusName: string;
+  statusCategory: JiraStatusCategory;
+  parentKey?: string;
+  jiraUpdatedAt: string;
+  // Launch binding: the Kermanych repo a launch chose (remembered for relaunches)
+  // and the shadow tasks row the session pipeline runs on.
+  kermanychProjectId?: string;
+  taskId?: string;
+  updatedAt: string;
+};
+
+export type JiraComment = {
+  integrationId: string;
+  workspaceId: string;
+  issueId: string;
+  commentId: string;
+  authorName: string;
+  authorAvatar: string;
+  bodyHtml: string;
+  jiraCreatedAt: string;
+  jiraUpdatedAt: string;
+};
+
+export type JiraWorklog = {
+  integrationId: string;
+  workspaceId: string;
+  issueId: string;
+  worklogId: string;
+  // Jira's accountId for the author. What «may I edit this entry?» is decided from: Jira
+  // gates a worklog write on own-versus-all permissions, and a display name cannot answer
+  // that. Blank for rows mirrored before it was recorded — read as «not mine».
+  authorAccountId: string;
+  authorName: string;
+  authorAvatar: string;
+  timeSpent: string;
+  seconds: number;
+  startedAt: string;
+  commentHtml: string;
+};
+
+export type JiraAttachment = {
+  integrationId: string;
+  workspaceId: string;
+  issueId: string;
+  attachmentId: string;
+  filename: string;
+  mime: string;
+  size: number;
+  authorName: string;
+  jiraCreatedAt: string;
 };

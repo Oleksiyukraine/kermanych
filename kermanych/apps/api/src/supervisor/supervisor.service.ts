@@ -1,5 +1,5 @@
 // apps/api/src/supervisor/supervisor.service.ts
-import { GoneException, Injectable, type OnModuleDestroy } from "@nestjs/common";
+import { GoneException, Injectable, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -79,7 +79,7 @@ const CHAT_TOOLS = ["read", "grep", "glob"];
 const MATCH_MAX_CHARS = 1 << 14;
 
 @Injectable()
-export class SupervisorService implements OnModuleDestroy {
+export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private map = new Map<string, Live>();
   private resuming = new Map<string, Promise<Live>>();
   // One cache for every session, live or dormant: GET /sessions/:id/tools/:callId must
@@ -91,6 +91,17 @@ export class SupervisorService implements OnModuleDestroy {
   private lastStamp = 0;
   private events = new Subject<ServerEvent>();
   events$: Observable<ServerEvent> = this.events.asObservable();
+
+  // A finished session's omp child stays resident so a follow-up resumes instantly — but a
+  // live `omp --mode rpc` process is by far the largest thing this service keeps alive (a big
+  // run's child holds gigabytes), so a board of done agents nobody has touched is what runs a
+  // machine out of application memory. `reapIdleChildren` stops the child of any finished
+  // session (status "done") silent past this TTL; the Live — and
+  // with it the rendered transcript — stays, and the next send respawns through `liveOrResume`
+  // exactly as a dormant session does. The child is a pure latency cache over the session file
+  // omp already persisted, so nothing is lost. Same tradeoff as ManagementChatService.IDLE_TTL_MS.
+  private static readonly CHILD_IDLE_TTL_MS = 15 * 60_000;
+  private reaper?: NodeJS.Timeout;
 
   constructor(
     private registry: RegistryService,
@@ -158,10 +169,40 @@ export class SupervisorService implements OnModuleDestroy {
 
   private skillSource = (sessionId: string): SkillSource => (name) => this.skillLabels.get(sessionId)?.get(name);
 
+  onModuleInit(): void {
+    // A minute is far finer than the 15-minute TTL, so a child is reaped within a minute of
+    // crossing it. Unref'd: the janitor must never hold the app open — a clean quit runs
+    // onModuleDestroy, which stops the children anyway. ManagementChatService sweeps on-use
+    // instead of on a timer, but a finished agent nobody touches is exactly the case an
+    // on-use sweep never reaches, so this one rides a timer.
+    this.reaper = setInterval(() => this.reapIdleChildren(), 60_000);
+    this.reaper.unref();
+  }
+
   onModuleDestroy(): void {
+    clearInterval(this.reaper);
     for (const live of this.map.values()) {
       this.stopPoll(live);
       void live.rpc.stop();
+    }
+  }
+
+  // Stop the resident omp child of every FINISHED session (status "done") that has been silent
+  // past CHILD_IDLE_TTL_MS. The Live stays, so getTranscript still serves the rendered history
+  // with no rehydrate; the next send respawns through liveOrResume, exactly as a dormant session
+  // does. Only "done": the isAlive guard already skips stopped/merged/most errored children
+  // (their child is gone), and stopping a still-live conflict/error child would make wireLive's
+  // onExit wrongly flip the row to "error". "done" is the state a big finished run rests at — the
+  // exact memory target. Idempotent (a reaped child reads !isAlive) and never mid-resume.
+  private reapIdleChildren(now = Date.now()): void {
+    const cutoff = now - SupervisorService.CHILD_IDLE_TTL_MS;
+    for (const [id, l] of this.map) {
+      if (!l.rpc.isAlive()) continue;
+      if (l.live.status !== "done") continue;
+      if (this.resuming.has(id)) continue;
+      if ((l.live.lastEventAt ?? now) > cutoff) continue;
+      this.stopPoll(l);
+      void l.rpc.stop().catch(() => {});
     }
   }
 
@@ -958,7 +999,12 @@ export class SupervisorService implements OnModuleDestroy {
   // and the agent would look "hung". Drop the corpse and respawn.
   private async liveOrResume(id: string): Promise<Live> {
     const l = this.map.get(id);
-    if (l?.rpc.isAlive()) return l;
+    if (l?.rpc.isAlive()) {
+      // A send or wake is activity: stamp it now so the idle reaper never stops a child we are
+      // about to write to — the child's own events only stamp lastEventAt once the turn starts.
+      l.live.lastEventAt = Date.now();
+      return l;
+    }
     if (l) {
       this.stopPoll(l);
       this.map.delete(id);
@@ -1551,7 +1597,7 @@ export class SupervisorService implements OnModuleDestroy {
   // Shared live-session wiring (fresh create + resume): build the Live, register it,
   // and route exit + events. onExit marks error unless the session ended cleanly.
   private wireLive(sessionId: string, rpc: RpcSession, status: Session["status"]): Live {
-    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status }, textBuf: "", thinkBuf: "", toolStarted: new Map(), toolArgs: new Map() };
+    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status, lastEventAt: Date.now() }, textBuf: "", thinkBuf: "", toolStarted: new Map(), toolArgs: new Map() };
     this.map.set(sessionId, live);
     rpc.onExit((_code, reason) => {
       this.stopPoll(live);

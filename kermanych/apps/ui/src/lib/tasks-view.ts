@@ -65,8 +65,10 @@ export function taskPatchFromDraft(draft: LauncherDraft): TaskPatch {
 export function myBacklogTasks(tasks: Task[], userId: string, scopedProjectIds: string[]): Task[] {
   if (!userId) return [];
   const inScope = new Set(scopedProjectIds);
+  // `!t.jiraKey`: a shadow task minted by a Jira-ticket launch lives on the Jira view;
+  // surfacing it here would offer the same work twice under two names.
   return tasks.filter(
-    (t) => t.status === 'backlog' && t.assigneeId === userId && inScope.has(t.projectId),
+    (t) => t.status === 'backlog' && !t.jiraKey && t.assigneeId === userId && inScope.has(t.projectId),
   );
 }
 
