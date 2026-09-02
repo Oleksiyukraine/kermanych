@@ -22,6 +22,7 @@ import {
   RISK_SCORE_MIN,
   RISK_STATUS_VALUES,
   type ManagementContext,
+  type ManagementJiraBoard,
   type ManagementRepo,
   type ManagementRiskRow,
   type ManagementWorkspaceProject,
@@ -238,9 +239,17 @@ function ticketProtocol(): string {
     "  outOfScope — необовʼязково: що цей тікет свідомо НЕ покриває, щоб межі були названі, а не вгадані.",
     "  Опис картки збирає застосунок з цих полів — заголовки й порядок його, тому не форматуй description сам.",
     "",
-    "ХТО ВИКОНАВЕЦЬ. assignee — імʼя РІВНО так, як воно стоїть у списку команди в контексті (не uuid і не e-mail).",
-    "  Немає такого імені в списку — не вгадуй: спитай прозою. Не назвали виконавця — не став його зовсім,",
-    "  непризначена картка це нормальний стан дошки.",
+    "ХТО ВИКОНАВЕЦЬ. У кожної дошки СВІЙ список людей, і вони не збігаються — бери той, що для цієї дошки:",
+    '  • ticket.create (власна дошка) — імʼя зі списку «Команда воркспейсу»: це користувачі застосунку.',
+    '  • jira.ticket.create — імʼя зі списку «Виконавці Jira»: це акаунти Atlassian на цій дошці.',
+    "    Те, що людини немає в команді воркспейсу, НЕ причина відмовити чи спитати: у Jira призначають того,",
+    "    кого дозволяє Jira, а не того, у кого є доступ до нашого застосунку. Ці два списки не порівнюй.",
+    "  Імʼя пиши РІВНО так, як воно стоїть у списку ДЛЯ ЦІЄЇ дошки (не uuid, не accountId і не e-mail).",
+    "  Не назвали виконавця — не став його зовсім, непризначена картка це нормальний стан обох дошок.",
+    "  Немає такого імені у списку для власної дошки — не вгадуй: спитай прозою.",
+    "  Для Jira інакше: список «Виконавці Jira» обмежений за розміром, тому якщо користувач прямо назвав людину,",
+    "    якої в ньому не видно, все одно постав це імʼя в assignee — застосунок перевірить його в живій Jira",
+    "    і сам скаже, якщо Jira такого виконавця не знає. Відмовляти замість нього не потрібно.",
     "",
     "ДОДАТКОВІ ПОЛЯ ticket.create:",
     "  project — назва проєкту РІВНО так, як вона стоїть у списку репозиторіїв контексту (не id і не шлях).",
@@ -264,7 +273,8 @@ function ticketProtocol(): string {
     "того ж ходу блок створення. Питання — короткі, конкретні, кожне про одне рішення; застосунок сам покаже їх",
     "користувачеві й скаже, що тікет не створено. Не дублюй ці питання прозою — достатньо одного речення про те,",
     "що ти зрозумів. Наступного ходу, коли користувач відповість, створюй тікет. Якщо не відповів — тікета немає.",
-    "Те, що можна вивести з коду або з контексту, питанням не є: прочитай і виріши сам.",
+    "Те, що можна вивести з коду або з контексту, питанням не є: прочитай і виріши сам. І виконавець, якого",
+    "користувач НАЗВАВ, теж не питання — постав його за правилом «ХТО ВИКОНАВЕЦЬ» вище, а не питай про нього.",
     "",
     "Тікет створює застосунок, не ти: у прозі скажи, який тікет і на яку дошку ти подаєш, і не пиши, що він уже",
     "створений — рядок з номером картки («Тікет KRM-214 створено…») чат покаже сам.",
@@ -288,6 +298,40 @@ function riskLine(r: ManagementRiskRow): string {
   return `- ${r.code} · ${r.kind} · ${r.category} · «${r.event}» · ${r.probability}×${r.impact}=${r.probability * r.impact} · ${r.response} · ${r.status}`;
 }
 
+// The Jira board's two or three lines. The FIRST is the only thing that tells the model the
+// second board exists at all: absent means the workspace has no Jira mirror, so
+// `jira.ticket.create` has nowhere to land — and the line says which of the two failures it
+// is, because they are not the same conversation: «нема інтеграції» is the owner's job in
+// Integrations, «нема токена» is this operator's.
+//
+// The rest is Jira's OWN assignable list, and it is a separate block from the roster on
+// purpose. The two are different sets of people — a Jira seat is not a Kermanych account —
+// and folding them into one list is precisely how a perfectly ordinary Jira assignee
+// («створи тікет у Jira на Марину») became «немає в команді воркспейсу, тікет не створено».
+// The roster is the native board's answer; this is Jira's.
+//
+// Printed only for a WRITABLE board: with no token there is no ticket to assign, and the
+// browser has no list to send either.
+function jiraLines(jira: ManagementJiraBoard | undefined): string {
+  if (jira === undefined)
+    return "Дошка Jira: не підключена — тікети створюються тільки на власній дошці воркспейсу";
+  const head =
+    `Дошка Jira: ${jira.boardName} · проєкт ${jira.projectKey} · ` +
+    (jira.canWrite
+      ? "можна створювати тікети"
+      : "БЕЗ особистого токена Jira на цій машині — створити тікет неможливо, скажи це прозою");
+  if (!jira.canWrite) return head;
+  return [
+    head,
+    `Виконавці Jira (${jira.assignees.length}) — цим списком, а НЕ командою воркспейсу, називається assignee у jira.ticket.create:`,
+    // An empty list is a failed read, never «nobody is assignable», so the sentence says what
+    // to do about it instead of leaving the model to infer a refusal from a network error.
+    jira.assignees.length
+      ? jira.assignees.map((n) => `- ${n}`).join("\n")
+      : "- список цього ходу недоступний: якщо користувач назвав виконавця — постав його імʼя як є, застосунок перевірить його в Jira",
+  ].join("\n");
+}
+
 function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: string): string {
   const s = managementSection(c.section);
   // An unresolved section name is still printed: the model must be able to say WHICH
@@ -309,21 +353,12 @@ function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: stri
     // code Postgres minted for it.
     `Реєстр ризиків воркспейсу (${risks.length}) — code · kind · category · подія · P×I · стратегія · статус:`,
     risks.length ? risks.map(riskLine).join("\n") : "- реєстр порожній",
-    // The roster, because a ticket can be assigned and `tasks.assignee_id` is a uuid the
+    // The roster — the NATIVE board's assignees, because `tasks.assignee_id` is a uuid the
     // model must never invent. Printed with the role, which is the other thing a manager
     // assigns by. Re-sent every turn for the register's reason: membership changes.
-    `Команда воркспейсу (${c.members.length}) — імʼя · роль (виконавця тікета називай саме цим імʼям):`,
+    `Команда воркспейсу (${c.members.length}) — імʼя · роль (виконавця тікета на ВЛАСНІЙ дошці називай саме цим імʼям):`,
     c.members.length ? c.members.map((m) => `- ${m.name} · ${m.role}`).join("\n") : "- список недоступний",
-    // The second board, and the ONLY thing that tells the model it exists. Absent means the
-    // workspace has no Jira mirror, so `jira.ticket.create` has nowhere to land — and the
-    // line says which of the two failures it is, because they are not the same conversation:
-    // «нема інтеграції» is the owner's job in Integrations, «нема токена» is this operator's.
-    c.jira === undefined
-      ? "Дошка Jira: не підключена — тікети створюються тільки на власній дошці воркспейсу"
-      : `Дошка Jira: ${c.jira.boardName} · проєкт ${c.jira.projectKey} · ` +
-        (c.jira.canWrite
-          ? "можна створювати тікети"
-          : "БЕЗ особистого токена Jira на цій машині — створити тікет неможливо, скажи це прозою"),
+    jiraLines(c.jira),
   ].join("\n");
 }
 

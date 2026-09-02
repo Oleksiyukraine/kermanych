@@ -214,10 +214,22 @@ export const useManagementChat = defineStore('management-chat', () => {
   // but has no personal token cannot create anything in Jira, because every Jira write is
   // signed with the acting user's own credentials, and an assistant that offered a ticket
   // there would be promising something the api refuses one round trip later.
-  function jiraDigest(): ManagementJiraBoard | undefined {
+  //
+  // `assignees` is Jira's OWN list and is what makes a Jira ticket assignable at all. Without
+  // it the only names in the prompt were the workspace roster, so the assistant refused every
+  // Jira assignee who has no Kermanych account — which is most of them, and exactly the
+  // people the operator sees in Jira's own picker when they file the same ticket by hand.
+  // Fetched by `loadAssignable`, which degrades to an empty list; `jiraLines` in the prompt
+  // says so rather than reading empty as «nobody».
+  async function jiraDigest(workspaceId: string): Promise<ManagementJiraBoard | undefined> {
     const row = jira.integration;
     if (!row) return undefined;
-    return { projectKey: row.projectKey, boardName: row.boardName, canWrite: jira.tokenPresent };
+    return {
+      projectKey: row.projectKey,
+      boardName: row.boardName,
+      canWrite: jira.tokenPresent,
+      assignees: (await jira.loadAssignable(workspaceId)).map((u) => u.displayName),
+    };
   }
 
   // The assignee a ticket named, resolved to the uuid the row carries — or a refusal.
@@ -353,10 +365,16 @@ export const useManagementChat = defineStore('management-chat', () => {
           draft.priorityId = priority.id;
         }
       }
-      // A Jira assignee is an Atlassian account, not a Kermanych member, so the roster cannot
-      // answer this one: the api asks Jira who is assignable on that project. Same rule as
-      // the native board — a name that resolves to nothing refuses the ticket instead of
-      // filing it into nobody's queue.
+      // A Jira assignee is an ATLASSIAN account, not a Kermanych member, so the workspace
+      // roster has no say here at all: Jira itself is asked who may be assigned on this
+      // project, which is the same list the ticket dialog's picker shows. A Jira seat with no
+      // Kermanych account is a perfectly ordinary assignee and must resolve.
+      //
+      // The live query rather than `jira.assignable`: the cached list is capped by Jira's page
+      // size, so a large site can hold assignable people the prompt never printed, and a name
+      // the operator gave explicitly must still be resolvable. Same rule as the native board
+      // for the ONE case that stays a refusal — a name Jira itself does not know refuses the
+      // ticket instead of filing it into nobody's queue.
       if (action.assignee !== undefined) {
         const candidates = await api.jiraAssignableUsers(workspaceId, action.assignee);
         const wanted = action.assignee.toLowerCase();
@@ -364,11 +382,17 @@ export const useManagementChat = defineStore('management-chat', () => {
           candidates.find((u) => u.displayName.toLowerCase() === wanted) ??
           (candidates.length === 1 ? candidates[0] : undefined);
         if (!user) {
-          const known = candidates.map((u) => u.displayName).join(', ');
+          // Jira's search matched nothing, so the near-misses are no help: name who IS
+          // assignable instead, from the list already in hand. Without it the refusal states
+          // a negative and leaves the operator with no next move.
+          const near = candidates.map((u) => u.displayName);
+          const all = near.length ? near : jira.assignable.map((u) => u.displayName);
+          const known = all.join(', ');
           result(
             workspaceId,
             'warn',
-            `Jira не знає виконавця «${action.assignee}» на цій дошці — тікет не створено.` + (known ? ` Схоже на: ${known}.` : ''),
+            `Jira не знає виконавця «${action.assignee}» на цій дошці — тікет не створено.` +
+              (known ? ` Кому можна призначити: ${known}.` : ''),
           );
           return;
         }
@@ -481,11 +505,13 @@ export const useManagementChat = defineStore('management-chat', () => {
       // IS the local copy — `useRisks().create/save` upsert into it — and refetching every
       // turn would flash the Risk Registry screen's loading state on each message.
       if (!risks.byWorkspace[workspaceId]) await risks.load(workspaceId);
-      // The roster and the Jira board are the two things a TICKET needs and nothing else on
-      // this surface does, so they are fetched here on the same once-per-workspace terms as
-      // the register. Both are cheap and both are cached by their own stores; `probe` also
-      // answers whether this machine holds a Jira token, which is what decides whether the
-      // assistant may offer the Jira board at all.
+      // The two rosters and the Jira board are what a TICKET needs and nothing else on this
+      // surface does, so they are fetched here on the same once-per-workspace terms as the
+      // register, and each is cached by its own store. `probe` answers whether this machine
+      // holds a Jira token, which decides whether the assistant may offer the Jira board at
+      // all; `jiraDigest` then reads Jira's assignable users through it, which is the one
+      // genuine third-party call on this path — spent once per conversation, and only for a
+      // board this operator can actually write to.
       //
       // Sequential rather than parallel with the register on purpose: three requests fired at
       // one Supabase project on the first keystroke of a conversation buys nothing a person
@@ -501,7 +527,7 @@ export const useManagementChat = defineStore('management-chat', () => {
           /* no roster this turn */
         }
       if (jira.integration === undefined) await jira.probe(workspaceId);
-      const jiraBoard = jiraDigest();
+      const jiraBoard = await jiraDigest(workspaceId);
       const ask: ManagementChatAsk = {
         conversationId: conversationId(workspaceId),
         workspaceId,

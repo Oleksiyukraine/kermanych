@@ -19,7 +19,7 @@ import {
   listJiraIssues,
   subscribeJiraIssues,
 } from '@kermanych/cloud';
-import { api } from '../lib/api';
+import { api, type JiraAssignableUser } from '../lib/api';
 import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { IS_PREVIEW } from '../lib/preview';
@@ -38,6 +38,11 @@ export const useJira = defineStore('jira', () => {
   const children = ref<Record<string, JiraIssueChildren>>({});
   const tokenPresent = ref(false);
   const tokenEmail = ref<string | undefined>(undefined);
+  // Jira's own assignable users for this project — the assignee picker's list, and the ONLY
+  // set a Jira issue may be assigned from. Kept here rather than in the Менеджмент chat for
+  // `probe`'s reason: it is a fact about the board, the chat is only one of its readers, and
+  // the names the assistant is shown must be the names the ticket dialog shows.
+  const assignable = ref<JiraAssignableUser[]>([]);
   const loading = ref(false);
   const loadError = ref<string | null>(null);
   const syncing = ref(false);
@@ -77,6 +82,10 @@ export const useJira = defineStore('jira', () => {
       return;
     }
     const mine = ++generation;
+    // The cached assignee list belongs to the project this probe is about to replace, so it
+    // is dropped here: a Jira roster held over from the previous workspace would be printed
+    // into the next workspace's prompt as its own.
+    assignable.value = [];
     try {
       const row = await getJiraIntegration(auth.client, workspaceId);
       if (mine !== generation) return;
@@ -98,6 +107,29 @@ export const useJira = defineStore('jira', () => {
       tokenEmail.value = status.email;
     } catch {
       if (mine === generation) tokenPresent.value = false;
+    }
+  }
+
+  // Jira's assignable users for this project, cached after the first answer. A Jira call, so
+  // it is NOT part of `probe`: the board tab only needs to know whether Jira exists, while
+  // the people who may be assigned matter only to something about to assign one.
+  //
+  // Never throws. An unreadable list costs the caller the ability to name an assignee, not
+  // its whole turn — and it degrades to the empty list, which every reader states as «not
+  // available» rather than as «nobody is assignable». Empty is therefore not cached either:
+  // a turn that failed on a dropped connection retries on the next one, which is the whole
+  // difference between a transient failure and a board with nobody on it.
+  async function loadAssignable(workspaceId: string): Promise<JiraAssignableUser[]> {
+    if (!integration.value || !tokenPresent.value) return [];
+    if (assignable.value.length) return assignable.value;
+    const mine = generation;
+    try {
+      const users = await api.jiraAssignableUsers(workspaceId, '');
+      if (mine !== generation) return [];
+      assignable.value = users;
+      return users;
+    } catch {
+      return [];
     }
   }
 
@@ -224,10 +256,12 @@ export const useJira = defineStore('jira', () => {
     children,
     tokenPresent,
     tokenEmail,
+    assignable,
     loading,
     loadError,
     syncing,
     probe,
+    loadAssignable,
     open,
     syncNow,
     close,

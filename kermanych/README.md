@@ -511,11 +511,15 @@ That field is a real assistant, and it is deliberately narrow:
     and there is no ticket. Belt and braces: a ticket whose text still contains «TBD»,
     «потрібно уточнити», a `<placeholder>`, a code fence or an acceptance criterion phrased as
     a question is refused in your browser with the offending fragment quoted back.
-  - **Assignees are resolved, never guessed.** `tasks.assignee_id` is a profile id, so every
-    turn carries the workspace roster by the same name the app shows you and the browser
-    matches the name the ticket used back to that id. A name that matches nobody — or two
-    people — refuses the ticket and lists the roster, rather than filing a card into nobody's
-    queue. For Jira the same rule runs against Jira's own assignable users.
+  - **Each board has its own people, and neither list is guessed.** They are not the same set
+    and the assistant is shown both. For the workspace's own board, `tasks.assignee_id` is a
+    profile id, so every turn carries the workspace roster by the same name the app shows you
+    and the browser matches the name back to that id. For Jira the roster has no say at all: a
+    Jira assignee is an Atlassian account, so every turn carries **Jira's own assignable
+    users** — the same list the ticket dialog's picker offers — and someone with a Jira seat
+    and no Kermanych account is assigned there exactly as you would assign them by hand. A
+    name that matches nobody on the board it was named for refuses that ticket and lists who
+    can be assigned, rather than filing a card into nobody's queue.
 - **It spends the same subscription your agents spend.** It runs through the same
   `omp` on your PATH, the same provider account and the same plan; there is no second
   key to configure and no separate budget. The mono pill on the right of the field is
