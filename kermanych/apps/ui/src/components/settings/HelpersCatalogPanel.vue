@@ -1,29 +1,24 @@
 <template>
   <section class="hp">
-    <p class="hp__lead">
-      Хелпер — це команда-настанова: наберіть її на початку повідомлення (або відкрийте
-      панель кнопкою <span class="mono">/</span> у полі чату), і Керманич допише до вашого
-      тексту готову вказівку для моделі. Ваше повідомлення в чаті лишається таким, як ви його
-      написали — під ним зʼявляється рядок про те, який хелпер спрацював.
-    </p>
-    <p class="hp__lead">
-      Список зашитий у застосунок: тут його лише видно. Хелпер спрацьовує лише на
-      <strong>початку</strong> повідомлення — далі це звичайний текст, тому шлях
-      <span class="mono">/usr/bin/env</span> нічого не робить. Незнайому команду Керманич не
-      чіпає взагалі.
-    </p>
+    <i18n-t keypath="settings.helpersCatalog.lead1" tag="p" class="hp__lead">
+      <template #slash><span class="mono">/</span></template>
+    </i18n-t>
+    <i18n-t keypath="settings.helpersCatalog.lead2" tag="p" class="hp__lead">
+      <template #start><strong>{{ t('settings.helpersCatalog.leadStart') }}</strong></template>
+      <template #path><span class="mono">/usr/bin/env</span></template>
+    </i18n-t>
 
     <!-- The two kinds explained once, because the difference is the whole reason `kind`
          exists: one adds text, the other flips a switch inside omp. -->
     <ul class="hp__kinds">
       <li class="hp__kind">
-        <span class="hp__badge">настанова</span>
-        <span class="hp__kind-what">додає до повідомлення текст, наведений нижче.</span>
+        <span class="hp__badge">{{ t('settings.helpersCatalog.kindDirective') }}</span>
+        <span class="hp__kind-what">{{ t('settings.helpersCatalog.kindDirectiveWhat') }}</span>
       </li>
       <li class="hp__kind">
-        <span class="hp__badge hp__badge--keyword">ключове слово</span>
+        <span class="hp__badge hp__badge--keyword">{{ t('settings.helpersCatalog.kindKeyword') }}</span>
         <span class="hp__kind-what">
-          вставляє слово, яке розпізнає сам omp — це єдині хелпери з механічним ефектом.
+          {{ t('settings.helpersCatalog.kindKeywordWhat') }}
         </span>
       </li>
     </ul>
@@ -34,7 +29,7 @@
           <span class="hp__name mono">/{{ h.name }}</span>
           <span class="hp__label">{{ h.label }}</span>
           <span class="hp__badge" :class="{ 'hp__badge--keyword': h.kind === 'keyword' }">
-            {{ h.kind === 'keyword' ? 'ключове слово' : 'настанова' }}
+            {{ h.kind === 'keyword' ? t('settings.helpersCatalog.kindKeyword') : t('settings.helpersCatalog.kindDirective') }}
           </span>
         </div>
         <p class="hp__hint">{{ h.hint }}</p>
@@ -50,6 +45,9 @@
 // this panel makes no api call and no cloud query. Same stance and same shape as
 // AgentCatalogPanel: the text shown IS the text the model gets, not a description of it.
 import { DEFAULT_HELPERS } from '@kermanych/core';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 </script>
 
 <style scoped lang="scss">

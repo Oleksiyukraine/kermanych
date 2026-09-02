@@ -3,24 +3,17 @@
     <!-- Deliberately NOT a restatement of the pane blurb sixty pixels above it: that line
          already says «без рішення моделі», so this one earns its place by drawing the
          distinction the operator actually has to hold — library versus trigger. -->
-    <p class="tg__lead">
-      Тригери проєкту
-      <span class="tg__lead-project mono">{{ projectName }}</span>.
-      Скіл із бібліотеки агент бере сам, коли вважає за потрібне; тригер вкидає свій текст тоді,
-      коли збігся патерн — хоче того модель чи ні.
-    </p>
+    <i18n-t keypath="settings.triggers.lead" tag="p" class="tg__lead">
+      <template #project><span class="tg__lead-project mono">{{ projectName }}</span></template>
+    </i18n-t>
 
     <!-- The two halves are not interchangeable and the operator picks between them in the
          source field, so the difference is stated before they get there. -->
     <ol class="tg__how">
       <li>
-        <span class="mono">слова оператора</span> — матчить сам Керманич, ще до того як
-        повідомлення піде в сесію. Тільки цей тригер може запустити агента.
+        <span class="mono">{{ translate('settings.triggers.howOperatorTerm') }}</span> {{ translate('settings.triggers.howOperator') }}
       </li>
-      <li>
-        решта — правило всередині сесії: воно дивиться на відповідь моделі, її розмірковування
-        або аргументи інструмента. Звідти покликати агента нема як, тож там лише скіл.
-      </li>
+      <li>{{ translate('settings.triggers.howRest') }}</li>
     </ol>
 
     <p v-if="error" class="tg__error mono">{{ error }}</p>
@@ -47,8 +40,8 @@
                  nothing; a stored `interrupt` on an OPERATOR row says nothing either, because
                  nothing reads it. -->
             <template v-if="triggerUsesRuleFile(t.source)">
-              <span v-if="t.mode === 'interrupt'" class="tg__badge tg__badge--hard">обриває хід</span>
-              <span v-if="t.repeat === 'after-gap'" class="tg__badge">може повторюватись</span>
+              <span v-if="t.mode === 'interrupt'" class="tg__badge tg__badge--hard">{{ translate('settings.triggers.badgeInterrupt') }}</span>
+              <span v-if="t.repeat === 'after-gap'" class="tg__badge">{{ translate('settings.triggers.badgeRepeat') }}</span>
             </template>
           </div>
 
@@ -57,10 +50,10 @@
 
           <p class="tg__does">
             <template v-if="t.action === 'agent'">
-              запускає <span class="mono">{{ agentLabel(t.target) }}</span>
+              {{ translate('settings.triggers.doesAgent') }} <span class="mono">{{ agentLabel(t.target) }}</span>
             </template>
             <template v-else>
-              вкидає скіл <span class="mono">{{ t.target }}</span>
+              {{ translate('settings.triggers.doesSkill') }} <span class="mono">{{ t.target }}</span>
             </template>
           </p>
           <!-- The same dangling reference the runtime reports as a warn notice mid-session,
@@ -71,32 +64,32 @@
           <div class="tg__actions">
             <KCheckbox
               :model-value="t.enabled"
-              label="Увімкнено"
+              :label="translate('settings.triggers.enabledLabel')"
               :disabled="!canWrite || busy"
               @update:model-value="toggle(t)"
             />
             <button type="button" class="tg__btn" :disabled="!canWrite || busy" @click="edit(t)">
-              Редагувати
+              {{ translate('settings.triggers.edit') }}
             </button>
             <button type="button" class="tg__btn" :disabled="!canWrite || busy" @click="drop(t.id)">
-              Видалити
+              {{ translate('settings.triggers.delete') }}
             </button>
           </div>
         </li>
       </ul>
-      <p v-else class="tg__empty mono">Тригерів немає — нічого не спрацьовує саме.</p>
+      <p v-else class="tg__empty mono">{{ translate('settings.triggers.empty') }}</p>
 
       <!-- Only with the list on screen: a trigger is saved with an upsert on (проєкт, id), so
            creating one against a list that failed to load could silently overwrite a trigger
            the operator cannot see. -->
       <button type="button" class="tg__btn tg__btn--primary" :disabled="!canWrite || busy" @click="create">
-        Додати тригер
+        {{ translate('settings.triggers.add') }}
       </button>
     </template>
 
     <KModal
       v-model="editorOpen"
-      :title="editing ? `Тригер · ${draft.id}` : 'Новий тригер'"
+      :title="editing ? translate('settings.triggers.editTitle', { id: draft.id }) : translate('settings.triggers.newTitle')"
       width="560px"
     >
       <div class="tg__form">
@@ -104,51 +97,44 @@
              once the row exists: renaming would leave the old rule behind and write a second. -->
         <KField
           v-model="draft.id"
-          label="Ідентифікатор (латиниця, цифри, дефіс)"
+          :label="translate('settings.triggers.idLabel')"
           :disabled="editing"
           placeholder="env-guard"
         />
-        <KField v-model="draft.label" label="Назва" placeholder="Просить нову змінну середовища" />
-        <p class="tg__note">
-          Назву видно в стрічці сесії, коли тригер спрацював, і вона ж іде в правило як опис.
-        </p>
+        <KField v-model="draft.label" :label="translate('settings.triggers.nameLabel')" :placeholder="translate('settings.triggers.namePlaceholder')" />
+        <p class="tg__note">{{ translate('settings.triggers.nameNote') }}</p>
 
         <KSelect
           :model-value="draft.source"
-          label="Дивитися на"
+          :label="translate('settings.triggers.sourceLabel')"
           :options="TRIGGER_SOURCE_OPTIONS"
           @update:model-value="onSource"
         />
 
-        <KField v-model="draft.pattern" label="Патерн (регулярний вираз)" placeholder="нов\w* env" />
-        <p class="tg__note">
-          Короткий патерн ловить більше, ніж здається: <span class="mono">env</span> збігається
-          і з <span class="mono">.env</span>, і з <span class="mono">environment</span>, і з
-          <span class="mono">Envoy</span>. Кожен збіг коштує окремого ходу.
-        </p>
+        <KField v-model="draft.pattern" :label="translate('settings.triggers.patternLabel')" :placeholder="translate('settings.triggers.patternPlaceholder')" />
+        <i18n-t keypath="settings.triggers.patternNote" tag="p" class="tg__note">
+          <template #env><span class="mono">env</span></template>
+          <template #dotenv><span class="mono">.env</span></template>
+          <template #environment><span class="mono">environment</span></template>
+          <template #envoy><span class="mono">Envoy</span></template>
+        </i18n-t>
 
         <!-- The test field. An unparseable pattern is invisible at launch — Керманич skips past
              it and omp simply never fires the rule — so this line is the only place it is ever
              seen. It renders as soon as there is a pattern, with or without a sample. -->
         <KField
           v-model="sample"
-          label="Перевірка: встав шматок тексту"
+          :label="translate('settings.triggers.sampleLabel')"
           multiline
           :rows="2"
-          placeholder="нам потрібна нова env для API"
+          :placeholder="translate('settings.triggers.samplePlaceholder')"
         />
-        <p v-if="patternError" class="tg__error mono">Патерн не компілюється: {{ patternError }}</p>
-        <p v-else-if="matched === true" class="tg__hit">Збігається — тригер спрацював би.</p>
-        <p v-else-if="matched === false" class="tg__miss">Не збігається.</p>
+        <p v-if="patternError" class="tg__error mono">{{ translate('settings.triggers.patternBroken', { error: patternError }) }}</p>
+        <p v-else-if="matched === true" class="tg__hit">{{ translate('settings.triggers.matchHit') }}</p>
+        <p v-else-if="matched === false" class="tg__miss">{{ translate('settings.triggers.matchMiss') }}</p>
         <p class="tg__note">
-          <template v-if="draft.source === 'operator'">
-            Керманич звіряє цей патерн нечутливо до регістру: текст оператора — жива проза, і
-            велика літера на початку речення нічого не означає.
-          </template>
-          <template v-else>
-            Цю умову компілює сам omp усередині сесії — Керманич не додає жодних прапорців, тож
-            регістр тут значить рівно те, що написано в патерні.
-          </template>
+          <template v-if="draft.source === 'operator'">{{ translate('settings.triggers.caseNoteOperator') }}</template>
+          <template v-else>{{ translate('settings.triggers.caseNoteRule') }}</template>
         </p>
 
         <!-- Globs scope a rule to the files a tool touched, so they have nothing to scope on any
@@ -157,38 +143,35 @@
         <template v-if="draft.source === 'tool'">
           <KField
             v-model="globs"
-            label="Тільки для шляхів (через кому; порожньо — для будь-яких)"
+            :label="translate('settings.triggers.globsLabel')"
             placeholder="apps/api/**, packages/**"
           />
         </template>
 
         <KSelect
           :model-value="draft.action"
-          label="Що зробити"
+          :label="translate('settings.triggers.actionLabel')"
           :options="actionOptions"
           @update:model-value="onAction"
         />
         <KSelect
           v-if="draft.action === 'agent'"
           v-model="draft.target"
-          label="Якого агента запустити"
+          :label="translate('settings.triggers.agentLabelField')"
           :options="agentOptions"
-          placeholder="вибрати агента…"
+          :placeholder="translate('settings.triggers.agentPlaceholder')"
         />
         <template v-else>
           <KSelect
             v-model="draft.target"
-            label="Який скіл вкинути"
+            :label="translate('settings.triggers.skillLabelField')"
             :options="skillOptions"
             :placeholder="skillPlaceholder"
             :disabled="!!libraryError"
           />
           <p v-if="libraryError" class="tg__error mono">{{ libraryError }}</p>
         </template>
-        <p class="tg__note">
-          Текст цілі має бути прямою вказівкою до дії. Розпливчастий опис лише змушує модель піти
-          розбиратися, замість того щоб зробити.
-        </p>
+        <p class="tg__note">{{ translate('settings.triggers.targetNote') }}</p>
 
         <!-- `mode` and `repeat` exist ONLY in the TTSR rule file, and an operator trigger has
              none: Kermanych matches it before the message is forwarded, so there is no turn to
@@ -196,24 +179,18 @@
              Rendering the hard-mode warning here would promise an abort the runtime cannot
              perform — the same contradiction a broken pattern at launch is. -->
         <template v-if="triggerUsesRuleFile(draft.source)">
-          <KSelect v-model="draft.mode" label="Режим" :options="MODE_OPTIONS" />
-          <p v-if="draft.mode === 'interrupt'" class="tg__warn">
-            Жорсткий режим обриває хід і викидає недописану відповідь — і однаково не гарантує
-            послуху: у прогоні модель повторила заборонене слово одразу після переривання.
-          </p>
-          <KSelect v-model="draft.repeat" label="Повтор" :options="REPEAT_OPTIONS" />
+          <KSelect v-model="draft.mode" :label="translate('settings.triggers.modeLabel')" :options="MODE_OPTIONS" />
+          <p v-if="draft.mode === 'interrupt'" class="tg__warn">{{ translate('settings.triggers.hardWarn') }}</p>
+          <KSelect v-model="draft.repeat" :label="translate('settings.triggers.repeatLabel')" :options="REPEAT_OPTIONS" />
         </template>
         <!-- Said rather than silently omitted: two controls that vanish without explanation read
              as a rendering fault, and the reason is a fact about the trigger worth knowing. -->
-        <p v-else class="tg__note">
-          Режим і повтор тут не діють: тригер на слова оператора спрацьовує ще до того, як
-          почався хід — обривати нема чого, — і Керманич звіряє його з кожним повідомленням.
-        </p>
+        <p v-else class="tg__note">{{ translate('settings.triggers.modeRepeatNote') }}</p>
 
         <p v-if="formError" class="tg__error mono">{{ formError }}</p>
       </div>
       <template #controls>
-        <button type="button" class="tg__btn" @click="editorOpen = false">Скасувати</button>
+        <button type="button" class="tg__btn" @click="editorOpen = false">{{ translate('settings.modal.cancel') }}</button>
         <!-- `canWrite` here as well as on every list action: the modal must not be the one
              surface where a non-owner's write reaches postgrest only to be refused there. -->
         <button
@@ -221,7 +198,7 @@
           class="tg__btn tg__btn--primary"
           :disabled="saving || !canWrite"
           @click="save"
-        >Зберегти</button>
+        >{{ translate('settings.triggers.save') }}</button>
       </template>
     </KModal>
   </section>
@@ -266,14 +243,14 @@ const { t: translate } = useI18n();
 // `remind` first and `once` first: the defaults a new trigger opens on, and the ones a native
 // select would land on anyway. The hard mode discards a partial answer, so it is a choice the
 // operator has to reach for rather than one they can fall into.
-const MODE_OPTIONS = [
-  { value: 'remind', label: 'мʼякий — дочекатись ходу й дописати' },
-  { value: 'interrupt', label: 'жорсткий — обірвати хід' },
-];
-const REPEAT_OPTIONS = [
-  { value: 'once', label: 'один раз за сесію' },
-  { value: 'after-gap', label: 'знову, якщо минув час' },
-];
+const MODE_OPTIONS = computed(() => [
+  { value: 'remind', label: translate('settings.triggers.modeSoft') },
+  { value: 'interrupt', label: translate('settings.triggers.modeHard') },
+]);
+const REPEAT_OPTIONS = computed(() => [
+  { value: 'once', label: translate('settings.triggers.repeatOnce') },
+  { value: 'after-gap', label: translate('settings.triggers.repeatGap') },
+]);
 
 const triggers = ref<ProjectTrigger[]>([]);
 const view = ref<SkillView[]>([]);
@@ -326,7 +303,9 @@ const agentOptions = computed(() =>
 );
 const skillOptions = computed(() => view.value.map((v) => v.name));
 const skillPlaceholder = computed(() =>
-  view.value.length ? 'вибрати скіл…' : 'бібліотека проєкту порожня',
+  view.value.length
+    ? translate('settings.triggers.skillPickPlaceholder')
+    : translate('settings.triggers.libraryEmpty'),
 );
 
 // One evaluation for both lines below: an uncompilable pattern reports its message, anything
@@ -356,7 +335,7 @@ function agentLabel(id: string): string {
 function danglingNote(t: ProjectTrigger): string {
   if (t.action === 'agent') {
     if (triggerAgentOptions(AGENTS).some((o) => o.value === t.target)) return '';
-    return `Агента «${t.target}» Керманич запустити не може — тригер лише додасть помилку в стрічку.`;
+    return translate('settings.triggers.danglingAgent', { target: t.target });
   }
   // Silent while the library is unknown: «немає в бібліотеці» from a pane that could not read
   // the library is a claim about the project rather than about this row.
@@ -372,7 +351,7 @@ function danglingNote(t: ProjectTrigger): string {
   // that exists nowhere would otherwise inherit a truthy `Object.prototype.constructor` and
   // pass for a live target. Same rule, same reason as assignmentRows and renderRuleFile.
   if (Object.hasOwn(repo.value, t.target)) return '';
-  return `Скіла «${t.target}» немає в бібліотеці — тригер спрацює й нічого не вкине.`;
+  return translate('settings.triggers.danglingSkill', { target: t.target });
 }
 
 async function load(): Promise<void> {
@@ -503,15 +482,15 @@ async function save(): Promise<void> {
   const projectId = props.projectId;
   formError.value = '';
   if (!SKILL_NAME_RE.test(draft.id)) {
-    formError.value = 'Ідентифікатор: лише малі латинські літери, цифри та дефіс (до 64 символів).';
+    formError.value = translate('settings.triggers.errId');
     return;
   }
   if (!draft.label.trim()) {
-    formError.value = 'Без назви тригер нічим не назветься ні в стрічці, ні в правилі.';
+    formError.value = translate('settings.triggers.errNoLabel');
     return;
   }
   if (!draft.pattern.trim()) {
-    formError.value = 'Патерн порожній — такий тригер не спрацює ніколи.';
+    formError.value = translate('settings.triggers.errNoPattern');
     return;
   }
   // The one check the runtime cannot make for the operator: a pattern that does not compile is
@@ -520,11 +499,11 @@ async function save(): Promise<void> {
     // Points at the line that already carries the message rather than repeating it: the two
     // sit two hundred pixels apart in the same modal, and the same sentence twice reads as two
     // separate problems.
-    formError.value = 'Патерн не компілюється — під полем перевірки написано, чому.';
+    formError.value = translate('settings.triggers.errPatternBroken');
     return;
   }
   if (!SKILL_NAME_RE.test(draft.target)) {
-    formError.value = draft.action === 'agent' ? 'Вибери агента.' : 'Вибери скіл.';
+    formError.value = draft.action === 'agent' ? translate('settings.triggers.errPickAgent') : translate('settings.triggers.errPickSkill');
     return;
   }
   saving.value = true;

@@ -1,31 +1,24 @@
 <template>
   <section class="as">
-    <p class="as__lead">
-      Проєкт
-      <span class="as__lead-project mono">{{ projectName }}</span>
-      — склад команди зашитий у застосунок, а призначення належать цьому проєкту й живуть у
-      хмарі.
-    </p>
+    <i18n-t keypath="settings.agentSkills.lead" tag="p" class="as__lead">
+      <template #project><span class="as__lead-project mono">{{ projectName }}</span></template>
+    </i18n-t>
 
     <!-- Verbatim from the spec: the four sentences that separate «є в бібліотеці» from
          «призначено». Without them the two panes look like the same list twice. -->
     <ol class="as__how">
-      <li>
-        Скіл у бібліотеці — агент бере його сам, коли вважає за потрібне; у чаті це видно
-        окремим рядком <span class="mono">skill</span>.
-      </li>
-      <li>Скіл, призначений ролі, вклеюється в інструкцію запуску — агент не може його не побачити.</li>
-      <li>
-        Той самий скіл може бути і в бібліотеці, і призначеним: у блоці призначення він
-        наведений повністю, і агенту сказано не читати його вдруге з бібліотеки.
-      </li>
-      <li>Призначений текст оплачується контекстом на кожному ході — тримай його коротким.</li>
+      <i18n-t keypath="settings.agentSkills.how1" tag="li">
+        <template #skill><span class="mono">skill</span></template>
+      </i18n-t>
+      <li>{{ t('settings.agentSkills.how2') }}</li>
+      <li>{{ t('settings.agentSkills.how3') }}</li>
+      <li>{{ t('settings.agentSkills.how4') }}</li>
     </ol>
 
     <!-- The literal header the agent receives, so sentence 3 is verifiable rather than a
          claim about text the operator cannot see. Imported, never retyped: this string is
          also what the launcher pastes (core/skills.ts, assignedBlock). -->
-    <p class="as__caption">Роль отримує призначене під цим заголовком, дослівно:</p>
+    <p class="as__caption">{{ t('settings.agentSkills.headerCaption') }}</p>
     <pre class="as__header mono">{{ ASSIGNED_BLOCK_HEADER }}</pre>
 
     <p v-if="error" class="as__error mono">{{ error }}</p>
@@ -53,14 +46,10 @@
           >{{ row.unmeasured.length ? '≥ ' : '' }}{{ size(row.bytes) }}</span>
         </div>
 
-        <p v-if="row.bytes > ASSIGNED_BYTES_WARN" class="as__warn">
-          Блок великий: ці байти йдуть у кожен хід цієї ролі, не лише в перший.
-        </p>
-        <p v-if="row.unmeasured.length" class="as__unmeasured">
-          Розмір не порахований для
-          <span class="mono">{{ row.unmeasured.join(', ') }}</span>
-          — цей текст лежить у репозиторії, і Керманич його не читає з цього екрана.
-        </p>
+        <p v-if="row.bytes > ASSIGNED_BYTES_WARN" class="as__warn">{{ t('settings.agentSkills.bigWarn') }}</p>
+        <i18n-t v-if="row.unmeasured.length" keypath="settings.agentSkills.unmeasured" tag="p" class="as__unmeasured">
+          <template #names><span class="mono">{{ row.unmeasured.join(', ') }}</span></template>
+        </i18n-t>
 
         <ul v-if="row.skills.length" class="as__skills">
           <li
@@ -73,26 +62,24 @@
             <span class="as__badge" :class="`as__badge--${s.badge.kind}`">{{ s.badge.label }}</span>
             <!-- A dangling assignment: the row exists in the cloud and the launcher still
                  reads it, so it is shown with the one action that fixes it. -->
-            <span v-if="s.broken" class="as__skill-note">
-              Скіла з таким імʼям немає ні в бібліотеці, ні в репозиторії — роль не отримає нічого.
-            </span>
+            <span v-if="s.broken" class="as__skill-note">{{ t('settings.agentSkills.brokenNote') }}</span>
             <span v-else-if="s.shadowedByRepo" class="as__shadow mono">{{ s.shadowedByRepo }}</span>
             <button
               type="button"
               class="as__btn"
               :disabled="!canWrite || busy"
               @click="unassign(row.agent.id, s.name)"
-            >Прибрати</button>
+            >{{ t('settings.agentSkills.remove') }}</button>
           </li>
         </ul>
-        <p v-else class="as__none">Нічого не призначено — роль отримає лише свою інструкцію.</p>
+        <p v-else class="as__none">{{ t('settings.agentSkills.none') }}</p>
 
         <div class="as__add">
           <select
             class="as__pick mono"
             :value="picked[row.agent.id] ?? ''"
             :disabled="!canWrite || busy || !row.left.length"
-            :aria-label="`Призначити скіл ролі ${t(row.agent.labelKey)}`"
+            :aria-label="t('settings.agentSkills.assignAria', { role: t(row.agent.labelKey) })"
             @change="onPick(row.agent.id, $event)"
           >
             <option value="">{{ pickLabel(row.left) }}</option>
@@ -103,7 +90,7 @@
             class="as__btn as__btn--primary"
             :disabled="!canWrite || busy || !picked[row.agent.id]"
             @click="assign(row.agent.id)"
-          >Призначити</button>
+          >{{ t('settings.agentSkills.assign') }}</button>
         </div>
       </li>
     </ul>
@@ -187,8 +174,10 @@ const board = computed(() => {
 // agent already has everything there is. Collapsing them would send the operator looking
 // for a skill to unassign when there is no library to assign from.
 function pickLabel(left: readonly string[]): string {
-  if (left.length) return 'вибрати скіл…';
-  return view.value.length ? 'усе з бібліотеки вже призначено' : 'бібліотека проєкту порожня';
+  if (left.length) return t('settings.agentSkills.pickPlaceholder');
+  return view.value.length
+    ? t('settings.agentSkills.allAssigned')
+    : t('settings.agentSkills.libraryEmpty');
 }
 
 const ENCODER = new TextEncoder();
@@ -214,8 +203,8 @@ function measure(rows: readonly SkillView[], stored: readonly ProjectSkill[]): R
 // Bytes, not tokens: bytes are what this process can actually count, and rounding to KiB
 // past a kilobyte keeps the figure readable without implying a precision it does not have.
 function size(bytes: number): string {
-  if (bytes < 1024) return `${bytes} Б`;
-  return `${(bytes / 1024).toFixed(1)} КБ`;
+  if (bytes < 1024) return t('settings.agentSkills.bytesUnit', { n: bytes });
+  return t('settings.agentSkills.kibUnit', { n: (bytes / 1024).toFixed(1) });
 }
 
 async function load(): Promise<void> {

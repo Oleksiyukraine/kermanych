@@ -1,10 +1,6 @@
 <template>
   <section class="ag">
-    <p class="ag__lead">
-      Команда Керманича зашита в застосунок: цей список і ці тексти — те саме, що отримують
-      моделі. Змінити їх тут не можна, і читати не обовʼязково: панель існує, щоб було видно,
-      хто працює на вашому боці й з якою вказівкою.
-    </p>
+    <p class="ag__lead">{{ t('settings.agentCatalog.lead') }}</p>
 
     <!-- The badge vocabulary explained once, so each row's badge can stay one word. -->
     <ul class="ag__kinds">
@@ -32,19 +28,15 @@
              and not a description of one. A Ukrainian version beside it would be a second
              source of truth that drifts the first time the text is edited. -->
         <template v-if="a.instruction">
-          <p class="ag__caption">
-            Інструкція на старті, дослівно (англійською — саме цей рядок іде в модель):
-          </p>
+          <p class="ag__caption">{{ t('settings.agentCatalog.instructionCaption') }}</p>
           <pre class="ag__tpl mono">{{ a.instruction }}</pre>
-          <p v-if="a.holes?.length" class="ag__holes">
-            <!-- v-pre: the braces here are literal text, not an interpolation. -->
-            Дужки <span class="mono" v-pre>{{…}}</span> Керманич заповнює під час запуску:
-            <span class="mono">{{ a.holes.join(', ') }}</span>
-          </p>
+          <!-- v-pre: the braces here are literal text, not an interpolation. -->
+          <i18n-t v-if="a.holes?.length" keypath="settings.agentCatalog.holes" tag="p" class="ag__holes">
+            <template #braces><span class="mono" v-pre>{{…}}</span></template>
+            <template #holes><span class="mono">{{ a.holes.join(', ') }}</span></template>
+          </i18n-t>
         </template>
-        <p v-else class="ag__none">
-          Інструкції немає: тут не задіяна жодна модель — цю дію Керманич виконує сам.
-        </p>
+        <p v-else class="ag__none">{{ t('settings.agentCatalog.none') }}</p>
       </li>
     </ul>
   </section>
@@ -56,6 +48,7 @@
 // so this panel makes no api call and no cloud query. It is the one place an operator can
 // see the instruction texts that used to be inline in supervisor.service.ts (see the note
 // at the top of packages/core/src/agents.ts, which is why they moved).
+import { computed } from 'vue';
 import { AGENTS, type AgentKind } from '@kermanych/core';
 import { useI18n } from 'vue-i18n';
 
@@ -63,11 +56,11 @@ const { t } = useI18n();
 
 // One sentence per kind — what the badge cannot fit. `kind` describes WHERE the agent runs;
 // it does not change how an assigned skill reaches it.
-const KINDS: readonly { kind: AgentKind; what: string }[] = [
-  { kind: 'session', what: 'працює окремим процесом omp, у власній сесії поряд із вашою.' },
-  { kind: 'procedure', what: 'надсилає доручення в сесію, яка вже працює; нового процесу не зʼявляється.' },
-  { kind: 'automation', what: 'модель не задіяна — Керманич виконує дію сам, тому й інструкції немає.' },
-];
+const KINDS = computed<readonly { kind: AgentKind; what: string }[]>(() => [
+  { kind: 'session', what: t('settings.agentCatalog.kindSession') },
+  { kind: 'procedure', what: t('settings.agentCatalog.kindProcedure') },
+  { kind: 'automation', what: t('settings.agentCatalog.kindAutomation') },
+]);
 </script>
 
 <style scoped lang="scss">
