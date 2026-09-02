@@ -1,5 +1,31 @@
 <template>
   <main class="board">
+    <!-- VIEW SWITCHER — exists only when the scoped workspace mirrors a Jira board.
+         «Задачі» is the native five-column board, untouched; «Jira» reproduces the
+         mirrored board's own columns (option A of the integration design). -->
+    <div v-if="jiraAvailable" class="board__views" role="tablist">
+      <button
+        class="board__view mono"
+        :class="{ 'board__view--on': boardView === 'tasks' }"
+        role="tab"
+        :aria-selected="boardView === 'tasks'"
+        @click="boardView = 'tasks'"
+      >Задачі</button>
+      <button
+        class="board__view mono"
+        :class="{ 'board__view--on': boardView === 'jira' }"
+        role="tab"
+        :aria-selected="boardView === 'jira'"
+        @click="boardView = 'jira'"
+      >Jira</button>
+    </div>
+
+    <JiraBoardView
+      v-if="boardView === 'jira' && local.selectedWorkspaceId"
+      :workspace-id="local.selectedWorkspaceId"
+    />
+
+    <template v-if="boardView === 'tasks'">
     <header class="board__head">
       <div class="board__title">
         <h1 class="board__heading">{{ scopeHeading }}</h1>
@@ -102,6 +128,7 @@
       <div class="board__blank-eyebrow mono">КЕРМАНИЧ</div>
       <p class="board__blank-text">{{ blankText }}</p>
     </div>
+    </template>
 
     <!-- CREATE / EDIT TASK — same launch vocabulary as the local launcher -->
     <KModal v-model="editorOpen" :title="editingId ? 'Змінити задачу' : 'Нова задача'" width="720px">
@@ -281,6 +308,8 @@ import { installReconcile } from '../lib/reconcile';
 import { UNASSIGNED, filterTasks, scopedProjectIds } from '../lib/scope';
 import { ASSIGNMENT_REFUSALS } from '../lib/cloud-errors';
 import { canAssignTask, canRunTask } from '../lib/tasks-view';
+import JiraBoardView from 'components/jira/JiraBoardView.vue';
+import { useJira } from 'stores/jira';
 
 const auth = useAuth();
 const board = useBoard();
@@ -288,6 +317,29 @@ const cloud = useProjects();
 const local = useOrchestrator();
 const now = useNow();
 const router = useRouter();
+const jiraStore = useJira();
+
+// ── the Jira view switcher ────────────────────────────────────────────────────
+// Probed per scoped workspace; no integration (or no workspace scope at all — «Дошка
+// команди» across groups has no single Jira board to show) means no switcher and the
+// page is exactly what it was before the integration existed.
+const boardView = ref<'tasks' | 'jira'>('tasks');
+const jiraAvailable = computed(() => !!local.selectedWorkspaceId && !!jiraStore.integration);
+
+watch(
+  () => local.selectedWorkspaceId,
+  (ws) => {
+    if (ws) void jiraStore.probe(ws);
+    else boardView.value = 'tasks';
+  },
+  { immediate: true },
+);
+
+// A workspace switch away from the mirrored one, or a disconnect, folds the page back to
+// the native board rather than leaving a Jira tab selected with nothing behind it.
+watch(jiraAvailable, (ok) => {
+  if (!ok) boardView.value = 'tasks';
+});
 
 // Back to the LOCAL board of whatever the rail has selected. The named route, not '/', so
 // this stays the same hop the Агенти view's «Дошка команди» button makes in reverse.
@@ -473,8 +525,11 @@ const scopeHeading = computed(() => {
   return cloud.listRead ? 'Дошка команди' : 'Дошка · читаю…';
 });
 
+// `!t.jiraKey`: shadow tasks minted by Jira-ticket launches belong to the Jira view,
+// where the ticket card wears their status chip; the native columns must not show the
+// same work twice.
 const visibleTasks = computed(() =>
-  filterTasks(board.tasks, {
+  filterTasks(board.tasks.filter((t) => !t.jiraKey), {
     scopedProjectIds: scoped.value,
     projectFilter: projectFilter.value,
     assigneeFilter: assigneeFilter.value,
@@ -1082,6 +1137,29 @@ function onDelete(task: Task): void {
   font-weight: 800;
   letter-spacing: 0.04em;
   color: var(--k-text);
+}
+
+.board__views {
+  display: flex;
+  gap: var(--k-sp-1);
+  align-self: flex-start;
+}
+
+.board__view {
+  padding: 4px 14px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--k-muted);
+  background: transparent;
+  border: var(--k-rule-thin) solid var(--k-line);
+  border-radius: var(--k-r-pill);
+  cursor: pointer;
+
+  &--on {
+    color: var(--k-text);
+    border-color: var(--k-line-strong);
+    background: var(--k-surface2);
+  }
 }
 
 .board__count,
