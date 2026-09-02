@@ -125,6 +125,7 @@ export const useJira = defineStore('jira', () => {
 
     const tick = async () => {
       if (!tokenPresent.value) return; // read-only member: someone else's tick feeds them
+      if (syncing.value) return; // a manual sync or a slow previous tick still owns the poll
       syncing.value = true;
       try {
         await api.jiraSync(workspaceId);
@@ -138,6 +139,33 @@ export const useJira = defineStore('jira', () => {
     };
     void tick();
     ticker = setInterval(() => void tick(), SYNC_TICK_MS);
+  }
+
+  // The «Синхронізувати» button. A deliberate human act, so it differs from the tick in
+  // three ways: it passes `full`, which makes the api bypass the shared lease and run a
+  // full sweep (deletion reconciliation + column layout) instead of an incremental poll;
+  // it reloads the mirror afterwards, because jira_columns has no realtime channel and a
+  // relayout would otherwise stay invisible until the next open(); and it reports, since
+  // a click with no visible answer reads as a dead button.
+  async function syncNow(workspaceId: string): Promise<void> {
+    if (syncing.value) return; // the tick is mid-poll — its spinner is already the answer
+    if (!tokenPresent.value) return; // nothing to sign the Jira call with
+    const mine = generation;
+    syncing.value = true;
+    try {
+      await api.jiraSync(workspaceId, true);
+      if (mine !== generation) return; // left the board meanwhile
+      await loadBoard();
+      local.notify('Дошку синхронізовано з Jira', 'info');
+    } catch (e) {
+      if (mine !== generation) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      // Unlike the tick, this one talks: the user asked.
+      if (/token/.test(msg)) tokenPresent.value = false;
+      local.notify(`Синхронізація не вдалася: ${msg}`, 'error');
+    } finally {
+      syncing.value = false;
+    }
   }
 
   function close(): void {
@@ -188,6 +216,7 @@ export const useJira = defineStore('jira', () => {
     syncing,
     probe,
     open,
+    syncNow,
     close,
     upsert,
     drop,

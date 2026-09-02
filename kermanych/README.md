@@ -133,6 +133,9 @@ the board's own columns, tickets, labels, comments, worklogs and attachment list
   membership; whoever has the Jira view open polls Jira every ~30 s (a shared lease
   keeps N open boards to one poller), and your own actions are written to Jira
   immediately and reflected back at once.
+  «Синхронізувати» in the Jira view's toolbar forces that poll now: it skips the
+  shared lease and runs a full sweep, so tickets closed or moved in Jira — and any
+  change to the board's columns — land immediately instead of at the next tick.
 - **Tickets launch like tasks.** «Запустити» on a ticket asks which Kermanych
   project (repo) to run in — pre-selected from the sidebar — and which Jira status
   to move the ticket to (skipped when it is already in an In-Progress-category
