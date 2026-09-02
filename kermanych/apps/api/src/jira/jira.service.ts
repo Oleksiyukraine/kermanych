@@ -33,7 +33,16 @@ import { RegistryService } from "../registry/registry.service";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { JiraClient, JiraHttpError, normalizeSiteUrl } from "./jira-client";
 import type { JiraBoardSummary, JiraCredentials, JiraRawIssue, JiraTransition } from "./jira-client";
-import { adfText, fullJql, incrementalJql, mapAttachments, mapComments, mapIssue, mapWorklogs } from "./jira-map";
+import {
+  adfDoc,
+  adfText,
+  fullJql,
+  incrementalJql,
+  mapAttachments,
+  mapComments,
+  mapIssue,
+  mapWorklogs,
+} from "./jira-map";
 
 // The lease staleness window. The UI ticks every ~30 s; 25 s means the previous holder's
 // stamp has expired by the time the next tick lands, while two clients ticking together
@@ -274,14 +283,11 @@ export class JiraService {
     const fields: Record<string, unknown> = {};
     if (forCreate) fields.project = { key: integration.projectKey };
     if (draft.summary !== undefined) fields.summary = draft.summary.trim();
-    if (draft.description !== undefined)
-      fields.description = {
-        type: "doc",
-        version: 1,
-        content: draft.description.trim()
-          ? [{ type: "paragraph", content: [{ type: "text", text: draft.description.trim() }] }]
-          : [],
-      };
+    // Through `adfDoc` rather than one text node: a ticket written from the Менеджмент chat
+    // arrives as several lines (context, flow, acceptance criteria) and ADF renders a `\n`
+    // inside a text node as nothing, so a single node collapsed the whole body into one
+    // paragraph.
+    if (draft.description !== undefined) fields.description = adfDoc(draft.description);
     if (draft.issueTypeId) fields.issuetype = { id: draft.issueTypeId };
     if (draft.priorityId) fields.priority = { id: draft.priorityId };
     if (draft.labels !== undefined) fields.labels = draft.labels;
