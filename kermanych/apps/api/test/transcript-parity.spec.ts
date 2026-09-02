@@ -29,7 +29,7 @@ test("live and rehydrated paths agree on the visible fields of a tool entry", ()
   );
 
   expect(visible(history)).toEqual(visible(live));
-  expect(visible(live)).toMatchObject({ target: "/def/ hello.py", stat: "1 збігів / 1 ф", count: 1 });
+  expect(visible(live)).toMatchObject({ target: "/def/ hello.py", stat: { key: "chat.toolStat.matches", params: { matches: 1, files: 1, truncated: false } }, count: 1 });
 });
 
 test("an edit keeps the same target and diff detail on both paths", () => {
