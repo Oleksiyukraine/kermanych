@@ -281,7 +281,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import type { SessionStatus } from '@kermanych/core';
+import type { Session, SessionStatus } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
@@ -290,6 +290,7 @@ import { IS_PREVIEW } from '../lib/preview';
 import { MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
 import { myBacklogTasks } from '../lib/tasks-view';
+import { bucketOf, type Bucket } from '../lib/buckets';
 import { theme, toggleTheme } from '../lib/theme';
 import { isMoveRefusal, MOVE_REFUSAL } from '../lib/cloud-errors';
 import { percent, planWindow } from '../lib/format';
@@ -571,16 +572,17 @@ function onThemeToggle(e: MouseEvent): void {
 // menu, ⤓ as a download and ↺ as a reload.
 const buckets = [
   { key: 'active', label: 'Активні', icon: 'activity' },
+  { key: 'waiting', label: 'Очікують', icon: 'waiting' },
+  { key: 'completed', label: 'Завершені', icon: 'done' },
+  { key: 'errors', label: 'Помилки', icon: 'alert' },
   { key: 'tasks', label: 'Задачі', icon: 'tasks' },
-  { key: 'archived', label: 'Відкладені', icon: 'archive' },
-  { key: 'history', label: 'Історія', icon: 'history' },
 ] as const;
-function onBucket(key: 'active' | 'tasks' | 'archived' | 'history'): void {
+function onBucket(key: Bucket): void {
   store.setBucket(key);
   if (route.name !== 'agents') void router.push({ name: 'agents' });
 }
-// Fleet tally per sidebar bucket (replaces the old footer KStatusBar). error/conflict
-// count as Активні (needs attention) so no session falls outside a bucket.
+// Fleet tally per sidebar bucket (replaces the old footer KStatusBar). Uses bucketOf so the
+// rail count and the Агенти list can never disagree about which bucket a session lands in.
 //
 // Scoped by ASKING the Агенти page's predicate, not by re-deriving it. It used to test
 // `s.projectId !== store.selectedProjectId`, which was true while a workspace-only selection
@@ -597,14 +599,13 @@ const bucketCounts = computed(() => {
       store.projectWorkspace,
     ),
   );
-  const c = { active: 0, tasks: 0, archived: 0, history: 0 };
+  const byId = new Map(store.sessions.map((s) => [s.id, s]));
+  const parent = (id: string): Session | undefined => byId.get(id);
+  const c: Record<Bucket, number> = { active: 0, waiting: 0, completed: 0, errors: 0, tasks: 0 };
   for (const s of store.sessions) {
     if (!inScope.has(s.projectId)) continue;
     if (s.kind === 'chat') continue;
-    if (s.archived) c.archived++;
-    else if (s.status === 'backlog') c.tasks++;
-    else if (s.status === 'merged' || s.status === 'done' || s.status === 'stopped') c.history++;
-    else c.active++;
+    c[bucketOf(s, parent)]++;
   }
   // «Задачі» shows two things now: my cloud backlog cards, and any stranded pre-cutover
   // local row. The badge counts both, because a count that disagrees with the list it counts
