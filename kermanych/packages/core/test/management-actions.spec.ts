@@ -54,14 +54,14 @@ test("unreadable JSON is rejected, never executed", () => {
   const r = parseManagementReply(block('{"kind":"unsupported","section":'));
   expect(r.actions).toEqual([]);
   expect(r.rejected).toHaveLength(1);
-  expect(r.rejected[0].code).toBe("blockUnreadable");
+  expect(r.rejected[0].code).toBe("block_unreadable");
   expect(r.rejected[0].text).toContain("не вдалося прочитати блок дії");
 });
 
 test("unsupported without a section is rejected", () => {
   const res = validateManagementAction({ kind: "unsupported", request: "щось" });
   if (!("error" in res)) throw new Error("expected a refusal");
-  expect(res.error).toMatchObject({ code: "unsupportedNoSection", text: "unsupported без поля section" });
+  expect(res.error).toMatchObject({ code: "unsupported_no_section", text: "unsupported без поля section" });
 });
 
 // The write path, which is the other half of the same requirement: the ONE section whose
@@ -115,36 +115,36 @@ test("a risk.create is refused when the register's schema would refuse it", () =
     return res.error;
   };
   expect(fail({ category: "client" })).toMatchObject({
-    code: "riskCategoryUnknown",
+    code: "risk_category_unknown",
     params: { value: '"client"', allowed: expect.stringContaining("external") },
   });
   expect(fail({ category: "client" }).text).toContain('невідома категорія ризику "client"');
   // The category an unpaid invoice actually belongs to is in the message, so the model can
   // fix its own block on the next turn.
   expect(fail({ category: "client" }).text).toContain("external");
-  expect(fail({ probability: 7 })).toMatchObject({ code: "riskScoreRange", params: { field: "probability", min: 1, max: 5 } });
+  expect(fail({ probability: 7 })).toMatchObject({ code: "risk_score_range", params: { field: "probability", min: 1, max: 5 } });
   expect(fail({ probability: 7 }).text).toContain("probability має бути цілим числом 1–5");
-  expect(fail({ cause: "  " })).toMatchObject({ code: "riskFieldBlank", params: { field: "cause" } });
+  expect(fail({ cause: "  " })).toMatchObject({ code: "risk_field_blank", params: { field: "cause" } });
   expect(fail({ cause: "  " }).text).toBe("поле cause не може бути порожнім");
-  expect(fail({ kind: "opportunity" })).toMatchObject({ code: "riskResponseKindMismatch", params: { response: "reduce", kind: "opportunity" } });
+  expect(fail({ kind: "opportunity" })).toMatchObject({ code: "risk_response_kind_mismatch", params: { response: "reduce", kind: "opportunity" } });
   expect(fail({ kind: "opportunity" }).text).toContain("стратегія reduce не застосовується до opportunity");
-  expect(fail({ response: "avoid", responseActions: "" })).toMatchObject({ code: "riskResponseActionsRequired", params: { response: "avoid" } });
+  expect(fail({ response: "avoid", responseActions: "" })).toMatchObject({ code: "risk_response_actions_required", params: { response: "avoid" } });
   expect(fail({ response: "avoid", responseActions: "" }).text).toContain("потребує responseActions");
-  expect(fail({ status: "closed" })).toMatchObject({ code: "riskClosureNoteRequired", params: { status: "closed" } });
+  expect(fail({ status: "closed" })).toMatchObject({ code: "risk_closure_note_required", params: { status: "closed" } });
   expect(fail({ status: "closed" }).text).toContain("потребує closureNote");
-  expect(fail({ costImpact: 40_000 })).toMatchObject({ code: "emvPairRequired" });
+  expect(fail({ costImpact: 40_000 })).toMatchObject({ code: "emv_pair_required" });
   expect(fail({ costImpact: 40_000 }).text).toContain("costImpact і probabilityPct вказуються разом");
-  expect(fail({ residualImpact: 2 })).toMatchObject({ code: "residualPairRequired" });
+  expect(fail({ residualImpact: 2 })).toMatchObject({ code: "residual_pair_required" });
   expect(fail({ residualImpact: 2 }).text).toContain("residualProbability і residualImpact вказуються разом");
-  expect(fail({ proximity: "наступного місяця" })).toMatchObject({ code: "riskDateFormat", params: { field: "proximity" } });
+  expect(fail({ proximity: "наступного місяця" })).toMatchObject({ code: "risk_date_format", params: { field: "proximity" } });
   expect(fail({ proximity: "наступного місяця" }).text).toContain("має бути датою РРРР-ММ-ДД");
   const noRisk = validateManagementAction({ kind: "risk.create" });
   if (!("error" in noRisk)) throw new Error("expected a refusal");
-  expect(noRisk.error).toMatchObject({ code: "riskCreateNoRisk", text: "risk.create без об'єкта risk" });
+  expect(noRisk.error).toMatchObject({ code: "risk_create_no_risk", text: "risk.create без об'єкта risk" });
   const missing = validateManagementAction({ kind: "risk.create", risk: { kind: "threat", category: "external" } });
   if (!("error" in missing)) throw new Error("expected a refusal");
   expect(missing.error).toMatchObject({
-    code: "riskCreateMissingFields",
+    code: "risk_create_missing_fields",
     params: { missing: "cause, event, consequence, probability, impact, response" },
   });
   expect(missing.error.text).toBe(
@@ -178,10 +178,10 @@ test("a risk.update names one register code and changes only what it lists", () 
   expect(res).toEqual({ kind: "risk.update", code: "R-003", patch: { probability: 5, closureNote: "" } });
   const noCode = validateManagementAction({ kind: "risk.update", patch: { probability: 5 } });
   if (!("error" in noCode)) throw new Error("expected a refusal");
-  expect(noCode.error).toMatchObject({ code: "riskUpdateNoCode", text: "risk.update без коду ризику (наприклад R-003)" });
+  expect(noCode.error).toMatchObject({ code: "risk_update_no_code", text: "risk.update без коду ризику (наприклад R-003)" });
   const empty = validateManagementAction({ kind: "risk.update", code: "R-003", patch: {} });
   if (!("error" in empty)) throw new Error("expected a refusal");
-  expect(empty.error).toMatchObject({ code: "riskUpdateEmpty", params: { code: "R-003" }, text: "risk.update R-003 нічого не змінює" });
+  expect(empty.error).toMatchObject({ code: "risk_update_empty", params: { code: "R-003" }, text: "risk.update R-003 нічого не змінює" });
   // Absent means «unchanged», and so does the `null` a model writes when it means that.
   expect(validateManagementAction({ kind: "risk.update", code: "R-003", patch: { impact: 2, riskOwner: null } })).toEqual(
     { kind: "risk.update", code: "R-003", patch: { impact: 2 } },
@@ -195,7 +195,7 @@ test("an unknown kind is named in the rejection", () => {
   expect(r.actions).toEqual([]);
   expect(r.rejected).toHaveLength(1);
   expect(r.rejected[0]).toMatchObject({
-    code: "actionKindUnknown",
+    code: "action_kind_unknown",
     params: { value: '"release.publish"' },
     text: 'невідома дія "release.publish"',
   });
@@ -224,12 +224,12 @@ test("a release.notes without a project or a branch is refused, not guessed", ()
   const noProject = validateManagementAction({ kind: "release.notes", ...RANGE, project: "  " });
   if (!("error" in noProject)) throw new Error("expected a refusal");
   expect(noProject.error).toMatchObject({
-    code: "releaseNoProject",
+    code: "release_no_project",
     text: "release.notes без проєкту — назви його так, як він стоїть у списку репозиторіїв",
   });
   const noBranch = validateManagementAction({ kind: "release.notes", ...RANGE, branch: undefined });
   if (!("error" in noBranch)) throw new Error("expected a refusal");
-  expect(noBranch.error).toMatchObject({ code: "releaseNoBranch", params: { project: "Альфа" }, text: "release.notes для «Альфа» без гілки" });
+  expect(noBranch.error).toMatchObject({ code: "release_no_branch", params: { project: "Альфа" }, text: "release.notes для «Альфа» без гілки" });
 });
 
 // A model asked for «за останній тиждень» writes exactly that into a date field often enough
@@ -243,20 +243,20 @@ test("a release.notes range must be two real calendar dates in order", () => {
     return res.error;
   };
   expect(relFail({ rangeFrom: "останній тиждень" })).toMatchObject({
-    code: "releaseDateFormat",
+    code: "release_date_format",
     params: { field: "rangeFrom", value: '"останній тиждень"' },
   });
   expect(relFail({ rangeFrom: "останній тиждень" }).text).toBe(
     'release.notes: rangeFrom="останній тиждень" — це не дата у форматі РРРР-ММ-ДД',
   );
-  expect(relFail({ rangeTo: "2026-08-32" })).toMatchObject({ code: "releaseDateFormat", params: { field: "rangeTo" } });
-  expect(relFail({ rangeFrom: "2026-13-01" })).toMatchObject({ code: "releaseDateFormat", params: { field: "rangeFrom" } });
+  expect(relFail({ rangeTo: "2026-08-32" })).toMatchObject({ code: "release_date_format", params: { field: "rangeTo" } });
+  expect(relFail({ rangeFrom: "2026-13-01" })).toMatchObject({ code: "release_date_format", params: { field: "rangeFrom" } });
   expect(relFail({ rangeTo: undefined })).toMatchObject({
-    code: "releaseNoRange",
+    code: "release_no_range",
     text: "release.notes для «Альфа» без періоду — потрібні rangeFrom і rangeTo",
   });
   expect(relFail({ rangeFrom: "2026-08-31", rangeTo: "2026-08-01" })).toMatchObject({
-    code: "releaseRangeReversed",
+    code: "release_range_reversed",
     params: { from: "2026-08-31", to: "2026-08-01" },
   });
   expect(relFail({ rangeFrom: "2026-08-31", rangeTo: "2026-08-01" }).text).toBe(

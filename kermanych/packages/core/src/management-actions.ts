@@ -291,7 +291,7 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
       return {
         error: {
           text: `невідомий тип ризику ${JSON.stringify(o.kind)} (threat або opportunity)`,
-          code: "riskKindUnknown",
+          code: "risk_kind_unknown",
           params: { value: JSON.stringify(o.kind) },
         },
       };
@@ -302,7 +302,7 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
       return {
         error: {
           text: `невідома категорія ризику ${JSON.stringify(o.category)} — допустимі: ${RISK_CATEGORY_VALUES.join(", ")}`,
-          code: "riskCategoryUnknown",
+          code: "risk_category_unknown",
           params: { value: JSON.stringify(o.category), allowed: RISK_CATEGORY_VALUES.join(", ") },
         },
       };
@@ -313,7 +313,7 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
       return {
         error: {
           text: `невідома стратегія реагування ${JSON.stringify(o.response)}`,
-          code: "riskResponseUnknown",
+          code: "risk_response_unknown",
           params: { value: JSON.stringify(o.response) },
         },
       };
@@ -324,7 +324,7 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
       return {
         error: {
           text: `невідомий статус ризику ${JSON.stringify(o.status)} — допустимі: ${RISK_STATUS_VALUES.join(", ")}`,
-          code: "riskStatusUnknown",
+          code: "risk_status_unknown",
           params: { value: JSON.stringify(o.status), allowed: RISK_STATUS_VALUES.join(", ") },
         },
       };
@@ -337,7 +337,7 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
     if (!has(o, key)) continue;
     const t = str(o[key]);
     if (t === undefined)
-      return { error: { text: `поле ${key} не може бути порожнім`, code: "riskFieldBlank", params: { field: key } } };
+      return { error: { text: `поле ${key} не може бути порожнім`, code: "risk_field_blank", params: { field: key } } };
     p[key] = t;
   }
 
@@ -346,7 +346,7 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
   for (const key of ["responseActions", "earlyWarning", "closureNote"] as const) {
     if (!has(o, key)) continue;
     if (typeof o[key] !== "string")
-      return { error: { text: `поле ${key} має бути текстом`, code: "riskFieldNotText", params: { field: key } } };
+      return { error: { text: `поле ${key} має бути текстом`, code: "risk_field_not_text", params: { field: key } } };
     p[key] = (o[key] as string).trim();
   }
 
@@ -357,7 +357,7 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
       return {
         error: {
           text: `поле ${key} має бути цілим числом ${RISK_SCORE_MIN}–${RISK_SCORE_MAX}, а не ${JSON.stringify(o[key])}`,
-          code: "riskScoreRange",
+          code: "risk_score_range",
           params: { field: key, min: RISK_SCORE_MIN, max: RISK_SCORE_MAX, value: JSON.stringify(o[key]) },
         },
       };
@@ -370,7 +370,7 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
       return {
         error: {
           text: `probabilityPct має бути цілим числом 0–100, а не ${JSON.stringify(o.probabilityPct)}`,
-          code: "probabilityPctRange",
+          code: "probability_pct_range",
           params: { value: JSON.stringify(o.probabilityPct) },
         },
       };
@@ -382,7 +382,7 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
       return {
         error: {
           text: `costImpact має бути невідʼємним числом, а не ${JSON.stringify(o.costImpact)}`,
-          code: "costImpactNegative",
+          code: "cost_impact_negative",
           params: { value: JSON.stringify(o.costImpact) },
         },
       };
@@ -396,7 +396,7 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
       return {
         error: {
           text: `поле ${key} має бути датою РРРР-ММ-ДД, а не ${JSON.stringify(o[key])}`,
-          code: "riskDateFormat",
+          code: "risk_date_format",
           params: { field: key, value: JSON.stringify(o[key]) },
         },
       };
@@ -409,7 +409,7 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
     return {
       error: {
         text: `стратегія ${p.response} не застосовується до ${p.kind} — допустимі: ${RISK_RESPONSES_BY_KIND[p.kind].join(", ")}`,
-        code: "riskResponseKindMismatch",
+        code: "risk_response_kind_mismatch",
         params: { response: p.response, kind: p.kind, allowed: RISK_RESPONSES_BY_KIND[p.kind].join(", ") },
       },
     };
@@ -419,7 +419,7 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
     return {
       error: {
         text: `статус ${p.status} потребує closureNote — причини закриття або плану по інциденту`,
-        code: "riskClosureNoteRequired",
+        code: "risk_closure_note_required",
         params: { status: p.status },
       },
     };
@@ -428,12 +428,12 @@ function riskPatch(o: Record<string, unknown>): ManagementRiskPatch | Fail {
     return {
       error: {
         text: "costImpact і probabilityPct вказуються разом — EMV з половини пари є вигаданим числом",
-        code: "emvPairRequired",
+        code: "emv_pair_required",
       },
     };
   if ((p.residualProbability === undefined) !== (p.residualImpact === undefined))
     return {
-      error: { text: "residualProbability і residualImpact вказуються разом", code: "residualPairRequired" },
+      error: { text: "residualProbability і residualImpact вказуються разом", code: "residual_pair_required" },
     };
 
   return p;
@@ -446,18 +446,18 @@ const RISK_REQUIRED = ["kind", "category", "cause", "event", "consequence", "pro
 // One parsed block -> one action, or a sentence explaining why not. The sentence is user
 // facing, so it names the offending value rather than a schema path.
 export function validateManagementAction(raw: unknown): ManagementAction | { error: ManagementRejection } {
-  if (!isObj(raw)) return { error: { text: "блок дії має бути JSON-об'єктом", code: "actionNotObject" } };
+  if (!isObj(raw)) return { error: { text: "блок дії має бути JSON-об'єктом", code: "action_not_object" } };
   const o = raw;
   const kind = str(o.kind);
   if (kind === "unsupported") {
     const section = str(o.section);
-    if (section === undefined) return { error: { text: "unsupported без поля section", code: "unsupportedNoSection" } };
+    if (section === undefined) return { error: { text: "unsupported без поля section", code: "unsupported_no_section" } };
     return { kind: "unsupported", section, request: str(o.request) ?? "" };
   }
   if (kind === "risk.create") {
     // Nested under `risk` and not flat, because a risk has a `kind` of its own
     // (threat/opportunity) and a flat block would have two fields fighting over that name.
-    if (!isObj(o.risk)) return { error: { text: "risk.create без об'єкта risk", code: "riskCreateNoRisk" } };
+    if (!isObj(o.risk)) return { error: { text: "risk.create без об'єкта risk", code: "risk_create_no_risk" } };
     const p = riskPatch(o.risk);
     if (isFail(p)) return p;
     const missing = RISK_REQUIRED.filter((k) => p[k] === undefined);
@@ -465,7 +465,7 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
       return {
         error: {
           text: `risk.create без обов'язкових полів: ${missing.join(", ")}`,
-          code: "riskCreateMissingFields",
+          code: "risk_create_missing_fields",
           params: { missing: missing.join(", ") },
         },
       };
@@ -474,7 +474,7 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
       return {
         error: {
           text: `стратегія ${p.response} потребує responseActions — що саме буде зроблено`,
-          code: "riskResponseActionsRequired",
+          code: "risk_response_actions_required",
           params: { response: String(p.response) },
         },
       };
@@ -483,13 +483,13 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
   if (kind === "risk.update") {
     const code = str(o.code);
     if (code === undefined)
-      return { error: { text: "risk.update без коду ризику (наприклад R-003)", code: "riskUpdateNoCode" } };
+      return { error: { text: "risk.update без коду ризику (наприклад R-003)", code: "risk_update_no_code" } };
     if (!isObj(o.patch))
-      return { error: { text: `risk.update ${code} без об'єкта patch`, code: "riskUpdateNoPatch", params: { code } } };
+      return { error: { text: `risk.update ${code} без об'єкта patch`, code: "risk_update_no_patch", params: { code } } };
     const p = riskPatch(o.patch);
     if (isFail(p)) return p;
     if (Object.keys(p).length === 0)
-      return { error: { text: `risk.update ${code} нічого не змінює`, code: "riskUpdateEmpty", params: { code } } };
+      return { error: { text: `risk.update ${code} нічого не змінює`, code: "risk_update_empty", params: { code } } };
     return { kind: "risk.update", code, patch: p };
   }
   if (kind === "release.notes") {
@@ -502,19 +502,19 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
       return {
         error: {
           text: "release.notes без проєкту — назви його так, як він стоїть у списку репозиторіїв",
-          code: "releaseNoProject",
+          code: "release_no_project",
         },
       };
     const branch = str(o.branch);
     if (branch === undefined)
-      return { error: { text: `release.notes для «${project}» без гілки`, code: "releaseNoBranch", params: { project } } };
+      return { error: { text: `release.notes для «${project}» без гілки`, code: "release_no_branch", params: { project } } };
     const rangeFrom = str(o.rangeFrom);
     const rangeTo = str(o.rangeTo);
     if (rangeFrom === undefined || rangeTo === undefined)
       return {
         error: {
           text: `release.notes для «${project}» без періоду — потрібні rangeFrom і rangeTo`,
-          code: "releaseNoRange",
+          code: "release_no_range",
           params: { project },
         },
       };
@@ -529,7 +529,7 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
         return {
           error: {
             text: `release.notes: ${field}=${JSON.stringify(value)} — це не дата у форматі РРРР-ММ-ДД`,
-            code: "releaseDateFormat",
+            code: "release_date_format",
             params: { field, value: JSON.stringify(value) },
           },
         };
@@ -540,13 +540,13 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
       return {
         error: {
           text: `release.notes: початок періоду (${rangeFrom}) пізніший за його кінець (${rangeTo})`,
-          code: "releaseRangeReversed",
+          code: "release_range_reversed",
           params: { from: rangeFrom, to: rangeTo },
         },
       };
     return { kind: "release.notes", project, branch, rangeFrom, rangeTo };
   }
-  return { error: { text: `невідома дія ${JSON.stringify(o.kind)}`, code: "actionKindUnknown", params: { value: JSON.stringify(o.kind) } } };
+  return { error: { text: `невідома дія ${JSON.stringify(o.kind)}`, code: "action_kind_unknown", params: { value: JSON.stringify(o.kind) } } };
 }
 
 // Split an assistant answer into the prose the user reads and the actions the app runs.
@@ -564,7 +564,7 @@ export function parseManagementReply(raw: string): ParsedManagementReply {
         const message = (err as Error).message;
         rejected.push({
           text: `не вдалося прочитати блок дії: ${message}`,
-          code: "blockUnreadable",
+          code: "block_unreadable",
           params: { message },
         });
         return "";

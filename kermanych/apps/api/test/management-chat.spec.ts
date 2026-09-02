@@ -188,7 +188,7 @@ describe("ManagementChatService", () => {
     // The rejection now carries a stable code + the Ukrainian text as its fallback, the same
     // codes-on-the-wire contract notices use, so the UI can localize it.
     expect(bad.rejected).toHaveLength(1);
-    expect(bad.rejected[0]).toMatchObject({ code: "riskCreateNoRisk", text: "risk.create без об'єкта risk" });
+    expect(bad.rejected[0]).toMatchObject({ code: "risk_create_no_risk", text: "risk.create без об'єкта risk" });
   });
 
   // The Менеджмент turn is templated — contract, context markers, then the operator's text —

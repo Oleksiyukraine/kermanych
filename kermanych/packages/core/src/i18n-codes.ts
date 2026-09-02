@@ -123,69 +123,69 @@ export type ApiErrorBody = { code: ApiErrorCode; message: string; params?: ApiEr
 // otherwise) — the exhaustiveness assert below keeps the array in lockstep with the union.
 export type ManagementRejectionCode =
   // riskPatch — one field of a risk, validated against ./risks and the register's CHECKs:
-  | "riskKindUnknown" // kind is neither threat nor opportunity (params: { value })
-  | "riskCategoryUnknown" // category is not a register category (params: { value, allowed })
-  | "riskResponseUnknown" // response is not a known strategy (params: { value })
-  | "riskStatusUnknown" // status is not a register status (params: { value, allowed })
-  | "riskFieldBlank" // cause/event/consequence sent blank (params: { field })
-  | "riskFieldNotText" // a free-text field sent as a non-string (params: { field })
-  | "riskScoreRange" // a 1–5 score out of range (params: { field, min, max, value })
-  | "probabilityPctRange" // probabilityPct outside 0–100 (params: { value })
-  | "costImpactNegative" // costImpact negative (params: { value })
-  | "riskDateFormat" // proximity/actionDue not YYYY-MM-DD (params: { field, value })
-  | "riskResponseKindMismatch" // response does not apply to kind (params: { response, kind, allowed })
-  | "riskClosureNoteRequired" // a terminal status arrived without a closure note (params: { status })
-  | "emvPairRequired" // costImpact and probabilityPct must arrive together (params: none)
-  | "residualPairRequired" // residualProbability and residualImpact must arrive together (params: none)
+  | "risk_kind_unknown" // kind is neither threat nor opportunity (params: { value })
+  | "risk_category_unknown" // category is not a register category (params: { value, allowed })
+  | "risk_response_unknown" // response is not a known strategy (params: { value })
+  | "risk_status_unknown" // status is not a register status (params: { value, allowed })
+  | "risk_field_blank" // cause/event/consequence sent blank (params: { field })
+  | "risk_field_not_text" // a free-text field sent as a non-string (params: { field })
+  | "risk_score_range" // a 1–5 score out of range (params: { field, min, max, value })
+  | "probability_pct_range" // probabilityPct outside 0–100 (params: { value })
+  | "cost_impact_negative" // costImpact negative (params: { value })
+  | "risk_date_format" // proximity/actionDue not YYYY-MM-DD (params: { field, value })
+  | "risk_response_kind_mismatch" // response does not apply to kind (params: { response, kind, allowed })
+  | "risk_closure_note_required" // a terminal status arrived without a closure note (params: { status })
+  | "emv_pair_required" // costImpact and probabilityPct must arrive together (params: none)
+  | "residual_pair_required" // residualProbability and residualImpact must arrive together (params: none)
   // validateManagementAction — the block as a whole, per kind:
-  | "actionNotObject" // the block body was not a JSON object (params: none)
-  | "unsupportedNoSection" // an unsupported block without a section (params: none)
-  | "riskCreateNoRisk" // a risk.create without its nested risk object (params: none)
-  | "riskCreateMissingFields" // a risk.create missing required fields (params: { missing })
-  | "riskResponseActionsRequired" // a non-accept strategy without responseActions (params: { response })
-  | "riskUpdateNoCode" // a risk.update without a register code (params: none)
-  | "riskUpdateNoPatch" // a risk.update without a patch object (params: { code })
-  | "riskUpdateEmpty" // a risk.update that changes nothing (params: { code })
-  | "releaseNoProject" // a release.notes without a project name (params: none)
-  | "releaseNoBranch" // a release.notes without a branch (params: { project })
-  | "releaseNoRange" // a release.notes without an inclusive range (params: { project })
-  | "releaseDateFormat" // a release.notes range bound that is not a date (params: { field, value })
-  | "releaseRangeReversed" // a release.notes range whose start is after its end (params: { from, to })
-  | "actionKindUnknown" // a block whose kind nobody implemented (params: { value })
+  | "action_not_object" // the block body was not a JSON object (params: none)
+  | "unsupported_no_section" // an unsupported block without a section (params: none)
+  | "risk_create_no_risk" // a risk.create without its nested risk object (params: none)
+  | "risk_create_missing_fields" // a risk.create missing required fields (params: { missing })
+  | "risk_response_actions_required" // a non-accept strategy without responseActions (params: { response })
+  | "risk_update_no_code" // a risk.update without a register code (params: none)
+  | "risk_update_no_patch" // a risk.update without a patch object (params: { code })
+  | "risk_update_empty" // a risk.update that changes nothing (params: { code })
+  | "release_no_project" // a release.notes without a project name (params: none)
+  | "release_no_branch" // a release.notes without a branch (params: { project })
+  | "release_no_range" // a release.notes without an inclusive range (params: { project })
+  | "release_date_format" // a release.notes range bound that is not a date (params: { field, value })
+  | "release_range_reversed" // a release.notes range whose start is after its end (params: { from, to })
+  | "action_kind_unknown" // a block whose kind nobody implemented (params: { value })
   // parseManagementReply — the block never parsed as JSON:
-  | "blockUnreadable"; // the fenced block was not readable JSON (params: { message })
+  | "block_unreadable"; // the fenced block was not readable JSON (params: { message })
 
 // Runtime mirror of the union above. MUST list every member exactly once.
 export const MANAGEMENT_REJECTION_CODES = [
-  "riskKindUnknown",
-  "riskCategoryUnknown",
-  "riskResponseUnknown",
-  "riskStatusUnknown",
-  "riskFieldBlank",
-  "riskFieldNotText",
-  "riskScoreRange",
-  "probabilityPctRange",
-  "costImpactNegative",
-  "riskDateFormat",
-  "riskResponseKindMismatch",
-  "riskClosureNoteRequired",
-  "emvPairRequired",
-  "residualPairRequired",
-  "actionNotObject",
-  "unsupportedNoSection",
-  "riskCreateNoRisk",
-  "riskCreateMissingFields",
-  "riskResponseActionsRequired",
-  "riskUpdateNoCode",
-  "riskUpdateNoPatch",
-  "riskUpdateEmpty",
-  "releaseNoProject",
-  "releaseNoBranch",
-  "releaseNoRange",
-  "releaseDateFormat",
-  "releaseRangeReversed",
-  "actionKindUnknown",
-  "blockUnreadable",
+  "risk_kind_unknown",
+  "risk_category_unknown",
+  "risk_response_unknown",
+  "risk_status_unknown",
+  "risk_field_blank",
+  "risk_field_not_text",
+  "risk_score_range",
+  "probability_pct_range",
+  "cost_impact_negative",
+  "risk_date_format",
+  "risk_response_kind_mismatch",
+  "risk_closure_note_required",
+  "emv_pair_required",
+  "residual_pair_required",
+  "action_not_object",
+  "unsupported_no_section",
+  "risk_create_no_risk",
+  "risk_create_missing_fields",
+  "risk_response_actions_required",
+  "risk_update_no_code",
+  "risk_update_no_patch",
+  "risk_update_empty",
+  "release_no_project",
+  "release_no_branch",
+  "release_no_range",
+  "release_date_format",
+  "release_range_reversed",
+  "action_kind_unknown",
+  "block_unreadable",
 ] as const satisfies readonly ManagementRejectionCode[];
 
 type _ManagementRejectionExhaustive = AssertNever<
