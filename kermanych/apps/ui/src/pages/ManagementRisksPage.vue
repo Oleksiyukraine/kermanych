@@ -1,10 +1,9 @@
 <template>
   <section class="risk">
     <p class="risk__lead">
-      Реєстр ризиків воркспейсу
+      {{ t('management.risks.leadBefore') }}
       <span class="risk__lead-workspace mono">{{ workspaceName }}</span>
-      — ризики, які ще не сталися. Те, що вже сталося, живе тут зі статусом «реалізувався» і
-      планом усунення.
+      {{ t('management.risks.leadAfter') }}
     </p>
 
     <!-- The four numbers a status report opens with. Every one of them is derived from the
@@ -12,47 +11,47 @@
     <div class="risk__summary">
       <div class="risk__stats">
         <article class="risk__stat">
-          <span class="risk__stat-label mono">живих ризиків</span>
+          <span class="risk__stat-label mono">{{ t('management.risks.statLive') }}</span>
           <strong class="risk__stat-value">{{ liveCount }}</strong>
-          <span class="risk__stat-note">із {{ all.length }} у реєстрі</span>
+          <span class="risk__stat-note">{{ t('management.risks.statLiveNote', { total: all.length }) }}</span>
         </article>
         <article class="risk__stat" :class="{ 'risk__stat--alarm': escalations.length }">
-          <span class="risk__stat-label mono">понад толерантність</span>
+          <span class="risk__stat-label mono">{{ t('management.risks.statOverTolerance') }}</span>
           <strong class="risk__stat-value">{{ escalations.length }}</strong>
-          <span class="risk__stat-note">експозиція ≥ {{ ESCALATION_EXPOSURE }} → спонсору</span>
+          <span class="risk__stat-note">{{ t('management.risks.statOverToleranceNote', { exposure: ESCALATION_EXPOSURE }) }}</span>
         </article>
         <article class="risk__stat" :class="{ 'risk__stat--warn': staleCount }">
-          <span class="risk__stat-label mono">прострочений перегляд</span>
+          <span class="risk__stat-label mono">{{ t('management.risks.statOverdue') }}</span>
           <strong class="risk__stat-value">{{ staleCount }}</strong>
-          <span class="risk__stat-note">каденція {{ REVIEW_CADENCE_DAYS }} дн</span>
+          <span class="risk__stat-note">{{ t('management.risks.statOverdueNote', { days: REVIEW_CADENCE_DAYS }) }}</span>
         </article>
         <article class="risk__stat">
-          <span class="risk__stat-label mono">обґрунтований резерв</span>
+          <span class="risk__stat-label mono">{{ t('management.risks.statReserve') }}</span>
           <strong class="risk__stat-value">{{ reserve ? money(reserve) : '—' }}</strong>
-          <span class="risk__stat-note">Σ EMV за {{ quantified }} кількісно оціненими</span>
+          <span class="risk__stat-note">{{ t('management.risks.statReserveNote', { count: quantified }) }}</span>
         </article>
       </div>
 
       <!-- The heat map doubles as a filter: clicking a cell narrows the table to it, which is
            the fastest way to answer «покажи все, що в червоному куті». -->
       <article class="risk__card">
-        <h3 class="risk__card-title mono">матриця · залишкова оцінка</h3>
+        <h3 class="risk__card-title mono">{{ t('management.risks.matrixTitle') }}</h3>
         <RiskMatrix
           :counts="counts"
           :selected-cell="filter.cell"
           interactive
-          aria-label="Матриця реєстру"
+          :aria-label="t('management.risks.matrixAria')"
           @pick="toggleCell"
         />
         <button v-if="filter.cell" class="risk__card-clear" type="button" @click="filter.cell = ''">
-          показати всі клітинки
+          {{ t('management.risks.clearCells') }}
         </button>
       </article>
 
       <!-- Top-N, not all-N: a status report carries these plus anything newly escalated, and
            the full register stays in the tool. -->
       <article class="risk__card">
-        <h3 class="risk__card-title mono">топ-5 за експозицією</h3>
+        <h3 class="risk__card-title mono">{{ t('management.risks.topTitle') }}</h3>
         <ol v-if="top.length" class="risk__top">
           <li v-for="r in top" :key="r.id" class="risk__top-row" @click="edit(r)">
             <span class="risk__top-code mono">{{ r.code }}</span>
@@ -62,31 +61,27 @@
             </span>
           </li>
         </ol>
-        <p v-else class="risk__card-empty">Живих ризиків немає.</p>
+        <p v-else class="risk__card-empty">{{ t('management.risks.topEmpty') }}</p>
       </article>
     </div>
 
     <div class="risk__toolbar">
-      <KField v-model="filter.query" placeholder="Пошук за формулюванням або номером" />
-      <KSelect v-model="categoryModel" :options="CATEGORY_OPTIONS" placeholder="Усі категорії" />
+      <KField v-model="filter.query" :placeholder="t('management.risks.searchPlaceholder')" />
+      <KSelect v-model="categoryModel" :options="CATEGORY_OPTIONS" :placeholder="t('management.risks.allCategories')" />
       <KSelect v-model="statusModel" :options="STATUS_OPTIONS" />
       <KSelect v-model="sortModel" :options="SORT_OPTIONS" />
-      <KCheckbox v-model="filter.aboveTolerance" label="Лише понад толерантність" />
-      <KBtn variant="primary" @click="create()">+ Новий ризик</KBtn>
+      <KCheckbox v-model="filter.aboveTolerance" :label="t('management.risks.aboveToleranceOnly')" />
+      <KBtn variant="primary" @click="create()">{{ t('management.risks.newRisk') }}</KBtn>
     </div>
 
     <p v-if="store.loadError" class="risk__error">
-      Реєстр не прочитався: {{ store.loadError }}
+      {{ t('management.risks.loadError', { error: store.loadError }) }}
     </p>
 
     <div v-else-if="!rows.length" class="risk__blank">
-      <span class="risk__blank-eyebrow mono">РЕЄСТР</span>
+      <span class="risk__blank-eyebrow mono">{{ t('management.risks.blankEyebrow') }}</span>
       <p class="risk__blank-text">
-        {{
-          all.length
-            ? 'Під цей фільтр не підпадає жоден ризик.'
-            : 'Реєстр порожній. Перший ризик пишеться як причина → подія → наслідок.'
-        }}
+        {{ all.length ? t('management.risks.blankFiltered') : t('management.risks.blankEmpty') }}
       </p>
     </div>
 
@@ -109,7 +104,7 @@
             <span class="risk__statement-text">{{ statementOf(row) }}</span>
             <span class="risk__statement-meta">
               <KTag>{{ categoryLabel(row.category) }}</KTag>
-              <KTag v-if="row.kind === 'opportunity'">можливість</KTag>
+              <KTag v-if="row.kind === 'opportunity'">{{ t('management.risks.kindOpportunity') }}</KTag>
               <KTag>{{ responseLabel(row.response) }}</KTag>
             </span>
           </div>
@@ -130,7 +125,7 @@
           >
             {{ row.residualExposure }}
           </span>
-          <span v-else class="risk__dash mono">не оцінено</span>
+          <span v-else class="risk__dash mono">{{ t('management.risks.notScored') }}</span>
         </template>
 
         <template #cell-proximity="{ row }">
@@ -159,13 +154,13 @@
                  cadence nobody keeps. There is no delete button: the register is append-only
                  and a risk leaves it through its status. -->
             <KIconButton
-              title="Позначити переглянутим"
+              :title="t('management.risks.reviewMark')"
               :disabled="!isLive(row) || reviewing === row.id"
               @click.stop="review(row)"
             >
               ✓
             </KIconButton>
-            <KIconButton title="Відкрити" @click.stop="edit(row)">✎</KIconButton>
+            <KIconButton :title="t('management.risks.open')" @click.stop="edit(row)">✎</KIconButton>
           </div>
         </template>
       </KTable>
@@ -175,8 +170,7 @@
          every score, every escalation and every review date on this page is measured against;
          they are agreed once for the whole workspace and live in lib/risk.ts. -->
     <p class="risk__plan mono">
-      план: шкали 1–5 · толерантність експозиції ≥ {{ ESCALATION_EXPOSURE }} → спонсор ·
-      перегляд щотижня ({{ REVIEW_CADENCE_DAYS }} дн) · рядки не видаляються, лише закриваються
+      {{ t('management.risks.plan', { exposure: ESCALATION_EXPOSURE, days: REVIEW_CADENCE_DAYS }) }}
     </p>
 
     <RiskEditor
@@ -199,6 +193,7 @@
 // applies — scoring, tolerance, review cadence, top-N — comes from lib/risk.ts, and every
 // write goes through stores/risks.ts.
 import { computed, reactive, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { RiskCategory, WorkspaceRisk } from '@kermanych/cloud';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
@@ -246,21 +241,23 @@ const props = defineProps<{ workspaceId: string; workspaceName: string }>();
 
 const store = useRisks();
 const projects = useProjects();
+
+const { t } = useI18n();
 // Proximity, overdue reviews and «переглянуто N дн тому» are all relative, so the page needs
 // a clock. A minute is plenty for a screen measured in days.
 const now = useNow(60_000);
 
-const COLUMNS: KTableColumn[] = [
+const COLUMNS = computed<KTableColumn[]>(() => [
   { key: 'code', label: 'ID', width: '70px', mono: true },
-  { key: 'statement', label: 'Ризик' },
+  { key: 'statement', label: t('management.risks.colStatement') },
   { key: 'score', label: 'P×I', align: 'center', width: '62px' },
-  { key: 'residual', label: 'Залишк.', align: 'center', width: '82px' },
-  { key: 'proximity', label: 'Проксіміті', width: '116px' },
-  { key: 'owner', label: 'Власник', width: '132px' },
-  { key: 'review', label: 'Перегляд', width: '112px' },
-  { key: 'status', label: 'Статус', width: '104px' },
+  { key: 'residual', label: t('management.risks.colResidual'), align: 'center', width: '82px' },
+  { key: 'proximity', label: t('management.risks.colProximity'), width: '116px' },
+  { key: 'owner', label: t('management.risks.colOwner'), width: '132px' },
+  { key: 'review', label: t('management.risks.colReview'), width: '112px' },
+  { key: 'status', label: t('management.risks.colStatus'), width: '104px' },
   { key: 'actions', label: '', align: 'right', width: '78px' },
-];
+]);
 
 const CATEGORY_OPTIONS: KSelectOption[] = RISK_CATEGORIES.map((c) => ({
   value: c.value,
@@ -343,7 +340,7 @@ const sortModel = computed({
 });
 
 function memberName(id: string | undefined): string {
-  if (!id) return 'не призначено';
+  if (!id) return t('management.risks.memberUnassigned');
   return memberOptions.value.find((m) => m.value === id)?.label ?? id;
 }
 

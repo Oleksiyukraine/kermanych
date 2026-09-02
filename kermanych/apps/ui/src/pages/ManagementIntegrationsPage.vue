@@ -1,7 +1,7 @@
 <template>
   <section class="int">
     <p class="int__lead">
-      Підключіть зовнішні сервіси до воркспейсу
+      {{ t('management.integrations.lead') }}
       <span class="int__lead-workspace mono">{{ workspaceName }}</span>
     </p>
 
@@ -18,17 +18,17 @@
           </svg>
         </span>
         <h3 class="int__name">{{ brand.name }}</h3>
-        <p class="int__blurb">{{ brand.blurb }}</p>
+        <p class="int__blurb">{{ t(brand.blurb) }}</p>
         <!-- The bubble hangs on the ROW, not on the button: `v-tip` binds mouseenter/focusin,
              and Chromium dispatches neither on a disabled control — the same dead-tooltip
              constraint AgentsPage and MainLayout document. The row is the cursor's target on
              the way to «Підключити» and reads correctly for the state chip beside it too.
              It replaces a native `title`, which drew the OS rectangle in a rounded UI. -->
-        <div v-tip="'У розробці'" class="int__foot">
+        <div v-tip="t('management.integrations.devTip')" class="int__foot">
           <span class="int__state mono">
-            <i class="int__state-dot" aria-hidden="true"></i>не підключено
+            <i class="int__state-dot" aria-hidden="true"></i>{{ t('management.integrations.notConnected') }}
           </span>
-          <button class="int__cta" type="button" disabled>Підключити</button>
+          <button class="int__cta" type="button" disabled>{{ t('management.integrations.connect') }}</button>
         </div>
       </article>
     </div>
@@ -43,7 +43,10 @@
 //
 // It takes the same props every section gets from ManagementPage, so the workspace
 // it would connect to is already named for it.
+import { useI18n } from 'vue-i18n';
 defineProps<{ workspaceId: string; workspaceName: string }>();
+
+const { t } = useI18n();
 
 type Brand = {
   id: string;
@@ -63,21 +66,21 @@ const BRANDS: readonly Brand[] = [
   {
     id: 'linear',
     name: 'Linear',
-    blurb: 'Задачі та цикли команди',
+    blurb: 'management.integrations.linearBlurb',
     color: '#5E6AD2',
     path: 'M2.886 4.18A11.982 11.982 0 0 1 11.99 0C18.624 0 24 5.376 24 12.009c0 3.64-1.62 6.903-4.18 9.105L2.887 4.18ZM1.817 5.626l16.556 16.556c-.524.33-1.075.62-1.65.866L.951 7.277c.247-.575.537-1.126.866-1.65ZM.322 9.163l14.515 14.515c-.71.172-1.443.282-2.195.322L0 11.358a12 12 0 0 1 .322-2.195Zm-.17 4.862 9.823 9.824a12.02 12.02 0 0 1-9.824-9.824Z',
   },
   {
     id: 'jira',
     name: 'Jira',
-    blurb: 'Тікети, спринти, беклог',
+    blurb: 'management.integrations.jiraBlurb',
     color: '#0052CC',
     path: 'M11.571 11.513H0a5.218 5.218 0 0 0 5.232 5.215h2.13v2.057A5.215 5.215 0 0 0 12.575 24V12.518a1.005 1.005 0 0 0-1.005-1.005zm5.723-5.756H5.736a5.215 5.215 0 0 0 5.215 5.214h2.129v2.058a5.218 5.218 0 0 0 5.215 5.214V6.758a1.001 1.001 0 0 0-1.001-1.001zM23.013 0H11.455a5.215 5.215 0 0 0 5.215 5.215h2.129v2.057A5.215 5.215 0 0 0 24 12.483V1.005A1.001 1.001 0 0 0 23.013 0Z',
   },
   {
     id: 'slack',
     name: 'Slack',
-    blurb: 'Сповіщення в канал',
+    blurb: 'management.integrations.slackBlurb',
     color: '#36C5F0',
     path: 'M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z',
   },

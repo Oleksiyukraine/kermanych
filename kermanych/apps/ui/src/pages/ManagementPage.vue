@@ -9,7 +9,7 @@
          line that says what a section holds. -->
     <aside class="mgmt__rail">
       <div class="mgmt__rail-head">
-        <span class="mgmt__eyebrow mono">Менеджмент</span>
+        <span class="mgmt__eyebrow mono">{{ t('management.nav.eyebrow') }}</span>
         <!-- The scope, stated above the rows it applies to: every section below
              reports on this one workspace. Greyed out and dot-less while nothing is
              chosen, so the chip reads as an empty slot rather than a label. -->
@@ -20,18 +20,18 @@
             :style="{ background: workspaceColor }"
             aria-hidden="true"
           ></span>
-          <span class="mgmt__chip-name">{{ workspaceName || 'воркспейс не вибрано' }}</span>
+          <span class="mgmt__chip-name">{{ workspaceName || t('management.nav.workspaceEmpty') }}</span>
         </span>
-        <p class="mgmt__rail-note">Кожен розділ звітує про цей воркспейс.</p>
+        <p class="mgmt__rail-note">{{ t('management.nav.scopeNote') }}</p>
       </div>
 
-      <nav class="mgmt__rail-list" aria-label="Розділи менеджменту">
+      <nav class="mgmt__rail-list" :aria-label="t('management.nav.railLabel')">
         <KNavItem
           v-for="s in MANAGEMENT_SECTIONS"
           :key="s.name"
           :label="s.label"
           :icon="SECTION_ICONS[s.name]"
-          :hint="s.hint"
+          :hint="t('management.section.' + s.name + '.hint')"
           :active="s.name === activeSection"
           :aria-current="s.name === activeSection ? 'page' : undefined"
           @click="goSection(s.name)"
@@ -51,13 +51,12 @@
            named on its own line — otherwise the gate looks like the app forgot the
            selection the sidebar is visibly holding. -->
       <div v-if="!workspaceId" class="mgmt__blank">
-        <div class="mgmt__blank-eyebrow mono">КЕРМАНИЧ</div>
+        <div class="mgmt__blank-eyebrow mono">{{ t('management.blank.eyebrow') }}</div>
         <p class="mgmt__blank-text">
-          Виберіть воркспейс у лівій панелі, щоб побачити його менеджмент.
+          {{ t('management.blank.text') }}
         </p>
         <p v-if="store.selectedProjectId" class="mgmt__blank-text mgmt__blank-note">
-          Вибраний проєкт існує лише локально — у нього немає воркспейсу, а значить і
-          менеджменту. Опублікуйте його або виберіть воркспейс.
+          {{ t('management.blank.note') }}
         </p>
       </div>
       <template v-else>
@@ -80,7 +79,7 @@
           <section
             v-if="chat.hasConversation"
             class="mgmt__log"
-            aria-label="Розмова з асистентом менеджменту"
+            :aria-label="t('management.assistant.logLabel')"
           >
             <header class="mgmt__log-head">
               <!-- The title doubles as the collapse control: pressing it folds the transcript
@@ -92,7 +91,7 @@
                 class="mgmt__log-toggle"
                 type="button"
                 :aria-expanded="!collapsed"
-                :aria-label="collapsed ? 'Розгорнути розмову' : 'Згорнути розмову'"
+                :aria-label="collapsed ? t('management.assistant.expand') : t('management.assistant.collapse')"
                 @click="toggleCollapsed"
               >
                 <span
@@ -100,15 +99,15 @@
                   :class="{ 'mgmt__log-caret--open': !collapsed }"
                   aria-hidden="true"
                 ></span>
-                <span class="mgmt__log-title mono">Асистент менеджменту</span>
-                <span v-if="collapsed && chat.busy" class="mgmt__log-busy mono" aria-live="polite">думає…</span>
+                <span class="mgmt__log-title mono">{{ t('management.assistant.title') }}</span>
+                <span v-if="collapsed && chat.busy" class="mgmt__log-busy mono" aria-live="polite">{{ t('management.assistant.busyShort') }}</span>
               </button>
               <button
-                v-tip="'Новий чат'"
+                v-tip="t('management.assistant.newChat')"
                 class="mgmt__log-close mono"
                 type="button"
                 :disabled="chat.busy"
-                aria-label="Закрити розмову і почати новий чат"
+                :aria-label="t('management.assistant.closeChat')"
                 @click="chat.reset()"
               >×</button>
             </header>
@@ -136,7 +135,7 @@
           <form
             class="mgmt__composer"
             :class="{ 'mgmt__composer--grown': grown }"
-            aria-label="Асистент менеджменту"
+            :aria-label="t('management.assistant.title')"
             @submit.prevent="submit"
           >
             <KHelperPicker :open="pickerOpen" @select="onHelper" @close="closePicker" />
@@ -146,16 +145,16 @@
               class="mgmt__c-input"
               rows="1"
               :disabled="chat.busy"
-              placeholder="Запитайте про менеджмент — ризики, реліз-ноти, статуси"
-              aria-label="Повідомлення асистенту менеджменту"
+              :placeholder="t('management.assistant.placeholder')"
+              :aria-label="t('management.assistant.inputLabel')"
               @input="autoGrow"
               @keydown="onKeydown"
             ></textarea>
             <button
-              v-tip="'Хелпери — команди-настанови'"
+              v-tip="t('management.assistant.helpersTip')"
               class="mgmt__c-helpers mono"
               type="button"
-              aria-label="Хелпери"
+              :aria-label="t('management.assistant.helpers')"
               :disabled="chat.busy"
               @click="pickerOpen = !pickerOpen"
             >/</button>
@@ -170,12 +169,12 @@
               class="mgmt__c-plan mono"
             >{{ planChip.short }} {{ planChip.percent }}</span>
             <button
-              v-tip="chat.busy ? 'Асистент відповідає' : 'Надіслати (Enter)'"
+              v-tip="chat.busy ? t('management.assistant.busy') : t('management.assistant.send')"
               class="mgmt__c-send"
               type="submit"
               :disabled="!canSend"
               :aria-busy="chat.busy"
-              :aria-label="chat.busy ? 'Асистент відповідає' : 'Надіслати'"
+              :aria-label="chat.busy ? t('management.assistant.busy') : t('management.assistant.sendShort')"
             ><span
               class="mgmt__c-glyph"
               :class="{ 'mgmt__c-glyph--busy': chat.busy }"
@@ -196,6 +195,7 @@
 // WHETHER one renders and WHICH WORKSPACE it renders for; it never renders their content.
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { MANAGEMENT_SECTIONS, prependHelper } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
@@ -217,11 +217,13 @@ const projects = useProjects();
 const route = useRoute();
 const router = useRouter();
 
+const { t } = useI18n();
+
 // The child route name IS the rail's selection, so the rail follows deep links and
 // the browser's back button with no state of its own.
 const activeSection = computed(() => (typeof route.name === 'string' ? route.name : ''));
 const sectionLabel = computed(
-  () => MANAGEMENT_SECTIONS.find((s) => s.name === activeSection.value)?.label ?? 'Менеджмент',
+  () => MANAGEMENT_SECTIONS.find((s) => s.name === activeSection.value)?.label ?? t('management.nav.title'),
 );
 function goSection(name: string): void {
   if (route.name !== name) void router.push({ name });
@@ -351,7 +353,9 @@ let thinkTimer: ReturnType<typeof setInterval> | undefined;
 
 // Silent for the first seconds — a fast answer must not flash a stopwatch — then the count
 // appears and keeps the wait honest.
-const thinkingLabel = computed(() => (thinkingSec.value < 3 ? 'Думає…' : `Думає… ${thinkingSec.value} с`));
+const thinkingLabel = computed(() =>
+  thinkingSec.value < 3 ? t('management.assistant.thinking') : t('management.assistant.thinkingSec', { sec: thinkingSec.value }),
+);
 
 watch(
   () => chat.busy,
@@ -390,14 +394,14 @@ const planChip = computed(() => {
     // The detail the one-number chip drops, plus the sentence that explains why a
     // management chat shows a provider plan at all.
     hint: [
-      'Цей чат витрачає ту саму підписку, що й агенти',
+      t('management.plan.note'),
       ...providers.flatMap((p) => [
         p.provider[0]!.toUpperCase() + p.provider.slice(1),
-        ...(p.accounts > 1 ? [`${p.accounts} акаунти, у середньому`] : []),
+        ...(p.accounts > 1 ? [t('management.plan.accounts', { count: p.accounts })] : []),
         ...p.windows.map(
           (w) =>
             `${w.label}: ${percent(w.usedPercent)}` +
-            (w.resetsAt ? ` — оновиться за ${until(w.resetsAt, planNow.value)}` : ''),
+            (w.resetsAt ? ` — ${t('management.plan.resetsIn', { time: until(w.resetsAt, planNow.value) })}` : ''),
         ),
       ]),
     ].join(' · '),
