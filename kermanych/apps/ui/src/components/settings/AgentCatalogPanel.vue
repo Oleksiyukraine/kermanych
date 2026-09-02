@@ -22,7 +22,7 @@
         :class="{ 'ag__row--bare': !a.instruction }"
       >
         <div class="ag__head">
-          <span class="ag__name">{{ a.label }}</span>
+          <span class="ag__name">{{ t(a.labelKey) }}</span>
           <span class="ag__id mono">{{ a.id }}</span>
           <span class="ag__badge" :class="`ag__badge--${a.kind}`">{{ agentKindLabel(a.kind) }}</span>
         </div>
@@ -57,7 +57,10 @@
 // see the instruction texts that used to be inline in supervisor.service.ts (see the note
 // at the top of packages/core/src/agents.ts, which is why they moved).
 import { AGENTS, type AgentKind } from '@kermanych/core';
+import { useI18n } from 'vue-i18n';
 import { agentKindLabel } from '../../lib/settings';
+
+const { t } = useI18n();
 
 // One sentence per kind — what the badge cannot fit. `kind` describes WHERE the agent runs;
 // it does not change how an assigned skill reaches it.

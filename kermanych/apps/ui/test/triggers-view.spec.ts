@@ -51,11 +51,11 @@ test('the agent picker offers exactly the instruction-carrying agents, from the 
     'pull-request',
     'resolve-conflict',
   ]);
-  expect(triggerAgentOptions(AGENTS).map((o) => o.label)).toEqual([
-    'Ревізор',
-    'Промоутер',
-    'Провізор',
-    'Вирішувач конфліктів',
+  expect(triggerAgentOptions(AGENTS).map((o) => o.labelKey)).toEqual([
+    'agents.role.review',
+    'agents.role.promote',
+    'agents.role.pull-request',
+    'agents.role.resolve-conflict',
   ]);
 });
 

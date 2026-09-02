@@ -238,6 +238,7 @@
 // list is the cloud rows alone; the library is only what fills the skill picker, so losing it
 // costs the picker and leaves every trigger on screen exactly as true as it was.
 import { computed, reactive, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { AGENTS, SKILL_NAME_RE, type SkillView } from '@kermanych/core';
 import { deleteTrigger, listTriggers, upsertTrigger, type ProjectTrigger } from '@kermanych/cloud';
 import { api } from '../../lib/api';
@@ -260,6 +261,7 @@ const props = defineProps<{ projectId: string; projectName: string }>();
 
 const auth = useAuth();
 const projects = useProjects();
+const { t: translate } = useI18n();
 
 // `remind` first and `once` first: the defaults a new trigger opens on, and the ones a native
 // select would land on anyway. The hard mode discards a partial answer, so it is a choice the
@@ -319,7 +321,9 @@ function blankDraft(): Omit<ProjectTrigger, 'projectId' | 'pathGlobs'> {
 const draft = reactive(blankDraft());
 
 const actionOptions = computed(() => triggerActionOptions(draft.source));
-const agentOptions = computed(() => triggerAgentOptions(AGENTS));
+const agentOptions = computed(() =>
+  triggerAgentOptions(AGENTS).map((o) => ({ value: o.value, label: translate(o.labelKey) })),
+);
 const skillOptions = computed(() => view.value.map((v) => v.name));
 const skillPlaceholder = computed(() =>
   view.value.length ? 'вибрати скіл…' : 'бібліотека проєкту порожня',
@@ -341,7 +345,8 @@ const matched = computed(() =>
 // above the line saying Kermanych cannot start it — two claims about one row, the friendlier
 // of them false. An unrunnable target keeps its raw id, which is what the warning names too.
 function agentLabel(id: string): string {
-  return triggerAgentOptions(AGENTS).find((o) => o.value === id)?.label ?? id;
+  const key = triggerAgentOptions(AGENTS).find((o) => o.value === id)?.labelKey;
+  return key ? translate(key) : id;
 }
 
 // What a trigger will actually do when it fires, or the reason it will do nothing. Both cases

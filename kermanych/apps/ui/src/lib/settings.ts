@@ -410,8 +410,8 @@ export function triggerActionOptions(source: TriggerSource): { value: 'skill' | 
  * notice «агента … не існує» and nothing else. Same filter as `assignmentRows`, and for the
  * same reason — a seventh agent must not be able to drift out of this list.
  */
-export function triggerAgentOptions(agents: readonly AgentDef[]): { value: string; label: string }[] {
-  return agents.filter((a) => a.instruction).map((a) => ({ value: a.id, label: a.label }));
+export function triggerAgentOptions(agents: readonly AgentDef[]): { value: string; labelKey: string }[] {
+  return agents.filter((a) => a.instruction).map((a) => ({ value: a.id, labelKey: a.labelKey }));
 }
 
 /**

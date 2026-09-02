@@ -817,9 +817,11 @@ export class SupervisorService implements OnModuleDestroy {
     return { kind: "notice", id: `n${at}`, at, level, text };
   }
 
-  // A trigger's `target` is an agent id; the notice names the agent the way the catalogue does.
+  // A trigger's `target` is an agent id. Returns the agent's i18n label KEY (`agents.role.<id>`):
+  // the api has no vue-i18n, so the four trigger notices below embed the key transitionally.
+  // T10 converts those notices to coded notices that pass the id as a param for the UI to resolve.
   private agentLabel(agentId: string): string {
-    return agentById(agentId)?.label ?? agentId;
+    return agentById(agentId)?.labelKey ?? agentId;
   }
 
   private onRpcEvent(id: string, e: RpcEvent) {

@@ -1,7 +1,16 @@
 import type { MessageSchema } from '../schema';
 export const en: MessageSchema = {
   common: {},
-  agents: {},
+  agents: {
+    role: {
+      review: 'Reviewer',
+      promote: 'Promoter',
+      'pull-request': 'Pull Request',
+      'resolve-conflict': 'Conflict Resolver',
+      finish: 'Finish',
+      summary: 'Summary',
+    },
+  },
   board: {},
   settings: {
     appGeneral: {

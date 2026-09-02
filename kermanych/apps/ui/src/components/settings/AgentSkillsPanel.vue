@@ -38,7 +38,7 @@
     <ul v-if="loaded" class="as__list">
       <li v-for="row in board" :key="row.agent.id" class="as__row">
         <div class="as__head">
-          <span class="as__name">{{ row.agent.label }}</span>
+          <span class="as__name">{{ t(row.agent.labelKey) }}</span>
           <span class="as__id mono">{{ row.agent.id }}</span>
           <span class="as__badge" :class="`as__badge--${row.agent.kind}`">
             {{ agentKindLabel(row.agent.kind) }}
@@ -92,7 +92,7 @@
             class="as__pick mono"
             :value="picked[row.agent.id] ?? ''"
             :disabled="!canWrite || busy || !row.left.length"
-            :aria-label="`Призначити скіл ролі ${row.agent.label}`"
+            :aria-label="`Призначити скіл ролі ${t(row.agent.labelKey)}`"
             @change="onPick(row.agent.id, $event)"
           >
             <option value="">{{ pickLabel(row.left) }}</option>
@@ -119,6 +119,7 @@
 // The merge the list renders is `assignmentRows`, a pure function in lib/settings.ts: this
 // component adds a badge and a byte format to it and nothing else.
 import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { AGENTS, ASSIGNED_BLOCK_HEADER, DEFAULT_SKILLS, type SkillView } from '@kermanych/core';
 import {
   deleteAgentSkill,
@@ -137,6 +138,7 @@ const props = defineProps<{ projectId: string; projectName: string }>();
 
 const auth = useAuth();
 const projects = useProjects();
+const { t } = useI18n();
 
 const view = ref<SkillView[]>([]);
 const assignments = ref<AgentSkill[]>([]);

@@ -5,7 +5,16 @@
 // so `en` can carry its own translations rather than being pinned to uk's text.
 export const uk = {
   common: {},
-  agents: {},
+  agents: {
+    role: {
+      review: 'Ревізор',
+      promote: 'Промоутер',
+      'pull-request': 'Провізор',
+      'resolve-conflict': 'Вирішувач конфліктів',
+      finish: 'Завершити',
+      summary: 'Саммарі',
+    },
+  },
   board: {},
   settings: {
     appGeneral: {

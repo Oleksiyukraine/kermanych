@@ -14,7 +14,8 @@ export type AgentKind = "session" | "procedure" | "automation";
 
 export type AgentDef = {
   id: string;
-  label: string;
+  /** i18n key for the operator-facing role name: `agents.role.<id>`. The UI renders it via `t()`. */
+  labelKey: string;
   kind: AgentKind;
   /** The template, with `{{hole}}` placeholders. Absent for `automation`. */
   instruction?: string;
@@ -78,12 +79,12 @@ const PULL_REQUEST = [
 ].join("");
 
 export const AGENTS: readonly AgentDef[] = [
-  { id: "review", label: "Ревізор", kind: "session", instruction: REVIEW, holes: ["task", "base", "branch", "diff"] },
-  { id: "promote", label: "Промоутер", kind: "session", instruction: PROMOTE, holes: ["branch"] },
-  { id: "pull-request", label: "Провізор", kind: "procedure", instruction: PULL_REQUEST, holes: ["branch", "conventions", "baseLine"] },
-  { id: "resolve-conflict", label: "Вирішувач конфліктів", kind: "procedure", instruction: RESOLVE_CONFLICT, holes: ["files"] },
-  { id: "finish", label: "Завершити", kind: "automation" },
-  { id: "summary", label: "Саммарі", kind: "automation" },
+  { id: "review", labelKey: "agents.role.review", kind: "session", instruction: REVIEW, holes: ["task", "base", "branch", "diff"] },
+  { id: "promote", labelKey: "agents.role.promote", kind: "session", instruction: PROMOTE, holes: ["branch"] },
+  { id: "pull-request", labelKey: "agents.role.pull-request", kind: "procedure", instruction: PULL_REQUEST, holes: ["branch", "conventions", "baseLine"] },
+  { id: "resolve-conflict", labelKey: "agents.role.resolve-conflict", kind: "procedure", instruction: RESOLVE_CONFLICT, holes: ["files"] },
+  { id: "finish", labelKey: "agents.role.finish", kind: "automation" },
+  { id: "summary", labelKey: "agents.role.summary", kind: "automation" },
 ];
 
 export function agentById(id: string): AgentDef | undefined {

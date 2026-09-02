@@ -8,7 +8,7 @@ test("the registry describes six agents, four of them instruction-bearing", () =
   ]);
   for (const a of AGENTS) {
     expect(SKILL_NAME_RE.test(a.id)).toBe(true);
-    expect(a.label.trim()).not.toBe("");
+    expect(a.labelKey).toBe(`agents.role.${a.id}`);
   }
   expect(AGENTS.filter((a) => a.instruction).map((a) => a.id)).toEqual([
     "review", "promote", "pull-request", "resolve-conflict",
