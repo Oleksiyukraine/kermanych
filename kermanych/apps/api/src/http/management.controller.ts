@@ -9,6 +9,8 @@ import {
   type ManagementChatAsk,
   type ManagementChatReply,
   type ManagementContext,
+  type ManagementJiraBoard,
+  type ManagementMember,
   type ManagementRiskRow,
   type ReleaseNotesAsk,
   type ReleaseNotesReply,
@@ -42,6 +44,39 @@ function riskRows(v: unknown): ManagementRiskRow[] {
     });
   }
   return rows;
+}
+
+// The roster as the browser sent it. Same reasoning as `riskRows`: `workspace_members` is
+// behind RLS and the api has no credentials for it, so the list cannot be re-derived here —
+// but it is printed into the prompt as the set of people a ticket may be assigned to, and a
+// blank name there is an assignee the browser could never resolve back to a uuid.
+function memberRows(v: unknown): ManagementMember[] {
+  if (!Array.isArray(v)) return [];
+  const rows: ManagementMember[] = [];
+  for (const m of v) {
+    if (typeof m !== "object" || m === null) continue;
+    const x = m as Record<string, unknown>;
+    if (typeof x.name !== "string" || x.name.trim() === "") continue;
+    rows.push({ name: x.name.trim(), role: typeof x.role === "string" ? x.role : "" });
+  }
+  return rows;
+}
+
+// The workspace's Jira board, or nothing. `undefined` is a meaningful value here — the
+// context block prints «не підключена» and the assistant then knows `jira.ticket.create` has
+// nowhere to land — so a half-filled row is dropped rather than repaired: a board with no
+// project key cannot be described to the model in any way it could act on.
+function jiraBoard(v: unknown): ManagementJiraBoard | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const x = v as Record<string, unknown>;
+  if (typeof x.projectKey !== "string" || x.projectKey.trim() === "") return undefined;
+  return {
+    projectKey: x.projectKey.trim(),
+    boardName: typeof x.boardName === "string" ? x.boardName : "",
+    // Write capability is never assumed: absent means «не можу створити», which is the safe
+    // way round — the assistant says so instead of promising a ticket the api cannot sign.
+    canWrite: x.canWrite === true,
+  };
 }
 
 // The Менеджмент assistant, over REST rather than the sessions WebSocket: one question,
@@ -83,10 +118,13 @@ export class ManagementController {
     if (!b?.context) throw new BadRequestException("не передано контекст розділу");
     // Rebuilt rather than forwarded: `risks` is printed into the prompt as the state the
     // write actions operate on, and the rest of the block is prose the model reads as fact.
+    const jira = jiraBoard(b.context.jira);
     const context: ManagementContext = {
       workspaceName: typeof b.context.workspaceName === "string" ? b.context.workspaceName : "",
       section: typeof b.context.section === "string" ? b.context.section : "",
       risks: riskRows(b.context.risks),
+      members: memberRows(b.context.members),
+      ...(jira ? { jira } : {}),
     };
     try {
       return await this.chat.ask({ ...b, conversationId, text, workspaceId, workspaceProjects, context });

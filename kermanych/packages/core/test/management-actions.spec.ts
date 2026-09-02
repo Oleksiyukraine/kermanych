@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { MANAGEMENT_SECTIONS, managementSection } from "../src/management";
-import { parseManagementReply, validateManagementAction } from "../src/management-actions";
+import { parseManagementReply, renderTicketDescription, validateManagementAction } from "../src/management-actions";
 
 function block(body: string): string {
   return "```kermanych-action\n" + body + "\n```";
@@ -246,4 +246,226 @@ test("exactly the sections with a store are writable, and the rest state why not
     if (s.capability === "read_write") expect(s.limitation, `${s.name} needs no excuse`).toBeUndefined();
     else expect(s.limitation, `${s.name} must explain itself`).toBeTruthy();
   }
+});
+
+// ── Tickets ───────────────────────────────────────────────────────────────────
+
+// The five slots a ticket from this surface has. Reused below so each test names only the
+// field it is about.
+const TICKET = {
+  title: "Замовник бачить історію змін рахунку",
+  context: "Бухгалтерія не може довести клієнту, коли саме змінилася сума, і кожен спір іде в дзвінки.",
+  userFlow: ["Відкриває рахунок", "Перемикається на «Історія»", "Бачить, хто і коли змінив суму"],
+  acceptanceCriteria: [
+    "На картці рахунку є вкладка «Історія»",
+    "Кожен запис показує автора, дату і попереднє значення суми",
+  ],
+  outOfScope: ["Експорт історії у файл"],
+};
+
+// The default board, and the whole of the routing rule: a request that did not name Jira is
+// a `ticket.create`. The project travels by NAME for the reason release.notes does.
+test("a ticket.create carries the ticket, a project by name and the two launch hints", () => {
+  const r = parseManagementReply(
+    "Готую тікет на дошку воркспейсу.\n\n" +
+      block(
+        JSON.stringify({
+          kind: "ticket.create",
+          project: "Альфа",
+          assignee: "olya",
+          prefix: "feature",
+          platform: "web",
+          ticket: TICKET,
+        }),
+      ),
+  );
+  expect(r.rejected).toEqual([]);
+  expect(r.actions).toEqual([
+    { kind: "ticket.create", project: "Альфа", assignee: "olya", prefix: "feature", platform: "web", ticket: TICKET },
+  ]);
+  expect(r.text).toBe("Готую тікет на дошку воркспейсу.");
+});
+
+// The two optional slots are genuinely optional: «зібрати пакет рахунків за вересень» has no
+// user flow, and an invented one is worse than none.
+test("a ticket needs a title, a context and one acceptance criterion, and nothing else", () => {
+  const minimal = { title: "Т", context: "К", acceptanceCriteria: ["Видно на екрані"] };
+  expect(validateManagementAction({ kind: "ticket.create", project: "Альфа", ticket: minimal })).toEqual({
+    kind: "ticket.create",
+    project: "Альфа",
+    ticket: minimal,
+  });
+  expect(
+    validateManagementAction({ kind: "ticket.create", project: "Альфа", ticket: { ...TICKET, context: "  " } }),
+  ).toEqual({
+    error: `тікет «${TICKET.title}» без бізнес-контексту (context) — навіщо ця робота і кому вона потрібна`,
+  });
+  expect(
+    validateManagementAction({ kind: "ticket.create", project: "Альфа", ticket: { ...TICKET, acceptanceCriteria: [] } }),
+  ).toEqual({
+    error: `тікет «${TICKET.title}» без критеріїв приймання (acceptanceCriteria) — немає за чим його закривати`,
+  });
+  // A string where a list belongs means several criteria were packed into one line, and the
+  // ticket would lose their separation.
+  expect(
+    validateManagementAction({
+      kind: "ticket.create",
+      project: "Альфа",
+      ticket: { ...TICKET, acceptanceCriteria: "усе працює" },
+    }),
+  ).toEqual({ error: `тікет «${TICKET.title}»: поле acceptanceCriteria має бути списком рядків` });
+});
+
+test("a ticket.create without a project is refused rather than filed on a guess", () => {
+  expect(validateManagementAction({ kind: "ticket.create", ticket: TICKET })).toEqual({
+    error: `тікет «${TICKET.title}» без проєкту — назви його так, як він стоїть у списку репозиторіїв`,
+  });
+});
+
+// The launch hints are validated against the core constants the board's own form offers, so a
+// value Postgres would store but no screen can render is refused with the list attached.
+test("a ticket.create refuses a prefix or a platform outside the app's vocabulary", () => {
+  expect(
+    validateManagementAction({ kind: "ticket.create", project: "Альфа", ticket: TICKET, prefix: "hotfix" }),
+  ).toEqual({ error: 'невідомий тип задачі "hotfix" (feature, fix, refactoring, chore)' });
+  expect(
+    validateManagementAction({ kind: "ticket.create", project: "Альфа", ticket: TICKET, platform: "desktop" }),
+  ).toEqual({ error: 'невідома платформа "desktop" (backend, web, mobile)' });
+});
+
+// The requirement this whole action exists to satisfy: a ticket that reaches a board contains
+// NO open questions. Each of these is a shape a model actually produces, and the refusal
+// quotes the fragment so a false positive is visible rather than mysterious.
+test("a ticket carrying an open question is refused, whichever field hides it", () => {
+  function refuse(ticket: unknown): string {
+    const r = validateManagementAction({ kind: "ticket.create", project: "Альфа", ticket });
+    // An accepted action here is the failure this test is about, so it comes back as a string
+    // the assertion prints rather than as `undefined.error`.
+    return "error" in r ? r.error : `дію прийнято, хоча вона мусила бути відхилена: ${JSON.stringify(r)}`;
+  }
+
+  expect(refuse({ ...TICKET, acceptanceCriteria: ["Видно історію", "Права доступу — TBD"] })).toContain('"TBD"');
+  expect(refuse({ ...TICKET, context: "Треба уточнити, чи це для всіх клієнтів" })).toContain("Треба уточн");
+  expect(refuse({ ...TICKET, outOfScope: ["Експорт — на розсуд розробника"] })).toContain("на розсуд");
+  expect(refuse({ ...TICKET, userFlow: [...TICKET.userFlow, "Далі незрозуміло"] })).toContain("незрозуміл");
+  expect(refuse({ ...TICKET, title: "Історія змін <назва>" })).toContain("<назва>");
+  // A criterion phrased as a question is not a criterion, and no marker catches it: it is a
+  // perfectly formed sentence that simply cannot be checked off.
+  expect(refuse({ ...TICKET, acceptanceCriteria: ["Чи має адміністратор бачити архів?"] })).toContain(
+    "Чи має адміністратор бачити архів?",
+  );
+  // A code fence is the assistant slipping out of the manager's voice — a technical decision
+  // in the only form a string can hold one.
+  expect(refuse({ ...TICKET, context: "Додати ендпоінт:\n```ts\nget()\n```" })).toContain("```");
+  // Every refusal points at the one action that IS allowed to carry a question.
+  expect(refuse({ ...TICKET, context: "потрібно уточнити обсяг" })).toContain("ticket.questions");
+});
+
+// «уточнити» on its own is ordinary Ukrainian, and a rule that refused it would refuse
+// perfectly good tickets. The markers are deliberately narrow.
+test("ordinary prose that merely contains a question word is not an open question", () => {
+  const ticket = {
+    ...TICKET,
+    context: "Користувач може уточнити фільтр за датою, але історії змін не бачить взагалі.",
+    acceptanceCriteria: ["Фільтр за датою працює разом з історією"],
+  };
+  expect(validateManagementAction({ kind: "ticket.create", project: "Альфа", ticket })).toEqual({
+    kind: "ticket.create",
+    project: "Альфа",
+    ticket,
+  });
+});
+
+// The second board. No `project`: the Jira project key comes from the workspace's integration,
+// so there is nothing here for the model to choose or mistake.
+test("a jira.ticket.create names its type and priority by name and takes no project", () => {
+  expect(
+    validateManagementAction({
+      kind: "jira.ticket.create",
+      ticket: TICKET,
+      issueType: "Story",
+      priority: "High",
+      labels: ["billing", "web"],
+      assignee: "Olya Petrenko",
+      parentKey: "KRM-101",
+    }),
+  ).toEqual({
+    kind: "jira.ticket.create",
+    ticket: TICKET,
+    issueType: "Story",
+    priority: "High",
+    labels: ["billing", "web"],
+    assignee: "Olya Petrenko",
+    parentKey: "KRM-101",
+  });
+  // Jira refuses a label with whitespace as a 400 naming a field path; refused here with the
+  // offending label quoted instead.
+  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, labels: ["two words"] })).toEqual({
+    error: 'мітка "two words" містить пробіл — Jira такі мітки не приймає',
+  });
+});
+
+// Both boards hold the ticket to the same standard: there is no board on which a worse ticket
+// is acceptable.
+test("a Jira ticket is held to the same ticket rules as a board card", () => {
+  expect(
+    validateManagementAction({ kind: "jira.ticket.create", ticket: { ...TICKET, acceptanceCriteria: ["TODO"] } }),
+  ).toEqual({
+    error:
+      `тікет «${TICKET.title}» містить відкрите питання ("TODO") — такий тікет не створюється. ` +
+      "Постав питання через ticket.questions і дочекайся відповіді.",
+  });
+});
+
+// The other half of «no open questions in a ticket»: the assistant has to be able to ASK, and
+// the app has to be able to say that nothing was filed. An empty list is neither.
+test("ticket.questions carries the blocked ticket and at least one question", () => {
+  expect(
+    validateManagementAction({
+      kind: "ticket.questions",
+      forTicket: "Історія змін рахунку",
+      questions: ["Чи бачить історію клієнт, чи лише бухгалтерія?", "  ", "Чи потрібен експорт?"],
+    }),
+  ).toEqual({
+    kind: "ticket.questions",
+    forTicket: "Історія змін рахунку",
+    questions: ["Чи бачить історію клієнт, чи лише бухгалтерія?", "Чи потрібен експорт?"],
+  });
+  expect(validateManagementAction({ kind: "ticket.questions", forTicket: "Історія", questions: [] })).toEqual({
+    error: "ticket.questions для «Історія» без жодного питання — або питай, або створюй тікет",
+  });
+  expect(validateManagementAction({ kind: "ticket.questions", questions: ["Що саме?"] })).toEqual({
+    error: "ticket.questions без forTicket — назви тікет, який чекає на відповіді",
+  });
+});
+
+// The app owns the shape of a ticket's body, not the model: the headings, their order and
+// their language are the same whichever turn — and whichever board — produced the ticket.
+test("renderTicketDescription writes the manager's sections in a fixed order", () => {
+  expect(renderTicketDescription(TICKET)).toBe(
+    [
+      "## Контекст",
+      TICKET.context,
+      "",
+      "## Користувацький сценарій",
+      "1. Відкриває рахунок",
+      "2. Перемикається на «Історія»",
+      "3. Бачить, хто і коли змінив суму",
+      "",
+      "## Критерії приймання",
+      "- [ ] На картці рахунку є вкладка «Історія»",
+      "- [ ] Кожен запис показує автора, дату і попереднє значення суми",
+      "",
+      "## Поза межами задачі",
+      "- Експорт історії у файл",
+    ].join("\n"),
+  );
+});
+
+// The optional sections vanish rather than rendering as empty headings — a «Поза межами»
+// heading with nothing under it reads as a scope nobody stated.
+test("renderTicketDescription omits the sections a ticket does not have", () => {
+  expect(renderTicketDescription({ title: "Т", context: "К", acceptanceCriteria: ["Видно"] })).toBe(
+    ["## Контекст", "К", "", "## Критерії приймання", "- [ ] Видно"].join("\n"),
+  );
 });

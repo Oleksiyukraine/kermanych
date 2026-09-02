@@ -61,11 +61,19 @@ export const useJira = defineStore('jira', () => {
     }
   }
 
-  // The integration row alone — cheap enough for MainLayout/BoardPage to ask on every
-  // workspace switch just to decide whether the «Jira» tab exists at all.
+  // The integration row plus this machine's answer to «may I write to it» — cheap enough for
+  // MainLayout/BoardPage to ask on every workspace switch just to decide whether the «Jira»
+  // tab exists at all.
+  //
+  // The token status travels WITH the row, and not only inside `loadBoard`, because it is a
+  // property of the same question: the Менеджмент chat has to tell the model whether a Jira
+  // ticket can be created before anybody has opened the Jira board, and «there is a board»
+  // without «I can write to it» would have it promise a ticket the api cannot sign. It costs
+  // a local sqlite read through the local api, not a Jira call.
   async function probe(workspaceId: string): Promise<void> {
     if (IS_PREVIEW || !auth.user) {
       integration.value = null;
+      tokenPresent.value = false;
       return;
     }
     const mine = ++generation;
@@ -77,6 +85,19 @@ export const useJira = defineStore('jira', () => {
       // An unreachable cloud answers «нема табу», not an error banner: the native board
       // already owns the offline story.
       if (mine === generation) integration.value = null;
+    }
+    const row = integration.value;
+    if (!row) {
+      if (mine === generation) tokenPresent.value = false;
+      return;
+    }
+    try {
+      const status = await api.jiraTokenStatus(row.siteUrl);
+      if (mine !== generation) return;
+      tokenPresent.value = status.present;
+      tokenEmail.value = status.email;
+    } catch {
+      if (mine === generation) tokenPresent.value = false;
     }
   }
 
@@ -98,14 +119,6 @@ export const useJira = defineStore('jira', () => {
       if (mine === generation) loadError.value = e instanceof Error ? e.message : String(e);
     } finally {
       if (mine === generation) loading.value = false;
-    }
-    try {
-      const status = await api.jiraTokenStatus(row.siteUrl);
-      if (mine !== generation) return;
-      tokenPresent.value = status.present;
-      tokenEmail.value = status.email;
-    } catch {
-      if (mine === generation) tokenPresent.value = false;
     }
   }
 
