@@ -316,6 +316,215 @@ describe("editIssue", () => {
   });
 });
 
+describe("logWork", () => {
+  // withIntegration + refreshIssue each read the integration row.
+  const integrations = () => Array.from({ length: 2 }, () => ({ data: integrationRow, error: null }));
+
+  it("writes the entry under the acting user's token and brings the issue back from Jira", async () => {
+    const { client } = fakeCloud({ workspace_jira_integrations: integrations() });
+    const addWorklog = vi.fn(async () => ({ id: "w1" }));
+    const getIssue = vi.fn(async () => rawIssue);
+    const svc = service(client, scriptedJiraClient({ addWorklog, getIssue }));
+
+    const issue = await svc.logWork(
+      "w1",
+      "KAN-42",
+      { timeSpent: " 3h 20m ", started: "2026-09-02T11:30:00.000Z", comment: " pair review " },
+      "u1",
+    );
+
+    expect(addWorklog).toHaveBeenCalledWith("KAN-42", {
+      timeSpent: "3h 20m",
+      started: "2026-09-02T11:30:00.000+0000",
+      comment: {
+        type: "doc",
+        version: 1,
+        content: [{ type: "paragraph", content: [{ type: "text", text: "pair review" }] }],
+      },
+      adjust: { mode: "auto" },
+    });
+    // The refetch is what moves «Витрачено»/«Залишилось» on the board without waiting for
+    // the next poll.
+    expect(getIssue).toHaveBeenCalled();
+    expect(issue.key).toBe("KAN-42");
+  });
+
+  it("defaults the start to now and omits an empty note", async () => {
+    const { client } = fakeCloud({ workspace_jira_integrations: integrations() });
+    const addWorklog = vi.fn(async () => ({ id: "w1" }));
+    await service(client, scriptedJiraClient({ addWorklog })).logWork("w1", "KAN-42", { timeSpent: "1h", comment: "  " }, "u1");
+
+    const [, input] = addWorklog.mock.calls[0] as unknown as [string, { started: string; comment?: unknown }];
+    expect(input.started).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+0000$/);
+    expect("comment" in input).toBe(false);
+  });
+
+  it("passes each estimate adjustment through and falls back to Jira's default on nonsense", async () => {
+    const { client } = fakeCloud({
+      workspace_jira_integrations: Array.from({ length: 6 }, () => ({ data: integrationRow, error: null })),
+    });
+    const addWorklog = vi.fn(async () => ({ id: "w1" }));
+    const svc = service(client, scriptedJiraClient({ addWorklog }));
+
+    await svc.logWork("w1", "KAN-42", { timeSpent: "1h", adjust: { mode: "leave" } }, "u1");
+    expect((addWorklog.mock.lastCall as unknown as [string, { adjust: unknown }])[1].adjust).toEqual({ mode: "leave" });
+
+    await svc.logWork("w1", "KAN-42", { timeSpent: "1h", adjust: { mode: "manual", value: " 30m " } }, "u1");
+    expect((addWorklog.mock.lastCall as unknown as [string, { adjust: unknown }])[1].adjust).toEqual({
+      mode: "manual",
+      value: "30m",
+    });
+
+    // A mode Jira never defined would earn `adjustEstimate=whatever` and a 400; the entry
+    // is worth more than the adjustment, so it lands with Jira's own default.
+    await svc.logWork("w1", "KAN-42", { timeSpent: "1h", adjust: { mode: "sideways" } as never }, "u1");
+    expect((addWorklog.mock.lastCall as unknown as [string, { adjust: unknown }])[1].adjust).toEqual({ mode: "auto" });
+  });
+
+  it("refuses an empty duration and an adjustment with nothing to adjust by", async () => {
+    const { client } = fakeCloud({
+      workspace_jira_integrations: Array.from({ length: 4 }, () => ({ data: integrationRow, error: null })),
+    });
+    const addWorklog = vi.fn(async () => ({ id: "w1" }));
+    const svc = service(client, scriptedJiraClient({ addWorklog }));
+
+    await expect(svc.logWork("w1", "KAN-42", { timeSpent: "   " }, "u1")).rejects.toThrow(/timeSpent is required/);
+    await expect(
+      svc.logWork("w1", "KAN-42", { timeSpent: "1h", adjust: { mode: "new", value: "" } }, "u1"),
+    ).rejects.toThrow(/needs a duration/);
+    expect(addWorklog).not.toHaveBeenCalled();
+  });
+});
+
+describe("editWorklog", () => {
+  const integrations = (n = 2) => Array.from({ length: n }, () => ({ data: integrationRow, error: null }));
+
+  it("sends the edited entry against its worklog id and keeps the start the user gave", async () => {
+    const { client } = fakeCloud({ workspace_jira_integrations: integrations() });
+    const updateWorklog = vi.fn(async () => ({ id: "10100" }));
+    const svc = service(client, scriptedJiraClient({ updateWorklog }));
+
+    await svc.editWorklog(
+      "w1",
+      "KAN-42",
+      "10100",
+      { timeSpent: "2h", started: "2026-09-01T08:00:00.000Z", comment: "fixed" },
+      "u1",
+    );
+
+    expect(updateWorklog).toHaveBeenCalledWith("KAN-42", "10100", {
+      timeSpent: "2h",
+      // The entry keeps the day it happened on — an edit is not a re-log.
+      started: "2026-09-01T08:00:00.000+0000",
+      comment: {
+        type: "doc",
+        version: 1,
+        content: [{ type: "paragraph", content: [{ type: "text", text: "fixed" }] }],
+      },
+      adjust: { mode: "auto" },
+    });
+  });
+
+  it("reads a relative adjustment as «recalculate», because Jira's update has no such parameter", async () => {
+    const { client } = fakeCloud({ workspace_jira_integrations: integrations() });
+    const updateWorklog = vi.fn(async () => ({ id: "10100" }));
+    await service(client, scriptedJiraClient({ updateWorklog })).editWorklog(
+      "w1",
+      "KAN-42",
+      "10100",
+      { timeSpent: "2h", started: "2026-09-01T08:00:00.000Z", adjust: { mode: "manual", value: "30m" } },
+      "u1",
+    );
+    expect((updateWorklog.mock.lastCall as unknown as [string, string, { adjust: unknown }])[2].adjust).toEqual({
+      mode: "auto",
+    });
+  });
+
+  it("refuses an edit with no start rather than silently restamping the entry to now", async () => {
+    const { client } = fakeCloud({ workspace_jira_integrations: integrations() });
+    const updateWorklog = vi.fn(async () => ({ id: "10100" }));
+    await expect(
+      service(client, scriptedJiraClient({ updateWorklog })).editWorklog("w1", "KAN-42", "10100", { timeSpent: "2h" }, "u1"),
+    ).rejects.toThrow(/started is required/);
+    expect(updateWorklog).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteWorklog", () => {
+  it("passes the estimate adjustment through and refreshes the issue afterwards", async () => {
+    const { client } = fakeCloud({
+      workspace_jira_integrations: Array.from({ length: 2 }, () => ({ data: integrationRow, error: null })),
+    });
+    const deleteWorklog = vi.fn(async () => undefined);
+    const getIssue = vi.fn(async () => rawIssue);
+    const svc = service(client, scriptedJiraClient({ deleteWorklog, getIssue }));
+
+    const issue = await svc.deleteWorklog("w1", "KAN-42", "10100", { mode: "manual", value: " 2h " }, "u1");
+    expect(deleteWorklog).toHaveBeenCalledWith("KAN-42", "10100", { mode: "manual", value: "2h" });
+    expect(getIssue).toHaveBeenCalled();
+    expect(issue.key).toBe("KAN-42");
+  });
+});
+
+describe("editorOptions", () => {
+  it("reports the token's identity and Jira's worklog verdict", async () => {
+    const { client } = fakeCloud({ workspace_jira_integrations: [{ data: integrationRow, error: null }] });
+    const myPermissions = vi.fn(async () => ({
+      WORKLOG_EDIT_OWN: true,
+      WORKLOG_EDIT_ALL: false,
+      WORKLOG_DELETE_OWN: true,
+      WORKLOG_DELETE_ALL: false,
+    }));
+    const svc = service(client, scriptedJiraClient({ myPermissions, projectIssueTypes: vi.fn(async () => []), listPriorities: vi.fn(async () => []) }));
+
+    const opts = await svc.editorOptions("w1", "u1");
+    expect(myPermissions).toHaveBeenCalledWith("KAN", [
+      "WORKLOG_EDIT_OWN",
+      "WORKLOG_EDIT_ALL",
+      "WORKLOG_DELETE_OWN",
+      "WORKLOG_DELETE_ALL",
+    ]);
+    expect(opts.worklog).toEqual({ editOwn: true, editAll: false, deleteOwn: true, deleteAll: false });
+  });
+
+  it("backfills the token's accountId from /myself once and stores it for next time", async () => {
+    const { client } = fakeCloud({
+      workspace_jira_integrations: Array.from({ length: 2 }, () => ({ data: integrationRow, error: null })),
+    });
+    // The token in beforeEach was stored without an accountId — the pre-existing-install
+    // case this backfill exists for.
+    const myself = vi.fn(async () => ({ accountId: "acc-me", displayName: "Dev" }));
+    const jira = scriptedJiraClient({
+      myself,
+      myPermissions: vi.fn(async () => ({})),
+      projectIssueTypes: vi.fn(async () => []),
+      listPriorities: vi.fn(async () => []),
+    });
+    const svc = service(client, jira);
+
+    expect((await svc.editorOptions("w1", "u1")).myAccountId).toBe("acc-me");
+    expect(registry.getJiraToken("https://team.atlassian.net", "u1")?.accountId).toBe("acc-me");
+
+    // Second ask: the registry answers, Jira is not asked again.
+    expect((await svc.editorOptions("w1", "u1")).myAccountId).toBe("acc-me");
+    expect(myself).toHaveBeenCalledTimes(1);
+  });
+
+  it("degrades an unreadable permission answer to «may touch nothing», not to an error", async () => {
+    const { client } = fakeCloud({ workspace_jira_integrations: [{ data: integrationRow, error: null }] });
+    const jira = scriptedJiraClient({
+      myPermissions: vi.fn(async () => {
+        throw new JiraHttpError(403, "no browse permission");
+      }),
+      projectIssueTypes: vi.fn(async () => []),
+      listPriorities: vi.fn(async () => []),
+    });
+
+    const opts = await service(client, jira).editorOptions("w1", "u1");
+    expect(opts.worklog).toEqual({ editOwn: false, editAll: false, deleteOwn: false, deleteAll: false });
+  });
+});
+
 describe("setToken", () => {
   it("refuses to store a token /myself rejects", async () => {
     const { client } = fakeCloud({});
@@ -345,6 +554,8 @@ function mirrorIssueRow(issueId: string, key: string) {
     priority_icon: "",
     labels: [],
     original_estimate: "",
+    time_spent: "",
+    remaining_estimate: "",
     start_date: "",
     due_date: "",
     assignee_account_id: null,

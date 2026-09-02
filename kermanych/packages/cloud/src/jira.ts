@@ -23,7 +23,7 @@ const INTEGRATION_COLUMNS =
   "id, workspace_id, site_url, jira_project_key, board_id, board_name, connected_by, created_at, updated_at";
 
 const ISSUE_COLUMNS =
-  "integration_id, workspace_id, issue_id, key, summary, description_html, type_name, type_icon, priority_name, priority_icon, labels, original_estimate, start_date, due_date, assignee_account_id, assignee_name, assignee_avatar, reporter_name, status_id, status_name, status_category, parent_key, jira_updated_at, kermanych_project_id, task_id, updated_at";
+  "integration_id, workspace_id, issue_id, key, summary, description_html, type_name, type_icon, priority_name, priority_icon, labels, original_estimate, time_spent, remaining_estimate, start_date, due_date, assignee_account_id, assignee_name, assignee_avatar, reporter_name, status_id, status_name, status_category, parent_key, jira_updated_at, kermanych_project_id, task_id, updated_at";
 
 type IntegrationRow = {
   id: string;
@@ -65,6 +65,8 @@ type IssueRow = {
   priority_icon: string;
   labels: string[];
   original_estimate: string;
+  time_spent: string;
+  remaining_estimate: string;
   start_date: string;
   due_date: string;
   assignee_account_id: string | null;
@@ -98,6 +100,7 @@ type WorklogRow = {
   workspace_id: string;
   issue_id: string;
   worklog_id: string;
+  author_account_id: string;
   author_name: string;
   author_avatar: string;
   time_spent: string;
@@ -153,6 +156,8 @@ export function toJiraIssue(row: IssueRow): JiraIssue {
     priorityIcon: row.priority_icon,
     labels: row.labels ?? [],
     originalEstimate: row.original_estimate,
+    timeSpent: row.time_spent,
+    remainingEstimate: row.remaining_estimate,
     startDate: row.start_date,
     dueDate: row.due_date,
     statusId: row.status_id,
@@ -189,6 +194,8 @@ export function toJiraIssueRow(issue: JiraIssue): Record<string, unknown> {
     priority_icon: issue.priorityIcon,
     labels: issue.labels,
     original_estimate: issue.originalEstimate,
+    time_spent: issue.timeSpent,
+    remaining_estimate: issue.remainingEstimate,
     start_date: issue.startDate,
     due_date: issue.dueDate,
     assignee_account_id: issue.assigneeAccountId ?? null,
@@ -234,6 +241,7 @@ function toJiraWorklog(row: WorklogRow): JiraWorklog {
     workspaceId: row.workspace_id,
     issueId: row.issue_id,
     worklogId: row.worklog_id,
+    authorAccountId: row.author_account_id,
     authorName: row.author_name,
     authorAvatar: row.author_avatar,
     timeSpent: row.time_spent,
@@ -481,7 +489,7 @@ export async function listJiraIssueChildren(
       .order("jira_created_at", { ascending: true }),
     client
       .from("jira_worklogs")
-      .select("integration_id, workspace_id, issue_id, worklog_id, author_name, author_avatar, time_spent, seconds, started_at, comment_html")
+      .select("integration_id, workspace_id, issue_id, worklog_id, author_account_id, author_name, author_avatar, time_spent, seconds, started_at, comment_html")
       .eq("integration_id", integrationId)
       .eq("issue_id", issueId)
       .order("started_at", { ascending: false }),
@@ -540,6 +548,7 @@ export async function replaceJiraIssueChildren(
       children.worklogs.map((w) => ({
         ...scope,
         worklog_id: w.worklogId,
+        author_account_id: w.authorAccountId,
         author_name: w.authorName,
         author_avatar: w.authorAvatar,
         time_spent: w.timeSpent,

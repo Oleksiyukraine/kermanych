@@ -396,8 +396,12 @@ export type JiraIssue = {
   priorityName: string;
   priorityIcon: string;
   labels: string[];
-  // Jira's own duration spelling («2w 3d 4h»); blank = no estimate set.
+  // Jira's time tracking, all three in Jira's own duration spelling («2w 3d 4h»); blank =
+  // Jira holds none. `originalEstimate` is planned, `timeSpent` is the sum of the issue's
+  // worklogs, and `remainingEstimate` is what logging work adjusts.
   originalEstimate: string;
+  timeSpent: string;
+  remainingEstimate: string;
   // Jira's planning dates in Jira's own spelling (YYYY-MM-DD); blank = not set.
   // `dueDate` is the system `duedate`; `startDate` is the site's «Start date» field,
   // which a site may not have at all — then it stays blank and is not editable.
@@ -436,6 +440,10 @@ export type JiraWorklog = {
   workspaceId: string;
   issueId: string;
   worklogId: string;
+  // Jira's accountId for the author. What «may I edit this entry?» is decided from: Jira
+  // gates a worklog write on own-versus-all permissions, and a display name cannot answer
+  // that. Blank for rows mirrored before it was recorded — read as «not mine».
+  authorAccountId: string;
   authorName: string;
   authorAvatar: string;
   timeSpent: string;

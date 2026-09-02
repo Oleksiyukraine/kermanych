@@ -70,7 +70,15 @@ const dueDate = ref('');
 const busy = ref(false);
 const error = ref('');
 
-const options = ref<JiraEditorOptions>({ issueTypes: [], priorities: [], startDateSupported: false });
+// The worklog half is inert here — this editor writes issue fields, never time entries —
+// but the shape is one contract, so the placeholder states «no identity, no permissions».
+const options = ref<JiraEditorOptions>({
+  issueTypes: [],
+  priorities: [],
+  startDateSupported: false,
+  myAccountId: '',
+  worklog: { editOwn: false, editAll: false, deleteOwn: false, deleteAll: false },
+});
 const assignable = ref<JiraAssignableUser[]>([]);
 
 const editKey = computed(() => props.issue?.key);

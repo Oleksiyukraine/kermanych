@@ -22,6 +22,9 @@ export type MappedComment = {
 
 export type MappedWorklog = {
   worklogId: string;
+  // Jira's accountId, not a name: the dialog decides own-versus-all worklog permissions
+  // from it. Blank when Jira returned no author (a deleted account).
+  authorAccountId: string;
   authorName: string;
   authorAvatar: string;
   timeSpent: string;
@@ -87,6 +90,18 @@ export function toJiraDate(raw: string): string | null {
   return day;
 }
 
+// The worklog endpoint's `started`, which is NOT the same spelling as everything else Jira
+// hands out: it parses `yyyy-MM-dd'T'HH:mm:ss.SSSZ` with a NUMERIC zone and refuses the
+// `Z` that `Date.toISOString()` writes, so the instant is re-spelled as UTC + «+0000».
+//
+// Strict like toJiraDate and for the same reason: an unreadable start would either be
+// silently logged at «now» or earn a refusal phrased in Java date patterns.
+export function toJiraStarted(raw: string): string {
+  const at = new Date(raw);
+  if (Number.isNaN(at.getTime())) throw new Error(`unreadable worklog start: ${raw}`);
+  return `${at.toISOString().replace(/Z$/, "")}+0000`;
+}
+
 // Jira has no system start date: every site keeps it in a custom field whose id differs
 // (customfield_10015 on most Cloud sites, an Advanced Roadmaps «Target start» on others).
 // Resolution is therefore by MEANING, in the order a human would read the list:
@@ -132,7 +147,13 @@ export function mapIssue(
   const assignee = (f.assignee ?? undefined) as UserField | undefined;
   const reporter = (f.reporter ?? undefined) as UserField | undefined;
   const parent = (f.parent ?? undefined) as { key?: string } | undefined;
-  const timetracking = (f.timetracking ?? {}) as { originalEstimate?: string };
+  // All three counters travel together: logging work moves timeSpent and remainingEstimate,
+  // so a mirror that carried only the plan would show the ticket unchanged after the write.
+  const timetracking = (f.timetracking ?? {}) as {
+    originalEstimate?: string;
+    timeSpent?: string;
+    remainingEstimate?: string;
+  };
 
   const issue: JiraIssue = {
     integrationId: integration.id,
@@ -149,6 +170,8 @@ export function mapIssue(
     priorityIcon: str(priority.iconUrl),
     labels: Array.isArray(f.labels) ? f.labels.filter((l): l is string => typeof l === "string") : [],
     originalEstimate: str(timetracking.originalEstimate),
+    timeSpent: str(timetracking.timeSpent),
+    remainingEstimate: str(timetracking.remainingEstimate),
     startDate: startDateFieldId ? dateOnly(f[startDateFieldId]) : "",
     dueDate: dateOnly(f.duedate),
     statusId: str(status.id),
@@ -221,6 +244,7 @@ export function adfDoc(text: string): Record<string, unknown> {
 export function mapWorklogs(raw: readonly JiraRawWorklog[]): MappedWorklog[] {
   return raw.map((w) => ({
     worklogId: w.id,
+    authorAccountId: w.author?.accountId ?? "",
     authorName: w.author?.displayName ?? "",
     authorAvatar: avatar(w.author?.avatarUrls),
     timeSpent: w.timeSpent ?? "",

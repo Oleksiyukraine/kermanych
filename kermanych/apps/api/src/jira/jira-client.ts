@@ -105,11 +105,40 @@ export type JiraRawComment = {
 
 export type JiraRawWorklog = {
   id: string;
-  author?: { displayName?: string; avatarUrls?: Record<string, string> };
+  author?: { accountId?: string; displayName?: string; avatarUrls?: Record<string, string> };
   timeSpent?: string;
   timeSpentSeconds?: number;
   started: string;
   comment?: unknown;
+};
+
+// Jira's remaining-estimate adjustment, the choice its own «Log work» dialog offers. It
+// rides in the QUERY string, not the body:
+//   auto   — recalculate the remaining estimate from the logged time (Jira's default)
+//   leave  — write the entry, touch no estimate
+//   new    — replace the remaining estimate with `value`
+//   manual — move the remaining estimate by `value`
+//
+// The three worklog endpoints do NOT accept the same set, and the difference is Jira's,
+// not ours: adding takes `manual` as `reduceBy` (work done eats the estimate), DELETING
+// takes it as `increaseBy` (removing an entry gives the time back), and UPDATING has no
+// manual form at all — only auto, leave and an explicit new estimate. Each method below
+// therefore states which parameter its `manual` becomes, and `worklogQuery` refuses a
+// mode the endpoint cannot express instead of sending it for Jira to reject.
+export type JiraWorklogAdjust =
+  | { mode: "auto" }
+  | { mode: "leave" }
+  | { mode: "new"; value: string }
+  | { mode: "manual"; value: string };
+
+export type JiraWorklogWrite = {
+  // Jira's duration spelling («3h 20m»). Jira parses and refuses it, not us.
+  timeSpent: string;
+  // Already in Jira's worklog spelling — see toJiraStarted in jira-map.ts.
+  started: string;
+  // An ADF doc; the service builds it, because adfDoc lives beside the other mappers.
+  comment?: Record<string, unknown>;
+  adjust: JiraWorklogAdjust;
 };
 
 export class JiraClient {
@@ -321,6 +350,73 @@ export class JiraClient {
       out.push(...page.worklogs);
       if (startAt + PAGE >= page.total) return out;
     }
+  }
+
+  // The one place the three endpoints' adjustment vocabularies are spelled out.
+  // `manualParam` is the name THIS endpoint gives a relative move, or undefined where it
+  // offers none — and then a `manual` mode is a caller bug, not something to forward.
+  private worklogQuery(adjust: JiraWorklogAdjust, manualParam?: "reduceBy" | "increaseBy"): string {
+    const params = new URLSearchParams({ adjustEstimate: adjust.mode });
+    if (adjust.mode === "new") params.set("newEstimate", adjust.value);
+    if (adjust.mode === "manual") {
+      if (!manualParam) throw new Error("this worklog endpoint has no relative estimate adjustment");
+      params.set(manualParam, adjust.value);
+    }
+    return params.toString();
+  }
+
+  // The write half of «Log work». Returns the created worklog's id; the caller's own
+  // refresh is what puts the entry and the moved counters into the mirror.
+  addWorklog(key: string, input: JiraWorklogWrite): Promise<{ id: string }> {
+    return this.request(
+      "POST",
+      `/rest/api/3/issue/${encodeURIComponent(key)}/worklog?${this.worklogQuery(input.adjust, "reduceBy")}`,
+      {
+        timeSpent: input.timeSpent,
+        started: input.started,
+        ...(input.comment ? { comment: input.comment } : {}),
+      },
+    );
+  }
+
+  // Editing an existing entry. Jira's update has NO relative adjustment (see the type's
+  // note), so `manual` never reaches here — the service normalises it away.
+  updateWorklog(key: string, worklogId: string, input: JiraWorklogWrite): Promise<{ id: string }> {
+    return this.request(
+      "PUT",
+      `/rest/api/3/issue/${encodeURIComponent(key)}/worklog/${encodeURIComponent(worklogId)}?${this.worklogQuery(input.adjust)}`,
+      {
+        timeSpent: input.timeSpent,
+        started: input.started,
+        // Always sent: Jira leaves an omitted comment ALONE, so clearing a note would be
+        // impossible, and an emptied note is a legitimate edit. adfDoc("") is Jira's own
+        // spelling of «no body».
+        comment: input.comment ?? { type: "doc", version: 1, content: [] },
+      },
+    );
+  }
+
+  // Removing an entry gives its time back, so Jira spells this endpoint's relative move
+  // `increaseBy`. 204, nothing to parse.
+  deleteWorklog(key: string, worklogId: string, adjust: JiraWorklogAdjust): Promise<void> {
+    return this.request(
+      "DELETE",
+      `/rest/api/3/issue/${encodeURIComponent(key)}/worklog/${encodeURIComponent(worklogId)}?${this.worklogQuery(adjust, "increaseBy")}`,
+    );
+  }
+
+  // Which of the named permissions this token actually holds in this project — Jira's own
+  // answer to «may I touch that worklog», rather than a guess from who wrote it. The
+  // endpoint REQUIRES the permissions list (an unknown key is a 400), so the caller names
+  // exactly the keys it will read back.
+  async myPermissions(projectKey: string, permissions: readonly string[]): Promise<Record<string, boolean>> {
+    const res = await this.request<{ permissions?: Record<string, { havePermission?: boolean }> }>(
+      "GET",
+      `/rest/api/3/mypermissions?projectKey=${encodeURIComponent(projectKey)}&permissions=${permissions.map(encodeURIComponent).join(",")}`,
+    );
+    const out: Record<string, boolean> = {};
+    for (const key of permissions) out[key] = res.permissions?.[key]?.havePermission === true;
+    return out;
   }
 
   // ── attachments ──────────────────────────────────────────────────────────────

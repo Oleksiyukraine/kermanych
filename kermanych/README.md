@@ -125,7 +125,7 @@ that the board page grows a «Задачі | Jira» switcher, and the «Jira» v
 the board's own columns, tickets, labels, comments, worklogs and attachment lists.
 
 - **Tokens are personal and local.** Every member who wants to *act* (drag a ticket
-  between columns, comment, create/edit/delete tickets, upload files) adds their own
+  between columns, comment, log work, create/edit/delete tickets, upload files) adds their own
   Atlassian API token on the Integrations tab; it is stored in this machine's
   registry SQLite and never reaches the cloud. Actions land in Jira under that
   member's own account. A member without a token gets a read-only mirror.
@@ -136,6 +136,15 @@ the board's own columns, tickets, labels, comments, worklogs and attachment list
   «Синхронізувати» in the Jira view's toolbar forces that poll now: it skips the
   shared lease and runs a full sweep, so tickets closed or moved in Jira — and any
   change to the board's columns — land immediately instead of at the next tick.
+- **Work is logged where it is done.** The ticket dialog's «Ворклоги» tab reproduces
+  Jira's own «Log work»: time spent in Jira's spelling («3h 20m»), when it started,
+  an optional description, and what the entry does to the remaining estimate
+  (subtract automatically, leave alone, set to, reduce by). The worklog is written to
+  Jira under the acting member's own account — so it carries their name there — and
+  the ticket's «Витрачено»/«Залишилось» move with it. An existing entry can be
+  corrected or removed from the same list, with the estimate question Jira asks in
+  each case; the «Редагувати»/«Видалити» controls appear only on the entries Jira
+  says this member may touch (its own edit-own vs edit-all worklog permissions).
 - **Tickets launch like tasks.** «Запустити» on a ticket asks which Kermanych
   project (repo) to run in — pre-selected from the sidebar — and which Jira status
   to move the ticket to (skipped when it is already in an In-Progress-category

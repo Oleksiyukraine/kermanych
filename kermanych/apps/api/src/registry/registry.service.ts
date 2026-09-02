@@ -188,6 +188,15 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS jira_tokens (site_url TEXT NOT NULL, user_id TEXT NOT NULL, email TEXT NOT NULL, api_token TEXT NOT NULL, PRIMARY KEY (site_url, user_id))`,
     );
+    // Additive migration: the token's own Jira identity, learned from /myself when the
+    // token is validated. Kept beside it because «is this worklog mine?» is a question
+    // about the STORED token, and asking Jira again on every dialog open would be a
+    // round trip for an answer that cannot change while the token does not.
+    try {
+      this.db.exec(`ALTER TABLE jira_tokens ADD COLUMN account_id TEXT`);
+    } catch {
+      /* column already exists */
+    }
   }
 
   // v1 (2026-08-21, team cloud): `groups` becomes `projects`, its id becomes the CLOUD
@@ -269,20 +278,39 @@ export class RegistryService {
 
   // ── Jira tokens ──────────────────────────────────────────────────────────────
 
-  getJiraToken(siteUrl: string, userId: string): { email: string; apiToken: string } | undefined {
+  // `accountId` is absent for a token stored before it was recorded; JiraService
+  // backfills it from /myself rather than treating the gap as «not me».
+  getJiraToken(
+    siteUrl: string,
+    userId: string,
+  ): { email: string; apiToken: string; accountId?: string } | undefined {
     const row = this.db
-      .prepare(`SELECT email, api_token as apiToken FROM jira_tokens WHERE site_url = ? AND user_id = ?`)
-      .get(siteUrl, userId) as { email: string; apiToken: string } | undefined;
-    return row;
+      .prepare(`SELECT email, api_token as apiToken, account_id as accountId FROM jira_tokens WHERE site_url = ? AND user_id = ?`)
+      .get(siteUrl, userId) as { email: string; apiToken: string; accountId: string | null } | undefined;
+    if (!row) return undefined;
+    const out: { email: string; apiToken: string; accountId?: string } = {
+      email: row.email,
+      apiToken: row.apiToken,
+    };
+    if (row.accountId) out.accountId = row.accountId;
+    return out;
   }
 
-  setJiraToken(siteUrl: string, userId: string, email: string, apiToken: string): void {
+  setJiraToken(siteUrl: string, userId: string, email: string, apiToken: string, accountId?: string): void {
     this.db
       .prepare(
-        `INSERT INTO jira_tokens (site_url, user_id, email, api_token) VALUES (?,?,?,?)
-         ON CONFLICT(site_url, user_id) DO UPDATE SET email = excluded.email, api_token = excluded.api_token`,
+        `INSERT INTO jira_tokens (site_url, user_id, email, api_token, account_id) VALUES (?,?,?,?,?)
+         ON CONFLICT(site_url, user_id) DO UPDATE SET email = excluded.email, api_token = excluded.api_token, account_id = excluded.account_id`,
       )
-      .run(siteUrl, userId, email, apiToken);
+      .run(siteUrl, userId, email, apiToken, accountId ?? null);
+  }
+
+  // The backfill path: a token stored before account_id existed keeps its row and gains
+  // the identity on the first call that needs it.
+  setJiraAccountId(siteUrl: string, userId: string, accountId: string): void {
+    this.db
+      .prepare(`UPDATE jira_tokens SET account_id = ? WHERE site_url = ? AND user_id = ?`)
+      .run(accountId, siteUrl, userId);
   }
 
   deleteJiraToken(siteUrl: string, userId: string): void {
