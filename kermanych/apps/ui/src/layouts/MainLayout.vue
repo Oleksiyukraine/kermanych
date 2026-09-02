@@ -270,6 +270,11 @@
 
     <!-- TOAST STACK — transient notifications (errors etc.) -->
     <KToast :toasts="store.toasts" @dismiss="store.dismissToast" />
+
+    <!-- JIRA MERGE PROMPT — global on purpose: a shadow task reaches `merged` wherever
+         the user happens to be, and the «куди перенести тікет?» question must not depend
+         on the board page being open. Renders nothing until such a merge happens. -->
+    <JiraMergePrompt />
   </q-layout>
 </template>
 
@@ -301,6 +306,7 @@ import KBtn from 'components/kit/KBtn.vue';
 import KToast from 'components/kit/KToast.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KUserButton from 'components/kit/KUserButton.vue';
+import JiraMergePrompt from 'components/jira/JiraMergePrompt.vue';
 
 // The Kermanych app shell (design-system section 07): project rail, brand header, page
 // container, fleet status bar. Two stores back it — `store` (useOrchestrator) owns the LOCAL

@@ -20,7 +20,7 @@ import type {
   FileContent,
   ModelOption,
 } from '@kermanych/core';
-import type { CloudProject } from '@kermanych/cloud';
+import type { CloudProject, JiraIntegration, JiraIssue } from '@kermanych/cloud';
 
 const BASE =
   (typeof window !== 'undefined' && window.kermanych?.apiBase) ||
@@ -135,6 +135,30 @@ export type DiffRow = {
 export type DiffHunk = { header: string; rows: DiffRow[] };
 export type FileDiff = { hunks: DiffHunk[]; binary: boolean; truncated: boolean };
 
+// ── Jira (all proxied through the local api: Jira REST forbids browser CORS, and the
+// per-user token lives in this machine's registry, never in the browser) ────────────────
+export type JiraTokenStatus = { present: boolean; email?: string };
+export type JiraBoardOption = { id: number; name: string; type: string; projectKey?: string };
+export type JiraTransitionWire = {
+  id: string;
+  name: string;
+  to: { id: string; name: string; statusCategory: { key: string } };
+};
+export type JiraIssueDraftWire = {
+  summary?: string;
+  description?: string;
+  issueTypeId?: string;
+  priorityId?: string;
+  labels?: string[];
+  assigneeAccountId?: string | null;
+  parentKey?: string;
+};
+export type JiraEditorOptions = {
+  issueTypes: { id: string; name: string; subtask: boolean }[];
+  priorities: { id: string; name: string }[];
+};
+export type JiraAssignableUser = { accountId: string; displayName: string; avatar?: string };
+
 export const api = {
   // LOCAL project rows. Creation and deletion live in the cloud (see stores/projects.ts);
   // these routes cache cloud config and own this machine's binding.
@@ -169,6 +193,77 @@ export const api = {
   // client cannot launch a task on somebody else's behalf.
   createSessionFromTask: (taskId: string, images?: ImageInput[]): Promise<Session> =>
     post<Session>('/sessions/from-task', { taskId, images }),
+
+  // ── Jira. The acting user comes from the guard's token; their Jira token from the
+  // machine's registry. Every write returns the refreshed mirror issue so the caller can
+  // upsert it without waiting for realtime.
+  jiraTokenStatus: (site: string): Promise<JiraTokenStatus> =>
+    get<JiraTokenStatus>(`/jira/token?site=${encodeURIComponent(site)}`),
+  jiraSetToken: (siteUrl: string, email: string, token: string): Promise<{ displayName: string }> =>
+    put<{ displayName: string }>('/jira/token', { siteUrl, email, token }),
+  jiraDeleteToken: (site: string): Promise<void> => del(`/jira/token?site=${encodeURIComponent(site)}`),
+
+  jiraBoards: (site: string): Promise<JiraBoardOption[]> =>
+    get<JiraBoardOption[]>(`/jira/boards?site=${encodeURIComponent(site)}`),
+  jiraConnect: (workspaceId: string, siteUrl: string, boardId: number): Promise<JiraIntegration> =>
+    post<JiraIntegration>('/jira/integrations', { workspaceId, siteUrl, boardId }),
+  jiraDisconnect: (workspaceId: string): Promise<void> => del(`/jira/integrations/${workspaceId}`),
+
+  jiraSync: (workspaceId: string, full = false): Promise<{ synced: boolean }> =>
+    post<{ synced: boolean }>(`/jira/sync/${workspaceId}`, { full }),
+
+  jiraTransitions: (workspaceId: string, key: string): Promise<JiraTransitionWire[]> =>
+    get<JiraTransitionWire[]>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/transitions`),
+  jiraTransition: (workspaceId: string, key: string, transitionId: string): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/transition`, { transitionId }),
+  jiraComment: (workspaceId: string, key: string, body: string): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/comments`, { body }),
+  jiraRefreshIssue: (workspaceId: string, key: string): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/refresh`, {}),
+
+  jiraCreateIssue: (workspaceId: string, draft: JiraIssueDraftWire): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${workspaceId}`, draft),
+  jiraEditIssue: (workspaceId: string, key: string, draft: JiraIssueDraftWire): Promise<JiraIssue> =>
+    put<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}`, draft),
+  jiraDeleteIssue: (workspaceId: string, key: string): Promise<void> =>
+    del(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}`),
+
+  jiraEditorOptions: (workspaceId: string): Promise<JiraEditorOptions> =>
+    get<JiraEditorOptions>(`/jira/editor-options/${workspaceId}`),
+  jiraAssignableUsers: (workspaceId: string, q: string): Promise<JiraAssignableUser[]> =>
+    get<JiraAssignableUser[]>(`/jira/assignable/${workspaceId}?q=${encodeURIComponent(q)}`),
+
+  jiraUploadAttachment: (
+    workspaceId: string,
+    key: string,
+    filename: string,
+    data: string,
+    mimeType: string,
+  ): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/attachments`, { filename, data, mimeType }),
+
+  // A fetch, not an <a href>: the proxy route is behind the same bearer guard as
+  // everything else, so the bytes come back as a Blob the caller turns into an object
+  // URL for the actual save.
+  jiraDownloadAttachment: async (workspaceId: string, attachmentId: string): Promise<Blob> => {
+    const r = await fetch(`${BASE}/jira/attachments/${workspaceId}/${attachmentId}`, {
+      headers: authHeaders(false),
+    });
+    if (!r.ok) throw await toError(r);
+    return r.blob();
+  },
+
+  jiraLaunch: (
+    workspaceId: string,
+    key: string,
+    projectId: string,
+    transitionId?: string,
+    images?: ImageInput[],
+  ): Promise<{ session: Session; transitionError?: string }> =>
+    post<{ session: Session; transitionError?: string }>(
+      `/jira/issues/${workspaceId}/${encodeURIComponent(key)}/launch`,
+      { projectId, transitionId, images },
+    ),
 
   // How many status pushes THIS machine still owes the cloud. Only the local process can
   // see that, so the board polls it (see the api controller for why it is not an event).
