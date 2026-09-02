@@ -20,6 +20,18 @@ import { createProject, listProjects, patchProject } from "../src/projects";
 import { deleteProjectSkill, listProjectSkills, upsertProjectSkill } from "../src/skills";
 import { deleteTrigger, listTriggers, upsertTrigger } from "../src/triggers";
 import { listMembers } from "../src/workspaces";
+import {
+  deleteJiraIntegration,
+  ensureJiraSyncState,
+  getJiraIntegration,
+  listJiraColumns,
+  listJiraIssues,
+  replaceJiraColumns,
+  takeJiraSyncLease,
+  upsertJiraIntegration,
+  upsertJiraIssues,
+} from "../src/jira";
+import { createTask, getTask } from "../src/tasks";
 
 const URL = process.env.SUPABASE_TEST_URL;
 const ANON = process.env.SUPABASE_TEST_ANON_KEY;
@@ -1010,5 +1022,128 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     const ownerSeat = roster.find((m) => m.userId === owner.id);
     expect(ownerSeat?.role).toBe("owner");
     expect(ownerSeat?.profile?.githubUsername).toMatch(/^owner-/);
+  });
+
+  // ── the Jira mirror ─────────────────────────────────────────────────────────
+  // Its own workspace: the fixture one has shed `member` by the time this block runs
+  // (the removal test above), and the mirror's whole policy story is «owner manages the
+  // integration row, any member writes the mirror» — both roles must exist to test it.
+  describe("jira mirror", () => {
+    let jiraWs: string;
+    let integrationId: string;
+
+    beforeAll(async () => {
+      const ws = await owner.client
+        .from("workspaces")
+        .insert({ name: "rls-jira-ws", owner_id: owner.id })
+        .select()
+        .single();
+      if (ws.error) throw ws.error;
+      jiraWs = ws.data.id as string;
+      const seated = await owner.client.rpc("invite_workspace_member", {
+        p_workspace_id: jiraWs,
+        p_email: member.email,
+      });
+      if (seated.error) throw seated.error;
+    }, 30_000);
+
+    it("a member cannot connect the integration; the owner can", async () => {
+      const refused = await member.client.from("workspace_jira_integrations").insert({
+        workspace_id: jiraWs,
+        site_url: "https://x.atlassian.net",
+        jira_project_key: "KAN",
+        board_id: 1,
+        board_name: "KAN board",
+      });
+      // Either spelling of an RLS refusal (42501 or a policy message) — the row must not land.
+      expect(refused.error).not.toBeNull();
+
+      const connected = await upsertJiraIntegration(owner.client, {
+        workspaceId: jiraWs,
+        siteUrl: "https://x.atlassian.net",
+        projectKey: "KAN",
+        boardId: 1,
+        boardName: "KAN board",
+      });
+      integrationId = connected.id;
+      expect(connected.workspaceId).toBe(jiraWs);
+      // The touch trigger owns provenance: connected_by is the caller, never a claim.
+      expect(connected.connectedBy).toBe(owner.id);
+    });
+
+    it("a member reads the integration; an outsider sees nothing", async () => {
+      expect((await getJiraIntegration(member.client, jiraWs))?.id).toBe(integrationId);
+      expect(await getJiraIntegration(outsider.client, jiraWs)).toBeUndefined();
+    });
+
+    it("any member writes the mirror; an outsider cannot read it", async () => {
+      await replaceJiraColumns(member.client, integrationId, jiraWs, [
+        { position: 0, name: "To Do", statusIds: ["1"] },
+      ]);
+      await upsertJiraIssues(member.client, [
+        {
+          integrationId,
+          workspaceId: jiraWs,
+          issueId: "10001",
+          key: "KAN-1",
+          summary: "mirrored",
+          descriptionHtml: "",
+          typeName: "Task",
+          typeIcon: "",
+          priorityName: "",
+          priorityIcon: "",
+          labels: ["a"],
+          statusId: "1",
+          statusName: "To Do",
+          statusCategory: "new",
+          jiraUpdatedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ]);
+
+      const mine = await listJiraIssues(member.client, integrationId);
+      expect(mine.map((i) => i.key)).toEqual(["KAN-1"]);
+      // toJiraIssueRow never carries the binding — the columns must still be null.
+      expect(mine[0]).not.toHaveProperty("taskId");
+
+      expect(await listJiraIssues(outsider.client, integrationId)).toEqual([]);
+      expect(await listJiraColumns(outsider.client, integrationId)).toEqual([]);
+    });
+
+    it("the sync lease admits one taker per staleness window", async () => {
+      await ensureJiraSyncState(member.client, integrationId, jiraWs);
+      expect(await takeJiraSyncLease(member.client, integrationId, 25_000)).toBe(true);
+      // Fresh stamp: the immediate second take loses without an error.
+      expect(await takeJiraSyncLease(owner.client, integrationId, 25_000)).toBe(false);
+      // A zero window makes the stamp instantly stale again.
+      expect(await takeJiraSyncLease(owner.client, integrationId, 0)).toBe(true);
+    });
+
+    it("tasks.jira_key round-trips through the typed surface", async () => {
+      const project = await owner.client
+        .from("projects")
+        .insert({ name: "rls-jira-project", workspace_id: jiraWs })
+        .select()
+        .single();
+      if (project.error) throw project.error;
+      const shadow = await createTask(owner.client, {
+        projectId: project.data.id as string,
+        title: "KAN-1 — mirrored",
+        createdBy: owner.id,
+        jiraKey: "KAN-1",
+      });
+      expect(shadow.jiraKey).toBe("KAN-1");
+      expect((await getTask(owner.client, shadow.id))?.jiraKey).toBe("KAN-1");
+    });
+
+    it("disconnecting cascades the whole mirror away", async () => {
+      // Member cannot disconnect…
+      await deleteJiraIntegration(member.client, jiraWs);
+      expect((await getJiraIntegration(member.client, jiraWs))?.id).toBe(integrationId);
+      // …the owner can, and the cascade sweeps columns and issues with the row.
+      await deleteJiraIntegration(owner.client, jiraWs);
+      expect(await getJiraIntegration(owner.client, jiraWs)).toBeUndefined();
+      expect(await listJiraIssues(owner.client, integrationId)).toEqual([]);
+    });
   });
 });
