@@ -32,12 +32,19 @@ to pick the ticket's next status.
    "don't move it"). On `merged`, a prompt lists the board's statuses and applies the
    chosen transition; skippable.
 5. **V1 scope.** Reads: columns, tickets (key, summary, type, priority, labels,
-   assignee, status, description), comments, worklogs (read-only), attachment
-   metadata + download. Writes: transitions (drag), comments, create/edit/delete
-   tickets, assignee, labels, standard fields, attachment upload, subtask creation.
+   assignee, status, description, original estimate, start & due date), comments,
+   worklogs (read-only), attachment metadata + download. Writes: transitions (drag),
+   comments, create/edit/delete tickets, assignee, labels, standard fields, attachment
+   upload, subtask creation.
    **Standard fields only are editable** (summary, description, type, priority,
-   assignee, labels, due date); custom fields render read-only. Out of v1: custom
-   field editing, sprint/backlog management, worklog writing.
+   assignee, labels, original estimate, due date); other custom fields render
+   read-only. Out of v1: custom field editing, sprint/backlog management, worklog
+   writing.
+   The one exception is **start date**: Jira has no system field for it, so the api
+   resolves the site's own «Start date» (or Advanced Roadmaps' «Target start») from
+   `GET /rest/api/3/field`, caches the id per site, and mirrors/edits through it. A site
+   with no such field reports `startDateSupported: false` and the editors hide the
+   control rather than offering a save Jira must refuse.
 6. **Jira is the source of truth.** The mirror is a cache; disagreement resolves by
    overwriting the mirror from Jira. No merge logic.
 
@@ -75,6 +82,7 @@ Supabase mirror → realtime/refetch → every member's UI (token or not)
   Jira board column maps several statuses).
 - `jira_issues` — card + detail body: Jira `issue_id`, `key`, `summary`,
   `description` (rendered), type/priority (name + icon URL), `labels text[]`,
+  `original_estimate`, `start_date` / `due_date` (Jira's `YYYY-MM-DD`, blank = unset),
   assignee/reporter (accountId, display name, avatar URL), `status_id`,
   `status_name`, `status_category` (`new`/`indeterminate`/`done`), `parent_key`,
   `jira_updated_at`; launch binding: `kermanych_project_id`, `task_id`. Upsert key
@@ -125,12 +133,14 @@ the shadow task via `jira_issues.task_id` for a live agent-status chip.
 - **Board switcher** on `BoardPage.vue` as decided above.
 - **Jira view**: columns from `jira_columns` by `position`; cards grouped by which
   column's `status_ids` holds the issue's status. Card: key, summary, type +
-  priority icons, label chips, assignee avatar, agent-status chip when a shadow task
+  priority icons, label chips, a start–due date chip (amber today, red past due unless
+  the ticket is done), assignee avatar, agent-status chip when a shadow task
   exists. Drag between columns → single-status column transitions immediately;
   multi-status column pops a status picker. Optimistic move, snap back with the Jira
   refusal text. Tokenless: drag disabled with explanatory tooltip.
-- **Ticket detail dialog**: description, standard fields (inline-editable for token
-  holders), custom fields read-only, subtasks list, attachments
+- **Ticket detail dialog**: description, standard fields inline-editable for token
+  holders (priority, assignee, original estimate, start & due date), other custom
+  fields read-only, subtasks list, attachments
   (download/upload), comments tab (composer), worklogs tab (read-only). Actions:
   «Запустити», «Редагувати», «Видалити».
 - **Launch dialog**: project picker (pre-selected from sidebar scope) + target
@@ -138,7 +148,7 @@ the shadow task via `jira_issues.task_id` for a live agent-status chip.
 - **Merge prompt**: on a `jira_key` task hitting `merged` on this machine —
   status-picker dialog, skippable.
 - **Create ticket**: «+ Тікет» in the Jira view header → summary, description, type,
-  priority, labels, assignee, parent.
+  priority, labels, assignee, start & due date, parent.
 
 ## Failure handling
 

@@ -101,3 +101,38 @@ export function launchDefaults(
 export function subtasksOf(issues: readonly JiraIssue[], parentKey: string): JiraIssue[] {
   return issues.filter((i) => i.parentKey === parentKey);
 }
+
+// ── planning dates ────────────────────────────────────────────────────────────
+
+// Today as Jira spells a day, in the user's OWN calendar: «прострочено» is a statement
+// about the day on their wall, so a UTC midnight must not make a card late an evening
+// early.
+export function todayIso(now = new Date()): string {
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+// The card's date chip: what to show for a ticket's start/due pair, and whether it is
+// late. Jira's own emphasis rule — a DONE ticket is never overdue, however long its due
+// date has passed, because the work it was late for is finished.
+export type JiraDateChip = { text: string; tone: 'plain' | 'soon' | 'overdue' };
+
+export function dateChip(
+  issue: Pick<JiraIssue, 'startDate' | 'dueDate' | 'statusCategory'>,
+  today: string,
+): JiraDateChip | undefined {
+  // DD.MM: a card chip has room for a day and a month, and on a sprint board the year is
+  // noise. The full date stays readable in the ticket dialog.
+  const start = issue.startDate ? `${issue.startDate.slice(8, 10)}.${issue.startDate.slice(5, 7)}` : '';
+  const due = issue.dueDate ? `${issue.dueDate.slice(8, 10)}.${issue.dueDate.slice(5, 7)}` : '';
+  if (!start && !due) return undefined;
+
+  let tone: JiraDateChip['tone'] = 'plain';
+  // Lexicographic on YYYY-MM-DD is chronological — no Date, no zone, no drift.
+  if (issue.dueDate && issue.statusCategory !== 'done') {
+    if (issue.dueDate < today) tone = 'overdue';
+    else if (issue.dueDate === today) tone = 'soon';
+  }
+  return { text: start && due ? `${start} – ${due}` : due ? `до ${due}` : `з ${start}`, tone };
+}

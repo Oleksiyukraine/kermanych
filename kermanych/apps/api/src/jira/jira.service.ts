@@ -33,7 +33,17 @@ import { RegistryService } from "../registry/registry.service";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { JiraClient, JiraHttpError, normalizeSiteUrl } from "./jira-client";
 import type { JiraBoardSummary, JiraCredentials, JiraRawIssue, JiraTransition } from "./jira-client";
-import { adfText, fullJql, incrementalJql, mapAttachments, mapComments, mapIssue, mapWorklogs } from "./jira-map";
+import {
+  adfText,
+  fullJql,
+  incrementalJql,
+  mapAttachments,
+  mapComments,
+  mapIssue,
+  mapWorklogs,
+  pickStartDateFieldId,
+  toJiraDate,
+} from "./jira-map";
 
 // The lease staleness window. The UI ticks every ~30 s; 25 s means the previous holder's
 // stamp has expired by the time the next tick lands, while two clients ticking together
@@ -44,6 +54,11 @@ const LEASE_STALE_MS = 25_000;
 // polls in between. In-process memory is enough: the worst a restart costs is one extra
 // full sweep.
 const FULL_SWEEP_EVERY_MS = 10 * 60_000;
+
+// The site's field dictionary (which custom field is «Start date») re-read at most this
+// often. Field configuration is site-wide and changes about as often as a workflow does;
+// the worst a stale answer costs is one poll cycle without the start date.
+const FIELD_TTL_MS = 10 * 60_000;
 
 export type JiraIssueDraft = {
   // Required on create (createIssue guards); an edit may send any subset — the ticket
@@ -56,6 +71,11 @@ export type JiraIssueDraft = {
   assigneeAccountId?: string | null;
   // Jira's own duration spelling («2w 3d 4h»); empty string clears the estimate.
   originalEstimate?: string;
+  // Jira's own date spelling (YYYY-MM-DD); empty string clears the date. `startDate`
+  // needs a site that HAS a start-date field — editIssue refuses otherwise instead of
+  // writing the day nowhere.
+  startDate?: string;
+  dueDate?: string;
   parentKey?: string;
 };
 
@@ -64,6 +84,10 @@ export type JiraLaunchResult = { session: Session; transitionError?: string };
 @Injectable()
 export class JiraService {
   private lastFullSweep = new Map<string, number>();
+  // Which custom field is «Start date», per SITE (the answer is site-wide, not
+  // workspace-wide) with the resolution timestamp. The lastFullSweep reasoning: in-process
+  // memory is enough, and a restart costs one extra field fetch.
+  private startDateFields = new Map<string, { id: string | undefined; at: number }>();
 
   constructor(
     private registry: RegistryService,
@@ -140,6 +164,30 @@ export class JiraService {
     return getJiraIntegration(this.auth.cloudClient(), workspaceId);
   }
 
+  // ── the site's start-date field ──────────────────────────────────────────────
+
+  // Jira's `duedate` is a system field; a start date is not, so its id must be looked up
+  // per site and cached (FIELD_TTL_MS) — a poll every 30 s cannot afford the whole field
+  // dictionary each time.
+  //
+  // A refusal here is NOT an error: a token without the browse-fields permission, or an
+  // older site, simply has no start date. The board keeps rendering with a blank one, the
+  // negative answer is cached like a positive one, and only an explicit start-date WRITE
+  // (issueFields) turns the absence into a refusal the user can read.
+  private async startDateFieldId(siteUrl: string, client: JiraClient): Promise<string | undefined> {
+    const site = normalizeSiteUrl(siteUrl);
+    const cached = this.startDateFields.get(site);
+    if (cached && cached.at > Date.now() - FIELD_TTL_MS) return cached.id;
+    let id: string | undefined;
+    try {
+      id = pickStartDateFieldId(await client.listFields());
+    } catch {
+      id = undefined;
+    }
+    this.startDateFields.set(site, { id, at: Date.now() });
+    return id;
+  }
+
   // ── sync ─────────────────────────────────────────────────────────────────────
 
   // One poll tick. Honors the shared lease so N open boards cost one poller; `full`
@@ -179,12 +227,15 @@ export class JiraService {
       );
     }
 
+    const startDateFieldId = await this.startDateFieldId(integration.siteUrl, client);
     const jql = full
       ? fullJql(integration.projectKey)
       : incrementalJql(integration.projectKey, state!.syncCursor!);
-    const raws = await client.searchIssues(jql);
+    const raws = await client.searchIssues(jql, startDateFieldId);
 
-    const issues = raws.map((raw) => mapIssue({ id: integration.id, workspaceId: integration.workspaceId }, raw));
+    const issues = raws.map((raw) =>
+      mapIssue({ id: integration.id, workspaceId: integration.workspaceId }, raw, startDateFieldId),
+    );
     await upsertJiraIssues(cloud, issues);
 
     // Children ride behind their issues: only issues the poll saw changed are refetched,
@@ -229,8 +280,9 @@ export class JiraService {
     const integration = await getJiraIntegration(cloud, workspaceId);
     if (!integration) throw new Error("no jira integration");
     const client = this.clientFor(integration.siteUrl, userId);
-    const raw = await client.getIssue(key);
-    const issue = mapIssue({ id: integration.id, workspaceId: integration.workspaceId }, raw);
+    const startDateFieldId = await this.startDateFieldId(integration.siteUrl, client);
+    const raw = await client.getIssue(key, startDateFieldId);
+    const issue = mapIssue({ id: integration.id, workspaceId: integration.workspaceId }, raw, startDateFieldId);
     await upsertJiraIssues(cloud, [issue]);
     await this.refreshChildren(cloud, integration, client, raw);
     return issue;
@@ -270,7 +322,12 @@ export class JiraService {
 
   // The standard-fields subset, spelled the way POST/PUT /issue expects. Absent keys are
   // not sent — Jira treats a present-but-empty field as «clear it».
-  private issueFields(integration: JiraIntegration, draft: JiraIssueDraft, forCreate: boolean): Record<string, unknown> {
+  private issueFields(
+    integration: JiraIntegration,
+    draft: JiraIssueDraft,
+    forCreate: boolean,
+    startDateFieldId: string | undefined,
+  ): Record<string, unknown> {
     const fields: Record<string, unknown> = {};
     if (forCreate) fields.project = { key: integration.projectKey };
     if (draft.summary !== undefined) fields.summary = draft.summary.trim();
@@ -290,6 +347,15 @@ export class JiraService {
       fields.assignee = draft.assigneeAccountId === null ? null : { accountId: draft.assigneeAccountId };
     if (draft.originalEstimate !== undefined)
       fields.timetracking = { originalEstimate: draft.originalEstimate.trim() || null };
+    // `duedate` is Jira's own key; the start date's key is whatever this site calls the
+    // field. null clears, and toJiraDate refuses a day Jira would only refuse later.
+    if (draft.dueDate !== undefined) fields.duedate = toJiraDate(draft.dueDate);
+    if (draft.startDate !== undefined) {
+      // The absence belongs to the site, not to the user's input, so it is said plainly:
+      // Jira's own refusal would name a customfield id nobody in the UI has heard of.
+      if (!startDateFieldId) throw new Error("this Jira site has no start date field");
+      fields[startDateFieldId] = toJiraDate(draft.startDate);
+    }
     if (draft.parentKey) fields.parent = { key: draft.parentKey };
     return fields;
   }
@@ -297,13 +363,17 @@ export class JiraService {
   async createIssue(workspaceId: string, draft: JiraIssueDraft, userId: string): Promise<JiraIssue> {
     const { integration, client } = await this.withIntegration(workspaceId, userId);
     if (!draft.summary?.trim()) throw new Error("summary is required");
-    const created = await client.createIssue(this.issueFields(integration, draft, true));
+    // Resolved unconditionally: the refreshIssue below needs the same id anyway, so the
+    // cache makes this free even for a draft that carries no start date.
+    const startDateFieldId = await this.startDateFieldId(integration.siteUrl, client);
+    const created = await client.createIssue(this.issueFields(integration, draft, true, startDateFieldId));
     return this.refreshIssue(workspaceId, created.key, userId);
   }
 
   async editIssue(workspaceId: string, key: string, draft: JiraIssueDraft, userId: string): Promise<JiraIssue> {
     const { integration, client } = await this.withIntegration(workspaceId, userId);
-    await client.editIssue(key, this.issueFields(integration, draft, false));
+    const startDateFieldId = await this.startDateFieldId(integration.siteUrl, client);
+    await client.editIssue(key, this.issueFields(integration, draft, false, startDateFieldId));
     return this.refreshIssue(workspaceId, key, userId);
   }
 
@@ -322,13 +392,17 @@ export class JiraService {
   async editorOptions(workspaceId: string, userId: string): Promise<{
     issueTypes: { id: string; name: string; subtask: boolean }[];
     priorities: { id: string; name: string }[];
+    // Whether this site HAS a start-date field at all. The editors show the control only
+    // on `true`: offering an input whose every save is refused is worse than no input.
+    startDateSupported: boolean;
   }> {
     const { integration, client } = await this.withIntegration(workspaceId, userId);
-    const [issueTypes, priorities] = await Promise.all([
+    const [issueTypes, priorities, startDateFieldId] = await Promise.all([
       client.projectIssueTypes(integration.projectKey),
       client.listPriorities(),
+      this.startDateFieldId(integration.siteUrl, client),
     ]);
-    return { issueTypes, priorities };
+    return { issueTypes, priorities, startDateSupported: !!startDateFieldId };
   }
 
   async assignableUsers(

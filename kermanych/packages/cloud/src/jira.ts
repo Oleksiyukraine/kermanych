@@ -23,7 +23,7 @@ const INTEGRATION_COLUMNS =
   "id, workspace_id, site_url, jira_project_key, board_id, board_name, connected_by, created_at, updated_at";
 
 const ISSUE_COLUMNS =
-  "integration_id, workspace_id, issue_id, key, summary, description_html, type_name, type_icon, priority_name, priority_icon, labels, original_estimate, assignee_account_id, assignee_name, assignee_avatar, reporter_name, status_id, status_name, status_category, parent_key, jira_updated_at, kermanych_project_id, task_id, updated_at";
+  "integration_id, workspace_id, issue_id, key, summary, description_html, type_name, type_icon, priority_name, priority_icon, labels, original_estimate, start_date, due_date, assignee_account_id, assignee_name, assignee_avatar, reporter_name, status_id, status_name, status_category, parent_key, jira_updated_at, kermanych_project_id, task_id, updated_at";
 
 type IntegrationRow = {
   id: string;
@@ -65,6 +65,8 @@ type IssueRow = {
   priority_icon: string;
   labels: string[];
   original_estimate: string;
+  start_date: string;
+  due_date: string;
   assignee_account_id: string | null;
   assignee_name: string | null;
   assignee_avatar: string | null;
@@ -151,6 +153,8 @@ export function toJiraIssue(row: IssueRow): JiraIssue {
     priorityIcon: row.priority_icon,
     labels: row.labels ?? [],
     originalEstimate: row.original_estimate,
+    startDate: row.start_date,
+    dueDate: row.due_date,
     statusId: row.status_id,
     statusName: row.status_name,
     statusCategory: toCategory(row.status_category),
@@ -185,6 +189,8 @@ export function toJiraIssueRow(issue: JiraIssue): Record<string, unknown> {
     priority_icon: issue.priorityIcon,
     labels: issue.labels,
     original_estimate: issue.originalEstimate,
+    start_date: issue.startDate,
+    due_date: issue.dueDate,
     assignee_account_id: issue.assigneeAccountId ?? null,
     assignee_name: issue.assigneeName ?? null,
     assignee_avatar: issue.assigneeAvatar ?? null,

@@ -32,6 +32,15 @@ export type JiraTransition = {
 
 export type JiraStatusSummary = { id: string; name: string; categoryKey: string };
 
+// One entry of GET /rest/api/3/field — the site's field dictionary. Only what start-date
+// resolution reads: the id to request, and the name/schema that identify it.
+export type JiraFieldSummary = {
+  id: string;
+  name?: string;
+  custom?: boolean;
+  schema?: { type?: string; custom?: string };
+};
+
 // Raw issue as the sync engine consumes it: `fields` for data, `renderedFields` for the
 // HTML Jira already rendered (description). Typed loosely on purpose — jira-map.ts is the
 // tolerant boundary that turns this into mirror rows.
@@ -56,6 +65,7 @@ export const ISSUE_FIELDS = [
   "parent",
   "timetracking",
   "updated",
+  "duedate",
   "attachment",
 ] as const;
 
@@ -187,9 +197,20 @@ export class JiraClient {
 
   // ── issues ───────────────────────────────────────────────────────────────────
 
-  // Token-paginated search. `fields` bounded to ISSUE_FIELDS, `renderedFields` for the
-  // description HTML. Loops until Jira stops handing out a nextPageToken.
-  async searchIssues(jql: string): Promise<JiraRawIssue[]> {
+  // Both issue fetches take the site's start-date custom field id when the caller resolved
+  // one (see pickStartDateFieldId in jira-map.ts): the id is per-site, so it travels as an
+  // argument instead of joining the module const that keeps the payload predictable.
+
+  // Every field the site defines, id and schema. Read to locate «Start date», whose id is
+  // a per-site customfield_NNNNN — the whole reason this endpoint is called at all.
+  listFields(): Promise<JiraFieldSummary[]> {
+    return this.request("GET", "/rest/api/3/field");
+  }
+
+  // Token-paginated search. `fields` bounded to the standard set (plus the start date when
+  // there is one), `renderedFields` for the description HTML. Loops until Jira stops
+  // handing out a nextPageToken.
+  async searchIssues(jql: string, startDateFieldId?: string): Promise<JiraRawIssue[]> {
     const out: JiraRawIssue[] = [];
     let nextPageToken: string | undefined;
     do {
@@ -199,7 +220,7 @@ export class JiraClient {
         {
           jql,
           maxResults: PAGE,
-          fields: ISSUE_FIELDS,
+          fields: startDateFieldId ? [...ISSUE_FIELDS, startDateFieldId] : ISSUE_FIELDS,
           expand: "renderedFields",
           ...(nextPageToken ? { nextPageToken } : {}),
         },
@@ -226,10 +247,10 @@ export class JiraClient {
     return out;
   }
 
-  getIssue(key: string): Promise<JiraRawIssue> {
+  getIssue(key: string, startDateFieldId?: string): Promise<JiraRawIssue> {
     return this.request(
       "GET",
-      `/rest/api/3/issue/${encodeURIComponent(key)}?fields=${ISSUE_FIELDS.join(",")}&expand=renderedFields`,
+      `/rest/api/3/issue/${encodeURIComponent(key)}?fields=${ISSUE_FIELDS.join(",")}${startDateFieldId ? `,${startDateFieldId}` : ""}&expand=renderedFields`,
     );
   }
 

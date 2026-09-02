@@ -152,11 +152,16 @@ export type JiraIssueDraftWire = {
   labels?: string[];
   assigneeAccountId?: string | null;
   originalEstimate?: string;
+  // YYYY-MM-DD, or '' to clear the date. `startDate` only where the site has a
+  // start-date field (JiraEditorOptions.startDateSupported).
+  startDate?: string;
+  dueDate?: string;
   parentKey?: string;
 };
 export type JiraEditorOptions = {
   issueTypes: { id: string; name: string; subtask: boolean }[];
   priorities: { id: string; name: string }[];
+  startDateSupported: boolean;
 };
 export type JiraAssignableUser = { accountId: string; displayName: string; avatar?: string };
 
