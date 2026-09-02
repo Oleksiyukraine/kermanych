@@ -239,7 +239,7 @@
           <template v-else-if="changesInfo">
             <div class="agents__changes-summary mono">
               <span class="agents__changes-branch">{{ changesInfo.branch }} → {{ changesInfo.target || '—' }}</span>
-              <span>{{ t('agents.changes.commits', { n: changesInfo.ahead }) }}</span>
+              <span>{{ t('agents.changes.commits', { n: changesInfo.ahead }, changesInfo.ahead) }}</span>
               <span v-if="changesInfo.dirty" class="agents__changes-dirty">{{ t('agents.changes.dirty') }}</span>
             </div>
             <ul v-if="changesInfo.conflicts.length" class="agents__conflict mono">
@@ -609,7 +609,7 @@
             <code class="mono">{{ finishData.target }}</code>
           </p>
           <p v-if="finishData" class="agents__hint mono">
-            {{ t('agents.finish.aheadInfo', { n: finishData.ahead, dirty: finishData.dirty ? t('agents.finish.aheadDirty') : '' }) }}
+            {{ t('agents.finish.aheadInfo', { n: finishData.ahead, dirty: finishData.dirty ? t('agents.finish.aheadDirty') : '' }, finishData.ahead) }}
           </p>
           <p v-else class="agents__hint mono">{{ t('agents.changes.preparing') }}</p>
         </div>

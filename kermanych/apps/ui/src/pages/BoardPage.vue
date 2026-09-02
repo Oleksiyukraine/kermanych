@@ -3,7 +3,7 @@
     <header class="board__head">
       <div class="board__title">
         <h1 class="board__heading">{{ scopeHeading }}</h1>
-        <span class="board__count mono">{{ t('board.header.count', { n: visibleTasks.length }) }}</span>
+        <span class="board__count mono">{{ t('board.header.count', { n: visibleTasks.length }, visibleTasks.length) }}</span>
       </div>
       <div class="board__controls">
         <KSelect v-model="projectFilter" :options="projectOptions" :placeholder="t('board.filter.allProjects')" />
