@@ -398,6 +398,11 @@ export type JiraIssue = {
   labels: string[];
   // Jira's own duration spelling («2w 3d 4h»); blank = no estimate set.
   originalEstimate: string;
+  // Jira's planning dates in Jira's own spelling (YYYY-MM-DD); blank = not set.
+  // `dueDate` is the system `duedate`; `startDate` is the site's «Start date» field,
+  // which a site may not have at all — then it stays blank and is not editable.
+  startDate: string;
+  dueDate: string;
   assigneeAccountId?: string;
   assigneeName?: string;
   assigneeAvatar?: string;

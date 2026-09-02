@@ -14,6 +14,11 @@
         placeholder="не призначено"
         searchable
       />
+      <div class="jie__row">
+        <!-- The start field exists only where the site does: see startDateSupported. -->
+        <KField v-if="options.startDateSupported" v-model="startDate" label="Початок" type="date" />
+        <KField v-model="dueDate" label="Дедлайн" type="date" />
+      </div>
       <KField v-model="labelsInput" label="Мітки" placeholder="backend, urgent — через кому" />
       <p v-if="parentKey" class="jie__note mono">Підзадача до {{ parentKey }}</p>
       <p v-if="error" class="jie__error mono">{{ error }}</p>
@@ -30,7 +35,9 @@
 <script setup lang="ts">
 // Create/edit a Jira ticket with the STANDARD fields only (the agreed v1 line): summary,
 // plain-text description, type, priority, assignee (from Jira's own assignable list),
-// labels. Custom fields render read-only in the detail dialog and are not editable here.
+// labels, and the two planning dates — Jira's system `duedate` plus the site's «Start
+// date» field, the one custom field the mirror carries because Jira's own board shows it.
+// Other custom fields are not editable here.
 // A subtask is a create with `parentKey`; Jira picks the subtask type itself when the
 // chosen type is subtask-capable.
 import { computed, ref, watch } from 'vue';
@@ -39,7 +46,7 @@ import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
-import { api, type JiraAssignableUser, type JiraEditorOptions } from '../../lib/api';
+import { api, type JiraAssignableUser, type JiraEditorOptions, type JiraIssueDraftWire } from '../../lib/api';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -58,10 +65,12 @@ const typePick = ref('');
 const priorityPick = ref('');
 const assigneePick = ref('');
 const labelsInput = ref('');
+const startDate = ref('');
+const dueDate = ref('');
 const busy = ref(false);
 const error = ref('');
 
-const options = ref<JiraEditorOptions>({ issueTypes: [], priorities: [] });
+const options = ref<JiraEditorOptions>({ issueTypes: [], priorities: [], startDateSupported: false });
 const assignable = ref<JiraAssignableUser[]>([]);
 
 const editKey = computed(() => props.issue?.key);
@@ -101,6 +110,8 @@ watch(
     typePick.value = '';
     assigneePick.value = issue?.assigneeAccountId ?? '';
     labelsInput.value = issue?.labels.join(', ') ?? '';
+    startDate.value = issue?.startDate ?? '';
+    dueDate.value = issue?.dueDate ?? '';
     try {
       const [opts, users] = await Promise.all([
         api.jiraEditorOptions(props.workspaceId),
@@ -133,13 +144,21 @@ async function save(): Promise<void> {
     .map((l) => l.trim())
     .filter(Boolean);
   try {
-    const draft = {
+    // On CREATE a date left blank is simply not sent: a project whose create screen has no
+    // due date refuses `duedate: null`, and «не заповнив» was never «очисти».
+    // On EDIT a cleared input IS the instruction to clear the date in Jira.
+    const dates: JiraIssueDraftWire = {};
+    if (props.issue || dueDate.value) dates.dueDate = dueDate.value;
+    if (options.value.startDateSupported && (props.issue || startDate.value))
+      dates.startDate = startDate.value;
+    const draft: JiraIssueDraftWire = {
       summary: summary.value,
       description: description.value,
       ...(typePick.value ? { issueTypeId: typePick.value } : {}),
       ...(priorityPick.value ? { priorityId: priorityPick.value } : {}),
       labels,
       assigneeAccountId: assigneePick.value || null,
+      ...dates,
       ...(props.parentKey ? { parentKey: props.parentKey } : {}),
     };
     const saved = props.issue

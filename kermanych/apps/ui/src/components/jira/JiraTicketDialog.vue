@@ -140,6 +140,40 @@
               <span v-else>{{ issue.originalEstimate || '—' }}</span>
             </dd>
           </div>
+          <!-- The start row appears only where there is something to show: a site without
+               a «Start date» field would otherwise offer an input whose every save is a
+               refusal, and a blank «Початок —» beside it. -->
+          <div v-if="issue.startDate || (canAct && editorOptions.startDateSupported)">
+            <dt>Початок</dt>
+            <dd>
+              <input
+                v-if="canAct && editorOptions.startDateSupported"
+                v-model="startDraft"
+                type="date"
+                class="jtd__date mono"
+                :disabled="savingField === 'startDate'"
+                v-tip="'Start date у Jira'"
+                @change="saveStartDate"
+              />
+              <span v-else>{{ issue.startDate || '—' }}</span>
+            </dd>
+          </div>
+          <div>
+            <dt>Дедлайн</dt>
+            <dd>
+              <input
+                v-if="canAct"
+                v-model="dueDraft"
+                type="date"
+                class="jtd__date mono"
+                :class="{ 'jtd__date--overdue': overdue }"
+                :disabled="savingField === 'dueDate'"
+                v-tip="overdue ? 'Due date у Jira — прострочено' : 'Due date у Jira'"
+                @change="saveDueDate"
+              />
+              <span v-else :class="{ 'jtd__date--overdue': overdue }">{{ issue.dueDate || '—' }}</span>
+            </dd>
+          </div>
           <div>
             <dt>Виконавець</dt>
             <dd v-if="canAct && assigneeOptions.length > 1">
@@ -213,7 +247,7 @@ import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import JiraStatusPickDialog from './JiraStatusPickDialog.vue';
 import { api, type JiraAssignableUser, type JiraEditorOptions, type JiraIssueDraftWire } from '../../lib/api';
 import { sanitizeJiraHtml } from '../../lib/sanitize-html';
-import { subtasksOf, type JiraTransitionView } from '../../lib/jira-view';
+import { dateChip, subtasksOf, todayIso, type JiraTransitionView } from '../../lib/jira-view';
 import { useJira } from 'stores/jira';
 import { useOrchestrator } from 'stores/orchestrator';
 
@@ -244,13 +278,15 @@ const transitionOpen = ref(false);
 const transitionOptions = ref<JiraTransitionView[]>([]);
 const transitioning = ref(false);
 
-// ── inline facts editing: priority / assignee / original estimate ─────────────
+// ── inline facts editing: priority / assignee / estimate / start & due date ───
 // One-field drafts through PUT /jira/issues — the same endpoint the full editor uses,
 // so Jira's own validation (estimate format, screens) is the only validation.
-const editorOptions = ref<JiraEditorOptions>({ issueTypes: [], priorities: [] });
+const editorOptions = ref<JiraEditorOptions>({ issueTypes: [], priorities: [], startDateSupported: false });
 const assignable = ref<JiraAssignableUser[]>([]);
 const estimateDraft = ref('');
-const savingField = ref<'priority' | 'assignee' | 'estimate' | null>(null);
+const startDraft = ref('');
+const dueDraft = ref('');
+const savingField = ref<'priority' | 'assignee' | 'estimate' | 'startDate' | 'dueDate' | null>(null);
 
 const priorityOptions = computed<KSelectOption[]>(() =>
   editorOptions.value.priorities.map((p) => ({ value: p.id, label: p.name })),
@@ -270,6 +306,10 @@ const canAct = computed(() => jira.tokenPresent);
 const kids = computed(() => jira.children[props.issue.issueId]);
 const descriptionHtml = computed(() => sanitizeJiraHtml(props.issue.descriptionHtml));
 const subtasks = computed(() => subtasksOf(jira.issues, props.issue.key));
+
+// The card's own verdict, reused so the dialog cannot disagree with the board about a
+// late ticket.
+const overdue = computed(() => dateChip(props.issue, todayIso())?.tone === 'overdue');
 
 // Launch is gated the native way (assignment is not: a Jira ticket has no Kermanych
 // assignee): a running shadow task means «уже виконується».
@@ -293,18 +333,23 @@ watch(
     tab.value = 'comments';
     confirmingDelete.value = false;
     estimateDraft.value = props.issue.originalEstimate;
+    startDraft.value = props.issue.startDate;
+    dueDraft.value = props.issue.dueDate;
     void jira.loadChildren(props.issue.issueId);
     void jira.refreshIssue(props.workspaceId, props.issue.key);
     if (canAct.value) void loadEditorLists();
   },
 );
 
-// Realtime/refresh may change the issue under an open dialog; the estimate input must
-// follow unless the user is mid-save (their draft would be stomped by the pre-save row).
+// Realtime/refresh may change the issue under an open dialog; the inline inputs must
+// follow unless the user is mid-save on that very field (their draft would be stomped by
+// the pre-save row).
 watch(
   () => props.issue,
   (issue) => {
     if (savingField.value !== 'estimate') estimateDraft.value = issue.originalEstimate;
+    if (savingField.value !== 'startDate') startDraft.value = issue.startDate;
+    if (savingField.value !== 'dueDate') dueDraft.value = issue.dueDate;
   },
 );
 
@@ -322,16 +367,16 @@ async function loadEditorLists(): Promise<void> {
   }
 }
 
-async function saveField(
-  field: 'priority' | 'assignee' | 'estimate',
-  draft: JiraIssueDraftWire,
-): Promise<void> {
+async function saveField(field: NonNullable<typeof savingField.value>, draft: JiraIssueDraftWire): Promise<void> {
   savingField.value = field;
   try {
     jira.upsert(await api.jiraEditIssue(props.workspaceId, props.issue.key, draft));
   } catch (e) {
     local.notify(e instanceof Error ? e.message : String(e), 'error');
+    // A refused write leaves the mirror row as the truth: every draft returns to it.
     estimateDraft.value = props.issue.originalEstimate;
+    startDraft.value = props.issue.startDate;
+    dueDraft.value = props.issue.dueDate;
   } finally {
     savingField.value = null;
   }
@@ -348,6 +393,18 @@ function pickAssignee(id: string): void {
 async function saveEstimate(): Promise<void> {
   if (estimateDraft.value.trim() === props.issue.originalEstimate) return;
   await saveField('estimate', { originalEstimate: estimateDraft.value.trim() });
+}
+
+// Both dates go to Jira exactly as <input type="date"> spells them (YYYY-MM-DD), and a
+// cleared input is a cleared date in Jira.
+async function saveStartDate(): Promise<void> {
+  if (startDraft.value === props.issue.startDate) return;
+  await saveField('startDate', { startDate: startDraft.value });
+}
+
+async function saveDueDate(): Promise<void> {
+  if (dueDraft.value === props.issue.dueDate) return;
+  await saveField('dueDate', { dueDate: dueDraft.value });
 }
 
 function blurTarget(e: Event): void {
@@ -692,7 +749,10 @@ function shortTime(iso: string): string {
   font-size: var(--k-fs-xs);
 }
 
-.jtd__estimate {
+// The two date pickers wear the estimate input's surface: same row, same weight — three
+// small facts a token holder edits in place.
+.jtd__estimate,
+.jtd__date {
   width: 100%;
   padding: 4px 8px;
   font-size: var(--k-fs-sm);
@@ -715,6 +775,13 @@ function shortTime(iso: string): string {
     opacity: 0.45;
   }
 }
+
+// Past due, said in the same colour the board card says it in.
+.jtd__date--overdue {
+  color: var(--k-danger);
+  border-color: color-mix(in srgb, var(--k-danger) 45%, var(--k-line-strong));
+}
+
 .jtd__side {
   display: flex;
   flex-direction: column;

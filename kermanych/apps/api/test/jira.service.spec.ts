@@ -67,6 +67,12 @@ function scriptedJiraClient(overrides: Partial<Record<keyof JiraClient, unknown>
     myself: vi.fn(async () => ({ accountId: "acc", displayName: "Dev" })),
     boardConfiguration: vi.fn(async () => [{ name: "To Do", statusIds: ["1"] }]),
     searchIssues: vi.fn(async () => [rawIssue]),
+    // Every real site answers this; the service resolves «Start date» from it once per
+    // site and then asks Jira for that field id beside the standard set.
+    listFields: vi.fn(async () => [
+      { id: "duedate", name: "Due date", schema: { type: "date" } },
+      { id: "customfield_10015", name: "Start date", custom: true, schema: { type: "date" } },
+    ]),
     listComments: vi.fn(async () => []),
     listWorklogs: vi.fn(async () => []),
     getIssue: vi.fn(async () => rawIssue),
@@ -140,6 +146,36 @@ describe("sync", () => {
 
     const cursor = queries.filter((q) => q.table === "jira_sync_state").find((q) => q.ops[0]![0] === "update");
     expect(cursor!.ops[0]![1]).toEqual({ sync_cursor: "2026-09-02T10:00:00.000Z" });
+  });
+
+  it("asks Jira for the site's start-date field once, then mirrors both planning dates", async () => {
+    const { client, queries } = fakeCloud({
+      workspace_jira_integrations: Array.from({ length: 2 }, () => ({ data: integrationRow, error: null })),
+      jira_sync_state: Array.from({ length: 4 }, () => ({ data: { integration_id: "i1", workspace_id: "w1", last_synced_at: null, sync_cursor: null }, error: null })),
+      jira_issues: Array.from({ length: 4 }, () => ({ data: [], error: null })),
+    });
+    const dated = {
+      ...rawIssue,
+      fields: { ...rawIssue.fields, duedate: "2026-09-30", customfield_10015: "2026-09-05" },
+    };
+    const searchIssues = vi.fn(async () => [dated]);
+    const jira = scriptedJiraClient({ searchIssues });
+    const svc = service(client, jira);
+
+    await svc.sync("w1", "u1", true);
+    // The id is per site, so it must travel with the search — Jira returns no field the
+    // caller did not name.
+    expect(searchIssues).toHaveBeenLastCalledWith(expect.any(String), "customfield_10015");
+    const upsert = queries.filter((q) => q.table === "jira_issues").find((q) => q.ops[0]![0] === "upsert")!;
+    expect((upsert.ops[0]![1] as Record<string, unknown>[])[0]).toMatchObject({
+      start_date: "2026-09-05",
+      due_date: "2026-09-30",
+    });
+
+    // Second poll, same site: the field dictionary is cached, because a 30-second tick
+    // cannot afford to re-read every field a site defines.
+    await svc.sync("w1", "u1", true);
+    expect(jira.listFields).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -236,6 +272,48 @@ describe("editIssue", () => {
     await svc.editIssue("w1", "KAN-42", { priorityId: "2" }, "u1");
     expect(editIssue).toHaveBeenLastCalledWith("KAN-42", { priority: { id: "2" } });
   });
+
+  it("writes the due date under Jira's own key and the start date under the site's field id", async () => {
+    const integrations = Array.from({ length: 4 }, () => ({ data: integrationRow, error: null }));
+    const { client } = fakeCloud({ workspace_jira_integrations: integrations });
+    const editIssue = vi.fn(async () => undefined);
+    const svc = service(client, scriptedJiraClient({ editIssue }));
+
+    await svc.editIssue("w1", "KAN-42", { startDate: "2026-09-05", dueDate: "2026-09-30" }, "u1");
+    expect(editIssue).toHaveBeenLastCalledWith("KAN-42", {
+      duedate: "2026-09-30",
+      customfield_10015: "2026-09-05",
+    });
+
+    // An emptied input clears the date in Jira; null is how Jira spells that.
+    await svc.editIssue("w1", "KAN-42", { startDate: "", dueDate: "" }, "u1");
+    expect(editIssue).toHaveBeenLastCalledWith("KAN-42", { duedate: null, customfield_10015: null });
+  });
+
+  it("refuses a start date on a site that has no start-date field, in words a user can read", async () => {
+    const { client } = fakeCloud({
+      workspace_jira_integrations: [{ data: integrationRow, error: null }],
+    });
+    const editIssue = vi.fn(async () => undefined);
+    const jira = scriptedJiraClient({ editIssue, listFields: vi.fn(async () => []) });
+
+    await expect(service(client, jira).editIssue("w1", "KAN-42", { startDate: "2026-09-05" }, "u1")).rejects.toThrow(
+      /no start date field/,
+    );
+    expect(editIssue).not.toHaveBeenCalled();
+  });
+
+  it("refuses a malformed date rather than letting Jira answer for it", async () => {
+    const { client } = fakeCloud({
+      workspace_jira_integrations: [{ data: integrationRow, error: null }],
+    });
+    const editIssue = vi.fn(async () => undefined);
+
+    await expect(
+      service(client, scriptedJiraClient({ editIssue })).editIssue("w1", "KAN-42", { dueDate: "30.09.2026" }, "u1"),
+    ).rejects.toThrow(/invalid date/);
+    expect(editIssue).not.toHaveBeenCalled();
+  });
 });
 
 describe("setToken", () => {
@@ -267,6 +345,8 @@ function mirrorIssueRow(issueId: string, key: string) {
     priority_icon: "",
     labels: [],
     original_estimate: "",
+    start_date: "",
+    due_date: "",
     assignee_account_id: null,
     assignee_name: null,
     assignee_avatar: null,

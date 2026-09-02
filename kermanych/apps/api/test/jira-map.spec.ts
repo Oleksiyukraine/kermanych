@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   adfText,
+  dateOnly,
   fullJql,
   incrementalJql,
   mapAttachments,
@@ -8,8 +9,10 @@ import {
   mapIssue,
   mapWorklogs,
   pickInProgressTransition,
+  pickStartDateFieldId,
+  toJiraDate,
 } from "../src/jira/jira-map";
-import type { JiraRawIssue, JiraTransition } from "../src/jira/jira-client";
+import type { JiraFieldSummary, JiraRawIssue, JiraTransition } from "../src/jira/jira-client";
 
 const integration = { id: "i1", workspaceId: "w1" };
 
@@ -26,6 +29,8 @@ const rawIssue: JiraRawIssue = {
     status: { id: "3", name: "In Progress", statusCategory: { key: "indeterminate" } },
     parent: { key: "KAN-40" },
     timetracking: { originalEstimate: "2d 4h", remainingEstimate: "1d" },
+    duedate: "2026-09-30",
+    customfield_10015: "2026-09-05",
     updated: "2026-09-02T10:00:00.000+0300",
     attachment: [
       { id: "att1", filename: "log.txt", mimeType: "text/plain", size: 123, author: { displayName: "Olha" }, created: "2026-09-01T09:00:00.000+0000" },
@@ -55,8 +60,22 @@ describe("mapIssue", () => {
       statusCategory: "indeterminate",
       parentKey: "KAN-40",
       originalEstimate: "2d 4h",
+      dueDate: "2026-09-30",
       jiraUpdatedAt: "2026-09-02T07:00:00.000Z",
     });
+  });
+
+  it("reads the start date out of the field id the caller resolved, and nothing without one", () => {
+    expect(mapIssue(integration, rawIssue, "customfield_10015").startDate).toBe("2026-09-05");
+    // No resolved id: the payload never carried the field, so the mirror says «not set»
+    // rather than guessing which customfield_* held a date.
+    expect(mapIssue(integration, rawIssue).startDate).toBe("");
+  });
+
+  it("blanks dates Jira left empty", () => {
+    const bare = mapIssue(integration, { id: "1", key: "K-1", fields: { updated: "2026-01-01T00:00:00.000Z" } }, "customfield_10015");
+    expect(bare.dueDate).toBe("");
+    expect(bare.startDate).toBe("");
   });
 
   it("degrades an unassigned, priority-less issue to blanks instead of crashing", () => {
@@ -66,6 +85,69 @@ describe("mapIssue", () => {
     expect(bare.statusCategory).toBe("new");
     expect("assigneeName" in bare).toBe(false);
     expect("parentKey" in bare).toBe(false);
+  });
+});
+
+describe("dateOnly", () => {
+  it("keeps Jira's calendar day verbatim, whatever time or zone rides along", () => {
+    expect(dateOnly("2026-09-30")).toBe("2026-09-30");
+    // A datetime-typed start field: the day is the datum, and taking it verbatim is what
+    // stops a +03:00 midnight from becoming the previous day.
+    expect(dateOnly("2026-09-30T00:30:00.000+0300")).toBe("2026-09-30");
+  });
+
+  it("degrades anything that is not a real day to blank", () => {
+    expect(dateOnly("2026-02-31")).toBe("");
+    expect(dateOnly("30/09/2026")).toBe("");
+    expect(dateOnly("")).toBe("");
+    expect(dateOnly(null)).toBe("");
+    expect(dateOnly(1_759_000_000)).toBe("");
+  });
+});
+
+describe("toJiraDate", () => {
+  it("spells a cleared date as null and a set one as the day itself", () => {
+    expect(toJiraDate("2026-09-30")).toBe("2026-09-30");
+    expect(toJiraDate("  ")).toBeNull();
+    expect(toJiraDate("")).toBeNull();
+  });
+
+  it("refuses a day Jira could only reject, instead of sending it", () => {
+    expect(() => toJiraDate("30.09.2026")).toThrow(/invalid date/);
+    expect(() => toJiraDate("2026-02-31")).toThrow(/invalid date/);
+  });
+});
+
+describe("pickStartDateFieldId", () => {
+  const field = (id: string, name: string, type = "date", custom?: string): JiraFieldSummary => ({
+    id,
+    name,
+    custom: true,
+    schema: custom ? { type, custom } : { type },
+  });
+
+  it("prefers the field actually named «Start date»", () => {
+    const id = pickStartDateFieldId([
+      field("customfield_10020", "Target start", "date", "com.atlassian.jpo:jpo-custom-field-baseline-start"),
+      field("customfield_10015", "Start date"),
+    ]);
+    expect(id).toBe("customfield_10015");
+  });
+
+  it("falls back to Advanced Roadmaps' baseline start by schema, not by its renameable name", () => {
+    const id = pickStartDateFieldId([
+      field("customfield_10020", "Початок за планом", "date", "com.atlassian.jpo:jpo-custom-field-baseline-start"),
+    ]);
+    expect(id).toBe("customfield_10020");
+  });
+
+  it("accepts a «Target start» by name when nothing better is on the site", () => {
+    expect(pickStartDateFieldId([field("customfield_10031", "Target start", "datetime")])).toBe("customfield_10031");
+  });
+
+  it("ignores same-named fields that are not dates, and reports a site with none", () => {
+    expect(pickStartDateFieldId([field("customfield_10099", "Start date", "string")])).toBeUndefined();
+    expect(pickStartDateFieldId([{ id: "duedate", name: "Due date", schema: { type: "date" } }])).toBeUndefined();
   });
 });
 
