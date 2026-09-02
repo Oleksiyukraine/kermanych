@@ -3,10 +3,13 @@ import type { TranscriptEntry } from "./types";
 export type ToolEntry = Extract<TranscriptEntry, { kind: "tool" }>;
 export type UserEntry = Extract<TranscriptEntry, { kind: "user_text" }>;
 
+// A coalesced group's summed stat: the total and the i18n key for its unit word. `stat` is
+// absent when the run cannot be summed — see `groupStat`.
+export type GroupStat = { count: number; unitKey?: string };
+
 export type ChatItem =
   | { kind: "entry"; entry: TranscriptEntry; muted: boolean }
-  // `stat` is absent when the run cannot be summed — see `groupStat`.
-  | { kind: "group"; tool: string; members: ToolEntry[]; stat?: string };
+  | { kind: "group"; tool: string; members: ToolEntry[]; stat?: GroupStat };
 
 export type BlockSummary = { ms: number; calls: number; files: number; thinkMs: number; cost: number };
 export type ChatBlock = { id: string; request?: UserEntry; items: ChatItem[]; summary: BlockSummary };
@@ -20,20 +23,21 @@ export const THINK_MIN_MS = 8_000;
 export const COALESCE_TOOLS = ["read", "grep", "glob"] as const;
 
 const TOUCHING = ["edit", "write"];
-const UNIT: Record<string, string> = { read: "ln", grep: "збігів", glob: "файлів" };
+// The count unit per grouped tool, as an i18n key the UI renders through vue-i18n.
+const UNIT: Record<string, string> = { read: "chat.unit.lines", grep: "chat.unit.matches", glob: "chat.unit.files" };
 
 // The group row's only number is its members' own counts added up, so it may be shown only
 // when every member carries one. A `read` whose stat is a byte size (no `totalLines` in the
 // payload) reports no count: treating that as 0 would under-report a mixed run and would
 // print `0 ln` for a run of nothing but those — a total the data never contained. An
 // unsummable run keeps its `×N` and each member row keeps its own truthful stat.
-function groupStat(tool: string, members: ToolEntry[]): string | undefined {
+function groupStat(tool: string, members: ToolEntry[]): GroupStat | undefined {
   let total = 0;
   for (const m of members) {
     if (m.count === undefined) return undefined;
     total += m.count;
   }
-  return `${total} ${UNIT[tool] ?? ""}`.trim();
+  return UNIT[tool] ? { count: total, unitKey: UNIT[tool] } : { count: total };
 }
 
 export function buildChatBlocks(entries: TranscriptEntry[], opts?: { thinkMinMs?: number }): ChatBlock[] {

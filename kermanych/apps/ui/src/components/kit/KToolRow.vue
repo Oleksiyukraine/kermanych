@@ -4,7 +4,7 @@
       <span class="k-tr__g" :class="`k-tr__g--${entry.status}`" role="img" :aria-label="statusLabel">{{ glyph }}</span>
       <span class="k-tr__t" :class="{ 'k-tr__t--skill': entry.tool === 'skill' }">{{ entry.tool }}</span>
       <span class="k-tr__tg">{{ entry.target ?? '' }}</span>
-      <span class="k-tr__st">{{ entry.stat ?? '' }}</span>
+      <span class="k-tr__st">{{ statText }}</span>
       <span class="k-tr__ch" aria-hidden="true">{{ open ? '⌄' : '›' }}</span>
     </button>
     <KToolCard
@@ -24,6 +24,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { ToolLine, TranscriptEntry } from '@kermanych/core';
 import { api } from '../../lib/api';
 import type { ExpandAllCommand } from '../../lib/expand-all';
@@ -42,6 +43,18 @@ const open = ref(false);
 const fullLines = ref<ToolLine[] | undefined>(undefined);
 const error = ref('');
 const loading = ref(false);
+
+const { t } = useI18n();
+// The stat cell is either a plain string the reducer already made language-neutral, or an
+// i18n key + params naming Ukrainian prose. A key carrying `truncated` also appends the
+// `·обрізано` marker, exactly as the pre-i18n formatted string did. See core/tool-display.ts.
+const statText = computed(() => {
+  const s = props.entry.stat;
+  if (s === undefined) return '';
+  if (typeof s === 'string') return s;
+  const base = t(s.key, s.params ?? {});
+  return s.params?.truncated ? base + t('chat.toolStat.truncated') : base;
+});
 
 // The log renders its items index-keyed, so one instance is rebound to another call —
 // in another session, even. Watch the id, not the object: `transcript_update` rebuilds

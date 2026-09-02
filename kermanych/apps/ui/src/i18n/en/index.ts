@@ -11,7 +11,19 @@ export const en: MessageSchema = {
   management: {},
   risk: {},
   kit: {},
-  chat: {},
+  chat: {
+    toolStat: {
+      dir: 'directory',
+      files: '{count} files',
+      matches: '{matches} matches / {files} f',
+      truncated: ' ·truncated',
+    },
+    unit: {
+      lines: 'ln',
+      matches: 'matches',
+      files: 'files',
+    },
+  },
   errors: {},
   notices: {},
 };

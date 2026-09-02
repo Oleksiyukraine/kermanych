@@ -28,7 +28,7 @@ test("coalesces a run of same-tool reads and sums their counts", () => {
     tool("t4", 4, "read", { target: "c.ts", count: 5, stat: "5 ln" }),
   ]);
   const items = blocks[0]!.items;
-  expect(items[0]).toMatchObject({ kind: "group", tool: "read", stat: "33 ln" });
+  expect(items[0]).toMatchObject({ kind: "group", tool: "read", stat: { count: 33, unitKey: "chat.unit.lines" } });
   expect((items[0] as { members: unknown[] }).members).toHaveLength(2);
   expect(items[1]).toMatchObject({ kind: "entry" });
   expect(items[2]).toMatchObject({ kind: "entry" });
@@ -42,7 +42,7 @@ test("a group containing a count-less member reports no stat at all", () => {
     tool("t1", 1, "read", { target: "a.ts", count: 145, stat: "145 ln" }),
     tool("t2", 2, "read", { target: "b.ts", stat: "4.6 KB" }),
   ]);
-  const group = blocks[0]!.items[0] as { kind: string; stat?: string; members: unknown[] };
+  const group = blocks[0]!.items[0] as { kind: string; stat?: unknown; members: unknown[] };
   expect(group.kind).toBe("group");
   expect(group.members).toHaveLength(2);
   expect(group.stat).toBeUndefined();
@@ -56,7 +56,7 @@ test("a group of only count-less members does not invent a zero total", () => {
     tool("t2", 2, "read", { target: "b.ts", stat: "1.2 KB" }),
     tool("t3", 3, "read", { target: "c.ts", stat: "820 B" }),
   ]);
-  const group = blocks[0]!.items[0] as { kind: string; stat?: string; members: unknown[] };
+  const group = blocks[0]!.items[0] as { kind: string; stat?: unknown; members: unknown[] };
   expect(group.kind).toBe("group");
   expect(group.members).toHaveLength(3);
   expect(group.stat).toBeUndefined();
@@ -71,7 +71,7 @@ test("a count-less member joining a summable run withdraws the total", () => {
     tool("t1", 1, "grep", { target: "/a/ src", count: 4, stat: "4 збігів" }),
     tool("t2", 2, "grep", { target: "/b/ src", count: 6, stat: "6 збігів" }),
   ]);
-  expect(blocks[0]!.items[0]).toMatchObject({ kind: "group", stat: "10 збігів" });
+  expect(blocks[0]!.items[0]).toMatchObject({ kind: "group", stat: { count: 10, unitKey: "chat.unit.matches" } });
 
   const widened = buildChatBlocks([
     user("u1", 0, "x"),
@@ -79,7 +79,7 @@ test("a count-less member joining a summable run withdraws the total", () => {
     tool("t2", 2, "grep", { target: "/b/ src", count: 6, stat: "6 збігів" }),
     tool("t3", 3, "grep", { target: "/c/ src" }),
   ]);
-  const group = widened[0]!.items[0] as { stat?: string; members: unknown[] };
+  const group = widened[0]!.items[0] as { stat?: unknown; members: unknown[] };
   expect(group.members).toHaveLength(3);
   expect(group.stat).toBeUndefined();
   expect("stat" in group).toBe(false);

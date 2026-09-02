@@ -31,7 +31,7 @@
             <span class="k-rb__gt">{{ item.tool }}</span>
             <span class="k-rb__gtg">{{ item.members.map((m) => m.target).filter(Boolean).join(', ') }}</span>
             <span class="k-rb__gx">×{{ item.members.length }}</span>
-            <span class="k-rb__gst">{{ item.stat }}</span>
+            <span class="k-rb__gst">{{ groupStatText(item.stat) }}</span>
             <span class="k-rb__gch" aria-hidden="true">{{ opened.has(i) ? '⌄' : '›' }}</span>
           </button>
           <div v-if="opened.has(i)" class="k-rb__members">
@@ -51,7 +51,8 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import type { ChatBlock, ToolEntry } from '@kermanych/core';
+import { useI18n } from 'vue-i18n';
+import type { ChatBlock, GroupStat, ToolEntry } from '@kermanych/core';
 import KLogBlock from './KLogBlock.vue';
 import KToolRow from './KToolRow.vue';
 import type { ExpandAllCommand } from '../../lib/expand-all';
@@ -59,6 +60,14 @@ import { dur } from '../../lib/time';
 import { usd } from '../../lib/format';
 
 const props = defineProps<{ block: ChatBlock; sessionId: string; open: boolean; expandAll: ExpandAllCommand }>();
+
+const { t } = useI18n();
+// A coalesced group's summed count plus its unit word, which core hands over as an i18n key
+// so the whole row reads in the active locale. See core/chat-blocks.ts `groupStat`.
+function groupStatText(stat?: GroupStat): string {
+  if (!stat) return '';
+  return stat.unitKey ? `${stat.count} ${t(stat.unitKey)}` : String(stat.count);
+}
 
 const open = ref(props.open);
 // The live block is the open one: when a new request arrives this block stops being

@@ -87,6 +87,7 @@ export {
   type ChatItem,
   type BlockSummary,
   type ChatBlock,
+  type GroupStat,
 } from "./chat-blocks";
 export {
   MANAGEMENT_SECTIONS,

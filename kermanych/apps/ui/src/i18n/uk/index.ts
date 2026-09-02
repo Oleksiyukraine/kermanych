@@ -15,7 +15,19 @@ export const uk = {
   management: {},
   risk: {},
   kit: {},
-  chat: {},
+  chat: {
+    toolStat: {
+      dir: 'каталог',
+      files: '{count} файлів',
+      matches: '{matches} збігів / {files} ф',
+      truncated: ' ·обрізано',
+    },
+    unit: {
+      lines: 'ln',
+      matches: 'збігів',
+      files: 'файлів',
+    },
+  },
   errors: {},
   notices: {},
 };
