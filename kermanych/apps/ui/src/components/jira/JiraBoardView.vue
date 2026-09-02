@@ -2,9 +2,15 @@
   <div class="jbv">
     <div class="jbv__bar">
       <span class="jbv__count mono">{{ jira.issues.length }} тікетів · {{ jira.integration?.boardName ?? '' }}</span>
-      <span v-if="jira.syncing" class="jbv__sync mono">синхронізація…</span>
       <span class="jbv__spacer"></span>
       <span v-if="!jira.tokenPresent" class="jbv__readonly mono" v-tip="READ_ONLY_HINT">лише читання</span>
+      <KBtn
+        :disabled="!jira.tokenPresent || jira.syncing"
+        :title="jira.tokenPresent ? SYNC_HINT : READ_ONLY_HINT"
+        @click="jira.syncNow(workspaceId)"
+      >
+        {{ jira.syncing ? 'Синхронізація…' : 'Синхронізувати' }}
+      </KBtn>
       <KBtn variant="primary" :disabled="!jira.tokenPresent" :title="jira.tokenPresent ? '' : READ_ONLY_HINT" @click="creatorOpen = true">
         + Тікет
       </KBtn>
@@ -112,6 +118,7 @@ import { useJira } from 'stores/jira';
 import { useOrchestrator } from 'stores/orchestrator';
 
 const READ_ONLY_HINT = 'Додайте свій Jira-токен у Менеджмент → Integrations, щоб діяти';
+const SYNC_HINT = 'Опитати Jira зараз: підтягнути всі тікети, статуси й колонки дошки';
 
 const props = defineProps<{ workspaceId: string }>();
 
@@ -248,8 +255,7 @@ onUnmounted(() => {
   gap: var(--k-sp-3);
 }
 
-.jbv__count,
-.jbv__sync {
+.jbv__count {
   font-size: var(--k-fs-xs);
   color: var(--k-faint);
 }
