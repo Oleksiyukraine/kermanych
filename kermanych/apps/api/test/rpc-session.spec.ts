@@ -103,3 +103,25 @@ test("one undecodable frame yields exactly one warning notice and the stream kee
   expect(rpc.droppedFrames).toBe(1);
   expect(deltas).toBe(3);
 });
+
+test("isAlive() reports dead the instant stop() is called, before the child has exited", async () => {
+  // A child that ignores stdin EOF and lingers, so the process is provably still up when we
+  // check. Without the synchronous `stopping` flag isAlive() would keep reporting true across
+  // the whole SIGTERM/SIGKILL window — the gap where a send coinciding with a reap would be
+  // written to the dying child's ended stdin and silently lost.
+  const omp = fakeOmp(
+    "lingers.mjs",
+    `process.stdout.write(JSON.stringify({type:"ready",protocolVersion:2})+"\\n");` +
+      `process.stdin.resume();setInterval(()=>{},1000);`,
+  );
+  const rpc = new RpcSession({ cwd: dir, ompPath: omp });
+  rpc.onExit(() => {});
+  await rpc.start();
+  expect(rpc.isAlive()).toBe(true);
+
+  const stopped = rpc.stop(); // NOT awaited: the child lingers, so isAlive() must flip now
+  expect(rpc.isAlive()).toBe(false);
+
+  await stopped; // let the SIGTERM escalation reap the lingering child
+  expect(rpc.isAlive()).toBe(false);
+});
