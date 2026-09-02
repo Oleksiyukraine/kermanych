@@ -182,6 +182,12 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS status_outbox (task_id TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT)`,
     );
+    // Per-user Jira API tokens, THIS machine only — the localRepoPath rule for secrets:
+    // the cloud carries the integration's address, never a credential. Keyed by (site,
+    // user) so one machine shared across sites or accounts keeps them apart.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS jira_tokens (site_url TEXT NOT NULL, user_id TEXT NOT NULL, email TEXT NOT NULL, api_token TEXT NOT NULL, PRIMARY KEY (site_url, user_id))`,
+    );
   }
 
   // v1 (2026-08-21, team cloud): `groups` becomes `projects`, its id becomes the CLOUD
@@ -259,6 +265,28 @@ export class RegistryService {
       .prepare(`UPDATE projects SET name=?, local_repo_path=?, color=?, preview_command=?, api_command=?, carry_files=?, default_branch=?, default_model=?, default_effort=?, conventions=? WHERE id=?`)
       .run(next.name, next.localRepoPath, next.color || null, next.previewCommand ?? null, next.apiCommand ?? null, JSON.stringify(next.carryFiles ?? [".env"]), next.defaultBranch || null, next.defaultModel || null, next.defaultEffort || null, next.conventions || null, id);
     return next;
+  }
+
+  // ── Jira tokens ──────────────────────────────────────────────────────────────
+
+  getJiraToken(siteUrl: string, userId: string): { email: string; apiToken: string } | undefined {
+    const row = this.db
+      .prepare(`SELECT email, api_token as apiToken FROM jira_tokens WHERE site_url = ? AND user_id = ?`)
+      .get(siteUrl, userId) as { email: string; apiToken: string } | undefined;
+    return row;
+  }
+
+  setJiraToken(siteUrl: string, userId: string, email: string, apiToken: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO jira_tokens (site_url, user_id, email, api_token) VALUES (?,?,?,?)
+         ON CONFLICT(site_url, user_id) DO UPDATE SET email = excluded.email, api_token = excluded.api_token`,
+      )
+      .run(siteUrl, userId, email, apiToken);
+  }
+
+  deleteJiraToken(siteUrl: string, userId: string): void {
+    this.db.prepare(`DELETE FROM jira_tokens WHERE site_url = ? AND user_id = ?`).run(siteUrl, userId);
   }
 
   removeProject(id: string): void {
