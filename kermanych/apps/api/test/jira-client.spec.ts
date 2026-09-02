@@ -106,6 +106,26 @@ describe("JiraClient", () => {
     expect(calls[0]!.url).toBe("https://team.atlassian.net/rest/api/3/search/jql");
   });
 
+  it("names the standard fields plus the site's start-date field on both issue fetches", async () => {
+    const calls = mockFetch({ json: { issues: [] } }, { json: { id: "1", key: "K-1", fields: {} } });
+    await client().searchIssues("project = K", "customfield_10015");
+    await client().getIssue("K-1", "customfield_10015");
+
+    const searched = JSON.parse(String(calls[0]!.init.body)) as { fields: string[] };
+    expect(searched.fields).toContain("duedate");
+    expect(searched.fields).toContain("customfield_10015");
+    expect(calls[1]!.url).toContain("duedate");
+    expect(calls[1]!.url).toContain("customfield_10015");
+  });
+
+  it("asks for no start-date field when the site has none", async () => {
+    const calls = mockFetch({ json: { issues: [] } });
+    await client().searchIssues("project = K");
+    const searched = JSON.parse(String(calls[0]!.init.body)) as { fields: string[] };
+    expect(searched.fields).toContain("duedate");
+    expect(searched.fields.some((f) => f.startsWith("customfield_"))).toBe(false);
+  });
+
   it("de-duplicates project statuses shared across issue types", async () => {
     mockFetch({
       json: [

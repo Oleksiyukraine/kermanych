@@ -7,7 +7,7 @@
 // renames must degrade to blank strings — a mirror that refuses to render is worse than
 // a card with an empty icon.
 import type { JiraIssue, JiraStatusCategory } from "@kermanych/cloud";
-import type { JiraRawComment, JiraRawIssue, JiraRawWorklog, JiraTransition } from "./jira-client";
+import type { JiraFieldSummary, JiraRawComment, JiraRawIssue, JiraRawWorklog, JiraTransition } from "./jira-client";
 
 // Mirror child rows carry their scope columns only at write time (replaceJiraIssueChildren
 // adds them); the mappers produce the content half.
@@ -61,6 +61,58 @@ function iso(raw: unknown): string {
   return d && !Number.isNaN(d.getTime()) ? d.toISOString() : new Date(0).toISOString();
 }
 
+// A Jira DAY, not an instant: `duedate` and the start-date field are calendar dates, and
+// re-zoning them through Date would move a Kyiv-morning deadline to the previous day in
+// UTC. So the leading YYYY-MM-DD is taken verbatim — datetime-typed start fields simply
+// lose their time — and only the calendar itself is validated: 2026-02-31 is ten digits
+// Postgres and Jira would both refuse, so it degrades to blank like every other
+// unreadable field here.
+export function dateOnly(raw: unknown): string {
+  const m = typeof raw === "string" ? /^(\d{4}-\d{2}-\d{2})/.exec(raw) : null;
+  if (!m) return "";
+  const day = m[1]!;
+  const parsed = new Date(`${day}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(day) ? day : "";
+}
+
+// dateOnly's outbound twin, and deliberately STRICT where that one is tolerant: a blank
+// draft means «clear this date» (null is how Jira spells that), while an unreadable one
+// is a bug in the caller — sending it would either clear a date the user meant to set or
+// earn a Jira refusal phrased in customfield ids.
+export function toJiraDate(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const day = dateOnly(trimmed);
+  if (!day) throw new Error(`invalid date: ${trimmed}`);
+  return day;
+}
+
+// Jira has no system start date: every site keeps it in a custom field whose id differs
+// (customfield_10015 on most Cloud sites, an Advanced Roadmaps «Target start» on others).
+// Resolution is therefore by MEANING, in the order a human would read the list:
+// the field actually named «Start date», then Advanced Roadmaps' baseline-start by its
+// schema (its display name is site-editable), then a «Target start» by name. Date-typed
+// only — a text field called «Start date» is not a date the board can render or write.
+//
+// `undefined` = this site has no start date. That is a legitimate answer: the board then
+// shows none and the editors hide the control rather than offering a guaranteed refusal.
+export function pickStartDateFieldId(fields: readonly JiraFieldSummary[]): string | undefined {
+  const dated = fields.filter((f) => f.schema?.type === "date" || f.schema?.type === "datetime");
+  // First occurrence wins: a site with two «Start date» fields (an app's copy beside the
+  // system one) must resolve to the same id on every poll, and Jira lists the system
+  // field first.
+  const byName = new Map<string, string>();
+  for (const f of dated) {
+    const name = f.name?.trim().toLowerCase() ?? "";
+    if (name && !byName.has(name)) byName.set(name, f.id);
+  }
+  return (
+    byName.get("start date") ??
+    dated.find((f) => f.schema?.custom === "com.atlassian.jpo:jpo-custom-field-baseline-start")?.id ??
+    byName.get("target start")
+  );
+}
+
 type NamedIconField = { name?: string; iconUrl?: string };
 
 type UserField = { accountId?: string; displayName?: string; avatarUrls?: Record<string, string> };
@@ -68,6 +120,10 @@ type UserField = { accountId?: string; displayName?: string; avatarUrls?: Record
 export function mapIssue(
   integration: { id: string; workspaceId: string },
   raw: JiraRawIssue,
+  // The site's start-date field id, resolved once per site by the caller. Absent (this
+  // site has none, or the fetch did not ask for it) mirrors a blank start date rather
+  // than guessing from a field the payload never carried.
+  startDateFieldId?: string,
 ): JiraIssue {
   const f = raw.fields;
   const status = (f.status ?? {}) as { id?: string; name?: string; statusCategory?: { key?: string } };
@@ -93,6 +149,8 @@ export function mapIssue(
     priorityIcon: str(priority.iconUrl),
     labels: Array.isArray(f.labels) ? f.labels.filter((l): l is string => typeof l === "string") : [],
     originalEstimate: str(timetracking.originalEstimate),
+    startDate: startDateFieldId ? dateOnly(f[startDateFieldId]) : "",
+    dueDate: dateOnly(f.duedate),
     statusId: str(status.id),
     statusName: str(status.name),
     statusCategory: toCategory(status.statusCategory?.key),

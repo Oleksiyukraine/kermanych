@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  dateChip,
   issuesByColumn,
   launchDefaults,
   subtasksOf,
+  todayIso,
   transitionChoiceForDrop,
   type JiraTransitionView,
 } from '../src/lib/jira-view';
@@ -30,6 +32,8 @@ function issue(over: Partial<JiraIssue>): JiraIssue {
     priorityIcon: '',
     labels: [],
     originalEstimate: '',
+    startDate: '',
+    dueDate: '',
     statusId: '1',
     statusName: 'To Do',
     statusCategory: 'new',
@@ -124,5 +128,43 @@ describe('subtasksOf', () => {
       issue({ issueId: 'b', key: 'KAN-3', parentKey: 'KAN-9' }),
     ];
     expect(subtasksOf(issues, 'KAN-1').map((i) => i.key)).toEqual(['KAN-2']);
+  });
+});
+
+describe('dateChip', () => {
+  it('shows a start–due range, and one side alone when that is all Jira has', () => {
+    expect(dateChip(issue({ startDate: '2026-09-01', dueDate: '2026-09-12' }), '2026-09-02')!.text).toBe(
+      '01.09 – 12.09',
+    );
+    expect(dateChip(issue({ dueDate: '2026-09-12' }), '2026-09-02')!.text).toBe('до 12.09');
+    expect(dateChip(issue({ startDate: '2026-09-01' }), '2026-09-02')!.text).toBe('з 01.09');
+  });
+
+  it('has nothing to say about a ticket with no dates', () => {
+    expect(dateChip(issue({}), '2026-09-02')).toBeUndefined();
+  });
+
+  it('calls a passed due date overdue, today soon, and a future one plain', () => {
+    expect(dateChip(issue({ dueDate: '2026-09-01' }), '2026-09-02')!.tone).toBe('overdue');
+    expect(dateChip(issue({ dueDate: '2026-09-02' }), '2026-09-02')!.tone).toBe('soon');
+    expect(dateChip(issue({ dueDate: '2026-09-03' }), '2026-09-02')!.tone).toBe('plain');
+  });
+
+  // The whole point of reading statusCategory: finished work cannot be late any more.
+  it('never calls a done ticket overdue, however long its due date has passed', () => {
+    expect(dateChip(issue({ dueDate: '2020-01-01', statusCategory: 'done' }), '2026-09-02')!.tone).toBe('plain');
+  });
+
+  // A start date alone is a plan, not a problem — no colour for it.
+  it('leaves a start-only ticket plain even when that start is long past', () => {
+    expect(dateChip(issue({ startDate: '2020-01-01' }), '2026-09-02')!.tone).toBe('plain');
+  });
+});
+
+describe('todayIso', () => {
+  it('spells the LOCAL day the way Jira does, without a UTC shift', () => {
+    // 00:30 local on the 2nd is the 2nd — through UTC in a +03:00 zone it would be the 1st.
+    expect(todayIso(new Date(2026, 8, 2, 0, 30))).toBe('2026-09-02');
+    expect(todayIso(new Date(2026, 0, 9, 23, 45))).toBe('2026-01-09');
   });
 });
