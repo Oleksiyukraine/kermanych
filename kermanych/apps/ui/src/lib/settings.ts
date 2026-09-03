@@ -55,6 +55,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { key: 'app-keymap', scope: 'app' },
   { key: 'app-agents', scope: 'app' },
   { key: 'app-helpers', scope: 'app' },
+  { key: 'app-runtime', scope: 'app' },
   { key: 'app-account', scope: 'app' },
 ];
 

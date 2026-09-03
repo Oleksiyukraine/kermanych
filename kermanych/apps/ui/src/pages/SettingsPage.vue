@@ -420,6 +420,22 @@
           <HelpersCatalogPanel />
         </div>
 
+        <!-- ── APP · ШІ-ПРОВАЙДЕР ───────────────────────────────────────────── -->
+        <div v-else-if="section.key === 'app-runtime'" class="set__form">
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.runtime.current', { name: auth.runtime ?? 'omp' }) }}</span>
+            <!-- Applies on selection: the runtime choice is written to the cloud
+                 immediately and affects new sessions. Existing sessions keep their
+                 backend as noted. -->
+            <KSelect
+              :model-value="auth.runtime ?? 'omp'"
+              :options="RUNTIME_OPTIONS"
+              @update:model-value="pickRuntime"
+            />
+            <p class="set__note">{{ t('settings.runtime.note') }}</p>
+          </div>
+        </div>
+
         <!-- ── APP · АКАУНТ ─────────────────────────────────────────────────── -->
         <div v-else-if="section.key === 'app-account'" class="set__form">
           <div class="set__group">
@@ -1212,6 +1228,23 @@ function pickTheme(next: KTheme, e: MouseEvent): void {
   // control.
   const el = e.currentTarget;
   toggleTheme(el instanceof HTMLElement ? el.getBoundingClientRect() : null);
+}
+
+const RUNTIME_OPTIONS = computed<readonly KSelectOption[]>(() => [
+  { value: 'omp', label: t('settings.runtime.omp') },
+  { value: 'claude-code', label: t('settings.runtime.claude') },
+]);
+
+async function pickRuntime(next: string): Promise<void> {
+  if (auth.runtime === next) return;
+  try {
+    await auth.chooseRuntime(next as 'omp' | 'claude-code');
+  } catch (e) {
+    store.notify(
+      `Failed to change runtime: ${e instanceof Error ? e.message : String(e)}`,
+      'error'
+    );
+  }
 }
 
 // Every binding the app actually listens to, and the file that owns it. A

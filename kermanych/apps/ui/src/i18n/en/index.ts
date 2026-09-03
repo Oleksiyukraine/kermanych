@@ -583,6 +583,11 @@ export const en: MessageSchema = {
         blurb:
           'Short commands you can drop into any chat — they add an instruction for the AI to your message. Wired into the app: here you can only view them.',
       },
+      'app-runtime': {
+        label: 'AI provider',
+        sub: 'Agent backend',
+        blurb: 'Which engine runs your agents. Applies to new sessions.',
+      },
       'app-account': {
         label: 'Account',
         sub: 'session, plan, queue',
@@ -719,6 +724,12 @@ export const en: MessageSchema = {
         thisScreen: 'this screen',
         everywhere: 'everywhere',
       },
+    },
+    runtime: {
+      current: 'Current: {name}',
+      omp: 'omp',
+      claude: 'claude-code',
+      note: 'Existing sessions keep their current backend.',
     },
     account: {
       loggedInAs: 'You are signed in as',
