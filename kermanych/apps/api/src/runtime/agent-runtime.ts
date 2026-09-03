@@ -1,6 +1,7 @@
 // apps/api/src/runtime/agent-runtime.ts
 import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, TodoPhase, AgentRuntimeKind } from "@kermanych/core";
 import { RpcSession } from "../rpc/rpc-session";
+import { ClaudeCodeRuntime } from "./claude-code-runtime";
 
 // The state contract a runtime reports through getState(). Moved here from rpc-session.ts
 // because it is backend-neutral: omp fills it from its `get_state` frame, claude from
@@ -52,6 +53,5 @@ export interface AgentRuntime {
 
 export function createRuntime(kind: AgentRuntimeKind, opts: RuntimeLaunchOpts): AgentRuntime {
   if (kind === "omp") return new RpcSession(opts);
-  // Task 5 replaces this throw with `return new ClaudeCodeRuntime(opts);`
-  throw new Error(`claude-code runtime not wired yet (kind=${kind})`);
+  return new ClaudeCodeRuntime(opts);
 }

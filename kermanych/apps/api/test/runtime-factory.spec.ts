@@ -16,7 +16,11 @@ describe("createRuntime", () => {
     expect(rt.isAlive()).toBe(false); // not started
   });
 
-  it("throws a clear error for claude-code until its adapter lands", () => {
-    expect(() => createRuntime("claude-code", { cwd: "/tmp/x" })).toThrow(/claude-code runtime not wired/i);
+  it("returns a claude-code runtime exposing the full AgentRuntime surface", () => {
+    const rt = createRuntime("claude-code", { cwd: "/tmp/x" });
+    for (const m of REQUIRED_METHODS) {
+      expect(typeof (rt as unknown as Record<string, unknown>)[m]).toBe("function");
+    }
+    expect(rt.isAlive()).toBe(false); // not started
   });
 });
