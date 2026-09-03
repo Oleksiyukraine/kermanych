@@ -175,6 +175,13 @@
           :title="theme === 'light' ? t('common.nav.themeDark') : t('common.nav.themeLight')"
           @click="onThemeToggle"
         >{{ theme === 'light' ? '☾' : '☀' }}</KIconButton>
+        <!-- Language toggle — twin of the theme toggle beside it: a one-click
+             screen preference (uk↔en), also carried by «Загальне» settings. The
+             code names the language the click moves TO. -->
+        <KIconButton
+          :title="locale === 'uk' ? t('common.nav.langEn') : t('common.nav.langUk')"
+          @click="locale = locale === 'uk' ? 'en' : 'uk'"
+        >{{ locale === 'uk' ? 'EN' : 'UK' }}</KIconButton>
       </div>
     </q-header>
 
@@ -291,6 +298,7 @@ import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
 import { myBacklogTasks } from '../lib/tasks-view';
 import { bucketOf, type Bucket } from '../lib/buckets';
 import { theme, toggleTheme } from '../lib/theme';
+import { locale } from '../lib/locale';
 import { isMoveRefusal, moveRefusalText } from '../lib/cloud-errors';
 import { percent, planWindow, renderWindow } from '../lib/format';
 import { until, renderTime } from '../lib/time';

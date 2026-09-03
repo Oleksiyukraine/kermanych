@@ -23,6 +23,8 @@ export const uk = {
       logo: 'КЕРМАНИЧ',
       themeDark: 'Темна тема',
       themeLight: 'Світла тема',
+      langUk: 'Українська',
+      langEn: 'Англійська',
       pullTip: 'git pull (--ff-only) поточної гілки репозиторію проєкту',
       changeInSettings: '{label} — змінити в налаштуваннях',
       changeFolder: 'Змінити теку',
