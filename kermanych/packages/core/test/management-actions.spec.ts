@@ -481,6 +481,25 @@ test("a jira.ticket.create may name the operator's attached files", () => {
   });
 });
 
+// The same names survive on the NATIVE board, where nothing can be done with them: `tasks`
+// has no attachment storage. Parsed rather than dropped because dropping is silent — the
+// executor files the card and states that the files stayed in the chat, and it cannot state
+// that about a field the validator threw away.
+test("a ticket.create keeps the named files so the executor can say they cannot ride", () => {
+  expect(
+    validateManagementAction({ kind: "ticket.create", project: "Alpha", ticket: TICKET, attachments: ["screen.png"] }),
+  ).toEqual({
+    kind: "ticket.create",
+    project: "Alpha",
+    ticket: TICKET,
+    attachments: ["screen.png"],
+  });
+  // And the same type discipline as the Jira twin — one parse, both kinds.
+  expect(
+    validateManagementAction({ kind: "ticket.create", project: "Alpha", ticket: TICKET, attachments: "screen.png" }),
+  ).toMatchObject({ error: { code: "field_not_string_list", params: { field: "attachments" } } });
+});
+
 // Both boards hold the ticket to the same standard: there is no board on which a worse ticket
 // is acceptable.
 test("a Jira ticket is held to the same ticket rules as a board card", () => {

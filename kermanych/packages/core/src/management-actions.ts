@@ -202,6 +202,13 @@ export type ManagementAction =
       assignee?: string;
       prefix?: BranchPrefix;
       platform?: Platform;
+      // NAMES of the operator's attached files, accepted here and honoured NOWHERE: `tasks`
+      // has no attachment storage, so a card on this board cannot carry a file. It is parsed
+      // rather than dropped because dropping it is silent — the operator asked for a ticket
+      // WITH a file, and «тікет створено» beside a file nobody mentioned again is the
+      // failure this field exists to make visible. The executor files the card and says the
+      // files stayed in the chat.
+      attachments?: string[];
     }
   // File one issue on the workspace's mirrored Jira board. No `project`: the Jira project
   // key comes from the workspace's integration row, so there is nothing here for the model
@@ -940,6 +947,17 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
     const assignee = ticketName(o, "assignee");
     if (isFail(assignee)) return assignee;
 
+    // Named files, parsed for BOTH kinds and before the split: the operator's request
+    // («тікет із цим файлом») does not change with the board — only what can be done about
+    // it does. Jira uploads them, the native board has nowhere to put them and says so, and
+    // the empty list is the same statement as no field at all.
+    let attached: string[] | undefined;
+    if (has(o, "attachments")) {
+      const parsed = strList(o.attachments, "attachments");
+      if (isFail(parsed)) return parsed;
+      if (parsed.length > 0) attached = parsed;
+    }
+
     if (kind === "ticket.create") {
       // Named, not guessed — a card belongs to exactly one project, and the wrong one puts a
       // ticket in front of a team that does not own the work. The prompt tells the model to
@@ -981,6 +999,7 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
           };
         a.platform = o.platform as Platform;
       }
+      if (attached !== undefined) a.attachments = attached;
       return a;
     }
 
@@ -1007,11 +1026,7 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
         };
       if (labels.length) a.labels = labels;
     }
-    if (has(o, "attachments")) {
-      const attachments = strList(o.attachments, "attachments");
-      if (isFail(attachments)) return attachments;
-      if (attachments.length) a.attachments = attachments;
-    }
+    if (attached !== undefined) a.attachments = attached;
     return a;
   }
   if (kind === "ticket.questions") {

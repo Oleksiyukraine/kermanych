@@ -125,7 +125,13 @@ function contract(locale: Locale | undefined): string {
     '  { "kind": "risk.update", "code": "R-003", "patch": { … } }',
     '  { "kind": "release.notes", "project": "…", "branch": "…", "rangeFrom": "РРРР-ММ-ДД", "rangeTo": "РРРР-ММ-ДД" }',
     '  { "kind": "ticket.create", "project": "…", "ticket": { … }, "assignee": "…", "prefix": "…", "platform": "…" }',
-    '  { "kind": "jira.ticket.create", "ticket": { … }, "issueType": "…", "priority": "…", "labels": ["…"], "assignee": "…", "parentKey": "…" }',
+    // `attachments` is listed HERE and not only under «ДОДАТКОВІ ПОЛЯ» below, because the line
+    // above declares this list exhaustive («Дозволені ТІЛЬКИ такі форми»). A field the model
+    // can only find 170 lines later loses that argument: asked to put the operator's image on
+    // the ticket, the assistant read this menu, concluded the action «не має поля для вкладень»
+    // and told the operator to attach the file by hand in Jira — while the executor behind it
+    // had been uploading named files all along.
+    '  { "kind": "jira.ticket.create", "ticket": { … }, "issueType": "…", "priority": "…", "labels": ["…"], "assignee": "…", "parentKey": "…", "attachments": ["імʼя файлу"] }',
     '  { "kind": "ticket.questions", "forTicket": "…", "questions": ["…", "…"] }',
     "Не вигадуй інші `kind` — вони відкидаються без виконання.",
     "",
@@ -286,6 +292,9 @@ function ticketProtocol(): string {
     `  platform — ${PLATFORMS.join(" | ")} (необовʼязково).`,
     "  Модель, рівень роздумів, базову гілку й окреме робоче дерево не задавай — це параметри запуску агента,",
     "  тобто саме ті технічні рішення, яких у тікеті бути не повинно.",
+    "  Вкладень у власної дошки НЕМАЄ: файл до картки «Задачі» прикріпити нікуди. Просили тікет із файлом на власній",
+    "    дошці — створи тікет і скажи прозою, що файл лишився в розмові; вкладення є тільки в Jira. Не обіцяй",
+    "    прикріпити його пізніше і не перенось тікет у Jira замість цього: дошку назвав користувач.",
     "",
     "ДОДАТКОВІ ПОЛЯ jira.ticket.create:",
     "  issueType, priority — НАЗВИ так, як їх показує Jira («Task», «Story», «Bug», «High»). Не назвали — не став:",
@@ -294,9 +303,15 @@ function ticketProtocol(): string {
     "  parentKey — ключ батьківського тікета, ТІЛЬКИ якщо користувач назвав його сам (наприклад «підзадача до KRM-101»).",
     "    Списку тікетів Jira у тебе немає, тому ключів не вигадуй: ключа, якого немає, Jira не приймає.",
     "  Проєкт Jira не вказуй — він визначений підключенням воркспейсу.",
-    '  attachments — масив ІМЕН файлів з блоку «ДОЛУЧЕНІ ФАЙЛИ» цієї розмови, РІВНО так, як вони там названі,',
-    "    і ТІЛЬКИ коли користувач попросив прикріпити їх до тікета. Застосунок сам завантажить ці файли в Jira",
-    "    після створення тікета — вміст у дію не клади й імен не вигадуй: невідоме імʼя буде відхилено.",
+    '  attachments — масив ІМЕН файлів з блоку «ДОЛУЧЕНІ ФАЙЛИ» цього ходу, РІВНО так, як вони там названі.',
+    "    Це ЄДИНИЙ і робочий спосіб прикріпити файл до тікета: користувач попросив «додай зображення/файл до тікета» —",
+    "    постав ці імена в attachments ТОГО САМОГО блоку jira.ticket.create. Застосунок завантажить їх у Jira відразу",
+    "    після створення тікета й сам напише про кожен файл окремим рядком.",
+    "    НІКОЛИ не пиши, що поля для вкладень немає, що вкладення неможливі або що файл треба прикріпити вручну",
+    "    на екрані Jira — це неправда, і користувач лишиться без вкладення, якого просив.",
+    "    Зображення — такий самий файл, як документ: воно теж називається у цьому полі, а не описується прозою.",
+    "    Вміст у дію не клади й імен не вигадуй: невідоме імʼя буде відхилено. Файли з ПОПЕРЕДНІХ повідомлень",
+    "    розмови теж можна називати — блок «ДОЛУЧЕНІ ФАЙЛИ» перелічує всі файли розмови, а не тільки нові.",
     "    Файл як ДЖЕРЕЛО для тексту тікета — це не attachments: просто прочитай його і пиши тікет.",
     "",
     "ЯКЩО ЧОГОСЬ НЕ ЗНАЄШ. Тікет з відкритим питанням не створюється. Коли для тікета бракує рішення, яке може",
@@ -313,22 +328,35 @@ function ticketProtocol(): string {
   ].join("\n");
 }
 
-// One attached file of the current turn, as the message states it. Documents carry the
+// One attached file of the conversation, as the message states it. Documents carry the
 // absolute path the api wrote them to (the read tool's subject); images carry no path —
-// they ride the same message through omp's image slots and the line only names them.
-export type ManagementTurnFile = { name: string; path?: string };
+// they ride their own message through omp's image slots and the line only names them.
+//
+// `earlier` marks a file that came with an EARLIER message: the block lists the whole
+// conversation (see ManagementChatService's ledger), and the model must still be able to
+// tell what arrived with the words it is answering now.
+export type ManagementTurnFile = { name: string; path?: string; earlier?: boolean };
 
-// The block that tells the model what the operator attached to THIS message and how to
-// reach it. Names are quoted exactly because they are also the vocabulary of
+// The block that tells the model which files the operator has attached to this conversation
+// and how to reach them. Names are quoted exactly because they are also the vocabulary of
 // `jira.ticket.create.attachments` — a paraphrased name there would be refused.
+//
+// The second line is not decoration. This block is the text CLOSEST to the decision «the
+// operator asked me to put this image on the ticket», and while it said only «зображення,
+// додане до цього повідомлення» the assistant filed the ticket and explained in prose that
+// attachments were impossible — the capability was stated once, in the first turn's
+// contract, hundreds of lines away. The rule is repeated where the file is named.
 function attachmentsBlock(files: ManagementTurnFile[]): string {
   return [
     "── ДОЛУЧЕНІ ФАЙЛИ ──",
-    ...files.map((f) =>
-      f.path === undefined
-        ? `- «${f.name}» — зображення, додане до цього повідомлення`
-        : `- «${f.name}» — ${f.path} (відкрий інструментом read, якщо файл потрібен для відповіді)`,
-    ),
+    "Ці імена — вокабуляр поля `attachments` у jira.ticket.create: просили прикріпити файл до тікета Jira —",
+    "постав імʼя звідси в те поле (і зображення теж), а не пиши, що вкладення неможливі.",
+    ...files.map((f) => {
+      const where = f.earlier ? "з попереднього повідомлення цієї розмови" : "додане до цього повідомлення";
+      return f.path === undefined
+        ? `- «${f.name}» — зображення, ${where}`
+        : `- «${f.name}» — ${f.path} (відкрий інструментом read, якщо файл потрібен для відповіді)`;
+    }),
   ].join("\n");
 }
 
@@ -433,8 +461,11 @@ export function buildManagementTurn(input: {
   // the rest of the contract stays Ukrainian. Sent on the FIRST turn, which is the one that
   // carries the contract — a later locale switch re-languages from the next new child.
   locale?: Locale;
-  // Files the operator attached to THIS turn (see ManagementTurnFile). Per-turn like the
-  // context block, not part of the contract: each message lists only what came with it.
+  // Every file of the CONVERSATION, newest message first (see ManagementTurnFile and the
+  // ledger in ManagementChatService). Per-turn like the context block, not part of the
+  // contract: a ticket is routinely filed a turn or two after the file arrived — through a
+  // `ticket.questions` round trip — and a block that listed only this message's files left
+  // that turn with no names to put in `attachments` at all.
   attachments?: ManagementTurnFile[];
 }): string {
   const parts = input.first ? [contract(input.locale), ""] : [];

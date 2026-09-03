@@ -950,6 +950,7 @@ export const en: MessageSchema = {
       jiraAttachUploaded: 'File “{name}” attached to {key}.',
       jiraAttachFailed: 'Could not attach file “{name}” to {key}: {error}',
       jiraAttachUnknown: 'File “{name}” was not attached in this conversation — nothing was attached to {key}.',
+      boardAttachUnsupported: 'The workspace board has no attachments — {names} stayed in the conversation and are not on the card. Only the Jira board supports attachments.',
     },
     refusal: {
       unknownSection: 'The assistant named a section “{section}” that does not exist in Management.',

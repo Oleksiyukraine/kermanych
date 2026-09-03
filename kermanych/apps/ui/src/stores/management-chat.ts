@@ -123,6 +123,11 @@ export const useManagementChat = defineStore('management-chat', () => {
   const busy = ref(false);
   // The payloads behind every attachment sent this conversation, keyed workspace → file
   // name (latest attach of a name wins, matching the file the api's copy on disk holds).
+  // The key is the TRIMMED name, because that is the only name the model can ever quote
+  // back: the api trims a name before it prints it into the turn (management.controller.ts
+  // attachmentRows) and `validateManagementAction` trims every entry of `attachments`.
+  // Keyed by the raw name, a file the browser called « звіт.pdf » was unresolvable — the
+  // ticket was created and the file silently refused as one nobody had attached.
   // A plain Map outside Vue reactivity on purpose: it is read imperatively by the
   // `jira.ticket.create` executor and never rendered — the transcript entries carry only
   // names and thumbnails.
@@ -330,6 +335,19 @@ export const useManagementChat = defineStore('management-chat', () => {
           })
         : globalTr.t('management.chat.ticketCreatedUnassigned', { title: created.title, project: project.name }),
     );
+    // `tasks` has no attachment storage, so a card on this board cannot carry a file at all.
+    // The prompt says so and tells the assistant to say it in prose — this line is the belt
+    // and braces, in the app's own voice: a ticket filed silently without the file the
+    // operator asked for is indistinguishable from an upload that failed.
+    if (action.attachments?.length)
+      result(
+        workspaceId,
+        'warn',
+        globalTr.t('management.chat.boardAttachUnsupported', {
+          names: action.attachments.map((n) => `«${n}»`).join(', '),
+          count: action.attachments.length,
+        }),
+      );
   }
 
   // One issue on the mirrored Jira board. Unlike every other action here this does NOT write
@@ -450,7 +468,12 @@ export const useManagementChat = defineStore('management-chat', () => {
           continue;
         }
         try {
-          await api.jiraUploadAttachment(workspaceId, issue.key, name, file.data, file.mimeType);
+          // The api answers an upload with the REFRESHED issue (jira.service.ts
+          // uploadAttachment → refreshIssue), so the card carries the file at once. Dropping
+          // that answer left «Файл прикріплено» beside a ticket whose «Вкладення» tab stayed
+          // empty until the next 30-second poll — which reads exactly like the failure this
+          // whole path is about.
+          jira.upsert(await api.jiraUploadAttachment(workspaceId, issue.key, name, file.data, file.mimeType));
           result(workspaceId, 'info', globalTr.t('management.chat.jiraAttachUploaded', { name, key: issue.key }));
         } catch (e) {
           result(
@@ -561,7 +584,10 @@ export const useManagementChat = defineStore('management-chat', () => {
     // or more turns later, and the entry itself carries only names and thumbnails.
     if (attachments.length) {
       const perWs = sentFiles.get(workspaceId) ?? new Map<string, ManagementAttachment>();
-      for (const f of attachments) perWs.set(f.name, { name: f.name, mimeType: f.mimeType, data: f.data });
+      for (const f of attachments) {
+        const name = f.name.trim();
+        perWs.set(name, { name, mimeType: f.mimeType, data: f.data });
+      }
       sentFiles.set(workspaceId, perWs);
     }
 

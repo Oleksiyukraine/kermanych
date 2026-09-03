@@ -249,13 +249,50 @@ describe("ManagementChatService", () => {
     expect(sent[0]?.text).toContain("── ДОЛУЧЕНІ ФАЙЛИ ──");
     expect(sent[0]?.text).toContain("- «screen.png» — зображення, додане до цього повідомлення");
     expect(sent[0]?.text).toContain(`- «план.pdf» — ${path}`);
-    // A turn with nothing attached does not resurrect the block.
+    // The turn AFTER the files still lists them, marked as earlier — and this is the whole
+    // bug: «прикріпи зображення до тікета» normally reaches the model one or two turns after
+    // the image did (an assistant that asks `ticket.questions` first is the documented
+    // path), and a turn with no file names has nothing to put in `attachments`.
     turns = [reply("ок")];
-    await svc.ask(withFiles("а тепер без файлів"));
-    expect(sent[1]?.text).not.toContain("ДОЛУЧЕНІ ФАЙЛИ");
+    await svc.ask(withFiles("а тепер створи тікет і прикріпи те зображення"));
+    expect(sent[1]?.text).toContain("── ДОЛУЧЕНІ ФАЙЛИ ──");
+    expect(sent[1]?.text).toContain("- «screen.png» — зображення, з попереднього повідомлення цієї розмови");
+    expect(sent[1]?.text).toContain(`- «план.pdf» — ${path}`);
+    // The bytes, though, travelled exactly once: only the NAMES are repeated.
     expect(sent[1]?.images).toBeUndefined();
-    // «Новий чат» removes the conversation's documents with its child — awaited by reset.
+    // «Новий чат» takes the names with the bytes, so the next conversation has no block.
     await svc.reset("management:w-files");
     expect(existsSync(join(tmpdir(), "kermanych-management", "management-w-files"))).toBe(false);
+    turns = [reply("новий"), reply("ок")];
+    await svc.ask(withFiles("нова розмова"));
+    // The HEADER, not the phrase: a reset conversation is a first turn, so it carries the
+    // contract — and the contract's own attachment rule quotes the block by name.
+    expect(sent[2]?.text).not.toContain("── ДОЛУЧЕНІ ФАЙЛИ ──");
+  });
+
+  // A conversation that keeps attaching must not grow the turn without bound: the list is a
+  // reminder of what can be named, and the oldest names stop being what «прикріпи файл»
+  // means long before the process is evicted.
+  it("carries at most the twenty most recent file names", async () => {
+    const svc = make();
+    const withFiles = (text: string): ManagementChatAsk => ({ ...ask(text), conversationId: "management:w-many" });
+    for (let batch = 0; batch < 3; batch++) {
+      turns = [reply("ок")];
+      await svc.ask({
+        ...withFiles(`партія ${batch}`),
+        attachments: Array.from({ length: 10 }, (_, i) => ({
+          name: `shot-${batch}-${i}.png`,
+          mimeType: "image/png",
+          data: Buffer.from("x").toString("base64"),
+        })),
+      });
+    }
+    const last = sent[2]?.text ?? "";
+    // The newest batch of ten and the ten before it; the first batch has fallen off.
+    expect(last).toContain("«shot-2-0.png»");
+    expect(last).toContain("«shot-1-9.png»");
+    expect(last).not.toContain("«shot-0-9.png»");
+    expect(last.match(/^- «shot-/gm)).toHaveLength(20);
+    await svc.reset("management:w-many");
   });
 });
