@@ -43,11 +43,13 @@ import type {
   ManagementJiraTicketCreate,
   ManagementMember,
   ManagementReleaseNotes,
+  ManagementAttachment,
   ManagementRiskRow,
   ManagementTicketCreate,
   ManagementWorkspaceProject,
   Usage,
 } from '@kermanych/core';
+import type { AttachedFile } from '../lib/files';
 import { globalTr } from '../boot/i18n';
 import { localizeNotice, localizeRejection } from '../lib/i18n-coded';
 import { locale } from '../lib/locale';
@@ -66,9 +68,14 @@ import { useRisks } from './risks';
 // own level rather than an assistant turn with a prefix — the operator must be able to tell
 // «я створив ризик» from «ризик створено» at a glance.
 export type MgmtChatEntry =
-  | { kind: 'user'; id: string; at: number; text: string }
+  // `files` is what travelled with the words — name always, data URL for images so the
+  // bubble can echo the thumbnail. The payloads themselves are not kept on the entry: a
+  // transcript holding megabytes of base64 per turn would bloat every deep watch of it.
+  | { kind: 'user'; id: string; at: number; text: string; files?: MgmtEntryFile[] }
   | { kind: 'assistant'; id: string; at: number; text: string; model?: string; usage?: Usage; ms: number }
   | { kind: 'result'; id: string; at: number; level: 'info' | 'warn' | 'error'; text: string };
+
+export type MgmtEntryFile = { name: string; url?: string };
 
 export type MgmtResultLevel = Extract<MgmtChatEntry, { kind: 'result' }>['level'];
 
@@ -114,6 +121,17 @@ export const useManagementChat = defineStore('management-chat', () => {
   // transcript the model no longer has.
   const byWorkspace = ref<Record<string, MgmtChatEntry[]>>({});
   const busy = ref(false);
+  // The payloads behind every attachment sent this conversation, keyed workspace → file
+  // name (latest attach of a name wins, matching the file the api's copy on disk holds).
+  // The key is the TRIMMED name, because that is the only name the model can ever quote
+  // back: the api trims a name before it prints it into the turn (management.controller.ts
+  // attachmentRows) and `validateManagementAction` trims every entry of `attachments`.
+  // Keyed by the raw name, a file the browser called « звіт.pdf » was unresolvable — the
+  // ticket was created and the file silently refused as one nobody had attached.
+  // A plain Map outside Vue reactivity on purpose: it is read imperatively by the
+  // `jira.ticket.create` executor and never rendered — the transcript entries carry only
+  // names and thumbnails.
+  const sentFiles = new Map<string, Map<string, ManagementAttachment>>();
 
   const entries = computed<MgmtChatEntry[]>(() => {
     const id = store.selectedWorkspaceId;
@@ -317,6 +335,19 @@ export const useManagementChat = defineStore('management-chat', () => {
           })
         : globalTr.t('management.chat.ticketCreatedUnassigned', { title: created.title, project: project.name }),
     );
+    // `tasks` has no attachment storage, so a card on this board cannot carry a file at all.
+    // The prompt says so and tells the assistant to say it in prose — this line is the belt
+    // and braces, in the app's own voice: a ticket filed silently without the file the
+    // operator asked for is indistinguishable from an upload that failed.
+    if (action.attachments?.length)
+      result(
+        workspaceId,
+        'warn',
+        globalTr.t('management.chat.boardAttachUnsupported', {
+          names: action.attachments.map((n) => `«${n}»`).join(', '),
+          count: action.attachments.length,
+        }),
+      );
   }
 
   // One issue on the mirrored Jira board. Unlike every other action here this does NOT write
@@ -425,6 +456,33 @@ export const useManagementChat = defineStore('management-chat', () => {
         'info',
         globalTr.t('jira.notify.ticketCreated', { key: issue.key, summary: issue.summary, board: row.boardName }),
       );
+      // The files the model asked to put on the issue — resolved by NAME against what the
+      // operator actually attached this conversation, never from the model's own bytes. In
+      // order and awaited, so the transcript reports each upload beside the create it
+      // belongs to; a name nobody attached is refused per file rather than sinking the
+      // ticket that already exists.
+      for (const name of action.attachments ?? []) {
+        const file = sentFiles.get(workspaceId)?.get(name);
+        if (!file) {
+          result(workspaceId, 'warn', globalTr.t('management.chat.jiraAttachUnknown', { name, key: issue.key }));
+          continue;
+        }
+        try {
+          // The api answers an upload with the REFRESHED issue (jira.service.ts
+          // uploadAttachment → refreshIssue), so the card carries the file at once. Dropping
+          // that answer left «Файл прикріплено» beside a ticket whose «Вкладення» tab stayed
+          // empty until the next 30-second poll — which reads exactly like the failure this
+          // whole path is about.
+          jira.upsert(await api.jiraUploadAttachment(workspaceId, issue.key, name, file.data, file.mimeType));
+          result(workspaceId, 'info', globalTr.t('management.chat.jiraAttachUploaded', { name, key: issue.key }));
+        } catch (e) {
+          result(
+            workspaceId,
+            'error',
+            globalTr.t('management.chat.jiraAttachFailed', { name, key: issue.key, error: errorText(e) }),
+          );
+        }
+      }
     } catch (e) {
       // Verbatim: a dead token, a field the Jira project made mandatory and an unreachable
       // site are three different problems with three different fixes.
@@ -514,16 +572,36 @@ export const useManagementChat = defineStore('management-chat', () => {
   // inside a store's setup depends on a component injection context this setup does not have.
   // ManagementPage already knows the active section from its own `useRoute()`, so it hands it
   // over — one source of truth, no second router lookup that could disagree with the strip.
-  async function send(text: string, section: string): Promise<void> {
+  async function send(text: string, section: string, attachments: AttachedFile[] = []): Promise<void> {
     const workspaceId = store.selectedWorkspaceId;
     const body = text.trim();
     // Nothing to say, nothing to say it about, or a turn already in flight. Silent because
-    // the composer disables its own send disc in exactly these three states.
-    if (busy.value || !body || !workspaceId) return;
+    // the composer disables its own send disc in exactly these three states. A turn of
+    // files alone is a legitimate message — «ось документ» often has no words.
+    if (busy.value || (!body && !attachments.length) || !workspaceId) return;
+
+    // Kept OUTSIDE the transcript: the payloads back `jira.ticket.create.attachments` one
+    // or more turns later, and the entry itself carries only names and thumbnails.
+    if (attachments.length) {
+      const perWs = sentFiles.get(workspaceId) ?? new Map<string, ManagementAttachment>();
+      for (const f of attachments) {
+        const name = f.name.trim();
+        perWs.set(name, { name, mimeType: f.mimeType, data: f.data });
+      }
+      sentFiles.set(workspaceId, perWs);
+    }
 
     // Appended before the request, so the operator's words are on screen while the model
     // thinks — a turn that takes twenty seconds must not look like a dropped keystroke.
-    push(workspaceId, { kind: 'user', id: entryId(), at: Date.now(), text: body });
+    push(workspaceId, {
+      kind: 'user',
+      id: entryId(),
+      at: Date.now(),
+      text: body,
+      ...(attachments.length
+        ? { files: attachments.map((f) => ({ name: f.name, ...(f.url ? { url: f.url } : {}) })) }
+        : {}),
+    });
     busy.value = true;
     try {
       // The register travels with the question, so the assistant can see what is already
@@ -569,6 +647,9 @@ export const useManagementChat = defineStore('management-chat', () => {
         // The model is told to answer in the operator's active locale (api rule ґ); the
         // prompt body stays Ukrainian.
         locale: locale.value,
+        ...(attachments.length
+          ? { attachments: attachments.map((f) => ({ name: f.name, mimeType: f.mimeType, data: f.data })) }
+          : {}),
       };
 
       const reply = await api.managementChat(ask);
@@ -607,6 +688,9 @@ export const useManagementChat = defineStore('management-chat', () => {
     const workspaceId = store.selectedWorkspaceId;
     if (busy.value || !workspaceId) return;
     byWorkspace.value[workspaceId] = [];
+    // The attachment payloads die with the conversation: a «новий чат» that still resolves
+    // last conversation's file names would attach bytes the transcript no longer shows.
+    sentFiles.delete(workspaceId);
     try {
       await api.resetManagementChat(conversationId(workspaceId));
     } catch (e) {

@@ -496,7 +496,7 @@ That field is a real assistant, and it is deliberately narrow:
   stay on the screen; the assistant has no verb for them and the prompt says so.
 - **It files tickets on «Дошка».** Say «створи тікет: …» and the ticket appears on the board
   — the board is not a Менеджмент section, so this works from any section, and «створи тікет»
-  is never answered with a refusal. Five rules make the ticket worth having:
+  is never answered with a refusal. Six rules make the ticket worth having:
   - **The default board is the workspace's own.** «Задачі» is the board that always exists,
     needs no integration and no personal token, so a request that does not name a board lands
     there (`ticket.create`). The mirrored Jira board is opt-in BY NAME: only «створи в Jira…»
@@ -541,6 +541,18 @@ That field is a real assistant, and it is deliberately narrow:
     and no Kermanych account is assigned there exactly as you would assign them by hand. A
     name that matches nobody on the board it was named for refuses that ticket and lists who
     can be assigned, rather than filing a card into nobody's queue.
+  - **A file you attached can ride onto the Jira card.** The chat's composer takes images and
+    documents (📎, paste or drop); images reach the model natively, documents land in the
+    conversation's temp directory and are read with the read tool. Say «створи тікет у Jira і
+    прикріпи це зображення» and the file is uploaded onto the issue right after it is created,
+    under your own Jira token, and the chat reports each file by name on its own line. Names
+    are the whole vocabulary: the assistant may only name files YOU attached to this
+    conversation — including ones from earlier messages, which is what makes «прикріпи те, що
+    я скидав» work across a `ticket.questions` round trip — and the bytes always come from the
+    browser's own copy, never from the model. A name nobody attached is refused per file, and
+    the ticket that already exists survives it. The workspace's own board has no attachments
+    at all, so the same request there files the ticket and says the file stayed in the chat —
+    it is not quietly re-routed to Jira, because you named the board.
 - **It spends the same subscription your agents spend.** It runs through the same
   `omp` on your PATH, the same provider account and the same plan; there is no second
   key to configure and no separate budget. The mono pill on the right of the field is

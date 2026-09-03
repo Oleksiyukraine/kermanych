@@ -23,6 +23,7 @@ const createTask = vi.fn();
 const loadMembers = vi.fn();
 const jiraUpsert = vi.fn();
 const jiraLoadAssignable = vi.fn();
+const jiraUploadAttachment = vi.fn();
 
 const members = [
   { workspaceId: 'w1', userId: 'u-olya', role: 'developer', addedAt: '', profile: { id: 'u-olya', githubUsername: 'olya', displayName: 'Оля Петренко' } },
@@ -46,6 +47,8 @@ vi.mock('../src/lib/api', () => ({
     jiraEditorOptions: (ws: string) => jiraEditorOptions(ws),
     jiraAssignableUsers: (ws: string, q: string) => jiraAssignableUsers(ws, q),
     jiraTokenStatus: (site: string) => jiraTokenStatus(site),
+    jiraUploadAttachment: (ws: string, key: string, filename: string, data: string, mimeType: string) =>
+      jiraUploadAttachment(ws, key, filename, data, mimeType),
   },
 }));
 vi.mock('../src/stores/orchestrator', () => ({
@@ -111,7 +114,7 @@ function results(entries: readonly MgmtChatEntry[]): string[] {
 
 beforeEach(() => {
   setActivePinia(createPinia());
-  for (const m of [managementChat, jiraCreateIssue, jiraEditorOptions, jiraAssignableUsers, jiraTokenStatus, createTask, loadMembers, jiraUpsert, jiraLoadAssignable])
+  for (const m of [managementChat, jiraCreateIssue, jiraEditorOptions, jiraAssignableUsers, jiraTokenStatus, createTask, loadMembers, jiraUpsert, jiraLoadAssignable, jiraUploadAttachment])
     m.mockReset();
   jiraState.integration = null;
   jiraState.tokenPresent = false;
@@ -201,6 +204,28 @@ describe('ticket.create on the default board', () => {
     await store.send('створи тікет', 'management-home');
 
     expect(results(store.entries)[0]).toContain('Не вдалося створити тікет');
+  });
+
+  // `tasks` has no attachment storage, so a file cannot ride onto a native card at all. The
+  // card is still worth filing — the text is the valuable part — but the operator asked for a
+  // ticket WITH the file, and a silent drop is indistinguishable from an upload that failed.
+  it('files the card and states that the named files cannot ride on this board', async () => {
+    managementChat.mockResolvedValue(
+      reply([{ kind: 'ticket.create', project: 'Kermanych UI', ticket: TICKET, attachments: ['screen.png'] }]),
+    );
+    createTask.mockImplementation((input: Record<string, unknown>) => ({ ...input, id: 't1' }));
+
+    const store = useManagementChat();
+    await store.send('створи тікет і прикріпи скріншот', 'management-home', [
+      { name: 'screen.png', mimeType: 'image/png', data: 'QUJD' },
+    ]);
+
+    const lines = results(store.entries);
+    expect(lines[0]).toContain('створено');
+    expect(lines[1]).toContain('Дошка воркспейсу не має вкладень');
+    expect(lines[1]).toContain('«screen.png»');
+    // Nothing was uploaded anywhere: there is no endpoint for a native card's files.
+    expect(jiraUploadAttachment).not.toHaveBeenCalled();
   });
 });
 
@@ -425,6 +450,69 @@ describe('jira.ticket.create on the mirrored board', () => {
     expect(line).toContain('Jira не знає виконавця «Хтось Невідомий»');
     expect(line).toContain('Maryna Koval');
     expect(line).toContain('Olya Petrenko');
+  });
+
+  // The «attach it somewhere» half of attachments: the model names the operator's own
+  // files, the browser resolves each name back to the payload it already holds and uploads
+  // it onto the issue it just created. Bytes never come from the model.
+  it('uploads the named operator files onto the created issue', async () => {
+    jiraState.integration = integration;
+    jiraState.tokenPresent = true;
+    jiraCreateIssue.mockResolvedValue({ key: 'KRM-218', summary: TICKET.title, issueId: '10502' });
+    // The api answers an upload with the refreshed issue, attachment list included.
+    jiraUploadAttachment.mockResolvedValue({ key: 'KRM-218', summary: TICKET.title, issueId: '10502', attachmentCount: 1 });
+    managementChat.mockResolvedValue(
+      reply([{ kind: 'jira.ticket.create', ticket: TICKET, attachments: ['звіт.pdf', 'чужий.pdf'] }]),
+    );
+
+    const store = useManagementChat();
+    await store.send('створи тікет у Jira і прикріпи звіт', 'management-home', [
+      { name: 'звіт.pdf', mimeType: 'application/pdf', data: 'QUJD' },
+    ]);
+
+    // The turn carried the file to the api (context for the model)…
+    const ask = managementChat.mock.calls[0]?.[0] as { attachments?: unknown };
+    expect(ask.attachments).toEqual([{ name: 'звіт.pdf', mimeType: 'application/pdf', data: 'QUJD' }]);
+    // …and its bubble echoes the name without the payload.
+    const user = store.entries.find((e) => e.kind === 'user');
+    expect(user && 'files' in user ? user.files : undefined).toEqual([{ name: 'звіт.pdf' }]);
+    // The named file lands on the issue; the invented name is refused per file, not per ticket.
+    expect(jiraUploadAttachment).toHaveBeenCalledTimes(1);
+    expect(jiraUploadAttachment).toHaveBeenCalledWith('w1', 'KRM-218', 'звіт.pdf', 'QUJD', 'application/pdf');
+    const lines = results(store.entries);
+    expect(lines[0]).toContain('Тікет KRM-218');
+    expect(lines[1]).toContain('Файл «звіт.pdf» прикріплено до KRM-218');
+    expect(lines[2]).toContain('«чужий.pdf» не долучали');
+    // The refreshed issue the upload returned is put on the board, so the card shows the file
+    // now rather than at the next 30-second poll — «прикріплено» beside an empty «Вкладення»
+    // tab is indistinguishable from the failure this path is about.
+    expect(jiraUpsert).toHaveBeenLastCalledWith({
+      key: 'KRM-218',
+      summary: TICKET.title,
+      issueId: '10502',
+      attachmentCount: 1,
+    });
+  });
+
+  // The api trims a file name before it prints it into the turn (attachmentRows) and the
+  // action validator trims every entry of `attachments`, so the trimmed name is the ONLY one
+  // the model can quote back. Keyed by the raw name, this file was «не долучали».
+  it('resolves a file whose name the api trimmed before the model ever saw it', async () => {
+    jiraState.integration = integration;
+    jiraState.tokenPresent = true;
+    jiraCreateIssue.mockResolvedValue({ key: 'KRM-219', summary: TICKET.title, issueId: '10504' });
+    jiraUploadAttachment.mockResolvedValue({ key: 'KRM-219' });
+    managementChat.mockResolvedValue(
+      reply([{ kind: 'jira.ticket.create', ticket: TICKET, attachments: ['screen.png'] }]),
+    );
+
+    const store = useManagementChat();
+    await store.send('створи тікет у Jira з цим скріншотом', 'management-home', [
+      { name: ' screen.png ', mimeType: 'image/png', data: 'QUJD' },
+    ]);
+
+    expect(jiraUploadAttachment).toHaveBeenCalledWith('w1', 'KRM-219', 'screen.png', 'QUJD', 'image/png');
+    expect(results(store.entries)[1]).toContain('Файл «screen.png» прикріплено до KRM-219');
   });
 });
 

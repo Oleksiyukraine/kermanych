@@ -146,6 +146,7 @@ export {
   type ManagementRepo,
   type ManagementWorkspaceProject,
   type ManagementContext,
+  type ManagementAttachment,
   type ManagementChatAsk,
   type ManagementChatReply,
   type ParsedManagementReply,

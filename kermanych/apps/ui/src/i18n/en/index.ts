@@ -932,6 +932,8 @@ export const en: MessageSchema = {
       sendShort: 'Send',
       thinking: 'Thinking…',
       thinkingSec: 'Thinking… {sec} s',
+      attach: 'Attach a file — image, PDF, Excel, Word or Pages',
+      removeFile: 'Remove file “{name}”',
     },
     plan: {
       note: 'This chat spends the same subscription as the agents',
@@ -954,6 +956,10 @@ export const en: MessageSchema = {
       ticketCreatedAssigned: 'Ticket “{title}” created on the workspace board · project {project}, assignee {assignee}. The card is already in the “Backlog” column.',
       ticketCreatedUnassigned: 'Ticket “{title}” created on the workspace board · project {project}, unassigned. The card is already in the “Backlog” column.',
       ticketNeedsAnswers: 'The ticket “{ticket}” was not created — answers needed: {questions} Answer here and the ticket will be created afterwards.',
+      jiraAttachUploaded: 'File “{name}” attached to {key}.',
+      jiraAttachFailed: 'Could not attach file “{name}” to {key}: {error}',
+      jiraAttachUnknown: 'File “{name}” was not attached in this conversation — nothing was attached to {key}.',
+      boardAttachUnsupported: 'The workspace board has no attachments — {names} stayed in the conversation and are not on the card. Only the Jira board supports attachments.',
     },
     refusal: {
       unknownSection: 'The assistant named a section “{section}” that does not exist in Management.',
@@ -1695,11 +1701,17 @@ export const en: MessageSchema = {
     workspace_has_projects: 'Move or delete this workspace’s projects first',
     workspace_delete_not_owner: 'The cloud refused: only the owner can delete a workspace',
     oauth_no_url: 'Supabase did not return an authorization URL',
+    attachments_too_many: 'too many files: {count} (max {max})',
+    attachment_too_large: 'file “{name}” is too large (max 20 MiB)',
     image: {
       unsupported: 'unsupported type: {mime} (need PNG/JPEG/GIF/WebP)',
       unknownMime: 'unknown',
       tooLarge: 'image too large: {size} MiB (max 20)',
       readFailed: 'could not read the file',
+    },
+    file: {
+      unsupported: '{name}: unsupported file type (PNG/JPEG/GIF/WebP, PDF, XLS/XLSX, DOCX, Pages)',
+      tooLarge: '{name}: file too large — {size} MiB (max 20)',
     },
   },
   notices: {
@@ -1827,6 +1839,8 @@ export const en: MessageSchema = {
       launchHintReady: 'Launch an agent on this ticket',
       notifyAdjustNeedsValue: 'Enter a duration for the chosen estimate change',
       notifyStartRequired: 'Enter the worklog start',
+      expand: 'Expand to 90% of the screen',
+      collapse: 'Back to compact width',
     },
     issueEditor: {
       summaryLabel: 'Title',

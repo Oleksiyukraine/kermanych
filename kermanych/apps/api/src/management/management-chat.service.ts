@@ -9,12 +9,17 @@
 // management surface that happens to be able to read the workspace's repositories, and
 // giving it a session would put a phantom card on the operator's board every time somebody
 // asked what the risk register says.
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Injectable, Logger, type OnModuleDestroy } from "@nestjs/common";
 import {
   INTERACTIVE_UI_METHODS,
   expandHelpers,
   helperNotice,
   parseManagementReply,
+  type ImageInput,
+  type ManagementAttachment,
   type ManagementChatAsk,
   type ManagementChatReply,
   type ManagementRepo,
@@ -25,7 +30,13 @@ import { RpcSession } from "../rpc/rpc-session";
 import { CodedError } from "./coded-error";
 import { RegistryService } from "../registry/registry.service";
 import { reduceRpcEvents, sumTurnUsage } from "../supervisor/transcript-reducer";
-import { buildManagementTurn, managementCwd, managementRepos, todayIso } from "./management-prompt";
+import {
+  buildManagementTurn,
+  managementCwd,
+  managementRepos,
+  todayIso,
+  type ManagementTurnFile,
+} from "./management-prompt";
 
 // Read-only, and not a setting: a management chat that can write to the repository is a
 // different — and far more dangerous — product than one that reads it to answer about
@@ -53,6 +64,13 @@ const TURN_TIMEOUT_MS = 240_000;
 // comes back to the tab keeps their context, and the tab nobody closed stops costing a
 // process.
 const IDLE_TTL_MS = 30 * 60_000;
+
+// How many of a conversation's file names one turn carries. The block is a reminder, not
+// an archive: ten files per message is the controller's own cap, and a chat that has
+// exchanged dozens is one where the oldest names are no longer what «прикріпи файл» means.
+// Only the LIST is trimmed — the documents stay on disk for the read tool, which reaches
+// them by the path it was already given.
+const LEDGER_MAX = 20;
 
 // The sink the live child's single event/exit callback feeds. `RpcSession.onEvent` only
 // ever pushes (rpc-session.ts:41) — there is no way to remove a callback — so exactly one
@@ -93,6 +111,14 @@ export class ManagementChatService implements OnModuleDestroy {
   // first `agent_end` resolves whichever turn is listening, and one operator's answer is
   // handed to the other's question.
   private tail = new Map<string, Promise<unknown>>();
+  // Every file the conversation has carried, by name, in arrival order. Outside `Live` for
+  // the same reason as `tail` — a child that dies mid-conversation is respawned and the
+  // operator's files did not go anywhere — and the reason it exists at all is the ordinary
+  // two-turn ticket: attach an image, ask for a Jira ticket, answer the assistant's
+  // `ticket.questions`, and the turn that finally files the ticket is a turn with no
+  // attachments of its own. Listing only that turn's files left the model with no name to
+  // put in `jira.ticket.create.attachments`, so the ticket was filed without the image.
+  private files = new Map<string, Map<string, ManagementTurnFile>>();
 
   constructor(private registry: RegistryService) {}
 
@@ -127,6 +153,16 @@ export class ManagementChatService implements OnModuleDestroy {
     const live = this.map.get(conversationId);
     this.map.delete(conversationId);
     this.tail.delete(conversationId);
+    // The ledger of names goes with the bytes: «новий чат» that still listed last
+    // conversation's files would let the assistant name a file the operator can no longer
+    // see, and the browser — whose own ledger reset with the transcript — would refuse it.
+    this.files.delete(conversationId);
+    // The conversation's document attachments die with it, live child or not: a file can
+    // outlive a crashed child, and «новий чат» must not leave last chat's documents
+    // behind. AWAITED, unlike drop()'s: reset is the one path a new ask on the same
+    // conversation can legally follow at once, and its first attachment must not race a
+    // removal still in flight.
+    await rm(this.attachDir(conversationId), { recursive: true, force: true }).catch(() => {});
     if (!live) return { ok: true };
     // An in-flight turn is told why it will never finish. Stopping the child first would
     // surface as `onExit` on a callback we are about to clear, i.e. as a hang.
@@ -155,6 +191,11 @@ export class ManagementChatService implements OnModuleDestroy {
     // the operator's text in the contract and the context markers, so by the time the child
     // reads it a leading `/el10` is no longer leading and would expand nowhere.
     const helped = expandHelpers(input.text);
+    // The operator's files, split by how the model reaches them: images ride the message
+    // through omp's own image slots, documents land on disk so the read tool can open
+    // them. Both are NAMED in the turn (see attachmentsBlock) — the names are also the
+    // vocabulary of `jira.ticket.create.attachments`.
+    const { images, files } = await this.storeAttachments(key, input.attachments ?? []);
     const message = buildManagementTurn({
       first,
       repos,
@@ -162,8 +203,9 @@ export class ManagementChatService implements OnModuleDestroy {
       today: todayIso(),
       text: helped.text,
       locale: input.locale,
+      ...(files.length ? { attachments: files } : {}),
     });
-    const { events, notices } = await this.drive(key, live, message);
+    const { events, notices } = await this.drive(key, live, message, images);
     // First, because it describes the message that produced everything after it.
     if (helped.used.length) notices.unshift(helperNotice(helped.used));
 
@@ -240,7 +282,12 @@ export class ManagementChatService implements OnModuleDestroy {
   }
 
   // Send one message and wait out the turn it starts.
-  private async drive(key: string, live: Live, message: string): Promise<{ events: RpcEvent[]; notices: Notice[] }> {
+  private async drive(
+    key: string,
+    live: Live,
+    message: string,
+    images: ImageInput[],
+  ): Promise<{ events: RpcEvent[]; notices: Notice[] }> {
     const events: RpcEvent[] = [];
     const notices: Notice[] = [];
     const { promise, resolve, reject } = Promise.withResolvers<void>();
@@ -280,8 +327,8 @@ export class ManagementChatService implements OnModuleDestroy {
     try {
       // First turn carries the contract and opens the conversation; every later one is a
       // follow_up into the same child, which is what keeps the contract worth sending once.
-      if (live.greeted) live.rpc.followUp(message);
-      else live.rpc.prompt(message);
+      if (live.greeted) live.rpc.followUp(message, images);
+      else live.rpc.prompt(message, images);
       live.greeted = true;
       const seconds = Math.round(TURN_TIMEOUT_MS / 1000);
       await limit(
@@ -315,11 +362,79 @@ export class ManagementChatService implements OnModuleDestroy {
   }
 
   private drop(key: string): void {
+    // Same best-effort cleanup as reset: the documents are as disposable as the child, and
+    // the names go with them — an evicted conversation starts its next turn as a new one.
+    void rm(this.attachDir(key), { recursive: true, force: true }).catch(() => {});
+    this.files.delete(key);
     const live = this.map.get(key);
     if (!live) return;
     this.map.delete(key);
     live.turn = undefined;
     void live.rpc.stop().catch(() => {});
+  }
+
+  // ── Attachments on disk ──────────────────────────────────────────────────────
+
+  // One directory per conversation under the OS temp dir. The key is sanitised into a
+  // flat name (`management:<uuid>` → `management-<uuid>`), so no client-supplied string
+  // ever becomes a path segment.
+  private attachDir(key: string): string {
+    return join(tmpdir(), "kermanych-management", key.replace(/[^A-Za-z0-9._-]/g, "-"));
+  }
+
+  // Persist the turn's documents, split out the images, and return every file the
+  // conversation has carried: THIS message's first, then the earlier ones marked as such.
+  // Documents accumulate on disk for the life of the conversation — the model may come back
+  // to turn one's document on turn nine — and a re-attached name overwrites both the bytes
+  // and its place in the ledger, which is what «here is the newer version» means.
+  private async storeAttachments(
+    key: string,
+    attachments: ManagementAttachment[],
+  ): Promise<{ images: ImageInput[]; files: ManagementTurnFile[] }> {
+    const images: ImageInput[] = [];
+    const fresh: ManagementTurnFile[] = [];
+    const dir = this.attachDir(key);
+    for (const a of attachments) {
+      if (a.mimeType.startsWith("image/")) {
+        images.push({ data: a.data, mimeType: a.mimeType });
+        fresh.push({ name: a.name });
+        continue;
+      }
+      // The name is display text from the browser; flattened to one safe segment so it can
+      // never climb out of the conversation's directory.
+      const safe = a.name.replace(/[/\\]/g, "-").replace(/^\.+/, "") || "file";
+      const path = join(dir, safe);
+      const bytes = Buffer.from(a.data, "base64");
+      // mkdir per file, and one retry through a fresh mkdir: drop() removes this directory
+      // fire-and-forget, so a removal from a just-dropped child may still be sweeping while
+      // this turn writes. Losing that race must cost a retry, not the operator's file.
+      await mkdir(dir, { recursive: true });
+      try {
+        await writeFile(path, bytes);
+      } catch {
+        await mkdir(dir, { recursive: true });
+        await writeFile(path, bytes);
+      }
+      fresh.push({ name: a.name, path });
+    }
+    const ledger = this.files.get(key) ?? new Map<string, ManagementTurnFile>();
+    for (const f of fresh) {
+      // Deleted before set so a re-attached name moves to the END of the ledger: the cap
+      // below drops the oldest, and the file the operator just sent is never the oldest.
+      ledger.delete(f.name);
+      ledger.set(f.name, f);
+    }
+    while (ledger.size > LEDGER_MAX) {
+      const oldest = ledger.keys().next();
+      if (oldest.done === true) break;
+      ledger.delete(oldest.value);
+    }
+    if (ledger.size > 0) this.files.set(key, ledger);
+    // `earlier` is set on a COPY: the ledger holds how the file arrived, and the flag is a
+    // statement about this turn only — the same entry is «this message» exactly once.
+    const earlier: ManagementTurnFile[] = [];
+    for (const f of ledger.values()) if (!fresh.some((n) => n.name === f.name)) earlier.push({ ...f, earlier: true });
+    return { images, files: [...fresh, ...earlier] };
   }
 
   // Idle eviction on use, not on a timer: a conversation nobody has touched for the TTL is

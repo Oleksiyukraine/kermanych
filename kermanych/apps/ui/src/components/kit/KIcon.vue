@@ -16,6 +16,10 @@
 // IS visible: there the mark is not the meaning but the anchor — six two-line rows of the
 // same weight are scanned by shape, and «Release Notes» vs «Risk Registry» at a glance is
 // exactly what the eye was failing at.
+//
+// `worktree` is a third case and the reason to reach here rather than for a glyph in future:
+// the label is right beside it, but Unicode's nearest mark (⑂) exists in no font this app
+// loads, so it came out as a half-weight smudge off the row's centre line.
 export type KIconName =
   | 'activity'
   | 'tasks'
@@ -27,7 +31,8 @@ export type KIconName =
   | 'risks'
   | 'releases'
   | 'capacity'
-  | 'integrations';
+  | 'integrations'
+  | 'worktree';
 </script>
 
 <script setup lang="ts">
@@ -93,6 +98,18 @@ const ICONS: Record<KIconName, readonly string[]> = {
     'M8.75 8.5V3',
     'M15.25 8.5V3',
     'M18.5 8.5v4.5a4.5 4.5 0 0 1-4.5 4.5h-4a4.5 4.5 0 0 1-4.5-4.5V8.5z',
+  ],
+
+  // Worktree — git's branch mark: a trunk, a node budding off it, and the arc between them.
+  // The composer's isolation chip had this as `⑂` (U+2442, OCR FORK), and no font in the UI
+  // stack carries it — it arrived from a fallback at roughly half the ink of the mono
+  // «worktree» beside it and sat off the row's centre line. This is the third KIcon case:
+  // the mark is not standing alone, it is standing next to type it has to match in weight.
+  worktree: [
+    'M6 3v12',
+    'M15 6a3 3 0 1 0 6 0a3 3 0 1 0-6 0',
+    'M3 18a3 3 0 1 0 6 0a3 3 0 1 0-6 0',
+    'M18 9a9 9 0 0 1-9 9',
   ],
 };
 

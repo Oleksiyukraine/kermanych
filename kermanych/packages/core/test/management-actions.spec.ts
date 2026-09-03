@@ -463,6 +463,43 @@ test("a jira.ticket.create names its type and priority by name and takes no proj
   });
 });
 
+// The names the browser resolves back to the operator's own files. Names only — the model
+// never carries bytes — and a wrong TYPE is refused the way every list field is.
+test("a jira.ticket.create may name the operator's attached files", () => {
+  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, attachments: ["report.pdf", " screen.png "] })).toEqual({
+    kind: "jira.ticket.create",
+    ticket: TICKET,
+    attachments: ["report.pdf", "screen.png"],
+  });
+  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, attachments: "report.pdf" })).toMatchObject({
+    error: { code: "field_not_string_list", params: { field: "attachments" } },
+  });
+  // An empty list is the same statement as no field at all.
+  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, attachments: [] })).toEqual({
+    kind: "jira.ticket.create",
+    ticket: TICKET,
+  });
+});
+
+// The same names survive on the NATIVE board, where nothing can be done with them: `tasks`
+// has no attachment storage. Parsed rather than dropped because dropping is silent — the
+// executor files the card and states that the files stayed in the chat, and it cannot state
+// that about a field the validator threw away.
+test("a ticket.create keeps the named files so the executor can say they cannot ride", () => {
+  expect(
+    validateManagementAction({ kind: "ticket.create", project: "Alpha", ticket: TICKET, attachments: ["screen.png"] }),
+  ).toEqual({
+    kind: "ticket.create",
+    project: "Alpha",
+    ticket: TICKET,
+    attachments: ["screen.png"],
+  });
+  // And the same type discipline as the Jira twin — one parse, both kinds.
+  expect(
+    validateManagementAction({ kind: "ticket.create", project: "Alpha", ticket: TICKET, attachments: "screen.png" }),
+  ).toMatchObject({ error: { code: "field_not_string_list", params: { field: "attachments" } } });
+});
+
 // Both boards hold the ticket to the same standard: there is no board on which a worse ticket
 // is acceptable.
 test("a Jira ticket is held to the same ticket rules as a board card", () => {
