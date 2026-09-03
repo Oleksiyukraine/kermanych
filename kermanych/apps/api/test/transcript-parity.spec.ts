@@ -1,7 +1,10 @@
 import { expect, test } from "vitest";
 import { reduceRpcEvents, type ToolEntry } from "../src/supervisor/transcript-reducer";
 import { messagesToTranscript } from "../src/supervisor/messages-to-transcript";
-import type { RpcEvent } from "@kermanych/core";
+import type { RpcEvent, TranscriptEntry } from "@kermanych/core";
+import type { SDKMessage, SessionMessage } from "@anthropic-ai/claude-agent-sdk";
+import { mapSdkMessage, initClaudeMapState } from "../src/runtime/claude-event-map";
+import { claudeHistoryToOmp } from "../src/runtime/claude-history";
 
 // `id` and `at` are allowed to differ — history has no toolCallId and no wall clock.
 const visible = (e: ToolEntry) => ({ kind: e.kind, tool: e.tool, status: e.status, target: e.target, stat: e.stat, count: e.count, detail: e.detail });
@@ -121,4 +124,62 @@ test("a bash failure agrees on the command header, status, stat and clamped deta
   expect(history.detail!.lines[0]).toEqual({ t: "head", text: "$ make test" });
   expect(composed.detail!.lines).toHaveLength(10);
   expect(composed.detail!.totalLines).toBe(32);
+});
+
+// The claude equivalents of the omp parity guard: one conversation built two ways — live via
+// mapSdkMessage over an SDK stream, rehydrated via claudeHistoryToOmp over the persisted
+// SessionMessage[] — must render the same visible transcript. Buffered text/thinking flush at
+// message_end while tool rows land at their start frame, so (as with the omp tests) the two
+// paths are compared on projected fields, not raw entry order.
+const sm = (type: SessionMessage["type"], message: unknown, i: number): SessionMessage =>
+  ({ type, message, uuid: `u${i}`, session_id: "sess-1", parent_tool_use_id: null, parent_agent_id: null });
+const thinkingText = (es: TranscriptEntry[]) => es.filter((e) => e.kind === "assistant_thinking").map((e) => ("text" in e ? e.text : "")).join("");
+const assistantText = (es: TranscriptEntry[]) => es.filter((e) => e.kind === "assistant_text").map((e) => ("text" in e ? e.text : "")).join("");
+const toolEntry = (es: TranscriptEntry[]): ToolEntry => {
+  const t = es.find((e) => e.kind === "tool");
+  if (!t || t.kind !== "tool") throw new Error("no tool entry");
+  return t;
+};
+
+test("claude live and rehydrated paths agree on thinking, assistant text and the tool row", () => {
+  // Live: the SDK stream for user prompt → thinking + text + grep tool_use → tool_result →
+  // closing text → result. mapSdkMessage carries state (tool names, open turn) across messages.
+  const st = initClaudeMapState();
+  const liveMsgs = [
+    { type: "system", subtype: "init", session_id: "sess-1", model: "m" },
+    { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "weighing options" } } },
+    { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "I'll grep." } } },
+    { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "c1", name: "grep", input: { pattern: "def", path: "hello.py" } }] } },
+    { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "c1", content: [{ type: "text", text: "" }], is_error: false }] } },
+    { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Found one." } } },
+    { type: "result", subtype: "success", duration_ms: 5, modelUsage: {} },
+  ] as unknown as SDKMessage[];
+  const liveEvents = liveMsgs.flatMap((m) => mapSdkMessage(m, st)) as RpcEvent[];
+  const live = reduceRpcEvents(liveEvents, { now: (n) => n }).entries;
+
+  // Rehydrated: the equivalent persisted transcript. The thinking/text/tool_use ride on one
+  // assistant message; the tool_result on the following user turn; the closing text on a second
+  // assistant message.
+  const rehydrated = messagesToTranscript(
+    claudeHistoryToOmp([
+      sm("user", { role: "user", content: [{ type: "text", text: "grep please" }] }, 1),
+      sm("assistant", { role: "assistant", content: [
+        { type: "thinking", thinking: "weighing options" },
+        { type: "text", text: "I'll grep." },
+        { type: "tool_use", id: "c1", name: "grep", input: { pattern: "def", path: "hello.py" } },
+      ] }, 2),
+      sm("user", { role: "user", content: [{ type: "tool_result", tool_use_id: "c1", content: [{ type: "text", text: "" }], is_error: false }] }, 3),
+      sm("assistant", { role: "assistant", content: [{ type: "text", text: "Found one." }] }, 4),
+    ]),
+  ).entries;
+
+  // Reasoning and the (buffer-joined) assistant text match across the two paths.
+  expect(thinkingText(rehydrated)).toBe(thinkingText(live));
+  expect(thinkingText(live)).toBe("weighing options");
+  expect(assistantText(rehydrated)).toBe(assistantText(live));
+  expect(assistantText(live)).toBe("I'll grep.Found one.");
+
+  // The tool row agrees on tool name, args-derived target and result status.
+  expect(visible(toolEntry(rehydrated))).toEqual(visible(toolEntry(live)));
+  expect(visible(toolEntry(live))).toMatchObject({ tool: "grep", status: "ok", target: "/def/ hello.py" });
 });
