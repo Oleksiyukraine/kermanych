@@ -48,4 +48,29 @@ describe("ClaudeCodeRuntime", () => {
     await vi.waitFor(() => expect(calls.interrupts).toBe(1));
     await vi.waitFor(() => expect(calls.sent.some((m) => JSON.stringify(m).includes("stop, do this instead"))).toBe(true));
   });
+
+  it("stop() closes the input queue cleanly: no spurious value, no warn, clean exit", async () => {
+    // A parked fake: yields init, then blocks reading the prompt stream between turns.
+    // This is the state stop() hits when the SDK consumer is idle between user turns.
+    const received: SDKUserMessage[] = [];
+    const queryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options?: unknown }) => {
+      const gen = (async function* () {
+        yield { type: "system", subtype: "init" } as unknown as SDKMessage;
+        for await (const m of params.prompt) received.push(m);
+      })() as AsyncGenerator<SDKMessage, void> & Record<string, unknown>;
+      gen.interrupt = async () => undefined;
+      return gen;
+    };
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x" }, queryFn as never);
+    const events: RpcEvent[] = [];
+    const exits: { code: number | null; reason: string }[] = [];
+    rt.onEvent((e) => events.push(e));
+    rt.onExit((code, reason) => exits.push({ code, reason }));
+    await rt.start();
+    await rt.stop();
+    await vi.waitFor(() => expect(exits.length).toBe(1));
+    expect(exits[0].code).toBe(0); // clean exit, not the error (null) path
+    expect(received).toEqual([]); // close() must NOT push a bogus undefined into the prompt stream
+    expect(events.some((e) => e.type === "notice" && e.level === "warn")).toBe(false);
+  });
 });

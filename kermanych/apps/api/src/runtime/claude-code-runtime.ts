@@ -24,7 +24,9 @@ class InputQueue {
     while (true) {
       if (this.pending.length) { yield this.pending.shift()!; continue; }
       if (this.closed) return;
-      yield await new Promise<SDKUserMessage>((resolve) => { this.waiter = (r) => resolve(r.value as SDKUserMessage); });
+      const r = await new Promise<IteratorResult<SDKUserMessage>>((resolve) => { this.waiter = resolve; });
+      if (r.done) return;
+      yield r.value;
     }
   }
 }
