@@ -1818,6 +1818,8 @@ export const en: MessageSchema = {
       launchHintReady: 'Launch an agent on this ticket',
       notifyAdjustNeedsValue: 'Enter a duration for the chosen estimate change',
       notifyStartRequired: 'Enter the worklog start',
+      expand: 'Expand to 90% of the screen',
+      collapse: 'Back to compact width',
     },
     issueEditor: {
       summaryLabel: 'Title',
