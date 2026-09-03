@@ -44,7 +44,7 @@ export function mapSdkMessage(msg: SDKMessage, st: ClaudeMapState): RpcEvent[] {
     const ev = (m as { event?: { type?: string; delta?: { type?: string; text?: string } } }).event;
     if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && typeof ev.delta.text === "string") {
       openTurn(st, out);
-      out.push({ type: "message_update", assistantMessageEvent: { type: "text", delta: ev.delta.text } });
+      out.push({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: ev.delta.text } });
     }
     return out;
   }
@@ -68,7 +68,13 @@ export function mapSdkMessage(msg: SDKMessage, st: ClaudeMapState): RpcEvent[] {
     for (const block of Array.isArray(content) ? content : []) {
       if (block.type === "tool_result") {
         const id = String(block.tool_use_id ?? "");
-        const text = typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
+        const raw = block.content;
+        const text =
+          typeof raw === "string"
+            ? raw
+            : Array.isArray(raw)
+              ? (raw as Array<{ type?: string; text?: string }>).filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n")
+              : "";
         out.push({
           type: "tool_execution_end",
           toolName: st.toolNames.get(id) ?? "",
@@ -85,6 +91,7 @@ export function mapSdkMessage(msg: SDKMessage, st: ClaudeMapState): RpcEvent[] {
     const r = m as { model?: string; duration_ms?: number; modelUsage?: Record<string, never> };
     const model = r.model ?? Object.keys(r.modelUsage ?? {})[0];
     out.push({ type: "message_end", message: {
+      role: "assistant",
       ...(model ? { model } : {}),
       ...(typeof r.duration_ms === "number" ? { duration: r.duration_ms } : {}),
       usage: sumUsage(r.modelUsage ?? {}),

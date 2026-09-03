@@ -20,8 +20,8 @@ describe("claude event map", () => {
     const out = run([textDelta("Hel"), textDelta("lo")]);
     expect(out[0]).toEqual({ type: "message_start" });
     expect(out.slice(1)).toEqual([
-      { type: "message_update", assistantMessageEvent: { type: "text", delta: "Hel" } },
-      { type: "message_update", assistantMessageEvent: { type: "text", delta: "lo" } },
+      { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Hel" } },
+      { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "lo" } },
     ]);
   });
 
@@ -37,13 +37,24 @@ describe("claude event map", () => {
     expect(out).toContainEqual({ type: "tool_execution_end", toolName: "read", toolCallId: "tu_1", isError: false, result: { content: [{ type: "text", text: "ok" }] } });
   });
 
+  it("joins array tool_result content into result text", () => {
+    const assistant = { type: "assistant", message: { role: "assistant", content: [
+      { type: "tool_use", id: "tu_2", name: "read", input: { path: "b.ts" } },
+    ] } } as unknown as SDKMessage;
+    const user = { type: "user", message: { role: "user", content: [
+      { type: "tool_result", tool_use_id: "tu_2", content: [{ type: "text", text: "ok" }], is_error: false },
+    ] } } as unknown as SDKMessage;
+    const out = run([assistant, user]);
+    expect(out).toContainEqual({ type: "tool_execution_end", toolName: "read", toolCallId: "tu_2", isError: false, result: { content: [{ type: "text", text: "ok" }] } });
+  });
+
   it("closes a turn on result with usage then agent_end", () => {
     const result = { type: "result", subtype: "success", duration_ms: 1200, modelUsage: {
       "claude-opus-4-8": { inputTokens: 10, outputTokens: 20, cacheReadInputTokens: 3, cacheCreationInputTokens: 1, costUSD: 0.5 },
     } } as unknown as SDKMessage;
     const out = run([result]);
     expect(out[0]).toEqual({ type: "message_end", message: {
-      model: "claude-opus-4-8", duration: 1200,
+      role: "assistant", model: "claude-opus-4-8", duration: 1200,
       usage: { input: 10, output: 20, cacheRead: 3, cacheWrite: 1, cost: { total: 0.5 } },
     } });
     expect(out[1]).toEqual({ type: "agent_end", isTerminal: true });

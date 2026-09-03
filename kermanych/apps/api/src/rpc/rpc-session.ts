@@ -2,7 +2,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { LineSplitter, ChunkReassembler } from "@kermanych/core";
-import type { RpcEvent, RpcExtensionUIResponse, TodoPhase, ImageInput, ThinkingLevel } from "@kermanych/core";
+import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel } from "@kermanych/core";
 import type { AgentRuntime, RpcStateData } from "../runtime/agent-runtime";
 
 interface RpcResponseFrame {

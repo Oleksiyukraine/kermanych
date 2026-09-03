@@ -43,7 +43,7 @@ describe("ClaudeCodeRuntime", () => {
     rt.prompt("do it");
     await vi.waitFor(() => expect(events.some((e) => e.type === "agent_end")).toBe(true));
     expect(events[0]).toEqual({ type: "ready", protocolVersion: 2 });
-    expect(events).toContainEqual({ type: "message_update", assistantMessageEvent: { type: "text", delta: "hi" } });
+    expect(events).toContainEqual({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hi" } });
   });
 
   it("steer interrupts then enqueues", async () => {
