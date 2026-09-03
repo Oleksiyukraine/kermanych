@@ -40,6 +40,8 @@ export type ApiErrorCode =
   | "branch_missing" // management.controller.ts:126 — branch absent (params: none)
   | "period_format_invalid" // management.controller.ts:130 — range is not a YYYY-MM-DD pair (params: none)
   | "period_start_after_end" // management.controller.ts:132 — range start is after its end (params: none)
+  | "attachments_too_many" // management.controller.ts — more attachments than one turn accepts (params: { count, max })
+  | "attachment_too_large" // management.controller.ts — one attachment over the 20 MiB cap (params: { name })
   // management-chat.service.ts — a management turn that fails is thrown to the controller:
   | "omp_launch_timeout" // management-chat.service.ts:218 & release-notes.service.ts:116 — omp did not start in time (params: { seconds })
   | "omp_exited_during_reply" // management-chat.service.ts:266 — the omp child died mid-turn (params: { reason })
@@ -76,6 +78,8 @@ export const API_ERROR_CODES = [
   "branch_missing",
   "period_format_invalid",
   "period_start_after_end",
+  "attachments_too_many",
+  "attachment_too_large",
   "omp_launch_timeout",
   "omp_exited_during_reply",
   "assistant_no_reply_timeout",
