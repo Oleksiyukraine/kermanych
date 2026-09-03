@@ -301,8 +301,11 @@ describe("resolveRuntime", () => {
      }
      ```
      Import `resolveRuntime` from `../runtime/resolve-runtime`.
-  3. Stamp at creation: in `createChat` (the `registry.createSession({ … })` call ~line 437) and in `createSessionFromTask` (the `registry.createSession({ … })` call ~line 370), add `runtime: this.runtimeFor()` to the argument object.
-  4. Launch/resume already call `createRuntime(this.runtimeFor(session), …)` (Inc 1). Change those two sites to prefer the stamped value: `createRuntime(session.runtime ?? this.runtimeFor(session), …)`, so a resumed session always respawns the backend it was created with even if the user later changes their preference. (Find both `createRuntime(this.runtimeFor(` call sites and update them.)
+  3. Stamp `runtime` to match the backend that ACTUALLY spawns the session (never the raw preference), so `doResume` always respawns the same backend after a preference change:
+     - `createSessionFromTask` (the `registry.createSession({ … })` call ~line 370) → `runtime: this.runtimeFor()`. This is the agent path, routed through the factory by `launch`, so it honors the preference.
+     - `createChat` (~line 437), `branchSession`, and `reviewSession` → `runtime: "omp"` LITERALLY. These sites still spawn omp directly via `new RpcSession(...)` (Increment 1 did not route them; chat/discussion/review move to the factory in Increment 3). Stamping the preference here would both lie and BREAK resume: with a claude preference, `doResume` (routed) would try to `switch_session` an omp session file through the claude adapter. Stamp the truth (`"omp"`) so resume stays correct.
+  4. Launch/resume call `createRuntime(this.runtimeFor(session), …)` today (Inc 1). Change BOTH sites to `createRuntime(session.runtime ?? "omp", …)` — use the STAMPED value, and fall back to `"omp"` (NOT `runtimeFor()`) when it is absent. An absent stamp means a legacy pre-Increment-2 row, which is necessarily omp (omp was the only backend); re-resolving via the current preference would make a claude preference try to resume an omp session file through the claude adapter — the exact break stamping prevents. At `launch` the stamp is always set (createSession just stamped it), so the fallback only ever applies to old rows at resume.
+  5. Test coverage: the T5 spec MUST assert that (a) with a cached `claude-code` preference, a `createSessionFromTask` row stamps `runtime: "claude-code"` while a `createChat` row stamps `runtime: "omp"`; and (b) resume of an `omp`-stamped row uses omp even when the cached preference is now `claude-code`.
 
 - [ ] **Step 4: Run + typecheck.** Focused tests + `pnpm --filter @kermanych/api typecheck` EXIT 0.
 
