@@ -8,6 +8,7 @@ import { RegistryService } from "../registry/registry.service";
 import { WorktreeService, type ChangedFile } from "../worktree/worktree.service";
 import type { SplitDiff } from "../worktree/split-diff";
 import { RpcSession } from "../rpc/rpc-session";
+import { createRuntime, type AgentRuntime } from "../runtime/agent-runtime";
 import { messagesToTranscript } from "./messages-to-transcript";
 import { reduceRpcEvents, toolRowMatches, type SkillLabel, type SkillSource } from "./transcript-reducer";
 import { ToolDetailCache } from "./tool-detail-cache";
@@ -20,6 +21,7 @@ import {
   expandHelpers,
   helperNotice,
   INITIAL_STATUS,
+  isAgentRuntime,
   reduceStatus,
   ACTIVE_STATUSES,
   slugify,
@@ -42,13 +44,14 @@ import {
   type ThinkingLevel,
   type ToolLine,
   type TranscriptEntry,
+  type AgentRuntimeKind,
 } from "@kermanych/core";
 import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type ProjectTrigger } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
 
 type Live = {
-  rpc: RpcSession;
+  rpc: AgentRuntime;
   state: StatusState;
   transcript: TranscriptEntry[];
   live: Partial<Session>;
@@ -517,6 +520,14 @@ export class SupervisorService implements OnModuleDestroy {
     return { branch, baseBranch };
   }
 
+  // Increment-1 dev switch: choose the backend from KERMANYCH_RUNTIME (default omp). Per-user
+  // preference + Session.runtime persistence arrive in Increment 2; until then the env var is
+  // the single selector and is read consistently at launch and at resume.
+  private runtimeFor(_session?: Session): AgentRuntimeKind {
+    const v = process.env.KERMANYCH_RUNTIME;
+    return isAgentRuntime(v) ? v : "omp";
+  }
+
   // Create the git isolation (worktree or in-place branch), spawn the omp child, and kick off
   // the first turn. `fork` seeds the child from a prior omp conversation (chat → agent) and
   // rehydrates its history; `firstPrompt` overrides the opening message sent (defaults to the
@@ -554,7 +565,7 @@ export class SupervisorService implements OnModuleDestroy {
     const cwd = worktree ? wtDir : project.localRepoPath;
     const configPath = await this.ompSkills(project.id, cwd, id);
     const extensionPath = await this.ompTriggers(project.id, cwd, id);
-    const rpc = new RpcSession({ cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    const rpc = createRuntime(this.runtimeFor(session), { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await rpc.start();
@@ -1509,7 +1520,7 @@ export class SupervisorService implements OnModuleDestroy {
 
   // Shared live-session wiring (fresh create + resume): build the Live, register it,
   // and route exit + events. onExit marks error unless the session ended cleanly.
-  private wireLive(sessionId: string, rpc: RpcSession, status: Session["status"]): Live {
+  private wireLive(sessionId: string, rpc: AgentRuntime, status: Session["status"]): Live {
     const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status }, textBuf: "", thinkBuf: "", toolStarted: new Map(), toolArgs: new Map() };
     this.map.set(sessionId, live);
     rpc.onExit((_code, reason) => {
@@ -1547,7 +1558,7 @@ export class SupervisorService implements OnModuleDestroy {
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
     const configPath = await this.ompSkills(s.projectId, dir, id);
     const extensionPath = await this.ompTriggers(s.projectId, dir, id);
-    const rpc = new RpcSession({ cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    const rpc = createRuntime(this.runtimeFor(s), { cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await rpc.start();
