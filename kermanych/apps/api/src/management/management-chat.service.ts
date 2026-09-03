@@ -25,8 +25,10 @@ import {
   type ManagementRepo,
   type Notice,
   type RpcEvent,
+  type AgentRuntimeKind,
 } from "@kermanych/core";
-import { RpcSession } from "../rpc/rpc-session";
+import { createRuntime, type AgentRuntime } from "../runtime/agent-runtime";
+import { resolveRuntime } from "../runtime/resolve-runtime";
 import { CodedError } from "./coded-error";
 import { RegistryService } from "../registry/registry.service";
 import { reduceRpcEvents, sumTurnUsage } from "../supervisor/transcript-reducer";
@@ -79,7 +81,7 @@ const LEDGER_MAX = 20;
 // turn two's frames.
 type Turn = { on: (e: RpcEvent) => void; fail: (reason: string) => void };
 
-type Live = { rpc: RpcSession; greeted: boolean; lastAt: number; turn?: Turn };
+type Live = { rpc: AgentRuntime; greeted: boolean; lastAt: number; turn?: Turn };
 
 // RpcSession bounds its command round trips (`commandTimeoutMs`) but neither `start()` nor
 // a turn, and neither does omp bound a provider request that never answers. Without this
@@ -121,6 +123,12 @@ export class ManagementChatService implements OnModuleDestroy {
   private files = new Map<string, Map<string, ManagementTurnFile>>();
 
   constructor(private registry: RegistryService) {}
+
+  // Per-user preference (Inc 2/3): env override → cached cloud preference → omp. These
+  // ephemeral chats have no sessions row to stamp, so the runtime is resolved fresh per child.
+  private runtimeFor(): AgentRuntimeKind {
+    return resolveRuntime(process.env.KERMANYCH_RUNTIME, this.registry.getAuthSession()?.agentRuntime);
+  }
 
   async ask(input: ManagementChatAsk): Promise<ManagementChatReply> {
     const startedAt = Date.now();
@@ -253,7 +261,7 @@ export class ManagementChatService implements OnModuleDestroy {
       await cur.rpc.stop().catch(() => {});
     }
     const cwd = managementCwd(repos);
-    const rpc = new RpcSession({ cwd, tools: [...MANAGEMENT_TOOLS] });
+    const rpc = createRuntime(this.runtimeFor(), { cwd, tools: [...MANAGEMENT_TOOLS] });
     const live: Live = { rpc, greeted: false, lastAt: Date.now() };
     rpc.onEvent((e) => live.turn?.on(e));
     rpc.onExit((_code, reason) => live.turn?.fail(reason));

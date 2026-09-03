@@ -14,8 +14,9 @@
 // same division of labour the risk register uses — the api has no cloud credentials and
 // must not grow any.
 import { Injectable, Logger } from "@nestjs/common";
-import type { ReleaseNotesAsk, ReleaseNotesReply, RpcEvent } from "@kermanych/core";
-import { RpcSession } from "../rpc/rpc-session";
+import type { ReleaseNotesAsk, ReleaseNotesReply, RpcEvent, AgentRuntimeKind } from "@kermanych/core";
+import { createRuntime } from "../runtime/agent-runtime";
+import { resolveRuntime } from "../runtime/resolve-runtime";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { reduceRpcEvents, sumTurnUsage, type TurnSpend } from "../supervisor/transcript-reducer";
@@ -45,6 +46,12 @@ export class ReleaseNotesService {
     private registry: RegistryService,
     private worktree: WorktreeService,
   ) {}
+
+  // Per-user preference (Inc 2/3): env override → cached cloud preference → omp. A generation
+  // has no sessions row to stamp, so the runtime is resolved fresh for its one-shot child.
+  private runtimeFor(): AgentRuntimeKind {
+    return resolveRuntime(process.env.KERMANYCH_RUNTIME, this.registry.getAuthSession()?.agentRuntime);
+  }
 
   async generate(ask: ReleaseNotesAsk): Promise<ReleaseNotesReply> {
     const startedAt = Date.now();
@@ -105,7 +112,7 @@ export class ReleaseNotesService {
   // read-only tools ask no questions the prompt has not already forbidden — but a child
   // that tries anyway is simply dropped by the timeout, never left hanging a request.
   private async oneShot(cwd: string, prompt: string, startedAt: number): Promise<{ text: string; spend: TurnSpend }> {
-    const rpc = new RpcSession({ cwd, tools: [...MANAGEMENT_TOOLS] });
+    const rpc = createRuntime(this.runtimeFor(), { cwd, tools: [...MANAGEMENT_TOOLS] });
     const events: RpcEvent[] = [];
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     rpc.onEvent((e) => {
