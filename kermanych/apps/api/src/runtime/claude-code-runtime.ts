@@ -1,5 +1,5 @@
 // apps/api/src/runtime/claude-code-runtime.ts
-import { query as sdkQuery, type SDKMessage, type SDKUserMessage, type Query, type Options } from "@anthropic-ai/claude-agent-sdk";
+import { query as sdkQuery, type SDKMessage, type SDKUserMessage, type Query, type Options, type ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel } from "@kermanych/core";
 import type { AgentRuntime, RpcStateData, RuntimeLaunchOpts } from "./agent-runtime";
 import { initClaudeMapState, mapSdkMessage, type ClaudeMapState } from "./claude-event-map";
@@ -69,7 +69,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       ...(this.opts.model ? { model: this.opts.model } : {}),
       ...(effort ? { effort } : {}),
       ...(this.opts.tools ? { allowedTools: this.opts.tools } : {}),
-      ...(this.opts.noTools ? { tools: [] } : {}),
+      // noTools wins over a stray `tools` allowlist: an empty allowlist = no tools. Placed
+      // last so it overwrites `allowedTools` above. `tools: []` (the prior code) is not a
+      // canonical SDK Option and was a silent no-op.
+      ...(this.opts.noTools ? { allowedTools: [] } : {}),
       ...(this.opts.fork ? { resume: this.opts.fork, forkSession: true } : {}),
     };
     const q = this.queryFn({ prompt: this.input, options });
@@ -134,5 +137,20 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
   async stop(): Promise<void> {
     try { await this.q?.interrupt().catch(() => {}); } finally { this.input.close(); this.alive = false; }
+  }
+
+  // The claude model catalog for GET /models. There is no top-level SDK export for this
+  // (only the per-Query control method), so we spin a throwaway streaming query, ask it over
+  // the control channel — this does NOT consume a prompt turn, so it answers without any
+  // input — then tear it down. `queryFn` is injectable so the test can fake the SDK.
+  static async supportedModels(queryFn: QueryFn = sdkQuery): Promise<ModelInfo[]> {
+    const input = new InputQueue();
+    const q = queryFn({ prompt: input, options: { includePartialMessages: false } });
+    try {
+      return await q.supportedModels();
+    } finally {
+      input.close();
+      await q.interrupt?.().catch(() => {});
+    }
   }
 }

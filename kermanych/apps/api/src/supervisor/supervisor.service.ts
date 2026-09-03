@@ -7,7 +7,6 @@ import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService, type ChangedFile } from "../worktree/worktree.service";
 import type { SplitDiff } from "../worktree/split-diff";
-import { RpcSession } from "../rpc/rpc-session";
 import { createRuntime, type AgentRuntime } from "../runtime/agent-runtime";
 import { resolveRuntime } from "../runtime/resolve-runtime";
 import { messagesToTranscript } from "./messages-to-transcript";
@@ -436,11 +435,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const n = this.registry.listSessions(projectId).filter((s) => s.kind === "chat").length + 1;
     const session = this.registry.createSession({
       projectId, name: `чат ${n}`, task: "", worktreePath: "", branch: "",
-      worktree: false, kind: "chat", status: "queued", runtime: "omp",
+      worktree: false, kind: "chat", status: "queued", runtime: this.runtimeFor(),
     });
     const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
     const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
-    const rpc = new RpcSession({ cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    const rpc = createRuntime(session.runtime ?? "omp", { cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await rpc.start();
@@ -650,12 +649,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const g = this.boundProject(s.projectId);
     if (s.kind !== "agent") throw new Error("can only branch an agent session");
 
-    let parentFile = s.ompSessionFile;
-    if (!parentFile) {
+    // A fork can only continue on the parent's backend (R1/R2): omp resumes from the parent's
+    // session FILE, claude resumes from the parent's session UUID (stored in ompSessionId).
+    const parentRuntime = s.runtime ?? "omp";
+    let forkHandle = parentRuntime === "claude-code" ? s.ompSessionId : s.ompSessionFile;
+    if (!forkHandle) {
       await this.refreshState(parentId);
-      parentFile = this.registry.listSessions().find((x) => x.id === parentId)?.ompSessionFile;
+      const fresh = this.registry.listSessions().find((x) => x.id === parentId);
+      forkHandle = parentRuntime === "claude-code" ? fresh?.ompSessionId : fresh?.ompSessionFile;
     }
-    if (!parentFile) throw new Error("agent has no omp session yet — send a first message before branching");
+    if (!forkHandle) throw new Error("agent has no omp session yet — send a first message before branching");
 
     const live = this.map.get(parentId);
     if (live && (live.state.status === "thinking" || live.state.status === "tool"))
@@ -671,15 +674,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       worktree: false,
       kind: "discussion",
       parentSessionId: parentId,
-      runtime: "omp",
+      runtime: parentRuntime,
     });
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = new RpcSession({ cwd, fork: parentFile, noTools: true, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, noTools: true, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
+      // claude's getAllMessages() returns [] today (Inc 1 stub): the SDK fork carries the parent
+      // context server-side, but the parent transcript is not re-rendered in the UI until Inc 4.
       this.rehydrate(childLive, child.id, await rpc.getAllMessages());
       this.events.next({ type: "transcript_reset", sessionId: child.id, entries: childLive.transcript });
       await this.refreshState(child.id);
@@ -727,7 +732,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       worktree: false,
       kind: "review",
       parentSessionId: parentId,
-      runtime: "omp",
+      runtime: this.runtimeFor(),
     });
 
     const block = await this.assignedBlockFor(s.projectId, "review", cwd);
@@ -736,7 +741,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = new RpcSession({ cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    const rpc = createRuntime(child.runtime ?? "omp", { cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();

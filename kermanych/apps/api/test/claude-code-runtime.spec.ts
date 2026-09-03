@@ -81,3 +81,70 @@ describe("ClaudeCodeRuntime", () => {
     expect(events.some((e) => e.type === "notice" && e.level === "warn")).toBe(false);
   });
 });
+
+// Captures the Options handed to query() so tool-restriction wiring can be asserted directly.
+function captureQuery() {
+  const captured = { options: undefined as Record<string, unknown> | undefined };
+  const queryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options?: unknown }) => {
+    captured.options = params.options as Record<string, unknown>;
+    const gen = (async function* () {
+      for await (const _ of params.prompt) { /* drain */ }
+    })() as AsyncGenerator<SDKMessage, void> & Record<string, unknown>;
+    gen.interrupt = async () => undefined;
+    return gen;
+  };
+  return { queryFn, captured };
+}
+
+describe("ClaudeCodeRuntime tool options", () => {
+  it("noTools maps to an empty allowedTools allowlist and sets no `tools` key", async () => {
+    const { queryFn, captured } = captureQuery();
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", noTools: true }, queryFn as never);
+    await rt.start();
+    expect(captured.options?.allowedTools).toEqual([]);
+    expect("tools" in (captured.options ?? {})).toBe(false);
+  });
+
+  it("tools passes straight through as allowedTools", async () => {
+    const { queryFn, captured } = captureQuery();
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", tools: ["read", "grep", "glob"] }, queryFn as never);
+    await rt.start();
+    expect(captured.options?.allowedTools).toEqual(["read", "grep", "glob"]);
+  });
+
+  it("noTools wins over a stray tools allowlist", async () => {
+    const { queryFn, captured } = captureQuery();
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", tools: ["read"], noTools: true }, queryFn as never);
+    await rt.start();
+    expect(captured.options?.allowedTools).toEqual([]);
+  });
+
+  it("neither tools nor noTools leaves allowedTools unset", async () => {
+    const { queryFn, captured } = captureQuery();
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x" }, queryFn as never);
+    await rt.start();
+    expect("allowedTools" in (captured.options ?? {})).toBe(false);
+    expect("tools" in (captured.options ?? {})).toBe(false);
+  });
+});
+
+describe("ClaudeCodeRuntime.supportedModels", () => {
+  it("runs a throwaway query, returns its catalog, and tears it down", async () => {
+    const script = [
+      { value: "claude-opus-4-8", displayName: "Opus 4.8", description: "", supportedEffortLevels: ["high", "max"] },
+      { value: "claude-sonnet-5", displayName: "Sonnet 5", description: "" },
+    ];
+    let interrupts = 0;
+    const queryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options?: unknown }) => {
+      const gen = (async function* () {
+        for await (const _ of params.prompt) { /* drain */ }
+      })() as AsyncGenerator<SDKMessage, void> & Record<string, unknown>;
+      gen.supportedModels = async () => script;
+      gen.interrupt = async () => { interrupts++; return undefined; };
+      return gen;
+    };
+    const models = await ClaudeCodeRuntime.supportedModels(queryFn as never);
+    expect(models).toEqual(script);
+    expect(interrupts).toBe(1);
+  });
+});
