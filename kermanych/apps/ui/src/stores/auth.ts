@@ -2,7 +2,8 @@
 import { defineStore } from 'pinia';
 import { markRaw, ref } from 'vue';
 import type { Session as SupabaseSession, SupabaseClient } from '@supabase/supabase-js';
-import { cloudEnv, createCloudClient, type Profile } from '@kermanych/cloud';
+import { cloudEnv, createCloudClient, type Profile, getMyAgentRuntime, setMyAgentRuntime } from '@kermanych/cloud';
+import type { AgentRuntimeKind } from '@kermanych/core';
 import { api, setAuthToken, setUnauthorizedHandler } from '../lib/api';
 import { IS_PREVIEW, PREVIEW_USER_ID } from '../lib/preview';
 import { useOrchestrator } from './orchestrator';
@@ -30,6 +31,7 @@ export const useAuth = defineStore('auth', () => {
   const user = ref<{ id: string } | null>(null);
   const profile = ref<Profile | null>(null);
   const accessToken = ref<string | null>(null);
+  const runtime = ref<AgentRuntimeKind | null>(null);
 
   let resolveReady: () => void = () => undefined;
   // Resolves once the initial session (if any) has been read and handed to the
@@ -75,6 +77,12 @@ export const useAuth = defineStore('auth', () => {
       } catch {
         // The local api may still be booting (Electron starts it in-process).
         // `handedOff` stays behind, so the next auth event retries.
+      }
+      // Best-effort runtime load: never block the UI for a stale cloud read.
+      try {
+        runtime.value = await getMyAgentRuntime(client);
+      } catch {
+        runtime.value = null;
       }
       return;
     }
@@ -183,5 +191,11 @@ export const useAuth = defineStore('auth', () => {
     await apply(null);
   }
 
-  return { client, user, profile, accessToken, ready, init, signInWithGithub, signOut };
+  async function chooseRuntime(kind: AgentRuntimeKind): Promise<void> {
+    await setMyAgentRuntime(client, kind);   // cloud = source of truth
+    await api.setAccountRuntime(kind);        // refresh local API cache
+    runtime.value = kind;
+  }
+
+  return { client, user, profile, accessToken, runtime, ready, init, signInWithGithub, signOut, chooseRuntime };
 });
