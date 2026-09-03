@@ -128,3 +128,23 @@ describe("ClaudeCodeRuntime tool options", () => {
   });
 });
 
+describe("ClaudeCodeRuntime.supportedModels", () => {
+  it("runs a throwaway query, returns its catalog, and tears it down", async () => {
+    const script = [
+      { value: "claude-opus-4-8", displayName: "Opus 4.8", description: "", supportedEffortLevels: ["high", "max"] },
+      { value: "claude-sonnet-5", displayName: "Sonnet 5", description: "" },
+    ];
+    let interrupts = 0;
+    const queryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options?: unknown }) => {
+      const gen = (async function* () {
+        for await (const _ of params.prompt) { /* drain */ }
+      })() as AsyncGenerator<SDKMessage, void> & Record<string, unknown>;
+      gen.supportedModels = async () => script;
+      gen.interrupt = async () => { interrupts++; return undefined; };
+      return gen;
+    };
+    const models = await ClaudeCodeRuntime.supportedModels(queryFn as never);
+    expect(models).toEqual(script);
+    expect(interrupts).toBe(1);
+  });
+});
