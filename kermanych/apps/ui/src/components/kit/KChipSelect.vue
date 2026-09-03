@@ -12,7 +12,7 @@
     >
       <span v-if="icon" class="k-chip-select__icon" aria-hidden="true">{{ icon }}</span>
       <span class="k-chip-select__label">{{ currentLabel }}</span>
-      <span class="k-chip-select__caret" aria-hidden="true">⌄</span>
+      <span class="k-chip-select__caret" aria-hidden="true"></span>
     </button>
 
     <!-- Menu opens UPWARD: this chip's home is the composer's control row, which sits at the
@@ -38,7 +38,7 @@
 <script setup lang="ts" generic="T extends string">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 
-// A flat chip that opens a small menu: `⚡ Високий ⌄`. The composer's control row needs a
+// A flat chip that opens a small menu: `⚡ Високий ▾`. The composer's control row needs a
 // picker that reads as a label rather than a form field, which is why this is not KSelect —
 // that one is a labelled, full-width native <select> built for modal forms.
 //
@@ -137,10 +137,27 @@ onBeforeUnmount(() => {
   line-height: 1;
 }
 
+// Drawn, not typed, and at the weight of the marker KWorkspaceRow and KSelect already use:
+// as a 10px `⌄` at half opacity this was a hairline that read as punctuation, and
+// `--k-font-ui` carries no geometric-shapes glyph, so the fallback face also hung it below
+// the label's centre line. A clipped box has no baseline to drift — its ink IS its box.
+//
+// 10x6 is KSelect's 9x5 marker one step up, because this chip has no frame to say it is a
+// control: the triangle is the only thing separating «Високий» from the flat worktree
+// reading beside it, so it has to carry that on its own.
 .k-chip-select__caret {
-  font-size: 10px;
-  line-height: 1;
-  opacity: 0.5;
+  flex: none;
+  width: 10px;
+  height: 6px;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+  opacity: 0.75;
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+
+.k-chip-select__trigger--open .k-chip-select__caret {
+  transform: rotate(180deg);
+  opacity: 1;
 }
 
 // floating surface — one of the few places this flat system uses a shadow.
