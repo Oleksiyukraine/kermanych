@@ -1833,6 +1833,8 @@ export const uk = {
       launchHintReady: 'Запустити агента на цьому тікеті',
       notifyAdjustNeedsValue: 'Вкажіть тривалість для вибраної зміни залишку',
       notifyStartRequired: 'Вкажіть початок ворклогу',
+      expand: 'Розгорнути на 90% екрана',
+      collapse: 'Повернути компактну ширину',
     },
     issueEditor: {
       summaryLabel: 'Назва',
