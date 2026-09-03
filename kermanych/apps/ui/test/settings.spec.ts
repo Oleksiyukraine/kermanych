@@ -19,7 +19,7 @@ import {
 
 describe('settingsSection', () => {
   it('resolves a known key', () => {
-    expect(settingsSection('workspace-members').label).toBe('Учасники');
+    expect(settingsSection('workspace-members').key).toBe('workspace-members');
   });
 
   // A stale bookmark, a hand-typed URL and a bare /settings are the same case:
@@ -62,7 +62,6 @@ describe('SETTINGS_CATEGORIES', () => {
     const skills = settingsSection('project-skills');
     expect(skills.key).toBe('project-skills');
     expect(skills.scope).toBe('project');
-    expect(skills.label).toBe('Бібліотека скілів');
   });
 
   // The agent catalogue is an APP setting, not a project one: `AGENTS` is a compile-time
@@ -71,7 +70,6 @@ describe('SETTINGS_CATEGORIES', () => {
     const agents = settingsSection('app-agents');
     expect(agents.key).toBe('app-agents');
     expect(agents.scope).toBe('app');
-    expect(agents.label).toBe('ШІ команда');
   });
 
   // The board is the mirror image of the catalogue above: the team is app-wide, but WHICH
@@ -81,7 +79,6 @@ describe('SETTINGS_CATEGORIES', () => {
     const board = settingsSection('project-agents');
     expect(board.key).toBe('project-agents');
     expect(board.scope).toBe('project');
-    expect(board.label).toBe('Призначення');
   });
 
   // Triggers are the third project-scoped pane of «ШІ команда» and the last row of the rail's
@@ -91,7 +88,6 @@ describe('SETTINGS_CATEGORIES', () => {
     const triggers = settingsSection('project-triggers');
     expect(triggers.key).toBe('project-triggers');
     expect(triggers.scope).toBe('project');
-    expect(triggers.label).toBe('Тригери');
   });
 
   // Хелпери are baked into the app exactly like `AGENTS`, so they sit beside the agent
@@ -100,7 +96,6 @@ describe('SETTINGS_CATEGORIES', () => {
     const helpers = settingsSection('app-helpers');
     expect(helpers.key).toBe('app-helpers');
     expect(helpers.scope).toBe('app');
-    expect(helpers.label).toBe('Хелпери');
   });
 
   // The default launch model is per-project cloud config, written through the same projects
@@ -109,7 +104,6 @@ describe('SETTINGS_CATEGORIES', () => {
     const defaults = settingsSection('project-defaults');
     expect(defaults.key).toBe('project-defaults');
     expect(defaults.scope).toBe('project');
-    expect(defaults.label).toBe('Запуск задач');
   });
 });
 

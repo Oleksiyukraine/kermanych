@@ -71,20 +71,20 @@ describe('percent', () => {
 // window Kermanych has never seen still renders instead of blanking the row.
 describe('planWindow', () => {
   it('shortens the hour/day/week windows providers actually meter', () => {
-    expect(planWindow('5h')).toBe('5г');
-    expect(planWindow('7d')).toBe('7д');
-    expect(planWindow('30d')).toBe('30д');
-    expect(planWindow('2w')).toBe('2тиж');
+    expect(planWindow('5h')).toEqual({ key: 'common.unit.hours', params: { n: 5 } });
+    expect(planWindow('7d')).toEqual({ key: 'common.unit.days', params: { n: 7 } });
+    expect(planWindow('30d')).toEqual({ key: 'common.unit.days', params: { n: 30 } });
+    expect(planWindow('2w')).toEqual({ key: 'common.unit.weeks', params: { n: 2 } });
   });
 
   it('names the monthly bucket', () => {
-    expect(planWindow('monthly')).toBe('міс');
-    expect(planWindow('month')).toBe('міс');
+    expect(planWindow('monthly')).toEqual({ key: 'common.unit.monthly', params: { n: 0 } });
+    expect(planWindow('month')).toEqual({ key: 'common.unit.monthly', params: { n: 0 } });
   });
 
   it('falls back to the provider id it cannot parse', () => {
-    expect(planWindow('primary')).toBe('primary');
-    expect(planWindow('')).toBe('');
+    expect(planWindow('primary')).toEqual({ text: 'primary' });
+    expect(planWindow('')).toEqual({ text: '' });
   });
 });
 

@@ -2,8 +2,8 @@
   <main class="agents">
     <!-- Nothing in scope — neither a workspace nor a project — so the rail invites a choice. -->
     <div v-if="!store.selectedProjectId && !store.selectedWorkspaceId" class="agents__blank">
-      <div class="agents__blank-eyebrow mono">КЕРМАНИЧ</div>
-      <p class="agents__blank-text">Виберіть воркспейс або проєкт у лівій панелі, щоб побачити агентів.</p>
+      <div class="agents__blank-eyebrow mono">{{ t('agents.blank.eyebrow') }}</div>
+      <p class="agents__blank-text">{{ t('agents.blank.text') }}</p>
     </div>
 
     <div v-else class="agents__content" ref="contentEl" :class="{ 'agents__content--resizing': resizing }">
@@ -22,7 +22,7 @@
                  neither on a disabled button — nor can one take focus. A tooltip on a
                  disabled control is unreachable by construction. -->
             <KBtn variant="primary" :disabled="!store.selectedProjectId" @click="openLauncher()">
-              Нова задача
+              {{ t('agents.board.newTask') }}
             </KBtn>
           </div>
         </header>
@@ -31,7 +31,7 @@
              something the operator can act on; the rule beneath keeps the cards reading as a
              separate list rather than as their continuation. -->
         <div v-if="!store.selectedProjectId || outsideScopeNote" class="agents__notes mono">
-          <p v-if="!store.selectedProjectId" class="agents__note">{{ PICK_PROJECT_HINT }}</p>
+          <p v-if="!store.selectedProjectId" class="agents__note">{{ t('agents.hints.pickProject') }}</p>
           <p v-if="outsideScopeNote" class="agents__note">{{ outsideScopeNote }}</p>
         </div>
 
@@ -47,19 +47,19 @@
                  hid the title in the ✕ tooltip. A BACKLOG card has no branch of its own to
                  name; the session cards below do, which is why they pass theirs. -->
             <KSessionCard
-              v-for="t in g.rows"
-              :key="t.id"
+              v-for="card in g.rows"
+              :key="card.id"
               :branch="''"
-              :title="t.title"
-              :time="relativeTime(t.updatedAt, now)"
-              :status="t.status"
-              :status-line="t.description ?? ''"
-              :model="t.model"
+              :title="card.title"
+              :time="renderTime(t, relativeTime(card.updatedAt, now))"
+              :status="card.status"
+              :status-line="card.description ?? ''"
+              :model="card.model"
               :selected="false"
               removable
-              :remove-title="`Видалити задачу «${t.title}»`"
-              @click="openLauncher(t)"
-              @remove="onDeleteCard(t)"
+              :remove-title="t('agents.board.removeTask', { title: card.title })"
+              @click="openLauncher(card)"
+              @remove="onDeleteCard(card)"
             />
           </template>
         </div>
@@ -67,8 +67,7 @@
              all, so there is nothing for a card to point at. Only under «Задачі» — in every
              other bucket these are ordinary local sessions. -->
         <p v-if="showTasks && boardRows.length" class="agents__note agents__note--stranded mono">
-          Лише на цій машині: проєкт цих задач ще не у хмарі, тому команда їх не бачить.
-          Опублікуйте проєкт — і вони переїдуть на дошку.
+          {{ t('agents.board.stranded') }}
         </p>
         <div v-if="boardRows.length" class="agents__cards">
           <template v-for="g in boardGroups" :key="g.projectId">
@@ -78,14 +77,14 @@
               :key="s.id"
               :branch="s.branch"
               :title="s.name"
-              :time="relativeTime(s.lastActivityAt, now)"
+              :time="renderTime(t, relativeTime(s.lastActivityAt, now))"
               :status="s.status"
               :status-line="activityOf(s) || statusWord(s)"
               :model="s.model"
               :usage="s.usage"
               :selected="store.selectedSessionId === s.id"
               :removable="s.kind === 'task'"
-              :remove-title="`Видалити локальну задачу «${s.name}»`"
+              :remove-title="t('agents.board.removeStranded', { name: s.name })"
               @click="onRowClick(s)"
               @remove="onDeleteStranded(s)"
             />
@@ -99,11 +98,11 @@
         class="agents__resizer"
         role="separator"
         aria-orientation="vertical"
-        aria-label="Змінити ширину секції з чатом"
+        :aria-label="t('agents.board.resizeAria')"
         :aria-valuenow="Math.round(detailWidth)"
         :aria-valuemin="MIN_DETAIL"
         tabindex="0"
-        v-tip="'Перетягніть, щоб змінити ширину секції з чатом'"
+        v-tip="t('agents.board.resizeTip')"
         @pointerdown="startResize"
         @keydown="onResizeKeydown"
       ></div>
@@ -118,8 +117,8 @@
               <button
                 type="button"
                 class="agents__detail-parent"
-                v-tip="'Відкрити батьківського агента'"
-                :aria-label="`Відкрити батьківського агента: ${parentOfSelected.name}`"
+                v-tip="t('agents.detail.openParent')"
+                :aria-label="t('agents.detail.openParentAria', { name: parentOfSelected.name })"
                 @click="store.selectSession(parentOfSelected.id)"
               >
                 <span class="agents__detail-parent-mark" aria-hidden="true">↑</span>
@@ -139,11 +138,11 @@
               <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
                 <KIconButton
                   v-if="selectedSession.status !== 'merged'"
-                  :title="selectedSession.kind === 'review' ? 'Віддати висновок ревізора виконавцю' : 'Влити висновок у батьківського агента'"
+                  :title="selectedSession.kind === 'review' ? t('agents.merge.reviewTitle') : t('agents.actions.mergeTip')"
                   @click="openMerge(selectedSession)"
                 >⤴</KIconButton>
                 <KIconButton
-                  :title="selectedSession.kind === 'review' ? 'Викинути ревізію' : 'Викинути гілку'"
+                  :title="selectedSession.kind === 'review' ? t('agents.actions.discardReview') : t('agents.actions.discardBranch')"
                   @click="onDiscardRow(selectedSession)"
                 >✕</KIconButton>
               </template>
@@ -157,44 +156,44 @@
                 <KIconButton
                   :active="!!store.previews[selectedSession.id]"
                   :disabled="!isBoundFor(selectedSession.projectId)"
-                  :title="store.previews[selectedSession.id] ? 'Зупинити превʼю' : 'Превʼю гілки в браузері'"
+                  :title="store.previews[selectedSession.id] ? t('agents.actions.previewStop') : t('agents.actions.previewStart')"
                   @click="togglePreview(selectedSession)"
                 >{{ store.previews[selectedSession.id] ? '◼' : '▶' }}</KIconButton>
                 <KIconButton
                   v-if="canReview(selectedSession)"
-                  title="Запросити ревізора (незалежний аудит гілки)"
+                  :title="t('agents.actions.review')"
                   @click="onReview(selectedSession)"
                 >⚖</KIconButton>
                 <KIconButton
                   v-if="selectedSession.status !== 'merged'"
-                  title="Завершити (merge гілки в проєкт)"
+                  :title="t('agents.actions.finish')"
                   @click="openFinish(selectedSession)"
                 >✓</KIconButton>
                 <KIconButton
                   v-if="selectedSession.status === 'merged'"
-                  title="Відновити (підняти worktree заново, щоб продовжити)"
+                  :title="t('agents.actions.reopen')"
                   @click="onReopen(selectedSession)"
                 >↻</KIconButton>
-                <KIconButton title="Відкласти" @click="onArchive(selectedSession)">⤓</KIconButton>
-                <KIconButton title="Видалити агента" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
+                <KIconButton :title="t('agents.actions.archive')" @click="onArchive(selectedSession)">⤓</KIconButton>
+                <KIconButton :title="t('agents.actions.delete')" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
               </template>
               <template v-else>
-                <KIconButton title="Повернути в активні" @click="onUnarchive(selectedSession)">⤒</KIconButton>
-                <KIconButton title="Видалити агента" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
+                <KIconButton :title="t('agents.actions.unarchive')" @click="onUnarchive(selectedSession)">⤒</KIconButton>
+                <KIconButton :title="t('agents.actions.delete')" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
               </template>
             </div>
             <button
               type="button"
               class="agents__close"
-              v-tip="'Закрити'"
-              aria-label="Закрити"
+              v-tip="t('agents.detail.close')"
+              :aria-label="t('agents.detail.close')"
               @click="store.selectSession(undefined)"
             >✕</button>
           </div>
         </div>
         <!-- The reason the ▶ above is down, on its own strip so it shows in every tab the
              disabled button is — a disabled control carries no reachable tooltip. -->
-        <p v-if="previewBlocked" class="agents__detail-note">{{ PREVIEW_BIND_HINT }}</p>
+        <p v-if="previewBlocked" class="agents__detail-note">{{ previewBindHint }}</p>
         <KTabs v-model="detailTab" :tabs="detailTabs" class="agents__detail-tabs" />
         <div v-show="detailTab === 'log'" class="agents__tabpane agents__tabpane--log">
           <KPanel
@@ -225,27 +224,26 @@
                 :expand-all="expandAll"
               />
             </template>
-            <div v-else class="agents__log-empty mono">Журнал порожній.</div>
+            <div v-else class="agents__log-empty mono">{{ t('agents.detail.logEmpty') }}</div>
           </KPanel>
         </div>
         <div v-if="detailTab === 'changes'" class="agents__tabpane agents__changes">
           <div v-if="worktreeGone" class="agents__pane-blank">
-            <span class="agents__pane-blank-eyebrow mono">ІСТОРІЯ</span>
+            <span class="agents__pane-blank-eyebrow mono">{{ t('agents.changes.historyEyebrow') }}</span>
             <p class="agents__pane-blank-text">
-              Робоче дерево цієї сесії прибрано — переглянути її зміни вже неможливо.
-              Відновіть сесію (↻ на вкладці «Сесія»), щоб підняти worktree знову.
+              {{ t('agents.changes.gone') }}
             </p>
           </div>
-          <p v-else-if="changesLoading" class="agents__log-empty mono">Готую…</p>
+          <p v-else-if="changesLoading" class="agents__log-empty mono">{{ t('agents.changes.preparing') }}</p>
           <p v-else-if="changesError" class="agents__error" role="alert">{{ changesError }}</p>
           <template v-else-if="changesInfo">
             <div class="agents__changes-summary mono">
               <span class="agents__changes-branch">{{ changesInfo.branch }} → {{ changesInfo.target || '—' }}</span>
-              <span>{{ changesInfo.ahead }} комітів</span>
-              <span v-if="changesInfo.dirty" class="agents__changes-dirty">незакоммічені зміни</span>
+              <span>{{ t('agents.changes.commits', { n: changesInfo.ahead }, changesInfo.ahead) }}</span>
+              <span v-if="changesInfo.dirty" class="agents__changes-dirty">{{ t('agents.changes.dirty') }}</span>
             </div>
             <ul v-if="changesInfo.conflicts.length" class="agents__conflict mono">
-              <li class="agents__conflict-head">Конфлікти:</li>
+              <li class="agents__conflict-head">{{ t('agents.changes.conflicts') }}</li>
               <li v-for="f in changesInfo.conflicts" :key="f">{{ f }}</li>
             </ul>
             <ul v-if="changesInfo.files.length" class="agents__file-list">
@@ -274,18 +272,17 @@
                 />
               </li>
             </ul>
-            <p v-else class="agents__log-empty mono">Немає змінених файлів.</p>
+            <p v-else class="agents__log-empty mono">{{ t('agents.changes.noFiles') }}</p>
           </template>
         </div>
         <div v-if="detailTab === 'files'" class="agents__tabpane agents__files">
           <div v-if="worktreeGone" class="agents__pane-blank">
-            <span class="agents__pane-blank-eyebrow mono">ІСТОРІЯ</span>
+            <span class="agents__pane-blank-eyebrow mono">{{ t('agents.changes.historyEyebrow') }}</span>
             <p class="agents__pane-blank-text">
-              Робоче дерево цієї сесії прибрано — її файлів на диску більше немає.
-              Відновіть сесію (↻ на вкладці «Сесія»), щоб підняти worktree знову.
+              {{ t('agents.files.gone') }}
             </p>
           </div>
-          <p v-else-if="treeLoading" class="agents__log-empty mono">Готую…</p>
+          <p v-else-if="treeLoading" class="agents__log-empty mono">{{ t('agents.changes.preparing') }}</p>
           <p v-else-if="treeError" class="agents__error" role="alert">{{ treeError }}</p>
           <template v-else>
             <KFileView
@@ -311,51 +308,51 @@
         <div v-if="detailTab === 'session'" class="agents__tabpane agents__session">
           <dl class="agents__meta">
             <div class="agents__meta-row">
-              <dt class="agents__meta-label">Статус</dt>
+              <dt class="agents__meta-label">{{ t('agents.session.status') }}</dt>
               <dd class="agents__meta-value">
                 <KStatusDot :status="selectedSession.status" />
                 <span class="mono">{{ statusWord(selectedSession) }}</span>
               </dd>
             </div>
             <div class="agents__meta-row">
-              <dt class="agents__meta-label">Модель</dt>
+              <dt class="agents__meta-label">{{ t('agents.session.model') }}</dt>
               <dd class="agents__meta-value mono">{{ selectedSession.model || '—' }}</dd>
             </div>
             <div class="agents__meta-row">
-              <dt class="agents__meta-label">Гілка</dt>
+              <dt class="agents__meta-label">{{ t('agents.session.branch') }}</dt>
               <dd class="agents__meta-value mono">{{ selectedSession.branch || '—' }}</dd>
             </div>
             <div class="agents__meta-row">
               <dt class="agents__meta-label">Worktree</dt>
-              <dd class="agents__meta-value mono">{{ selectedSession.worktree ? 'так' : 'ні' }}</dd>
+              <dd class="agents__meta-value mono">{{ selectedSession.worktree ? t('agents.session.worktreeYes') : t('agents.session.worktreeNo') }}</dd>
             </div>
             <div class="agents__meta-row">
-              <dt class="agents__meta-label">База</dt>
+              <dt class="agents__meta-label">{{ t('agents.session.base') }}</dt>
               <dd class="agents__meta-value mono">{{ selectedSession.baseBranch || '—' }}</dd>
             </div>
             <div class="agents__meta-row">
-              <dt class="agents__meta-label">Контекст</dt>
+              <dt class="agents__meta-label">{{ t('agents.session.context') }}</dt>
               <dd class="agents__meta-value mono">{{ ctxOf(selectedSession) ?? '—' }}</dd>
             </div>
             <div class="agents__meta-row">
               <dt
-                v-tip="SKILLS_HINT"
+                v-tip="skillsHint"
                 class="agents__meta-label"
-              >Скіли</dt>
+              >{{ t('agents.session.skills') }}</dt>
               <dd class="agents__meta-value mono">{{ usedSkills.join(', ') || '—' }}</dd>
             </div>
             <div class="agents__meta-row">
-              <dt class="agents__meta-label">Токени</dt>
+              <dt class="agents__meta-label">{{ t('agents.session.tokens') }}</dt>
               <dd class="agents__meta-value mono">{{ tokenTotal ?? '—' }}</dd>
             </div>
             <div class="agents__meta-row">
-              <dt class="agents__meta-label">Вартість</dt>
+              <dt class="agents__meta-label">{{ t('agents.session.cost') }}</dt>
               <dd class="agents__meta-value mono">{{ costLabel || '—' }}</dd>
             </div>
           </dl>
         </div>
         </template>
-        <div v-else class="agents__detail-blank mono">Виберіть сесію зі списку.</div>
+        <div v-else class="agents__detail-blank mono">{{ t('agents.detail.blank') }}</div>
       </aside>
     </div>
 
@@ -365,7 +362,7 @@
         <div class="agents-launcher__headmeta">
           <span v-if="launchProject" class="agents-launcher__tag mono">{{ launchProject.name }}</span>
           <span class="agents-launcher__spacer"></span>
-          <span class="agents-launcher__esc mono">Esc — закрити</span>
+          <span class="agents-launcher__esc mono">{{ t('agents.launcher.esc') }}</span>
         </div>
       </template>
 
@@ -374,15 +371,15 @@
         <div class="agents-launcher__main">
           <div>
             <div class="agents-launcher__label-row">
-              <span class="agents-launcher__label agents-launcher__label--strong">Завдання</span>
-              <span class="agents-launcher__hint-inline mono">⌘⏎ — запустити</span>
+              <span class="agents-launcher__label agents-launcher__label--strong">{{ t('agents.launcher.taskLabel') }}</span>
+              <span class="agents-launcher__hint-inline mono">{{ t('agents.launcher.taskKbd') }}</span>
             </div>
             <textarea
               ref="taskInput"
               v-model="draftTask"
               class="agents-launcher__task"
               rows="9"
-              placeholder="Що має зробити агент? Один абзац — далі він сам поставить уточнення."
+              :placeholder="t('agents.launcher.taskPlaceholder')"
               @paste="onLaunchPaste"
               @drop.prevent="onLaunchDrop"
               @dragover.prevent
@@ -391,7 +388,7 @@
 
           <div class="agents-launcher__attach">
             <button type="button" class="agents-launcher__attach-btn mono" @click="launchFileInput?.click()">
-              ⛶ Зображення
+              {{ t('agents.launcher.image') }}
             </button>
             <input
               ref="launchFileInput"
@@ -401,22 +398,22 @@
               class="agents__file"
               @change="onLaunchFilePick"
             />
-            <span class="agents-launcher__attach-note mono">або перетягни сюди</span>
+            <span class="agents-launcher__attach-note mono">{{ t('agents.launcher.dragHint') }}</span>
           </div>
           <KAttachStrip v-if="launchImages.length" :images="launchImages" @remove="removeLaunchImage" />
           <p v-if="launchError" class="agents__error" role="alert">{{ launchError }}</p>
 
           <div class="agents-launcher__name">
-            <div class="agents-launcher__label">Назва задачі</div>
+            <div class="agents-launcher__label">{{ t('agents.launcher.nameLabel') }}</div>
             <input
               ref="nameField"
               v-model="draftName"
               class="agents-launcher__name-input"
-              placeholder="виводиться із завдання"
+              :placeholder="t('agents.launcher.namePlaceholder')"
               @input="nameEdited = true"
             />
             <div class="agents-launcher__hint mono">
-              {{ draftName.trim() ? branchPreview : 'зʼявиться, як напишеш завдання' }}
+              {{ draftName.trim() ? branchPreview : t('agents.launcher.nameHintPending') }}
             </div>
           </div>
         </div>
@@ -424,13 +421,13 @@
         <!-- RIGHT — where it lands -->
         <div class="agents-launcher__side">
           <div>
-            <div class="agents-launcher__label">Гілка</div>
+            <div class="agents-launcher__label">{{ t('agents.session.branch') }}</div>
             <div class="agents-launcher__branch mono">{{ branchPreview }}</div>
             <div class="agents-launcher__hint mono">{{ branchHint }}</div>
           </div>
 
           <div>
-            <div class="agents-launcher__label">Тип</div>
+            <div class="agents-launcher__label">{{ t('agents.launcher.typeLabel') }}</div>
             <div class="agents-launcher__seg agents-launcher__seg--grid2">
               <button
                 v-for="opt in prefixOptions"
@@ -445,8 +442,8 @@
 
           <div>
             <div class="agents-launcher__label-row agents-launcher__label-row--tight">
-              <span class="agents-launcher__label">Платформа</span>
-              <span class="agents-launcher__optional mono">необовʼязково</span>
+              <span class="agents-launcher__label">{{ t('agents.launcher.platformLabel') }}</span>
+              <span class="agents-launcher__optional mono">{{ t('agents.launcher.optional') }}</span>
             </div>
             <div class="agents-launcher__seg">
               <button
@@ -462,32 +459,32 @@
 
           <div class="agents-launcher__block agents-launcher__block--stack">
             <div class="agents-launcher__check">
-              <KCheckbox v-model="draftWorktree" label="Ізолювати у worktree" />
+              <KCheckbox v-model="draftWorktree" :label="t('agents.launcher.worktreeLabel')" />
               <p class="agents-launcher__check-desc">
-                Окрема тека, окремий чекаут. Агент не чіпає твій робочий стан.
+                {{ t('agents.launcher.worktreeDesc') }}
               </p>
             </div>
             <div v-if="draftWorktree" class="agents-launcher__from">
-              <span class="agents-launcher__from-label mono">від</span>
+              <span class="agents-launcher__from-label mono">{{ t('agents.launcher.from') }}</span>
               <KSelect v-model="draftBaseBranch" :options="launchBranches" />
             </div>
           </div>
 
           <div class="agents-launcher__block">
-            <div class="agents-launcher__label">Модель</div>
+            <div class="agents-launcher__label">{{ t('agents.session.model') }}</div>
             <!-- `searchable`: the catalog is ~26 rows all named «Claude …», so the way to
                  «Haiku» is to type it, not to scroll past twenty siblings. -->
             <KSelect
               v-model="draftModel"
               :options="modelPickOptions"
-              placeholder="за замовчуванням"
+              :placeholder="t('agents.launcher.defaultOption')"
               searchable
             />
           </div>
 
           <div class="agents-launcher__block">
-            <div class="agents-launcher__label">Рівень роздумів</div>
-            <KSelect v-model="draftEffort" :options="effortPickOptions" placeholder="за замовчуванням" />
+            <div class="agents-launcher__label">{{ t('agents.launcher.effortLabel') }}</div>
+            <KSelect v-model="draftEffort" :options="effortPickOptions" :placeholder="t('agents.launcher.defaultOption')" />
           </div>
         </div>
       </div>
@@ -496,18 +493,18 @@
            to get there first. Below the form, above the controls, so it reads as the reason
            «В беклог» would refuse rather than as another launch option. -->
       <div v-if="needsPublish" class="agents-launcher__publish">
-        <p class="agents__hint mono">{{ PUBLISH_FIRST_HINT }}</p>
+        <p class="agents__hint mono">{{ t('agents.hints.publishFirst') }}</p>
         <KSelect
           v-model="publishInto"
-          label="Воркспейс"
+          :label="t('agents.launcher.workspaceLabel')"
           :options="workspaceOptions"
-          placeholder="виберіть воркспейс"
+          :placeholder="t('agents.launcher.workspacePlaceholder')"
         />
         <KBtn :disabled="!publishInto || publishing" @click="publishAndFile">
-          Опублікувати і створити задачу
+          {{ t('agents.launcher.publishBtn') }}
         </KBtn>
         <p v-if="!workspaceOptions.length" class="agents__hint mono">
-          Спершу створіть воркспейс у лівій панелі.
+          {{ t('agents.launcher.createWorkspaceFirst') }}
         </p>
       </div>
 
@@ -518,17 +515,17 @@
                exists, and this modal is the task's only detail view — the board's cards
                carry a ✕, but a task opened for editing must be closable from here too. -->
           <KBtn v-if="editingTask" variant="ghost" @click="onDeleteCard(editingTask)">
-            Видалити
+            {{ t('agents.launcher.delete') }}
           </KBtn>
           <span v-if="launcherError" class="agents__error" role="alert">{{ launcherError }}</span>
           <span v-else class="agents-launcher__foot-hint mono">{{ footHint }}</span>
           <span class="agents-launcher__spacer"></span>
-          <KBtn variant="ghost" @click="launcherOpen = false">Скасувати</KBtn>
+          <KBtn variant="ghost" @click="launcherOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
           <KBtn
             variant="secondary"
             :disabled="!canLaunch"
             @click="submitLauncher(true)"
-          >{{ editingTaskId ? 'Зберегти' : 'В беклог' }}</KBtn>
+          >{{ editingTaskId ? t('agents.launcher.save') : t('agents.launcher.backlog') }}</KBtn>
           <!-- No `title` here either, and for the same reason: it only ever had content while
                the button was disabled, so it was never reachable. `footHint` above already
                renders BIND_HINT visibly, which is why the user never lost anything — the dead
@@ -538,102 +535,100 @@
             :disabled="!canLaunch || !isBound"
             @click="submitLauncher(false)"
           >
-            Запустити<span class="agents-launcher__kbd mono">⌘⏎</span>
+            {{ t('agents.launcher.launch') }}<span class="agents-launcher__kbd mono">⌘⏎</span>
           </KBtn>
         </div>
       </template>
     </KModal>
 
     <!-- MERGE — pour a discussion branch's conclusion into its parent -->
-    <KModal v-model="mergeOpen" :title="mergeIsReview ? 'Віддати висновок ревізора виконавцю' : 'Влити гілку в батьківського агента'">
+    <KModal v-model="mergeOpen" :title="mergeIsReview ? t('agents.merge.reviewTitle') : t('agents.merge.branchTitle')">
       <div class="agents__form">
         <label class="agents__field">
-          <span class="agents__field-label">Summary (піде як повідомлення в батьківського агента)</span>
+          <span class="agents__field-label">{{ t('agents.merge.summaryLabel') }}</span>
           <textarea
             v-model="mergeSummary"
             class="agents__textarea mono"
             rows="6"
-            :placeholder="mergeIsReview ? 'Порожнє — візьму висновок ревізора' : 'Порожнє — візьму останню відповідь гілки'"
+            :placeholder="mergeIsReview ? t('agents.merge.summaryPlaceholderReview') : t('agents.merge.summaryPlaceholder')"
           />
         </label>
         <p class="agents__hint mono">
-          Батьківський агент отримає це й почне діяти. Гілка стане історією
+          {{ t('agents.merge.hint') }}
           (<code class="mono">merged</code>).
         </p>
         <p v-if="mergeError" class="agents__error" role="alert">{{ mergeError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="mergeOpen = false">Скасувати</KBtn>
-        <KBtn variant="primary" :disabled="mergeBusy" @click="submitMerge">{{ mergeIsReview ? '⤴ Віддати' : '⤴ Влити' }}</KBtn>
+        <KBtn variant="ghost" @click="mergeOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
+        <KBtn variant="primary" :disabled="mergeBusy" @click="submitMerge">{{ mergeIsReview ? t('agents.merge.give') : t('agents.merge.pour') }}</KBtn>
       </template>
     </KModal>
 
     <!-- PREVIEW CONFIG — how to run this project's app for a live branch preview -->
-    <KModal v-model="previewCfgOpen" title="Налаштувати превʼю">
+    <KModal v-model="previewCfgOpen" :title="t('agents.preview.title')">
       <div class="agents__form">
         <label class="agents__field">
-          <span class="agents__field-label">Команда web (з $PORT)</span>
+          <span class="agents__field-label">{{ t('agents.preview.webLabel') }}</span>
           <textarea v-model="draftWebCmd" class="agents__textarea mono" rows="2" />
         </label>
         <label class="agents__field">
-          <span class="agents__field-label">Команда api (опційно; отримує PORT)</span>
+          <span class="agents__field-label">{{ t('agents.preview.apiLabel') }}</span>
           <textarea v-model="draftApiCmd" class="agents__textarea mono" rows="2" />
         </label>
         <p class="agents__hint mono">
-          Запускається в worktree. web відкриється на автопорті; якщо задано api —
-          підніметься першим, а web вкажеться на нього через VITE_API_BASE.
+          {{ t('agents.preview.hint') }}
         </p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="previewCfgOpen = false">Скасувати</KBtn>
+        <KBtn variant="ghost" @click="previewCfgOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
         <KBtn variant="primary" :disabled="!draftWebCmd.trim()" @click="submitPreviewConfig">
-          Запустити превʼю
+          {{ t('agents.preview.run') }}
         </KBtn>
       </template>
     </KModal>
 
     <!-- FINISH — merge the session branch into the project branch, retire the worktree -->
-    <KModal v-model="finishOpen" title="Завершити сесію" persistent>
+    <KModal v-model="finishOpen" :title="t('agents.finish.title')" persistent>
       <div class="agents__form">
         <div v-show="finishFiles.length">
           <p class="agents__error" role="alert">
-            Конфлікт при злитті — розвʼяжи його у worktree, потім «Влити» ще раз.
+            {{ t('agents.finish.conflictError') }}
           </p>
-          <p class="agents__hint mono">Файли з конфліктом:</p>
+          <p class="agents__hint mono">{{ t('agents.finish.conflictFiles') }}</p>
           <ul class="agents__conflict mono">
             <li v-for="f in finishFiles" :key="f">{{ f }}</li>
           </ul>
           <p class="agents__hint mono">
-            Відкрий у редакторі, прибери маркери конфлікту, закоміть — тоді «Влити».
+            {{ t('agents.finish.conflictHint') }}
           </p>
         </div>
         <div v-show="!finishFiles.length">
           <p v-if="finishData">
-            Влити <code class="mono">{{ finishData.branch }}</code> →
+            {{ t('agents.finish.pour') }} <code class="mono">{{ finishData.branch }}</code> →
             <code class="mono">{{ finishData.target }}</code>
           </p>
           <p v-if="finishData" class="agents__hint mono">
-            {{ finishData.ahead }} комітів{{ finishData.dirty ? ' + незакоммічені зміни (авто-коміт)' : '' }};
-            worktree буде прибрано, сесія лишиться як «влито».
+            {{ t('agents.finish.aheadInfo', { n: finishData.ahead, dirty: finishData.dirty ? t('agents.finish.aheadDirty') : '' }, finishData.ahead) }}
           </p>
-          <p v-else class="agents__hint mono">Готую…</p>
+          <p v-else class="agents__hint mono">{{ t('agents.changes.preparing') }}</p>
         </div>
         <p v-if="finishError" class="agents__error" role="alert">{{ finishError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="finishOpen = false">Закрити</KBtn>
-        <KBtn v-show="finishFiles.length" variant="secondary" @click="resolveAuto">Вирішити автоматично</KBtn>
+        <KBtn variant="ghost" @click="finishOpen = false">{{ t('agents.finish.close') }}</KBtn>
+        <KBtn v-show="finishFiles.length" variant="secondary" @click="resolveAuto">{{ t('agents.finish.resolveAuto') }}</KBtn>
         <KBtn
           v-show="!finishFiles.length"
           variant="secondary"
           :disabled="prBusy || finishBusy || !finishData"
           @click="submitPr"
-        >Створити ПР</KBtn>
+        >{{ t('agents.finish.createPr') }}</KBtn>
         <KBtn
           variant="primary"
           :disabled="finishBusy || (!finishData && !finishFiles.length)"
           @click="submitFinish"
-        >{{ finishFiles.length ? 'Спробувати ще' : 'Влити' }}</KBtn>
+        >{{ finishFiles.length ? t('agents.finish.tryAgain') : t('agents.finish.pour') }}</KBtn>
       </template>
     </KModal>
   </main>
@@ -641,6 +636,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import {
   slugify,
   buildChatBlocks,
@@ -686,7 +682,7 @@ import KSelect from 'components/kit/KSelect.vue';
 import { BRANCH_PREFIXES, PLATFORMS, type BranchPrefix, type Platform } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useNow } from '../composables/useNow';
-import { relativeTime } from '../lib/time';
+import { relativeTime, renderTime } from '../lib/time';
 import { tokens, usageTokens, usd } from '../lib/format';
 import { EFFORT_OPTIONS } from '../lib/effort';
 import { modelOptions, effortOptions } from '../lib/models';
@@ -696,6 +692,7 @@ import { useResizableWidth } from '../composables/useResizableWidth';
 // in scope — one project, or every project of a workspace — plus the full panel for the
 // selected session and the new-agent launcher. All mutations go through the Pinia store.
 const store = useOrchestrator();
+const { t } = useI18n();
 // Two things come from here: previewCommand/apiCommand are CLOUD config that any workspace
 // member may edit, so that write goes to Supabase and mirrors itself into the local row —
 // a local-only edit would not survive the next sync — and the cloud project list, which is
@@ -798,7 +795,7 @@ const boardRows = computed<Session[]>(() => {
 // mirrored from the cloud — so it is the name the online tree shows, and it still reads with
 // Supabase unreachable.
 function projectName(id: string): string {
-  return store.projects.find((p) => p.id === id)?.name ?? 'Невідомий проєкт';
+  return store.projects.find((p) => p.id === id)?.name ?? t('agents.board.unknownProject');
 }
 
 // Under a workspace scope the cards come from several projects, and KSessionCard names only
@@ -892,8 +889,8 @@ const outsideScopeNote = computed(() => {
   // lines and pushed the first card most of a card-height down — for a sentence the blank and
   // empty states already teach. The names ARE the affordance: they are the rail's own labels.
   const rest = names.length - 3;
-  const shown = names.slice(0, 3).join(', ') + (rest > 0 ? ` та ще ${rest}` : '');
-  return `Активні агенти поза цим вибором: ${shown}.`;
+  const shown = names.slice(0, 3).join(', ') + (rest > 0 ? ` ${t('agents.board.outsideMore', { n: rest })}` : '');
+  return t('agents.board.outsideScope', { names: shown });
 });
 // Which project the launcher acts ON. Creating: the selected project. Editing a backlog task
 // or spinning one out of a transcript: the SESSION's own project — a workspace scope can list
@@ -909,21 +906,16 @@ const launchProject = computed(() =>
 // Requirement 3 in the UI: a task can be created, edited and moved without a binding, but
 // nothing that touches the repo may run. `BIND_HINT` is the same string MainLayout uses; both
 // copies are the operator's next action, not an apology.
-const BIND_HINT = 'Прив’яжіть локальну теку репозиторію';
 // A card lives in the cloud, and `tasks.project_id` is what tasks_insert_member checks
 // membership against — so a project that never left this machine has nothing to hang one on.
 // The way out is the publish hatch in the launcher, which this line points at.
-const PUBLISH_FIRST_HINT =
-  'Цей проєкт живе лише на цій машині — опублікуйте його у воркспейсі, і тоді задача стане видимою команді.';
 // A workspace is not a place a session can be created: it holds several projects and a session
 // row carries exactly one projectId. Rendered as visible text beside the disabled button, not
 // as its tooltip — see the template.
-const PICK_PROJECT_HINT = 'Нова задача належить одному проєкту — виберіть проєкт у лівій панелі.';
 // The one explanatory bubble in the meta list. `v-tip`, not the native `title` it used to
 // be: that one drew the OS rectangle after a ~1s delay, the single square bubble left in a
 // rounded UI. A <dt> is neither focusable nor disabled, so the directive fires on it.
-const SKILLS_HINT =
-  'Скіли з усього завантаженого транскрипту цієї сесії — разом із турами, перебраними від батька, якщо гілку відгалужено. Скіл, узятий субагентом, тут не видно.';
+const skillsHint = computed(() => t('agents.session.skillsHint'));
 const isBound = computed(() => !!launchProject.value?.localRepoPath);
 
 // Row-level check: the board can show sessions of an orphan project whose row is still here
@@ -957,7 +949,7 @@ const parentOfSelected = computed<Session | undefined>(() =>
 // dead-tooltip pattern in this file — the only one with no visible substitute anywhere, since
 // the meta list above carries no binding row. Derived from BIND_HINT rather than written out,
 // so the two cannot drift into saying different things about the same state.
-const PREVIEW_BIND_HINT = `${BIND_HINT}, щоб відкривати превʼю гілки.`;
+const previewBindHint = computed(() => t('agents.hints.previewBind', { bind: t('agents.hints.bind') }));
 const previewBlocked = computed(() => {
   const s = selectedSession.value;
   if (!s || s.archived) return false;
@@ -996,7 +988,7 @@ const blocks = computed(() => buildChatBlocks(entries.value));
 // figures are absent — not zero — until the agent has taken a turn the api counted.
 const tokenTotal = computed(() => {
   const u = selectedSession.value?.usage;
-  return u ? `${tokens(usageTokens(u))} ток` : undefined;
+  return u ? t('agents.session.tokenTotal', { n: tokens(usageTokens(u)) }) : undefined;
 });
 const costLabel = computed(() => usd(selectedSession.value?.usage?.cost ?? 0));
 
@@ -1022,30 +1014,23 @@ const {
     contentEl.value ? contentEl.value.clientWidth - MIN_DETAIL : Number.POSITIVE_INFINITY,
 });
 
-const BUCKET_LABELS: Record<Bucket, string> = {
-  active: 'Активні',
-  waiting: 'Очікують',
-  completed: 'Завершені',
-  errors: 'Помилки',
-  tasks: 'Задачі',
-};
-const bucketLabel = computed(() => BUCKET_LABELS[store.selectedBucket]);
+const bucketLabel = computed(() => t(`agents.bucket.${store.selectedBucket}`));
 
 // The empty list, per bucket. The two creatable buckets split again on scope, because
 // «Нова задача» is disabled under a workspace scope and an invitation to press it would be a
 // dead end there. The click that unblocks it is NOT repeated here — PICK_PROJECT_HINT is
 // already on screen a few pixels above, and saying it twice reads as two different problems.
 const emptyText = computed(() => {
-  if (showCompleted.value) return 'Немає завершених агентів.';
-  if (store.selectedBucket === 'waiting') return 'Немає агентів, що очікують.';
-  if (store.selectedBucket === 'errors') return 'Немає помилок.';
+  if (showCompleted.value) return t('agents.empty.completed');
+  if (store.selectedBucket === 'waiting') return t('agents.empty.waiting');
+  if (store.selectedBucket === 'errors') return t('agents.empty.errors');
   const pickFirst = !store.selectedProjectId;
   if (showTasks.value) {
-    return pickFirst ? 'Беклог порожній.' : 'Беклог порожній. Створи задачу через «Нова задача».';
+    return pickFirst ? t('agents.empty.backlog') : t('agents.empty.backlogScoped');
   }
   return pickFirst
-    ? 'Ще немає агентів.'
-    : 'Ще немає агентів. Запусти першого через «Нова задача».';
+    ? t('agents.empty.none')
+    : t('agents.empty.noneScoped');
 });
 
 // Re-clamp once the detail column mounts (the container is measurable by then),
@@ -1062,12 +1047,12 @@ watch(
 // The right panel splits the session into three views. The choice is persisted
 // per session (localStorage `kermanych.agents.tab.<id>`) so reopening an agent lands where the
 // operator left it; a fresh session defaults to the log.
-const detailTabs = [
-  { value: 'log', label: 'Лог' },
-  { value: 'changes', label: 'Зміни' },
-  { value: 'files', label: 'Файли' },
-  { value: 'session', label: 'Сесія' },
-];
+const detailTabs = computed(() => [
+  { value: 'log', label: t('agents.tabs.log') },
+  { value: 'changes', label: t('agents.tabs.changes') },
+  { value: 'files', label: t('agents.tabs.files') },
+  { value: 'session', label: t('agents.tabs.session') },
+]);
 const detailTab = ref('log');
 watch(
   () => store.selectedSessionId,
@@ -1277,25 +1262,25 @@ function activityOf(s: Session): string {
 function statusWord(s: Session): string {
   switch (s.status) {
     case 'thinking':
-      return 'думає';
+      return t('agents.statusWord.thinking');
     case 'tool':
-      return 'виконує';
+      return t('agents.statusWord.tool');
     case 'waiting_input':
-      return 'чекає';
+      return t('agents.statusWord.waiting');
     case 'done':
-      return 'готово';
+      return t('agents.statusWord.done');
     case 'error':
-      return 'помилка';
+      return t('agents.statusWord.error');
     case 'queued':
-      return 'у черзі';
+      return t('agents.statusWord.queued');
     case 'stopped':
-      return 'зупинено';
+      return t('agents.statusWord.stopped');
     case 'merged':
-      return 'влито';
+      return t('agents.statusWord.merged');
     case 'conflict':
-      return 'конфлікт';
+      return t('agents.statusWord.conflict');
     case 'backlog':
-      return 'у беклозі';
+      return t('agents.statusWord.backlog');
     default:
       return s.status;
   }
@@ -1331,7 +1316,7 @@ const modelPickOptions = computed(() => modelOptions(store.models));
 // «за замовчуванням» or an unknown alias keeps the full ladder. Labels stay ours (lib/effort).
 const effortPickOptions = computed(() => {
   const allowed = effortOptions(store.models, draftModel.value || undefined);
-  return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value));
+  return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value)).map((o) => ({ value: o.value, label: t(o.labelKey) }));
 });
 const draftPlatform = ref<Platform | undefined>(undefined);
 const draftWorktree = ref(true);
@@ -1352,8 +1337,8 @@ const branchPreview = computed(() =>
 // Right-column summary line under the branch box.
 const branchHint = computed(() =>
   draftWorktree.value
-    ? `нова worktree, чекаут від ${draftBaseBranch.value || launchProject.value?.defaultBranch || 'HEAD'}`
-    : 'in-place у теці проєкту; дерево має бути чистим',
+    ? t('agents.launcher.branchHintWorktree', { base: draftBaseBranch.value || launchProject.value?.defaultBranch || 'HEAD' })
+    : t('agents.launcher.branchHintInplace'),
 );
 const taskInput = ref<HTMLTextAreaElement | null>(null);
 const nameField = ref<HTMLInputElement | null>(null);
@@ -1379,12 +1364,12 @@ const canLaunch = computed(
   () => !!launchProjectId.value && draftName.value.trim() !== '' && draftTask.value.trim() !== '',
 );
 
-const launcherTitle = computed(() => (editingTaskId.value ? 'Задача' : 'Нова задача'));
+const launcherTitle = computed(() => (editingTaskId.value ? t('agents.launcher.editTitle') : t('agents.board.newTask')));
 // Footer status: the binding first (it blocks launching outright), then the form nudge,
 // then silence once launchable.
 const footHint = computed(() => {
-  if (!isBound.value) return BIND_HINT;
-  return canLaunch.value ? '' : 'опиши завдання, щоб запустити';
+  if (!isBound.value) return t('agents.hints.bind');
+  return canLaunch.value ? '' : t('agents.launcher.footDescribe');
 });
 
 // The name is derived from the task text until the operator edits it by hand.
@@ -1488,19 +1473,19 @@ async function submitLauncher(asTask: boolean): Promise<void> {
   const userId = auth.user?.id;
   if (!projectId || !canLaunch.value) return;
   if (!userId) {
-    launcherError.value = 'Спочатку увійдіть у Kermanych';
+    launcherError.value = t('agents.launcher.loginFirst');
     return;
   }
   // A card may be filed for an unbound project — it is a saved plan. Launching may not, and
   // the api would refuse it with `project not bound` anyway.
   if (!asTask && !isBound.value) {
-    launcherError.value = BIND_HINT;
+    launcherError.value = t('agents.hints.bind');
     return;
   }
   // A card needs a project the cloud can check membership against; the publish hatch below
   // is the way out of a local-only project.
   if (projects.listRead && !projects.byId.has(projectId)) {
-    launcherError.value = PUBLISH_FIRST_HINT;
+    launcherError.value = t('agents.hints.publishFirst');
     return;
   }
   const draft = {
@@ -1584,7 +1569,7 @@ async function publishAndFile(): Promise<void> {
 // Deleting a card is a cloud row and nothing else — it owns no branch, no worktree and no
 // omp child — so one confirm is the whole guard; tasks_guard refuses an active card anyway.
 async function onDeleteCard(card: Task): Promise<void> {
-  if (!window.confirm(`Видалити задачу «${card.title}»?`)) return;
+  if (!window.confirm(t('agents.notify.deleteCard', { title: card.title }))) return;
   if (!(await board.deleteTask(card.id))) return;
   // The editor is this card's only detail view; it must not outlive the row it edits.
   if (editingTaskId.value === card.id) launcherOpen.value = false;
@@ -1592,7 +1577,7 @@ async function onDeleteCard(card: Task): Promise<void> {
 
 // A stranded pre-cutover row: local SQLite and nothing else, so this stays a plain delete.
 async function onDeleteStranded(s: Session): Promise<void> {
-  if (!window.confirm(`Видалити локальну задачу «${s.name}»?`)) return;
+  if (!window.confirm(t('agents.notify.deleteStranded', { name: s.name }))) return;
   try {
     await store.deleteSession(s.id);
   } catch (e) {
@@ -1717,15 +1702,12 @@ async function onRefreshChat(): Promise<void> {
 // Composer ≡ — ask the agent itself to recap, rather than stitching a digest out of the
 // transcript locally: it has the whole session in context and can say where the work stands.
 // A canned operator message, the same shape as the server-side resolve/PR prompts.
-const SUMMARY_PROMPT =
-  'Дай коротке саммарі цієї сесії: що зроблено, де ми зараз, що далі. ' +
-  'Відповідай українською, стисло. Нічого не змінюй.';
 
 async function onSummary(): Promise<void> {
   const s = selectedSession.value;
   if (!s) return;
   try {
-    await store.sendMessage(s.id, SUMMARY_PROMPT, nextMode(s));
+    await store.sendMessage(s.id, t('agents.prompt.summary'), nextMode(s));
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
@@ -1798,7 +1780,7 @@ async function onReopen(s: Session): Promise<void> {
     const session = await store.reopenSession(s.id);
     store.setBucket('active');
     if (session?.id) store.selectSession(session.id);
-    store.notify(`Сесію «${s.name}» відновлено — worktree піднято, можна продовжувати`);
+    store.notify(t('agents.notify.reopened', { name: s.name }));
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
@@ -1808,7 +1790,7 @@ async function onReopen(s: Session): Promise<void> {
 // worktree/branch and the registry row, cascading to child branches. Works on any
 // status, unlike archive which refuses active agents.
 async function onDeleteAgent(s: Session): Promise<void> {
-  if (!window.confirm(`Видалити агента «${s.name}»?`)) return;
+  if (!window.confirm(t('agents.notify.deleteAgent', { name: s.name }))) return;
   try {
     await store.deleteSession(s.id);
     if (store.selectedSessionId === s.id) store.selectSession(undefined);
@@ -1832,7 +1814,7 @@ function canReview(s: Session): boolean {
 // Active agents can't be archived: pre-check and toast (the API also enforces).
 async function onArchive(s: Session): Promise<void> {
   if (ACTIVE_STATUSES.includes(s.status)) {
-    store.notify('Не можна відкласти активного агента', 'error');
+    store.notify(t('agents.notify.cannotArchive'), 'error');
     return;
   }
   try {
@@ -1919,7 +1901,7 @@ async function submitMerge(): Promise<void> {
 }
 
 function onDiscardRow(s: Session): void {
-  if (!window.confirm(`Викинути ${s.kind === 'review' ? 'ревізію' : 'гілку'} «${s.name}»? Розмову буде втрачено.`)) return;
+  if (!window.confirm(t('agents.notify.discard', { kind: s.kind === 'review' ? t('agents.notify.kindReview') : t('agents.notify.kindBranch'), name: s.name }))) return;
   void store.deleteSession(s.id).then(() => {
     if (store.selectedSessionId === s.id) store.selectSession(undefined);
   });
@@ -1953,7 +1935,7 @@ async function submitFinish(): Promise<void> {
       // Merged, but the push back to origin did not land — say so, because the work is only
       // local until the operator pulls and pushes it.
       if ('pushed' in res && res.pushed === false) {
-        store.notify(`«${s.name}» злито локально, але push у origin заблоковано: ${res.reason ?? 'origin зрушив'}. Зроби git pull та push.`, 'error');
+        store.notify(t('agents.notify.pushBlocked', { name: s.name, reason: res.reason ?? t('agents.notify.pushReasonDefault') }), 'error');
       }
     }
   } catch (e) {
@@ -1972,7 +1954,7 @@ async function submitPr(): Promise<void> {
     await store.createPr(s.id);
     finishOpen.value = false; // agent pushes + opens the PR in the background — watch it in chat
     store.selectSession(s.id);
-    store.notify(`Створюю ПР для «${s.name}» — стежу за гілкою в чаті`, 'info');
+    store.notify(t('agents.notify.prCreating', { name: s.name }), 'info');
   } catch (e) {
     finishError.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -1981,8 +1963,9 @@ async function submitPr(): Promise<void> {
 }
 
 // ── Live preview (per-session worktree app on a free port) ─────────────────
-const LOADING_HTML =
-  '<p style="font:14px system-ui;padding:24px;color:#888">Піднімаю превʼю гілки… (перший раз довше — встановлення залежностей).</p>';
+const loadingHtml = computed(
+  () => `<p style="font:14px system-ui;padding:24px;color:#888">${t('agents.preview.loadingText')}</p>`,
+);
 // A fresh worktree carries no dependencies and no build output (`dist` is gitignored), so
 // each command installs first and then runs the package script — which builds that
 // package's workspace deps itself (see apps/*/package.json). Naming the deps here instead
@@ -2010,7 +1993,7 @@ async function launchInto(win: Window | null, s: Session): Promise<void> {
     else win?.close();
   } catch (e) {
     win?.close();
-    window.alert(`Превʼю не запустилось: ${e instanceof Error ? e.message : String(e)}`);
+    window.alert(t('agents.preview.launchFailed', { error: e instanceof Error ? e.message : String(e) }));
     openPreviewConfig(s, true); // reopen prefilled with working defaults so the user can fix it
   }
 }
@@ -2026,7 +2009,7 @@ async function togglePreview(s: Session): Promise<void> {
     return;
   }
   const win = window.open('', '_blank');
-  win?.document.write(LOADING_HTML);
+  win?.document.write(loadingHtml.value);
   await launchInto(win, s);
 }
 
@@ -2057,14 +2040,14 @@ async function submitPreviewConfig(): Promise<void> {
   if (!projects.byId.has(s.projectId)) {
     store.notify(
       projects.listRead
-        ? 'Цей проєкт існує лише на цій машині, тому команди прев’ю нікуди зберігати. Опублікуйте його в хмарі на дошці.'
-        : 'Хмара ще не відповіла, тому команди прев’ю зберігати нікуди. Спробуйте ще раз, коли зв’язок з’явиться.',
+        ? t('agents.preview.notBoundLocal')
+        : t('agents.preview.notBoundOffline'),
       'error',
     );
     return;
   }
   const win = window.open('', '_blank');
-  win?.document.write(LOADING_HTML);
+  win?.document.write(loadingHtml.value);
   previewCfgOpen.value = false;
   try {
     const patch: { previewCommand: string; apiCommand?: string } = {
@@ -2075,7 +2058,7 @@ async function submitPreviewConfig(): Promise<void> {
     await projects.patch(s.projectId, patch);
   } catch (e) {
     win?.close();
-    window.alert(`Не вдалось зберегти: ${e instanceof Error ? e.message : String(e)}`);
+    window.alert(t('agents.preview.saveFailed', { error: e instanceof Error ? e.message : String(e) }));
     return;
   }
   await launchInto(win, s);

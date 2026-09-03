@@ -45,7 +45,7 @@ test("read of a whole file omits the shown/total form", () => {
 
 test("read of a directory degrades to a caталог stat with content lines", () => {
   const out = toolDisplay("read", { path: "/tmp/wt" }, { isDirectory: true, resolvedPath: "/tmp/wt" }, "a\nb");
-  expect(out.stat).toBe("каталог");
+  expect(out.stat).toEqual({ key: "chat.toolStat.dir" });
   expect(out.lines).toEqual([
     { t: "ctx", text: "a" },
     { t: "ctx", text: "b" },
@@ -65,7 +65,7 @@ test("write counts written lines and marks them as additions", () => {
 
 test("glob reports the file count and flags upstream truncation", () => {
   const out = toolDisplay("glob", { path: "*" }, { fileCount: 196, files: ["a", "b"], truncated: true }, "");
-  expect(out.stat).toBe("196 файлів ·обрізано");
+  expect(out.stat).toEqual({ key: "chat.toolStat.files", params: { count: 196, truncated: true } });
   expect(out.count).toBe(196);
   expect(out.truncatedUpstream).toBe(true);
   expect(out.totalLines).toBe(2);
@@ -129,7 +129,7 @@ test("grep lists per-file counts then the matches, marking hit lines", () => {
   };
   const out = toolDisplay("grep", { pattern: "setTimeout|setInterval", path: "kermanych/apps/ui/src" }, d, "");
   expect(out.target).toBe("/setTimeout|setInterval/ src");
-  expect(out.stat).toBe("3 збігів / 2 ф");
+  expect(out.stat).toEqual({ key: "chat.toolStat.matches", params: { matches: 3, files: 2, truncated: false } });
   expect(out.count).toBe(3);
   expect(out.lines).toEqual([
     { t: "head", text: "composables/useNow.ts  2" },
@@ -150,7 +150,7 @@ test("grep with no matches degrades to an empty card, not a blank row", () => {
 
 test("grep flags upstream truncation in the stat", () => {
   const out = toolDisplay("grep", { pattern: "x" }, { matchCount: 900, fileCount: 40, truncated: true, fileMatches: [], displayContent: "" }, "");
-  expect(out.stat).toBe("900 збігів / 40 ф ·обрізано");
+  expect(out.stat).toEqual({ key: "chat.toolStat.matches", params: { matches: 900, files: 40, truncated: true } });
   expect(out.count).toBe(900);
   expect(out.totalLines).toBe(0);
   expect(out.truncatedUpstream).toBe(true);

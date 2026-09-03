@@ -1,17 +1,11 @@
 <template>
   <section class="sk">
-    <p class="sk__lead">
-      Бібліотека скілів проєкту
-      <span class="sk__lead-project mono">{{ projectName }}</span>
-      — агент сам вирішує, коли їх узяти. Скіл із таким же імʼям у репозиторії завжди
-      перемагає: Керманич його не підміняє.
-    </p>
+    <i18n-t keypath="settings.skillsLibrary.lead" tag="p" class="sk__lead">
+      <template #project><span class="sk__lead-project mono">{{ projectName }}</span></template>
+    </i18n-t>
     <!-- The library is opt-in by the agent. Handing a skill to a role unconditionally is the
          next pane's job, and the distinction is easy to miss from here. -->
-    <p class="sk__lead">
-      Щоб роль отримувала скіл обовʼязково, а не за власним рішенням — розділ
-      «Призначення».
-    </p>
+    <p class="sk__lead">{{ t('settings.skillsLibrary.assignHint') }}</p>
 
     <p v-if="error" class="sk__error mono">{{ error }}</p>
 
@@ -32,18 +26,18 @@
             class="sk__btn"
             :disabled="!canWrite"
             @click="dropRow(row.name)"
-          >Увімкнути</button>
+          >{{ t('settings.skillsLibrary.enable') }}</button>
           <template v-else>
-            <button type="button" class="sk__btn" :disabled="!canWrite" @click="edit(row)">Редагувати</button>
+            <button type="button" class="sk__btn" :disabled="!canWrite" @click="edit(row)">{{ t('settings.skillsLibrary.edit') }}</button>
             <button
               v-if="row.source === 'project'"
               type="button"
               class="sk__btn"
               :disabled="!canWrite"
               @click="dropRow(row.name)"
-            >Видалити</button>
+            >{{ t('settings.skillsLibrary.delete') }}</button>
             <button v-else type="button" class="sk__btn" :disabled="!canWrite" @click="disable(row.name)">
-              Вимкнути
+              {{ t('settings.skillsLibrary.disable') }}
             </button>
           </template>
         </div>
@@ -51,30 +45,30 @@
     </ul>
     <!-- Only when the read actually succeeded: after a failure the error line stands alone,
          because «бібліотека порожня» under a failed read is a lie about the project. -->
-    <p v-else-if="!error && !loading" class="sk__empty mono">Бібліотека порожня.</p>
+    <p v-else-if="!error && !loading" class="sk__empty mono">{{ t('settings.skillsLibrary.empty') }}</p>
 
     <button type="button" class="sk__btn sk__btn--primary" :disabled="!canWrite" @click="create">
-      Додати скіл
+      {{ t('settings.skillsLibrary.add') }}
     </button>
 
-    <KModal v-model="editorOpen" :title="editing ? `Скіл · ${draftName}` : 'Новий скіл'">
+    <KModal v-model="editorOpen" :title="editing ? t('settings.skillsLibrary.editTitle', { name: draftName }) : t('settings.skillsLibrary.newTitle')">
       <!-- The name is a directory name under ~/.kermanych/skills/<project>/, so it is fixed
            once the row exists: renaming would orphan the materialised directory. -->
       <KField
         v-model="draftName"
-        label="Імʼя (латиниця, цифри, дефіс)"
+        :label="t('settings.skillsLibrary.nameLabel')"
         :disabled="editing"
         placeholder="opening-a-pr"
       />
       <KField
         v-model="draftDescription"
-        label="Коли застосовувати (обовʼязково)"
-        placeholder="Use when … — без опису omp проігнорує скіл"
+        :label="t('settings.skillsLibrary.descLabel')"
+        :placeholder="t('settings.skillsLibrary.descPlaceholder')"
       />
-      <KField v-model="draftBody" label="Текст скіла (Markdown)" multiline :disabled="bodyPending" />
+      <KField v-model="draftBody" :label="t('settings.skillsLibrary.bodyLabel')" multiline :disabled="bodyPending" />
       <p v-if="formError" class="sk__error mono">{{ formError }}</p>
       <template #controls>
-        <button type="button" class="sk__btn" @click="editorOpen = false">Скасувати</button>
+        <button type="button" class="sk__btn" @click="editorOpen = false">{{ t('settings.modal.cancel') }}</button>
         <!-- Saving while the stored body has not been read would write the empty draft over
              it, so the editor is not savable until that read lands — and stays unsavable if
              it failed, with the reason on the form's error line. `canWrite` is checked here
@@ -85,7 +79,7 @@
           class="sk__btn sk__btn--primary"
           :disabled="saving || bodyPending || !canWrite"
           @click="save"
-        >Зберегти</button>
+        >{{ t('settings.skillsLibrary.save') }}</button>
       </template>
     </KModal>
   </section>
@@ -97,6 +91,7 @@
 // straight to Supabase, where RLS enforces owner-only edits — the same split the .env editor
 // uses for values-vs-names.
 import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { DEFAULT_SKILLS, SKILL_NAME_RE, type SkillView } from '@kermanych/core';
 import { deleteProjectSkill, listProjectSkills, upsertProjectSkill, type ProjectSkill } from '@kermanych/cloud';
 import { api } from '../../lib/api';
@@ -104,6 +99,8 @@ import { useAuth } from 'stores/auth';
 import { useProjects } from 'stores/projects';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
+
+const { t } = useI18n();
 
 const props = defineProps<{ projectId: string; projectName: string }>();
 
@@ -146,9 +143,11 @@ function badgeKind(row: Row): string {
   return row.shadowedByRepo ? 'repo' : row.source;
 }
 function badgeLabel(row: Row): string {
-  if (row.off) return 'вимкнено';
-  if (row.shadowedByRepo) return 'перекрито репо';
-  return row.source === 'default' ? 'дефолт' : 'проєкт';
+  if (row.off) return t('settings.skillsLibrary.badgeOff');
+  if (row.shadowedByRepo) return t('settings.skillsLibrary.badgeRepo');
+  return row.source === 'default'
+    ? t('settings.skillsLibrary.badgeDefault')
+    : t('settings.skillsLibrary.badgeProject');
 }
 
 // A row with `enabled: false` whose name is one of Kermanych's own defaults is a TOMBSTONE:
@@ -279,11 +278,11 @@ async function save(): Promise<void> {
   const token = draftToken;
   formError.value = '';
   if (!SKILL_NAME_RE.test(draftName.value)) {
-    formError.value = 'Імʼя: лише малі латинські літери, цифри та дефіс (до 64 символів).';
+    formError.value = t('settings.skillsLibrary.errName');
     return;
   }
   if (!draftDescription.value.trim()) {
-    formError.value = 'Без опису omp проігнорує скіл.';
+    formError.value = t('settings.skillsLibrary.errNoDesc');
     return;
   }
   saving.value = true;

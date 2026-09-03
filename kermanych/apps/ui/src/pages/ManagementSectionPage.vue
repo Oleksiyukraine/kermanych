@@ -4,8 +4,8 @@
       <span class="mgmt-section__badge mono">
         <i class="mgmt-section__pulse" aria-hidden="true"></i>coming soon
       </span>
-      <p class="mgmt-section__text">Розділ у розробці.</p>
-      <p class="mgmt-section__scope mono">Воркспейс: {{ workspaceName }}</p>
+      <p class="mgmt-section__text">{{ t('management.placeholder.text') }}</p>
+      <p class="mgmt-section__scope mono">{{ t('management.placeholder.scope', { name: workspaceName }) }}</p>
     </div>
   </section>
 </template>
@@ -19,7 +19,9 @@
 // bug, while a card that carries the state and the workspace reads as a promise.
 // The section is NOT named again here — the shell's heading and the active tab
 // both already say it.
+import { useI18n } from 'vue-i18n';
 defineProps<{ workspaceId: string; workspaceName: string }>();
+const { t } = useI18n();
 </script>
 
 <style scoped lang="scss">

@@ -16,6 +16,7 @@ export type RailProject = {
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { initialsOf } from '../../lib/initials';
 
 // A project row in the left sidebar. The name plus the running-agent badge on the right: a
@@ -39,11 +40,10 @@ const props = withDefaults(
 
 const emit = defineEmits<{ dragstart: [id: string]; dragend: [] }>();
 
-const STATE_HINT: Record<RailProject['state'], string> = {
-  bound: '',
-  unbound: ' · не прив’язано',
-  orphan: ' · поза хмарою',
-};
+const { t } = useI18n();
+
+const stateHint = (state: RailProject['state']): string =>
+  state === 'unbound' ? t('kit.railItem.unbound') : state === 'orphan' ? t('kit.railItem.orphan') : '';
 
 // The badge is aria-hidden (a bare digit reads as noise), so the count travels to assistive
 // tech through the button's label instead. Count-agnostic phrasing — «запущено агентів: 3»
@@ -55,8 +55,10 @@ const STATE_HINT: Record<RailProject['state'], string> = {
 const title = computed(
   () =>
     props.project.name +
-    STATE_HINT[props.project.state] +
-    (props.count > 0 ? ` · запущено агентів: ${props.count}` : ' · немає запущених агентів'),
+    stateHint(props.project.state) +
+    (props.count > 0
+      ? t('kit.railItem.running', { count: props.count })
+      : t('kit.railItem.none')),
 );
 const initials = computed(() => initialsOf(props.project.name, '#'));
 

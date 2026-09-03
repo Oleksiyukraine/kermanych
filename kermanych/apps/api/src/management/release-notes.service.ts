@@ -20,6 +20,7 @@ import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { reduceRpcEvents, sumTurnUsage, type TurnSpend } from "../supervisor/transcript-reducer";
 import { limit, MANAGEMENT_TOOLS } from "./management-chat.service";
+import { CodedError } from "./coded-error";
 import { buildReleaseNotesPrompt } from "./release-notes-prompt";
 
 // Same bounds as the management chat, for the same reasons: a start slower than thirty
@@ -52,20 +53,27 @@ export class ReleaseNotesService {
     // managementRepos applies. Unbound means unbuildable HERE: generation reads THIS
     // machine's git history, so the error names the machine, not the project.
     const project = this.registry.listProjects().find((p) => p.id === ask.projectId);
-    if (!project) throw new Error("проєкт не знайдено в локальному реєстрі");
+    if (!project) throw new CodedError("project_not_in_registry", "проєкт не знайдено в локальному реєстрі");
     if (!project.localRepoPath)
-      throw new Error("проєкт не привʼязаний на цій машині — генерація читає git-історію локального репозиторію");
+      throw new CodedError(
+        "project_not_bound",
+        "проєкт не привʼязаний на цій машині — генерація читає git-історію локального репозиторію",
+      );
 
     // The branch must be one of the repo's own: `git log` on an invented name would answer
     // with an error the operator cannot act on, and the UI's picker offers exactly this list.
     const branches = await this.worktree.listBranches(project.localRepoPath);
     if (!branches.includes(ask.branch))
-      throw new Error(`гілки «${ask.branch}» немає в локальному репозиторії`);
+      throw new CodedError("branch_not_in_repo", `гілки «${ask.branch}» немає в локальному репозиторії`, {
+        branch: ask.branch,
+      });
 
     const commits = await this.worktree.logRange(project.localRepoPath, ask.branch, ask.rangeFrom, ask.rangeTo);
     if (commits.length === 0)
-      throw new Error(
+      throw new CodedError(
+        "no_commits_in_range",
         `на гілці «${ask.branch}» немає комітів за ${ask.rangeFrom} — ${ask.rangeTo}; реліз-ноти нема з чого писати`,
+        { branch: ask.branch, from: ask.rangeFrom, to: ask.rangeTo },
       );
 
     const prompt = buildReleaseNotesPrompt({
@@ -75,6 +83,7 @@ export class ReleaseNotesService {
       rangeFrom: ask.rangeFrom,
       rangeTo: ask.rangeTo,
       commits,
+      locale: ask.locale,
     });
 
     const generated = await this.oneShot(project.localRepoPath, prompt, startedAt);
@@ -107,19 +116,31 @@ export class ReleaseNotesService {
         if (isTerminal !== false) resolve();
       }
     });
-    rpc.onExit((_code, reason) => reject(new Error(`omp завершився під час генерації: ${reason}`)));
+    rpc.onExit((_code, reason) =>
+      reject(new CodedError("omp_exited_during_generation", `omp завершився під час генерації: ${reason}`, { reason })),
+    );
 
     try {
+      const startSeconds = Math.round(START_TIMEOUT_MS / 1000);
       await limit(
         rpc.start(),
         START_TIMEOUT_MS,
-        `не вдалося запустити omp за ${Math.round(START_TIMEOUT_MS / 1000)} с — перевірте, що команда omp доступна в PATH`,
+        new CodedError(
+          "omp_launch_timeout",
+          `не вдалося запустити omp за ${startSeconds} с — перевірте, що команда omp доступна в PATH`,
+          { seconds: startSeconds },
+        ),
       );
       rpc.prompt(prompt);
+      const genSeconds = Math.round(TURN_TIMEOUT_MS / 1000);
       await limit(
         promise,
         TURN_TIMEOUT_MS,
-        `генерація не завершилась за ${Math.round(TURN_TIMEOUT_MS / 1000)} с — спробуйте вужчий період або меншу гілку`,
+        new CodedError(
+          "generation_timeout",
+          `генерація не завершилась за ${genSeconds} с — спробуйте вужчий період або меншу гілку`,
+          { seconds: genSeconds },
+        ),
       );
     } finally {
       // Success or failure, the child dies here: a leaked omp outlives the request and
@@ -136,7 +157,7 @@ export class ReleaseNotesService {
       .map((e) => e.text)
       .join("\n\n")
       .trim();
-    if (!text) throw new Error("модель не повернула тексту — спробуйте ще раз");
+    if (!text) throw new CodedError("model_no_text", "модель не повернула тексту — спробуйте ще раз");
     this.log.debug(`release notes: згенеровано ${text.length} символів у ${cwd}`);
     return { text, spend: sumTurnUsage(events, startedAt) };
   }

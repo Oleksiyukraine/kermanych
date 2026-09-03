@@ -6,6 +6,7 @@ import { cloudEnv, createCloudClient, type Profile } from '@kermanych/cloud';
 import { api, setAuthToken, setUnauthorizedHandler } from '../lib/api';
 import { IS_PREVIEW, PREVIEW_USER_ID } from '../lib/preview';
 import { useOrchestrator } from './orchestrator';
+import { globalTr } from '../boot/i18n';
 
 // One Supabase client per renderer, built when this module is first imported —
 // which boot/supabase.ts triggers before the first navigation. PKCE, session
@@ -119,7 +120,7 @@ export const useAuth = defineStore('auth', () => {
     // cannot bounce back in.
     setUnauthorizedHandler(() => {
       if (!user.value) return;
-      ui.notify('Сесія завершилася. Увійдіть знову.', 'error');
+      ui.notify(globalTr.t('common.notify.sessionExpired'), 'error');
       void signOut();
     });
     try {
@@ -155,7 +156,7 @@ export const useAuth = defineStore('auth', () => {
         options: { redirectTo: LOOPBACK_REDIRECT, skipBrowserRedirect: true },
       });
       if (error) throw error;
-      if (!data.url) throw new Error('Supabase не повернув URL авторизації');
+      if (!data.url) throw new Error(globalTr.t('errors.oauth_no_url'));
       const { code } = await startOAuth(data.url);
       // Pass the flowId back: v2 stores the PKCE verifier per flow at
       // `${storageKey}-flow-${flowId}-code-verifier`, and the fixed legacy key

@@ -23,6 +23,7 @@ import { api, type JiraAssignableUser } from '../lib/api';
 import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { IS_PREVIEW } from '../lib/preview';
+import { globalTr } from '../boot/i18n';
 
 const SYNC_TICK_MS = 30_000;
 
@@ -201,13 +202,13 @@ export const useJira = defineStore('jira', () => {
       await api.jiraSync(workspaceId, true);
       if (mine !== generation) return; // left the board meanwhile
       await loadBoard();
-      local.notify('Дошку синхронізовано з Jira', 'info');
+      local.notify(globalTr.t('jira.notify.synced'), 'info');
     } catch (e) {
       if (mine !== generation) return;
       const msg = e instanceof Error ? e.message : String(e);
       // Unlike the tick, this one talks: the user asked.
       if (/token/.test(msg)) tokenPresent.value = false;
-      local.notify(`Синхронізація не вдалася: ${msg}`, 'error');
+      local.notify(globalTr.t('jira.notify.syncFailed', { error: msg }), 'error');
     } finally {
       syncing.value = false;
     }

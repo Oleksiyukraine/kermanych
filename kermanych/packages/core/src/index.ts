@@ -9,6 +9,20 @@
 // types.ts is type-only (erased at build), so `export *` is safe there.
 export * from "./types";
 export {
+  NOTICE_CODES,
+  API_ERROR_CODES,
+  MANAGEMENT_REJECTION_CODES,
+  type NoticeCode,
+  type ApiErrorCode,
+  type ManagementRejectionCode,
+  type Locale,
+  type NoticeParams,
+  type Notice,
+  type ApiErrorParams,
+  type ApiErrorBody,
+  type ManagementRejection,
+} from "./i18n-codes";
+export {
   toolDisplay,
   clampLines,
   shortPath,
@@ -81,6 +95,7 @@ export {
   type ChatItem,
   type BlockSummary,
   type ChatBlock,
+  type GroupStat,
 } from "./chat-blocks";
 export {
   MANAGEMENT_SECTIONS,

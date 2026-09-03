@@ -1,7 +1,7 @@
 <template>
   <KModal
     :model-value="modelValue"
-    title="Обрати директорію"
+    :title="t('kit.dirPicker.title')"
     @update:model-value="(v) => emit('update:modelValue', v)"
   >
     <div class="k-dirpicker">
@@ -24,22 +24,23 @@
           @click="enter(e.name)"
         >
           <span class="k-dirpicker__name">{{ e.name }}</span>
-          <span v-if="e.isRepo" class="k-dirpicker__repo" v-tip="'git-репозиторій'">⑂</span>
+          <span v-if="e.isRepo" class="k-dirpicker__repo" v-tip="t('kit.dirPicker.repo')">⑂</span>
         </button>
         <div v-if="listing && !listing.entries.length" class="k-dirpicker__empty mono">
-          (немає піддиректорій)
+          {{ t('kit.dirPicker.empty') }}
         </div>
       </div>
     </div>
     <template #controls>
-      <KBtn variant="ghost" @click="close">Скасувати</KBtn>
-      <KBtn variant="primary" :disabled="!listing" @click="choose">Обрати цю теку</KBtn>
+      <KBtn variant="ghost" @click="close">{{ t('kit.dirPicker.cancel') }}</KBtn>
+      <KBtn variant="primary" :disabled="!listing" @click="choose">{{ t('kit.dirPicker.choose') }}</KBtn>
     </template>
   </KModal>
 </template>
 
 <script setup lang="ts">
 import { ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { DirListing } from '@kermanych/core';
 import { api } from '../../lib/api';
 import KModal from './KModal.vue';
@@ -50,6 +51,8 @@ import KBtn from './KBtn.vue';
 // THIS machine's binding for a cloud project; `⑂` marks the git repos.
 const props = withDefaults(defineProps<{ modelValue: boolean; start?: string }>(), { start: '' });
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; select: [path: string] }>();
+
+const { t } = useI18n();
 
 const listing = ref<DirListing | null>(null);
 const error = ref<string | null>(null);

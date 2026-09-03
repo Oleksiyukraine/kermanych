@@ -7,7 +7,8 @@
 // INTO the prompt rather than left for the model to dig out, because the child's tools are
 // read-only (no bash, so no `git log`) — but the tools still matter: a commit subject that
 // says nothing («fix», «wip») can be resolved by reading the code it touched.
-import type { ReleaseCommit } from "@kermanych/core";
+import type { Locale, ReleaseCommit } from "@kermanych/core";
+import { LANGUAGE_NAME } from "./management-prompt";
 
 // Upper bound on the commit block, in characters. A quarter's worth of a busy repo can be
 // megabytes of commit bodies; past this the tail is dropped and the prompt says so, which
@@ -45,8 +46,13 @@ export function buildReleaseNotesPrompt(input: {
   rangeFrom: string;
   rangeTo: string;
   commits: ReleaseCommit[];
+  // The operator's active UI locale. The note is WRITTEN in it; the prompt body stays a
+  // Ukrainian template and only the language word below varies. Defaults to English — this
+  // section's documented product default — when a caller omits it.
+  locale?: Locale;
 }): string {
   const { block, included, truncated } = commitsBlock(input.commits);
+  const language = LANGUAGE_NAME[input.locale ?? "en"];
   return [
     `Ти пишеш реліз-ноти для продукту «${input.workspaceName}».`,
     ``,
@@ -54,9 +60,10 @@ export function buildReleaseNotesPrompt(input: {
     ``,
     `Вимоги до документа:`,
     // The requirement the user set for this feature, stated first: the reader is NOT an
-    // engineer, and every rule below serves that one. The document is written in English
-    // by default — the language directive and the example group headings both say so.
-    `- Пиши англійською, простою мовою, зрозумілою людині без технічної освіти. Пояснюй, що змінилося ДЛЯ КОРИСТУВАЧА і чим це корисно — не як воно реалізоване.`,
+    // engineer, and every rule below serves that one. The note's LANGUAGE is the operator's
+    // locale (default English — this section's product default); the group headings below
+    // stay English example labels, which the model adapts to the chosen language.
+    `- Пиши ${language}, простою мовою, зрозумілою людині без технічної освіти. Пояснюй, що змінилося ДЛЯ КОРИСТУВАЧА і чим це корисно — не як воно реалізоване.`,
     `- Жодних хешів комітів, назв файлів, назв гілок, імен функцій і технічного жаргону в тексті.`,
     `- Згрупуй зміни за смислом: «New», «Improvements», «Fixes» (заголовки другого рівня; порожні групи пропусти). Споріднені коміти об'єднуй в один пункт.`,
     `- Дрібниці, які користувач не помітить (рефакторинг, залежності, CI), збери одним реченням наприкінці або пропусти.`,

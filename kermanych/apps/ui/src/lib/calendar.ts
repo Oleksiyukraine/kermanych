@@ -9,24 +9,14 @@
 // Pure by design — apps/ui has no component tests, so the month grid, the roll-over and the
 // clamping live here and are covered by test/calendar.spec.ts.
 
-/** Monday-first, the Ukrainian week. The grid below is built in this order. */
-export const WEEKDAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'] as const;
+/** Monday-first, the Ukrainian week. The grid below is built in this order; the labels live
+ *  in the catalog under `common.calendar.weekday.*` and the caller renders them. */
+export const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 
 // Nominative: the header stands alone («Вересень 2026»), it is not a date being read out.
-const MONTH_LABELS = [
-  'Січень',
-  'Лютий',
-  'Березень',
-  'Квітень',
-  'Травень',
-  'Червень',
-  'Липень',
-  'Серпень',
-  'Вересень',
-  'Жовтень',
-  'Листопад',
-  'Грудень',
-] as const;
+// Keys, not words — the month name lives in the catalog (`common.calendar.month.*`) and
+// follows the active locale.
+const MONTH_KEYS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'] as const;
 
 // A leading `YYYY-MM-DD` — a full timestamp is accepted because `raisedAt`-style columns are
 // read by the same formatter as the date-only ones.
@@ -126,8 +116,10 @@ export function shiftMonths(iso: string, months: number): string {
   return isoOf({ year, month, day: Math.min(p.day, daysInMonth(year, month)) });
 }
 
-export function monthTitle(year: number, month: number): string {
-  return `${MONTH_LABELS[month - 1]} ${year}`;
+/** The catalog key of a month's nominative name; the caller pairs it with the year through
+ *  `common.calendar.monthTitle`. Month is 1–12, the way it is written. */
+export function monthNameKey(month: number): string {
+  return `common.calendar.month.${MONTH_KEYS[month - 1]}`;
 }
 
 /**

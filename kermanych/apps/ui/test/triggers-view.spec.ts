@@ -4,7 +4,7 @@ import {
   triggerActionOptions,
   triggerAgentOptions,
   triggerMatches,
-  triggerSourceLabel,
+  triggerSourceLabelKey,
   triggerUsesRuleFile,
 } from '../src/lib/settings';
 
@@ -51,11 +51,11 @@ test('the agent picker offers exactly the instruction-carrying agents, from the 
     'pull-request',
     'resolve-conflict',
   ]);
-  expect(triggerAgentOptions(AGENTS).map((o) => o.label)).toEqual([
-    'Ревізор',
-    'Промоутер',
-    'Провізор',
-    'Вирішувач конфліктів',
+  expect(triggerAgentOptions(AGENTS).map((o) => o.labelKey)).toEqual([
+    'agents.role.review',
+    'agents.role.promote',
+    'agents.role.pull-request',
+    'agents.role.resolve-conflict',
   ]);
 });
 
@@ -103,6 +103,6 @@ test('a short pattern matches substrings of unrelated words', () => {
 test('a source outside the union labels itself rather than rendering blank', () => {
   // Rows predating the DB constraint exist in the api's own tests (triggers.spec.ts keeps a
   // `reasoning` row). The list must name what it read instead of showing an empty cell.
-  expect(triggerSourceLabel('thinking')).toBe('розмірковування моделі');
-  expect(triggerSourceLabel('reasoning')).toBe('reasoning');
+  expect(triggerSourceLabelKey('thinking')).toBe('settings.logChannel.thinking');
+  expect(triggerSourceLabelKey('reasoning')).toBeUndefined();
 });

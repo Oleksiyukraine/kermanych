@@ -16,7 +16,7 @@
           :key="i"
           :src="src"
           class="k-log__user-img"
-          alt="вкладення"
+          :alt="t('kit.logBlock.attachmentAlt')"
         />
       </div>
     </template>
@@ -37,23 +37,33 @@
 
     <!-- notice — muted by default; warn and error lift into the accent -->
     <div v-else-if="entry.kind === 'notice'" class="k-log__notice" :class="`k-log__notice--${entry.level}`">
-      {{ entry.text }}
+      {{ noticeText }}
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { TranscriptEntry } from '@kermanych/core';
+import { localizeNotice } from '../../lib/i18n-coded';
 import { renderMarkdown } from '../../lib/markdown';
 import type { ExpandAllCommand } from '../../lib/expand-all';
-import { dur } from '../../lib/time';
+import { dur, renderTime } from '../../lib/time';
 import { tokens } from '../../lib/format';
 import KToolRow from './KToolRow.vue';
 
 // One transcript block. Tool rows delegate to KToolRow; `turn` entries are ledger
 // data for block summaries and deliberately render nothing.
 const props = defineProps<{ entry: TranscriptEntry; sessionId: string; expandAll: ExpandAllCommand }>();
+
+const { t, te } = useI18n();
+
+// A notice carries the server's Ukrainian `text` and, when known, a stable `code`+`params`
+// the UI re-renders in the active locale (falls back to `text` for an unknown code).
+const noticeText = computed(() =>
+  props.entry.kind === 'notice' ? localizeNotice({ t, te }, props.entry) : '',
+);
 
 // assistant_text renders as Markdown (headings, lists, code, links). Output is a
 // controlled tag set (html:false), safe for v-html.
@@ -88,13 +98,13 @@ const chip = computed(() => {
   // the `роздуми` figure one press away describe the same quantity, so they must agree on
   // both the sub-second floor marker and the switch to minutes.
   // A zero or absent `ms` drops out entirely rather than claiming a measured span.
-  const msLabel = props.entry.ms ? dur(props.entry.ms) : '';
+  const msLabel = props.entry.ms ? renderTime(t, dur(props.entry.ms)) : '';
   const tok = props.entry.tokens;
-  const tokLabel = tok === undefined ? '' : `${tokens(tok)} ток`;
+  const tokLabel = tok === undefined ? '' : t('kit.logBlock.tokens', { count: tokens(tok) });
   // `думав` is the label, not a metric: the dot only ever separates two metrics,
   // so a missing ms or tokens leaves no dangling separator behind.
   const parts = [msLabel, tokLabel].filter(Boolean);
-  return parts.length ? `думав ${parts.join(' · ')}` : 'думав';
+  return parts.length ? t('kit.logBlock.thoughtWith', { parts: parts.join(' · ') }) : t('kit.logBlock.thought');
 });
 </script>
 

@@ -42,6 +42,7 @@ import {
   type ThinkingLevel,
   type ToolLine,
   type TranscriptEntry,
+  type Notice,
 } from "@kermanych/core";
 import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type ProjectTrigger } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
@@ -853,14 +854,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // A Kermanych-authored row in the conversation. A fired trigger changed what the child was
   // asked, so the transcript has to say so: an invisible trigger is a session that behaves
   // differently for no reason the operator can read back.
-  private noticeEntry(text: string, level: "info" | "warn" | "error" = "info"): TranscriptEntry {
+  private noticeEntry(notice: string | Notice, level: "info" | "warn" | "error" = "info"): TranscriptEntry {
     const at = this.stamp();
-    return { kind: "notice", id: `n${at}`, at, level, text };
-  }
-
-  // A trigger's `target` is an agent id; the notice names the agent the way the catalogue does.
-  private agentLabel(agentId: string): string {
-    return agentById(agentId)?.label ?? agentId;
+    const n: Notice = typeof notice === "string" ? { text: notice } : notice;
+    return {
+      kind: "notice",
+      id: `n${at}`,
+      at,
+      level,
+      text: n.text,
+      ...(n.code ? { code: n.code } : {}),
+      ...(n.params ? { params: n.params } : {}),
+    };
   }
 
   private onRpcEvent(id: string, e: RpcEvent) {
@@ -1101,7 +1106,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         }
         if (!re.test(text)) continue;
         if (trigger.action === "agent") {
-          this.appendEntry(id, this.noticeEntry(`тригер «${trigger.label}» запускає «${this.agentLabel(trigger.target)}»`));
+          this.appendEntry(
+            id,
+            this.noticeEntry({
+              // The fallback text names the raw agent id — the api has no vue-i18n to render
+              // its label. A UI that knows the code renders `t('agents.role.<agent>')` for it.
+              text: `тригер «${trigger.label}» запускає «${trigger.target}»`,
+              code: "trigger_launches_agent",
+              params: { trigger: trigger.label, agent: trigger.target },
+            }),
+          );
           return { trigger, block: "" };
         }
         // One resolver for every skill body in Kermanych, assignments and triggers alike.
@@ -1111,11 +1125,25 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           // to nothing is exactly the state the dangling-reference UI exists to surface.
           this.appendEntry(
             id,
-            this.noticeEntry(`тригер «${trigger.label}»: скіл «${missing[0] ?? trigger.target}» не знайдено`, "warn"),
+            this.noticeEntry(
+              {
+                text: `тригер «${trigger.label}»: скіл «${missing[0] ?? trigger.target}» не знайдено`,
+                code: "trigger_skill_missing",
+                params: { trigger: trigger.label, skill: missing[0] ?? trigger.target },
+              },
+              "warn",
+            ),
           );
           return undefined;
         }
-        this.appendEntry(id, this.noticeEntry(`тригер «${trigger.label}» додав скіл «${trigger.target}»`));
+        this.appendEntry(
+          id,
+          this.noticeEntry({
+            text: `тригер «${trigger.label}» додав скіл «${trigger.target}»`,
+            code: "skill_added_by_trigger",
+            params: { trigger: trigger.label, skill: trigger.target },
+          }),
+        );
         return { trigger, block };
       }
       return undefined;
@@ -1142,7 +1170,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     } catch (err) {
       this.appendEntry(
         id,
-        this.noticeEntry(`тригер «${trigger.label}» не запустив агента: ${(err as Error).message}`, "error"),
+        this.noticeEntry(
+          {
+            text: `тригер «${trigger.label}» не запустив агента: ${(err as Error).message}`,
+            code: "trigger_agent_launch_failed",
+            params: { trigger: trigger.label, reason: (err as Error).message },
+          },
+          "error",
+        ),
       );
       return false;
     }
@@ -1535,12 +1570,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Dormant: in the registry but no live process (e.g. after an api restart).
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (s) {
-      const text =
-        s.status === "merged"
-          ? "Сесію влито в проєкт. Натисни «↻ Відновити» вгорі, щоб підняти worktree і продовжити."
-          : "Сесія неактивна. Надішли повідомлення, щоб відновити її та підтягнути історію.";
       // Synthesised on every read, never appended to a transcript, so a fixed id is enough.
-      return [{ kind: "notice", id: "dormant", at: Date.now(), level: "info", text }];
+      const dormant: Notice =
+        s.status === "merged"
+          ? {
+              text: "Сесію влито в проєкт. Натисни «↻ Відновити» вгорі, щоб підняти worktree і продовжити.",
+              code: "session_dormant_merged",
+            }
+          : {
+              text: "Сесія неактивна. Надішли повідомлення, щоб відновити її та підтягнути історію.",
+              code: "session_dormant_inactive",
+            };
+      return [{ kind: "notice", id: "dormant", at: Date.now(), level: "info", text: dormant.text, code: dormant.code }];
     }
     return [];
   }

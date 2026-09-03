@@ -18,9 +18,11 @@ import {
   type ManagementChatAsk,
   type ManagementChatReply,
   type ManagementRepo,
+  type Notice,
   type RpcEvent,
 } from "@kermanych/core";
 import { RpcSession } from "../rpc/rpc-session";
+import { CodedError } from "./coded-error";
 import { RegistryService } from "../registry/registry.service";
 import { reduceRpcEvents, sumTurnUsage } from "../supervisor/transcript-reducer";
 import { buildManagementTurn, managementCwd, managementRepos, todayIso } from "./management-prompt";
@@ -66,13 +68,13 @@ type Live = { rpc: RpcSession; greeted: boolean; lastAt: number; turn?: Turn };
 // the http request would stay open until the browser gave up, with nothing the operator
 // could read or act on. Exported for the release-notes generator, which bounds the same
 // two waits over the same kind of child.
-export async function limit<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+export async function limit<T>(p: Promise<T>, ms: number, onTimeout: Error): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       p,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), ms);
+        timer = setTimeout(() => reject(onTimeout), ms);
       }),
     ]);
   } finally {
@@ -159,6 +161,7 @@ export class ManagementChatService implements OnModuleDestroy {
       context: input.context,
       today: todayIso(),
       text: helped.text,
+      locale: input.locale,
     });
     const { events, notices } = await this.drive(key, live, message);
     // First, because it describes the message that produced everything after it.
@@ -171,7 +174,8 @@ export class ManagementChatService implements OnModuleDestroy {
     const texts: string[] = [];
     for (const e of entries) {
       if (e.kind === "assistant_text") texts.push(e.text);
-      else if (e.kind === "notice") notices.push(e.text);
+      else if (e.kind === "notice")
+        notices.push({ text: e.text, ...(e.code ? { code: e.code } : {}), ...(e.params ? { params: e.params } : {}) });
     }
 
     // Summed across the turn's assistant messages by the shared helper, so this reply and
@@ -212,10 +216,15 @@ export class ManagementChatService implements OnModuleDestroy {
     rpc.onEvent((e) => live.turn?.on(e));
     rpc.onExit((_code, reason) => live.turn?.fail(reason));
     try {
+      const seconds = Math.round(START_TIMEOUT_MS / 1000);
       await limit(
         rpc.start(),
         START_TIMEOUT_MS,
-        `не вдалося запустити omp за ${Math.round(START_TIMEOUT_MS / 1000)} с — перевірте, що команда omp доступна в PATH`,
+        new CodedError(
+          "omp_launch_timeout",
+          `не вдалося запустити omp за ${seconds} с — перевірте, що команда omp доступна в PATH`,
+          { seconds },
+        ),
       );
     } catch (err) {
       // `limit` abandons the start promise; it does not kill the process behind it. An omp
@@ -231,9 +240,9 @@ export class ManagementChatService implements OnModuleDestroy {
   }
 
   // Send one message and wait out the turn it starts.
-  private async drive(key: string, live: Live, message: string): Promise<{ events: RpcEvent[]; notices: string[] }> {
+  private async drive(key: string, live: Live, message: string): Promise<{ events: RpcEvent[]; notices: Notice[] }> {
     const events: RpcEvent[] = [];
-    const notices: string[] = [];
+    const notices: Notice[] = [];
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     const droppedBefore = live.rpc.droppedFrames;
     live.turn = {
@@ -251,9 +260,11 @@ export class ManagementChatService implements OnModuleDestroy {
           // failing. Cancel it at once and tell the user the model tried to ask this way —
           // the prompt's rule (г) exists to stop it happening twice.
           live.rpc.answerUi({ type: "extension_ui_response", id, cancelled: true });
-          notices.push(
-            `асистент спробував запитати через інтерактивне вікно (${method}) — запит скасовано, бо в цьому чаті немає де на нього відповісти`,
-          );
+          notices.push({
+            text: `асистент спробував запитати через інтерактивне вікно (${method}) — запит скасовано, бо в цьому чаті немає де на нього відповісти`,
+            code: "interactive_request_cancelled",
+            params: { method },
+          });
           return;
         }
         if (e.type === "agent_end") {
@@ -263,7 +274,8 @@ export class ManagementChatService implements OnModuleDestroy {
           if (isTerminal !== false) resolve();
         }
       },
-      fail: (reason) => reject(new Error(`omp завершився під час відповіді: ${reason}`)),
+      fail: (reason) =>
+        reject(new CodedError("omp_exited_during_reply", `omp завершився під час відповіді: ${reason}`, { reason })),
     };
     try {
       // First turn carries the contract and opens the conversation; every later one is a
@@ -271,10 +283,15 @@ export class ManagementChatService implements OnModuleDestroy {
       if (live.greeted) live.rpc.followUp(message);
       else live.rpc.prompt(message);
       live.greeted = true;
+      const seconds = Math.round(TURN_TIMEOUT_MS / 1000);
       await limit(
         promise,
         TURN_TIMEOUT_MS,
-        `асистент не відповів за ${Math.round(TURN_TIMEOUT_MS / 1000)} с — розмову перезапущено, спробуйте ще раз`,
+        new CodedError(
+          "assistant_no_reply_timeout",
+          `асистент не відповів за ${seconds} с — розмову перезапущено, спробуйте ще раз`,
+          { seconds },
+        ),
       );
     } catch (err) {
       // Timed out or died: either way this child can no longer be trusted with the next
@@ -288,7 +305,12 @@ export class ManagementChatService implements OnModuleDestroy {
     live.lastAt = Date.now();
     const lost = live.rpc.droppedFrames - droppedBefore;
     // Silent loss is the one failure this chat must never present as a complete answer.
-    if (lost > 0) notices.push(`втрачено ${lost} кадр(ів) від omp — частина відповіді могла не дійти`);
+    if (lost > 0)
+      notices.push({
+        text: `втрачено ${lost} кадр(ів) від omp — частина відповіді могла не дійти`,
+        code: "frames_lost",
+        params: { count: lost },
+      });
     return { events, notices };
   }
 

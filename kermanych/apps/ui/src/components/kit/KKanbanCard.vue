@@ -7,7 +7,7 @@
            rendered: a face that appears only when assigned makes «нікому» look like «не
            дочиталося», and the row would reflow as tasks get claimed. -->
       <KAvatar
-        :name="assignee?.name ?? 'Не призначено'"
+        :name="assignee?.name ?? t('kit.kanbanCard.unassigned')"
         :avatar-url="assignee?.avatarUrl"
         :hint="assigneeHint"
         :empty="!assignee"
@@ -23,6 +23,7 @@
 // Kanban card: a compact session tile for the board — status dot + title + assignee avatar,
 // mono branch, and a "project · time" meta line (design-system Дошка section).
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { SessionStatus } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KAvatar from './KAvatar.vue';
@@ -38,10 +39,12 @@ const props = defineProps<{
   assignee?: { name: string; avatarUrl?: string | undefined } | null;
 }>();
 
+const { t } = useI18n();
+
 // The picture is the only thing naming the assignee on a card, so the bubble spells out the
 // relation — a bare handle over a task tile could be read as its author.
 const assigneeHint = computed(() =>
-  props.assignee ? `Виконавець: ${props.assignee.name}` : 'Виконавця не призначено',
+  props.assignee ? t('kit.kanbanCard.assignee', { name: props.assignee.name }) : t('kit.kanbanCard.noAssignee'),
 );
 
 const emit = defineEmits<{ click: [] }>();

@@ -10,14 +10,14 @@
         role="tab"
         :aria-selected="boardView === 'tasks'"
         @click="setBoardView('tasks')"
-      >Задачі</button>
+      >{{ t('board.viewSwitch.tasks') }}</button>
       <button
         class="board__view mono"
         :class="{ 'board__view--on': boardView === 'jira' }"
         role="tab"
         :aria-selected="boardView === 'jira'"
         @click="setBoardView('jira')"
-      >Jira</button>
+      >{{ t('board.viewSwitch.jira') }}</button>
     </div>
 
     <JiraBoardView
@@ -29,11 +29,11 @@
     <header class="board__head">
       <div class="board__title">
         <h1 class="board__heading">{{ scopeHeading }}</h1>
-        <span class="board__count mono">{{ visibleTasks.length }} задач</span>
+        <span class="board__count mono">{{ t('board.header.count', { n: visibleTasks.length }, visibleTasks.length) }}</span>
       </div>
       <div class="board__controls">
-        <KSelect v-model="projectFilter" :options="projectOptions" placeholder="Усі проєкти" />
-        <KSelect v-model="assigneeFilter" :options="assigneeOptions" placeholder="Усі виконавці" />
+        <KSelect v-model="projectFilter" :options="projectOptions" :placeholder="t('board.filter.allProjects')" />
+        <KSelect v-model="assigneeFilter" :options="assigneeOptions" :placeholder="t('board.filter.allAssignees')" />
         <!-- A task row needs a `project_id` the tasks policies can check membership
              against, so with no project IN SCOPE there is nothing to create a task on.
              Say so: a grey button with no explanation is what made this look broken. -->
@@ -42,7 +42,7 @@
           :disabled="!projectOptions.length"
           :title="newTaskHint"
           @click="openCreate"
-        >Нова задача</KBtn>
+        >{{ t('board.header.newTask') }}</KBtn>
       </div>
     </header>
 
@@ -56,36 +56,33 @@
          Supabase was unreachable) used to dead-end here. -->
     <section v-if="unpublished.length" class="board__publish">
       <p class="board__publish-note">
-        Ці проєкти є лише на цій машині, тому дошка їх не показує. Публікація віддає проєкт
-        команді під тим самим id — прив’язана тека, сесії та їхні робочі дерева залишаються
-        на місці.
+        {{ t('board.publish.note') }}
       </p>
       <!-- `cloud.workspaces` is authoritative here rather than merely empty: this whole
            section renders only once `unpublished` is non-empty, and that list is gated on
            the cloud read having answered — workspaces and projects arrive in the same
            Promise.all. Without that, an unread list reads as «you have no workspace». -->
       <p v-if="!cloud.workspaces.length" class="board__publish-note">
-        Але спершу потрібен воркспейс: проєкт у хмарі завжди належить якійсь групі — створіть
-        її кнопкою «+» у лівій панелі.
+        {{ t('board.publish.needWorkspace') }}
       </p>
       <div v-for="p in unpublished" :key="p.id" class="board__publish-row">
         <span class="board__publish-name">{{ p.name }}</span>
-        <span class="board__publish-path mono">{{ p.localRepoPath || 'не прив’язано' }}</span>
+        <span class="board__publish-path mono">{{ p.localRepoPath || t('board.publish.unbound') }}</span>
         <!-- Not v-model: an untouched row has NO key in `publishInto`, and passing that
              `undefined` through as the model value is exactly what
              exactOptionalPropertyTypes refuses. '' is the placeholder, i.e. "not chosen". -->
         <KSelect
           :model-value="publishInto[p.id] ?? ''"
           :options="workspaceOptions"
-          placeholder="— виберіть воркспейс —"
+          :placeholder="t('board.publish.pickWorkspace')"
           @update:model-value="(id: string) => (publishInto[p.id] = id)"
         />
         <KBtn
           variant="primary"
           :disabled="!!publishing || !publishInto[p.id]"
-          :title="`Створити «${p.name}» у вибраному воркспейсі — id, тека й сесії не змінюються`"
+          :title="t('board.publish.createTip', { name: p.name })"
           @click="publishProject(p)"
-        >{{ publishing === p.id ? 'Публікуємо…' : 'Опублікувати в хмарі' }}</KBtn>
+        >{{ publishing === p.id ? t('board.publish.publishing') : t('board.publish.publish') }}</KBtn>
       </div>
       <p v-if="publishError" class="board__error" role="alert">{{ publishError }}</p>
     </section>
@@ -94,10 +91,10 @@
          (board.offline, computed by the store) and this machine's unsent push queue. -->
     <div v-if="board.offline || outboxPending > 0" class="board__alerts">
       <p v-if="board.offline" class="board__alert board__alert--offline" role="status">
-        Немає звʼязку з хмарою — показано останній відомий стан дошки. Локальні сесії працюють як завжди.
+        {{ t('board.alert.offline') }}
       </p>
       <p v-if="outboxPending > 0" class="board__alert board__alert--outbox" role="status">
-        Статуси цієї машини ще не відправлені: {{ outboxPending }}. Надішлемо автоматично, щойно зʼявиться звʼязок.
+        {{ t('board.alert.outbox', { n: outboxPending }) }}
       </p>
     </div>
 
@@ -105,7 +102,7 @@
       <KKanbanColumn
         v-for="col in COLUMNS"
         :key="col.key"
-        :label="col.label"
+        :label="t(col.labelKey)"
         :count="byColumn[col.key]?.length ?? 0"
       >
         <KKanbanCard
@@ -114,7 +111,7 @@
           :title="task.title"
           :branch="task.branch ?? ''"
           :project="projectName(task.projectId)"
-          :time="relativeTime(task.updatedAt, now)"
+          :time="renderTime(t, relativeTime(task.updatedAt, now))"
           :status="task.status"
           :assignee="resolveAssignee(task.assigneeId, membersOf(task.projectId))"
           @click="openEdit(task)"
@@ -125,30 +122,30 @@
     </div>
 
     <div v-else class="board__blank">
-      <div class="board__blank-eyebrow mono">КЕРМАНИЧ</div>
+      <div class="board__blank-eyebrow mono">{{ t('board.blank.eyebrow') }}</div>
       <p class="board__blank-text">{{ blankText }}</p>
     </div>
     </template>
 
     <!-- CREATE / EDIT TASK — same launch vocabulary as the local launcher -->
-    <KModal v-model="editorOpen" :title="editingId ? 'Змінити задачу' : 'Нова задача'" width="720px">
+    <KModal v-model="editorOpen" :title="editingId ? t('board.editor.editTitle') : t('board.editor.createTitle')" width="720px">
       <template #head-meta>
-        <span class="board__esc mono">Esc — закрити</span>
+        <span class="board__esc mono">{{ t('board.editor.esc') }}</span>
       </template>
 
       <div class="board__form">
         <KSelect
           v-if="!editingId"
           v-model="draftProject"
-          label="Проєкт"
+          :label="t('board.editor.project')"
           :options="projectOptions"
-          placeholder="виберіть проєкт"
+          :placeholder="t('board.editor.projectPlaceholder')"
         />
-        <KField v-model="draftTitle" label="Назва задачі" placeholder="що саме треба зробити" />
+        <KField v-model="draftTitle" :label="t('board.editor.title')" :placeholder="t('board.editor.titlePlaceholder')" />
         <KField
           v-model="draftDescription"
-          label="Опис"
-          placeholder="Один абзац — далі агент поставить уточнення."
+          :label="t('board.editor.description')"
+          :placeholder="t('board.editor.descriptionPlaceholder')"
           multiline
           :rows="6"
         />
@@ -157,29 +154,29 @@
                launcher's, and the same reason typing beats scrolling it. -->
           <KSelect
             v-model="draftModel"
-            label="Модель"
+            :label="t('board.editor.model')"
             :options="modelPickOptions"
-            placeholder="за замовчуванням"
+            :placeholder="t('board.editor.default')"
             searchable
           />
-          <KSelect v-model="draftEffort" label="Рівень роздумів" :options="effortPickOptions" placeholder="за замовчуванням" />
-          <KSelect v-model="draftPrefix" label="Тип" :options="PREFIX_OPTIONS" placeholder="feature" />
+          <KSelect v-model="draftEffort" :label="t('board.editor.effort')" :options="effortPickOptions" :placeholder="t('board.editor.default')" />
+          <KSelect v-model="draftPrefix" :label="t('board.editor.prefix')" :options="PREFIX_OPTIONS" placeholder="feature" />
           <KSelect
             v-model="draftPlatform"
-            label="Платформа"
+            :label="t('board.editor.platform')"
             :options="PLATFORM_OPTIONS"
-            placeholder="необовʼязково"
+            :placeholder="t('board.editor.platformPlaceholder')"
           />
         </div>
-        <KField v-model="draftBranch" label="Базова гілка" placeholder="за замовчуванням проєкту" />
+        <KField v-model="draftBranch" :label="t('board.editor.branch')" :placeholder="t('board.editor.branchPlaceholder')" />
         <!-- The label is hoisted OUT of KSelect so the avatar can be centred on the
              control itself: inside the component the label and the input are one column,
              and centring the face on that column parks it in the gap between them. -->
         <div v-if="editingTask" class="board__assign">
-          <span class="board__assign-label">Виконавець</span>
+          <span class="board__assign-label">{{ t('board.editor.assignee') }}</span>
           <div class="board__assign-row">
             <KAvatar
-              :name="editingAssignee?.name ?? 'Не призначено'"
+              :name="editingAssignee?.name ?? t('board.editor.unassignedName')"
               :avatar-url="editingAssignee?.avatarUrl"
               :empty="!editingAssignee"
               :size="26"
@@ -187,7 +184,7 @@
             <KSelect
               :model-value="editingTask.assigneeId ?? ''"
               :options="editorAssigneeOptions"
-              placeholder="не призначено"
+              :placeholder="t('board.editor.unassigned')"
               :disabled="isActiveTask(editingTask) || !canAssign(editingTask)"
               @update:model-value="(id: string) => onAssign(editingTask!, id)"
             />
@@ -198,52 +195,50 @@
         <div v-else-if="!editingId" class="board__assign">
           <KSelect
             v-model="draftAssignee"
-            label="Виконавець"
+            :label="t('board.editor.assignee')"
             :options="editorAssigneeOptions"
-            placeholder="не призначено"
+            :placeholder="t('board.editor.unassigned')"
           />
         </div>
         <p v-if="editingTask && isStale(editingTask)" class="board__stale-note mono" role="alert">
-          ⚠ Давно без змін — машина виконавця, схоже, офлайн.
+          {{ t('board.editor.staleNote') }}
         </p>
         <p v-if="editorError" class="board__error" role="alert">{{ editorError }}</p>
       </div>
 
       <template #controls>
-        <KBtn v-if="editingTask" variant="ghost" @click="onDelete(editingTask); editorOpen = false">Видалити</KBtn>
+        <KBtn v-if="editingTask" variant="ghost" @click="onDelete(editingTask); editorOpen = false">{{ t('board.editor.delete') }}</KBtn>
         <KBtn
           v-if="editingTask && canForceStop(editingTask)"
           variant="ghost"
           @click="editorOpen = false; openForceStop(editingTask)"
-        >Позначити зупиненою</KBtn>
-        <KBtn variant="ghost" @click="editorOpen = false">Скасувати</KBtn>
+        >{{ t('board.forceStop.mark') }}</KBtn>
+        <KBtn variant="ghost" @click="editorOpen = false">{{ t('board.action.cancel') }}</KBtn>
         <KBtn
           v-if="editingTask"
           variant="secondary"
           :disabled="launching !== null || isActiveTask(editingTask) || !canRun(editingTask)"
           :title="launchHint(editingTask)"
           @click="editorOpen = false; launch(editingTask)"
-        >Запустити</KBtn>
-        <KBtn variant="primary" :disabled="!canSubmit" @click="submitEditor">{{ editingId ? 'Зберегти' : 'Створити' }}</KBtn>
+        >{{ t('board.editor.launch') }}</KBtn>
+        <KBtn variant="primary" :disabled="!canSubmit" @click="submitEditor">{{ editingId ? t('board.editor.save') : t('board.editor.create') }}</KBtn>
       </template>
     </KModal>
 
     <!-- LOCAL BINDING: a cloud task only runs where its repo actually lives -->
-    <KModal v-model="bindingOpen" title="Звʼязати проєкт з локальною текою">
+    <KModal v-model="bindingOpen" :title="t('board.binding.title')">
       <div class="board__bind">
         <p class="board__bind-note">
-          Задача «{{ pendingLaunch?.title ?? '' }}» виконується на цій машині. Вкажи локальний
-          git-репозиторій проєкту «{{ bindingProjectId ? projectName(bindingProjectId) : '' }}» —
-          шлях лишається лише тут і в хмару не потрапляє.
+          {{ t('board.binding.note', { title: pendingLaunch?.title ?? '', project: bindingProjectId ? projectName(bindingProjectId) : '' }) }}
         </p>
-        <KField v-model="bindingPath" label="Локальна тека" placeholder="/Users/me/code/project" />
-        <KBtn variant="secondary" @click="pickerOpen = true">Обрати теку…</KBtn>
+        <KField v-model="bindingPath" :label="t('board.binding.pathLabel')" placeholder="/Users/me/code/project" />
+        <KBtn variant="secondary" @click="pickerOpen = true">{{ t('board.binding.pick') }}</KBtn>
         <p v-if="bindingError" class="board__bind-error" role="alert">{{ bindingError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="bindingOpen = false">Скасувати</KBtn>
+        <KBtn variant="ghost" @click="bindingOpen = false">{{ t('board.action.cancel') }}</KBtn>
         <KBtn variant="primary" :disabled="!bindingPath.trim()" @click="confirmBinding">
-          Звʼязати і запустити
+          {{ t('board.binding.confirm') }}
         </KBtn>
       </template>
     </KModal>
@@ -251,24 +246,19 @@
     <!-- STUCK TASK: say plainly what this does and, more importantly, what it does NOT do.
          A user who reads this as «зупинити агента» would walk away believing a session on
          another machine is dead when it may be running fine. -->
-    <KModal :model-value="!!forceStopTarget" title="Позначити задачу зупиненою" @update:model-value="closeForceStop">
+    <KModal :model-value="!!forceStopTarget" :title="t('board.forceStop.title')" @update:model-value="closeForceStop">
       <div class="board__force">
         <p class="board__force-note">
-          Задача «{{ forceStopTarget?.title ?? '' }}» рахується активною зі статусом
-          «{{ forceStopTarget?.status ?? '' }}», але її машина більше не надсилає оновлень.
-          Це поверне картку в стан «зупинено», щоб задачу знову можна було запустити,
-          переасайнити або видалити.
+          {{ t('board.forceStop.note', { title: forceStopTarget?.title ?? '', status: forceStopTarget?.status ?? '' }) }}
         </p>
         <p class="board__force-warn">
-          Це виправляє лише дошку. Сесію на машині, до якої ви не маєте доступу, воно не
-          зупиняє — і якщо та машина ще жива, вона просто надішле свій справжній статус
-          знову, і картка повернеться в роботу.
+          {{ t('board.forceStop.warn') }}
         </p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="closeForceStop(false)">Скасувати</KBtn>
+        <KBtn variant="ghost" @click="closeForceStop(false)">{{ t('board.action.cancel') }}</KBtn>
         <KBtn variant="primary" :disabled="forcingStop" @click="confirmForceStop">
-          Позначити зупиненою
+          {{ t('board.forceStop.mark') }}
         </KBtn>
       </template>
     </KModal>
@@ -282,6 +272,7 @@
 // on the assignee's own machine, which is why «Запустити» needs a local binding.
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import type { Project, ThinkingLevel } from '@kermanych/core';
 import type { Task, TaskStatus, WorkspaceMember } from '@kermanych/cloud';
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
@@ -299,7 +290,7 @@ import KAvatar from 'components/kit/KAvatar.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
 import { useDelayedTrue } from '../composables/useDelayedTrue';
-import { relativeTime } from '../lib/time';
+import { relativeTime, renderTime } from '../lib/time';
 import { EFFORT_OPTIONS } from '../lib/effort';
 import { modelOptions, effortOptions } from '../lib/models';
 import { handleOf, resolveAssignee } from '../lib/members';
@@ -317,6 +308,7 @@ const cloud = useProjects();
 const local = useOrchestrator();
 const now = useNow();
 const router = useRouter();
+const { t } = useI18n();
 const jiraStore = useJira();
 
 // ── the Jira view switcher ────────────────────────────────────────────────────
@@ -378,13 +370,13 @@ function goToAgents(): void {
 // Ten task statuses, five columns: `thinking` and `tool` are one human state («агент
 // працює»), and the five end states are all «не рухається». Ten lanes would be ten
 // mostly-empty columns.
-type Column = { key: string; label: string; statuses: TaskStatus[] };
+type Column = { key: string; labelKey: string; statuses: TaskStatus[] };
 const COLUMNS: Column[] = [
-  { key: 'backlog', label: 'Беклог', statuses: ['backlog'] },
-  { key: 'queued', label: 'У черзі', statuses: ['queued'] },
-  { key: 'running', label: 'В роботі', statuses: ['thinking', 'tool'] },
-  { key: 'waiting', label: 'Чекає відповіді', statuses: ['waiting_input'] },
-  { key: 'closed', label: 'Завершені', statuses: ['done', 'merged', 'stopped', 'error', 'conflict'] },
+  { key: 'backlog', labelKey: 'board.column.backlog', statuses: ['backlog'] },
+  { key: 'queued', labelKey: 'board.column.queued', statuses: ['queued'] },
+  { key: 'running', labelKey: 'board.column.running', statuses: ['thinking', 'tool'] },
+  { key: 'waiting', labelKey: 'board.column.waiting', statuses: ['waiting_input'] },
+  { key: 'closed', labelKey: 'board.column.closed', statuses: ['done', 'merged', 'stopped', 'error', 'conflict'] },
 ];
 
 // The Realtime subscription is NOT this page's any more: MainLayout owns subscribe() and
@@ -528,7 +520,7 @@ const assigneeOptions = computed<KSelectOption[]>(() => {
   const rosters = ws
     ? [cloud.members[ws] ?? []]
     : cloud.workspaces.map((w) => cloud.members[w.id] ?? []);
-  const out: KSelectOption[] = [{ value: UNASSIGNED, label: 'Не призначено' }];
+  const out: KSelectOption[] = [{ value: UNASSIGNED, label: t('board.filter.unassigned') }];
   const seen = new Set<string>();
   for (const roster of rosters) {
     for (const m of roster) {
@@ -542,15 +534,15 @@ const assigneeOptions = computed<KSelectOption[]>(() => {
 
 const scopeHeading = computed(() => {
   const id = local.selectedWorkspaceId;
-  if (!id) return 'Дошка команди';
+  if (!id) return t('board.heading.team');
   const name = cloud.workspaceById.get(id)?.name;
-  if (name) return `Дошка · ${name}`;
+  if (name) return t('board.heading.scoped', { name });
   // Scoped, but the name has not arrived. «Дошка команди» would claim the OPPOSITE of what
   // the board is showing — one group's tasks announced as every group's — so while the list
   // is unread the heading keeps the scoped SHAPE and says «читаю…» where the name goes.
   // After a read an unresolvable id means the group is gone, and there is no name to wait
   // for any more.
-  return cloud.listRead ? 'Дошка команди' : 'Дошка · читаю…';
+  return cloud.listRead ? t('board.heading.team') : t('board.heading.reading');
 });
 
 // `!t.jiraKey`: shadow tasks minted by Jira-ticket launches belong to the Jira view,
@@ -637,8 +629,8 @@ const SLOW_LOAD_MS = 500;
 const slowLoad = useDelayedTrue(() => board.loading, SLOW_LOAD_MS);
 
 const loadHint = computed(() => {
-  if (slowLoad.value) return 'Читаю дошку…';
-  if (board.loadError) return `Хмара недоступна: ${board.loadError}`;
+  if (slowLoad.value) return t('board.loadHint.reading');
+  if (board.loadError) return t('board.loadHint.error', { error: board.loadError });
   return '';
 });
 
@@ -683,34 +675,33 @@ const localOnlyHint = computed(() => {
   if (!id || local.selectedWorkspaceId) return '';
   const row = unpublished.value.find((p) => p.id === id);
   return row
-    ? `Проєкт «${row.name}» живе лише на цій машині, тому задач у хмарі в нього немає — опублікуйте його нижче.`
+    ? t('board.localOnly.hint', { name: row.name })
     : '';
 });
 
 // «Читаю дошку…» is about the TASK read; this is the project read, and the two finish
-// independently. One constant because two surfaces say it and they must not drift.
-const READING_PROJECTS = 'Читаю список проєктів…';
+// independently. One key so the two surfaces that say it cannot drift.
 
 // Why «Нова задача» is grey. `tasks.project_id` is what tasks_insert_member checks
 // membership against, so with no project to hang a task on there is nothing to create —
 // and that is now three different situations, only some of which the user can act on.
 const newTaskHint = computed(() => {
   if (!cloud.projects.length) {
-    if (cloud.offlineError) return 'Список проєктів не прочитано — хмара недоступна';
+    if (cloud.offlineError) return t('board.newTaskHint.offline');
     // Unread is not empty. Saying the cloud holds no project yet — and pointing at a publish
     // section this window deliberately hides — hands the user a reason that is not the real
     // one, on a button that is grey for a reason that will pass on its own.
-    if (!cloud.listRead) return READING_PROJECTS;
-    return 'Задача належить проєкту в хмарі, а тут його ще немає — опублікуйте локальний проєкт нижче або попросіть колегу додати вас до свого';
+    if (!cloud.listRead) return t('board.readingProjects');
+    return t('board.newTaskHint.noCloudProjects');
   }
   // Projects exist, but none in the current scope: the create picker offers only what the
   // board is showing, so the way out is a sidebar click, not this button.
   if (!projectOptions.value.length) {
     return localOnlyHint.value
-      ? 'Цей проєкт ще не у хмарі — опублікуйте його нижче, і тоді на ньому можна буде створювати задачі'
-      : 'У вибраному воркспейсі ще немає проєктів — створіть проєкт у лівій панелі або виберіть інший воркспейс';
+      ? t('board.newTaskHint.localOnly')
+      : t('board.newTaskHint.emptyWorkspace');
   }
-  return 'Створити задачу для команди';
+  return t('board.newTaskHint.create');
 });
 
 // The same states, spelled out where the board is empty. Telling a user with two local
@@ -719,13 +710,13 @@ const newTaskHint = computed(() => {
 // the list above that this text sends them to is hidden until the read lands.
 const blankText = computed(() => {
   if (cloud.offlineError) {
-    return 'Список проєктів не прочитано — хмара недоступна. Задачі команди зʼявляться, щойно буде звʼязок; локальні сесії працюють як завжди.';
+    return t('board.blank.offline');
   }
-  if (!cloud.listRead) return READING_PROJECTS;
+  if (!cloud.listRead) return t('board.readingProjects');
   if (unpublished.value.length) {
-    return 'Жоден проєкт цієї машини ще не живе у хмарі — опублікуйте будь-який зі списку вище, і його задачі побачить уся команда.';
+    return t('board.blank.unpublished');
   }
-  return 'Ви ще не в жодному проєкті. Створіть проєкт кнопкою «+» у лівій панелі або попросіть колегу додати вас до свого.';
+  return t('board.blank.noProjects');
 });
 
 const publishing = ref<string | null>(null);
@@ -748,7 +739,7 @@ async function publishProject(project: Project): Promise<void> {
   // arrives anyway (a stale click, a keyboard activation), so the call site can never hand
   // publish() an empty workspace.
   if (!workspaceId) {
-    publishError.value = `Виберіть воркспейс для «${project.name}»`;
+    publishError.value = t('board.publish.selectWorkspace', { name: project.name });
     return;
   }
   publishing.value = project.id;
@@ -759,14 +750,14 @@ async function publishProject(project: Project): Promise<void> {
     // loaded needs nothing new — this is the retry for a roster whose earlier read failed,
     // and the first read for a group that had no visible project until now.
     await loadMembers();
-    local.notify(`Проєкт «${project.name}» опубліковано — тепер тут можна створювати задачі.`);
+    local.notify(t('board.notify.published', { name: project.name }));
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
     // A primary-key collision is the one refusal that means something specific: the cloud
     // row exists and this user simply cannot see it. Publishing again would never help.
     publishError.value = /duplicate key|already exists/i.test(raw)
-      ? `Проєкт «${project.name}» уже є в хмарі, але ви не його учасник — попросіть власника додати вас.`
-      : `Не вдалося опублікувати «${project.name}»: ${raw}`;
+      ? t('board.publish.duplicate', { name: project.name })
+      : t('board.publish.failed', { name: project.name, error: raw });
   } finally {
     publishing.value = null;
   }
@@ -845,17 +836,17 @@ function launchHint(task: Task): string {
     // from here at all — pointing at the folder picker would be a dead end. An ACTIVE card
     // keeps the branches below instead: «де воно виконується» is the more useful answer
     // there, and it is the only place the force-stop pointer lives.
-    if (!canRun(task)) return 'Задача призначена іншому учаснику — запустити її може лише він';
+    if (!canRun(task)) return t('board.launchHint.assignedOther');
     return isBound(task)
-      ? 'Запустити локальну сесію'
-      : 'Проєкт не звʼязано з локальною текою — вкажи її';
+      ? t('board.launchHint.runLocal')
+      : t('board.launchHint.notBound');
   }
   if (hasLocalSession(task)) {
-    return 'Задача вже виконується на цій машині — зупини сесію, щоб запустити її знову';
+    return t('board.launchHint.alreadyRunningLocal');
   }
   return canForceStop(task)
-    ? 'Задача виконується — можливо, на іншій машині. Якщо вона там уже не працює, натисни «Позначити зупиненою».'
-    : 'Задача виконується на машині виконавця. Зупинити її може лише виконавець або власник проєкту.';
+    ? t('board.launchHint.maybeOtherMachine')
+    : t('board.launchHint.runningRemote');
 }
 
 // ── Stuck-task recovery ───────────────────────────────────────────────────────
@@ -907,15 +898,15 @@ const pendingLaunch = ref<Task | null>(null);
 // Every refusal `POST /sessions/from-task` can produce, phrased for the person who pressed
 // the button. `project not bound` is deliberately absent: it is not a toast, it opens the
 // picker — a dead end would leave the user with no way to fix it from here.
-const LAUNCH_ERRORS: Record<string, string> = {
-  'task not found': 'Задачі вже немає — хтось її видалив. Онови дошку.',
+const launchErrors = computed<Record<string, string>>(() => ({
+  'task not found': t('board.launchError.notFound'),
   // tasks_guard's own two sentences, shared with every other surface that renders a refused
   // assignment so the wording cannot drift between them.
-  ...ASSIGNMENT_REFUSALS,
-  'task already claimed': 'Задачу щойно забрав інший учасник — онови дошку.',
-  'task is already running': 'Задача вже виконується — зупини поточну сесію, перш ніж запускати нову.',
-  'not signed in': 'Локальний Керманич не має токена — увійди ще раз.',
-};
+  ...Object.fromEntries(Object.entries(ASSIGNMENT_REFUSALS).map(([raw, key]) => [raw, t(key)])),
+  'task already claimed': t('board.launchError.claimed'),
+  'task is already running': t('board.launchError.running'),
+  'not signed in': t('board.launchError.notSignedIn'),
+}));
 
 // The board is a shared surface, so this is a pre-check for UX only: the API re-checks the
 // binding and the RLS-backed assignee rule regardless of what the button allowed.
@@ -932,7 +923,7 @@ async function runLaunch(task: Task): Promise<void> {
   launching.value = task.id;
   try {
     const session = await api.createSessionFromTask(task.id);
-    local.notify(`Сесію «${session.name}» запущено на цій машині.`, 'info');
+    local.notify(t('board.notify.sessionStarted', { name: session.name }), 'info');
     // The local session lives on the Агенти board, so go where the work is.
     await router.push('/');
   } catch (e) {
@@ -940,7 +931,7 @@ async function runLaunch(task: Task): Promise<void> {
     // plain Error carrying the server's message. That is what separates "the local
     // Kermanych is not answering" from "it answered no".
     if (e instanceof TypeError) {
-      local.notify('Локальний Керманич не відповідає — перевір, чи він запущений.', 'error');
+      local.notify(t('board.notify.localUnreachable'), 'error');
       return;
     }
     const message = e instanceof Error ? e.message : String(e);
@@ -949,7 +940,7 @@ async function runLaunch(task: Task): Promise<void> {
       openBinding(task);
       return;
     }
-    local.notify(LAUNCH_ERRORS[message] ?? `Не вдалося запустити задачу: ${message}`, 'error');
+    local.notify(launchErrors.value[message] ?? t('board.launchError.generic', { error: message }), 'error');
   } finally {
     launching.value = null;
   }
@@ -977,7 +968,7 @@ async function confirmBinding(): Promise<void> {
     // browser's own English text, which has no business inside this modal. Everything else
     // is the api's refusal and is shown as it came.
     if (e instanceof TypeError) {
-      bindingError.value = 'Локальний Керманич не відповідає — перевір, чи він запущений.';
+      bindingError.value = t('board.notify.localUnreachable');
       return;
     }
     bindingError.value = e instanceof Error ? e.message : String(e);
@@ -992,7 +983,7 @@ const modelPickOptions = computed(() => modelOptions(local.models));
 // «за замовчуванням» or an unknown alias keeps the full ladder. Labels stay ours (lib/effort).
 const effortPickOptions = computed(() => {
   const allowed = effortOptions(local.models, draftModel.value || undefined);
-  return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value));
+  return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value)).map((o) => ({ value: o.value, label: t(o.labelKey) }));
 });
 const PREFIX_OPTIONS = ['feature', 'fix', 'refactoring', 'chore'];
 const PLATFORM_OPTIONS = ['backend', 'web', 'mobile'];
@@ -1098,20 +1089,20 @@ async function submitEditor(): Promise<void> {
   // title would persist and the card would lose its name. `canSubmit` already disables the
   // control; this is the refusal for a submit that arrives anyway (Enter, a stale click).
   if (!fields.title) {
-    editorError.value = 'Задача без назви — введіть назву';
-    local.notify('Задача без назви — введіть назву', 'error');
+    editorError.value = t('board.editor.noTitle');
+    local.notify(t('board.editor.noTitle'), 'error');
     return;
   }
 
   if (editingId.value) {
     if (!(await board.updateTaskFields(editingId.value, fields))) {
-      editorError.value = 'Хмара відмовила — подробиці в повідомленні';
+      editorError.value = t('board.editor.updateFailed');
       return;
     }
   } else {
     const projectId = draftProject.value;
     if (!cloud.byId.has(projectId)) {
-      editorError.value = 'Виберіть проєкт';
+      editorError.value = t('board.editor.selectProject');
       return;
     }
     if (
@@ -1123,7 +1114,7 @@ async function submitEditor(): Promise<void> {
         ...(draftAssignee.value ? { assigneeId: draftAssignee.value } : {}),
       }))
     ) {
-      editorError.value = 'Не вдалося створити задачу — подробиці в повідомленні';
+      editorError.value = t('board.editor.createFailed');
       return;
     }
   }

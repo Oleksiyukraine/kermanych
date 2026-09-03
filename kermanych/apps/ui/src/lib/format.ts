@@ -34,14 +34,26 @@ export function percent(n: number): string {
   return n > 0 ? '<1%' : '0%';
 }
 
-// A plan window's name, short enough to sit under the account name: `5г`, `7д`, `міс`. The
+// A quota window's name, short enough to sit under the account name: `5г`, `7д`, `міс`. The
 // id comes from the provider (`5h`, `7d`, `monthly`), so parse the shape rather than
-// enumerate the providers — an unknown window still renders, under its own id.
-export function planWindow(id: string): string {
+// enumerate the providers — an unknown window still renders, under its own id. The unit words
+// live in the catalog (`common.unit.*`); the caller renders the parsed shape via renderWindow.
+export type WindowLabel = { key: string; params: { n: number } } | { text: string };
+
+export function planWindow(id: string): WindowLabel {
   const m = /^(\d+)([hdw])$/i.exec(id);
-  if (m) return `${m[1]}${{ h: 'г', d: 'д', w: 'тиж' }[m[2]!.toLowerCase()]}`;
-  if (/^month(ly)?$/i.test(id)) return 'міс';
-  return id;
+  if (m) {
+    const key = { h: 'common.unit.hours', d: 'common.unit.days', w: 'common.unit.weeks' }[m[2]!.toLowerCase()]!;
+    return { key, params: { n: Number(m[1]) } };
+  }
+  if (/^month(ly)?$/i.test(id)) return { key: 'common.unit.monthly', params: { n: 0 } };
+  return { text: id };
+}
+
+// Render a window label: a recognised window resolves through the catalog, an unknown provider
+// id passes through as its own text.
+export function renderWindow(t: (key: string, named?: Record<string, unknown>) => string, w: WindowLabel): string {
+  return 'text' in w ? w.text : t(w.key, w.params);
 }
 
 // Every token the provider billed for: fresh input, output and both cache lanes. Cache

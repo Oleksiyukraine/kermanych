@@ -13,27 +13,27 @@
           v-if="session.kind === 'chat'"
           :disabled="promoting"
           :title="promoting
-            ? 'Готую worktree…'
-            : 'Почати імплементацію обговореного (worktree + повний доступ, цей же контекст)'"
+            ? t('kit.panel.promoting')
+            : t('kit.panel.promoteAgent')"
           @click="emit('promoteAgent')"
         >▶</KIconButton>
         <KIconButton
           v-if="session.kind === 'chat'"
-          title="Зберегти як задачу в беклог"
+          :title="t('kit.panel.promoteTask')"
           @click="emit('promoteTask')"
         >⊕</KIconButton>
         <KIconButton
           v-if="session.kind === 'agent'"
-          title="Обговорити окрему гілку (форк розмови)"
+          :title="t('kit.panel.branch')"
           @click="emit('branch')"
         >⑂</KIconButton>
         <KIconButton
           v-if="running"
-          title="Зупинити"
+          :title="t('kit.panel.stop')"
           @click="emit('stop')"
         >■</KIconButton>
         <KIconButton
-          title="Відкрити в редакторі"
+          :title="t('kit.panel.editor')"
           @click="emit('editor')"
         >⧉</KIconButton>
       </div>
@@ -46,16 +46,16 @@
          control to a text locator, resolved the collapse button to the expand one.
          «стиснути» is the plain antonym and shares no prefix with it. -->
     <div class="k-panel__tools mono">
-      <span class="k-panel__tools-label">деталі:</span>
-      <button type="button" class="k-panel__tools-btn" @click="emit('expandAll', true)">розгорнути все</button>
-      <button type="button" class="k-panel__tools-btn" @click="emit('expandAll', false)">стиснути все</button>
+      <span class="k-panel__tools-label">{{ t('kit.panel.detailsLabel') }}</span>
+      <button type="button" class="k-panel__tools-btn" @click="emit('expandAll', true)">{{ t('kit.panel.expandAll') }}</button>
+      <button type="button" class="k-panel__tools-btn" @click="emit('expandAll', false)">{{ t('kit.panel.collapseAll') }}</button>
     </div>
 
     <!-- my-message navigation — jump between the operator's own messages -->
-    <div v-if="userMsgCount > 1" class="k-panel__nav" role="group" aria-label="Навігація по моїх повідомленнях">
-      <button type="button" class="k-panel__nav-btn" v-tip="'Попереднє моє повідомлення (Alt+↑)'" aria-label="Попереднє моє повідомлення" @click="jumpUser(-1)">▲</button>
+    <div v-if="userMsgCount > 1" class="k-panel__nav" role="group" :aria-label="t('kit.panel.navGroup')">
+      <button type="button" class="k-panel__nav-btn" v-tip="t('kit.panel.prevMsgTip')" :aria-label="t('kit.panel.prevMsg')" @click="jumpUser(-1)">▲</button>
       <span class="k-panel__nav-count mono">{{ userNavLabel }}</span>
-      <button type="button" class="k-panel__nav-btn" v-tip="'Наступне моє повідомлення (Alt+↓)'" aria-label="Наступне моє повідомлення" @click="jumpUser(1)">▼</button>
+      <button type="button" class="k-panel__nav-btn" v-tip="t('kit.panel.nextMsgTip')" :aria-label="t('kit.panel.nextMsg')" @click="jumpUser(1)">▼</button>
     </div>
 
     <!-- floor 2 — scrollable log -->
@@ -64,14 +64,14 @@
 
       <!-- decision block — the ONE accent block-strip in the log -->
       <div v-if="req" class="k-panel__decision">
-        <div class="k-panel__decision-head mono">ПОТРІБНЕ РІШЕННЯ</div>
+        <div class="k-panel__decision-head mono">{{ t('kit.panel.decisionNeeded') }}</div>
         <div v-if="req.title" class="k-panel__decision-title">{{ req.title }}</div>
         <div v-if="req.message" class="k-panel__decision-msg">{{ req.message }}</div>
 
         <!-- confirm -->
         <div v-if="req.method === 'confirm'" class="k-panel__decision-row">
-          <KBtn variant="primary" @click="answerConfirm(true)">Так</KBtn>
-          <KBtn variant="secondary" @click="answerConfirm(false)">Ні</KBtn>
+          <KBtn variant="primary" @click="answerConfirm(true)">{{ t('kit.panel.yes') }}</KBtn>
+          <KBtn variant="secondary" @click="answerConfirm(false)">{{ t('kit.panel.no') }}</KBtn>
         </div>
 
         <!-- select -->
@@ -96,7 +96,7 @@
             class="k-panel__decision-input mono"
             :placeholder="req.placeholder ?? ''"
           />
-          <KBtn variant="primary" type="submit">Надіслати</KBtn>
+          <KBtn variant="primary" type="submit">{{ t('kit.panel.submit') }}</KBtn>
         </form>
 
         <!-- editor -->
@@ -111,25 +111,25 @@
             rows="4"
             :placeholder="req.placeholder ?? ''"
           />
-          <KBtn variant="primary" type="submit">Надіслати</KBtn>
+          <KBtn variant="primary" type="submit">{{ t('kit.panel.submit') }}</KBtn>
         </form>
 
         <div class="k-panel__decision-cancel">
-          <KBtn variant="ghost" @click="answerCancel">Скасувати</KBtn>
+          <KBtn variant="ghost" @click="answerCancel">{{ t('kit.panel.cancel') }}</KBtn>
         </div>
       </div>
 
       <!-- error banner — the omp child exited before finishing; surface the reason -->
       <div v-if="session.status === 'error'" class="k-panel__error" role="alert">
-        <div class="k-panel__error-head mono">ПОМИЛКА</div>
-        <div class="k-panel__error-msg">{{ session.error || 'Сесію завершено з помилкою.' }}</div>
+        <div class="k-panel__error-head mono">{{ t('kit.panel.error') }}</div>
+        <div class="k-panel__error-msg">{{ session.error || t('kit.panel.sessionErrored') }}</div>
       </div>
 
       <!-- live activity — a pinned, pulsing heartbeat so a long turn (thinking or a
            minutes-long tool call) never looks dead -->
       <div v-if="stalled" class="k-panel__stall" role="alert">
-        <span class="k-panel__stall-msg">⚠ Немає активності {{ silentLabel }} — агент міг зависнути</span>
-        <button type="button" class="k-panel__stall-btn" @click="emit('restart')">⟳ Перезапустити</button>
+        <span class="k-panel__stall-msg">{{ t('kit.panel.stalled', { label: silentLabel }) }}</span>
+        <button type="button" class="k-panel__stall-btn" @click="emit('restart')">{{ t('kit.panel.restart') }}</button>
       </div>
       <div v-else-if="liveActivity" class="k-panel__thinking" aria-live="polite">{{ liveActivity }}</div>
     </div>
@@ -161,21 +161,21 @@
         <template #actions>
           <KIconButton
             :disabled="refreshing"
-            title="Оновити чат — підтягнути історію сесії"
+            :title="t('kit.panel.refreshTip')"
             @click="emit('refresh')"
           >↻</KIconButton>
           <KIconButton
             :disabled="running"
             :title="running
-              ? 'Агент працює — саммарі можна попросити після ходу'
-              : 'Коротке саммарі сесії'"
+              ? t('kit.panel.summaryBusyTip')
+              : t('kit.panel.summaryTip')"
             @click="emit('summary')"
           >≡</KIconButton>
         </template>
       </KComposer>
     </div>
     <div v-else class="k-panel__composer k-panel__merged-note mono">
-      Сесію влито в проєкт. Натисни «↻ Відновити» вгорі, щоб підняти worktree і продовжити.
+      {{ t('kit.panel.mergedNote') }}
     </div>
 
     <!-- floating "+ Задача" — appears over a text selection in the log -->
@@ -184,14 +184,15 @@
       type="button"
       class="k-panel__sel-task"
       :style="{ left: selBtn.x + 'px', top: selBtn.y + 'px' }"
-      v-tip="'Створити задачу з виділеного'"
+      v-tip="t('kit.panel.newTaskTip')"
       @mousedown.prevent.stop="emitNewTask"
-    >+ Задача</button>
+    >{{ t('kit.panel.newTask') }}</button>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { Session, RpcExtensionUIResponse, ImageInput, ModelOption, ThinkingLevel } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KTag from './KTag.vue';
@@ -201,6 +202,8 @@ import KTodoLane from './KTodoLane.vue';
 import KStatusRow from './KStatusRow.vue';
 import KIconButton from './KIconButton.vue';
 import { useNow } from '../../composables/useNow';
+
+const { t } = useI18n();
 
 // The application atom (design-system section 05): three floors — header, log,
 // input — stacked with no gaps (panels dock via 2px rules). The active panel
@@ -218,7 +221,7 @@ const props = withDefaults(
     // The omp model catalog, forwarded to the composer's model chip so it can offer a picker.
     models?: readonly ModelOption[] | undefined;
   }>(),
-  { placeholder: 'напиши наступний крок…', promoting: false, refreshing: false, models: () => [] },
+  { promoting: false, refreshing: false, models: () => [] },
 );
 
 // `finish`, `reopen` and `delete` are NOT declared here: завершити / відновити / видалити are
@@ -392,23 +395,23 @@ const isMerged = computed(() => props.session.status === 'merged');
 const statusLabel = computed(() => {
   switch (props.session.status) {
     case 'thinking':
-      return props.session.currentTool ?? 'працює';
+      return props.session.currentTool ?? t('kit.panel.status.working');
     case 'tool':
-      return props.session.currentTool ?? 'виконує';
+      return props.session.currentTool ?? t('kit.panel.status.running');
     case 'waiting_input':
-      return 'чекає';
+      return t('kit.panel.status.waiting');
     case 'done':
-      return 'готово';
+      return t('kit.panel.status.done');
     case 'error':
-      return 'помилка';
+      return t('kit.panel.status.error');
     case 'queued':
-      return 'у черзі';
+      return t('kit.panel.status.queued');
     case 'stopped':
-      return 'зупинено';
+      return t('kit.panel.status.stopped');
     case 'merged':
-      return 'влито';
+      return t('kit.panel.status.merged');
     case 'conflict':
-      return 'конфлікт';
+      return t('kit.panel.status.conflict');
     default:
       return props.session.status;
   }
@@ -420,11 +423,11 @@ const statusLabel = computed(() => {
 const liveActivity = computed(() => {
   switch (props.session.status) {
     case 'queued':
-      return 'Запускаю…';
+      return t('kit.panel.live.launching');
     case 'thinking':
-      return 'Думаю…';
+      return t('kit.panel.live.thinking');
     case 'tool':
-      return props.session.currentTool ? `Виконую: ${props.session.currentTool}…` : 'Виконую…';
+      return props.session.currentTool ? t('kit.panel.live.runningTool', { tool: props.session.currentTool }) : t('kit.panel.live.running');
     default:
       return '';
   }
@@ -446,7 +449,7 @@ const stalled = computed(() => silentMs.value >= STALL_MS);
 // Do not fold it into the shared formatter.
 const silentLabel = computed(() => {
   const s = Math.round(silentMs.value / 1000);
-  return s >= 90 ? `${Math.round(s / 60)} хв` : `${s} с`;
+  return s >= 90 ? t('kit.panel.unit.min', { n: Math.round(s / 60) }) : t('kit.panel.unit.sec', { n: s });
 });
 
 function answerConfirm(confirmed: boolean) {

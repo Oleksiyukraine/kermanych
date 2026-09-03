@@ -1,8 +1,8 @@
-import type { ToolLine } from "./types";
+import type { ToolLine, ToolStat } from "./types";
 
 export type ToolDisplay = {
   target?: string;
-  stat?: string;
+  stat?: ToolStat;
   // The primary number behind `stat` (lines, matches, files, ms) so coalesced rows
   // can sum without re-parsing the formatted string.
   count?: number;
@@ -57,7 +57,7 @@ const readDisplay: Reducer = (args, d, content) => {
   const target = shortPath(str(args["path"]));
   if (d["isDirectory"]) {
     const dirLines = textLines(content);
-    return { target, stat: "каталог", lines: dirLines, totalLines: dirLines.length };
+    return { target, stat: { key: "chat.toolStat.dir" }, lines: dirLines, totalLines: dirLines.length };
   }
   const dc = d["displayContent"] as { text?: string; lineNumbers?: number[] } | undefined;
   const total = num(d["totalLines"]);
@@ -97,7 +97,7 @@ const globDisplay: Reducer = (args, d, content) => {
   const lines: ToolLine[] = files.length ? files.map((text) => ({ t: "ctx" as const, text })) : textLines(content);
   return {
     target: shortPath(str(args["path"]), 1),
-    stat: `${count ?? files.length} файлів${d["truncated"] ? " ·обрізано" : ""}`,
+    stat: { key: "chat.toolStat.files", params: { count: count ?? files.length, truncated: Boolean(d["truncated"]) } },
     count: count ?? files.length,
     lines,
     totalLines: lines.length,
@@ -172,7 +172,7 @@ const grepDisplay: Reducer = (args, d) => {
   }
   return {
     target,
-    stat: `${matches} збігів / ${num(d["fileCount"]) ?? 0} ф${d["truncated"] ? " ·обрізано" : ""}`,
+    stat: { key: "chat.toolStat.matches", params: { matches, files: num(d["fileCount"]) ?? 0, truncated: Boolean(d["truncated"]) } },
     count: matches,
     lines,
     totalLines: lines.length,

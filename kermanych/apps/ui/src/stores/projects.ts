@@ -28,6 +28,7 @@ import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { api } from '../lib/api';
 import { groupProjectsByWorkspace, projectWorkspaceMap } from '../lib/scope';
+import { globalTr } from '../boot/i18n';
 
 // Cloud workspaces + projects + membership: the source of truth for project CONFIG, for
 // the group a project belongs to, and for who is on that group. Every successful read is
@@ -206,7 +207,7 @@ export const useProjects = defineStore('projects', () => {
   // projects.workspace_id raises while the group still holds any.
   async function removeWorkspace(id: string): Promise<void> {
     if (projects.value.some((p) => p.workspaceId === id)) {
-      throw new Error('спершу перенесіть або видаліть проєкти цього воркспейсу');
+      throw new Error(globalTr.t('errors.workspace_has_projects'));
     }
     await cloudDeleteWorkspace(auth.client, id);
     // By ID, not by list length: cloudListWorkspaces returns the whole RLS-scoped set,
@@ -215,7 +216,7 @@ export const useProjects = defineStore('projects', () => {
     // does the same thing the same way.
     workspaces.value = await cloudListWorkspaces(auth.client);
     if (workspaces.value.some((w) => w.id === id)) {
-      throw new Error('хмара відмовила: видалити воркспейс може лише власник');
+      throw new Error(globalTr.t('errors.workspace_delete_not_owner'));
     }
     const rest = { ...members.value };
     delete rest[id];

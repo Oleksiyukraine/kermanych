@@ -3,14 +3,14 @@
     <!-- Click-away. `mousedown` rather than `click` so the panel closes before the textarea
          underneath can take the caret, and `.prevent` so focus never leaves on the way out. -->
     <div class="k-hp__scrim" @mousedown.prevent="emit('close')"></div>
-    <div class="k-hp__panel" role="dialog" aria-label="Хелпери">
+    <div class="k-hp__panel" role="dialog" :aria-label="t('kit.helperPicker.title')">
       <input
         ref="filterEl"
         v-model="query"
         class="k-hp__filter mono"
         type="text"
-        placeholder="фільтр…"
-        aria-label="Фільтр хелперів"
+        :placeholder="t('kit.helperPicker.filter')"
+        :aria-label="t('kit.helperPicker.filterLabel')"
         @keydown="onKeydown"
       />
       <ul v-if="shown.length" class="k-hp__list" role="listbox">
@@ -32,13 +32,14 @@
           </button>
         </li>
       </ul>
-      <p v-else class="k-hp__empty mono">нічого не знайшлось</p>
+      <p v-else class="k-hp__empty mono">{{ t('kit.helperPicker.empty') }}</p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { DEFAULT_HELPERS } from '@kermanych/core';
 
 // The Хелпери panel: an emoji-picker-shaped list of the app's command-instructions, anchored
@@ -50,6 +51,8 @@ import { DEFAULT_HELPERS } from '@kermanych/core';
 // the textarea, and Enter never reaches the form.
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ select: [name: string]; close: [] }>();
+
+const { t } = useI18n();
 
 const query = ref('');
 const active = ref(0);

@@ -3,20 +3,20 @@
     <div class="jsp">
       <p v-if="lead" class="jsp__lead">{{ lead }}</p>
       <button
-        v-for="t in options"
-        :key="t.id"
+        v-for="opt in options"
+        :key="opt.id"
         class="jsp__option"
         type="button"
         :disabled="busy"
-        @click="emit('pick', t)"
+        @click="emit('pick', opt)"
       >
-        <span class="jsp__status">{{ t.to.name }}</span>
-        <span v-if="t.name !== t.to.name" class="jsp__via mono">{{ t.name }}</span>
+        <span class="jsp__status">{{ opt.to.name }}</span>
+        <span v-if="opt.name !== opt.to.name" class="jsp__via mono">{{ opt.name }}</span>
       </button>
-      <p v-if="!options.length" class="jsp__empty mono">Jira не пропонує переходів звідси.</p>
+      <p v-if="!options.length" class="jsp__empty mono">{{ t('jira.statusPick.empty') }}</p>
     </div>
     <template #controls>
-      <KBtn variant="ghost" @click="emit('update:modelValue', false)">{{ skippable ? 'Не переносити' : 'Скасувати' }}</KBtn>
+      <KBtn variant="ghost" @click="emit('update:modelValue', false)">{{ skippable ? t('jira.statusPick.skip') : t('jira.statusPick.cancel') }}</KBtn>
     </template>
   </KModal>
 </template>
@@ -29,6 +29,7 @@
 import KBtn from 'components/kit/KBtn.vue';
 import KModal from 'components/kit/KModal.vue';
 import type { JiraTransitionView } from '../../lib/jira-view';
+import { useI18n } from 'vue-i18n';
 
 defineProps<{
   modelValue: boolean;
@@ -41,6 +42,8 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; pick: [t: JiraTransitionView] }>();
+
+const { t } = useI18n();
 </script>
 
 <style scoped lang="scss">

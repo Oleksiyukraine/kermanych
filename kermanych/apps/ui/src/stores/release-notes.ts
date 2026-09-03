@@ -41,6 +41,8 @@ import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { api } from '../lib/api';
 import { IS_PREVIEW } from '../lib/preview';
+import { locale } from '../lib/locale';
+import { globalTr } from '../boot/i18n';
 
 // One generation in flight, or one that failed and still owes the operator a reason. Held
 // as plain data rather than a promise because the screen renders it: a row in the history
@@ -110,7 +112,7 @@ export const useReleaseNotes = defineStore('release-notes', () => {
     workspaceId: string,
     input: Omit<WorkspaceReleaseNoteInsert, 'workspaceId'>,
   ): Promise<WorkspaceReleaseNote> {
-    if (!auth.user) throw new Error('Спочатку увійдіть у Kermanych');
+    if (!auth.user) throw new Error(globalTr.t('common.notify.signInFirst'));
     const created = await cloudCreateNote(auth.client, { workspaceId, ...input });
     upsert(workspaceId, created);
     return created;
@@ -144,6 +146,9 @@ export const useReleaseNotes = defineStore('release-notes', () => {
         branch: job.branch,
         rangeFrom: job.rangeFrom,
         rangeTo: job.rangeTo,
+        // The note is written in the operator's active locale; the api's prompt body stays
+        // a Ukrainian template and only the language directive varies.
+        locale: locale.value,
       });
       await create(job.workspaceId, {
         projectId: job.projectId,
@@ -158,11 +163,11 @@ export const useReleaseNotes = defineStore('release-notes', () => {
       // The note is NOT opened for them: the operator walked away on purpose, and a modal
       // that mounts itself over whatever they are doing now is the interruption this whole
       // change removed. The toast says where to find it.
-      local.notify(`Реліз-ноти «${reply.title}» готові — з ${reply.commitCount} комітів`);
+      local.notify(globalTr.t('management.releases.notifyReady', { title: reply.title, count: reply.commitCount }));
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       jobs.value = jobs.value.map((j) => (j.id === id ? { ...j, error: message } : j));
-      local.notify(`Реліз-ноти не згенерувались: ${message}`, 'error');
+      local.notify(globalTr.t('management.releases.notifyFailed', { error: message }), 'error');
     }
   }
 

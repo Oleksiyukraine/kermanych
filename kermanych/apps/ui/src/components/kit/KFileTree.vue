@@ -4,6 +4,7 @@
 // opens, the result is cached on the node, and a collapse drops it (a re-open re-fetches,
 // which is cheap against a local worktree). A file click bubbles up as `open`; read-only.
 import { ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { TreeEntry } from '@kermanych/core';
 
 const props = defineProps<{
@@ -13,6 +14,8 @@ const props = defineProps<{
   load: (path: string) => Promise<TreeEntry[]>;
 }>();
 const emit = defineEmits<{ open: [path: string] }>();
+
+const { t } = useI18n();
 
 type Child = TreeEntry[] | 'loading' | 'error';
 const children = ref<Record<string, Child>>({});
@@ -61,7 +64,7 @@ async function onClick(entry: TreeEntry): Promise<void> {
         v-else-if="children[pathOf(e)] === 'error'"
         class="k-file-tree__note k-file-tree__note--error mono"
       >
-        не вдалося відкрити теку
+        {{ t('kit.fileTree.openError') }}
       </div>
       <KFileTree
         v-else-if="Array.isArray(children[pathOf(e)])"

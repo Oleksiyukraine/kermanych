@@ -1,33 +1,33 @@
 <template>
-  <KModal :model-value="modelValue" :title="`Запустити ${issue.key}`" width="480px" @update:model-value="emit('update:modelValue', $event)">
+  <KModal :model-value="modelValue" :title="t('jira.launchDialog.title', { key: issue.key })" width="480px" @update:model-value="emit('update:modelValue', $event)">
     <div class="jld">
       <p class="jld__summary">{{ issue.summary }}</p>
 
       <KSelect
         v-model="projectPick"
-        label="Проєкт Керманича (репозиторій)"
+        :label="t('jira.launchDialog.projectLabel')"
         :options="projectOptions"
-        placeholder="вибрати проєкт…"
+        :placeholder="t('jira.launchDialog.projectPlaceholder')"
       />
 
       <template v-if="defaults.askStatus">
         <KSelect
           v-model="transitionPick"
-          label="Перенести тікет у статус"
+          :label="t('jira.launchDialog.statusLabel')"
           :options="transitionOptions"
-          placeholder="— не переносити —"
+          :placeholder="t('jira.launchDialog.statusPlaceholder')"
         />
       </template>
       <p v-else class="jld__note">
-        Тікет уже «в роботі» у Jira — статус не змінюємо.
+        {{ t('jira.launchDialog.inProgressNote') }}
       </p>
 
       <p v-if="error" class="jld__error mono">{{ error }}</p>
     </div>
     <template #controls>
-      <KBtn variant="ghost" @click="emit('update:modelValue', false)">Скасувати</KBtn>
+      <KBtn variant="ghost" @click="emit('update:modelValue', false)">{{ t('jira.launchDialog.cancel') }}</KBtn>
       <KBtn variant="primary" :disabled="!projectPick || busy" @click="launch">
-        {{ busy ? 'Запускаємо…' : 'Запустити' }}
+        {{ busy ? t('jira.launchDialog.launching') : t('jira.launchDialog.launch') }}
       </KBtn>
     </template>
   </KModal>
@@ -49,6 +49,7 @@ import { api } from '../../lib/api';
 import { launchDefaults, type JiraTransitionView, type LaunchDefaults } from '../../lib/jira-view';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{ modelValue: boolean; issue: JiraIssue; workspaceId: string }>();
 const emit = defineEmits<{
@@ -58,6 +59,7 @@ const emit = defineEmits<{
 
 const cloud = useProjects();
 const local = useOrchestrator();
+const { t } = useI18n();
 
 const projectPick = ref('');
 const transitionPick = ref('');

@@ -26,7 +26,7 @@
           ref="fieldEl"
           class="k-composer__field mono"
           :value="modelValue"
-          :placeholder="placeholder"
+          :placeholder="placeholder ?? t('kit.composer.placeholder')"
           :disabled="disabled"
           rows="1"
           @focus="focused = true"
@@ -45,16 +45,16 @@
         <button
           type="button"
           class="k-composer__attach-btn mono"
-          v-tip="'Хелпери — команди-настанови'"
-          aria-label="Хелпери"
+          v-tip="t('kit.composer.helpersTip')"
+          :aria-label="t('kit.composer.helpers')"
           :disabled="disabled"
           @click="pickerOpen = !pickerOpen"
         >/</button>
         <button
           type="button"
           class="k-composer__attach-btn"
-          v-tip="'Додати зображення'"
-          aria-label="Додати зображення"
+          v-tip="t('kit.composer.addImage')"
+          :aria-label="t('kit.composer.addImage')"
           :disabled="disabled"
           @click="fileInput?.click()"
         >📎</button>
@@ -62,24 +62,24 @@
           v-if="model && modelChipOptions.length"
           :model-value="model"
           :options="modelChipOptions"
-          title="Модель цієї сесії"
+          :title="t('kit.composer.model')"
           :disabled="disabled"
           @update:model-value="onModelPick"
         />
-        <span v-else-if="model" class="k-composer__chip" v-tip="'Модель цієї сесії'">
+        <span v-else-if="model" class="k-composer__chip" v-tip="t('kit.composer.model')">
           <KModelMark class="k-composer__chip-mark" :model="model" />
           <span class="mono">{{ model }}</span>
         </span>
         <KChipSelect
           v-if="effort"
           :model-value="effort"
-          :options="EFFORT_OPTIONS"
+          :options="effortChoices"
           icon="⚡"
-          title="Рівень роздумів"
+          :title="t('kit.composer.effort')"
           :disabled="disabled"
           @update:model-value="(level) => emit('effort', level)"
         />
-        <span v-if="worktree" class="k-composer__chip" v-tip="'Працює в окремому worktree'">
+        <span v-if="worktree" class="k-composer__chip" v-tip="t('kit.composer.worktree')">
           <span class="k-composer__chip-icon" aria-hidden="true">⑂</span>
           <span class="mono">worktree</span>
         </span>
@@ -89,7 +89,7 @@
         <button
           type="submit"
           class="k-composer__send"
-          aria-label="Надіслати"
+          :aria-label="t('kit.composer.send')"
           :disabled="disabled || !canSend"
         >↑</button>
       </div>
@@ -108,6 +108,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { prependHelper, type ImageInput, type ModelOption, type ThinkingLevel, type Usage } from '@kermanych/core';
 import KAttachStrip from './KAttachStrip.vue';
 import KChipSelect from './KChipSelect.vue';
@@ -118,6 +119,12 @@ import { useImageAttach } from '../../composables/useImageAttach';
 import { EFFORT_OPTIONS } from '../../lib/effort';
 import { modelOptions } from '../../lib/models';
 import { tokens, usageTokens, usd } from '../../lib/format';
+
+const { t } = useI18n();
+
+// The ladder's labels are catalog keys (lib/effort); map them through `t` in a computed so the
+// chip menu re-reads on a locale change instead of freezing the words at setup.
+const effortChoices = computed(() => EFFORT_OPTIONS.map((o) => ({ value: o.value, label: t(o.labelKey) })));
 
 // The composer atom: a mono textarea that grows with content up to a cap, plus a
 // v3 controls row — what this session is running as (model, reasoning effort, isolation),
@@ -150,7 +157,7 @@ const props = withDefaults(
     // caller from re-deriving the same two figures.
     usage?: Usage | undefined;
   }>(),
-  { placeholder: 'напиши наступний крок…', disabled: false, worktree: false, models: () => [] },
+  { disabled: false, worktree: false, models: () => [] },
 );
 
 const emit = defineEmits<{
@@ -250,8 +257,8 @@ const stats = computed(() => {
   const pc = props.context;
   const u = props.usage;
   return [
-    pc == null ? '' : `контекст ${pc > 0 && pc < 0.5 ? '<1' : pc.toFixed(0)}%`,
-    ...(u ? [`${tokens(usageTokens(u))} токенів`, usd(u.cost)] : []),
+    pc == null ? '' : t('kit.composer.contextPct', { pc: pc > 0 && pc < 0.5 ? '<1' : pc.toFixed(0) }),
+    ...(u ? [t('kit.composer.tokens', { count: tokens(usageTokens(u)) }), usd(u.cost)] : []),
   ]
     .filter(Boolean)
     .join(' · ');
