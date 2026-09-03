@@ -75,18 +75,18 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     const q = this.queryFn({ prompt: this.input, options });
     this.q = q;
     this.alive = true;
-    const { promise: ready, resolve } = Promise.withResolvers<void>();
     // Drain the SDK stream in the background, translating each message to RpcEvent(s).
+    // start() does NOT await `ready`: the streaming query() only emits system/init after the
+    // first input turn is consumed, but callers send prompt() only after start() resolves.
+    // Awaiting ready here would deadlock. Events (ready included) still flow via onEvent.
     (async () => {
       try {
         for await (const msg of q) {
-          const m = msg as { type?: string; session_id?: string; model?: string };
-          if (m.type === "system" && m.session_id) this.sessionId = m.session_id;
-          if (m.type === "system" && m.model) this.model = m.model;
-          for (const e of mapSdkMessage(msg, this.mapState)) {
-            if (e.type === "ready") resolve();
-            this.emit(e);
+          if (msg.type === "system") {
+            if ("session_id" in msg && typeof msg.session_id === "string") this.sessionId = msg.session_id;
+            if ("model" in msg && typeof msg.model === "string") this.model = msg.model;
           }
+          for (const e of mapSdkMessage(msg, this.mapState)) this.emit(e);
         }
         this.alive = false;
         for (const cb of this.exitCbs) cb(0, "claude query ended");
@@ -97,7 +97,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         for (const cb of this.exitCbs) cb(null, reason);
       }
     })();
-    await ready;
   }
 
   prompt(message: string, images?: ImageInput[]): void { this.input.push(userMessage(message, images)); }
