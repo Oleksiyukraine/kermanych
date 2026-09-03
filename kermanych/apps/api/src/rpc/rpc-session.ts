@@ -3,12 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { LineSplitter, ChunkReassembler } from "@kermanych/core";
 import type { RpcEvent, RpcExtensionUIResponse, TodoPhase, ImageInput, ThinkingLevel } from "@kermanych/core";
-
-export interface RpcStateData {
-  isStreaming: boolean; contextUsage?: { percent: number };
-  model?: { provider: string; id: string }; thinkingLevel?: ThinkingLevel;
-  sessionId?: string; sessionFile?: string; todoPhases?: TodoPhase[];
-}
+import type { AgentRuntime, RpcStateData } from "../runtime/agent-runtime";
 
 interface RpcResponseFrame {
   type: "response"; id?: string; command: string; success: boolean; data?: unknown; error?: string;
@@ -25,7 +20,7 @@ function imagesFrame(images?: ImageInput[]): { images?: { type: "image"; data: s
     : {};
 }
 
-export class RpcSession {
+export class RpcSession implements AgentRuntime {
   private proc?: ChildProcessWithoutNullStreams;
   private splitter = new LineSplitter();
   private reassembler = new ChunkReassembler();
