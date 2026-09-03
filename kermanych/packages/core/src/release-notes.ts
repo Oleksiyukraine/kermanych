@@ -7,6 +7,7 @@
 // never two at once. Naming the project already answers «what does this note cover?», so a
 // second picker could only contradict the first.
 import type { Usage } from "./types";
+import type { Locale } from "./i18n-codes";
 
 // One commit as the generator is shown it, parsed out of `git log` by the api. `body` is
 // the commit's full message body — often the only place a commit says WHY, which is
@@ -47,6 +48,10 @@ export type ReleaseNotesAsk = {
   // Inclusive date range, YYYY-MM-DD both ends.
   rangeFrom: string;
   rangeTo: string;
+  // The operator's active UI locale, threaded into the generation prompt so the note is
+  // written in it (release-notes-prompt.ts). Optional and defaulting to English — the
+  // section's documented product default — when a caller omits it.
+  locale?: Locale;
 };
 
 // The generated document, NOT a stored row: the api has no cloud credentials, so the

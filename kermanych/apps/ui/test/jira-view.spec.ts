@@ -136,12 +136,12 @@ describe('subtasksOf', () => {
 });
 
 describe('dateChip', () => {
-  it('shows a start–due range, and one side alone when that is all Jira has', () => {
-    expect(dateChip(issue({ startDate: '2026-09-01', dueDate: '2026-09-12' }), '2026-09-02')!.text).toBe(
-      '01.09 – 12.09',
-    );
-    expect(dateChip(issue({ dueDate: '2026-09-12' }), '2026-09-02')!.text).toBe('до 12.09');
-    expect(dateChip(issue({ startDate: '2026-09-01' }), '2026-09-02')!.text).toBe('з 01.09');
+  it('formats start and due as DD.MM, blank when Jira lacks one', () => {
+    const both = dateChip(issue({ startDate: '2026-09-01', dueDate: '2026-09-12' }), '2026-09-02')!;
+    expect(both.start).toBe('01.09');
+    expect(both.due).toBe('12.09');
+    expect(dateChip(issue({ dueDate: '2026-09-12' }), '2026-09-02')!).toMatchObject({ start: '', due: '12.09' });
+    expect(dateChip(issue({ startDate: '2026-09-01' }), '2026-09-02')!).toMatchObject({ start: '01.09', due: '' });
   });
 
   it('has nothing to say about a ticket with no dates', () => {

@@ -101,7 +101,7 @@ test("start and end frames arriving in separate calls keep the call-time target 
     { now, startedAt },
   );
   const patch = closed.entries[0] as ToolEntry;
-  expect(patch).toMatchObject({ kind: "tool", id: "c1", status: "ok", stat: "2 збігів / 1 ф", ms: 1 });
+  expect(patch).toMatchObject({ kind: "tool", id: "c1", status: "ok", stat: { key: "chat.toolStat.matches", params: { matches: 2, files: 1, truncated: false } }, ms: 1 });
   // The end frame carries no args; inventing a target here would clobber the pattern.
   expect(patch.target).toBeUndefined();
 });

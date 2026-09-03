@@ -1,6 +1,7 @@
 import type { BranchPrefix } from "./worktree-names";
 import type { Platform } from "./platform";
 import type { ThinkingLevel } from "./thinking";
+import type { NoticeCode, NoticeParams } from "./i18n-codes";
 
 export type SessionStatus =
   | "backlog" | "queued" | "thinking" | "tool" | "waiting_input" | "done" | "error" | "stopped" | "merged" | "conflict";
@@ -119,15 +120,20 @@ export type ProviderUsage = { provider: string; accounts: number; windows: Usage
 // no figure at all rather than a zero it cannot stand behind.
 export type SubscriptionUsage = { fetchedAt: string; providers: ProviderUsage[] };
 
+// A tool row's stat cell. A plain string when the reducer's own text is already
+// language-neutral (line/byte/ms counts, a hub op, a skill badge); a key plus params
+// when it names Ukrainian prose the UI renders through vue-i18n. See tool-display.ts.
+export type ToolStat = string | { key: string; params?: Record<string, string | number | boolean> };
+
 export type TranscriptEntry =
   | { kind: "user_text"; id: string; at: number; text: string; images?: string[] }
   | { kind: "assistant_text"; id: string; at: number; text: string }
   | { kind: "assistant_thinking"; id: string; at: number; text: string; ms?: number; tokens?: number }
   | {
       kind: "tool"; id: string; at: number; tool: string; status: ToolStatus;
-      intent?: string; target?: string; stat?: string; count?: number; ms?: number; detail?: ToolDetail;
+      intent?: string; target?: string; stat?: ToolStat; count?: number; ms?: number; detail?: ToolDetail;
     }
-  | { kind: "notice"; id: string; at: number; level: "info" | "warn" | "error"; text: string }
+  | { kind: "notice"; id: string; at: number; level: "info" | "warn" | "error"; text: string; code?: NoticeCode; params?: NoticeParams }
   | { kind: "turn"; id: string; at: number; model?: string; ms?: number; usage?: Usage };
 
 export type RpcExtensionUIRequest = {
@@ -180,7 +186,7 @@ export type ServerEvent =
   // at call time (an `edit` reporting an authoritative repo-relative path), and without it
   // the client would keep the call-time value while the server's transcript shows the better
   // one. The full line list stays on the API behind GET /sessions/:id/tools/:callId.
-  | { type: "transcript_update"; sessionId: string; id: string; status: "ok" | "error"; target?: string; stat?: string; count?: number; ms?: number; detail?: ToolDetail }
+  | { type: "transcript_update"; sessionId: string; id: string; status: "ok" | "error"; target?: string; stat?: ToolStat; count?: number; ms?: number; detail?: ToolDetail }
   | { type: "project_update"; project: Project }
   | { type: "session_removed"; sessionId: string }
   | { type: "project_removed"; projectId: string };

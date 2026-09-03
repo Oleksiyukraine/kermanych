@@ -11,10 +11,10 @@
         <!-- Sanitized before v-html: the mirror stores what Jira rendered; trust is decided
              here (lib/sanitize-html.ts). -->
         <div v-if="descriptionHtml" class="jtd__desc" v-html="descriptionHtml"></div>
-        <p v-else class="jtd__empty mono">Без опису.</p>
+        <p v-else class="jtd__empty mono">{{ t('jira.ticketDialog.emptyDescription') }}</p>
 
         <div v-if="subtasks.length" class="jtd__section">
-          <h4 class="jtd__section-title">Підзадачі</h4>
+          <h4 class="jtd__section-title">{{ t('jira.ticketDialog.subtasks') }}</h4>
           <button
             v-for="sub in subtasks"
             :key="sub.issueId"
@@ -29,7 +29,7 @@
         </div>
 
         <div v-if="kids?.attachments.length || canAct" class="jtd__section">
-          <h4 class="jtd__section-title">Вкладення</h4>
+          <h4 class="jtd__section-title">{{ t('jira.ticketDialog.attachments') }}</h4>
           <div v-for="a in kids?.attachments ?? []" :key="a.attachmentId" class="jtd__attachment">
             <button class="jtd__attachment-name" type="button" :disabled="!canAct" @click="download(a)">
               {{ a.filename }}
@@ -39,7 +39,7 @@
           <div v-if="canAct" class="jtd__attach-row">
             <input ref="fileInput" type="file" class="jtd__file" @change="upload" />
             <KBtn variant="ghost" :disabled="uploading" @click="fileInput?.click()">
-              {{ uploading ? 'Завантажуємо…' : '⛶ Додати файл' }}
+              {{ uploading ? t('jira.ticketDialog.uploading') : t('jira.ticketDialog.addFile') }}
             </KBtn>
           </div>
         </div>
@@ -51,13 +51,13 @@
               :class="{ 'jtd__tab--on': tab === 'comments' }"
               type="button"
               @click="tab = 'comments'"
-            >Коментарі{{ kids?.comments.length ? ` · ${kids.comments.length}` : '' }}</button>
+            >{{ t('jira.ticketDialog.comments') }}{{ kids?.comments.length ? ` · ${kids.comments.length}` : '' }}</button>
             <button
               class="jtd__tab"
               :class="{ 'jtd__tab--on': tab === 'worklogs' }"
               type="button"
               @click="tab = 'worklogs'"
-            >Ворклоги{{ kids?.worklogs.length ? ` · ${kids.worklogs.length}` : '' }}</button>
+            >{{ t('jira.ticketDialog.worklogs') }}{{ kids?.worklogs.length ? ` · ${kids.worklogs.length}` : '' }}</button>
           </div>
 
           <template v-if="tab === 'comments'">
@@ -69,17 +69,17 @@
               </div>
               <div class="jtd__comment-body" v-html="sanitizeJiraHtml(c.bodyHtml)"></div>
             </div>
-            <p v-if="!kids?.comments.length" class="jtd__empty mono">Коментарів ще немає.</p>
+            <p v-if="!kids?.comments.length" class="jtd__empty mono">{{ t('jira.ticketDialog.noComments') }}</p>
 
             <div v-if="canAct" class="jtd__composer">
               <textarea
                 v-model="commentDraft"
                 class="jtd__composer-input"
                 rows="3"
-                placeholder="Коментар піде в Jira від вашого імені"
+                :placeholder="t('jira.ticketDialog.commentPlaceholder')"
               ></textarea>
               <KBtn variant="secondary" :disabled="!commentDraft.trim() || commenting" @click="sendComment">
-                {{ commenting ? 'Надсилаємо…' : 'Коментувати' }}
+                {{ commenting ? t('jira.ticketDialog.sending') : t('jira.ticketDialog.comment') }}
               </KBtn>
             </div>
           </template>
@@ -99,23 +99,23 @@
                   type="button"
                   :disabled="logging"
                   @click="startEditWorklog(w)"
-                >{{ editingWorklogId === w.worklogId ? 'Редагується' : 'Редагувати' }}</button>
+                >{{ editingWorklogId === w.worklogId ? t('jira.ticketDialog.worklogEditing') : t('jira.ticketDialog.edit') }}</button>
                 <button
                   v-if="mayDeleteWorklog(w)"
                   class="jtd__worklog-act"
                   type="button"
                   :disabled="logging"
                   @click="askDeleteWorklog(w.worklogId)"
-                >Видалити</button>
+                >{{ t('jira.ticketDialog.delete') }}</button>
               </span>
 
               <!-- Jira asks the same estimate question when an entry goes away; here
                    `manual` is «increase by», because deleting gives the time back. -->
               <div v-if="deletingWorklogId === w.worklogId" class="jtd__worklog-confirm">
-                <p class="jtd__confirm">Видалити цей ворклог у Jira?</p>
+                <p class="jtd__confirm">{{ t('jira.ticketDialog.deleteWorklogConfirm') }}</p>
                 <div class="jtd__logwork-row">
                   <label class="jtd__field">
-                    <span class="jtd__field-label">Залишок оцінки</span>
+                    <span class="jtd__field-label">{{ t('jira.ticketDialog.remainingEstimate') }}</span>
                     <KSelect
                       :model-value="deleteAdjust"
                       :options="DELETE_ADJUST_OPTIONS"
@@ -128,20 +128,20 @@
                     <input
                       v-model="deleteAdjustValue"
                       class="jtd__estimate mono"
-                      placeholder="напр. 2h"
+                      :placeholder="t('jira.ticketDialog.estimatePlaceholder')"
                       :disabled="logging"
                     />
                   </label>
                 </div>
                 <div class="jtd__confirm-row">
-                  <KBtn variant="ghost" :disabled="logging" @click="deletingWorklogId = null">Ні</KBtn>
+                  <KBtn variant="ghost" :disabled="logging" @click="deletingWorklogId = null">{{ t('jira.ticketDialog.no') }}</KBtn>
                   <KBtn variant="secondary" :disabled="logging" @click="deleteWorklog(w.worklogId)">
-                    {{ logging ? '…' : 'Так, видалити' }}
+                    {{ logging ? '…' : t('jira.ticketDialog.yesDelete') }}
                   </KBtn>
                 </div>
               </div>
             </div>
-            <p v-if="!kids?.worklogs.length" class="jtd__empty mono">Ворклогів немає.</p>
+            <p v-if="!kids?.worklogs.length" class="jtd__empty mono">{{ t('jira.ticketDialog.noWorklogs') }}</p>
 
             <!-- Jira's «Log work», field for field: duration, when it started, what it did
                  to the remaining estimate, and an optional note. The entry lands in Jira
@@ -151,26 +151,26 @@
                  — with one difference Jira imposes: its update endpoint has no relative
                  estimate move, so «Зменшити на» is not on offer while editing. -->
             <div v-if="canAct" class="jtd__logwork">
-              <p v-if="editingWorklogId" class="jtd__logwork-mode mono">Редагування ворклогу</p>
+              <p v-if="editingWorklogId" class="jtd__logwork-mode mono">{{ t('jira.ticketDialog.worklogEditMode') }}</p>
               <div class="jtd__logwork-row">
                 <label class="jtd__field">
-                  <span class="jtd__field-label">Витрачено</span>
+                  <span class="jtd__field-label">{{ t('jira.ticketDialog.spent') }}</span>
                   <input
                     v-model="workTime"
                     class="jtd__estimate mono"
-                    placeholder="напр. 3h 20m"
+                    :placeholder="t('jira.ticketDialog.timePlaceholder')"
                     :disabled="logging"
-                    v-tip="'Формат Jira: 3h 20m'"
+                    v-tip="t('jira.ticketDialog.timeFormatTip')"
                   />
                 </label>
                 <label class="jtd__field">
-                  <span class="jtd__field-label">Початок</span>
+                  <span class="jtd__field-label">{{ t('jira.ticketDialog.start') }}</span>
                   <input v-model="workStarted" type="datetime-local" class="jtd__date mono" :disabled="logging" />
                 </label>
               </div>
               <div class="jtd__logwork-row">
                 <label class="jtd__field">
-                  <span class="jtd__field-label">Залишок оцінки</span>
+                  <span class="jtd__field-label">{{ t('jira.ticketDialog.remainingEstimate') }}</span>
                   <KSelect
                     :model-value="workAdjust"
                     :options="adjustOptions"
@@ -183,7 +183,7 @@
                   <input
                     v-model="workAdjustValue"
                     class="jtd__estimate mono"
-                    placeholder="напр. 2h"
+                    :placeholder="t('jira.ticketDialog.estimatePlaceholder')"
                     :disabled="logging"
                   />
                 </label>
@@ -192,11 +192,11 @@
                 v-model="workComment"
                 class="jtd__composer-input"
                 rows="2"
-                placeholder="Опис роботи — піде в Jira від вашого імені"
+                :placeholder="t('jira.ticketDialog.workNotePlaceholder')"
               ></textarea>
               <div class="jtd__confirm-row">
                 <KBtn v-if="editingWorklogId" variant="ghost" :disabled="logging" @click="resetWorkDraft">
-                  Скасувати
+                  {{ t('jira.ticketDialog.cancel') }}
                 </KBtn>
                 <KBtn variant="secondary" :disabled="!workTime.trim() || logging" @click="submitWork">
                   {{ submitLabel }}
@@ -210,20 +210,20 @@
       <aside class="jtd__side">
         <dl class="jtd__facts">
           <div>
-            <dt>Статус</dt>
+            <dt>{{ t('jira.ticketDialog.status') }}</dt>
             <dd>
               <button
                 class="jtd__status"
                 type="button"
                 :disabled="!canAct"
-                v-tip="canAct ? 'Перенести в інший статус' : READ_ONLY_HINT"
+                v-tip="canAct ? t('jira.ticketDialog.transitionTip') : readOnlyHint"
                 @click="openTransition"
               >{{ issue.statusName }}</button>
             </dd>
           </div>
-          <div v-if="issue.typeName"><dt>Тип</dt><dd class="jtd__fact-icon"><img v-if="issue.typeIcon" :src="issue.typeIcon" alt="" />{{ issue.typeName }}</dd></div>
+          <div v-if="issue.typeName"><dt>{{ t('jira.ticketDialog.type') }}</dt><dd class="jtd__fact-icon"><img v-if="issue.typeIcon" :src="issue.typeIcon" alt="" />{{ issue.typeName }}</dd></div>
           <div v-if="canAct || issue.priorityName">
-            <dt>Пріоритет</dt>
+            <dt>{{ t('jira.ticketDialog.priority') }}</dt>
             <dd v-if="canAct && priorityOptions.length">
               <KSelect
                 :model-value="priorityCurrent"
@@ -236,15 +236,15 @@
             <dd v-else class="jtd__fact-icon"><img v-if="issue.priorityIcon" :src="issue.priorityIcon" alt="" />{{ issue.priorityName || '—' }}</dd>
           </div>
           <div>
-            <dt>Оцінка</dt>
+            <dt>{{ t('jira.ticketDialog.estimate') }}</dt>
             <dd>
               <input
                 v-if="canAct"
                 v-model="estimateDraft"
                 class="jtd__estimate mono"
-                placeholder="напр. 2w 3d 4h"
+                :placeholder="t('jira.ticketDialog.estimateBigPlaceholder')"
                 :disabled="savingField === 'estimate'"
-                v-tip="'Original estimate — формат Jira: 2w 3d 4h'"
+                v-tip="t('jira.ticketDialog.estimateTip')"
                 @keydown.enter.prevent="blurTarget($event)"
                 @blur="saveEstimate"
               />
@@ -254,13 +254,13 @@
           <!-- Jira's other two time-tracking counters, read-only because only a worklog
                moves them: they appear once Jira actually holds one, so a ticket nobody has
                logged against does not carry two blank rows. -->
-          <div v-if="issue.timeSpent"><dt>Витрачено</dt><dd class="mono">{{ issue.timeSpent }}</dd></div>
-          <div v-if="issue.remainingEstimate"><dt>Залишилось</dt><dd class="mono">{{ issue.remainingEstimate }}</dd></div>
+          <div v-if="issue.timeSpent"><dt>{{ t('jira.ticketDialog.spent') }}</dt><dd class="mono">{{ issue.timeSpent }}</dd></div>
+          <div v-if="issue.remainingEstimate"><dt>{{ t('jira.ticketDialog.remaining') }}</dt><dd class="mono">{{ issue.remainingEstimate }}</dd></div>
           <!-- The start row appears only where there is something to show: a site without
                a «Start date» field would otherwise offer an input whose every save is a
                refusal, and a blank «Початок —» beside it. -->
           <div v-if="issue.startDate || (canAct && editorOptions.startDateSupported)">
-            <dt>Початок</dt>
+            <dt>{{ t('jira.ticketDialog.start') }}</dt>
             <dd>
               <input
                 v-if="canAct && editorOptions.startDateSupported"
@@ -268,14 +268,14 @@
                 type="date"
                 class="jtd__date mono"
                 :disabled="savingField === 'startDate'"
-                v-tip="'Start date у Jira'"
+                v-tip="t('jira.ticketDialog.startDateTip')"
                 @change="saveStartDate"
               />
               <span v-else>{{ issue.startDate || '—' }}</span>
             </dd>
           </div>
           <div>
-            <dt>Дедлайн</dt>
+            <dt>{{ t('jira.ticketDialog.due') }}</dt>
             <dd>
               <input
                 v-if="canAct"
@@ -284,35 +284,35 @@
                 class="jtd__date mono"
                 :class="{ 'jtd__date--overdue': overdue }"
                 :disabled="savingField === 'dueDate'"
-                v-tip="overdue ? 'Due date у Jira — прострочено' : 'Due date у Jira'"
+                v-tip="overdue ? t('jira.ticketDialog.dueTipOverdue') : t('jira.ticketDialog.dueTip')"
                 @change="saveDueDate"
               />
               <span v-else :class="{ 'jtd__date--overdue': overdue }">{{ issue.dueDate || '—' }}</span>
             </dd>
           </div>
           <div>
-            <dt>Виконавець</dt>
+            <dt>{{ t('jira.ticketDialog.assignee') }}</dt>
             <dd v-if="canAct && assigneeOptions.length > 1">
               <KSelect
                 :model-value="assigneeCurrent"
                 :options="assigneeOptions"
                 :disabled="savingField === 'assignee'"
-                placeholder="не призначено"
+                :placeholder="t('jira.ticketDialog.unassigned')"
                 searchable
                 @update:model-value="pickAssignee"
               />
             </dd>
-            <dd v-else>{{ issue.assigneeName ?? 'не призначено' }}</dd>
+            <dd v-else>{{ issue.assigneeName ?? t('jira.ticketDialog.unassigned') }}</dd>
           </div>
-          <div v-if="issue.reporterName"><dt>Автор</dt><dd>{{ issue.reporterName }}</dd></div>
+          <div v-if="issue.reporterName"><dt>{{ t('jira.ticketDialog.reporter') }}</dt><dd>{{ issue.reporterName }}</dd></div>
           <div v-if="issue.labels.length">
-            <dt>Мітки</dt>
+            <dt>{{ t('jira.ticketDialog.labels') }}</dt>
             <dd class="jtd__labels">
               <span v-for="label in issue.labels" :key="label" class="jtd__label mono">{{ label }}</span>
             </dd>
           </div>
           <div v-if="issue.parentKey">
-            <dt>Батьківський</dt>
+            <dt>{{ t('jira.ticketDialog.parent') }}</dt>
             <dd><button class="jtd__link mono" type="button" @click="emit('openIssue', issue.parentKey!)">{{ issue.parentKey }}</button></dd>
           </div>
         </dl>
@@ -323,15 +323,15 @@
             :disabled="!canLaunch"
             :title="launchHint"
             @click="emit('launch')"
-          >Запустити</KBtn>
-          <KBtn variant="secondary" :disabled="!canAct" :title="canAct ? '' : READ_ONLY_HINT" @click="emit('edit')">Редагувати</KBtn>
-          <KBtn variant="ghost" :disabled="!canAct" :title="canAct ? '' : READ_ONLY_HINT" @click="emit('subtask')">+ Підзадача</KBtn>
-          <KBtn v-if="!confirmingDelete" variant="ghost" :disabled="!canAct" :title="canAct ? '' : READ_ONLY_HINT" @click="confirmingDelete = true">Видалити</KBtn>
+          >{{ t('jira.ticketDialog.launch') }}</KBtn>
+          <KBtn variant="secondary" :disabled="!canAct" :title="canAct ? '' : readOnlyHint" @click="emit('edit')">{{ t('jira.ticketDialog.edit') }}</KBtn>
+          <KBtn variant="ghost" :disabled="!canAct" :title="canAct ? '' : readOnlyHint" @click="emit('subtask')">{{ t('jira.ticketDialog.addSubtask') }}</KBtn>
+          <KBtn v-if="!confirmingDelete" variant="ghost" :disabled="!canAct" :title="canAct ? '' : readOnlyHint" @click="confirmingDelete = true">{{ t('jira.ticketDialog.delete') }}</KBtn>
           <template v-else>
-            <p class="jtd__confirm">Видалити {{ issue.key }} у Jira разом із підзадачами?</p>
+            <p class="jtd__confirm">{{ t('jira.ticketDialog.deleteConfirm', { key: issue.key }) }}</p>
             <div class="jtd__confirm-row">
-              <KBtn variant="ghost" @click="confirmingDelete = false">Ні</KBtn>
-              <KBtn variant="secondary" :disabled="deleting" @click="doDelete">{{ deleting ? '…' : 'Так, видалити' }}</KBtn>
+              <KBtn variant="ghost" @click="confirmingDelete = false">{{ t('jira.ticketDialog.no') }}</KBtn>
+              <KBtn variant="secondary" :disabled="deleting" @click="doDelete">{{ deleting ? '…' : t('jira.ticketDialog.yesDelete') }}</KBtn>
             </div>
           </template>
         </div>
@@ -340,7 +340,7 @@
 
     <JiraStatusPickDialog
       v-model="transitionOpen"
-      :title="`${issue.key} → статус`"
+      :title="t('jira.ticketDialog.statusTitle', { key: issue.key })"
       :options="transitionOptions"
       :busy="transitioning"
       @pick="applyTransition"
@@ -355,6 +355,7 @@
 // mirror; a tokenless member sees everything and can touch nothing — each control says
 // why instead of hiding.
 import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { JiraAttachment, JiraIssue, JiraWorklog } from '@kermanych/cloud';
 import KAvatar from 'components/kit/KAvatar.vue';
 import KBtn from 'components/kit/KBtn.vue';
@@ -381,7 +382,8 @@ import {
 import { useJira } from 'stores/jira';
 import { useOrchestrator } from 'stores/orchestrator';
 
-const READ_ONLY_HINT = 'Додайте свій Jira-токен у Менеджмент → Integrations, щоб діяти';
+const { t } = useI18n();
+const readOnlyHint = computed(() => t('jira.ticketDialog.readOnlyHint'));
 
 const props = defineProps<{ modelValue: boolean; issue: JiraIssue; workspaceId: string }>();
 const emit = defineEmits<{
@@ -416,21 +418,21 @@ const transitioning = ref(false);
 // Three option sets, because Jira's three worklog endpoints accept three different
 // vocabularies: logging can REDUCE the estimate by an amount, deleting can INCREASE it by
 // one (the entry's time comes back), and updating offers no relative move at all.
-const ADJUST_OPTIONS: KSelectOption[] = [
-  { value: 'auto', label: 'Скоротити автоматично' },
-  { value: 'leave', label: 'Не змінювати' },
-  { value: 'new', label: 'Встановити' },
-  { value: 'manual', label: 'Зменшити на' },
-];
+const ADJUST_OPTIONS = computed<KSelectOption[]>(() => [
+  { value: 'auto', label: t('jira.ticketDialog.adjustAuto') },
+  { value: 'leave', label: t('jira.ticketDialog.adjustLeave') },
+  { value: 'new', label: t('jira.ticketDialog.adjustNew') },
+  { value: 'manual', label: t('jira.ticketDialog.adjustManual') },
+]);
 
-const EDIT_ADJUST_OPTIONS: KSelectOption[] = ADJUST_OPTIONS.filter((o) => o.value !== 'manual');
+const EDIT_ADJUST_OPTIONS = computed<KSelectOption[]>(() => ADJUST_OPTIONS.value.filter((o) => o.value !== 'manual'));
 
-const DELETE_ADJUST_OPTIONS: KSelectOption[] = [
-  { value: 'auto', label: 'Перерахувати автоматично' },
-  { value: 'leave', label: 'Не змінювати' },
-  { value: 'new', label: 'Встановити' },
-  { value: 'manual', label: 'Збільшити на' },
-];
+const DELETE_ADJUST_OPTIONS = computed<KSelectOption[]>(() => [
+  { value: 'auto', label: t('jira.ticketDialog.deleteAdjustAuto') },
+  { value: 'leave', label: t('jira.ticketDialog.adjustLeave') },
+  { value: 'new', label: t('jira.ticketDialog.adjustNew') },
+  { value: 'manual', label: t('jira.ticketDialog.deleteAdjustManual') },
+]);
 
 type AdjustMode = JiraWorklogAdjustWire['mode'];
 
@@ -475,7 +477,7 @@ const priorityCurrent = computed(
 );
 
 const assigneeOptions = computed<KSelectOption[]>(() => [
-  { value: '', label: 'не призначено' },
+  { value: '', label: t('jira.ticketDialog.unassigned') },
   ...assignable.value.map((u) => ({ value: u.accountId, label: u.displayName })),
 ]);
 const assigneeCurrent = computed(() => props.issue.assigneeAccountId ?? '');
@@ -487,19 +489,19 @@ const subtasks = computed(() => subtasksOf(jira.issues, props.issue.key));
 
 // «Встановити» and the relative move are the modes that carry a duration of their own;
 // the other two adjust the estimate without one.
-const adjustOptions = computed(() => (editingWorklogId.value ? EDIT_ADJUST_OPTIONS : ADJUST_OPTIONS));
+const adjustOptions = computed(() => (editingWorklogId.value ? EDIT_ADJUST_OPTIONS.value : ADJUST_OPTIONS.value));
 const adjustNeedsValue = computed(() => workAdjust.value === 'new' || workAdjust.value === 'manual');
-const adjustValueLabel = computed(() => (workAdjust.value === 'new' ? 'Новий залишок' : 'Зменшити на'));
+const adjustValueLabel = computed(() => (workAdjust.value === 'new' ? t('jira.ticketDialog.adjustValueNew') : t('jira.ticketDialog.adjustManual')));
 const submitLabel = computed(() => {
-  if (logging.value) return editingWorklogId.value ? 'Зберігаємо…' : 'Логуємо…';
-  return editingWorklogId.value ? 'Зберегти' : 'Залогувати роботу';
+  if (logging.value) return editingWorklogId.value ? t('jira.ticketDialog.savingWorklog') : t('jira.ticketDialog.loggingWork');
+  return editingWorklogId.value ? t('jira.ticketDialog.saveWorklog') : t('jira.ticketDialog.logWork');
 });
 
 const deleteAdjustNeedsValue = computed(
   () => deleteAdjust.value === 'new' || deleteAdjust.value === 'manual',
 );
 const deleteAdjustValueLabel = computed(() =>
-  deleteAdjust.value === 'new' ? 'Новий залишок' : 'Збільшити на',
+  deleteAdjust.value === 'new' ? t('jira.ticketDialog.adjustValueNew') : t('jira.ticketDialog.deleteAdjustManual'),
 );
 
 // Whose entry it is, in Jira's terms — and therefore which of Jira's two permissions
@@ -533,9 +535,9 @@ const running = computed(() => {
 });
 const canLaunch = computed(() => canAct.value && !running.value);
 const launchHint = computed(() => {
-  if (!canAct.value) return READ_ONLY_HINT;
-  if (running.value) return 'Тікет уже виконується на цій машині';
-  return 'Запустити агента на цьому тікеті';
+  if (!canAct.value) return readOnlyHint.value;
+  if (running.value) return t('jira.ticketDialog.launchHintRunning');
+  return t('jira.ticketDialog.launchHintReady');
 });
 
 // Fresh detail on every open: live refresh through the api when a token is here (comments
@@ -720,7 +722,7 @@ async function submitWork(): Promise<void> {
   // as Jira's own refusal about a query parameter the user never saw.
   const adjust = wireAdjust(workAdjust.value, workAdjustValue.value, adjustNeedsValue.value);
   if (!adjust) {
-    local.notify('Вкажіть тривалість для вибраної зміни залишку', 'error');
+    local.notify(t('jira.ticketDialog.notifyAdjustNeedsValue'), 'error');
     return;
   }
   const started = worklogStartedInstant(workStarted.value);
@@ -729,7 +731,7 @@ async function submitWork(): Promise<void> {
   // An edit must carry its start: an omitted one would restamp the entry to now, and
   // «I fixed the duration» is not «this happened just now».
   if (editing && !started) {
-    local.notify('Вкажіть початок ворклогу', 'error');
+    local.notify(t('jira.ticketDialog.notifyStartRequired'), 'error');
     return;
   }
   const draft: JiraWorklogDraftWire = {
@@ -757,7 +759,7 @@ async function submitWork(): Promise<void> {
 async function deleteWorklog(worklogId: string): Promise<void> {
   const adjust = wireAdjust(deleteAdjust.value, deleteAdjustValue.value, deleteAdjustNeedsValue.value);
   if (!adjust) {
-    local.notify('Вкажіть тривалість для вибраної зміни залишку', 'error');
+    local.notify(t('jira.ticketDialog.notifyAdjustNeedsValue'), 'error');
     return;
   }
   logging.value = true;

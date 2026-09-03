@@ -86,6 +86,18 @@ describe("buildManagementTurn", () => {
     expect(out).toContain('"kind": "unsupported"');
   });
 
+  // Rule ґ is the ONE line that varies with the operator's locale: the model is told which
+  // language to answer in, while the rest of the contract stays a Ukrainian template.
+  it("names the operator's locale in the answer directive, and defaults to Ukrainian", () => {
+    const en = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?", locale: "en" });
+    expect(en).toContain("(ґ) Відповідай англійською мовою (en).");
+    const uk = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?", locale: "uk" });
+    expect(uk).toContain("(ґ) Відповідай українською мовою (uk).");
+    // No locale sent → the previous behaviour (Ukrainian), never a blank or English default.
+    const bare = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
+    expect(bare).toContain("(ґ) Відповідай українською мовою (uk).");
+  });
+
   // The write protocol must describe EXACTLY what the validator accepts. A vocabulary that
   // drifts from @kermanych/core is how the assistant starts filing risks that are refused
   // one round trip later, or — worse — stops offering a category the register needs.

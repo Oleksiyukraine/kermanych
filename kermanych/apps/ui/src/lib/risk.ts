@@ -33,30 +33,13 @@ export const SCALE = [1, 2, 3, 4, 5] as const;
 // Anchors, not adjectives. «Середня ймовірність» means nothing across two people; a band of
 // percentages means the same thing to both, which is the only way two risks scored by two
 // people end up comparable in one register.
-export const PROBABILITY_ANCHORS: Readonly<Record<number, string>> = {
-  1: 'Дуже низька — до 10%',
-  2: 'Низька — 10–30%',
-  3: 'Середня — 30–50%',
-  4: 'Висока — 50–75%',
-  5: 'Дуже висока — понад 75%',
-};
+export const probabilityAnchor = (score: number): string => `risk.probabilityAnchors.${score}`;
 
-export const IMPACT_ANCHORS: Readonly<Record<number, string>> = {
-  1: 'Незначний — поглинається спринтом',
-  2: 'Малий — зсув до 3 днів',
-  3: 'Помітний — зсув до 2 тижнів або перевитрата до 5%',
-  4: 'Серйозний — зсув реліз-гейта або перевитрата до 15%',
-  5: 'Критичний — зрив релізу, контракту або комплаєнсу',
-};
+export const impactAnchor = (score: number): string => `risk.impactAnchors.${score}`;
 
 export type RiskBand = 'low' | 'medium' | 'high' | 'extreme';
 
-export const BAND_LABELS: Readonly<Record<RiskBand, string>> = {
-  low: 'низький',
-  medium: 'середній',
-  high: 'високий',
-  extreme: 'критичний',
-};
+export const bandLabel = (band: RiskBand): string => `risk.bands.${band}`;
 
 // P × I on a 5×5 grid, cut where the management response changes: watched, planned for,
 // actively worked, and «not the PM's to sit on».
@@ -79,70 +62,50 @@ export const REVIEW_CADENCE_DAYS = 7;
 
 // ── Vocabulary ──────────────────────────────────────────────────────────────────
 
-export type Labelled<T extends string> = { value: T; label: string };
-
-export const RISK_CATEGORIES: readonly Labelled<RiskCategory>[] = [
-  { value: 'technical', label: 'Технічний' },
-  { value: 'security', label: 'Безпека та захист даних (GDPR)' },
-  { value: 'vendor', label: 'Постачальник, SaaS-залежність, vendor lock-in' },
-  { value: 'resource', label: 'Ресурси команди' },
-  { value: 'external', label: 'Зовнішні чинники' },
-  { value: 'compliance', label: 'Комплаєнс і регуляторика' },
-  { value: 'organizational', label: 'Організаційний' },
-  { value: 'legacy', label: 'Легасі-інтеграції та технічний борг' },
-  { value: 'key_person', label: 'Залежність від ключової людини' },
-  { value: 'infrastructure', label: 'Середовища та інфраструктура' },
-  { value: 'data_migration', label: 'Якість міграції даних' },
-  { value: 'performance', label: 'Нефункціональні вимоги, продуктивність' },
-  { value: 'licensing', label: 'Ліцензування' },
-  { value: 'ai_model', label: 'AI/модель і використання даних' },
+export const RISK_CATEGORIES: readonly RiskCategory[] = [
+  'technical',
+  'security',
+  'vendor',
+  'resource',
+  'external',
+  'compliance',
+  'organizational',
+  'legacy',
+  'key_person',
+  'infrastructure',
+  'data_migration',
+  'performance',
+  'licensing',
+  'ai_model',
 ];
 
-export const RISK_KINDS: readonly Labelled<RiskKind>[] = [
-  { value: 'threat', label: 'Загроза' },
-  { value: 'opportunity', label: 'Можливість' },
-];
+export const RISK_KINDS: readonly RiskKind[] = ['threat', 'opportunity'];
 
 // Which strategies are legal depends on the direction of the uncertainty. The Postgres
 // constraint workspace_risks_response_matches_kind enforces the same split, so the editor
 // filtering this list is a courtesy, not the guard.
-export const RISK_RESPONSES: readonly (Labelled<RiskResponse> & { kind: RiskKind | 'both' })[] = [
-  { value: 'avoid', label: 'Уникнути', kind: 'threat' },
-  { value: 'reduce', label: 'Зменшити', kind: 'threat' },
-  { value: 'transfer', label: 'Передати', kind: 'threat' },
-  { value: 'escalate', label: 'Ескалювати', kind: 'threat' },
-  { value: 'exploit', label: 'Використати', kind: 'opportunity' },
-  { value: 'enhance', label: 'Підсилити', kind: 'opportunity' },
-  { value: 'share', label: 'Розділити', kind: 'opportunity' },
-  { value: 'accept', label: 'Прийняти', kind: 'both' },
+export const RISK_RESPONSES: readonly { value: RiskResponse; kind: RiskKind | 'both' }[] = [
+  { value: 'avoid', kind: 'threat' },
+  { value: 'reduce', kind: 'threat' },
+  { value: 'transfer', kind: 'threat' },
+  { value: 'escalate', kind: 'threat' },
+  { value: 'exploit', kind: 'opportunity' },
+  { value: 'enhance', kind: 'opportunity' },
+  { value: 'share', kind: 'opportunity' },
+  { value: 'accept', kind: 'both' },
 ];
 
-export const RISK_STATUSES: readonly Labelled<RiskStatus>[] = [
-  { value: 'open', label: 'Відкритий' },
-  { value: 'treated', label: 'Оброблений' },
-  { value: 'closed', label: 'Закритий' },
-  { value: 'materialized', label: 'Реалізувався' },
-];
+export const RISK_STATUSES: readonly RiskStatus[] = ['open', 'treated', 'closed', 'materialized'];
 
-export const RISK_EVENT_LABELS: Readonly<Record<RiskEventKind, string>> = {
-  created: 'Занесено в реєстр',
-  scored: 'Переоцінено',
-  response: 'Реакція змінена',
-  status: 'Статус змінено',
-  reviewed: 'Переглянуто',
-  edited: 'Формулювання уточнено',
-};
+// The vocabulary is pure structure: every visible string is an i18n key derived from the
+// enum value (`risk.<group>.<value>`) and resolved at the callsite via t().
+export const categoryLabel = (value: RiskCategory): string => `risk.categories.${value}`;
+export const kindLabel = (value: RiskKind): string => `risk.kinds.${value}`;
+export const responseLabel = (value: RiskResponse): string => `risk.responses.${value}`;
+export const statusLabel = (value: RiskStatus): string => `risk.statuses.${value}`;
+export const eventLabel = (kind: RiskEventKind): string => `risk.events.${kind}`;
 
-function labelFrom<T extends string>(table: readonly Labelled<T>[], value: string): string {
-  return table.find((r) => r.value === value)?.label ?? value;
-}
-
-export const categoryLabel = (v: RiskCategory): string => labelFrom(RISK_CATEGORIES, v);
-export const kindLabel = (v: RiskKind): string => labelFrom(RISK_KINDS, v);
-export const responseLabel = (v: RiskResponse): string => labelFrom(RISK_RESPONSES, v);
-export const statusLabel = (v: RiskStatus): string => labelFrom(RISK_STATUSES, v);
-
-export function responsesFor(kind: RiskKind): readonly Labelled<RiskResponse>[] {
+export function responsesFor(kind: RiskKind): readonly { value: RiskResponse; kind: RiskKind | 'both' }[] {
   return RISK_RESPONSES.filter((r) => r.kind === kind || r.kind === 'both');
 }
 
@@ -190,13 +153,7 @@ export function reviewOverdue(r: WorkspaceRisk, nowMs: number): boolean {
 
 export type Proximity = 'unset' | 'passed' | 'immediate' | 'near' | 'far';
 
-export const PROXIMITY_LABELS: Readonly<Record<Proximity, string>> = {
-  unset: 'не визначено',
-  passed: 'вікно минуло',
-  immediate: 'цей спринт',
-  near: 'цей квартал',
-  far: 'далі',
-};
+export const proximityLabel = (proximity: Proximity): string => `risk.proximity.${proximity}`;
 
 // A high risk eight months out is not managed like one due next sprint, so proximity is a
 // dimension of its own rather than a date column nobody sorts on.
@@ -262,11 +219,10 @@ export function matrixCounts(risks: readonly WorkspaceRisk[]): Record<string, nu
 // closed is a register nobody scrolls.
 export type RiskStatusFilter = '' | 'active' | RiskStatus;
 
-export const STATUS_FILTERS: readonly Labelled<RiskStatusFilter>[] = [
-  { value: 'active', label: 'У роботі' },
-  { value: '', label: 'Усі статуси' },
-  ...RISK_STATUSES,
-];
+export const STATUS_FILTERS: readonly RiskStatusFilter[] = ['active', '', ...RISK_STATUSES];
+
+export const statusFilterLabel = (value: RiskStatusFilter): string =>
+  value === 'active' ? 'risk.statusFilters.active' : value === '' ? 'risk.statusFilters.all' : statusLabel(value);
 
 export type RiskFilter = {
   query: string;
@@ -305,12 +261,9 @@ export function filterRisks(risks: readonly WorkspaceRisk[], f: RiskFilter): Wor
 
 export type RiskSort = 'exposure' | 'proximity' | 'review' | 'code';
 
-export const SORTS: readonly Labelled<RiskSort>[] = [
-  { value: 'exposure', label: 'За експозицією' },
-  { value: 'proximity', label: 'За проксіміті' },
-  { value: 'review', label: 'За давністю перегляду' },
-  { value: 'code', label: 'За номером' },
-];
+export const SORTS: readonly RiskSort[] = ['exposure', 'proximity', 'review', 'code'];
+
+export const sortLabel = (value: RiskSort): string => `risk.sorts.${value}`;
 
 export function sortRisks(risks: readonly WorkspaceRisk[], sort: RiskSort): WorkspaceRisk[] {
   const out = risks.slice();
@@ -342,10 +295,16 @@ function clause(s: string): string {
 // cause -> event -> consequence, rendered as the one sentence a steering committee can read
 // without the register open. Composed rather than stored, so the three parts stay separately
 // editable and a row can never drift into an unscoreable «the API might be a problem».
-export function statementOf(r: Pick<WorkspaceRisk, 'kind' | 'cause' | 'event' | 'consequence'>): string {
-  const middle = r.kind === 'opportunity' ? 'існує можливість, що' : 'існує ризик, що';
-  const tail = r.kind === 'opportunity' ? 'що дало б' : 'що призвело б до';
-  return `Оскільки ${clause(r.cause)}, ${middle} ${clause(r.event)}, ${tail} ${clause(r.consequence)}.`;
+export type RiskStatement = {
+  key: 'risk.statement.risk' | 'risk.statement.opportunity';
+  params: { cause: string; event: string; consequence: string };
+};
+
+export function statementOf(r: Pick<WorkspaceRisk, 'kind' | 'cause' | 'event' | 'consequence'>): RiskStatement {
+  return {
+    key: r.kind === 'opportunity' ? 'risk.statement.opportunity' : 'risk.statement.risk',
+    params: { cause: clause(r.cause), event: clause(r.event), consequence: clause(r.consequence) },
+  };
 }
 
 // ── Dates and money ─────────────────────────────────────────────────────────────
@@ -373,15 +332,17 @@ export function daysUntil(date: string, nowMs: number): number | undefined {
 
 // A date with its distance from today attached, because «20.09.2026» alone does not tell a
 // reader whether it is this sprint's problem. Overdue is stated, not implied.
-export function dueLabel(date: string | undefined, nowMs: number): string {
-  if (!date) return '—';
+export type DueLabel = { key: string; params?: { n: number } };
+
+export function dueLabel(date: string | undefined, nowMs: number): DueLabel {
+  if (!date) return { key: 'risk.due.none' };
   const d = daysUntil(date, nowMs);
-  if (d === undefined) return '—';
-  if (d < 0) return `прострочено ${-d} дн`;
-  if (d === 0) return 'сьогодні';
-  if (d === 1) return 'завтра';
-  if (d <= 45) return `за ${d} дн`;
-  return `за ${Math.round(d / 30)} міс`;
+  if (d === undefined) return { key: 'risk.due.none' };
+  if (d < 0) return { key: 'risk.due.overdue', params: { n: -d } };
+  if (d === 0) return { key: 'risk.due.today' };
+  if (d === 1) return { key: 'risk.due.tomorrow' };
+  if (d <= 45) return { key: 'risk.due.days', params: { n: d } };
+  return { key: 'risk.due.months', params: { n: Math.round(d / 30) } };
 }
 
 // Money at the register's zoom level, on the same magnitude ladder the rest of the app uses
@@ -482,65 +443,78 @@ export function draftOf(r: WorkspaceRisk): RiskDraft {
 //
 // The Postgres CHECK constraints cover the same ground for any other writer; this exists so
 // the user gets an instant, readable answer instead of a round trip and a constraint name.
-export function validateDraft(d: RiskDraft): string[] {
-  const errors: string[] = [];
+export type RiskError =
+  | 'causeBlank'
+  | 'eventBlank'
+  | 'consequenceBlank'
+  | 'proximityBlank'
+  | 'responseKindMismatch'
+  | 'responseActionsBlank'
+  | 'actionOwnerBlank'
+  | 'actionDueBlank'
+  | 'riskOwnerBlank'
+  | 'earlyWarningBlank'
+  | 'residualIncomplete'
+  | 'residualHigher'
+  | 'treatedNeedsResidual'
+  | 'costNaN'
+  | 'costNegative'
+  | 'pctNaN'
+  | 'pctRange'
+  | 'emvNeedsBoth'
+  | 'closureNoteBlank'
+  | 'materializedNoteBlank';
+
+// Returns stable error CODES in field order; the editor maps each to `risk.validation.<code>`
+// via t(). The conditions and their order are the process rules — only the payload changed
+// from prose to code, so the list still reads top-to-bottom against the form.
+export function validateDraft(d: RiskDraft): RiskError[] {
+  const errors: RiskError[] = [];
   const blank = (s: string): boolean => s.trim() === '';
 
-  if (blank(d.cause)) errors.push('Причина порожня. Ризик записується як причина → подія → наслідок.');
-  if (blank(d.event)) errors.push('Подія порожня — саме її ймовірність ви оцінюєте.');
-  if (blank(d.consequence)) errors.push('Наслідок порожній. Без нього немає чого оцінювати за впливом.');
+  if (blank(d.cause)) errors.push('causeBlank');
+  if (blank(d.event)) errors.push('eventBlank');
+  if (blank(d.consequence)) errors.push('consequenceBlank');
 
-  if (blank(d.proximity)) {
-    errors.push('Вкажіть проксіміті: ризик через 8 місяців і ризик у цьому спринті керуються по-різному.');
-  }
+  if (blank(d.proximity)) errors.push('proximityBlank');
 
   if (!responsesFor(d.kind).some((r) => r.value === d.response)) {
-    errors.push('Стратегія не відповідає типу: загрози уникають, зменшують, передають, ескалюють або приймають.');
+    errors.push('responseKindMismatch');
   }
   if (d.response !== 'accept') {
-    if (blank(d.responseActions)) {
-      errors.push('Опишіть дії у відповідь. «Моніторити» — це не реакція.');
-    }
-    if (blank(d.actionOwner)) errors.push('У дій має бути виконавець.');
-    if (blank(d.actionDue)) errors.push('У дій має бути дедлайн.');
+    if (blank(d.responseActions)) errors.push('responseActionsBlank');
+    if (blank(d.actionOwner)) errors.push('actionOwnerBlank');
+    if (blank(d.actionDue)) errors.push('actionDueBlank');
   }
 
-  if (blank(d.riskOwner)) {
-    errors.push('Призначте власника ризику — одну людину з повноваженнями діяти, не команду.');
-  }
-  if (blank(d.earlyWarning)) {
-    errors.push('Вкажіть тригер: без раннього індикатора ризик помітять уже як проблему.');
-  }
+  if (blank(d.riskOwner)) errors.push('riskOwnerBlank');
+  if (blank(d.earlyWarning)) errors.push('earlyWarningBlank');
 
   const hasResidual = d.residualProbability > 0 || d.residualImpact > 0;
   if (hasResidual && (d.residualProbability === 0 || d.residualImpact === 0)) {
-    errors.push('Залишкова оцінка неповна: потрібні і ймовірність, і вплив.');
+    errors.push('residualIncomplete');
   }
   if (hasResidual && d.residualProbability * d.residualImpact > d.probability * d.impact) {
-    errors.push('Залишкова оцінка вища за початкову — реакція не може погіршувати ризик.');
+    errors.push('residualHigher');
   }
   if (d.status === 'treated' && !hasResidual) {
-    errors.push('Оброблений ризик потребує залишкової оцінки — інакше не видно, що дала реакція.');
+    errors.push('treatedNeedsResidual');
   }
 
   const cost = parseAmount(d.costImpact);
   const pct = parseAmount(d.probabilityPct);
-  if (Number.isNaN(cost)) errors.push('Вартість наслідку — не число.');
-  else if (cost !== undefined && cost < 0) errors.push('Вартість наслідку не може бути відʼємною.');
-  if (Number.isNaN(pct)) errors.push('Ймовірність у відсотках — не число.');
+  if (Number.isNaN(cost)) errors.push('costNaN');
+  else if (cost !== undefined && cost < 0) errors.push('costNegative');
+  if (Number.isNaN(pct)) errors.push('pctNaN');
   else if (pct !== undefined && (pct < 0 || pct > 100)) {
-    errors.push('Ймовірність у відсотках має бути в межах 0–100.');
+    errors.push('pctRange');
   }
   if (!Number.isNaN(cost) && !Number.isNaN(pct) && (cost === undefined) !== (pct === undefined)) {
-    errors.push('Для EMV потрібні обидва числа: вартість наслідку і ймовірність у відсотках.');
+    errors.push('emvNeedsBoth');
   }
 
   if ((d.status === 'closed' || d.status === 'materialized') && blank(d.closureNote)) {
-    errors.push(
-      d.status === 'closed'
-        ? 'Закриття потребує причини — рядки не видаляють, їх закривають із поясненням.'
-        : 'Ризик, що реалізувався, потребує плану усунення: це вже проблема, а не мітигація.',
-    );
+    errors.push(d.status === 'closed' ? 'closureNoteBlank' : 'materializedNoteBlank');
   }
 
   return errors;

@@ -1,6 +1,6 @@
 <template>
   <div class="rmx">
-    <div class="rmx__grid" role="group" :aria-label="ariaLabel">
+    <div class="rmx__grid" role="group" :aria-label="ariaLabel ?? t('risk.matrix.aria')">
       <template v-for="p in ROWS" :key="`row-${p}`">
         <span class="rmx__axis rmx__axis--p mono">{{ p }}</span>
         <button
@@ -18,7 +18,7 @@
           ]"
           :disabled="!interactive"
           :aria-pressed="probability === p && impact === i"
-          v-tip="`Ймовірність ${p} × вплив ${i} = ${p * i}`"
+          v-tip="t('risk.matrix.cellTip', { p, i, exposure: p * i })"
           @click="emit('pick', p, i)"
         >
           <span class="rmx__value mono">{{ cellText(p, i) }}</span>
@@ -30,8 +30,8 @@
     </div>
 
     <div class="rmx__legend mono">
-      <span class="rmx__legend-p">ймовірність ↑</span>
-      <span class="rmx__legend-i">вплив →</span>
+      <span class="rmx__legend-p">{{ t('risk.matrix.legendP') }}</span>
+      <span class="rmx__legend-i">{{ t('risk.matrix.legendI') }}</span>
     </div>
   </div>
 </template>
@@ -44,7 +44,10 @@
 //
 // Probability climbs upward and impact runs rightward, the orientation every risk-management
 // text prints, so a register imported into a steering deck does not have to be re-read.
+import { useI18n } from 'vue-i18n';
 import { bandOf, SCALE } from '../../lib/risk';
+
+const { t } = useI18n();
 
 const props = withDefaults(
   defineProps<{
@@ -58,7 +61,7 @@ const props = withDefaults(
     interactive?: boolean;
     ariaLabel?: string;
   }>(),
-  { interactive: false, ariaLabel: 'Матриця ймовірність × вплив' },
+  { interactive: false },
 );
 
 const emit = defineEmits<{ pick: [probability: number, impact: number] }>();

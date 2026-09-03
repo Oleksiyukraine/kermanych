@@ -1,7 +1,7 @@
 <template>
   <section class="int">
     <p class="int__lead">
-      Підключіть зовнішні сервіси до воркспейсу
+      {{ t('management.integrations.lead') }}
       <span class="int__lead-workspace mono">{{ workspaceName }}</span>
     </p>
 
@@ -18,83 +18,83 @@
           </svg>
         </span>
         <h3 class="int__name">{{ brand.name }}</h3>
-        <p class="int__blurb">{{ brand.blurb }}</p>
+        <p class="int__blurb">{{ t(brand.blurb) }}</p>
 
         <!-- Jira is live; the other tiles keep the original presentation-only foot. -->
         <div v-if="brand.id === 'jira'" class="int__foot">
           <span class="int__state mono">
             <i class="int__state-dot" :class="{ 'int__state-dot--on': !!jira.integration }" aria-hidden="true"></i>
-            <template v-if="jira.integration">підключено · {{ jira.integration.boardName }}</template>
-            <template v-else>не підключено</template>
+            <template v-if="jira.integration">{{ t('jira.connect.stateConnected', { board: jira.integration.boardName }) }}</template>
+            <template v-else>{{ t('management.integrations.notConnected') }}</template>
           </span>
           <button
             v-if="jira.integration"
             class="int__cta"
             type="button"
             @click="openSettings"
-          >Налаштувати</button>
+          >{{ t('jira.connect.configure') }}</button>
           <button
             v-else
-            v-tip="canConnect ? '' : 'Підключає власник воркспейсу'"
+            v-tip="canConnect ? '' : t('jira.connect.ownerOnly')"
             class="int__cta"
             type="button"
             :disabled="!canConnect"
             @click="openConnect"
-          >Підключити</button>
+          >{{ t('management.integrations.connect') }}</button>
         </div>
-        <div v-else v-tip="'У розробці'" class="int__foot">
+        <div v-else v-tip="t('management.integrations.devTip')" class="int__foot">
           <span class="int__state mono">
-            <i class="int__state-dot" aria-hidden="true"></i>не підключено
+            <i class="int__state-dot" aria-hidden="true"></i>{{ t('management.integrations.notConnected') }}
           </span>
-          <button class="int__cta" type="button" disabled>Підключити</button>
+          <button class="int__cta" type="button" disabled>{{ t('management.integrations.connect') }}</button>
         </div>
       </article>
     </div>
 
     <!-- CONNECT — the owner's three steps: site → personal token → board. -->
-    <KModal v-model="connectOpen" title="Підключити Jira" width="520px">
+    <KModal v-model="connectOpen" :title="t('jira.connect.title')" width="520px">
       <div class="int__flow">
         <template v-if="connectStep === 'site'">
           <KField
             v-model="siteInput"
-            label="Адреса Jira Cloud"
+            :label="t('jira.connect.siteLabel')"
             placeholder="team.atlassian.net"
             @keydown.enter="siteNext"
           />
-          <p class="int__hint">Сайт вашої команди в Jira Cloud. Досить домену — https додамо самі.</p>
+          <p class="int__hint">{{ t('jira.connect.siteHint') }}</p>
         </template>
 
         <template v-else-if="connectStep === 'token'">
-          <KField v-model="emailInput" label="Email акаунта Atlassian" placeholder="you@company.com" />
-          <KField v-model="tokenInput" label="API-токен" type="password" placeholder="ATATT…" />
+          <KField v-model="emailInput" :label="t('jira.connect.emailLabel')" placeholder="you@company.com" />
+          <KField v-model="tokenInput" :label="t('jira.connect.tokenLabel')" type="password" placeholder="ATATT…" />
           <p class="int__hint">
-            Токен створюється за хвилину:
+            {{ t('jira.connect.tokenHintBefore') }}
             <a class="int__link" href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer">id.atlassian.com → API tokens</a>.
-            Він лишається лише на цій машині й у хмару не потрапляє.
+            {{ t('jira.connect.tokenHintAfter') }}
           </p>
         </template>
 
         <template v-else>
           <KSelect
             v-model="boardPick"
-            label="Дошка"
+            :label="t('jira.connect.boardLabel')"
             :options="boardOptions"
-            placeholder="вибрати дошку…"
+            :placeholder="t('jira.connect.boardPlaceholder')"
             searchable
           />
-          <p class="int__hint">Одна дошка на воркспейс — її колонки й тікети зʼявляться на «Дошці».</p>
+          <p class="int__hint">{{ t('jira.connect.boardHint') }}</p>
         </template>
 
         <p v-if="flowError" class="int__error mono">{{ flowError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="connectOpen = false">Скасувати</KBtn>
-        <KBtn v-if="connectStep === 'site'" variant="primary" :disabled="!siteInput.trim() || busy" @click="siteNext">Далі</KBtn>
+        <KBtn variant="ghost" @click="connectOpen = false">{{ t('jira.connect.cancel') }}</KBtn>
+        <KBtn v-if="connectStep === 'site'" variant="primary" :disabled="!siteInput.trim() || busy" @click="siteNext">{{ t('jira.connect.next') }}</KBtn>
         <KBtn v-else-if="connectStep === 'token'" variant="primary" :disabled="!emailInput.trim() || !tokenInput.trim() || busy" @click="tokenNext">
-          {{ busy ? 'Перевіряємо…' : 'Далі' }}
+          {{ busy ? t('jira.connect.checking') : t('jira.connect.next') }}
         </KBtn>
         <KBtn v-else variant="primary" :disabled="!boardPick || busy" @click="connectFinish">
-          {{ busy ? 'Підключаємо…' : 'Підключити' }}
+          {{ busy ? t('jira.connect.connecting') : t('management.integrations.connect') }}
         </KBtn>
       </template>
     </KModal>
@@ -103,48 +103,48 @@
     <KModal v-model="settingsOpen" title="Jira" width="520px">
       <div v-if="jira.integration" class="int__flow">
         <dl class="int__facts">
-          <div><dt>Сайт</dt><dd class="mono">{{ jira.integration.siteUrl }}</dd></div>
-          <div><dt>Дошка</dt><dd>{{ jira.integration.boardName }}</dd></div>
-          <div><dt>Проєкт</dt><dd class="mono">{{ jira.integration.projectKey }}</dd></div>
+          <div><dt>{{ t('jira.connect.siteFact') }}</dt><dd class="mono">{{ jira.integration.siteUrl }}</dd></div>
+          <div><dt>{{ t('jira.connect.boardLabel') }}</dt><dd>{{ jira.integration.boardName }}</dd></div>
+          <div><dt>{{ t('jira.connect.projectFact') }}</dt><dd class="mono">{{ jira.integration.projectKey }}</dd></div>
         </dl>
 
         <div class="int__token">
           <p class="int__token-state">
             <template v-if="jira.tokenPresent">
-              Ваш токен на цій машині: <span class="mono">{{ jira.tokenEmail }}</span>
+              {{ t('jira.connect.tokenOnMachine') }} <span class="mono">{{ jira.tokenEmail }}</span>
             </template>
             <template v-else>
-              Токена немає — дошка для вас лише для читання. Додайте свій API-токен, щоб діяти від свого імені.
+              {{ t('jira.connect.noToken') }}
             </template>
           </p>
           <template v-if="tokenEditing || !jira.tokenPresent">
-            <KField v-model="emailInput" label="Email акаунта Atlassian" placeholder="you@company.com" />
-            <KField v-model="tokenInput" label="API-токен" type="password" placeholder="ATATT…" />
+            <KField v-model="emailInput" :label="t('jira.connect.emailLabel')" placeholder="you@company.com" />
+            <KField v-model="tokenInput" :label="t('jira.connect.tokenLabel')" type="password" placeholder="ATATT…" />
             <p class="int__hint">
               <a class="int__link" href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer">id.atlassian.com → API tokens</a>
             </p>
             <div class="int__row">
               <KBtn variant="secondary" :disabled="!emailInput.trim() || !tokenInput.trim() || busy" @click="saveToken">
-                {{ busy ? 'Перевіряємо…' : 'Зберегти токен' }}
+                {{ busy ? t('jira.connect.checking') : t('jira.connect.saveToken') }}
               </KBtn>
-              <KBtn v-if="tokenEditing" variant="ghost" @click="tokenEditing = false">Скасувати</KBtn>
+              <KBtn v-if="tokenEditing" variant="ghost" @click="tokenEditing = false">{{ t('jira.connect.cancel') }}</KBtn>
             </div>
           </template>
           <div v-else class="int__row">
-            <KBtn variant="ghost" @click="startTokenEdit">Замінити токен</KBtn>
-            <KBtn variant="ghost" @click="removeToken">Прибрати з цієї машини</KBtn>
+            <KBtn variant="ghost" @click="startTokenEdit">{{ t('jira.connect.replaceToken') }}</KBtn>
+            <KBtn variant="ghost" @click="removeToken">{{ t('jira.connect.removeToken') }}</KBtn>
           </div>
         </div>
 
         <p v-if="flowError" class="int__error mono">{{ flowError }}</p>
 
         <div v-if="isOwner" class="int__danger">
-          <KBtn variant="ghost" @click="changeBoard">Змінити дошку</KBtn>
-          <KBtn variant="ghost" @click="disconnect">Відключити Jira</KBtn>
+          <KBtn variant="ghost" @click="changeBoard">{{ t('jira.connect.changeBoard') }}</KBtn>
+          <KBtn variant="ghost" @click="disconnect">{{ t('jira.connect.disconnect') }}</KBtn>
         </div>
       </div>
       <template #controls>
-        <KBtn variant="primary" @click="settingsOpen = false">Готово</KBtn>
+        <KBtn variant="primary" @click="settingsOpen = false">{{ t('jira.connect.done') }}</KBtn>
       </template>
     </KModal>
   </section>
@@ -158,6 +158,7 @@
 // It takes the same props every section gets from ManagementPage, so the workspace it
 // connects is already named for it.
 import { computed, onMounted, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
@@ -262,7 +263,7 @@ async function connectFinish(): Promise<void> {
     await api.jiraConnect(props.workspaceId, siteInput.value.trim(), Number(boardPick.value));
     await jira.probe(props.workspaceId);
     connectOpen.value = false;
-    local.notify('Jira підключено — дошка зʼявиться на «Дошці» у вкладці «Jira»', 'info');
+    local.notify(t('jira.notify.connected'), 'info');
   } catch (e) {
     flowError.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -287,7 +288,7 @@ async function saveToken(): Promise<void> {
     tokenInput.value = '';
     tokenEditing.value = false;
     await refreshTokenState();
-    local.notify('Токен збережено на цій машині', 'info');
+    local.notify(t('jira.notify.tokenSaved'), 'info');
   } catch (e) {
     flowError.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -329,7 +330,7 @@ async function disconnect(): Promise<void> {
     await api.jiraDisconnect(props.workspaceId);
     settingsOpen.value = false;
     await jira.probe(props.workspaceId);
-    local.notify('Jira відключено — дзеркало дошки видалено', 'info');
+    local.notify(t('jira.notify.disconnected'), 'info');
   } catch (e) {
     flowError.value = e instanceof Error ? e.message : String(e);
   }
@@ -344,6 +345,8 @@ watch(
     void jira.probe(id);
   },
 );
+
+const { t } = useI18n();
 
 type Brand = {
   id: string;
@@ -363,21 +366,21 @@ const BRANDS: readonly Brand[] = [
   {
     id: 'linear',
     name: 'Linear',
-    blurb: 'Задачі та цикли команди',
+    blurb: 'management.integrations.linearBlurb',
     color: '#5E6AD2',
     path: 'M2.886 4.18A11.982 11.982 0 0 1 11.99 0C18.624 0 24 5.376 24 12.009c0 3.64-1.62 6.903-4.18 9.105L2.887 4.18ZM1.817 5.626l16.556 16.556c-.524.33-1.075.62-1.65.866L.951 7.277c.247-.575.537-1.126.866-1.65ZM.322 9.163l14.515 14.515c-.71.172-1.443.282-2.195.322L0 11.358a12 12 0 0 1 .322-2.195Zm-.17 4.862 9.823 9.824a12.02 12.02 0 0 1-9.824-9.824Z',
   },
   {
     id: 'jira',
     name: 'Jira',
-    blurb: 'Тікети, спринти, беклог',
+    blurb: 'management.integrations.jiraBlurb',
     color: '#0052CC',
     path: 'M11.571 11.513H0a5.218 5.218 0 0 0 5.232 5.215h2.13v2.057A5.215 5.215 0 0 0 12.575 24V12.518a1.005 1.005 0 0 0-1.005-1.005zm5.723-5.756H5.736a5.215 5.215 0 0 0 5.215 5.214h2.129v2.058a5.218 5.218 0 0 0 5.215 5.214V6.758a1.001 1.001 0 0 0-1.001-1.001zM23.013 0H11.455a5.215 5.215 0 0 0 5.215 5.215h2.129v2.057A5.215 5.215 0 0 0 24 12.483V1.005A1.001 1.001 0 0 0 23.013 0Z',
   },
   {
     id: 'slack',
     name: 'Slack',
-    blurb: 'Сповіщення в канал',
+    blurb: 'management.integrations.slackBlurb',
     color: '#36C5F0',
     path: 'M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z',
   },

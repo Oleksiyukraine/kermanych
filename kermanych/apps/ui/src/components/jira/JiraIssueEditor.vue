@@ -1,32 +1,32 @@
 <template>
   <KModal :model-value="modelValue" :title="title" width="560px" @update:model-value="emit('update:modelValue', $event)">
     <div class="jie">
-      <KField v-model="summary" label="Назва" placeholder="Що зробити?" />
-      <KField v-model="description" label="Опис" multiline :rows="5" placeholder="Деталі — простим текстом" />
+      <KField v-model="summary" :label="t('jira.issueEditor.summaryLabel')" :placeholder="t('jira.issueEditor.summaryPlaceholder')" />
+      <KField v-model="description" :label="t('jira.issueEditor.descLabel')" multiline :rows="5" :placeholder="t('jira.issueEditor.descPlaceholder')" />
       <div class="jie__row">
-        <KSelect v-model="typePick" label="Тип" :options="typeOptions" placeholder="—" :disabled="!!editKey" />
-        <KSelect v-model="priorityPick" label="Пріоритет" :options="priorityOptions" placeholder="—" />
+        <KSelect v-model="typePick" :label="t('jira.issueEditor.typeLabel')" :options="typeOptions" placeholder="—" :disabled="!!editKey" />
+        <KSelect v-model="priorityPick" :label="t('jira.issueEditor.priorityLabel')" :options="priorityOptions" placeholder="—" />
       </div>
       <KSelect
         v-model="assigneePick"
-        label="Виконавець (акаунт Jira)"
+        :label="t('jira.issueEditor.assigneeLabel')"
         :options="assigneeOptions"
-        placeholder="не призначено"
+        :placeholder="t('jira.issueEditor.assigneePlaceholder')"
         searchable
       />
       <div class="jie__row">
         <!-- The start field exists only where the site does: see startDateSupported. -->
-        <KField v-if="options.startDateSupported" v-model="startDate" label="Початок" type="date" />
-        <KField v-model="dueDate" label="Дедлайн" type="date" />
+        <KField v-if="options.startDateSupported" v-model="startDate" :label="t('jira.issueEditor.startLabel')" type="date" />
+        <KField v-model="dueDate" :label="t('jira.issueEditor.dueLabel')" type="date" />
       </div>
-      <KField v-model="labelsInput" label="Мітки" placeholder="backend, urgent — через кому" />
-      <p v-if="parentKey" class="jie__note mono">Підзадача до {{ parentKey }}</p>
+      <KField v-model="labelsInput" :label="t('jira.issueEditor.labelsLabel')" :placeholder="t('jira.issueEditor.labelsPlaceholder')" />
+      <p v-if="parentKey" class="jie__note mono">{{ t('jira.issueEditor.subtaskOf', { key: parentKey }) }}</p>
       <p v-if="error" class="jie__error mono">{{ error }}</p>
     </div>
     <template #controls>
-      <KBtn variant="ghost" @click="emit('update:modelValue', false)">Скасувати</KBtn>
+      <KBtn variant="ghost" @click="emit('update:modelValue', false)">{{ t('jira.issueEditor.cancel') }}</KBtn>
       <KBtn variant="primary" :disabled="!summary.trim() || busy" @click="save">
-        {{ busy ? 'Зберігаємо…' : editKey ? 'Зберегти' : 'Створити' }}
+        {{ busy ? t('jira.issueEditor.saving') : editKey ? t('jira.issueEditor.save') : t('jira.issueEditor.create') }}
       </KBtn>
     </template>
   </KModal>
@@ -47,6 +47,7 @@ import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import { api, type JiraAssignableUser, type JiraEditorOptions, type JiraIssueDraftWire } from '../../lib/api';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -83,8 +84,13 @@ const assignable = ref<JiraAssignableUser[]>([]);
 
 const editKey = computed(() => props.issue?.key);
 const parentKey = computed(() => props.parentKey);
+const { t } = useI18n();
 const title = computed(() =>
-  props.issue ? `Редагувати ${props.issue.key}` : props.parentKey ? `Підзадача до ${props.parentKey}` : 'Новий тікет',
+  props.issue
+    ? t('jira.issueEditor.editTitle', { key: props.issue.key })
+    : props.parentKey
+      ? t('jira.issueEditor.subtaskOf', { key: props.parentKey })
+      : t('jira.issueEditor.newTitle'),
 );
 
 // Subtask types only under a parent; parent-level types only without one — offering the

@@ -1,13 +1,16 @@
 <template>
   <main class="not-found">
     <div class="code mono">404</div>
-    <p>Nothing here.</p>
-    <router-link to="/">Go home</router-link>
+    <p>{{ t('common.notFound.message') }}</p>
+    <router-link to="/">{{ t('common.notFound.home') }}</router-link>
   </main>
 </template>
 
 <script setup lang="ts">
 // Placeholder 404 page.
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 </script>
 
 <style scoped lang="scss">

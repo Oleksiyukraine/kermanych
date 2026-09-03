@@ -145,7 +145,10 @@ let seq = 0;
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { filterByQuery, matchByPrefix, placeMenu } from '../../lib/menu';
+
+const { t } = useI18n();
 
 // The app's dropdown. Styled like KField — label above, surface trigger, accent focus ring —
 // and the LIST is ours too: a `role="listbox"` panel with the kit's glass, radius and rules.
@@ -235,7 +238,7 @@ const visible = computed<readonly KSelectOption[]>(() =>
 );
 // Told apart because the two states have different cures: an empty catalog is «nothing to
 // pick here», a query that matched nothing is «that word is not in this list».
-const emptyText = computed(() => (query.value ? '(нічого не знайдено)' : '(немає варіантів)'));
+const emptyText = computed(() => (query.value ? t('kit.select.notFound') : t('kit.select.noOptions')));
 
 const open = ref(false);
 // Placement runs after the panel is in the DOM (it has to be measured first), so the first

@@ -147,6 +147,7 @@ describe('release notes generation', () => {
       branch: 'main',
       rangeFrom: '2026-08-01',
       rangeTo: '2026-08-31',
+      locale: 'uk',
     });
     expect(store.jobs).toHaveLength(0);
     expect((store.byWorkspace.w1 ?? []).map((n) => n.title)).toEqual(['Реліз 12']);

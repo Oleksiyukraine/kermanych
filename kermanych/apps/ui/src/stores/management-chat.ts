@@ -48,6 +48,9 @@ import type {
   ManagementWorkspaceProject,
   Usage,
 } from '@kermanych/core';
+import { globalTr } from '../boot/i18n';
+import { localizeNotice, localizeRejection } from '../lib/i18n-coded';
+import { locale } from '../lib/locale';
 import { api } from '../lib/api';
 import type { JiraIssueDraftWire } from '../lib/api';
 import { handleOf } from '../lib/members';
@@ -83,6 +86,11 @@ function entryId(): string {
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
+
+// This store runs outside a component, so it localizes a reply's notices through the global
+// i18n adapter (`globalTr`) rather than `useI18n()`. Notices become static `result` lines
+// the moment they land — like every other line this transcript keeps — so they render in the
+// locale that was active when the turn answered, which is the locale the operator asked in.
 
 export const useManagementChat = defineStore('management-chat', () => {
   const store = useOrchestrator();
@@ -179,8 +187,8 @@ export const useManagementChat = defineStore('management-chat', () => {
       result(
         workspaceId,
         'warn',
-        `У цьому воркспейсі немає проєкту «${action.project}» — реліз-ноти не згенеровано.` +
-          (known ? ` Є: ${known}.` : ''),
+        globalTr.t('management.chat.releaseNotesNoProject', { project: action.project }) +
+          (known ? globalTr.t('management.chat.releaseNotesKnownProjects', { known }) : ''),
       );
       return;
     }
@@ -198,7 +206,12 @@ export const useManagementChat = defineStore('management-chat', () => {
     result(
       workspaceId,
       'info',
-      `Запустив генерацію реліз-нот: ${project.name} · ${action.branch} · ${action.rangeFrom} — ${action.rangeTo}. Це триває десятки секунд — про результат скаже повідомлення, а сама нотатка зʼявиться в розділі Release Notes.`,
+      globalTr.t('management.chat.releaseNotesStarted', {
+        project: project.name,
+        branch: action.branch,
+        from: action.rangeFrom,
+        to: action.rangeTo,
+      }),
     );
   }
 
@@ -247,7 +260,8 @@ export const useManagementChat = defineStore('management-chat', () => {
     const known = roster.map(handleOf).join(', ');
     return {
       error:
-        `У команді цього воркспейсу немає «${name}» — тікет не створено.` + (known ? ` Є: ${known}.` : ''),
+        globalTr.t('management.chat.ticketMemberMissing', { name }) +
+        (known ? globalTr.t('management.chat.releaseNotesKnownProjects', { known }) : ''),
     };
   }
 
@@ -267,7 +281,8 @@ export const useManagementChat = defineStore('management-chat', () => {
       result(
         workspaceId,
         'warn',
-        `У цьому воркспейсі немає проєкту «${action.project}» — тікет не створено.` + (known ? ` Є: ${known}.` : ''),
+        globalTr.t('management.chat.ticketProjectMissing', { project: action.project }) +
+          (known ? globalTr.t('management.chat.releaseNotesKnownProjects', { known }) : ''),
       );
       return;
     }
@@ -288,14 +303,19 @@ export const useManagementChat = defineStore('management-chat', () => {
       ...(action.platform ? { platform: action.platform } : {}),
     });
     if (!created) {
-      result(workspaceId, 'error', `Не вдалося створити тікет «${action.ticket.title}» — подробиці в повідомленні.`);
+      result(workspaceId, 'error', globalTr.t('management.chat.ticketCreateFailed', { title: action.ticket.title }));
       return;
     }
-    const who = assignee ? `, виконавець ${action.assignee}` : ', без виконавця';
     result(
       workspaceId,
       'info',
-      `Тікет «${created.title}» створено на дошці воркспейсу · проєкт ${project.name}${who}. Картка вже в колонці «Беклог».`,
+      assignee
+        ? globalTr.t('management.chat.ticketCreatedAssigned', {
+            title: created.title,
+            project: project.name,
+            assignee: action.assignee,
+          })
+        : globalTr.t('management.chat.ticketCreatedUnassigned', { title: created.title, project: project.name }),
     );
   }
 
@@ -315,7 +335,7 @@ export const useManagementChat = defineStore('management-chat', () => {
       result(
         workspaceId,
         'warn',
-        'До цього воркспейсу не підключено дошку Jira — тікет не створено. Підключити її може власник воркспейсу в розділі Integrations.',
+        globalTr.t('jira.notify.noBoardForTicket'),
       );
       return;
     }
@@ -323,7 +343,7 @@ export const useManagementChat = defineStore('management-chat', () => {
       result(
         workspaceId,
         'warn',
-        'Немає особистого токена Jira на цій машині — тікет у Jira не створено. Додайте токен у розділі Integrations: кожен запис у Jira підписується вашим власним доступом.',
+        globalTr.t('jira.notify.noTokenForTicket'),
       );
       return;
     }
@@ -346,7 +366,7 @@ export const useManagementChat = defineStore('management-chat', () => {
             result(
               workspaceId,
               'warn',
-              `На дошці Jira немає типу «${action.issueType}» — тікет не створено. Є: ${options.issueTypes.map((t) => t.name).join(', ')}.`,
+              globalTr.t('jira.notify.unknownType', { type: action.issueType, options: options.issueTypes.map((t) => t.name).join(', ') }),
             );
             return;
           }
@@ -358,7 +378,7 @@ export const useManagementChat = defineStore('management-chat', () => {
             result(
               workspaceId,
               'warn',
-              `На цій дошці Jira немає пріоритету «${action.priority}» — тікет не створено. Є: ${options.priorities.map((p) => p.name).join(', ')}.`,
+              globalTr.t('jira.notify.unknownPriority', { priority: action.priority, options: options.priorities.map((p) => p.name).join(', ') }),
             );
             return;
           }
@@ -391,8 +411,8 @@ export const useManagementChat = defineStore('management-chat', () => {
           result(
             workspaceId,
             'warn',
-            `Jira не знає виконавця «${action.assignee}» на цій дошці — тікет не створено.` +
-              (known ? ` Кому можна призначити: ${known}.` : ''),
+            globalTr.t('jira.notify.unknownAssignee', { assignee: action.assignee }) +
+              (known ? globalTr.t('jira.notify.assigneeHint', { known }) : ''),
           );
           return;
         }
@@ -403,12 +423,12 @@ export const useManagementChat = defineStore('management-chat', () => {
       result(
         workspaceId,
         'info',
-        `Тікет ${issue.key} «${issue.summary}» створено в Jira · ${row.boardName}. Він уже на вкладці «Jira» дошки.`,
+        globalTr.t('jira.notify.ticketCreated', { key: issue.key, summary: issue.summary, board: row.boardName }),
       );
     } catch (e) {
       // Verbatim: a dead token, a field the Jira project made mandatory and an unreachable
       // site are three different problems with three different fixes.
-      result(workspaceId, 'error', `Не вдалося створити тікет у Jira: ${errorText(e)}`);
+      result(workspaceId, 'error', globalTr.t('jira.notify.ticketCreateFailed', { error: errorText(e) }));
     }
   }
 
@@ -430,26 +450,31 @@ export const useManagementChat = defineStore('management-chat', () => {
         result(
           workspaceId,
           'info',
-          `Ризик ${created.code} занесено до реєстру: ${created.event} (${created.probability}×${created.impact})`,
+          globalTr.t('management.chat.riskCreated', {
+            code: created.code,
+            event: created.event,
+            probability: created.probability,
+            impact: created.impact,
+          }),
         );
       } catch (e) {
         // The reason, verbatim: an RLS refusal, a CHECK constraint and an unreachable
         // Supabase are three different problems with three different fixes.
-        result(workspaceId, 'error', `Не вдалося занести ризик: ${errorText(e)}`);
+        result(workspaceId, 'error', globalTr.t('management.chat.riskCreateFailed', { error: errorText(e) }));
       }
       return;
     }
     if (action.kind === 'risk.update') {
       const row = findRiskByCode(risks.byWorkspace[workspaceId] ?? [], action.code);
       if (!row) {
-        result(workspaceId, 'warn', `У реєстрі цього воркспейсу немає ризику ${action.code} — нічого не змінено.`);
+        result(workspaceId, 'warn', globalTr.t('management.chat.riskNotFound', { code: action.code }));
         return;
       }
       try {
         const saved = await risks.save(workspaceId, row.id, action.patch);
-        result(workspaceId, 'info', `Ризик ${saved.code} оновлено: ${Object.keys(action.patch).join(', ')}`);
+        result(workspaceId, 'info', globalTr.t('management.chat.riskUpdated', { code: saved.code, fields: Object.keys(action.patch).join(', ') }));
       } catch (e) {
-        result(workspaceId, 'error', `Не вдалося оновити ризик ${row.code}: ${errorText(e)}`);
+        result(workspaceId, 'error', globalTr.t('management.chat.riskUpdateFailed', { code: row.code, error: errorText(e) }));
       }
       return;
     }
@@ -474,9 +499,10 @@ export const useManagementChat = defineStore('management-chat', () => {
       result(
         workspaceId,
         'warn',
-        `Тікет «${action.forTicket}» не створено — потрібні відповіді: ` +
-          action.questions.map((q, i) => `${i + 1}) ${q}`).join(' ') +
-          ' Відповідайте тут — тікет буде створено після цього.',
+        globalTr.t('management.chat.ticketNeedsAnswers', {
+          ticket: action.forTicket,
+          questions: action.questions.map((q, i) => `${i + 1}) ${q}`).join(' '),
+        }),
       );
       return;
     }
@@ -540,6 +566,9 @@ export const useManagementChat = defineStore('management-chat', () => {
           members: memberDigest(workspaceId),
           ...(jiraBoard ? { jira: jiraBoard } : {}),
         },
+        // The model is told to answer in the operator's active locale (api rule ґ); the
+        // prompt body stays Ukrainian.
+        locale: locale.value,
       };
 
       const reply = await api.managementChat(ask);
@@ -556,8 +585,8 @@ export const useManagementChat = defineStore('management-chat', () => {
       // Rejections first, then notices: a block that did not validate is the closest thing
       // to a lost instruction, and an operator who believes something was recorded when it
       // was not is exactly how that ends. Notices are omp's own asides and rank below it.
-      for (const line of reply.rejected) result(workspaceId, 'warn', line);
-      for (const line of reply.notices) result(workspaceId, 'info', line);
+      for (const line of reply.rejected) result(workspaceId, 'warn', localizeRejection(globalTr, line));
+      for (const line of reply.notices) result(workspaceId, 'info', localizeNotice(globalTr, line));
       // In order and one at a time: the model may file two risks in one turn, and the codes
       // Postgres mints depend on the order they arrive in. Awaited, so the transcript's
       // result lines follow the actions rather than racing them.
@@ -584,7 +613,7 @@ export const useManagementChat = defineStore('management-chat', () => {
       // Reported, never thrown: the screen is already clear, and the operator needs to know
       // that the model's memory is not — otherwise the next answer refers to a conversation
       // that visibly never happened.
-      result(workspaceId, 'error', `Не вдалося скинути розмову: ${errorText(e)}`);
+      result(workspaceId, 'error', globalTr.t('management.chat.resetFailed', { error: errorText(e) }));
     }
   }
 

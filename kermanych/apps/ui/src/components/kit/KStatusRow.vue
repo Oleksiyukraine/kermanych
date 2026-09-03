@@ -1,13 +1,14 @@
 <template>
   <div v-if="live" class="k-sr mono">
-    <span class="k-sr__live">◆ {{ live }}<template v-if="silence"> · тиша {{ silence }}</template></span>
+    <span class="k-sr__live">◆ {{ live }}<template v-if="silence"> · {{ t('kit.statusRow.silence', { value: silence }) }}</template></span>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { Session } from '@kermanych/core';
-import { dur } from '../../lib/time';
+import { dur, renderTime } from '../../lib/time';
 import { useNow } from '../../composables/useNow';
 
 // The live lane: what the agent is doing right now, pinned between the plan lane and the
@@ -20,11 +21,12 @@ import { useNow } from '../../composables/useNow';
 const props = defineProps<{ session: Session }>();
 
 const now = useNow(1000);
+const { t } = useI18n();
 
 const live = computed(() =>
-  props.session.status === 'tool' ? (props.session.currentTool ?? 'виконує')
-  : props.session.status === 'thinking' ? 'думає'
-  : props.session.status === 'queued' ? 'стартує'
+  props.session.status === 'tool' ? (props.session.currentTool ?? t('kit.statusRow.tool'))
+  : props.session.status === 'thinking' ? t('kit.statusRow.thinking')
+  : props.session.status === 'queued' ? t('kit.statusRow.queued')
   : '',
 );
 // `lastEventAt` is a silence heartbeat, not a turn clock — every streaming delta resets
@@ -39,7 +41,7 @@ const live = computed(() =>
 // KPanel's `running`, so no banner could ever arrive to replace it.
 const silence = computed(() => {
   if (!live.value || !props.session.lastEventAt) return '';
-  return dur(Math.max(0, now.value - props.session.lastEventAt));
+  return renderTime(t, dur(Math.max(0, now.value - props.session.lastEventAt)));
 });
 </script>
 

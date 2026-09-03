@@ -9,6 +9,12 @@
 // (pages/SettingsPage.vue) map the same refusals, and two copies of a
 // version-dependent regex is how one of them silently stops matching.
 
+// The refusal text lives in the catalog (`errors.*`); this module keeps the load-bearing
+// substring→key mapping and resolves each key through the global i18n adapter, exactly the way
+// api.ts localizes a server code. These run outside a component, so they use `globalTr`, not
+// `useI18n()`; the raw server sentence stays the fallback whenever a match is not one of ours.
+import { globalTr } from '../boot/i18n';
+
 /**
  * «Zero rows through .single()», in BOTH of its spellings. PostgREST ≤11 said
  * «JSON object requested, multiple (or no) rows returned»; this server says
@@ -34,8 +40,9 @@ export function isMoveRefusal(raw: string): boolean {
   return /42501|row-level security/.test(raw) || NO_ROWS.test(raw);
 }
 
-export const MOVE_REFUSAL =
-  'Хмара відмовила: переносити проєкт можна лише між воркспейсами, у яких ви учасник';
+export function moveRefusalText(): string {
+  return globalTr.t('errors.move_refusal');
+}
 
 /**
  * tasks_guard()'s two ASSIGNMENT refusals
@@ -49,8 +56,8 @@ export const MOVE_REFUSAL =
  * one of them silently stops matching the sentence Postgres actually sends.
  */
 export const ASSIGNMENT_REFUSALS: Record<string, string> = {
-  'task assigned to someone else': 'Задача призначена іншому учаснику — запустити її може лише він.',
-  'assignee is not a workspace member': 'Цей користувач не входить у воркспейс задачі.',
+  'task assigned to someone else': 'errors.assign_other',
+  'assignee is not a workspace member': 'errors.assign_not_member',
 };
 
 /**
@@ -63,7 +70,8 @@ export const ASSIGNMENT_REFUSALS: Record<string, string> = {
  * `undefined` means «not one of ours», i.e. show the raw text.
  */
 export function assignmentRefusalText(raw: string): string | undefined {
-  return Object.entries(ASSIGNMENT_REFUSALS).find(([refusal]) => raw.includes(refusal))?.[1];
+  const key = Object.entries(ASSIGNMENT_REFUSALS).find(([refusal]) => raw.includes(refusal))?.[1];
+  return key ? globalTr.t(key) : undefined;
 }
 
 /**
@@ -75,17 +83,9 @@ export function assignmentRefusalText(raw: string): string | undefined {
  */
 export function memberErrorText(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);
-  if (raw.includes('no Kermanych account for')) {
-    return 'Немає акаунта Керманича з такою адресою — попросіть колегу спершу увійти через GitHub';
-  }
-  if (raw.includes('not a valid email address')) {
-    return 'Це не схоже на імейл — запрошуємо за адресою, якою колега входить у Керманич';
-  }
-  if (raw.includes('only the workspace owner can invite')) {
-    return 'Хмара відмовила: запрошувати до воркспейсу може лише його власник';
-  }
-  if (raw.includes('only the workspace owner can change roles')) {
-    return 'Хмара відмовила: змінювати ролі може лише власник воркспейсу';
-  }
+  if (raw.includes('no Kermanych account for')) return globalTr.t('errors.member_no_account');
+  if (raw.includes('not a valid email address')) return globalTr.t('errors.member_bad_email');
+  if (raw.includes('only the workspace owner can invite')) return globalTr.t('errors.member_not_owner_invite');
+  if (raw.includes('only the workspace owner can change roles')) return globalTr.t('errors.member_not_owner_roles');
   return raw;
 }

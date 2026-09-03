@@ -8,6 +8,7 @@
 import { managementSection } from '@kermanych/core';
 import type { ManagementUnsupported } from '@kermanych/core';
 import type { WorkspaceMember, WorkspaceRisk } from '@kermanych/cloud';
+import { globalTr } from '../boot/i18n';
 
 // The register code as a person writes it. `R-003`, `R-3` and `r3` are one row to everyone
 // except a string comparison, and the model writes all three — the code it saw in the
@@ -87,8 +88,13 @@ export function findMemberByName(
 export function refusalText(action: ManagementUnsupported): string {
   const section = managementSection(action.section);
   if (section === undefined)
-    return `Асистент назвав розділ «${action.section}», якого не існує в Менеджменті.`;
+    return globalTr.t('management.refusal.unknownSection', { section: action.section });
   if (section.capability === 'read_write')
-    return `Асистент відмовився змінити розділ «${section.label}», хоча цей розділ доступний для запису — спробуйте перепитати.`;
-  return `Не можу змінити розділ «${section.label}»: ${section.limitation ?? 'розділ доступний лише для читання'}`;
+    return globalTr.t('management.refusal.writableRefused', { section: section.label });
+  return globalTr.t('management.refusal.readOnly', {
+    section: section.label,
+    limitation: section.limitation
+      ? globalTr.t(`management.section.${section.name}.limitation`)
+      : globalTr.t('management.refusal.readOnlyFallback'),
+  });
 }

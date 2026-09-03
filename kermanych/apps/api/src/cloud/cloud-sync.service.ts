@@ -80,10 +80,13 @@ export class CloudSyncService implements OnModuleInit, OnModuleDestroy {
     if (!taskId) return;
     this.taskOf.delete(sessionId);
     const last = this.lastPushed.get(taskId);
+    // The session is gone, so its edge-filter entry is dead weight — drop it either way. Left
+    // behind, `lastPushed` grew by one entry per task for the process's whole life; a later
+    // session that reuses this taskId (a relaunch) re-seeds it on its first status.
+    this.lastPushed.delete(taskId);
     // D5: only an ACTIVE task needs a terminal push; a session deleted after `done`/`merged`
     // must not have its outcome overwritten by `stopped`.
     if (!last || !ACTIVE_STATUSES.includes(last)) return;
-    this.lastPushed.set(taskId, "stopped");
     this.registry.enqueueTaskStatus(taskId, "stopped", new Date().toISOString());
     void this.drain();
   }

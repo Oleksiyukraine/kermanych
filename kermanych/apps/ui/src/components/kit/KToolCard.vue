@@ -14,13 +14,14 @@
       </template>
     </div>
     <button v-if="rest > 0" type="button" class="k-tc__more" :disabled="busy" @click="emit('more')">
-      {{ busy ? 'завантаження…' : `показати всі ${totalLines} рядків` }}
+      {{ busy ? t('kit.toolCard.loading') : t('kit.toolCard.showAll', { count: totalLines }) }}
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { ToolLine, TranscriptEntry } from '@kermanych/core';
 
 // One card body for every tool: the per-tool knowledge already lives in the API's
@@ -32,6 +33,8 @@ const props = defineProps<{
   busy?: boolean;
 }>();
 const emit = defineEmits<{ more: [] }>();
+
+const { t } = useI18n();
 
 // A clipped diff hides the change itself, so edit/write wrap with a hanging indent.
 const wrap = computed(() => props.entry.tool === 'edit' || props.entry.tool === 'write');

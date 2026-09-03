@@ -1,5 +1,5 @@
 // apps/api/src/supervisor/supervisor.service.ts
-import { GoneException, Injectable, type OnModuleDestroy } from "@nestjs/common";
+import { GoneException, Injectable, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -45,6 +45,7 @@ import {
   type ToolLine,
   type TranscriptEntry,
   type AgentRuntimeKind,
+  type Notice,
 } from "@kermanych/core";
 import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type ProjectTrigger } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
@@ -81,7 +82,7 @@ const CHAT_TOOLS = ["read", "grep", "glob"];
 const MATCH_MAX_CHARS = 1 << 14;
 
 @Injectable()
-export class SupervisorService implements OnModuleDestroy {
+export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private map = new Map<string, Live>();
   private resuming = new Map<string, Promise<Live>>();
   // One cache for every session, live or dormant: GET /sessions/:id/tools/:callId must
@@ -93,6 +94,17 @@ export class SupervisorService implements OnModuleDestroy {
   private lastStamp = 0;
   private events = new Subject<ServerEvent>();
   events$: Observable<ServerEvent> = this.events.asObservable();
+
+  // A finished session's omp child stays resident so a follow-up resumes instantly — but a
+  // live `omp --mode rpc` process is by far the largest thing this service keeps alive (a big
+  // run's child holds gigabytes), so a board of done agents nobody has touched is what runs a
+  // machine out of application memory. `reapIdleChildren` stops the child of any finished
+  // session (status "done") silent past this TTL; the Live — and
+  // with it the rendered transcript — stays, and the next send respawns through `liveOrResume`
+  // exactly as a dormant session does. The child is a pure latency cache over the session file
+  // omp already persisted, so nothing is lost. Same tradeoff as ManagementChatService.IDLE_TTL_MS.
+  private static readonly CHILD_IDLE_TTL_MS = 15 * 60_000;
+  private reaper?: NodeJS.Timeout;
 
   constructor(
     private registry: RegistryService,
@@ -160,10 +172,40 @@ export class SupervisorService implements OnModuleDestroy {
 
   private skillSource = (sessionId: string): SkillSource => (name) => this.skillLabels.get(sessionId)?.get(name);
 
+  onModuleInit(): void {
+    // A minute is far finer than the 15-minute TTL, so a child is reaped within a minute of
+    // crossing it. Unref'd: the janitor must never hold the app open — a clean quit runs
+    // onModuleDestroy, which stops the children anyway. ManagementChatService sweeps on-use
+    // instead of on a timer, but a finished agent nobody touches is exactly the case an
+    // on-use sweep never reaches, so this one rides a timer.
+    this.reaper = setInterval(() => this.reapIdleChildren(), 60_000);
+    this.reaper.unref();
+  }
+
   onModuleDestroy(): void {
+    clearInterval(this.reaper);
     for (const live of this.map.values()) {
       this.stopPoll(live);
       void live.rpc.stop();
+    }
+  }
+
+  // Stop the resident omp child of every FINISHED session (status "done") that has been silent
+  // past CHILD_IDLE_TTL_MS. The Live stays, so getTranscript still serves the rendered history
+  // with no rehydrate; the next send respawns through liveOrResume, exactly as a dormant session
+  // does. Only "done": the isAlive guard already skips stopped/merged/most errored children
+  // (their child is gone), and stopping a still-live conflict/error child would make wireLive's
+  // onExit wrongly flip the row to "error". "done" is the state a big finished run rests at — the
+  // exact memory target. Idempotent (a reaped child reads !isAlive) and never mid-resume.
+  private reapIdleChildren(now = Date.now()): void {
+    const cutoff = now - SupervisorService.CHILD_IDLE_TTL_MS;
+    for (const [id, l] of this.map) {
+      if (!l.rpc.isAlive()) continue;
+      if (l.live.status !== "done") continue;
+      if (this.resuming.has(id)) continue;
+      if ((l.live.lastEventAt ?? now) > cutoff) continue;
+      this.stopPoll(l);
+      void l.rpc.stop().catch(() => {});
     }
   }
 
@@ -823,14 +865,18 @@ export class SupervisorService implements OnModuleDestroy {
   // A Kermanych-authored row in the conversation. A fired trigger changed what the child was
   // asked, so the transcript has to say so: an invisible trigger is a session that behaves
   // differently for no reason the operator can read back.
-  private noticeEntry(text: string, level: "info" | "warn" | "error" = "info"): TranscriptEntry {
+  private noticeEntry(notice: string | Notice, level: "info" | "warn" | "error" = "info"): TranscriptEntry {
     const at = this.stamp();
-    return { kind: "notice", id: `n${at}`, at, level, text };
-  }
-
-  // A trigger's `target` is an agent id; the notice names the agent the way the catalogue does.
-  private agentLabel(agentId: string): string {
-    return agentById(agentId)?.label ?? agentId;
+    const n: Notice = typeof notice === "string" ? { text: notice } : notice;
+    return {
+      kind: "notice",
+      id: `n${at}`,
+      at,
+      level,
+      text: n.text,
+      ...(n.code ? { code: n.code } : {}),
+      ...(n.params ? { params: n.params } : {}),
+    };
   }
 
   private onRpcEvent(id: string, e: RpcEvent) {
@@ -964,7 +1010,12 @@ export class SupervisorService implements OnModuleDestroy {
   // and the agent would look "hung". Drop the corpse and respawn.
   private async liveOrResume(id: string): Promise<Live> {
     const l = this.map.get(id);
-    if (l?.rpc.isAlive()) return l;
+    if (l?.rpc.isAlive()) {
+      // A send or wake is activity: stamp it now so the idle reaper never stops a child we are
+      // about to write to — the child's own events only stamp lastEventAt once the turn starts.
+      l.live.lastEventAt = Date.now();
+      return l;
+    }
     if (l) {
       this.stopPoll(l);
       this.map.delete(id);
@@ -1066,7 +1117,16 @@ export class SupervisorService implements OnModuleDestroy {
         }
         if (!re.test(text)) continue;
         if (trigger.action === "agent") {
-          this.appendEntry(id, this.noticeEntry(`тригер «${trigger.label}» запускає «${this.agentLabel(trigger.target)}»`));
+          this.appendEntry(
+            id,
+            this.noticeEntry({
+              // The fallback text names the raw agent id — the api has no vue-i18n to render
+              // its label. A UI that knows the code renders `t('agents.role.<agent>')` for it.
+              text: `тригер «${trigger.label}» запускає «${trigger.target}»`,
+              code: "trigger_launches_agent",
+              params: { trigger: trigger.label, agent: trigger.target },
+            }),
+          );
           return { trigger, block: "" };
         }
         // One resolver for every skill body in Kermanych, assignments and triggers alike.
@@ -1076,11 +1136,25 @@ export class SupervisorService implements OnModuleDestroy {
           // to nothing is exactly the state the dangling-reference UI exists to surface.
           this.appendEntry(
             id,
-            this.noticeEntry(`тригер «${trigger.label}»: скіл «${missing[0] ?? trigger.target}» не знайдено`, "warn"),
+            this.noticeEntry(
+              {
+                text: `тригер «${trigger.label}»: скіл «${missing[0] ?? trigger.target}» не знайдено`,
+                code: "trigger_skill_missing",
+                params: { trigger: trigger.label, skill: missing[0] ?? trigger.target },
+              },
+              "warn",
+            ),
           );
           return undefined;
         }
-        this.appendEntry(id, this.noticeEntry(`тригер «${trigger.label}» додав скіл «${trigger.target}»`));
+        this.appendEntry(
+          id,
+          this.noticeEntry({
+            text: `тригер «${trigger.label}» додав скіл «${trigger.target}»`,
+            code: "skill_added_by_trigger",
+            params: { trigger: trigger.label, skill: trigger.target },
+          }),
+        );
         return { trigger, block };
       }
       return undefined;
@@ -1107,7 +1181,14 @@ export class SupervisorService implements OnModuleDestroy {
     } catch (err) {
       this.appendEntry(
         id,
-        this.noticeEntry(`тригер «${trigger.label}» не запустив агента: ${(err as Error).message}`, "error"),
+        this.noticeEntry(
+          {
+            text: `тригер «${trigger.label}» не запустив агента: ${(err as Error).message}`,
+            code: "trigger_agent_launch_failed",
+            params: { trigger: trigger.label, reason: (err as Error).message },
+          },
+          "error",
+        ),
       );
       return false;
     }
@@ -1500,12 +1581,18 @@ export class SupervisorService implements OnModuleDestroy {
     // Dormant: in the registry but no live process (e.g. after an api restart).
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (s) {
-      const text =
-        s.status === "merged"
-          ? "Сесію влито в проєкт. Натисни «↻ Відновити» вгорі, щоб підняти worktree і продовжити."
-          : "Сесія неактивна. Надішли повідомлення, щоб відновити її та підтягнути історію.";
       // Synthesised on every read, never appended to a transcript, so a fixed id is enough.
-      return [{ kind: "notice", id: "dormant", at: Date.now(), level: "info", text }];
+      const dormant: Notice =
+        s.status === "merged"
+          ? {
+              text: "Сесію влито в проєкт. Натисни «↻ Відновити» вгорі, щоб підняти worktree і продовжити.",
+              code: "session_dormant_merged",
+            }
+          : {
+              text: "Сесія неактивна. Надішли повідомлення, щоб відновити її та підтягнути історію.",
+              code: "session_dormant_inactive",
+            };
+      return [{ kind: "notice", id: "dormant", at: Date.now(), level: "info", text: dormant.text, code: dormant.code }];
     }
     return [];
   }
@@ -1521,7 +1608,7 @@ export class SupervisorService implements OnModuleDestroy {
   // Shared live-session wiring (fresh create + resume): build the Live, register it,
   // and route exit + events. onExit marks error unless the session ended cleanly.
   private wireLive(sessionId: string, rpc: AgentRuntime, status: Session["status"]): Live {
-    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status }, textBuf: "", thinkBuf: "", toolStarted: new Map(), toolArgs: new Map() };
+    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status, lastEventAt: Date.now() }, textBuf: "", thinkBuf: "", toolStarted: new Map(), toolArgs: new Map() };
     this.map.set(sessionId, live);
     rpc.onExit((_code, reason) => {
       this.stopPoll(live);

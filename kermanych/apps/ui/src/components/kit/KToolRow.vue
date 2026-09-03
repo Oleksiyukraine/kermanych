@@ -4,7 +4,7 @@
       <span class="k-tr__g" :class="`k-tr__g--${entry.status}`" role="img" :aria-label="statusLabel">{{ glyph }}</span>
       <span class="k-tr__t" :class="{ 'k-tr__t--skill': entry.tool === 'skill' }">{{ entry.tool }}</span>
       <span class="k-tr__tg">{{ entry.target ?? '' }}</span>
-      <span class="k-tr__st">{{ entry.stat ?? '' }}</span>
+      <span class="k-tr__st">{{ statText }}</span>
       <span class="k-tr__ch" aria-hidden="true">{{ open ? '⌄' : '›' }}</span>
     </button>
     <KToolCard
@@ -17,13 +17,14 @@
     />
     <div v-else-if="open" class="k-tr__empty mono">
       <div v-if="entry.intent" class="k-tr__intent">{{ entry.intent }}</div>
-      <div>{{ note || 'Деталей немає.' }}</div>
+      <div>{{ note || t('kit.toolRow.noDetails') }}</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { ToolLine, TranscriptEntry } from '@kermanych/core';
 import { api } from '../../lib/api';
 import type { ExpandAllCommand } from '../../lib/expand-all';
@@ -42,6 +43,18 @@ const open = ref(false);
 const fullLines = ref<ToolLine[] | undefined>(undefined);
 const error = ref('');
 const loading = ref(false);
+
+const { t } = useI18n();
+// The stat cell is either a plain string the reducer already made language-neutral, or an
+// i18n key + params naming Ukrainian prose. A key carrying `truncated` also appends the
+// `·обрізано` marker, exactly as the pre-i18n formatted string did. See core/tool-display.ts.
+const statText = computed(() => {
+  const s = props.entry.stat;
+  if (s === undefined) return '';
+  if (typeof s === 'string') return s;
+  const base = t(s.key, s.params ?? {});
+  return s.params?.truncated ? base + t('chat.toolStat.truncated') : base;
+});
 
 // The log renders its items index-keyed, so one instance is rebound to another call —
 // in another session, even. Watch the id, not the object: `transcript_update` rebuilds
@@ -68,11 +81,11 @@ watch(() => props.expandAll.seq, () => { open.value = props.expandAll.on; }, { i
 const glyph = computed(() => (props.entry.status === 'pending' ? '◆' : props.entry.status === 'ok' ? '✓' : '✗'));
 // The glyph alone reaches assistive technology as nothing, and no visible word follows it.
 const statusLabel = computed(() =>
-  props.entry.status === 'pending' ? 'виконується' : props.entry.status === 'ok' ? 'завершено' : 'помилка',
+  props.entry.status === 'pending' ? t('kit.toolRow.statusPending') : props.entry.status === 'ok' ? t('kit.toolRow.statusOk') : t('kit.toolRow.statusError'),
 );
 const shown = computed(() => fullLines.value ?? props.entry.detail?.lines ?? []);
 const total = computed(() => (fullLines.value ? fullLines.value.length : props.entry.detail?.totalLines ?? 0));
-const note = computed(() => error.value || (props.entry.detail?.truncatedUpstream ? 'віддано обрізаним' : ''));
+const note = computed(() => error.value || (props.entry.detail?.truncatedUpstream ? t('kit.toolRow.truncatedUpstream') : ''));
 
 function toggle(): void {
   open.value = !open.value;

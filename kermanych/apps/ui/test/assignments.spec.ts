@@ -59,7 +59,7 @@ test('a name only the repository defines is live, not broken', () => {
   expect(skill.broken).toBeUndefined();
   expect(skill).toEqual({ name: 'repo-only', shadowedByRepo: '/repo/.omp/skills/repo-only/SKILL.md' });
   // And it must read as the repository's text, not as the project's.
-  expect(assignmentBadge(skill)).toEqual({ kind: 'repo', label: 'перекрито репо' });
+  expect(assignmentBadge(skill)).toEqual({ kind: 'repo' });
 });
 
 // Its size is unknowable from the renderer — the file is in the checkout, not in the cloud
@@ -84,7 +84,7 @@ test('a name in neither the library nor the repository is broken', () => {
     'something-else': '/repo/.omp/skills/something-else/SKILL.md',
   });
   expect(rows[0]!.skills).toEqual([{ name: 'gone', broken: true }]);
-  expect(assignmentBadge(rows[0]!.skills[0]!)).toEqual({ kind: 'broken', label: 'немає скіла' });
+  expect(assignmentBadge(rows[0]!.skills[0]!)).toEqual({ kind: 'broken' });
 });
 
 // `constructor` is a LEGAL skill name — lowercase, no separators, so SKILL_NAME_RE and the
@@ -101,7 +101,7 @@ test('a dangling assignment named constructor is broken, not a repository skill'
   for (const repo of [{}, { 'other-skill': '/repo/.omp/skills/other-skill/SKILL.md' }]) {
     const rows = assignmentRows(AGENTS, [A('constructor')], [], {}, repo);
     expect(rows[0]!.skills).toEqual([{ name: 'constructor', broken: true }]);
-    expect(assignmentBadge(rows[0]!.skills[0]!)).toEqual({ kind: 'broken', label: 'немає скіла' });
+    expect(assignmentBadge(rows[0]!.skills[0]!)).toEqual({ kind: 'broken' });
     // And it is not an open question about the byte total either: there is no body anywhere.
     expect(rows[0]!.unmeasured).toEqual([]);
     expect(rows[0]!.bytes).toBe(0);
@@ -168,19 +168,17 @@ test('an assignment to an instruction-less agent appears on no row', () => {
 test('the badge keys off shadowedByRepo, never off source', () => {
   expect(assignmentBadge({ name: 'x', source: 'project', shadowedByRepo: '/repo/x/SKILL.md' })).toEqual({
     kind: 'repo',
-    label: 'перекрито репо',
   });
   expect(assignmentBadge({ name: 'x', source: 'default', shadowedByRepo: '/repo/x/SKILL.md' })).toEqual({
     kind: 'repo',
-    label: 'перекрито репо',
   });
-  expect(assignmentBadge({ name: 'x', source: 'default' })).toEqual({ kind: 'default', label: 'дефолт' });
-  expect(assignmentBadge({ name: 'x', source: 'project' })).toEqual({ kind: 'project', label: 'проєкт' });
+  expect(assignmentBadge({ name: 'x', source: 'default' })).toEqual({ kind: 'default' });
+  expect(assignmentBadge({ name: 'x', source: 'project' })).toEqual({ kind: 'project' });
 });
 
 // A dangling assignment has no source to report — its badge says what is actually wrong.
 test('a broken row gets its own badge rather than a source it does not have', () => {
-  expect(assignmentBadge({ name: 'gone', broken: true })).toEqual({ kind: 'broken', label: 'немає скіла' });
+  expect(assignmentBadge({ name: 'gone', broken: true })).toEqual({ kind: 'broken' });
 });
 
 // The threshold exists to catch a bloated block, not to nag about a normal one: assigning

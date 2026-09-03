@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 
 // A workspace row in the left sidebar: the group header that is also the scope selector
 // and the drop target for projects.
@@ -29,6 +30,8 @@ const props = withDefaults(
 
 const emit = defineEmits<{ select: []; toggle: []; 'add-project': [] }>();
 
+const { t } = useI18n();
+
 // The counter is aria-hidden (a bare digit reads as noise), so the count reaches assistive
 // tech through the row's label instead. Count-agnostic phrasing — «запущено агентів: 3» —
 // because Ukrainian would otherwise need three plural forms for one tooltip.
@@ -38,7 +41,9 @@ const emit = defineEmits<{ select: []; toggle: []; 'add-project': [] }>();
 const title = computed(
   () =>
     props.workspace.name +
-    (props.count > 0 ? ` · запущено агентів: ${props.count}` : ' · немає запущених агентів'),
+    (props.count > 0
+      ? t('kit.workspaceRow.running', { count: props.count })
+      : t('kit.workspaceRow.none')),
 );
 
 // The visible counter, empty when nothing runs. Resolved here rather than in the template
@@ -53,9 +58,11 @@ const badge = computed(() => (props.count > 0 ? String(props.count) : ''));
 // Names are quoted because they are arbitrary text spliced into a Ukrainian sentence:
 // «Новий проєкт у Особисте» is ungrammatical, «Новий проєкт у «Особисте»» is not.
 const toggleLabel = computed(() =>
-  props.expanded ? `Згорнути «${props.workspace.name}»` : `Розгорнути «${props.workspace.name}»`,
+  props.expanded
+    ? t('kit.workspaceRow.collapse', { name: props.workspace.name })
+    : t('kit.workspaceRow.expand', { name: props.workspace.name }),
 );
-const addLabel = computed(() => `Новий проєкт у «${props.workspace.name}»`);
+const addLabel = computed(() => t('kit.workspaceRow.addProject', { name: props.workspace.name }));
 </script>
 
 <template>

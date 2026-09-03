@@ -32,6 +32,12 @@ export class RpcSession implements AgentRuntime {
   // transcript work exists to remove, so the count is kept and each loss is announced.
   droppedFrames = 0;
   private seq = 0;
+  // A wall between "stop() has begun" and the child's async exit: stop() ends stdin
+  // synchronously, but the process lingers until it honours EOF or the SIGTERM/SIGKILL
+  // escalation fires (~up to 4s). isAlive() MUST read dead across that whole window —
+  // otherwise liveOrResume's fast path hands a caller the dying child and the write to its
+  // already-ended stdin vanishes, the exact silent loss the resume-on-dead contract prevents.
+  private stopping = false;
   constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; commandTimeoutMs?: number; configPath?: string; extensionPath?: string }) {}
 
   onEvent(cb: (e: RpcEvent) => void) { this.eventCbs.push(cb); }
@@ -180,6 +186,7 @@ export class RpcSession implements AgentRuntime {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
     const proc = this.proc;
     if (!proc) return;
     try { proc.stdin.end(); } catch {}
@@ -199,6 +206,6 @@ export class RpcSession implements AgentRuntime {
   // never written to: writes to its closed stdin raise EPIPE, which start() swallows,
   // so the message would vanish silently and the agent would appear "hung".
   isAlive(): boolean {
-    return !!this.proc && this.proc.exitCode === null && this.proc.signalCode === null;
+    return !this.stopping && !!this.proc && this.proc.exitCode === null && this.proc.signalCode === null;
   }
 }

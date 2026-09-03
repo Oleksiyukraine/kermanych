@@ -1,8 +1,8 @@
 <template>
   <JiraStatusPickDialog
     :model-value="!!current"
-    :title="current ? `${current.jiraKey} злито` : ''"
-    lead="Гілку влито — перенести тікет у Jira в який статус?"
+    :title="current ? t('jira.mergePrompt.title', { key: current.jiraKey }) : ''"
+    :lead="t('jira.mergePrompt.lead')"
     :options="options"
     :busy="busy"
     skippable
@@ -26,9 +26,11 @@ import { api } from '../../lib/api';
 import type { JiraTransitionView } from '../../lib/jira-view';
 import { useBoard } from 'stores/board';
 import { useOrchestrator } from 'stores/orchestrator';
+import { useI18n } from 'vue-i18n';
 
 const board = useBoard();
 const local = useOrchestrator();
+const { t } = useI18n();
 
 // One prompt at a time; later merges queue behind it.
 const queue = ref<Task[]>([]);
@@ -78,15 +80,15 @@ function onToggle(open: boolean): void {
   if (!open) queue.value = queue.value.slice(1); // «Не переносити»
 }
 
-async function apply(t: JiraTransitionView): Promise<void> {
+async function apply(transition: JiraTransitionView): Promise<void> {
   const task = current.value;
   if (!task?.jiraKey) return;
   const ws = local.projectWorkspace[task.projectId];
   if (!ws) return;
   busy.value = true;
   try {
-    await api.jiraTransition(ws, task.jiraKey, t.id);
-    local.notify(`${task.jiraKey} → «${t.to.name}»`, 'info');
+    await api.jiraTransition(ws, task.jiraKey, transition.id);
+    local.notify(t('jira.mergePrompt.moved', { key: task.jiraKey, name: transition.to.name }), 'info');
   } catch (e) {
     local.notify(e instanceof Error ? e.message : String(e), 'error');
   } finally {

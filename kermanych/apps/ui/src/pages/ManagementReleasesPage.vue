@@ -1,26 +1,24 @@
 <template>
   <section class="rel">
     <p class="rel__lead">
-      Реліз-ноти воркспейсу
+      {{ t('management.releases.leadBefore') }}
       <span class="rel__lead-workspace mono">{{ workspaceName }}</span>
-      — що змінилося для користувачів, написане простою мовою. Все згенероване зберігається
-      тут, у воркспейсі, і його бачить уся команда.
+      {{ t('management.releases.leadAfter') }}
     </p>
 
     <div class="rel__toolbar">
-      <span class="rel__count mono">{{ notes.length ? `нотаток: ${notes.length}` : '' }}</span>
-      <KBtn variant="primary" @click="openGenerate">+ Згенерувати реліз-ноти</KBtn>
+      <span class="rel__count mono">{{ notes.length ? t('management.releases.count', { count: notes.length }) : '' }}</span>
+      <KBtn variant="primary" @click="openGenerate">{{ t('management.releases.generate') }}</KBtn>
     </div>
 
     <p v-if="store.loadError" class="rel__error">
-      Історія не прочиталась: {{ store.loadError }}
+      {{ t('management.releases.loadError', { error: store.loadError }) }}
     </p>
 
     <div v-else-if="!notes.length && !jobs.length" class="rel__blank">
-      <span class="rel__blank-eyebrow mono">РЕЛІЗ-НОТИ</span>
+      <span class="rel__blank-eyebrow mono">{{ t('management.releases.blankEyebrow') }}</span>
       <p class="rel__blank-text">
-        Ще жодної нотатки. Оберіть проєкт, гілку й період — документ буде написано з
-        git-історії так, щоб його зрозуміла й нетехнічна людина.
+        {{ t('management.releases.blankText') }}
       </p>
     </div>
 
@@ -38,7 +36,7 @@
         <div class="rel__row-main">
           <span class="rel__row-title">
             <span v-if="!j.error" class="rel__row-pulse" aria-hidden="true">◆</span>
-            {{ j.error ? 'Реліз-ноти не згенерувались' : 'Пишемо реліз-ноти…' }}
+            {{ j.error ? t('management.releases.jobFailed') : t('management.releases.jobRunning') }}
           </span>
           <span class="rel__row-meta">
             <KTag>{{ j.projectName }}</KTag>
@@ -49,8 +47,8 @@
         </div>
         <span v-if="!j.error" class="rel__row-when mono">{{ elapsed(j) }}</span>
         <span v-else class="rel__row-actions">
-          <KBtn variant="secondary" @click="store.retry(j.id)">Повторити</KBtn>
-          <KBtn variant="ghost" @click="store.dismissJob(j.id)">Прибрати</KBtn>
+          <KBtn variant="secondary" @click="store.retry(j.id)">{{ t('management.releases.retry') }}</KBtn>
+          <KBtn variant="ghost" @click="store.dismissJob(j.id)">{{ t('management.releases.dismiss') }}</KBtn>
         </span>
       </li>
 
@@ -63,35 +61,35 @@
             <span class="rel__row-range mono">{{ n.rangeFrom }} — {{ n.rangeTo }}</span>
           </span>
         </div>
-        <span class="rel__row-when mono">{{ relativeTime(n.createdAt, now) }}</span>
+        <span class="rel__row-when mono">{{ renderTime(t, relativeTime(n.createdAt, now)) }}</span>
       </li>
     </ol>
 
     <!-- ── Generation form ─────────────────────────────────────────────────────
          Never persistent, never busy: submitting hands the run to the store and closes,
          so the form holds nothing anybody is waiting on. -->
-    <KModal v-model="genOpen" title="Згенерувати реліз-ноти" width="600px">
+    <KModal v-model="genOpen" :title="t('management.releases.genTitle')" width="600px">
       <div class="rel__form">
         <!-- One picker, full width: the project IS the release's shape — its repository is
              the front-end, the back-end or an app — so naming it is the whole answer to
              «which product does this note cover?». -->
         <KSelect
           v-model="gen.projectId"
-          label="Проєкт"
+          :label="t('management.releases.projectLabel')"
           :options="projectOptions"
-          placeholder="— оберіть проєкт —"
+          :placeholder="t('management.releases.projectPlaceholder')"
         />
         <div class="rel__form-row">
           <KSelect
             v-model="gen.branch"
-            label="Гілка"
+            :label="t('management.releases.branchLabel')"
             :options="branches"
             :placeholder="branchPlaceholder"
             :disabled="!branches.length"
           />
           <div class="rel__form-range">
-            <KDateField v-model="gen.rangeFrom" label="Період з" />
-            <KDateField v-model="gen.rangeTo" label="по" />
+            <KDateField v-model="gen.rangeFrom" :label="t('management.releases.rangeFromLabel')" />
+            <KDateField v-model="gen.rangeTo" :label="t('management.releases.rangeToLabel')" />
           </div>
         </div>
 
@@ -100,17 +98,14 @@
              spends the same provider plan every agent spends, and it keeps going while the
              operator does something else. -->
         <p class="rel__form-hint">
-          Генерація читає git-історію привʼязаного репозиторію на цій машині й витрачає ту
-          саму підписку, що й агенти. Гілку взято з налаштувань проєкту — за потреби
-          виберіть іншу. Вікно можна закрити: нотатка зʼявиться у списку сама, коли буде
-          готова.
+          {{ t('management.releases.formHint') }}
         </p>
       </div>
 
       <template #controls>
-        <KBtn variant="ghost" @click="genOpen = false">Скасувати</KBtn>
+        <KBtn variant="ghost" @click="genOpen = false">{{ t('management.releases.cancel') }}</KBtn>
         <KBtn variant="primary" :disabled="!canGenerate" @click="submitGenerate">
-          Згенерувати
+          {{ t('management.releases.generateSubmit') }}
         </KBtn>
       </template>
     </KModal>
@@ -139,18 +134,18 @@
                controlled tag set — the same guarantee the assistant transcript relies on. -->
           <div class="k-log__markdown" v-html="renderMarkdown(current.bodyMd)"></div>
           <p class="rel__doc-audit mono">
-            згенеровано {{ memberName(current.createdBy) }} · {{ relativeTime(current.createdAt, now) }}
+            {{ t('management.releases.auditGenerated') }} {{ memberName(current.createdBy) }} · {{ renderTime(t, relativeTime(current.createdAt, now)) }}
             <template v-if="current.updatedAt !== current.createdAt">
-              · змінено {{ memberName(current.updatedBy) }} · {{ relativeTime(current.updatedAt, now) }}
+              · {{ t('management.releases.auditEdited') }} {{ memberName(current.updatedBy) }} · {{ renderTime(t, relativeTime(current.updatedAt, now)) }}
             </template>
           </p>
         </div>
 
         <div v-else class="rel__edit">
-          <KField v-model="draftTitle" label="Заголовок" :disabled="saving" />
+          <KField v-model="draftTitle" :label="t('management.releases.editTitle')" :disabled="saving" />
           <KField
             v-model="draftBody"
-            label="Текст (markdown)"
+            :label="t('management.releases.editBody')"
             multiline
             :rows="18"
             :disabled="saving"
@@ -161,13 +156,13 @@
 
       <template #controls>
         <template v-if="!editing">
-          <KBtn variant="secondary" @click="startEdit">Редагувати</KBtn>
-          <KBtn variant="primary" @click="copy">{{ copied ? 'Скопійовано ✓' : 'Копіювати' }}</KBtn>
+          <KBtn variant="secondary" @click="startEdit">{{ t('management.releases.edit') }}</KBtn>
+          <KBtn variant="primary" @click="copy">{{ copied ? t('management.releases.copied') : t('management.releases.copy') }}</KBtn>
         </template>
         <template v-else>
-          <KBtn variant="ghost" :disabled="saving" @click="cancelEdit">Скасувати</KBtn>
+          <KBtn variant="ghost" :disabled="saving" @click="cancelEdit">{{ t('management.releases.cancel') }}</KBtn>
           <KBtn variant="primary" :disabled="saving || !draftTitle.trim() || !draftBody.trim()" @click="saveEdit">
-            {{ saving ? 'Зберігаємо…' : 'Зберегти' }}
+            {{ saving ? t('management.releases.saving') : t('management.releases.save') }}
           </KBtn>
         </template>
       </template>
@@ -188,6 +183,7 @@
 //   * this screen collects the parameters, renders the running job as a row in the history
 //     it will land in, and reads, copies and edits what is stored.
 import { computed, onUnmounted, reactive, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { WorkspaceReleaseNote } from '@kermanych/cloud';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
@@ -199,7 +195,7 @@ import { useReleaseNotes, type ReleaseNotesJob } from 'stores/release-notes';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
 import { renderMarkdown } from '../lib/markdown';
-import { relativeTime } from '../lib/time';
+import { relativeTime, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 
 const props = defineProps<{ workspaceId: string; workspaceName: string }>();
@@ -208,6 +204,8 @@ const store = useReleaseNotes();
 const projects = useProjects();
 const local = useOrchestrator();
 const now = useNow(60_000);
+
+const { t } = useI18n();
 
 // The history is read on open and whenever the sidebar moves to another workspace. No
 // Realtime channel: see the header of stores/release-notes.ts.
@@ -259,7 +257,7 @@ const projectOptions = computed<KSelectOption[]>(() =>
     .filter((p) => p.workspaceId === props.workspaceId)
     .map((p) => {
       const bound = !!local.projects.find((lp) => lp.id === p.id)?.localRepoPath;
-      return { value: p.id, label: bound ? p.name : `${p.name} · не привʼязаний на цій машині` };
+      return { value: p.id, label: bound ? p.name : t('management.releases.projectUnbound', { name: p.name }) };
     }),
 );
 
@@ -270,8 +268,8 @@ const branches = ref<string[]>([]);
 const branchesFailed = ref(false);
 
 const branchPlaceholder = computed(() => {
-  if (!gen.projectId) return '— спершу оберіть проєкт —';
-  return branchesFailed.value ? 'гілки недоступні — проєкт не привʼязаний тут' : '— гілок не знайдено —';
+  if (!gen.projectId) return t('management.releases.branchPlaceholderNoProject');
+  return branchesFailed.value ? t('management.releases.branchPlaceholderFailed') : t('management.releases.branchPlaceholderEmpty');
 });
 
 watch(
@@ -359,7 +357,7 @@ onUnmounted(() => {
 
 function elapsed(job: ReleaseNotesJob): string {
   const sec = Math.max(0, Math.round((tick.value - job.startedAt) / 1000));
-  return sec < 3 ? 'щойно' : `${sec} с`;
+  return sec < 3 ? t('management.releases.elapsedJustNow') : t('management.releases.elapsedSec', { sec });
 }
 
 // ── One note ─────────────────────────────────────────────────────────────────

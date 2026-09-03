@@ -136,7 +136,11 @@ describe("ManagementChatService", () => {
     ];
     const r = await svc.ask(ask("зміни щось у менеджменті"));
     expect(answered).toEqual([{ type: "extension_ui_response", id: "ui-1", cancelled: true }]);
-    expect(r.notices.some((n) => n.includes("інтерактивне вікно"))).toBe(true);
+    // The notice carries a stable code + the method the model tried, and keeps the
+    // Ukrainian text as the fallback the UI shows when it does not know the code.
+    const cancelled = r.notices.find((n) => n.code === "interactive_request_cancelled");
+    expect(cancelled?.params).toEqual({ method: "input" });
+    expect(cancelled?.text).toContain("інтерактивне вікно");
     expect(r.text).toBe("Який саме розділ ти маєш на увазі?");
   });
 
@@ -181,7 +185,10 @@ describe("ManagementChatService", () => {
 
     const bad = await svc.ask(ask("і ще один"));
     expect(bad.actions).toEqual([]);
-    expect(bad.rejected).toEqual(["risk.create без об'єкта risk"]);
+    // The rejection now carries a stable code + the Ukrainian text as its fallback, the same
+    // codes-on-the-wire contract notices use, so the UI can localize it.
+    expect(bad.rejected).toHaveLength(1);
+    expect(bad.rejected[0]).toMatchObject({ code: "risk_create_no_risk", text: "risk.create без об'єкта risk" });
   });
 
   // The Менеджмент turn is templated — contract, context markers, then the operator's text —
@@ -201,6 +208,17 @@ describe("ManagementChatService", () => {
     const svc = make();
     turns = [reply("ок")];
     const r = await svc.ask(ask("/el10 що в нас із ризиками?"));
-    expect(r.notices).toContain("хелпер «/el10» додав настанову");
+    const helper = r.notices.find((n) => n.code === "helper_added_instruction");
+    expect(helper?.params).toEqual({ names: "«/el10»", count: 1 });
+    expect(helper?.text).toBe("хелпер «/el10» додав настанову");
+  });
+
+  // The operator's UI locale rides the ask into the model's contract (rule ґ), so the model
+  // is told which language to answer in — the prompt body itself stays Ukrainian.
+  it("threads the operator's locale into the contract directive", async () => {
+    const svc = make();
+    turns = [reply("ok")];
+    await svc.ask({ ...ask("що в нас із ризиками?"), locale: "en" });
+    expect(sent[0]?.text).toContain("Відповідай англійською мовою (en).");
   });
 });
