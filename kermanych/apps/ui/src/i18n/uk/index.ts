@@ -954,6 +954,7 @@ export const uk = {
       jiraAttachUploaded: 'Файл «{name}» прикріплено до {key}.',
       jiraAttachFailed: 'Не вдалося прикріпити файл «{name}» до {key}: {error}',
       jiraAttachUnknown: 'Файл «{name}» не долучали до цієї розмови — до {key} нічого не прикріплено.',
+      boardAttachUnsupported: 'Дошка воркспейсу не має вкладень — {names} лишилися в розмові й до картки не прикріплені. Вкладення підтримує лише дошка Jira.',
     },
     refusal: {
       unknownSection: 'Асистент назвав розділ «{section}», якого не існує в Менеджменті.',
