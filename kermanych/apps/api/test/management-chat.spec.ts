@@ -1,13 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DEFAULT_HELPERS } from "@kermanych/core";
-import type { ManagementChatAsk, RpcEvent, RpcExtensionUIResponse } from "@kermanych/core";
+import type { ImageInput, ManagementChatAsk, RpcEvent, RpcExtensionUIResponse } from "@kermanych/core";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // The same seam supervisor.chat.spec.ts uses: swap the transport, keep the service. Here it
 // also plays a scripted turn back at the service, because what this service IS is the loop
 // that turns an omp event burst into one reply.
 type SpawnOpts = { cwd: string; tools?: string[] };
 const spawned: SpawnOpts[] = [];
-const sent: { kind: "prompt" | "followUp"; text: string }[] = [];
+const sent: { kind: "prompt" | "followUp"; text: string; images?: ImageInput[] }[] = [];
 const answered: RpcExtensionUIResponse[] = [];
 let stopped = 0;
 // One entry per turn, consumed in order: the events the child "emits" once it is written to.
@@ -34,12 +38,12 @@ vi.mock("../src/rpc/rpc-session", () => {
     answerUi(res: RpcExtensionUIResponse) {
       answered.push(res);
     }
-    prompt(text: string) {
-      sent.push({ kind: "prompt", text });
+    prompt(text: string, images?: ImageInput[]) {
+      sent.push({ kind: "prompt", text, ...(images?.length ? { images } : {}) });
       this.play();
     }
-    followUp(text: string) {
-      sent.push({ kind: "followUp", text });
+    followUp(text: string, images?: ImageInput[]) {
+      sent.push({ kind: "followUp", text, ...(images?.length ? { images } : {}) });
       this.play();
     }
     steer() {}
@@ -220,5 +224,38 @@ describe("ManagementChatService", () => {
     turns = [reply("ok")];
     await svc.ask({ ...ask("що в нас із ризиками?"), locale: "en" });
     expect(sent[0]?.text).toContain("Відповідай англійською мовою (en).");
+  });
+
+  // The operator's files, split by how the model reaches them: images ride the message
+  // through omp's own image slots, documents land on disk under the conversation's temp
+  // directory so the read tool can open them — and BOTH are named in the turn, because the
+  // names are the vocabulary of `jira.ticket.create.attachments`.
+  it("passes images to the child and lands documents on disk for the read tool", async () => {
+    const svc = make();
+    turns = [reply("бачу файли")];
+    // Its OWN conversation id: sibling tests reset `management:w1`, and that reset removes
+    // the conversation's attachment directory — sharing the key would race their cleanup.
+    const withFiles = (text: string): ManagementChatAsk => ({ ...ask(text), conversationId: "management:w-files" });
+    await svc.ask({
+      ...withFiles("подивись на файли"),
+      attachments: [
+        { name: "screen.png", mimeType: "image/png", data: Buffer.from("png-bytes").toString("base64") },
+        { name: "план.pdf", mimeType: "application/pdf", data: Buffer.from("pdf-bytes").toString("base64") },
+      ],
+    });
+    expect(sent[0]?.images).toEqual([{ data: Buffer.from("png-bytes").toString("base64"), mimeType: "image/png" }]);
+    const path = join(tmpdir(), "kermanych-management", "management-w-files", "план.pdf");
+    expect((await readFile(path)).toString()).toBe("pdf-bytes");
+    expect(sent[0]?.text).toContain("── ДОЛУЧЕНІ ФАЙЛИ ──");
+    expect(sent[0]?.text).toContain("- «screen.png» — зображення, додане до цього повідомлення");
+    expect(sent[0]?.text).toContain(`- «план.pdf» — ${path}`);
+    // A turn with nothing attached does not resurrect the block.
+    turns = [reply("ок")];
+    await svc.ask(withFiles("а тепер без файлів"));
+    expect(sent[1]?.text).not.toContain("ДОЛУЧЕНІ ФАЙЛИ");
+    expect(sent[1]?.images).toBeUndefined();
+    // «Новий чат» removes the conversation's documents with its child — awaited by reset.
+    await svc.reset("management:w-files");
+    expect(existsSync(join(tmpdir(), "kermanych-management", "management-w-files"))).toBe(false);
   });
 });

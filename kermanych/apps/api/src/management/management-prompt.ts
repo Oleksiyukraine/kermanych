@@ -294,6 +294,10 @@ function ticketProtocol(): string {
     "  parentKey — ключ батьківського тікета, ТІЛЬКИ якщо користувач назвав його сам (наприклад «підзадача до KRM-101»).",
     "    Списку тікетів Jira у тебе немає, тому ключів не вигадуй: ключа, якого немає, Jira не приймає.",
     "  Проєкт Jira не вказуй — він визначений підключенням воркспейсу.",
+    '  attachments — масив ІМЕН файлів з блоку «ДОЛУЧЕНІ ФАЙЛИ» цієї розмови, РІВНО так, як вони там названі,',
+    "    і ТІЛЬКИ коли користувач попросив прикріпити їх до тікета. Застосунок сам завантажить ці файли в Jira",
+    "    після створення тікета — вміст у дію не клади й імен не вигадуй: невідоме імʼя буде відхилено.",
+    "    Файл як ДЖЕРЕЛО для тексту тікета — це не attachments: просто прочитай його і пиши тікет.",
     "",
     "ЯКЩО ЧОГОСЬ НЕ ЗНАЄШ. Тікет з відкритим питанням не створюється. Коли для тікета бракує рішення, яке може",
     "ухвалити тільки користувач (межі роботи, поведінка в крайньому випадку, пріоритет, виконавець, проєкт) —",
@@ -306,6 +310,25 @@ function ticketProtocol(): string {
     "",
     "Тікет створює застосунок, не ти: у прозі скажи, який тікет і на яку дошку ти подаєш, і не пиши, що він уже",
     "створений — рядок з номером картки («Тікет KRM-214 створено…») чат покаже сам.",
+  ].join("\n");
+}
+
+// One attached file of the current turn, as the message states it. Documents carry the
+// absolute path the api wrote them to (the read tool's subject); images carry no path —
+// they ride the same message through omp's image slots and the line only names them.
+export type ManagementTurnFile = { name: string; path?: string };
+
+// The block that tells the model what the operator attached to THIS message and how to
+// reach it. Names are quoted exactly because they are also the vocabulary of
+// `jira.ticket.create.attachments` — a paraphrased name there would be refused.
+function attachmentsBlock(files: ManagementTurnFile[]): string {
+  return [
+    "── ДОЛУЧЕНІ ФАЙЛИ ──",
+    ...files.map((f) =>
+      f.path === undefined
+        ? `- «${f.name}» — зображення, додане до цього повідомлення`
+        : `- «${f.name}» — ${f.path} (відкрий інструментом read, якщо файл потрібен для відповіді)`,
+    ),
   ].join("\n");
 }
 
@@ -410,14 +433,14 @@ export function buildManagementTurn(input: {
   // the rest of the contract stays Ukrainian. Sent on the FIRST turn, which is the one that
   // carries the contract — a later locale switch re-languages from the next new child.
   locale?: Locale;
+  // Files the operator attached to THIS turn (see ManagementTurnFile). Per-turn like the
+  // context block, not part of the contract: each message lists only what came with it.
+  attachments?: ManagementTurnFile[];
 }): string {
   const parts = input.first ? [contract(input.locale), ""] : [];
-  parts.push(
-    contextBlock(input.repos, input.context, input.today),
-    "",
-    "── ПОВІДОМЛЕННЯ КОРИСТУВАЧА ──",
-    input.text,
-  );
+  parts.push(contextBlock(input.repos, input.context, input.today), "");
+  if (input.attachments?.length) parts.push(attachmentsBlock(input.attachments), "");
+  parts.push("── ПОВІДОМЛЕННЯ КОРИСТУВАЧА ──", input.text);
   return parts.join("\n");
 }
 

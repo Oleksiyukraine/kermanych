@@ -23,6 +23,7 @@ const createTask = vi.fn();
 const loadMembers = vi.fn();
 const jiraUpsert = vi.fn();
 const jiraLoadAssignable = vi.fn();
+const jiraUploadAttachment = vi.fn();
 
 const members = [
   { workspaceId: 'w1', userId: 'u-olya', role: 'developer', addedAt: '', profile: { id: 'u-olya', githubUsername: 'olya', displayName: 'Оля Петренко' } },
@@ -46,6 +47,8 @@ vi.mock('../src/lib/api', () => ({
     jiraEditorOptions: (ws: string) => jiraEditorOptions(ws),
     jiraAssignableUsers: (ws: string, q: string) => jiraAssignableUsers(ws, q),
     jiraTokenStatus: (site: string) => jiraTokenStatus(site),
+    jiraUploadAttachment: (ws: string, key: string, filename: string, data: string, mimeType: string) =>
+      jiraUploadAttachment(ws, key, filename, data, mimeType),
   },
 }));
 vi.mock('../src/stores/orchestrator', () => ({
@@ -111,7 +114,7 @@ function results(entries: readonly MgmtChatEntry[]): string[] {
 
 beforeEach(() => {
   setActivePinia(createPinia());
-  for (const m of [managementChat, jiraCreateIssue, jiraEditorOptions, jiraAssignableUsers, jiraTokenStatus, createTask, loadMembers, jiraUpsert, jiraLoadAssignable])
+  for (const m of [managementChat, jiraCreateIssue, jiraEditorOptions, jiraAssignableUsers, jiraTokenStatus, createTask, loadMembers, jiraUpsert, jiraLoadAssignable, jiraUploadAttachment])
     m.mockReset();
   jiraState.integration = null;
   jiraState.tokenPresent = false;
@@ -425,6 +428,38 @@ describe('jira.ticket.create on the mirrored board', () => {
     expect(line).toContain('Jira не знає виконавця «Хтось Невідомий»');
     expect(line).toContain('Maryna Koval');
     expect(line).toContain('Olya Petrenko');
+  });
+
+  // The «attach it somewhere» half of attachments: the model names the operator's own
+  // files, the browser resolves each name back to the payload it already holds and uploads
+  // it onto the issue it just created. Bytes never come from the model.
+  it('uploads the named operator files onto the created issue', async () => {
+    jiraState.integration = integration;
+    jiraState.tokenPresent = true;
+    jiraCreateIssue.mockResolvedValue({ key: 'KRM-218', summary: TICKET.title, issueId: '10502' });
+    jiraUploadAttachment.mockResolvedValue({ key: 'KRM-218' });
+    managementChat.mockResolvedValue(
+      reply([{ kind: 'jira.ticket.create', ticket: TICKET, attachments: ['звіт.pdf', 'чужий.pdf'] }]),
+    );
+
+    const store = useManagementChat();
+    await store.send('створи тікет у Jira і прикріпи звіт', 'management-home', [
+      { name: 'звіт.pdf', mimeType: 'application/pdf', data: 'QUJD' },
+    ]);
+
+    // The turn carried the file to the api (context for the model)…
+    const ask = managementChat.mock.calls[0]?.[0] as { attachments?: unknown };
+    expect(ask.attachments).toEqual([{ name: 'звіт.pdf', mimeType: 'application/pdf', data: 'QUJD' }]);
+    // …and its bubble echoes the name without the payload.
+    const user = store.entries.find((e) => e.kind === 'user');
+    expect(user && 'files' in user ? user.files : undefined).toEqual([{ name: 'звіт.pdf' }]);
+    // The named file lands on the issue; the invented name is refused per file, not per ticket.
+    expect(jiraUploadAttachment).toHaveBeenCalledTimes(1);
+    expect(jiraUploadAttachment).toHaveBeenCalledWith('w1', 'KRM-218', 'звіт.pdf', 'QUJD', 'application/pdf');
+    const lines = results(store.entries);
+    expect(lines[0]).toContain('Тікет KRM-218');
+    expect(lines[1]).toContain('Файл «звіт.pdf» прикріплено до KRM-218');
+    expect(lines[2]).toContain('«чужий.pdf» не долучали');
   });
 });
 

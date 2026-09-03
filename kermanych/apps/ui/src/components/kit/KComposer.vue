@@ -185,6 +185,13 @@ const MAX_COMPOSER_HEIGHT = 160;
 function autoGrow(): void {
   const el = fieldEl.value;
   if (!el) return;
+  // Empty field: back to the one-line floor without measuring — Chrome counts the rendered
+  // placeholder into an empty textarea's scrollHeight, so a wrapping placeholder would hold
+  // the cleared field at the placeholder's height (ManagementPage hit exactly that).
+  if (props.modelValue === '') {
+    el.style.height = '';
+    return;
+  }
   el.style.height = 'auto';
   el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_HEIGHT)}px`;
 }
