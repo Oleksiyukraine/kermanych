@@ -39,8 +39,8 @@
 
       <!-- v3 controls row: attach + the session's own facts (model, reasoning effort,
            isolation) on the left, spend + session actions + the accent send FAB on the right.
-           The model and worktree chips are readings, not controls — both are fixed when omp is
-           spawned — so only effort carries a caret. -->
+           Model and effort are live controls, so each carries a caret; isolation is a reading
+           — it is fixed when omp is spawned — so it is flat, a mark and a word. -->
       <div class="k-composer__controls">
         <button
           type="button"
@@ -80,7 +80,7 @@
           @update:model-value="(level) => emit('effort', level)"
         />
         <span v-if="worktree" class="k-composer__chip" v-tip="t('kit.composer.worktree')">
-          <span class="k-composer__chip-icon" aria-hidden="true">⑂</span>
+          <KIcon class="k-composer__chip-icon" name="worktree" />
           <span class="mono">worktree</span>
         </span>
         <span class="k-composer__spacer"></span>
@@ -113,6 +113,7 @@ import { prependHelper, type ImageInput, type ModelOption, type ThinkingLevel, t
 import KAttachStrip from './KAttachStrip.vue';
 import KChipSelect from './KChipSelect.vue';
 import KModelMark from './KModelMark.vue';
+import KIcon from './KIcon.vue';
 import KHelperPicker from './KHelperPicker.vue';
 import KTag from './KTag.vue';
 import { useImageAttach } from '../../composables/useImageAttach';
@@ -185,6 +186,13 @@ const MAX_COMPOSER_HEIGHT = 160;
 function autoGrow(): void {
   const el = fieldEl.value;
   if (!el) return;
+  // Empty field: back to the one-line floor without measuring — Chrome counts the rendered
+  // placeholder into an empty textarea's scrollHeight, so a wrapping placeholder would hold
+  // the cleared field at the placeholder's height (ManagementPage hit exactly that).
+  if (props.modelValue === '') {
+    el.style.height = '';
+    return;
+  }
   el.style.height = 'auto';
   el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_HEIGHT)}px`;
 }
@@ -395,9 +403,11 @@ function submit(): void {
   white-space: nowrap;
 }
 
+// The isolation mark: a drawn KIcon, so its size is a box and not a font-size. 15px against
+// 12px mono text — a stroked line mark at the type's own size reads lighter than the type,
+// which is exactly how the old `⑂` disappeared.
 .k-composer__chip-icon {
-  font-size: var(--k-fs-base);
-  line-height: 1;
+  --k-icon-size: 15px;
 }
 
 // The model is the one fact worth a colour: it is what the operator changes screens to check.

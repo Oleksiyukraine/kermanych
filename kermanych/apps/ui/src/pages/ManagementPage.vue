@@ -113,7 +113,19 @@
             </header>
             <div v-show="!collapsed" ref="logEl" class="mgmt__log-body">
               <template v-for="e in chat.entries" :key="e.id">
-                <KChatMessage v-if="e.kind === 'user'" role="user">{{ e.text }}</KChatMessage>
+                <KChatMessage v-if="e.kind === 'user'" role="user">
+                  <template v-if="e.text">{{ e.text }}</template>
+                  <!-- What travelled with the words: image attachments echo as thumbnails,
+                       documents as named chips — the transcript must show what the model
+                       was actually given, or «додай цей файл до тікета» reads as nonsense
+                       a turn later. -->
+                  <span v-if="e.files?.length" class="mgmt__msg-files">
+                    <template v-for="f in e.files" :key="f.name">
+                      <img v-if="f.url" :src="f.url" class="mgmt__msg-thumb" :alt="f.name" />
+                      <span v-else class="mgmt__msg-doc mono">{{ f.name }}</span>
+                    </template>
+                  </span>
+                </KChatMessage>
                 <KChatMessage v-else-if="e.kind === 'assistant'" role="assistant">
                   <div class="k-log__markdown" v-html="renderMarkdown(e.text)"></div>
                 </KChatMessage>
@@ -132,11 +144,32 @@
             </div>
           </section>
 
+          <!-- Pending attachments, ABOVE the pill rather than inside it: the dock is
+               bottom-anchored, so the strip grows upward over the section like the
+               transcript does, and the capsule below keeps its one-row shape. -->
+          <div v-if="attachFiles.length || attachError" class="mgmt__attach">
+            <p v-if="attachError" class="mgmt__attach-error mono">{{ attachError }}</p>
+            <div v-if="attachFiles.length" class="mgmt__attach-row">
+              <span v-for="(f, i) in attachFiles" :key="`${f.name}-${i}`" class="mgmt__attach-item">
+                <img v-if="f.url" :src="f.url" class="mgmt__attach-thumb" :alt="f.name" />
+                <span class="mgmt__attach-name">{{ f.name }}</span>
+                <button
+                  type="button"
+                  class="mgmt__attach-remove"
+                  :aria-label="t('management.assistant.removeFile', { name: f.name })"
+                  @click="removeAttachment(i)"
+                >✕</button>
+              </span>
+            </div>
+          </div>
+
           <form
             class="mgmt__composer"
             :class="{ 'mgmt__composer--grown': grown }"
             :aria-label="t('management.assistant.title')"
             @submit.prevent="submit"
+            @drop.prevent="onAttachDrop"
+            @dragover.prevent
           >
             <KHelperPicker :open="pickerOpen" @select="onHelper" @close="closePicker" />
             <textarea
@@ -149,6 +182,7 @@
               :aria-label="t('management.assistant.inputLabel')"
               @input="autoGrow"
               @keydown="onKeydown"
+              @paste="onAttachPaste"
             ></textarea>
             <button
               v-tip="t('management.assistant.helpersTip')"
@@ -158,6 +192,22 @@
               :disabled="chat.busy"
               @click="pickerOpen = !pickerOpen"
             >/</button>
+            <button
+              v-tip="t('management.assistant.attach')"
+              class="mgmt__c-helpers"
+              type="button"
+              :aria-label="t('management.assistant.attach')"
+              :disabled="chat.busy"
+              @click="attachInput?.click()"
+            >📎</button>
+            <input
+              ref="attachInput"
+              type="file"
+              class="mgmt__c-file"
+              :accept="ATTACH_ACCEPT"
+              multiple
+              @change="onAttachPick"
+            />
             <!-- The plan the turn is charged to. This chat runs through the same `omp`, the
                  same provider account and the same subscription as every agent, so a message
                  here is a message debited there — the figure sits in the composer because
@@ -211,6 +261,8 @@ import { percent, planWindow, renderWindow } from '../lib/format';
 import { until, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
+import { useFileAttach } from '../composables/useFileAttach';
+import { ATTACH_ACCEPT } from '../lib/files';
 
 const store = useOrchestrator();
 const projects = useProjects();
@@ -283,6 +335,15 @@ const grown = ref(false);
 function autoGrow(): void {
   const el = fieldEl.value;
   if (!el) return;
+  // An EMPTY field goes straight back to its one-line floor without measuring. Chrome
+  // includes the rendered placeholder in an empty textarea's scrollHeight, and this
+  // field's placeholder is long enough to wrap — measured, every clear (send, delete-all)
+  // grew the empty pill to the placeholder's two lines.
+  if (draft.value === '') {
+    el.style.height = '';
+    grown.value = false;
+    return;
+  }
   el.style.height = 'auto';
   el.style.height = `${Math.min(el.scrollHeight, MAX_FIELD_PX)}px`;
   // Measured against the field's OWN line-height rather than a pixel constant, so a theme
@@ -290,7 +351,27 @@ function autoGrow(): void {
   grown.value = el.scrollHeight > parseFloat(getComputedStyle(el).lineHeight) * 1.5;
 }
 
-const canSend = computed(() => draft.value.trim().length > 0 && !chat.busy);
+const canSend = computed(() => (draft.value.trim().length > 0 || attachFiles.value.length > 0) && !chat.busy);
+
+// Attachments — images the model sees natively plus the documents (PDF, Excel, Word,
+// Pages) the api lands on disk for the read tool. Collected by paste, drop or the 📎
+// pick; sent with the turn and cleared the moment it is on its way, like the draft.
+const {
+  files: attachFiles,
+  error: attachError,
+  onPaste: onAttachPaste,
+  onDrop: onAttachDrop,
+  remove: removeAttachment,
+  clear: clearAttachments,
+  addFiles: addAttachmentFiles,
+} = useFileAttach();
+const attachInput = ref<HTMLInputElement | null>(null);
+
+function onAttachPick(e: Event): void {
+  const input = e.target as HTMLInputElement;
+  if (input.files) void addAttachmentFiles(input.files);
+  input.value = '';
+}
 
 // The active section travels with the message: the store has no router of its own (Quasar
 // builds one per app in a factory, and a store setup has no injection context to reach it),
@@ -298,14 +379,16 @@ const canSend = computed(() => draft.value.trim().length > 0 && !chat.busy);
 function submit(): void {
   if (!canSend.value) return;
   const text = draft.value;
+  const files = attachFiles.value;
   // Cleared before the await: the turn is already in the transcript, and a field that keeps
   // the sent text invites sending it twice.
   draft.value = '';
+  clearAttachments();
   void nextTick(autoGrow);
   // Sending a new turn re-opens a folded transcript, the same way the first message opens
   // it: the operator is asking to watch this answer, not just to send it into a hidden log.
   collapsed.value = false;
-  void chat.send(text, activeSection.value);
+  void chat.send(text, activeSection.value, files);
 }
 
 // Хелпери. This page has its own textarea rather than KComposer, so the picker is wired
@@ -797,6 +880,117 @@ const workspaceColor = computed(() => {
   color: var(--k-danger);
   border-left-color: var(--k-danger);
   background: color-mix(in srgb, var(--k-danger) 8%, transparent);
+}
+
+// ── Pending attachments — the strip above the pill ───────────────────────────
+// Same frost recipe as the pill and the log (one glass object in three parts), on the
+// panel radius: this is a list, not a control. In flow inside the bottom-anchored dock,
+// so it grows UPWARD over the section the way the transcript does and the capsule below
+// keeps its one-row shape.
+.mgmt__attach {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
+  margin-bottom: var(--k-sp-2);
+  padding: var(--k-sp-2) var(--k-sp-3);
+  background: color-mix(in srgb, var(--k-surface) 74%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  backdrop-filter: blur(22px) saturate(150%);
+  border: var(--k-rule-thin) solid var(--k-line-strong);
+  border-radius: var(--k-r-lg);
+  box-shadow:
+    var(--k-shadow-toast),
+    inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent);
+}
+
+.mgmt__attach-error {
+  margin: 0;
+  font-size: var(--k-fs-xs);
+  color: var(--k-danger);
+}
+
+.mgmt__attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--k-sp-2);
+}
+
+// One pending file: thumbnail (images) or bare name (documents), and the ✕ that drops it
+// before sending.
+.mgmt__attach-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+  max-width: 240px;
+  padding: 3px var(--k-sp-2);
+  background: color-mix(in srgb, var(--k-surface2) 60%, transparent);
+  border: var(--k-rule-thin) solid var(--k-line);
+  border-radius: var(--k-r-sm);
+}
+
+.mgmt__attach-thumb {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.mgmt__attach-name {
+  font-size: var(--k-fs-xs);
+  color: var(--k-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mgmt__attach-remove {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  appearance: none;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: var(--k-muted);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--k-text);
+  }
+}
+
+// The attachments a sent message carried, echoed inside its bubble.
+.mgmt__msg-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--k-sp-2);
+  margin-top: var(--k-sp-2);
+}
+
+.mgmt__msg-thumb {
+  display: block;
+  max-width: 160px;
+  max-height: 120px;
+  border-radius: var(--k-r-sm);
+}
+
+.mgmt__msg-doc {
+  font-size: var(--k-fs-xs);
+  padding: 2px var(--k-sp-2);
+  border: var(--k-rule-thin) solid var(--k-line-strong);
+  border-radius: var(--k-r-sm);
+  color: var(--k-muted);
+}
+
+// The 📎's hidden <input type=file>, reached only through the button.
+.mgmt__c-file {
+  display: none;
 }
 
 .mgmt__composer {

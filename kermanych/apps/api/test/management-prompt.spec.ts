@@ -232,6 +232,48 @@ describe("buildManagementTurn", () => {
     expect(out).toContain(`platform — ${PLATFORMS.join(" | ")}`);
   });
 
+  // The reported bug, one layer up from the executor that was already correct: asked to put
+  // the operator's image on a Jira ticket, the assistant filed the ticket and answered that
+  // «дія створення Jira-тікета не має поля для вкладень — прикріпити файл можна лише вручну
+  // на екрані Jira». The field existed, the upload path existed, and the ONE authoritative
+  // list of allowed forms — the one introduced by «Дозволені ТІЛЬКИ такі форми» — did not
+  // mention it. So the menu carries it now, and the rule says out loud what must never be
+  // claimed.
+  it("lists attachments among the allowed forms and forbids denying the capability", () => {
+    const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
+    // In the exhaustive menu itself, not only in the prose 170 lines below it.
+    const menu = out.split("Не вигадуй інші `kind`")[0] ?? "";
+    expect(menu).toContain('"attachments": ["імʼя файлу"]');
+    expect(out).toContain("НІКОЛИ не пиши, що поля для вкладень немає");
+    expect(out).toContain("Зображення — такий самий файл, як документ");
+    // And the other board's truth, which is the opposite one: there is nowhere to put a file
+    // on a native card, so that is stated instead of left to the model to improvise.
+    expect(out).toContain("Вкладень у власної дошки НЕМАЄ");
+  });
+
+  // The block is the text closest to the decision, so it repeats the rule where the file is
+  // named — and it distinguishes this message's files from the conversation's earlier ones,
+  // because a ticket is routinely filed a turn or two after the image arrived.
+  it("names the attachment vocabulary in the file block and marks earlier files as earlier", () => {
+    const out = buildManagementTurn({
+      first: false,
+      repos,
+      context,
+      today: TODAY,
+      text: "прикріпи це до тікета",
+      attachments: [
+        { name: "screen.png" },
+        { name: "звіт.pdf", path: "/tmp/kermanych-management/management-w1/звіт.pdf" },
+        { name: "старе.png", earlier: true },
+      ],
+    });
+    expect(out).toContain("── ДОЛУЧЕНІ ФАЙЛИ ──");
+    expect(out).toContain("вокабуляр поля `attachments` у jira.ticket.create");
+    expect(out).toContain("- «screen.png» — зображення, додане до цього повідомлення");
+    expect(out).toContain("- «старе.png» — зображення, з попереднього повідомлення цієї розмови");
+    expect(out).toContain("- «звіт.pdf» — /tmp/kermanych-management/management-w1/звіт.pdf");
+  });
+
   // The ticket's language is not the conversation's. Rule (ґ) tells the model to answer in the
   // user's language, and with nothing else said a Ukrainian request produced a Ukrainian
   // ticket — a card the rest of the team cannot read. Both halves are asserted: the ticket's

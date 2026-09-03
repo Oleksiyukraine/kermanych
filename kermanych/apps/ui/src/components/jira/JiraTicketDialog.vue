@@ -1,7 +1,18 @@
 <template>
-  <KModal :model-value="modelValue" :title="`${issue.key}`" width="780px" @update:model-value="emit('update:modelValue', $event)">
+  <KModal
+    :model-value="modelValue"
+    :title="`${issue.key}`"
+    :width="expanded ? 'min(90vw, 1680px)' : '780px'"
+    @update:model-value="emit('update:modelValue', $event)"
+  >
     <template #head-meta>
-      <span class="jtd__headmeta mono">{{ issue.statusName }}</span>
+      <span class="jtd__headside">
+        <span class="jtd__headmeta mono">{{ issue.statusName }}</span>
+        <KIconButton
+          :title="expanded ? t('jira.ticketDialog.collapse') : t('jira.ticketDialog.expand')"
+          @click="expanded = !expanded"
+        >{{ expanded ? '⤡' : '⤢' }}</KIconButton>
+      </span>
     </template>
 
     <div class="jtd">
@@ -360,6 +371,7 @@ import type { JiraAttachment, JiraIssue, JiraWorklog } from '@kermanych/cloud';
 import KAvatar from 'components/kit/KAvatar.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KModal from 'components/kit/KModal.vue';
+import KIconButton from 'components/kit/KIconButton.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import JiraStatusPickDialog from './JiraStatusPickDialog.vue';
 import {
@@ -399,6 +411,8 @@ const jira = useJira();
 const local = useOrchestrator();
 
 const tab = ref<'comments' | 'worklogs'>('comments');
+// The wide mode: the same ticket at ~90% of the screen, for descriptions that need room.
+const expanded = ref(false);
 const commentDraft = ref('');
 const commenting = ref(false);
 const uploading = ref(false);
@@ -844,6 +858,132 @@ function shortTime(iso: string): string {
 </script>
 
 <style scoped lang="scss">
+// Jira's rendered HTML (descriptions, comment bodies) restyled to Jira's own proportions
+// on the modal's type ramp. Em-based so the same rules fit the description's base size
+// and the comments' smaller one. Without this, h1/h2 from a ticket land at the page's
+// browser-default heading scale and dwarf the dialog.
+@mixin jira-rich {
+  :deep(h1),
+  :deep(h2),
+  :deep(h3),
+  :deep(h4),
+  :deep(h5),
+  :deep(h6) {
+    margin: 1em 0 0.4em;
+    font-family: var(--k-font-ui);
+    font-weight: var(--k-fw-semibold);
+    line-height: 1.3;
+    color: var(--k-text);
+
+    &:first-child {
+      margin-top: 0;
+    }
+  }
+
+  :deep(h1) { font-size: 1.45em; }
+  :deep(h2) { font-size: 1.3em; }
+  :deep(h3) { font-size: 1.15em; }
+  :deep(h4) { font-size: 1.05em; }
+  :deep(h5) { font-size: 1em; }
+  :deep(h6) { font-size: 0.9em; color: var(--k-muted); }
+
+  :deep(p) {
+    margin: 0 0 0.6em;
+  }
+
+  :deep(ul),
+  :deep(ol) {
+    margin: 0 0 0.6em;
+    padding-left: 1.5em;
+  }
+
+  :deep(li) {
+    margin: 0.15em 0;
+  }
+
+  // A nested list closes with its parent item, not with a paragraph's worth of air.
+  :deep(li > ul),
+  :deep(li > ol) {
+    margin-bottom: 0;
+  }
+
+  :deep(blockquote) {
+    margin: 0 0 0.6em;
+    padding: 0 0 0 0.75em;
+    border-left: 2px solid var(--k-line-strong);
+    color: var(--k-muted);
+  }
+
+  :deep(pre),
+  :deep(code) {
+    font-family: var(--k-font-mono);
+    font-size: var(--k-fs-sm);
+  }
+
+  :deep(pre) {
+    margin: 0 0 0.6em;
+    padding: var(--k-sp-2);
+    overflow-x: auto;
+    background: var(--k-surface2);
+    border: var(--k-rule-thin) solid var(--k-line);
+    border-radius: var(--k-r);
+  }
+
+  :deep(code) {
+    padding: 1px 4px;
+    background: var(--k-surface2);
+    border-radius: var(--k-r-sm);
+  }
+
+  :deep(pre code) {
+    padding: 0;
+    background: none;
+    border-radius: 0;
+  }
+
+  // display:block + max-content: a Jira table wider than the column scrolls in place
+  // instead of blowing the grid open.
+  :deep(table) {
+    display: block;
+    width: max-content;
+    max-width: 100%;
+    margin: 0 0 0.6em;
+    overflow-x: auto;
+    border-collapse: collapse;
+  }
+
+  :deep(th),
+  :deep(td) {
+    padding: 4px 8px;
+    border: var(--k-rule-thin) solid var(--k-line);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  :deep(th) {
+    background: var(--k-surface2);
+    font-weight: var(--k-fw-semibold);
+  }
+
+  :deep(hr) {
+    margin: var(--k-sp-3) 0;
+    border: none;
+    border-top: var(--k-rule-thin) solid var(--k-line);
+  }
+
+  :deep(img) {
+    max-width: 100%;
+  }
+
+  :deep(a) {
+    color: var(--k-accent);
+  }
+
+  :deep(> :last-child) {
+    margin-bottom: 0;
+  }
+}
+
 .jtd {
   display: grid;
   grid-template-columns: 1fr 220px;
@@ -853,6 +993,12 @@ function shortTime(iso: string): string {
 .jtd__headmeta {
   font-size: var(--k-fs-xs);
   color: var(--k-faint);
+}
+
+.jtd__headside {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-2);
 }
 
 .jtd__main {
@@ -877,19 +1023,7 @@ function shortTime(iso: string): string {
   color: var(--k-text);
   overflow-wrap: anywhere;
 
-  :deep(img) {
-    max-width: 100%;
-  }
-
-  :deep(pre),
-  :deep(code) {
-    font-family: var(--k-font-mono);
-    font-size: var(--k-fs-sm);
-  }
-
-  :deep(a) {
-    color: var(--k-accent);
-  }
+  @include jira-rich;
 }
 
 .jtd__empty {
@@ -1032,6 +1166,8 @@ function shortTime(iso: string): string {
   line-height: 1.5;
   color: var(--k-text);
   overflow-wrap: anywhere;
+
+  @include jira-rich;
 }
 
 .jtd__composer {
