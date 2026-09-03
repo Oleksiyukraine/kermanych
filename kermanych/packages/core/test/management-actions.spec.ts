@@ -463,6 +463,24 @@ test("a jira.ticket.create names its type and priority by name and takes no proj
   });
 });
 
+// The names the browser resolves back to the operator's own files. Names only — the model
+// never carries bytes — and a wrong TYPE is refused the way every list field is.
+test("a jira.ticket.create may name the operator's attached files", () => {
+  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, attachments: ["report.pdf", " screen.png "] })).toEqual({
+    kind: "jira.ticket.create",
+    ticket: TICKET,
+    attachments: ["report.pdf", "screen.png"],
+  });
+  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, attachments: "report.pdf" })).toMatchObject({
+    error: { code: "field_not_string_list", params: { field: "attachments" } },
+  });
+  // An empty list is the same statement as no field at all.
+  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, attachments: [] })).toEqual({
+    kind: "jira.ticket.create",
+    ticket: TICKET,
+  });
+});
+
 // Both boards hold the ticket to the same standard: there is no board on which a worse ticket
 // is acceptable.
 test("a Jira ticket is held to the same ticket rules as a board card", () => {

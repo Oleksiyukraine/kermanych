@@ -53,6 +53,28 @@ describe("ManagementController — chat validations", () => {
   it("codes a missing conversationId on reset", async () => {
     expect((await refusal(() => make().reset({ conversationId: "" }))).code).toBe("conversation_id_missing");
   });
+
+  // Files without words ARE a turn («ось документ» often has none), while the caps are
+  // refusals rather than silent drops — a dropped attachment is context the operator is
+  // actively relying on.
+  it("accepts a turn of files alone and hands the sanitized list to the service", async () => {
+    let seen: ManagementChatAsk | undefined;
+    const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as never });
+    await ctl.ask(chatAsk({ text: "", attachments: [{ name: " report.pdf ", mimeType: "application/pdf", data: "QUJD" }] }));
+    expect(seen?.attachments).toEqual([{ name: "report.pdf", mimeType: "application/pdf", data: "QUJD" }]);
+  });
+  it("codes an oversized attachment", async () => {
+    const big = { name: "big.pdf", mimeType: "application/pdf", data: "x".repeat(Math.ceil((20 * 1024 * 1024 * 4) / 3) + 1) };
+    const body = await refusal(() => make().ask(chatAsk({ attachments: [big] })));
+    expect(body.code).toBe("attachment_too_large");
+    expect(body.params).toEqual({ name: "big.pdf" });
+  });
+  it("codes too many attachments", async () => {
+    const one = { name: "a.pdf", mimeType: "application/pdf", data: "QQ==" };
+    const body = await refusal(() => make().ask(chatAsk({ attachments: Array.from({ length: 11 }, () => one) })));
+    expect(body.code).toBe("attachments_too_many");
+    expect(body.params).toEqual({ count: 11, max: 10 });
+  });
 });
 
 describe("ManagementController — release-notes validations", () => {

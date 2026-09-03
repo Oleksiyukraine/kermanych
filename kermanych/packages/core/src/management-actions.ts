@@ -218,6 +218,12 @@ export type ManagementAction =
       assignee?: string;
       // An existing key on the mirrored board, when the operator asked for a subtask.
       parentKey?: string;
+      // NAMES of files the operator attached to the conversation («долучені файли» in the
+      // context of the turn) that should be uploaded onto the created issue — stated only
+      // when the operator asked for it. Names, not bytes: the browser holds the attached
+      // files and resolves each name back to the payload it already has, so the model can
+      // never invent content — an unknown name is refused with the file left unattached.
+      attachments?: string[];
     }
   // The ticket was NOT written, because writing it would have required the assistant to
   // decide something only the operator can. Writes nothing — its whole job is to make the
@@ -251,6 +257,16 @@ export type ManagementTicketQuestions = Extract<ManagementAction, { kind: "ticke
 export type ManagementWorkspaceProject = {
   id: string;
   gitRemoteUrl?: string;
+};
+
+// One file the operator attached to a chat turn: the display name (also the name the model
+// may quote back in `jira.ticket.create.attachments`), the mime type and the raw base64
+// payload. Images reach the model natively through omp's image slots; everything else the
+// api writes to disk so the read tool can open it.
+export type ManagementAttachment = {
+  name: string;
+  mimeType: string;
+  data: string;
 };
 
 // One repository of the scoped workspace, as the api resolved it from its LOCAL registry.
@@ -383,6 +399,11 @@ export type ManagementChatAsk = {
   workspaceProjects: ManagementWorkspaceProject[];
   text: string;
   context: ManagementContext;
+  // Files the operator attached to THIS turn. Images reach the model through omp's own
+  // image slots; documents are written to disk by the api and named in the turn so the
+  // read tool can open them. Optional: an old client that omits it keeps the previous
+  // behaviour.
+  attachments?: ManagementAttachment[];
   // The operator's active UI locale, threaded into the model prompt so the answer is
   // written in it (management-prompt.ts rule ґ). Optional and defaulting to uk: an old
   // client that omits it keeps the previous behaviour.
@@ -985,6 +1006,11 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
           },
         };
       if (labels.length) a.labels = labels;
+    }
+    if (has(o, "attachments")) {
+      const attachments = strList(o.attachments, "attachments");
+      if (isFail(attachments)) return attachments;
+      if (attachments.length) a.attachments = attachments;
     }
     return a;
   }

@@ -6,6 +6,7 @@ import {
   isRiskKind,
   isRiskResponse,
   isRiskStatus,
+  type ManagementAttachment,
   type ManagementChatAsk,
   type ManagementChatReply,
   type ManagementContext,
@@ -63,6 +64,34 @@ function memberRows(v: unknown): ManagementMember[] {
   return rows;
 }
 
+// The operator's files, bounded before a byte lands anywhere. The caps are refusals rather
+// than silent drops — a dropped register row is a cosmetic loss, a dropped attachment is
+// context the operator is actively relying on, and «відповів без файлу» must never look
+// like an answer. 20 MiB of binary is omp's own image cap; base64 puts it at 4/3.
+const MAX_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_B64 = Math.ceil((20 * 1024 * 1024 * 4) / 3);
+
+function attachmentRows(v: unknown): ManagementAttachment[] {
+  if (!Array.isArray(v)) return [];
+  if (v.length > MAX_ATTACHMENTS)
+    throw badRequest("attachments_too_many", `забагато файлів: ${v.length} (максимум ${MAX_ATTACHMENTS})`, {
+      count: v.length,
+      max: MAX_ATTACHMENTS,
+    });
+  const rows: ManagementAttachment[] = [];
+  for (const a of v) {
+    if (!a || typeof a !== "object") continue;
+    const { name, mimeType, data } = a as Record<string, unknown>;
+    if (typeof name !== "string" || typeof data !== "string" || typeof mimeType !== "string") continue;
+    const trimmed = name.trim();
+    if (!trimmed || !data) continue;
+    if (data.length > MAX_ATTACHMENT_B64)
+      throw badRequest("attachment_too_large", `файл «${trimmed}» завеликий (максимум 20 МіБ)`, { name: trimmed });
+    rows.push({ name: trimmed, mimeType, data });
+  }
+  return rows;
+}
+
 // The workspace's Jira board, or nothing. `undefined` is a meaningful value here — the
 // context block prints «не підключена» and the assistant then knows `jira.ticket.create` has
 // nowhere to land — so a half-filled row is dropped rather than repaired: a board with no
@@ -104,9 +133,10 @@ export class ManagementController {
     const conversationId = typeof b?.conversationId === "string" ? b.conversationId.trim() : "";
     if (!conversationId) throw badRequest("conversation_id_missing", "не вказано розмову (conversationId)");
     const text = typeof b?.text === "string" ? b.text.trim() : "";
+    const attachments = attachmentRows(b?.attachments);
     // A blank turn would still spawn omp and still cost a provider call, for a question
-    // nobody asked.
-    if (!text) throw badRequest("message_empty", "повідомлення порожнє");
+    // nobody asked. Files without words ARE a turn — «ось документ» often has none.
+    if (!text && attachments.length === 0) throw badRequest("message_empty", "повідомлення порожнє");
     // The one scope check this endpoint makes, and it replaced a registry-binding refusal
     // that turned away a workspace none of whose repositories are bound on this machine.
     // The honest scope question at this level is «is a workspace named»: a named workspace
@@ -136,7 +166,7 @@ export class ManagementController {
       ...(jira ? { jira } : {}),
     };
     try {
-      return await this.chat.ask({ ...b, conversationId, text, workspaceId, workspaceProjects, context });
+      return await this.chat.ask({ ...b, conversationId, text, workspaceId, workspaceProjects, context, attachments });
     } catch (err) {
       // A missing `omp`, a start timeout or a turn timeout are all operator-actionable
       // sentences already; a 500 would hide every one of them behind "Internal Server

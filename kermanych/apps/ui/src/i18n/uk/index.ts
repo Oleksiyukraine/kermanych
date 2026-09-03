@@ -927,6 +927,8 @@ export const uk = {
       sendShort: 'Надіслати',
       thinking: 'Думає…',
       thinkingSec: 'Думає… {sec} с',
+      attach: 'Долучити файл — зображення, PDF, Excel, Word або Pages',
+      removeFile: 'Прибрати файл «{name}»',
     },
     plan: {
       note: 'Цей чат витрачає ту саму підписку, що й агенти',
@@ -949,6 +951,9 @@ export const uk = {
       ticketCreatedAssigned: 'Тікет «{title}» створено на дошці воркспейсу · проєкт {project}, виконавець {assignee}. Картка вже в колонці «Беклог».',
       ticketCreatedUnassigned: 'Тікет «{title}» створено на дошці воркспейсу · проєкт {project}, без виконавця. Картка вже в колонці «Беклог».',
       ticketNeedsAnswers: 'Тікет «{ticket}» не створено — потрібні відповіді: {questions} Відповідайте тут — тікет буде створено після цього.',
+      jiraAttachUploaded: 'Файл «{name}» прикріплено до {key}.',
+      jiraAttachFailed: 'Не вдалося прикріпити файл «{name}» до {key}: {error}',
+      jiraAttachUnknown: 'Файл «{name}» не долучали до цієї розмови — до {key} нічого не прикріплено.',
     },
     refusal: {
       unknownSection: 'Асистент назвав розділ «{section}», якого не існує в Менеджменті.',
@@ -1690,11 +1695,17 @@ export const uk = {
     workspace_has_projects: 'спершу перенесіть або видаліть проєкти цього воркспейсу',
     workspace_delete_not_owner: 'хмара відмовила: видалити воркспейс може лише власник',
     oauth_no_url: 'Supabase не повернув URL авторизації',
+    attachments_too_many: 'забагато файлів: {count} (максимум {max})',
+    attachment_too_large: 'файл «{name}» завеликий (максимум 20 МіБ)',
     image: {
       unsupported: 'непідтримуваний тип: {mime} (треба PNG/JPEG/GIF/WebP)',
       unknownMime: 'невідомо',
       tooLarge: 'завелике зображення: {size} МіБ (макс 20)',
       readFailed: 'не вдалося прочитати файл',
+    },
+    file: {
+      unsupported: '{name}: непідтримуваний тип файлу (PNG/JPEG/GIF/WebP, PDF, XLS/XLSX, DOCX, Pages)',
+      tooLarge: '{name}: файл завеликий — {size} МіБ (макс 20)',
     },
   },
   notices: {

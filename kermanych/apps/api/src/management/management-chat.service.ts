@@ -9,12 +9,17 @@
 // management surface that happens to be able to read the workspace's repositories, and
 // giving it a session would put a phantom card on the operator's board every time somebody
 // asked what the risk register says.
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Injectable, Logger, type OnModuleDestroy } from "@nestjs/common";
 import {
   INTERACTIVE_UI_METHODS,
   expandHelpers,
   helperNotice,
   parseManagementReply,
+  type ImageInput,
+  type ManagementAttachment,
   type ManagementChatAsk,
   type ManagementChatReply,
   type ManagementRepo,
@@ -25,7 +30,13 @@ import { RpcSession } from "../rpc/rpc-session";
 import { CodedError } from "./coded-error";
 import { RegistryService } from "../registry/registry.service";
 import { reduceRpcEvents, sumTurnUsage } from "../supervisor/transcript-reducer";
-import { buildManagementTurn, managementCwd, managementRepos, todayIso } from "./management-prompt";
+import {
+  buildManagementTurn,
+  managementCwd,
+  managementRepos,
+  todayIso,
+  type ManagementTurnFile,
+} from "./management-prompt";
 
 // Read-only, and not a setting: a management chat that can write to the repository is a
 // different — and far more dangerous — product than one that reads it to answer about
@@ -127,6 +138,12 @@ export class ManagementChatService implements OnModuleDestroy {
     const live = this.map.get(conversationId);
     this.map.delete(conversationId);
     this.tail.delete(conversationId);
+    // The conversation's document attachments die with it, live child or not: a file can
+    // outlive a crashed child, and «новий чат» must not leave last chat's documents
+    // behind. AWAITED, unlike drop()'s: reset is the one path a new ask on the same
+    // conversation can legally follow at once, and its first attachment must not race a
+    // removal still in flight.
+    await rm(this.attachDir(conversationId), { recursive: true, force: true }).catch(() => {});
     if (!live) return { ok: true };
     // An in-flight turn is told why it will never finish. Stopping the child first would
     // surface as `onExit` on a callback we are about to clear, i.e. as a hang.
@@ -155,6 +172,11 @@ export class ManagementChatService implements OnModuleDestroy {
     // the operator's text in the contract and the context markers, so by the time the child
     // reads it a leading `/el10` is no longer leading and would expand nowhere.
     const helped = expandHelpers(input.text);
+    // The operator's files, split by how the model reaches them: images ride the message
+    // through omp's own image slots, documents land on disk so the read tool can open
+    // them. Both are NAMED in the turn (see attachmentsBlock) — the names are also the
+    // vocabulary of `jira.ticket.create.attachments`.
+    const { images, files } = await this.storeAttachments(key, input.attachments ?? []);
     const message = buildManagementTurn({
       first,
       repos,
@@ -162,8 +184,9 @@ export class ManagementChatService implements OnModuleDestroy {
       today: todayIso(),
       text: helped.text,
       locale: input.locale,
+      ...(files.length ? { attachments: files } : {}),
     });
-    const { events, notices } = await this.drive(key, live, message);
+    const { events, notices } = await this.drive(key, live, message, images);
     // First, because it describes the message that produced everything after it.
     if (helped.used.length) notices.unshift(helperNotice(helped.used));
 
@@ -240,7 +263,12 @@ export class ManagementChatService implements OnModuleDestroy {
   }
 
   // Send one message and wait out the turn it starts.
-  private async drive(key: string, live: Live, message: string): Promise<{ events: RpcEvent[]; notices: Notice[] }> {
+  private async drive(
+    key: string,
+    live: Live,
+    message: string,
+    images: ImageInput[],
+  ): Promise<{ events: RpcEvent[]; notices: Notice[] }> {
     const events: RpcEvent[] = [];
     const notices: Notice[] = [];
     const { promise, resolve, reject } = Promise.withResolvers<void>();
@@ -280,8 +308,8 @@ export class ManagementChatService implements OnModuleDestroy {
     try {
       // First turn carries the contract and opens the conversation; every later one is a
       // follow_up into the same child, which is what keeps the contract worth sending once.
-      if (live.greeted) live.rpc.followUp(message);
-      else live.rpc.prompt(message);
+      if (live.greeted) live.rpc.followUp(message, images);
+      else live.rpc.prompt(message, images);
       live.greeted = true;
       const seconds = Math.round(TURN_TIMEOUT_MS / 1000);
       await limit(
@@ -315,11 +343,58 @@ export class ManagementChatService implements OnModuleDestroy {
   }
 
   private drop(key: string): void {
+    // Same best-effort cleanup as reset: the documents are as disposable as the child.
+    void rm(this.attachDir(key), { recursive: true, force: true }).catch(() => {});
     const live = this.map.get(key);
     if (!live) return;
     this.map.delete(key);
     live.turn = undefined;
     void live.rpc.stop().catch(() => {});
+  }
+
+  // ── Attachments on disk ──────────────────────────────────────────────────────
+
+  // One directory per conversation under the OS temp dir. The key is sanitised into a
+  // flat name (`management:<uuid>` → `management-<uuid>`), so no client-supplied string
+  // ever becomes a path segment.
+  private attachDir(key: string): string {
+    return join(tmpdir(), "kermanych-management", key.replace(/[^A-Za-z0-9._-]/g, "-"));
+  }
+
+  // Persist the turn's documents and split out the images. Files accumulate for the life
+  // of the conversation — the model may come back to turn one's document on turn nine —
+  // and a re-attached name overwrites, which is what «here is the newer version» means.
+  private async storeAttachments(
+    key: string,
+    attachments: ManagementAttachment[],
+  ): Promise<{ images: ImageInput[]; files: ManagementTurnFile[] }> {
+    const images: ImageInput[] = [];
+    const files: ManagementTurnFile[] = [];
+    const dir = this.attachDir(key);
+    for (const a of attachments) {
+      if (a.mimeType.startsWith("image/")) {
+        images.push({ data: a.data, mimeType: a.mimeType });
+        files.push({ name: a.name });
+        continue;
+      }
+      // The name is display text from the browser; flattened to one safe segment so it can
+      // never climb out of the conversation's directory.
+      const safe = a.name.replace(/[/\\]/g, "-").replace(/^\.+/, "") || "file";
+      const path = join(dir, safe);
+      const bytes = Buffer.from(a.data, "base64");
+      // mkdir per file, and one retry through a fresh mkdir: drop() removes this directory
+      // fire-and-forget, so a removal from a just-dropped child may still be sweeping while
+      // this turn writes. Losing that race must cost a retry, not the operator's file.
+      await mkdir(dir, { recursive: true });
+      try {
+        await writeFile(path, bytes);
+      } catch {
+        await mkdir(dir, { recursive: true });
+        await writeFile(path, bytes);
+      }
+      files.push({ name: a.name, path });
+    }
+    return { images, files };
   }
 
   // Idle eviction on use, not on a timer: a conversation nobody has touched for the TTL is
