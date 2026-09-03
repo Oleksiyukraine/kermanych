@@ -19,6 +19,8 @@ export const en: MessageSchema = {
       logo: 'KERMANYCH',
       themeDark: 'Dark theme',
       themeLight: 'Light theme',
+      langUk: 'Ukrainian',
+      langEn: 'English',
       pullTip: 'git pull (--ff-only) for the current branch of the project repository',
       changeInSettings: '{label} — change in settings',
       changeFolder: 'Change folder',
