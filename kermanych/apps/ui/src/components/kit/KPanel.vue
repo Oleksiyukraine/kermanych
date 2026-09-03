@@ -4,7 +4,7 @@
     <header class="k-panel__header">
       <div class="k-panel__id">
         <KStatusDot :status="session.status" />
-        <span class="k-panel__harness mono">omp</span>
+        <span class="k-panel__harness mono">{{ session.runtime || 'omp' }}</span>
         <KTag v-if="session.branch">⑂ {{ session.branch }}</KTag>
       </div>
       <div class="k-panel__controls">

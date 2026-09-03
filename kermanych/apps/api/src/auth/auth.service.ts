@@ -1,5 +1,5 @@
 import { Injectable, Optional } from "@nestjs/common";
-import { cloudEnv, createCloudClient } from "@kermanych/cloud";
+import { cloudEnv, createCloudClient, getMyAgentRuntime } from "@kermanych/cloud";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { RegistryService, type AuthSessionRow } from "../registry/registry.service";
 
@@ -89,6 +89,18 @@ export class AuthService {
     // Fired last, so a listener that immediately drains the outbox already sees
     // the persisted row and a working cloudClient().
     for (const cb of this.tokenListeners) cb({ userId: row.userId, accessToken });
+
+    // Bring the user's cloud runtime preference into the local cache so the first launch
+    // on a new machine respects it without a network read on the hot path. Best-effort:
+    // a failure leaves the cache as-is (runtimeFor falls back to omp), never blocks sign-in.
+    try {
+      const runtime = await getMyAgentRuntime(this.cloudClient());
+      if (runtime) {
+        const cur = this.registry.getAuthSession();
+        if (cur) this.registry.setAuthSession({ ...cur, agentRuntime: runtime });
+      }
+    } catch { /* offline or profile unreadable — cache stays, omp default applies */ }
+
     return { userId: row.userId, githubUsername: row.githubUsername };
   }
 

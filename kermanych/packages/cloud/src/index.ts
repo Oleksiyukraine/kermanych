@@ -50,6 +50,8 @@ export { cloudEnv, createCloudClient } from "./client";
 
 export { TERMINAL_TASK_STATUSES, taskStatusFromSession, isTerminalTaskStatus } from "./status";
 
+export { getMyAgentRuntime, setMyAgentRuntime } from "./account";
+
 export type { CloudProjectPatch, CloudProjectInsert } from "./projects";
 export {
   toCloudProject,

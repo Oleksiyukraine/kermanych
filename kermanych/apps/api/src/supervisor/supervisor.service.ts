@@ -9,6 +9,7 @@ import { WorktreeService, type ChangedFile } from "../worktree/worktree.service"
 import type { SplitDiff } from "../worktree/split-diff";
 import { RpcSession } from "../rpc/rpc-session";
 import { createRuntime, type AgentRuntime } from "../runtime/agent-runtime";
+import { resolveRuntime } from "../runtime/resolve-runtime";
 import { messagesToTranscript } from "./messages-to-transcript";
 import { reduceRpcEvents, toolRowMatches, type SkillLabel, type SkillSource } from "./transcript-reducer";
 import { ToolDetailCache } from "./tool-detail-cache";
@@ -406,6 +407,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       effort: task.effort,
       prefix,
       platform,
+      runtime: this.runtimeFor(),
     });
     try {
       return await this.launch(session, project, { images });
@@ -434,7 +436,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const n = this.registry.listSessions(projectId).filter((s) => s.kind === "chat").length + 1;
     const session = this.registry.createSession({
       projectId, name: `чат ${n}`, task: "", worktreePath: "", branch: "",
-      worktree: false, kind: "chat", status: "queued",
+      worktree: false, kind: "chat", status: "queued", runtime: "omp",
     });
     const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
     const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
@@ -562,12 +564,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return { branch, baseBranch };
   }
 
-  // Increment-1 dev switch: choose the backend from KERMANYCH_RUNTIME (default omp). Per-user
-  // preference + Session.runtime persistence arrive in Increment 2; until then the env var is
-  // the single selector and is read consistently at launch and at resume.
+  // Per-user preference (Inc 2): env override → cached cloud preference → omp.
   private runtimeFor(_session?: Session): AgentRuntimeKind {
-    const v = process.env.KERMANYCH_RUNTIME;
-    return isAgentRuntime(v) ? v : "omp";
+    return resolveRuntime(process.env.KERMANYCH_RUNTIME, this.registry.getAuthSession()?.agentRuntime);
   }
 
   // Create the git isolation (worktree or in-place branch), spawn the omp child, and kick off
@@ -607,7 +606,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const cwd = worktree ? wtDir : project.localRepoPath;
     const configPath = await this.ompSkills(project.id, cwd, id);
     const extensionPath = await this.ompTriggers(project.id, cwd, id);
-    const rpc = createRuntime(this.runtimeFor(session), { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    const rpc = createRuntime(session.runtime ?? "omp", { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await rpc.start();
@@ -672,6 +671,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       worktree: false,
       kind: "discussion",
       parentSessionId: parentId,
+      runtime: "omp",
     });
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
@@ -727,6 +727,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       worktree: false,
       kind: "review",
       parentSessionId: parentId,
+      runtime: "omp",
     });
 
     const block = await this.assignedBlockFor(s.projectId, "review", cwd);
@@ -1645,7 +1646,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
     const configPath = await this.ompSkills(s.projectId, dir, id);
     const extensionPath = await this.ompTriggers(s.projectId, dir, id);
-    const rpc = createRuntime(this.runtimeFor(s), { cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    const rpc = createRuntime(s.runtime ?? "omp", { cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await rpc.start();

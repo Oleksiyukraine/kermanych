@@ -6,6 +6,9 @@ import type { NoticeCode, NoticeParams } from "./i18n-codes";
 export type SessionStatus =
   | "backlog" | "queued" | "thinking" | "tool" | "waiting_input" | "done" | "error" | "stopped" | "merged" | "conflict";
 
+export type AgentRuntime = "omp" | "claude-code";
+
+
 export type TodoTask = { id: string; content: string; status: "pending" | "in_progress" | "completed" | string };
 export type TodoPhase = { id: string; name: string; tasks: TodoTask[] };
 
@@ -35,7 +38,7 @@ export type Session = {
   taskId?: string;
   worktreePath: string; branch: string;
   worktree: boolean; baseBranch?: string;
-  model?: string; prefix?: BranchPrefix; platform?: Platform;
+  model?: string; prefix?: BranchPrefix; platform?: Platform; runtime?: AgentRuntime;
   // "task" is no longer produced: a task is a cloud card and `from-task` is the only way an
   // agent is born. Rows with this kind are pre-cutover backlog leftovers whose project is
   // not in the cloud, so lib/publish-backlog.ts could not move them; AgentsPage lists them
@@ -55,6 +58,24 @@ export type Session = {
   usage?: Usage;
   pendingUiRequest?: RpcExtensionUIRequest; archived?: boolean; createdAt: string;
   lastActivityAt: string;
+};
+
+// DTO for creating a new session. All fields are optional as they patch a backlog row.
+export type CreateSessionDto = {
+  name?: string;
+  task?: string;
+  projectId?: string;
+  worktreePath?: string;
+  branch?: string;
+  worktree?: boolean;
+  baseBranch?: string;
+  model?: string;
+  prefix?: BranchPrefix;
+  platform?: Platform;
+  runtime?: AgentRuntime;
+  effort?: ThinkingLevel;
+  kind?: "agent" | "discussion" | "task" | "review" | "chat";
+  parentSessionId?: string;
 };
 
 // The editable launch config the New-task launcher collects; startTask/updateTask patch
