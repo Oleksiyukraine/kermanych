@@ -273,6 +273,46 @@
       </template>
     </KModal>
 
+    <!-- ONBOARDING RUNTIME GATE — one-time choice when auth.runtime is unset. Not dismissible:
+         the operator MUST pick a backend before any agent work can proceed. Once chosen it lives
+         in auth and can be changed later through profile settings. -->
+    <KModal
+      :model-value="showOnboarding"
+      :title="t('onboarding.runtime.title')"
+      @update:model-value="() => {}"
+    >
+      <div class="shell__form">
+        <p class="shell__hint">
+          {{ t('onboarding.runtime.blurb') }}
+        </p>
+        <div class="shell__runtime-picker">
+          <button
+            class="shell__runtime-option"
+            :class="{ 'shell__runtime-option--selected': onboardingChoice === 'omp' }"
+            @click="onboardingChoice = 'omp'"
+          >
+            {{ t('onboarding.runtime.omp') }}
+          </button>
+          <button
+            class="shell__runtime-option"
+            :class="{ 'shell__runtime-option--selected': onboardingChoice === 'claude-code' }"
+            @click="onboardingChoice = 'claude-code'"
+          >
+            {{ t('onboarding.runtime.claude') }}
+          </button>
+        </div>
+      </div>
+      <template #controls>
+        <KBtn
+          variant="primary"
+          :disabled="!onboardingChoice || onboardingBusy"
+          @click="submitOnboarding"
+        >
+          {{ t('onboarding.runtime.confirm') }}
+        </KBtn>
+      </template>
+    </KModal>
+
     <!-- TOAST STACK — transient notifications (errors etc.) -->
     <KToast :toasts="store.toasts" @dismiss="store.dismissToast" />
 
@@ -863,6 +903,29 @@ function openCreateProject(workspaceId: string): void {
   createProjectFor.value = workspaceId;
 }
 
+
+// ONBOARDING RUNTIME GATE — a one-time modal shown when auth.runtime is null. The operator
+// picks which backend their agents run on (omp or claude-code), and the choice is persisted
+// through auth.chooseRuntime. Not dismissible: the modal has no cancel, and the
+// @update:model-value handler is a no-op, so the only way out is to make a choice.
+const showOnboarding = computed(() => !!auth.user && auth.runtime === null);
+const onboardingChoice = ref<'omp' | 'claude-code' | null>(null);
+const onboardingBusy = ref(false);
+
+async function submitOnboarding(): Promise<void> {
+  if (!onboardingChoice.value || onboardingBusy.value) return;
+  onboardingBusy.value = true;
+  try {
+    await auth.chooseRuntime(onboardingChoice.value);
+    // Runtime is now set, showOnboarding becomes false, modal auto-hides.
+  } catch (e) {
+    // If chooseRuntime throws, the error surfaces through auth or as a network failure;
+    // we keep the modal open and the operator can retry. No local error display needed.
+    console.error('Failed to set runtime:', e);
+  } finally {
+    onboardingBusy.value = false;
+  }
+}
 async function submitCreateWorkspace(): Promise<void> {
   if (!canCreateWorkspace.value) return;
   createError.value = null;
@@ -1382,6 +1445,36 @@ async function gitPull(): Promise<void> {
   color: var(--k-muted);
 }
 
+
+.shell__runtime-picker {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.shell__runtime-option {
+  flex: 1;
+  padding: 12px 16px;
+  background: var(--k-bg);
+  border: 2px solid var(--k-line);
+  border-radius: var(--k-r);
+  color: var(--k-text);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.shell__runtime-option:hover {
+  background: var(--k-surface);
+  border-color: var(--k-line-strong);
+}
+
+.shell__runtime-option--selected {
+  background: var(--k-accent-bg);
+  border-color: var(--k-accent);
+  color: var(--k-accent);
+}
 // A non-owner sees the value, cannot change it, and gets the same greyed-out signal as a
 // disabled KField (which is why the opacity matches KField's :disabled rule).
 .shell__readonly {

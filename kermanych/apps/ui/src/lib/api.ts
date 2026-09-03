@@ -21,6 +21,7 @@ import type {
   ModelOption,
   ApiErrorCode,
   ApiErrorParams,
+  AgentRuntimeKind,
 } from '@kermanych/core';
 import type { CloudProject, JiraIntegration, JiraIssue } from '@kermanych/cloud';
 import { globalTr } from '../boot/i18n';
@@ -508,4 +509,11 @@ export const api = {
 
   clearAuthSession: (): Promise<void> => del('/auth/session'),
 
+  // Account-level runtime preference. GET reads the cached choice; POST refreshes it
+  // (stores/auth.ts writes to the cloud, then pings this to keep the cache current).
+  getAccountRuntime: (): Promise<{ runtime: AgentRuntimeKind | null }> =>
+    get<{ runtime: AgentRuntimeKind | null }>('/account/runtime'),
+
+  setAccountRuntime: (runtime: AgentRuntimeKind): Promise<void> =>
+    post<void>('/account/runtime', { runtime }),
 };

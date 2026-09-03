@@ -1,3 +1,4 @@
+import { AccountController } from "./http/account.controller";
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { AuthController } from "./auth/auth.controller";
@@ -27,7 +28,7 @@ import { JiraController } from "./http/jira.controller";
 import { JiraService } from "./jira/jira.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ModelsController, JiraController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ModelsController, JiraController, AccountController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,

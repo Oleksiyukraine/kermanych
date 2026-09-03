@@ -328,6 +328,15 @@ export const en: MessageSchema = {
       summary: 'Give a short summary of this session: what’s done, where we are, what’s next. Answer concisely. Don’t change anything.',
     },
   },
+  onboarding: {
+    runtime: {
+      title: 'Choose your AI provider',
+      blurb: 'All your agents run on this backend. You can change it later in profile settings.',
+      omp: 'omp',
+      claude: 'claude-code',
+      confirm: 'Continue',
+    },
+  },
   board: {
     header: {
       count: '{n} task | {n} tasks',
