@@ -436,11 +436,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const n = this.registry.listSessions(projectId).filter((s) => s.kind === "chat").length + 1;
     const session = this.registry.createSession({
       projectId, name: `чат ${n}`, task: "", worktreePath: "", branch: "",
-      worktree: false, kind: "chat", status: "queued", runtime: "omp",
+      worktree: false, kind: "chat", status: "queued", runtime: this.runtimeFor(),
     });
     const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
     const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
-    const rpc = new RpcSession({ cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    const rpc = createRuntime(session.runtime ?? "omp", { cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await rpc.start();
@@ -727,7 +727,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       worktree: false,
       kind: "review",
       parentSessionId: parentId,
-      runtime: "omp",
+      runtime: this.runtimeFor(),
     });
 
     const block = await this.assignedBlockFor(s.projectId, "review", cwd);
@@ -736,7 +736,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = new RpcSession({ cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    const rpc = createRuntime(child.runtime ?? "omp", { cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
