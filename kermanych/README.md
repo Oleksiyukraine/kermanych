@@ -624,11 +624,10 @@ back to you instead of silently dropped.
 
 ### Its conversation
 
-One conversation per Воркспейс (`management:<workspaceId>`), held open as a git-free `omp`
-child in the first bound repository of the group — or in your home directory when none is
-bound — with no worktree, no branch and no row on the Агенти board. The management
-assistant always runs on the `omp` runtime, independent of your per-user session
-preference. Switching workspace in
+One conversation per Воркспейс (`management:<workspaceId>`), held open as a git-free child
+on your chosen runtime (`omp` or `claude-code`) in the first bound repository of the group
+— or in your home directory when none is bound — with no worktree, no branch and no row on
+the Агенти board. Switching workspace in
 the sidebar switches conversation; «Новий чат» drops the child so the next question starts
 from nothing. An idle conversation is stopped after a while, and the next message simply
 spawns a fresh one.
