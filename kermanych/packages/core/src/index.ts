@@ -44,6 +44,7 @@ export {
   type ReleaseNotesReply,
 } from "./release-notes";
 export { THINKING_LEVELS, isThinkingLevel, type ThinkingLevel } from "./thinking";
+export { AGENT_RUNTIMES, isAgentRuntime, type AgentRuntimeKind } from "./runtime";
 export {
   ASSIGNED_BLOCK_HEADER,
   DEFAULT_SKILLS,
