@@ -1,17 +1,24 @@
 # Kermanych
 
 Kermanych is a local, project-grouped orchestrator for running multiple
-`omp` coding sessions in parallel. It is a NestJS API plus a
+coding sessions in parallel. It is a NestJS API plus a
 Quasar (Vue 3) UI. Each session gets its own git worktree and its own
-`omp --mode rpc` child process, so several agents can work in isolation at the
+agent runtime child, so several agents can work in isolation at the
 same time and you drive them all from one board.
 
+Kermanych drives a pluggable `AgentRuntime` behind one factory: a session's
+child is either an `omp` runtime (an `omp --mode rpc` child) or a
+`claude-code` runtime (via the `@anthropic-ai/claude-agent-sdk`). The backend
+is a per-user preference (see below); everything above the runtime seam — the
+board, transcripts, worktrees, the RPC bridge — is shared.
+
 - **API** — NestJS. Manages sessions, git worktrees, the SQLite registry, and
-  the RPC bridge to each `omp` child. Speaks REST + WebSocket.
+  the runtime bridge to each agent child. Speaks REST + WebSocket.
 - **UI** — Quasar/Vue 3. A single dashboard for creating sessions, watching
   their turns stream in, and answering interactive prompts.
-- **One session = one git worktree + one `omp --mode rpc` child.** Worktrees
-  live under `~/.kermanych/worktrees/<sessionId>`; the registry DB is
+- **One session = one git worktree + one runtime child** of the session's
+  chosen backend (`omp` or `claude-code`). Worktrees live under
+  `~/.kermanych/worktrees/<sessionId>`; the registry DB is
   `~/.kermanych/kermanych.sqlite`.
 
 ## Prerequisites
@@ -20,11 +27,26 @@ same time and you drive them all from one board.
   prebuilt binary is ABI-stable across Node ≥22.12 and the bundled Electron, so
   no per-version rebuild is needed. Older Node (including 22.11) crashes the
   native addon.
-- **`omp` on your PATH, authenticated.** Each session spawns
-  `omp --mode rpc`; if `omp` is missing or unauthenticated, sessions cannot
-  start.
+- **`omp` on your PATH, authenticated.** Sessions on the `omp` backend spawn
+  `omp --mode rpc`; if `omp` is missing or unauthenticated, they cannot start.
+- **`claude` CLI installed and authenticated.** Required when a user's runtime
+  preference is `claude-code`; those sessions run through the
+  `@anthropic-ai/claude-agent-sdk` and cannot start without it.
 - **pnpm** (the repo pins its version via `packageManager` in
   `package.json`).
+
+### Runtime preference
+
+Which backend a session uses is a per-user choice. An onboarding gate on first
+sign-in picks `omp` or `claude-code`; you can change it later in profile
+settings, and the `KERMANYCH_RUNTIME` env var is a dev override. The choice
+applies to sessions created afterwards: each session keeps the runtime it was
+created with, and resuming or branching a session never switches its backend.
+
+Not every feature is available on both. TTSR triggers, the skill-overlay
+config, subscription-plan spend, and the plan/todo chip are `omp`-only; on the
+`claude-code` backend, skills reach the agent inline through the prompt. Per-
+session token spend is tracked on both.
 
 ## The shared board (cloud)
 
@@ -604,7 +626,9 @@ back to you instead of silently dropped.
 
 One conversation per Воркспейс (`management:<workspaceId>`), held open as a git-free `omp`
 child in the first bound repository of the group — or in your home directory when none is
-bound — with no worktree, no branch and no row on the Агенти board. Switching workspace in
+bound — with no worktree, no branch and no row on the Агенти board. The management
+assistant always runs on the `omp` runtime, independent of your per-user session
+preference. Switching workspace in
 the sidebar switches conversation; «Новий чат» drops the child so the next question starts
 from nothing. An idle conversation is stopped after a while, and the next message simply
 spawns a fresh one.
