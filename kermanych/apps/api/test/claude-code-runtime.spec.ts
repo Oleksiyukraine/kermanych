@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKMessage, SDKUserMessage, SessionMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeCodeRuntime } from "../src/runtime/claude-code-runtime";
 import type { RpcEvent } from "@kermanych/core";
 
@@ -146,5 +146,38 @@ describe("ClaudeCodeRuntime.supportedModels", () => {
     const models = await ClaudeCodeRuntime.supportedModels(queryFn as never);
     expect(models).toEqual(script);
     expect(interrupts).toBe(1);
+  });
+});
+
+describe("ClaudeCodeRuntime.getAllMessages", () => {
+  const history: SessionMessage[] = [
+    { type: "user", message: { role: "user", content: [{ type: "text", text: "hi" }] }, uuid: "u1", session_id: "sess-1", parent_tool_use_id: null, parent_agent_id: null },
+    { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "hello" }] }, uuid: "u2", session_id: "sess-1", parent_tool_use_id: null, parent_agent_id: null },
+  ];
+
+  it("reads the session transcript for the captured id and converts it to OmpMessage[]", async () => {
+    const { queryFn } = fakeQuery([{ type: "system", subtype: "init", session_id: "sess-1" } as unknown as SDKMessage]);
+    let asked: { id?: string; dir?: string } = {};
+    const getMsgs = async (id: string, opts?: { dir?: string }) => { asked = { id, dir: opts?.dir }; return history; };
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x" }, queryFn as never, getMsgs as never);
+    rt.onEvent(() => {});
+    await rt.start();
+    rt.prompt("go"); // consume input so the fake yields system/init and the runtime captures the id
+    await vi.waitFor(async () => expect((await rt.getState()).sessionId).toBe("sess-1"));
+    const out = await rt.getAllMessages();
+    expect(asked).toEqual({ id: "sess-1", dir: "/tmp/x" });
+    expect(out).toEqual([
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+      { role: "assistant", content: [{ type: "text", text: "hello" }] },
+    ]);
+  });
+
+  it("returns [] without fetching when no session id was captured", async () => {
+    let calls = 0;
+    const getMsgs = async () => { calls++; return history; };
+    const { queryFn } = fakeQuery([]);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x" }, queryFn as never, getMsgs as never);
+    expect(await rt.getAllMessages()).toEqual([]); // never started → no id
+    expect(calls).toBe(0);
   });
 });

@@ -1,11 +1,13 @@
 // apps/api/src/runtime/claude-code-runtime.ts
-import { query as sdkQuery, type SDKMessage, type SDKUserMessage, type Query, type Options, type ModelInfo } from "@anthropic-ai/claude-agent-sdk";
+import { query as sdkQuery, getSessionMessages as sdkGetSessionMessages, type SDKMessage, type SDKUserMessage, type Query, type Options, type ModelInfo, type SessionMessage, type GetSessionMessagesOptions } from "@anthropic-ai/claude-agent-sdk";
 import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel } from "@kermanych/core";
 import type { AgentRuntime, RpcStateData, RuntimeLaunchOpts } from "./agent-runtime";
 import { initClaudeMapState, mapSdkMessage, type ClaudeMapState } from "./claude-event-map";
 import { toClaudeEffort, toClaudeThinking, fromClaudeEffort } from "./effort-map";
+import { claudeHistoryToOmp } from "./claude-history";
 
 type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options?: Options }) => Query;
+type GetSessionMessagesFn = (sessionId: string, options?: GetSessionMessagesOptions) => Promise<SessionMessage[]>;
 
 // A pushable async generator: the runtime feeds user turns into a live query() this way.
 class InputQueue {
@@ -49,7 +51,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private model?: string;
   private thinking: ThinkingLevel;
 
-  constructor(private opts: RuntimeLaunchOpts, private queryFn: QueryFn = sdkQuery) {
+  constructor(
+    private opts: RuntimeLaunchOpts,
+    private queryFn: QueryFn = sdkQuery,
+    private getSessionMessagesFn: GetSessionMessagesFn = sdkGetSessionMessages,
+  ) {
     this.thinking = opts.thinking ?? "off";
   }
 
@@ -73,7 +79,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       // last so it overwrites `allowedTools` above. `tools: []` (the prior code) is not a
       // canonical SDK Option and was a silent no-op.
       ...(this.opts.noTools ? { allowedTools: [] } : {}),
-      ...(this.opts.fork ? { resume: this.opts.fork, forkSession: true } : {}),
+      // A fork copies the parent session (new id); a plain resume continues the same id in
+      // place. `fork` wins if both are set — a branch is a fork.
+      ...(this.opts.fork ? { resume: this.opts.fork, forkSession: true } : this.opts.resume ? { resume: this.opts.resume } : {}),
     };
     const q = this.queryFn({ prompt: this.input, options });
     this.q = q;
@@ -133,7 +141,15 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // No dedicated live effort setter; approximate via thinking-token budget (coarse; see spec).
     await this.q?.setMaxThinkingTokens?.(effort ? null : 0);
   }
-  async getAllMessages(): Promise<unknown[]> { return []; }
+  // Rehydrate: read claude's own persisted transcript for this session and convert it to the
+  // omp `OmpMessage[]` seam so a resumed/forked session re-renders through the same reducers
+  // the live stream uses. No session id yet (never started, or start failed before init) →
+  // nothing to read. `getSessionMessagesFn` is injectable so tests fake the SDK.
+  async getAllMessages(): Promise<unknown[]> {
+    if (!this.sessionId) return [];
+    const msgs = await this.getSessionMessagesFn(this.sessionId, { dir: this.opts.cwd });
+    return claudeHistoryToOmp(msgs);
+  }
 
   async stop(): Promise<void> {
     try { await this.q?.interrupt().catch(() => {}); } finally { this.input.close(); this.alive = false; }
