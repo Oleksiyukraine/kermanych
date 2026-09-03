@@ -69,7 +69,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       ...(this.opts.model ? { model: this.opts.model } : {}),
       ...(effort ? { effort } : {}),
       ...(this.opts.tools ? { allowedTools: this.opts.tools } : {}),
-      ...(this.opts.noTools ? { tools: [] } : {}),
+      // noTools wins over a stray `tools` allowlist: an empty allowlist = no tools. Placed
+      // last so it overwrites `allowedTools` above. `tools: []` (the prior code) is not a
+      // canonical SDK Option and was a silent no-op.
+      ...(this.opts.noTools ? { allowedTools: [] } : {}),
       ...(this.opts.fork ? { resume: this.opts.fork, forkSession: true } : {}),
     };
     const q = this.queryFn({ prompt: this.input, options });
