@@ -48,7 +48,7 @@ withDefaults(
   border: 1px solid var(--k-line);
   background: transparent;
   color: var(--k-muted);
-  font-size: 18px;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
   border-radius: var(--k-r);
