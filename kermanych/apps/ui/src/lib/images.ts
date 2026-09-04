@@ -32,3 +32,11 @@ export async function fileToImage(file: File | Blob): Promise<AttachedImage> {
   const name = file instanceof File ? file.name : `pasted.${mimeType.split('/')[1] ?? 'png'}`;
   return { data, mimeType, url, name };
 }
+
+// Rebuild a File from an AttachedImage for upload paths that take File[] (the board's
+// task-images bucket). The base64 payload is the same bytes the thumbnail already showed;
+// name and mimeType carry through so storage keeps the extension and content type.
+export function imageToFile(img: AttachedImage): File {
+  const bytes = Uint8Array.from(atob(img.data), (c) => c.charCodeAt(0));
+  return new File([bytes], img.name, { type: img.mimeType });
+}

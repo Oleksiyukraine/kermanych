@@ -413,6 +413,8 @@ export const en: MessageSchema = {
       titlePlaceholder: 'what exactly needs doing',
       description: 'Description',
       descriptionPlaceholder: 'One paragraph — the agent will ask follow-ups.',
+      image: '⛶ Image',
+      dragHint: 'paste from clipboard (⌘V), drag here, or click ⛶',
       model: 'Model',
       default: 'default',
       effort: 'Reasoning effort',

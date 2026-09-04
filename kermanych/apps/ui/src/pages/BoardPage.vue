@@ -148,7 +148,26 @@
           :placeholder="t('board.editor.descriptionPlaceholder')"
           multiline
           :rows="6"
+          @paste="editingId ? undefined : onDraftPaste($event)"
+          @drop.prevent="editingId ? undefined : onDraftDrop($event)"
+          @dragover.prevent
         />
+        <div v-if="!editingId" class="board__attach">
+          <button type="button" class="board__attach-btn mono" @click="draftFileInput?.click()">
+            {{ t('board.editor.image') }}
+          </button>
+          <input
+            ref="draftFileInput"
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            multiple
+            class="board__file"
+            @change="onDraftFilePick"
+          />
+          <span class="board__attach-note mono">{{ t('board.editor.dragHint') }}</span>
+        </div>
+        <KAttachStrip v-if="!editingId && draftImages.length" :images="draftImages" @remove="removeDraftImage" />
+        <p v-if="!editingId && draftImageError" class="board__error" role="alert">{{ draftImageError }}</p>
         <div class="board__form-row">
           <!-- `searchable` on the model picker only: same ~26-row catalog as the local
                launcher's, and the same reason typing beats scrolling it. -->
@@ -287,9 +306,12 @@ import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KKanbanCard from 'components/kit/KKanbanCard.vue';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import KAvatar from 'components/kit/KAvatar.vue';
+import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
 import { useDelayedTrue } from '../composables/useDelayedTrue';
+import { useImageAttach } from '../composables/useImageAttach';
+import { imageToFile } from '../lib/images';
 import { relativeTime, renderTime } from '../lib/time';
 import { EFFORT_OPTIONS } from '../lib/effort';
 import { modelOptions, effortOptions } from '../lib/models';
@@ -1014,6 +1036,25 @@ const draftBranch = ref('');
 // the value. '' is «не призначено».
 const draftAssignee = ref('');
 
+// Images attached at task creation (paste ⌘V, drag-drop, or the ⛶ file-pick). Create only:
+// `board.createTask` uploads them to the task-images bucket and writes their paths onto the
+// new row. Editing has no store path to change a card's images, so the strip is hidden then.
+const {
+  images: draftImages,
+  error: draftImageError,
+  onPaste: onDraftPaste,
+  onDrop: onDraftDrop,
+  remove: removeDraftImage,
+  clear: clearDraftImages,
+  addFiles: addDraftFiles,
+} = useImageAttach();
+const draftFileInput = ref<HTMLInputElement | null>(null);
+function onDraftFilePick(e: Event): void {
+  const input = e.target as HTMLInputElement;
+  if (input.files) void addDraftFiles(input.files);
+  input.value = '';
+}
+
 // The editor's assignee picker reads the roster of the picker's OWN project, which is not
 // necessarily the scoped one: an unscoped board shows cards from every workspace, and
 // «Виконавець» must name the person who actually holds the card. `draftProject` is the key
@@ -1049,6 +1090,7 @@ function openCreate(): void {
   draftPlatform.value = '';
   draftBranch.value = '';
   draftAssignee.value = '';
+  clearDraftImages();
   editorOpen.value = true;
 }
 
@@ -1066,6 +1108,7 @@ function openEdit(task: Task): void {
   // Reset with the rest of the draft set rather than left over from a previous dialog: only
   // the create branch reads it, and a half-reset draft set is a trap for the next edit here.
   draftAssignee.value = task.assigneeId ?? '';
+  clearDraftImages();
   editorOpen.value = true;
 }
 
@@ -1106,13 +1149,16 @@ async function submitEditor(): Promise<void> {
       return;
     }
     if (
-      !(await board.createTask({
-        projectId,
-        ...fields,
-        // «не призначено» is still the default: the board is the shared backlog. An assignee
-        // picked here is the «this one is yours» case, and tasks_guard refuses a non-member.
-        ...(draftAssignee.value ? { assigneeId: draftAssignee.value } : {}),
-      }))
+      !(await board.createTask(
+        {
+          projectId,
+          ...fields,
+          // «не призначено» is still the default: the board is the shared backlog. An assignee
+          // picked here is the «this one is yours» case, and tasks_guard refuses a non-member.
+          ...(draftAssignee.value ? { assigneeId: draftAssignee.value } : {}),
+        },
+        draftImages.value.map(imageToFile),
+      ))
     ) {
       editorError.value = t('board.editor.createFailed');
       return;
@@ -1320,6 +1366,36 @@ function onDelete(task: Task): void {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
+}
+
+.board__attach {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.board__attach-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-r);
+  color: var(--k-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.board__attach-btn:hover {
+  border-color: var(--k-accent);
+  color: var(--k-text);
+}
+.board__attach-note {
+  font-size: 11.5px;
+  color: var(--k-muted);
+}
+.board__file {
+  display: none;
 }
 
 .board__esc {
