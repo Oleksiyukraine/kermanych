@@ -41,10 +41,13 @@ export function mapSdkMessage(msg: SDKMessage, st: ClaudeMapState): RpcEvent[] {
   }
 
   if (m.type === "stream_event") {
-    const ev = (m as { event?: { type?: string; delta?: { type?: string; text?: string } } }).event;
+    const ev = (m as { event?: { type?: string; delta?: { type?: string; text?: string; thinking?: string } } }).event;
     if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && typeof ev.delta.text === "string") {
       openTurn(st, out);
       out.push({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: ev.delta.text } });
+    } else if (ev?.type === "content_block_delta" && ev.delta?.type === "thinking_delta" && typeof ev.delta.thinking === "string") {
+      openTurn(st, out);
+      out.push({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: ev.delta.thinking } });
     }
     return out;
   }

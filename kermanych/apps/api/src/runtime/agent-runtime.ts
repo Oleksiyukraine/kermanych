@@ -18,12 +18,14 @@ export interface RpcStateData {
 
 // Normalized launch inputs. omp-only fields (configPath/extensionPath = skill overlay +
 // trigger package) are ignored by non-omp backends. `tools`/`noTools` restrict the toolset;
-// `fork` seeds from a prior session; `thinking` is the opening effort.
+// `fork` seeds a NEW session from a prior one (branch/discussion); `resume` continues an
+// existing session in place (claude reopen); `thinking` is the opening effort.
 export interface RuntimeLaunchOpts {
   cwd: string;
   model?: string;
   thinking?: ThinkingLevel;
   fork?: string;
+  resume?: string;
   noTools?: boolean;
   tools?: string[];
   commandTimeoutMs?: number;

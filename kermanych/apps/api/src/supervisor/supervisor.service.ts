@@ -683,8 +683,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
-      // claude's getAllMessages() returns [] today (Inc 1 stub): the SDK fork carries the parent
-      // context server-side, but the parent transcript is not re-rendered in the UI until Inc 4.
+      // Both backends now re-render the parent transcript: omp forks the session file, claude
+      // forks the session UUID, and getAllMessages() reads either back through the same seam.
       this.rehydrate(childLive, child.id, await rpc.getAllMessages());
       this.events.next({ type: "transcript_reset", sessionId: child.id, entries: childLive.transcript });
       await this.refreshState(child.id);
@@ -1651,12 +1651,19 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
     const configPath = await this.ompSkills(s.projectId, dir, id);
     const extensionPath = await this.ompTriggers(s.projectId, dir, id);
-    const rpc = createRuntime(s.runtime ?? "omp", { cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    // A fork can only continue on its own backend (R1/R2): omp reloads its saved session FILE
+    // through switch_session; claude resumes the same session UUID (stored in ompSessionId) in
+    // place via opts.resume at start(), where switch_session is a no-op. One resume handle,
+    // read per backend, so both re-render their prior transcript on wake.
+    const runtimeKind = s.runtime ?? "omp";
+    const resumeHandle = runtimeKind === "claude-code" ? s.ompSessionId : s.ompSessionFile;
+    const rpc = createRuntime(runtimeKind, { cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await rpc.start();
-      if (s.ompSessionFile) {
-        await rpc.switchSession(s.ompSessionFile);
+      if (resumeHandle) {
+        // omp loads the saved file into the freshly spawned child; claude already resumed at start().
+        if (runtimeKind !== "claude-code") await rpc.switchSession(resumeHandle);
         this.rehydrate(live, id, await rpc.getAllMessages());
       }
       // Re-assert the chosen effort AFTER switch_session: the reloaded session file carries its

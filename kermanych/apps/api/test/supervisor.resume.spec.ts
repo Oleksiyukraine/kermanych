@@ -1,10 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { WorktreeService } from "../src/worktree/worktree.service";
+import type { OmpMessage } from "../src/supervisor/messages-to-transcript";
 
 // Every spawned RpcSession is captured so the test can inspect which child a message was
 // delivered to and can simulate a child dying (a provider outage killing the omp process).
 type FakeChild = { alive: boolean; prompts: number; followUps: number; steers: number };
 const instances: FakeChild[] = [];
+
+// Every spawned claude runtime is captured with the launch opts it was constructed with, so
+// the resume/branch tests can assert the resume/fork handle and read back the scripted history.
+type FakeClaude = { opts: { resume?: string; fork?: string }; prompts: number; followUps: number };
+const claudeInstances: FakeClaude[] = [];
+// The scripted claude transcript getAllMessages() returns — a prior user prompt and answer.
+const claudeHistory: OmpMessage[] = [
+  { role: "user", content: [{ type: "text", text: "prior claude prompt" }] },
+  { role: "assistant", content: [{ type: "text", text: "prior claude answer" }] },
+];
 
 vi.mock("../src/rpc/rpc-session", () => {
   class FakeRpc {
@@ -28,6 +39,33 @@ vi.mock("../src/rpc/rpc-session", () => {
   return { RpcSession: FakeRpc };
 });
 
+vi.mock("../src/runtime/claude-code-runtime", () => {
+  class FakeClaudeRuntime {
+    readonly droppedFrames = 0;
+    alive = true;
+    prompts = 0;
+    followUps = 0;
+    steers = 0;
+    constructor(public opts: { resume?: string; fork?: string }) { claudeInstances.push(this); }
+    onEvent() {}
+    onExit() {}
+    async start() {}
+    // claude reports only a session UUID (no session file); resume keys off ompSessionId.
+    async getState() { return { sessionId: "claude-1" }; }
+    async getAllMessages() { return claudeHistory; }
+    async switchSession() {} // no-op on claude — resume is expressed at start()
+    async setModel() {}
+    async setThinkingLevel() {}
+    async stop() {}
+    answerUi() {}
+    isAlive() { return this.alive; }
+    prompt() { this.prompts++; }
+    followUp() { this.followUps++; }
+    steer() { this.steers++; }
+  }
+  return { ClaudeCodeRuntime: FakeClaudeRuntime };
+});
+
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
 import { offlineAuth } from "./offline-auth";
@@ -45,7 +83,7 @@ function make() {
   return { sup, registry };
 }
 
-beforeEach(() => { instances.length = 0; });
+beforeEach(() => { instances.length = 0; claudeInstances.length = 0; });
 
 describe("sendMessage resume-on-dead", () => {
   it("respawns a dead omp child instead of writing to its closed stdin", async () => {
@@ -121,5 +159,45 @@ describe("resume", () => {
     expect(instances).toHaveLength(1);
     expect(instances[0].alive).toBe(true);
     expect(instances[0].followUps).toBe(1);
+  });
+});
+
+describe("resume claude-code", () => {
+  it("resumes a dormant claude session by UUID and rehydrates its transcript", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "CCC", task: "t", worktreePath: "/tmp/wt", branch: "feature/ccc" });
+    // A claude session persists its session UUID in ompSessionId and has NO ompSessionFile.
+    registry.updateSession(s.id, { runtime: "claude-code", ompSessionId: "claude-uuid-1", status: "done" });
+
+    expect(await sup.resume(s.id)).toEqual({ ok: true });
+
+    // (a) the claude runtime was constructed with the resume handle = the session UUID, not a file.
+    expect(claudeInstances).toHaveLength(1);
+    expect(instances).toHaveLength(0); // no omp child spawned
+    expect(claudeInstances[0].opts.resume).toBe("claude-uuid-1");
+    expect(claudeInstances[0].opts.fork).toBeUndefined();
+
+    // (b) getAllMessages() ran and populated the live transcript (no longer the dormant notice).
+    const tx = sup.getTranscript(s.id);
+    expect(tx.map((e) => e.kind)).toEqual(["user_text", "assistant_text"]);
+    expect(tx.map((e) => ("text" in e ? e.text : undefined))).toEqual(["prior claude prompt", "prior claude answer"]);
+  });
+
+  it("branches a claude parent by forking its UUID and rehydrates the child from the parent", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const parent = registry.createSession({ projectId: g.id, name: "CCC", task: "t", worktreePath: "/tmp/wt", branch: "feature/ccc" });
+    registry.updateSession(parent.id, { runtime: "claude-code", ompSessionId: "claude-uuid-1", status: "done" });
+
+    const child = await sup.branchSession(parent.id);
+
+    // The child forks the parent's UUID (a branch is a fork), never a plain resume.
+    expect(claudeInstances).toHaveLength(1);
+    expect(claudeInstances[0].opts.fork).toBe("claude-uuid-1");
+    expect(child.runtime).toBe("claude-code");
+    // The child's transcript is rehydrated from the parent's history.
+    const tx = sup.getTranscript(child.id);
+    expect(tx.map((e) => e.kind)).toEqual(["user_text", "assistant_text"]);
   });
 });
