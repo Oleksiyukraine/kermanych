@@ -11,12 +11,13 @@
 //               cost one actual poller.
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { JiraColumn, JiraIntegration, JiraIssue, JiraIssueChildren } from '@kermanych/cloud';
+import type { JiraColumn, JiraIntegration, JiraIssue, JiraIssueChildren, JiraWorklog } from '@kermanych/cloud';
 import {
   getJiraIntegration,
   listJiraColumns,
   listJiraIssueChildren,
   listJiraIssues,
+  listJiraWorklogsBetween,
   subscribeJiraIssues,
 } from '@kermanych/cloud';
 import { api, type JiraAssignableUser } from '../lib/api';
@@ -24,6 +25,8 @@ import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { IS_PREVIEW } from '../lib/preview';
 import { globalTr } from '../boot/i18n';
+import { shiftDays } from '../lib/calendar';
+import type { CapacityRange } from '../lib/capacity';
 
 const SYNC_TICK_MS = 30_000;
 
@@ -155,6 +158,22 @@ export const useJira = defineStore('jira', () => {
     }
   }
 
+  // Worklogs of the whole board for a calendar range — Team Capacity's read. Returned, not
+  // stored: the screen and the Менеджмент chat ask for different ranges at the same time,
+  // and one `worklogs` ref would have them overwrite each other. A day of slack on both
+  // ends because `started_at` is an instant and the range is the operator's wall calendar;
+  // lib/capacity.ts buckets by local day and drops what falls outside.
+  async function fetchWorklogs(range: CapacityRange): Promise<JiraWorklog[]> {
+    const row = integration.value;
+    if (!row) return [];
+    return listJiraWorklogsBetween(
+      auth.client,
+      row.id,
+      `${shiftDays(range.from, -1)}T00:00:00.000Z`,
+      `${shiftDays(range.to, 2)}T00:00:00.000Z`,
+    );
+  }
+
   // The Jira view's lifecycle: probe + board + realtime + the sync ticker. Idempotent —
   // reopening rebuilds one channel and one ticker, never two.
   async function open(workspaceId: string): Promise<void> {
@@ -263,6 +282,8 @@ export const useJira = defineStore('jira', () => {
     syncing,
     probe,
     loadAssignable,
+    loadBoard,
+    fetchWorklogs,
     open,
     syncNow,
     close,
