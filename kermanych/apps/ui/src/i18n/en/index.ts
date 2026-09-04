@@ -173,6 +173,16 @@ export const en: MessageSchema = {
       close: 'Close',
       blank: 'Pick a session from the list.',
       logEmpty: 'The log is empty.',
+      more: 'More actions',
+      expandAll: 'Expand all',
+      collapseAll: 'Collapse all',
+      menu: {
+        review: 'Reviewer',
+        branch: 'Discussion branch',
+        editor: 'Open in editor',
+        stop: 'Stop the agent',
+        delete: 'Delete the agent',
+      },
     },
     tabs: {
       log: 'Log',
