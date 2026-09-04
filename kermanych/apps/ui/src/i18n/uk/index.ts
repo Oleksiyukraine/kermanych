@@ -1880,6 +1880,9 @@ export const uk = {
     },
     boardView: {
       count: '{n} тікетів · {board}',
+      searchPlaceholder: 'Пошук тікетів…',
+      searchCount: 'знайдено {n} з {total}',
+      searchEmpty: 'Нічого не знайдено за запитом «{q}»',
       readOnly: 'лише читання',
       readOnlyHint: 'Додайте свій Jira-токен у Менеджмент → Integrations, щоб діяти',
       syncHint: 'Опитати Jira зараз: підтягнути всі тікети, статуси й колонки дошки',

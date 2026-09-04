@@ -13,6 +13,27 @@ export type JiraTransitionView = {
   to: { id: string; name: string; statusCategory: { key: string } };
 };
 
+// The board's search box, matching the way every other list in the app filters
+// (menu.ts's filterByQuery): tokens split on whitespace, EVERY token must appear
+// somewhere in the card — so «sandbox андрій» finds the ticket about the sandbox that is
+// also Andrii's, with the two words landing in different fields.
+//
+// The haystack is what a card actually shows: key, summary, assignee, labels, type,
+// priority. `descriptionHtml` is deliberately NOT searched — it is server-rendered
+// markup, so «div» or «href» would match every ticket that carries any formatting.
+//
+// An empty query returns the input array itself, not a copy: this runs on every keystroke
+// and the common case is «nothing typed yet».
+export function filterIssues(issues: readonly JiraIssue[], query: string): readonly JiraIssue[] {
+  const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return issues;
+  return issues.filter((i) => {
+    const hay =
+      `${i.key} ${i.summary} ${i.assigneeName ?? ''} ${i.labels.join(' ')} ${i.typeName} ${i.priorityName}`.toLowerCase();
+    return tokens.every((t) => hay.includes(t));
+  });
+}
+
 // Cards grouped the way Jira's own board groups them: an issue belongs to the first
 // column whose status set holds its status. An issue mapped to NO column is invisible —
 // that is Jira's rule too (an unmapped status does not render on the board), and the

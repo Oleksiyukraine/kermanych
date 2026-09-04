@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   dateChip,
+  filterIssues,
   issuesByColumn,
   launchDefaults,
   localDateTimeValue,
@@ -51,6 +52,78 @@ const t = (id: string, toId: string, key = 'indeterminate', name = id): JiraTran
   id,
   name,
   to: { id: toId, name: `S${toId}`, statusCategory: { key } },
+});
+
+describe('filterIssues', () => {
+  it('returns the input array itself when nothing is typed', () => {
+    const issues = [issue({ issueId: 'a' })];
+    expect(filterIssues(issues, '')).toBe(issues);
+  });
+
+  it('treats a whitespace-only query as nothing typed', () => {
+    const issues = [issue({ issueId: 'a' })];
+    expect(filterIssues(issues, '   ')).toBe(issues);
+  });
+
+  it('matches the key regardless of case', () => {
+    const issues = [issue({ issueId: 'a', key: 'KAN-42' }), issue({ issueId: 'b', key: 'KAN-7' })];
+    expect(filterIssues(issues, 'kan-42').map((i) => i.issueId)).toEqual(['a']);
+  });
+
+  it('matches a substring of the summary', () => {
+    const issues = [
+      issue({ issueId: 'a', summary: 'Fix the sandbox timeout' }),
+      issue({ issueId: 'b', summary: 'Add a login button' }),
+    ];
+    expect(filterIssues(issues, 'sandbox').map((i) => i.issueId)).toEqual(['a']);
+  });
+
+  it('matches the assignee name', () => {
+    const issues = [
+      issue({ issueId: 'a', assigneeName: 'Андрій Чесноков' }),
+      issue({ issueId: 'b', assigneeName: 'Олексій' }),
+    ];
+    expect(filterIssues(issues, 'чесноков').map((i) => i.issueId)).toEqual(['a']);
+  });
+
+  it('matches a label', () => {
+    const issues = [
+      issue({ issueId: 'a', labels: ['backend', 'urgent'] }),
+      issue({ issueId: 'b', labels: ['design'] }),
+    ];
+    expect(filterIssues(issues, 'urgent').map((i) => i.issueId)).toEqual(['a']);
+  });
+
+  it('matches the issue type and priority', () => {
+    const issues = [
+      issue({ issueId: 'a', typeName: 'Bug', priorityName: 'Highest' }),
+      issue({ issueId: 'b', typeName: 'Story', priorityName: 'Low' }),
+    ];
+    expect(filterIssues(issues, 'bug').map((i) => i.issueId)).toEqual(['a']);
+    expect(filterIssues(issues, 'highest').map((i) => i.issueId)).toEqual(['a']);
+  });
+
+  it('requires every token to match, and lets tokens land in different fields', () => {
+    const issues = [
+      issue({ issueId: 'a', summary: 'Fix the sandbox', assigneeName: 'Андрій' }),
+      issue({ issueId: 'b', summary: 'Fix the login', assigneeName: 'Андрій' }),
+      issue({ issueId: 'c', summary: 'Fix the sandbox', assigneeName: 'Олексій' }),
+    ];
+    expect(filterIssues(issues, 'sandbox андрій').map((i) => i.issueId)).toEqual(['a']);
+  });
+
+  it('returns nothing when no issue matches', () => {
+    const issues = [issue({ issueId: 'a', summary: 'Fix the sandbox' })];
+    expect(filterIssues(issues, 'nonexistent')).toEqual([]);
+  });
+
+  // The description arrives as server-rendered HTML, so searching it would match markup:
+  // «div» or «href» would hit every ticket that has any formatting at all.
+  it('does not match the rendered description markup', () => {
+    const issues = [issue({ issueId: 'a', descriptionHtml: '<div class="tricky">body text</div>' })];
+    expect(filterIssues(issues, 'div')).toEqual([]);
+    expect(filterIssues(issues, 'tricky')).toEqual([]);
+  });
 });
 
 describe('issuesByColumn', () => {
