@@ -412,6 +412,8 @@ const statusLabel = computed(() => {
       return t('kit.panel.status.waiting');
     case 'done':
       return t('kit.panel.status.done');
+    case 'in_review':
+      return t('kit.panel.status.review');
     case 'error':
       return t('kit.panel.status.error');
     case 'queued':

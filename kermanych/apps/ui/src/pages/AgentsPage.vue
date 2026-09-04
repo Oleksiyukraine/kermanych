@@ -804,9 +804,9 @@ const now = useNow();
 const router = useRouter();
 
 // Board buckets mirror the sidebar (lib/buckets.ts): completed (merged or set aside) wins,
-// then backlog → Задачі, error/conflict → Помилки, done/stopped → Очікують, everything else
-// → Активні. Driven by store.selectedBucket.
-const WAITING_STATUSES: readonly SessionStatus[] = ['done', 'stopped'];
+// then backlog → Задачі, error/conflict → Помилки, done/in_review/stopped → Очікують,
+// everything else → Активні. Driven by store.selectedBucket.
+const WAITING_STATUSES: readonly SessionStatus[] = ['done', 'in_review', 'stopped'];
 const ERROR_STATUSES: readonly SessionStatus[] = ['error', 'conflict'];
 // Active = an agent whose process is alive or is blocked on the operator. Shared: archiving
 // refuses these (the API re-checks with core's ACTIVE_STATUSES) and the out-of-scope note
@@ -832,6 +832,7 @@ const STATUS_RANK: Record<SessionStatus, number> = {
   error: 1,
   conflict: 1,
   done: 2,
+  in_review: 2,
   stopped: 2,
   merged: 3,
 };
@@ -1448,6 +1449,8 @@ function statusWord(s: Session): string {
       return t('agents.statusWord.waiting');
     case 'done':
       return t('agents.statusWord.done');
+    case 'in_review':
+      return t('agents.statusWord.review');
     case 'error':
       return t('agents.statusWord.error');
     case 'queued':

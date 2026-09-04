@@ -3,8 +3,11 @@ import type { Platform } from "./platform";
 import type { ThinkingLevel } from "./thinking";
 import type { NoticeCode, NoticeParams } from "./i18n-codes";
 
+// `in_review` is the PR hand-off state: the operator asked for a pull request, the agent
+// pushed it, and the work now waits on a HUMAN reviewer. It is settled (nothing moves on
+// its own) but not closed — `merged` is still ahead of it.
 export type SessionStatus =
-  | "backlog" | "queued" | "thinking" | "tool" | "waiting_input" | "done" | "error" | "stopped" | "merged" | "conflict";
+  | "backlog" | "queued" | "thinking" | "tool" | "waiting_input" | "done" | "in_review" | "error" | "stopped" | "merged" | "conflict";
 
 export type AgentRuntime = "omp" | "claude-code";
 

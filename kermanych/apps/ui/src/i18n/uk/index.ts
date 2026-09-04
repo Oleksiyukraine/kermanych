@@ -241,6 +241,7 @@ export const uk = {
       tool: 'виконує',
       waiting: 'чекає',
       done: 'готово',
+      review: 'на ревʼю',
       error: 'помилка',
       queued: 'у черзі',
       stopped: 'зупинено',
@@ -253,6 +254,7 @@ export const uk = {
       error: 'помилка',
       conflict: 'конфлікт злиття',
       done: 'завершено',
+      in_review: 'на ревʼю — ПР відкрито',
     },
     launcher: {
       esc: 'Esc — закрити',
@@ -417,6 +419,7 @@ export const uk = {
       queued: 'У черзі',
       running: 'В роботі',
       waiting: 'Чекає відповіді',
+      review: 'На ревʼю',
       closed: 'Завершені',
     },
     editor: {
@@ -1323,6 +1326,7 @@ export const uk = {
         running: 'виконує',
         waiting: 'чекає',
         done: 'готово',
+        review: 'на ревʼю',
         error: 'помилка',
         queued: 'у черзі',
         stopped: 'зупинено',

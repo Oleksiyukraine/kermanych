@@ -40,9 +40,13 @@ describe('bucketOf', () => {
   it('files a finished-but-unclosed agent as waiting', () => {
     const done = session({ id: 'a', status: 'done' });
     const stopped = session({ id: 'b', status: 'stopped' });
-    const find = resolver(done, stopped);
+    // A pushed PR is settled work that is NOT closed out: it belongs beside `done`, never
+    // in «Завершені», or the cards somebody still has to review are the ones nobody sees.
+    const review = session({ id: 'c', status: 'in_review' });
+    const find = resolver(done, stopped, review);
     expect(bucketOf(done, find)).toBe('waiting');
     expect(bucketOf(stopped, find)).toBe('waiting');
+    expect(bucketOf(review, find)).toBe('waiting');
   });
 
   it('files an agent needing attention under errors', () => {
