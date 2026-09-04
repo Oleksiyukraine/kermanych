@@ -138,6 +138,9 @@ export const en: MessageSchema = {
     },
     board: {
       newTask: 'New task',
+      searchPlaceholder: 'Search: name, branch, model, brief',
+      searchCount: '{n} of {total} matched',
+      searchEmpty: 'Nothing matched “{q}”',
       resizeAria: 'Resize the chat section',
       resizeTip: 'Drag to resize the chat section',
       stranded: 'Only on this machine: these tasks’ project isn’t in the cloud yet, so the team can’t see them. Publish the project and they’ll move to the board.',
