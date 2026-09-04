@@ -119,6 +119,7 @@ export {
   listWorkspaceRisks,
   createWorkspaceRisk,
   patchWorkspaceRisk,
+  deleteWorkspaceRisk,
   listRiskEvents,
 } from "./risks";
 

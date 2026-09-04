@@ -195,6 +195,10 @@ export const useAuth = defineStore('auth', () => {
     await setMyAgentRuntime(client, kind);   // cloud = source of truth
     await api.setAccountRuntime(kind);        // refresh local API cache
     runtime.value = kind;
+    // The model catalog is runtime-specific (omp and claude expose different models) and the
+    // orchestrator caches it; force a refetch so every picker offers the new runtime's models
+    // instead of the previous runtime's stale list.
+    await useOrchestrator().loadModels(true);
   }
 
   return { client, user, profile, accessToken, runtime, ready, init, signInWithGithub, signOut, chooseRuntime };

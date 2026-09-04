@@ -75,13 +75,14 @@ export function seedDemo(registry: RegistryService): void {
     }
   };
 
-  // Acme Web covers all nine statuses, both isolation modes, and one archived row.
+  // Acme Web covers all ten statuses, both isolation modes, and one archived row.
   const acmeRows: Demo[] = [
     { name: "Оновити залежності", branch: "chore/deps", status: "queued", model: "haiku" },
     { name: "Додати онбординг", branch: "feature/onboarding", status: "thinking", model: "opus-5", usage: { input: 18_400, output: 9_200, cacheRead: 1_240_000, cacheWrite: 62_000, cost: 3.18 } },
     { name: "Виправити CSP на iframe", branch: "fix/csp-iframe", status: "tool", model: "sonnet-4.5", usage: { input: 6_100, output: 3_400, cacheRead: 214_000, cacheWrite: 18_000, cost: 0.62 } },
     { name: "Рефактор стора", branch: "refactoring/store", status: "waiting_input", model: "opus-5", usage: { input: 9_800, output: 4_100, cacheRead: 480_000, cacheWrite: 27_000, cost: 1.41 }, forks: [{ kind: "discussion", status: "done", model: "opus-5", usage: { input: 2_100, output: 1_300, cacheRead: 88_000, cacheWrite: 0, cost: 0.21 } }] },
     { name: "Темна тема", branch: "feature/dark-theme", status: "done", model: "sonnet-4.5", usage: { input: 3_200, output: 1_900, cacheRead: 96_000, cacheWrite: 8_400, cost: 0.28 }, forks: [{ kind: "discussion", status: "thinking", model: "haiku", usage: { input: 410, output: 180, cacheRead: 6_200, cacheWrite: 0, cost: 0.004 } }, { kind: "review", status: "done", model: "opus-5", usage: { input: 7_400, output: 2_900, cacheRead: 132_000, cacheWrite: 9_600, cost: 0.88 } }] },
+    { name: "Пагінація списку", branch: "feature/pagination", status: "in_review", model: "sonnet-4.5", usage: { input: 4_700, output: 2_200, cacheRead: 118_000, cacheWrite: 6_900, cost: 0.34 } },
     { name: "Кеш API", branch: "feature/api-cache", status: "error", model: "haiku", usage: { input: 740, output: 210, cacheRead: 12_000, cacheWrite: 0, cost: 0.003 } },
     { name: "Хотфікс продакшена", branch: "fix/prod-hotfix", status: "stopped", worktree: false, baseBranch: "main", model: "sonnet-4.5", usage: { input: 1_100, output: 520, cacheRead: 34_000, cacheWrite: 2_100, cost: 0.11 } },
     { name: "Міграція БД", branch: "feature/db-migration", status: "conflict", model: "opus-5", usage: { input: 12_600, output: 5_800, cacheRead: 720_000, cacheWrite: 41_000, cost: 2.07 } },

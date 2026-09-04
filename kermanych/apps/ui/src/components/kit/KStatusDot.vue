@@ -20,7 +20,10 @@ const kind = computed<Kind>(() => {
     case 'thinking':
     case 'tool':
       return 'running';
+    // Both cases where the work is settled but a HUMAN still owes it something: an answer,
+    // or a review. Framed in warning rather than filled green — nothing is finished yet.
     case 'waiting_input':
+    case 'in_review':
     case 'conflict':
       return 'waiting';
     case 'done':

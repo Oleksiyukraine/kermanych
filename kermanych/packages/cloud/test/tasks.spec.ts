@@ -57,6 +57,7 @@ const taskRow = {
   kind: null,
   branch: "main",
   worktree: true,
+  hidden: false,
   created_at: "2026-08-21T00:00:00.000Z",
   updated_at: "2026-08-21T00:10:00.000Z",
 };
@@ -77,6 +78,7 @@ describe("listTasks", () => {
       prefix: "feature",
       branch: "main",
       worktree: true,
+      hidden: false,
       createdAt: "2026-08-21T00:00:00.000Z",
       updatedAt: "2026-08-21T00:10:00.000Z",
     });
@@ -196,6 +198,42 @@ describe("worktree on a task", () => {
     const { client, queries } = fakeClient({ data: taskRow, error: null });
     await patchTask(client, "t1", { worktree: true });
     expect(queries[0]!.ops[0]).toEqual(["update", { worktree: true }]);
+  });
+});
+
+// «Приховати з дошки»: a NOT NULL boolean like `worktree`, and read at exactly one place —
+// BoardPage's `visibleTasks`. Everything here is about the column surviving the round trip
+// intact, because a `hidden` that arrives as `undefined` reads as «visible» and would put a
+// card the author hid back onto the team's board.
+describe("hidden on a task", () => {
+  it("is selected, so a listTasks snapshot agrees with the realtime echo", async () => {
+    const { client, queries } = fakeClient({ data: [taskRow], error: null });
+    await listTasks(client, ["p1"]);
+    const [, columns] = queries[0]!.ops[0] as [string, string];
+    expect(columns.split(", ")).toContain("hidden");
+  });
+
+  it("maps the column even when true, like every non-nullable flag", async () => {
+    const { client } = fakeClient({ data: { ...taskRow, hidden: true }, error: null });
+    const t = await getTask(client, "t1");
+    expect(t!.hidden).toBe(true);
+  });
+
+  it("sends hidden:true on create — the card is off the board from birth", async () => {
+    const { client, queries } = fakeClient({ data: { ...taskRow, hidden: true }, error: null });
+
+    await createTask(client, { projectId: "p1", title: "T", hidden: true, createdBy: "u1" });
+
+    expect(queries[0]!.ops[0]).toEqual([
+      "insert",
+      { project_id: "p1", created_by: "u1", title: "T", hidden: true },
+    ]);
+  });
+
+  it("patches hidden:false without touching anything else — the way back onto the board", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null });
+    await patchTask(client, "t1", { hidden: false });
+    expect(queries[0]!.ops[0]).toEqual(["update", { hidden: false }]);
   });
 });
 

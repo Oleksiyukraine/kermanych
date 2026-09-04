@@ -225,8 +225,12 @@
 // DECIDES is imported from lib/risk.ts — this component only wires fields to that module and
 // to the store, so the rules stay testable without a component harness.
 //
-// There is no delete control anywhere in here, on purpose: the table grants no `delete` to
-// anyone. A risk leaves the register through the status field, with a note.
+// There is still no delete control anywhere in here, on purpose — and the reason has changed
+// since it was written. Deleting a risk IS possible now (migration 20260904090000), but it is
+// the answer to «this row should never have been filed», which is a judgement about the
+// register rather than an edit to a risk. This editor is where a risk is described, and the
+// way a risk leaves from HERE is the status field, with a note. The delete lives one level
+// up, on the register screen, next to the row it removes.
 import { computed, nextTick, ref, useTemplateRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type {

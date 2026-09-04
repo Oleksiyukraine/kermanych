@@ -16,6 +16,7 @@ export type LauncherDraft = {
   prefix: BranchPrefix;
   platform?: Platform | undefined;
   worktree: boolean;
+  hidden: boolean;
   baseBranch?: string | undefined;
 };
 
@@ -37,6 +38,7 @@ export function taskInsertFromDraft(
     prefix: draft.prefix,
     ...(draft.platform ? { platform: draft.platform } : {}),
     worktree: draft.worktree,
+    hidden: draft.hidden,
     ...(base ? { branch: base } : {}),
     assigneeId,
   };
@@ -54,12 +56,34 @@ export function taskPatchFromDraft(draft: LauncherDraft): TaskPatch {
     prefix: draft.prefix,
     platform: draft.platform ?? '',
     worktree: draft.worktree,
+    hidden: draft.hidden,
     branch: (draft.worktree ? draft.baseBranch?.trim() : '') ?? '',
   };
 }
 
+// Which cards the team's kanban columns are allowed to render, before the operator's own
+// scope/project/assignee narrowing (lib/scope.filterTasks) is applied. Two rules, both
+// properties of the CARD rather than of the current selection — which is why they live
+// here and not in `filterTasks`:
+//
+// - `!t.jiraKey`: a shadow task minted by a Jira-ticket launch belongs to the Jira view,
+//   where the ticket card wears its status chip; the native columns must not show the same
+//   work twice.
+// - `!t.hidden`: its author checked «Приховати з дошки». The row is untouched everywhere
+//   else — its assignee still works it from «Задачі», it still launches and still pushes
+//   status — so THIS is the only place the flag is read.
+//
+// Neither is user-toggleable, and neither is authorization: a hidden card is still a
+// project member's card, and the api launches it through the same getTask/claimTask path.
+export function boardTasks(tasks: Task[]): Task[] {
+  return tasks.filter((t) => !t.jiraKey && !t.hidden);
+}
+
 // «Задачі» in Агенти is my inbox — the cards I have to work, including ones a colleague
 // assigned to me. Unclaimed team cards live on Дошка, so they are deliberately absent.
+// Deliberately blind to `hidden`: «приховати» takes a card off the TEAM board, and this is
+// the assignee's own list — the one place a hidden card must stay reachable from, or the
+// flag would delete work rather than quieten it.
 // It filters WITHOUT sorting, so the rows keep the order they arrive in — listTasks' own
 // `created_at` ascending — which is where the inbox's ordering is decided, not here.
 export function myBacklogTasks(tasks: Task[], userId: string, scopedProjectIds: string[]): Task[] {

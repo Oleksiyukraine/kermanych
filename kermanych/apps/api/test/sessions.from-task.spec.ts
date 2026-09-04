@@ -2,7 +2,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AuthService } from "../src/auth/auth.service";
+import type { ModelsService } from "../src/models/models.service";
 import type { CloudProject, Task } from "@kermanych/cloud";
+
+// The runtime-aware model guard (ModelsService.validModel) is not under test here; an identity
+// stub returns the wanted model unchanged so createSessionFromTask keeps task.model as before.
+function stubModels(): ModelsService {
+  return { validModel: async (_r: string, w: string | undefined) => w } as unknown as ModelsService;
+}
 
 // Capture every spawned RpcSession so a test can prove whether a launch happened.
 const started: unknown[] = [];
@@ -86,7 +93,7 @@ function make() {
     current: () => ({ userId: USER, accessToken: "token" }),
     cloudClient: () => ({}),
   } as unknown as AuthService;
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, stubSkills());
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, stubSkills(), stubModels());
   return { sup, registry, worktree };
 }
 

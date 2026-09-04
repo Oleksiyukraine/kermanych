@@ -1,0 +1,28 @@
+-- «на ревʼю» becomes a task status.
+--
+-- Until now the board had exactly one way to end an agent's work: «Завершити» → «Влити»,
+-- which merges the branch and lands the card on `merged`. The other way out — «Завершити» →
+-- «Створити ПР» — pushes the branch and opens a pull request, and had NO status of its own:
+-- the agent's PR turn ended like any other turn, so the card fell back to `done`. On the
+-- board that reads «нічого не рухається», which is true of the AGENT and false of the WORK:
+-- the branch is published and a human owes it a review. `in_review` is that state.
+--
+-- Where it sits in the lifecycle:
+--
+--   backlog → queued → thinking/tool → waiting_input → done ─┬─→ merged
+--                                                            └─→ in_review → merged
+--
+-- so the label is added AFTER 'done' and BEFORE 'error'. Enum position is sort order for
+-- `order by status`, never identity, so this is cosmetic — but a lifecycle enum whose
+-- declaration order contradicts the lifecycle is a trap for the next reader.
+--
+-- `tasks_guard()` (20260830090000_tasks_assignment.sql:33) is deliberately NOT touched: its
+-- `active_statuses` list is the four statuses that mean «the omp process is mid-work», and
+-- `in_review` is not one of them. A card on review therefore stays reassignable and
+-- deletable, exactly like `done` — the whole point of the state is that nothing is running.
+--
+-- Postgres ≥ 12 permits ADD VALUE inside a transaction block (which is how migrations are
+-- applied) as long as the new label is not USED in the same transaction. Nothing below uses
+-- it: existing rows keep their status and there is no backfill, because no historical row
+-- can be known to have gone through a PR — `done` was the honest answer for those.
+alter type task_status add value if not exists 'in_review' after 'done';

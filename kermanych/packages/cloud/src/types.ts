@@ -4,7 +4,7 @@
 import type { AgentRuntime, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
-// The Postgres type `task_status` carries the same ten labels.
+// The Postgres type `task_status` carries the same eleven labels.
 export type TaskStatus = SessionStatus;
 
 export type Profile = {
@@ -81,6 +81,11 @@ export type Task = {
   // run in the project folder itself. createSessionFromTask honours that only for the
   // card's author (a shared card must never commandeer another developer's checkout).
   worktree: boolean;
+  // `tasks.hidden` is `not null default false`, so like `worktree` this key is always
+  // present. `true` means the launcher's «Приховати з дошки» was checked: the card stays a
+  // full task — its assignee sees it in «Задачі», it launches and pushes status like any
+  // other — but the kanban columns skip it. Visibility only, never permission.
+  hidden: boolean;
   kind?: string;
   branch?: string;
   // Storage object paths in the `task-images` bucket (private). The board mints signed
@@ -107,6 +112,7 @@ export type TaskInsert = {
   // trick as CloudProjectInsert.id (projects.ts:95).
   id?: string;
   worktree?: boolean;
+  hidden?: boolean;
   kind?: string;
   branch?: string;
   imagePaths?: string[];
@@ -122,6 +128,7 @@ export type TaskPatch = {
   prefix?: string;
   platform?: string;
   worktree?: boolean;
+  hidden?: boolean;
   kind?: string;
   branch?: string;
   imagePaths?: string[];

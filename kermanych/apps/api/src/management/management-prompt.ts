@@ -126,6 +126,14 @@ function contract(locale: Locale | undefined): string {
     '  { "kind": "unsupported", "section": <назва розділу>, "request": <що просили зробити> }',
     '  { "kind": "risk.create", "risk": { … } }',
     '  { "kind": "risk.update", "code": "R-003", "patch": { … } }',
+    // Listed HERE, in the exhaustive menu, and not only in riskProtocol() below — the same
+    // repair the `attachments` line above documents, and this action is the case that proved
+    // the rule twice. Asked to delete R-001, the assistant read this menu, correctly found
+    // only create and update, and then told the operator to delete the card on the Risk
+    // Registry screen — a button that did not exist anywhere in the app. A capability absent
+    // from this list is not merely unavailable to the model; it is something the model will
+    // invent a plausible home for.
+    '  { "kind": "risk.delete", "code": "R-003" }',
     '  { "kind": "release.notes", "project": "…", "branch": "…", "rangeFrom": "РРРР-ММ-ДД", "rangeTo": "РРРР-ММ-ДД" }',
     '  { "kind": "ticket.create", "project": "…", "ticket": { … }, "assignee": "…", "prefix": "…", "platform": "…" }',
     // `attachments` is listed HERE and not only under «ДОДАТКОВІ ПОЛЯ» below, because the line
@@ -177,6 +185,18 @@ function riskProtocol(): string {
     "Не передавай code, exposure, emv, дати аудиту чи власників (riskOwner, actionOwner) — код і розрахунки присвоює база, а власників призначають на екрані.",
     "У risk.update поле code бери СУВОРО зі списку реєстру в контексті; patch містить лише те, що змінюється.",
     "Перед створенням звірся з реєстром у контексті: якщо такий ризик уже є — онови його, а не дублюй.",
+    "",
+    // The distinction the whole delete feature rests on, stated as a rule the model applies
+    // rather than a fact it has to infer. Both halves are load-bearing: without the first the
+    // model deletes materialised risks and destroys the lessons-learned set the register
+    // exists to produce; without the second it refuses a legitimate «прибери тестовий рядок»
+    // and sends the operator looking for a screen to do it on.
+    "ЗАКРИТИ ЧИ ВИДАЛИТИ. Це різні дії, і плутати їх не можна:",
+    `  ризик СТАВСЯ або відпав — це risk.update зі status ${RISK_STATUS_VALUES.filter(isTerminalRiskStatus).join(" / ")} і closureNote. Рядок лишається в реєстрі: він і є матеріал для lessons learned;`,
+    "  рядка взагалі не мало бути в реєстрі (тестовий запис, дубль уже наявного ризику, помилковий воркспейс) — це risk.delete.",
+    "risk.delete видаляє рядок НАЗАВЖДИ і разом з усією його історією подій; скасувати це неможливо. Тому: якщо з формулювання не очевидно, що рядок помилковий, спершу запитай прозою, що саме мають на увазі — закрити чи видалити, — і не давай блок дії до відповіді.",
+    "Видаляти ризики може лише ВЛАСНИК воркспейсу. Якщо просить не власник, база відмовить — чат покаже цю відмову, а ти не обіцяй наперед, що видалиш.",
+    "code бери СУВОРО зі списку реєстру в контексті — так само, як для risk.update. Інших полів risk.delete не має.",
   ].join("\n");
 }
 

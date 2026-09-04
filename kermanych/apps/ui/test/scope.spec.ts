@@ -32,6 +32,7 @@ function task(id: string, projectId: string, over: Partial<Task> = {}): Task {
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     worktree: true,
+    hidden: false,
     ...over,
   };
 }

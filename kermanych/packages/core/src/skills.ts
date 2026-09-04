@@ -57,7 +57,7 @@ export const DEFAULT_SKILLS: readonly SkillDef[] = [
   {
     name: "kermanych-session",
     description:
-      "Use when you need to know how this session's git isolation works — the worktree, the branch, carried .env files, or who merges — before committing, switching branches or touching .env.",
+      "Use when you need to know how this session's git isolation works — the worktree, the branch, carried .env files, or how the code is delivered — before committing, switching branches or touching .env.",
     body: [
       "# Working inside a Kermanych session",
       "",
@@ -69,7 +69,7 @@ export const DEFAULT_SKILLS: readonly SkillDef[] = [
       "- You run in a dedicated git worktree under `~/.kermanych/worktrees/<sessionId>`, on a",
       "  branch created for this task. The developer's own checkout is a different directory",
       "  and must never be touched.",
-      "- **Never switch, rebase onto, or delete the session branch.** The operator's merge and",
+      "- **Never switch, rebase onto, or delete the session branch.** The operator's finish and",
       "  delete actions assume the worktree is still on it; resuming after a switch fails.",
       "",
       "## Carried files",
@@ -78,10 +78,12 @@ export const DEFAULT_SKILLS: readonly SkillDef[] = [
       "  worktree so the app can run. It is not tracked. Never `git add` it, never paste its",
       "  values into code, a commit message, or a PR body.",
       "",
-      "## Who finishes the work",
+      "## How the work is delivered",
       "",
-      "- Commit on this branch as you go. **The merge is the operator's action** («Завершити» in",
-      "  the UI) — do not merge into the base branch yourself.",
+      "- Commit on this branch as you go. Code leaves Kermanych **through a pull request only** —",
+      "  there is no merge button. Never merge this branch into the base branch yourself.",
+      "- «Завершити» in the UI is the operator retiring the session: the worktree is removed and",
+      "  this branch is kept for its PR.",
       "- If a merge is already in progress with conflicts, the operator triggers conflict",
       "  resolution explicitly; resolve every marker and complete the merge commit only then.",
     ].join("\n"),
