@@ -1071,7 +1071,7 @@ export const en: MessageSchema = {
       leadBefore: 'Team capacity of workspace',
       leadAfter: '— Jira estimates and logged work against {hours} h per person per business day.',
       gateTitle: 'Capacity reads from Jira',
-      gateText: 'Team Capacity adds up the estimates and worklogs of the workspace\'s Jira board. The native board has no estimates, so there is nothing to show until a Jira board is connected.',
+      gateText: 'Team Capacity adds up the estimates and worklogs of the workspace’s Jira board. The native board has no estimates, so there is nothing to show until a Jira board is connected.',
       gateButton: 'Open Integrations',
       loading: 'Reading the Jira mirror…',
       loadError: 'Could not read the Jira mirror: {error}',
