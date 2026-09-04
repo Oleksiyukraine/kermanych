@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assigneeOptions,
   dateChip,
+  filterByAssignee,
   filterIssues,
+  UNASSIGNED,
   issuesByColumn,
   launchDefaults,
   localDateTimeValue,
@@ -123,6 +126,78 @@ describe('filterIssues', () => {
     const issues = [issue({ issueId: 'a', descriptionHtml: '<div class="tricky">body text</div>' })];
     expect(filterIssues(issues, 'div')).toEqual([]);
     expect(filterIssues(issues, 'tricky')).toEqual([]);
+  });
+});
+
+describe('assigneeOptions', () => {
+  it('lists one option per person, sorted by name', () => {
+    const issues = [
+      issue({ issueId: 'a', assigneeAccountId: 'u2', assigneeName: 'Олексій' }),
+      issue({ issueId: 'b', assigneeAccountId: 'u1', assigneeName: 'Андрій' }),
+    ];
+    expect(assigneeOptions(issues)).toEqual([
+      { id: 'u1', name: 'Андрій' },
+      { id: 'u2', name: 'Олексій' },
+    ]);
+  });
+
+  it('lists a person carrying several tickets once', () => {
+    const issues = [
+      issue({ issueId: 'a', assigneeAccountId: 'u1', assigneeName: 'Андрій' }),
+      issue({ issueId: 'b', assigneeAccountId: 'u1', assigneeName: 'Андрій' }),
+    ];
+    expect(assigneeOptions(issues)).toEqual([{ id: 'u1', name: 'Андрій' }]);
+  });
+
+  it('offers no option for unassigned tickets', () => {
+    const issues = [issue({ issueId: 'a' }), issue({ issueId: 'b', assigneeAccountId: 'u1', assigneeName: 'Андрій' })];
+    expect(assigneeOptions(issues)).toEqual([{ id: 'u1', name: 'Андрій' }]);
+  });
+
+  // An older mirror row can carry the name without the account id; the person is still a
+  // real filterable person, keyed by the only identity there is.
+  it('falls back to the name when the account id is missing', () => {
+    const issues = [issue({ issueId: 'a', assigneeName: 'Андрій' })];
+    expect(assigneeOptions(issues)).toEqual([{ id: 'Андрій', name: 'Андрій' }]);
+  });
+});
+
+describe('filterByAssignee', () => {
+  it('returns the input array itself when nobody is picked', () => {
+    const issues = [issue({ issueId: 'a', assigneeAccountId: 'u1', assigneeName: 'Андрій' })];
+    expect(filterByAssignee(issues, '')).toBe(issues);
+  });
+
+  it('keeps only the picked person’s tickets', () => {
+    const issues = [
+      issue({ issueId: 'a', assigneeAccountId: 'u1', assigneeName: 'Андрій' }),
+      issue({ issueId: 'b', assigneeAccountId: 'u2', assigneeName: 'Олексій' }),
+      issue({ issueId: 'c' }),
+    ];
+    expect(filterByAssignee(issues, 'u1').map((i) => i.issueId)).toEqual(['a']);
+  });
+
+  it('keeps only tickets with nobody on them when Unassigned is picked', () => {
+    const issues = [
+      issue({ issueId: 'a', assigneeAccountId: 'u1', assigneeName: 'Андрій' }),
+      issue({ issueId: 'b' }),
+    ];
+    expect(filterByAssignee(issues, UNASSIGNED).map((i) => i.issueId)).toEqual(['b']);
+  });
+
+  it('matches a person keyed by name when the account id is missing', () => {
+    const issues = [issue({ issueId: 'a', assigneeName: 'Андрій' }), issue({ issueId: 'b' })];
+    expect(filterByAssignee(issues, 'Андрій').map((i) => i.issueId)).toEqual(['a']);
+  });
+
+  // The board applies both narrowings at once; neither may widen the other.
+  it('intersects with the search box', () => {
+    const issues = [
+      issue({ issueId: 'a', summary: 'Fix the sandbox', assigneeAccountId: 'u1', assigneeName: 'Андрій' }),
+      issue({ issueId: 'b', summary: 'Fix the login', assigneeAccountId: 'u1', assigneeName: 'Андрій' }),
+      issue({ issueId: 'c', summary: 'Fix the sandbox', assigneeAccountId: 'u2', assigneeName: 'Олексій' }),
+    ];
+    expect(filterByAssignee(filterIssues(issues, 'sandbox'), 'u1').map((i) => i.issueId)).toEqual(['a']);
   });
 });
 

@@ -15,9 +15,17 @@
       <span class="k-chip-select__caret" aria-hidden="true"></span>
     </button>
 
-    <!-- Menu opens UPWARD: this chip's home is the composer's control row, which sits at the
-         very bottom of the screen, so a downward menu would open off-viewport. -->
-    <div v-if="open" class="k-chip-select__menu" role="menu" :aria-label="title">
+    <!-- Menu opens UPWARD by default: this chip's first home is the composer's control row,
+         which sits at the very bottom of the screen, so a downward menu would open
+         off-viewport. A chip in a toolbar at the TOP of a view has the mirrored problem, and
+         says `placement="down"`. -->
+    <div
+      v-if="open"
+      class="k-chip-select__menu"
+      :class="{ 'k-chip-select__menu--down': placement === 'down' }"
+      role="menu"
+      :aria-label="title"
+    >
       <button
         v-for="o in options"
         :key="o.value"
@@ -53,6 +61,9 @@ const props = defineProps<{
   // the current value, so without this the menu is an unlabelled list of words.
   title?: string | undefined;
   disabled?: boolean | undefined;
+  // Which way the menu unfolds. Defaults to 'up' — the composer's need, and the behaviour
+  // every existing caller already relies on.
+  placement?: 'up' | 'down' | undefined;
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: T] }>();
@@ -174,6 +185,11 @@ onBeforeUnmount(() => {
   border: 1px solid var(--k-line-strong);
   border-radius: var(--k-r);
   box-shadow: var(--k-shadow-pop);
+
+  &--down {
+    bottom: auto;
+    top: calc(100% + 6px);
+  }
 }
 
 .k-chip-select__item {
