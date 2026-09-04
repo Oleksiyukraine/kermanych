@@ -6,7 +6,7 @@ import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import type { Task, TaskInsert, TaskPatch, TaskStatus } from "./types";
 
 const TASK_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, image_paths, jira_key, created_at, updated_at";
+  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, image_paths, jira_key, created_at, updated_at";
 
 type TaskRow = {
   id: string;
@@ -22,6 +22,7 @@ type TaskRow = {
   prefix: string | null;
   platform: string | null;
   worktree: boolean;
+  hidden: boolean;
   kind: string | null;
   branch: string | null;
   image_paths: string[] | null;
@@ -39,6 +40,7 @@ export function toTask(row: TaskRow): Task {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     worktree: row.worktree,
+    hidden: row.hidden,
   };
   // Optional keys are omitted rather than set to undefined, so a mapped task deep-equals a
   // hand-written literal in tests and carries no null noise into Vue's reactivity.
@@ -75,6 +77,7 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   if (patch.platform !== undefined) row.platform = patch.platform.trim() || null;
   // A boolean, so no trim/blank-to-null step: `false` is a value, not an empty field.
   if (patch.worktree !== undefined) row.worktree = patch.worktree;
+  if (patch.hidden !== undefined) row.hidden = patch.hidden;
   if (patch.kind !== undefined) row.kind = patch.kind.trim() || null;
   if (patch.branch !== undefined) row.branch = patch.branch.trim() || null;
   if (patch.jiraKey !== undefined) row.jira_key = patch.jiraKey.trim() || null;
@@ -130,6 +133,7 @@ export async function createTask(
       kind: input.kind,
       branch: input.branch,
       worktree: input.worktree,
+      hidden: input.hidden,
       imagePaths: input.imagePaths,
       jiraKey: input.jiraKey,
     }),

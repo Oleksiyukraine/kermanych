@@ -139,6 +139,16 @@ could not be published because its project exists only on this machine; it stays
 the list under the note «Лише на цій машині: проєкт цих задач ще не у хмарі, тому
 команда їх не бачить».
 
+**«Приховати з дошки» keeps a card off «Дошка» without hiding it from you.** The
+launcher's checkbox, off by default, marks the card as yours alone to look at: it
+never reaches the kanban columns, and neither does its status while it runs. It is
+still an ordinary task in every other respect — it sits in your «Задачі» inbox and
+in the sidebar's count, it launches a session the usual way, it pushes status back,
+and every member of the workspace can still read the row. Hiding is a view, never a
+permission. Un-hiding is the same checkbox: open the card from «Задачі», clear it,
+«Зберегти». That is the only way back, because a hidden card has no card on the
+board to click.
+
 ### Jira
 
 A workspace can mirror **one Jira Cloud board** onto «Дошка». The owner connects it
