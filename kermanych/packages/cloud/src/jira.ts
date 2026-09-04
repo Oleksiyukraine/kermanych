@@ -517,6 +517,26 @@ export async function listJiraIssueChildren(
   };
 }
 
+// The capacity screen's read: every worklog of the board whose `started_at` falls in a
+// half-open instant range, regardless of issue. The per-issue reader above serves the
+// ticket dialog; a fortnight of the whole team is a different shape and its own index.
+export async function listJiraWorklogsBetween(
+  client: SupabaseClient,
+  integrationId: string,
+  fromIso: string,
+  toIso: string,
+): Promise<JiraWorklog[]> {
+  const { data, error } = await client
+    .from("jira_worklogs")
+    .select("integration_id, workspace_id, issue_id, worklog_id, author_account_id, author_name, author_avatar, time_spent, seconds, started_at, comment_html")
+    .eq("integration_id", integrationId)
+    .gte("started_at", fromIso)
+    .lt("started_at", toIso)
+    .order("started_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data as WorklogRow[]).map(toJiraWorklog);
+}
+
 // One issue's children replaced wholesale — same reasoning as the columns: a comment
 // deleted in Jira must vanish here, and per-child diffing would buy nothing at this size.
 export async function replaceJiraIssueChildren(

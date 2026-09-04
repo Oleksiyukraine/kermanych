@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   deleteJiraIssues,
+  listJiraWorklogsBetween,
   patchJiraIssueBinding,
   replaceJiraColumns,
   takeJiraSyncLease,
@@ -28,7 +29,7 @@ function fakeClient(...results: Result[]) {
         then: (resolve: (v: Result) => unknown) => Promise.resolve(result).then(resolve),
       };
       for (const op of [
-        "select", "insert", "update", "upsert", "delete", "eq", "in", "is", "or", "order", "single", "maybeSingle",
+        "select", "insert", "update", "upsert", "delete", "eq", "in", "is", "or", "gte", "lt", "order", "single", "maybeSingle",
       ]) {
         builder[op] = (...args: unknown[]) => {
           q.ops.push([op, ...args]);
@@ -204,5 +205,27 @@ describe("replaceJiraColumns", () => {
       name: "To Do",
       status_ids: ["1"],
     });
+  });
+});
+
+describe("listJiraWorklogsBetween", () => {
+  it("reads one integration's worklogs by started_at half-open range, oldest first", async () => {
+    const row = {
+      integration_id: "i1", workspace_id: "w1", issue_id: "10001", worklog_id: "wl1",
+      author_account_id: "acc1", author_name: "Andrii", author_avatar: "", time_spent: "2h",
+      seconds: 7200, started_at: "2026-09-02T08:00:00.000Z", comment_html: "",
+    };
+    const { client, queries } = fakeClient({ data: [row], error: null });
+    const out = await listJiraWorklogsBetween(client, "i1", "2026-09-01T00:00:00.000Z", "2026-09-08T00:00:00.000Z");
+    expect(queries[0]!.table).toBe("jira_worklogs");
+    expect(queries[0]!.ops).toEqual(
+      expect.arrayContaining([
+        ["eq", "integration_id", "i1"],
+        ["gte", "started_at", "2026-09-01T00:00:00.000Z"],
+        ["lt", "started_at", "2026-09-08T00:00:00.000Z"],
+        ["order", "started_at", { ascending: true }],
+      ]),
+    );
+    expect(out[0]).toMatchObject({ worklogId: "wl1", authorAccountId: "acc1", seconds: 7200 });
   });
 });
