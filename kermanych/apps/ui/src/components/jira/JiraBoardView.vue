@@ -1,6 +1,12 @@
 <template>
   <div class="jbv">
     <div class="jbv__bar">
+      <KField
+        v-model="query"
+        class="jbv__search"
+        type="search"
+        :placeholder="t('jira.boardView.searchPlaceholder')"
+      />
       <span v-if="searching" class="jbv__count mono">{{ t('jira.boardView.searchCount', { n: matched.length, total: jira.issues.length, board: boardName }) }}</span>
       <span v-else class="jbv__count mono">{{ t('jira.boardView.count', { n: jira.issues.length, board: boardName }, jira.issues.length) }}</span>
       <span class="jbv__spacer"></span>
@@ -15,12 +21,6 @@
       <KBtn variant="primary" :disabled="!jira.tokenPresent" :title="jira.tokenPresent ? '' : readOnlyHint" @click="creatorOpen = true">
         {{ t('jira.boardView.newTicket') }}
       </KBtn>
-      <KField
-        v-model="query"
-        class="jbv__search"
-        type="search"
-        :placeholder="t('jira.boardView.searchPlaceholder')"
-      />
     </div>
 
     <p v-if="jira.loadError" class="jbv__error mono">{{ jira.loadError }}</p>
