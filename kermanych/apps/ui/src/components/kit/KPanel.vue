@@ -23,6 +23,11 @@
           @click="emit('promoteTask')"
         >⊕</KIconButton>
         <KIconButton
+          v-if="session.kind === 'chat'"
+          :title="t('kit.panel.clear')"
+          @click="emit('clear')"
+        >✕</KIconButton>
+        <KIconButton
           v-if="session.kind === 'agent'"
           :title="t('kit.panel.branch')"
           @click="emit('branch')"
@@ -239,6 +244,7 @@ const emit = defineEmits<{
   newTask: [text: string];
   promoteAgent: [];
   promoteTask: [];
+  clear: [];
   expandAll: [value: boolean];
   effort: [level: ThinkingLevel];
   setModel: [patch: { model: string; provider?: string }];
