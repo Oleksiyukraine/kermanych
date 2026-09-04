@@ -73,6 +73,10 @@ grant delete on table public.workspace_risks to authenticated;
 
 -- No `with check` clause: DELETE policies take `using` only — the row is tested as it
 -- stands, and there is no new version of it to check.
+-- Idempotent: an earlier (colliding) migration version applied this policy out of band on
+-- the shared remote, so drop any existing copy before recreating it at this canonical
+-- version. On a fresh database the drop is a no-op and the create runs normally.
+drop policy if exists workspace_risks_delete_owner on public.workspace_risks;
 create policy workspace_risks_delete_owner on public.workspace_risks for delete to authenticated
   using (public.is_workspace_owner(workspace_id, auth.uid()));
 
