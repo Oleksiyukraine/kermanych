@@ -1638,7 +1638,7 @@ describe('management chat — capacity digest', () => {
   it('sends a weekly digest built from the mirror when there is one', async () => {
     jiraState.integration = { id: 'i1', siteUrl: 'https://x.atlassian.net', projectKey: 'KAN', boardName: 'KAN board' };
     jiraState.issues = [
-      issue({ assigneeAccountId: 'acc1', assigneeName: 'Andrii', remainingEstimateSeconds: 8 * 3600, dueDate: '2099-01-05' }),
+      issue({ assigneeAccountId: 'acc1', assigneeName: 'Andrii', remainingEstimateSeconds: 8 * 3600, startDate: '2099-01-04', dueDate: '2099-01-05' }),
     ];
     await useManagementChat().send('capacity?', 'management-capacity');
     const ask = managementChat.mock.calls[0]![0] as ManagementChatAsk;
@@ -1648,7 +1648,7 @@ describe('management chat — capacity digest', () => {
     expect(c.hoursPerDay).toBe(8);
     expect(c.team).toHaveLength(8);
     expect(c.persons.map((p) => p.name)).toEqual(['Andrii']);
-    expect(c.persons[0]!.openIssues).toBe(0); // due in 2099: outside the window, unflagged
+    expect(c.persons[0]!.openIssues).toBe(0); // starts and ends in 2099: wholly outside the window, unflagged
   });
 
   it('loads the board first when nothing is mirrored yet, and survives a failed read', async () => {
