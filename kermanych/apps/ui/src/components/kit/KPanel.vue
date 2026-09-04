@@ -794,9 +794,6 @@ function answerCancel() {
   margin-top: 10px;
 }
 
-.k-panel__composer {
-  border-top: 2px solid var(--k-line-strong);
-}
 .k-panel__merged-note {
   padding: 14px 12px;
   color: var(--k-muted);
