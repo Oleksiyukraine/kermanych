@@ -464,9 +464,7 @@ export const api = {
   sessionFile: (id: string, path: string): Promise<FileContent> =>
     get<FileContent>(`/sessions/${id}/file?path=${encodeURIComponent(path)}`),
 
-  finish: (
-    id: string,
-  ): Promise<{ merged: boolean; into: string; pushed?: boolean; reason?: string } | { conflict: boolean; files: string[] }> =>
+  finish: (id: string): Promise<{ finished: boolean; branch: string }> =>
     post(`/sessions/${id}/finish`, {}),
 
   createPr: (id: string): Promise<{ ok: boolean }> =>

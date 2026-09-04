@@ -1388,15 +1388,19 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.pushUpdate(id);
   }
 
-  // Preview of what "finish" will do: the target branch, how many commits land,
-  // and whether the worktree has uncommitted work that would be auto-committed.
+  // Preview of what "finish" will do: the base the branch will be PR'd against, how many
+  // commits the branch carries, and whether the worktree has uncommitted work that would be
+  // auto-committed before it is retired.
   async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[]; files: ChangedFile[] }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
     const dir = s.worktreePath || g.localRepoPath;
-    const target = s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : (s.baseBranch ?? "");
+    // The branch the session forked from — the base its PR targets, and the fork point every
+    // count and diff below is taken against. Only a row predating `baseBranch` falls back to
+    // whatever the project repo happens to be on.
+    const target = s.baseBranch || (s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : "");
     const ahead = target ? await this.worktree.aheadCount(g.localRepoPath, target, s.branch) : 0;
     const dirty = await this.worktree.hasUncommitted(dir);
     const conflicts = await this.worktree.unmergedFiles(dir);
@@ -1412,7 +1416,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const g = this.boundProject(s.projectId);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
     const dir = s.worktreePath || g.localRepoPath;
-    const target = s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : (s.baseBranch ?? "");
+    const target = s.baseBranch || (s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : "");
     return this.worktree.fileDiff(dir, target, path);
   }
 
@@ -1436,122 +1440,52 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return this.worktree.readFileContent(dir, path);
   }
 
-  // Merge the session's branch into the project's current branch, then retire the
-  // worktree + branch and keep the session as `merged` history. On a content conflict
-  // it instead pulls the target into the worktree (leaving markers to resolve in an
-  // editor) and marks the session `conflict`; re-running after a resolve merges cleanly.
-  async finishSession(id: string): Promise<{ merged: true; into: string; pushed?: boolean; reason?: string } | { conflict: true; files: string[] }> {
+  // Retire the session: commit whatever is loose so nothing is lost, stop the omp child and
+  // drop the worktree (in-place: hand the project repo back to its base branch). Nothing is
+  // merged anywhere — code leaves Kermanych through a pull request only, so the BRANCH is
+  // kept: it is what the PR points at, and reopening the session continues on it. The row
+  // stays as `merged` history.
+  async finishSession(id: string): Promise<{ finished: true; branch: string }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
     if (s.kind !== "agent")
       throw new Error(`${s.kind} branches can't be finished — merge or discard instead`);
+    if (s.worktree && !s.worktreePath) throw new Error("session has no worktree");
 
-    if (s.worktree) {
-      if (!s.worktreePath) throw new Error("session has no worktree");
-      // Finish targets the branch the session forked from, not whatever the project repo is
-      // checked out on — merging a session into an unrelated branch is how work used to land
-      // in the wrong place. Fall back to the current branch only for a row that predates
-      // baseBranch being recorded.
-      const base = (s.baseBranch || (await this.worktree.currentBranch(g.localRepoPath))).trim();
-      if (!base) throw new Error("project repo has a detached HEAD - checkout a branch first");
-      if (base === s.branch) throw new Error("project repo is on the session branch itself");
+    const dir = s.worktreePath || g.localRepoPath;
+    const base = s.worktree ? "" : (s.baseBranch ?? "");
+    if (!s.worktree) {
+      if (!base) throw new Error("in-place session has no base branch");
       const cur = await this.worktree.currentBranch(g.localRepoPath);
-      if (cur !== base)
-        throw new Error(`project repo is on ${cur || "detached HEAD"}, not the session's base ${base} - checkout ${base} first`);
-      // A prior conflict left the worktree mid-merge — it must be resolved before retrying.
-      if ((await this.worktree.unmergedFiles(s.worktreePath)).length)
-        throw new Error("worktree has unresolved conflicts - resolve them in the editor first");
-      if (await this.worktree.hasUncommitted(s.worktreePath))
-        await this.worktree.commitAll(s.worktreePath, `session work: ${s.name}`);
-
-      // Fold the team's latest into the worktree FIRST, so `base` never receives a conflicted
-      // merge and a conflict is resolved in the agent's own tree (re-finish continues after).
-      const remote = await this.worktree.hasRemote(g.localRepoPath);
-      if (remote) {
-        await this.worktree.fetch(g.localRepoPath, "origin", base);
-        const down = await this.worktree.mergeInto(s.worktreePath, `origin/${base}`);
-        if (down.ok === false && down.conflict) {
-          this.registry.updateSession(id, { status: "conflict" });
-          this.pushUpdate(id);
-          return { conflict: true, files: await this.worktree.unmergedFiles(s.worktreePath) };
-        }
-      }
-
-      const res = await this.worktree.mergeBranch(g.localRepoPath, s.branch, `merge session: ${s.name}`);
-      if (!res.ok) {
-        if (!res.conflict) throw new Error(res.message); // e.g. dirty project tree
-        // Pull the base into the worktree so the conflict can be resolved there.
-        await this.worktree.mergeInto(s.worktreePath, base);
-        this.registry.updateSession(id, { status: "conflict" });
-        this.pushUpdate(id);
-        return { conflict: true, files: await this.worktree.unmergedFiles(s.worktreePath) };
-      }
-      const l = this.map.get(id);
-      if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); this.toolDetails.dropSession(id); this.skillLabels.delete(id); }
-      await this.worktree.removeWorktree(g.localRepoPath, s.worktreePath);
-      await this.worktree.removeBranch(g.localRepoPath, s.branch);
-      this.registry.updateSession(id, { status: "merged", worktreePath: "" });
-      this.pushUpdate(id);
-      // Publish the merged base so local and origin never drift. On a race retry once inside
-      // pushBase; a persistent block leaves the merge local and is reported to the caller.
-      if (remote) {
-        const pushed = await this.pushBase(g.localRepoPath, base);
-        this.pushUpdate(id);
-        return { merged: true, into: base, ...pushed };
-      }
-      return { merged: true, into: base };
+      if (cur !== s.branch)
+        throw new Error(`project is not on ${s.branch} (on ${cur || "detached HEAD"}) - switch to it first`);
     }
+    // A tree mid-merge (the agent folded the base in and hit conflicts) has no committable
+    // state: retiring it would strand the half-done resolution. Resolve first, then finish.
+    if ((await this.worktree.unmergedFiles(dir)).length)
+      throw new Error("unresolved merge conflicts - resolve them before finishing");
+    if (await this.worktree.hasUncommitted(dir))
+      await this.worktree.commitAll(dir, `session work: ${s.name}`);
 
-    // In-place: the local repo is checked out on the session branch. Merge it into base.
-    const base = s.baseBranch;
-    if (!base) throw new Error("in-place session has no base branch");
-    const cur = await this.worktree.currentBranch(g.localRepoPath);
-    if (cur !== s.branch)
-      throw new Error(`project is not on ${s.branch} (on ${cur || "detached HEAD"}) - switch to it first`);
-    if ((await this.worktree.unmergedFiles(g.localRepoPath)).length)
-      throw new Error("project has unresolved conflicts - resolve them first");
-    if (await this.worktree.hasUncommitted(g.localRepoPath))
-      await this.worktree.commitAll(g.localRepoPath, `session work: ${s.name}`);
-
-    await this.worktree.checkout(g.localRepoPath, base);
-    const res = await this.worktree.mergeBranch(g.localRepoPath, s.branch, `merge session: ${s.name}`);
-    if (!res.ok) {
-      // Restore onto the session branch; on a content conflict leave markers there to resolve.
-      await this.worktree.checkout(g.localRepoPath, s.branch);
-      if (!res.conflict) throw new Error(res.message);
-      await this.worktree.mergeInto(g.localRepoPath, base);
-      this.registry.updateSession(id, { status: "conflict" });
-      this.pushUpdate(id);
-      return { conflict: true, files: await this.worktree.unmergedFiles(g.localRepoPath) };
-    }
     const l = this.map.get(id);
     if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); this.toolDetails.dropSession(id); this.skillLabels.delete(id); }
-    await this.worktree.removeBranch(g.localRepoPath, s.branch); // the local repo is left on base
-    this.registry.updateSession(id, { status: "merged" });
+    if (s.worktree) {
+      await this.worktree.removeWorktree(g.localRepoPath, s.worktreePath);
+      this.registry.updateSession(id, { status: "merged", worktreePath: "" });
+    } else {
+      await this.worktree.checkout(g.localRepoPath, base);
+      this.registry.updateSession(id, { status: "merged" });
+    }
     this.pushUpdate(id);
-    return { merged: true, into: base };
+    return { finished: true, branch: s.branch };
   }
 
-  // Publish `base` to origin after a finish. A non-fast-forward rejection means origin moved
-  // since our fetch: fold it into the local base and retry once. A second rejection, or a
-  // conflict folding origin in, leaves the merge standing locally and reports the block — the
-  // operator pulls and pushes rather than the finish looping.
-  private async pushBase(repoDir: string, base: string): Promise<{ pushed: true } | { pushed: false; reason: string }> {
-    let p = await this.worktree.push(repoDir, "origin", base);
-    if (p.ok) return { pushed: true };
-    if (!p.rejected) return { pushed: false, reason: p.message };
-    await this.worktree.fetch(repoDir, "origin", base);
-    const m = await this.worktree.mergeBranch(repoDir, `origin/${base}`, `merge origin/${base}`);
-    if (!m.ok)
-      return { pushed: false, reason: m.conflict ? `origin/${base} has conflicting changes — pull and resolve` : m.message };
-    p = await this.worktree.push(repoDir, "origin", base);
-    return p.ok ? { pushed: true } : { pushed: false, reason: "origin moved again — pull and push" };
-  }
-
-  // Reopen a merged (retired) worktree agent: fork a fresh branch + worktree from the base
-  // — which now holds the merged work — so the same session can continue and be finished again.
-  // The omp child resumes lazily on the next message, rehydrating its saved conversation.
+  // Reopen a retired worktree agent: bring the worktree back ON THE SESSION'S OWN BRANCH,
+  // which finish keeps — the pull request points at it, so continuing here updates that PR.
+  // A row retired before branches were kept has none left; that one forks a fresh branch off
+  // the base instead. The omp child resumes lazily on the next message, rehydrating its
+  // saved conversation.
   async reopenSession(id: string): Promise<Session> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
@@ -1559,14 +1493,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (s.kind !== "agent") throw new Error(`${s.kind} sessions can't be reopened`);
     if (!s.worktree) throw new Error("in-place sessions can't be reopened — create a new task");
     if (s.worktreePath) throw new Error("session already has a worktree");
-    const { branch, baseBranch } = await this.resolveLaunchParams(g, s.name, s.prefix ?? "feature", true, id, s.baseBranch);
+    const kept = !!s.branch && (await this.worktree.refExists(g.localRepoPath, `refs/heads/${s.branch}`));
+    const { branch, baseBranch } = kept
+      ? { branch: s.branch, baseBranch: s.baseBranch }
+      : await this.resolveLaunchParams(g, s.name, s.prefix ?? "feature", true, id, s.baseBranch);
     const wtDir = worktreeDir(id);
     try {
-      await this.worktree.addWorktree(g.localRepoPath, wtDir, branch, baseBranch);
+      if (kept) await this.worktree.attachWorktree(g.localRepoPath, wtDir, branch);
+      else await this.worktree.addWorktree(g.localRepoPath, wtDir, branch, baseBranch);
       await copyCarryFiles(g.localRepoPath, wtDir, g.carryFiles ?? [".env"]);
     } catch (err) {
       await this.worktree.removeWorktree(g.localRepoPath, wtDir).catch(() => {});
-      await this.worktree.removeBranch(g.localRepoPath, branch).catch(() => {});
+      if (!kept) await this.worktree.removeBranch(g.localRepoPath, branch).catch(() => {});
       throw err;
     }
     const next = this.registry.updateSession(id, { status: "done", branch, baseBranch, worktreePath: wtDir });
@@ -1597,7 +1535,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       const dormant: Notice =
         s.status === "merged"
           ? {
-              text: "Сесію влито в проєкт. Натисни «↻ Відновити» вгорі, щоб підняти worktree і продовжити.",
+              text: "Сесію завершено — worktree прибрано, гілка лишилась. Натисни «↻ Відновити» вгорі, щоб підняти worktree і продовжити.",
               code: "session_dormant_merged",
             }
           : {

@@ -8,16 +8,17 @@ import type { Session } from '@kermanych/core';
 // accounts for the whole project. The lifecycle they trace:
 //   tasks      — backlog, not yet launched
 //   active     — an agent is working or is blocked on the operator
-//   waiting    — the agent finished but the task is not closed out (not merged, no PR yet)
-//   completed  — merged, or set aside by the operator (the old «Відкладені»)
-//   errors     — a merge failure, a conflict, or any other error that needs a human
+//   waiting    — the agent finished but the task is not closed out (no PR, not retired yet)
+//   completed  — finished, or set aside by the operator (the old «Відкладені»)
+//   errors     — a conflict or any other error that needs a human
 export type Bucket = 'active' | 'waiting' | 'completed' | 'errors' | 'tasks';
 
-// The agent finished on its own but the work is not closed out — it is waiting for a merge
-// or a PR. `stopped` sits here too: an interrupted run is settled but undecided, not done.
+// The agent finished on its own but the work is not closed out — it is waiting for a PR or
+// for the operator to retire it. `stopped` sits here too: an interrupted run is settled but
+// undecided, not done.
 const WAITING: readonly Session['status'][] = ['done', 'stopped'];
 
-// Needs a human before it can move: a failed merge, a conflict, or a crashed run.
+// Needs a human before it can move: a conflict, or a crashed run.
 const ERRORS: readonly Session['status'][] = ['error', 'conflict'];
 
 // A FORK — a discussion or review branch — is bucketed by the agent it was forked off, not
@@ -34,7 +35,7 @@ export function bucketOf(
   parent: (id: string) => Session | undefined,
 ): Bucket {
   const owner = (s.parentSessionId ? parent(s.parentSessionId) : undefined) ?? s;
-  // Merged and operator-archived sessions are both «done with» — one bucket for both.
+  // Finished and operator-archived sessions are both «done with» — one bucket for both.
   if (owner.archived || owner.status === 'merged') return 'completed';
   if (owner.status === 'backlog') return 'tasks';
   if (ERRORS.includes(owner.status)) return 'errors';
