@@ -1084,6 +1084,7 @@ export const en: MessageSchema = {
         thisMonth: 'This month',
         nextMonth: 'Next month',
         last2Weeks: 'Last 2 weeks',
+        custom: 'Custom',
       },
       wholeTeam: 'Whole team',
       unassigned: 'Unassigned',

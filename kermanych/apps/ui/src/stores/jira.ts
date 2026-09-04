@@ -174,13 +174,20 @@ export const useJira = defineStore('jira', () => {
     );
   }
 
+  // Which caller currently owns the session. The board and Team Capacity both open/close
+  // this singleton; a view that is leaving must not tear down the session the arriving
+  // view just built, so close() is a no-op for any token but the latest.
+  let opener = 0;
+
   // The Jira view's lifecycle: probe + board + realtime + the sync ticker. Idempotent —
-  // reopening rebuilds one channel and one ticker, never two.
-  async function open(workspaceId: string): Promise<void> {
+  // reopening rebuilds one channel and one ticker, never two. Returns a token the caller
+  // hands back to close(), so a stale unmount cannot tear down a session it no longer owns.
+  async function open(workspaceId: string): Promise<number> {
+    const token = ++opener;
     close();
     await probe(workspaceId);
     const row = integration.value;
-    if (!row) return;
+    if (!row) return token;
     await loadBoard();
 
     unsubscribe = subscribeJiraIssues(auth.client, row.id, (change) => {
@@ -204,6 +211,7 @@ export const useJira = defineStore('jira', () => {
     };
     void tick();
     ticker = setInterval(() => void tick(), SYNC_TICK_MS);
+    return token;
   }
 
   // The «Синхронізувати» button. A deliberate human act, so it differs from the tick in
@@ -233,7 +241,8 @@ export const useJira = defineStore('jira', () => {
     }
   }
 
-  function close(): void {
+  function close(token?: number): void {
+    if (token !== undefined && token !== opener) return;
     generation++;
     unsubscribe?.();
     unsubscribe = undefined;

@@ -1088,6 +1088,7 @@ export const uk = {
         thisMonth: 'Цей місяць',
         nextMonth: 'Наступний місяць',
         last2Weeks: 'Останні 2 тижні',
+        custom: 'Свій період',
       },
       wholeTeam: 'Уся команда',
       unassigned: 'Не призначено',

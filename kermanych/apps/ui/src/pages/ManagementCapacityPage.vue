@@ -22,8 +22,18 @@
 
     <template v-else>
       <div class="cap__toolbar">
-        <KDateField v-model="from" :label="t('management.capacity.from')" :now-ms="nowMs" />
-        <KDateField v-model="to" :label="t('management.capacity.to')" :now-ms="nowMs" />
+        <KDateField
+          :model-value="from"
+          :label="t('management.capacity.from')"
+          :now-ms="nowMs"
+          @update:model-value="(v: string) => editDate('from', v)"
+        />
+        <KDateField
+          :model-value="to"
+          :label="t('management.capacity.to')"
+          :now-ms="nowMs"
+          @update:model-value="(v: string) => editDate('to', v)"
+        />
         <KChipSelect v-model="presetModel" :options="presetOptions" :title="t('management.capacity.from')" />
         <KSelect v-model="person" :options="personOptions" />
         <KTabs v-model="granularityModel" :tabs="granularityTabs" />
@@ -133,7 +143,7 @@
 // View state only. Every number comes from lib/capacity.ts `capacityReport`, which is also
 // what the Менеджмент assistant is handed — so a figure quoted in the chat is a figure on
 // this screen.
-import { computed, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import type { JiraWorklog } from '@kermanych/cloud';
@@ -178,6 +188,9 @@ const today = computed(() => todayIso(nowMs.value));
 
 const TEAM = '@team';
 const ALL = '';
+// The chip's own «no preset» option: KChipSelect falls back to the raw model value when it
+// finds no matching option, which rendered blank the moment a date edit cleared `preset`.
+const CUSTOM = 'custom';
 
 // ── range ─────────────────────────────────────────────────────────────────────
 
@@ -208,23 +221,30 @@ function applyPreset(p: CapacityPreset): void {
   granularityChoice.value = '';
 }
 
-// Editing a date deselects the preset; the chip then reads as «custom».
-watch([from, to], () => {
-  if (preset.value && presetRange(preset.value, today.value).from !== from.value) preset.value = '';
-  else if (preset.value && presetRange(preset.value, today.value).to !== to.value) preset.value = '';
-});
+// A typed or picked date is the operator's intent: it ends the preset and releases the
+// Days/Weeks override, which is what «until the range changes» means. applyPreset and the
+// saved-range restore set the refs directly and keep their own state.
+function editDate(which: 'from' | 'to', value: string): void {
+  if (which === 'from') from.value = value;
+  else to.value = value;
+  preset.value = '';
+  granularityChoice.value = '';
+}
 
-// KChipSelect is generic over its option type; the model is a plain string here so the
-// «no preset» state ('') needs no option of its own.
+// KChipSelect is generic over its option type; the model is a plain string. '' (no preset,
+// i.e. a custom range) reads as the CUSTOM option rather than falling back to the raw '',
+// which KChipSelect cannot label.
 const presetModel = computed({
-  get: () => preset.value as string,
+  get: () => preset.value || CUSTOM,
   set: (v: string) => {
-    if (v) applyPreset(v as CapacityPreset);
+    // Picking CUSTOM is a no-op: it only names the state the operator is already in.
+    if (v !== CUSTOM && (CAPACITY_PRESETS as readonly string[]).includes(v)) applyPreset(v as CapacityPreset);
   },
 });
-const presetOptions = computed(() =>
-  CAPACITY_PRESETS.map((value) => ({ value: value as string, label: t(`management.capacity.preset.${value}`) })),
-);
+const presetOptions = computed(() => [
+  ...CAPACITY_PRESETS.map((value) => ({ value: value as string, label: t(`management.capacity.preset.${value}`) })),
+  { value: CUSTOM, label: t('management.capacity.preset.custom') },
+]);
 
 const range = computed<CapacityRange | undefined>(() =>
   from.value && to.value ? normalizeRange({ from: from.value, to: to.value }) : undefined,
@@ -287,26 +307,43 @@ async function loadWorklogs(): Promise<void> {
   }
 }
 
+// Token for the session THIS page opened — see stores/jira.ts. Kept so the unmount below
+// closes only its own session, never one an arriving view (the board, or another workspace's
+// Team Capacity) has since opened.
+let openToken: number | undefined;
+
+async function enter(id: string): Promise<void> {
+  person.value = ALL;
+  flaggedOnly.value = false;
+  const saved = readSaved();
+  // A remembered PRESET is re-resolved against today — «next 2 weeks» saved last Monday
+  // means this coming fortnight, not last week's. Only custom dates are kept verbatim. The
+  // shape is validated: a hand-edited or future-format blob must not reach presetRange with
+  // a preset it does not recognize.
+  if (saved?.preset && (CAPACITY_PRESETS as readonly string[]).includes(saved.preset)) applyPreset(saved.preset);
+  else if (saved?.from && saved.to) {
+    from.value = saved.from;
+    to.value = saved.to;
+    preset.value = '';
+  } else applyPreset('next2Weeks');
+  if (saved?.granularity === 'day' || saved?.granularity === 'week') granularityChoice.value = saved.granularity;
+  openToken = await jira.open(id);
+  void loadWorklogs();
+}
+
+// The first open runs post-mount rather than in an `immediate` watcher: Vue flushes a
+// leaving view's onUnmounted AFTER an entering view's setup, so an immediate open() here
+// would have its generation bumped moments later by the board's own close() (both views
+// share the one useJira() session) and probe() would bail. Mounting is already after that
+// flush, so this open sees a settled store.
+onMounted(() => {
+  if (props.workspaceId) void enter(props.workspaceId);
+});
 watch(
   () => props.workspaceId,
-  async (id) => {
-    if (!id) return;
-    person.value = ALL;
-    flaggedOnly.value = false;
-    const saved = readSaved();
-    // A remembered PRESET is re-resolved against today — «next 2 weeks» saved last Monday
-    // means this coming fortnight, not last week's. Only custom dates are kept verbatim.
-    if (saved?.preset) applyPreset(saved.preset);
-    else if (saved?.from && saved.to) {
-      from.value = saved.from;
-      to.value = saved.to;
-      preset.value = '';
-    } else applyPreset('next2Weeks');
-    if (saved?.granularity) granularityChoice.value = saved.granularity;
-    await jira.open(id);
-    void loadWorklogs();
+  (id) => {
+    if (id) void enter(id);
   },
-  { immediate: true },
 );
 
 watch(range, () => void loadWorklogs());
@@ -319,7 +356,7 @@ watch(
   },
 );
 
-onUnmounted(() => jira.close());
+onUnmounted(() => jira.close(openToken));
 
 // The unfiltered report feeds the person picker, so the list does not shrink to the one
 // person picked.
