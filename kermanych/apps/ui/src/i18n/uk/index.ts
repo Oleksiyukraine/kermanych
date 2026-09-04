@@ -1881,7 +1881,7 @@ export const uk = {
     boardView: {
       count: '{n} тікетів · {board}',
       searchPlaceholder: 'Пошук тікетів…',
-      searchCount: 'знайдено {n} з {total}',
+      searchCount: 'знайдено {n} з {total} · {board}',
       searchEmpty: 'Нічого не знайдено за запитом «{q}»',
       readOnly: 'лише читання',
       readOnlyHint: 'Додайте свій Jira-токен у Менеджмент → Integrations, щоб діяти',
