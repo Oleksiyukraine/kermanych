@@ -28,7 +28,12 @@ test("terminal agent_end -> done, non-terminal ignored", () => {
 });
 
 test("NOTIFY_STATUSES is the attention set", () => {
-  expect([...NOTIFY_STATUSES]).toEqual(["waiting_input", "error", "conflict", "done"]);
+  expect([...NOTIFY_STATUSES]).toEqual(["waiting_input", "error", "conflict", "done", "in_review"]);
+});
+
+test("shouldNotify fires when a pushed PR lands the session on review", () => {
+  expect(shouldNotify("tool", "in_review")).toBe(true);
+  expect(shouldNotify("in_review", "in_review")).toBe(false);
 });
 
 test("shouldNotify fires on a transition INTO a notify status", () => {

@@ -149,6 +149,7 @@ export {
   deleteJiraIssues,
   patchJiraIssueBinding,
   listJiraIssueChildren,
+  listJiraWorklogsBetween,
   replaceJiraIssueChildren,
   subscribeJiraIssues,
 } from "./jira";

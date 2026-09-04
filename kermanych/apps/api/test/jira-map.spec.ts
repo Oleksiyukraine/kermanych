@@ -30,7 +30,7 @@ const rawIssue: JiraRawIssue = {
     reporter: { displayName: "Olha" },
     status: { id: "3", name: "In Progress", statusCategory: { key: "indeterminate" } },
     parent: { key: "KAN-40" },
-    timetracking: { originalEstimate: "2d 4h", remainingEstimate: "1d" },
+    timetracking: { originalEstimate: "2d 4h", remainingEstimate: "1d", originalEstimateSeconds: 72000, remainingEstimateSeconds: 28800 },
     duedate: "2026-09-30",
     customfield_10015: "2026-09-05",
     updated: "2026-09-02T10:00:00.000+0300",
@@ -96,6 +96,17 @@ describe("mapIssue", () => {
     // The payload holds no timeSpent yet — nothing has been logged — and a mirror that
     // guessed one would disagree with Jira's own panel.
     expect(issue.timeSpent).toBe("");
+    expect(issue.originalEstimateSeconds).toBe(72000);
+    expect(issue.remainingEstimateSeconds).toBe(28800);
+    // Nothing logged → Jira sends no timeSpentSeconds; the mirror says 0, not NaN.
+    expect(issue.timeSpentSeconds).toBe(0);
+  });
+
+  it("reads 0 for every numeric counter when Jira sends no timetracking at all", () => {
+    const issue = mapIssue(integration, { ...rawIssue, fields: { ...rawIssue.fields, timetracking: undefined } });
+    expect(issue.originalEstimateSeconds).toBe(0);
+    expect(issue.timeSpentSeconds).toBe(0);
+    expect(issue.remainingEstimateSeconds).toBe(0);
   });
 });
 

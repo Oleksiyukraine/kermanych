@@ -121,3 +121,40 @@ describe("ManagementController — CodedError relay", () => {
     expect(body.params).toEqual({ seconds: 240 });
   });
 });
+
+describe("ManagementController — capacity context", () => {
+  it("rebuilds the capacity digest with caps and drops a malformed one", async () => {
+    let seen: ManagementChatAsk | undefined;
+    const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
+    const weeks = Array.from({ length: 20 }, (_, i) => ({ week: `2026-01-${String(i + 1).padStart(2, "0")}`, capacityH: 40, plannedH: -3, loggedH: 1.26 }));
+    await ctl.ask(
+      chatAsk({
+        context: {
+          workspaceName: "A",
+          section: "s",
+          risks: [],
+          members: [],
+          capacity: {
+            from: "2026-08-17",
+            to: "2026-10-11",
+            hoursPerDay: 8,
+            team: weeks,
+            persons: [{ name: " Марина ", weeks, openIssues: 2.7, unscheduled: -1, overdue: 1 }, { name: 7 }],
+            unscheduled: 1,
+            overdue: "x",
+          },
+        } as unknown as ManagementChatAsk["context"],
+      }),
+    );
+    const c = seen!.context.capacity!;
+    expect(c.team).toHaveLength(12);
+    expect(c.team[0]).toEqual({ week: "2026-01-01", capacityH: 40, plannedH: 0, loggedH: 1.3 });
+    expect(c.persons).toHaveLength(2);
+    expect(c.persons[0]).toMatchObject({ name: "Марина", openIssues: 2, unscheduled: 0, overdue: 1 });
+    expect(c.persons[1]).toMatchObject({ name: "", weeks: [] });
+    expect(c.overdue).toBe(0);
+
+    await ctl.ask(chatAsk({ context: { workspaceName: "A", section: "s", risks: [], members: [], capacity: { from: "не дата" } } as unknown as ManagementChatAsk["context"] }));
+    expect("capacity" in seen!.context).toBe(false);
+  });
+});

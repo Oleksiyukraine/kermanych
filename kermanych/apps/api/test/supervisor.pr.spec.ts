@@ -6,15 +6,20 @@ import type { WorktreeService } from "../src/worktree/worktree.service";
 type RpcOpts = { cwd: string; fork?: string; noTools?: boolean; tools?: string[] };
 const started: RpcOpts[] = [];
 const prompts: string[] = [];
+// The supervisor's own event sink, captured so a test can play a turn's `agent_end` back at
+// it — that frame is where the PR request turns into a status.
+const eventCbs: ((e: unknown) => void)[] = [];
 vi.mock("../src/rpc/rpc-session", () => {
   class FakeRpc {
     constructor(opts: RpcOpts) { started.push(opts); }
-    onEvent() {} onExit() {}
+    onEvent(cb: (e: unknown) => void) { eventCbs.push(cb); }
+    onExit() {}
     async start() {}
     async switchSession() {}
     async getState() { return { sessionId: "c", sessionFile: "/tmp/c.jsonl" }; }
     async getAllMessages() { return []; }
     async stop() {}
+    isAlive() { return true; }
     prompt(text: string) { prompts.push(text); }
     followUp(text: string) { prompts.push(text); }
     steer(text: string) { prompts.push(text); }
@@ -34,7 +39,7 @@ function make() {
   const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth(), stubSkills());
   return { sup, registry };
 }
-beforeEach(() => { started.length = 0; prompts.length = 0; });
+beforeEach(() => { started.length = 0; prompts.length = 0; eventCbs.length = 0; });
 
 describe("createPullRequest", () => {
   it("refuses to open a PR for a non-agent session", async () => {
@@ -74,5 +79,43 @@ describe("createPullRequest", () => {
     const p = prompts.at(-1)!;
     expect(p).toContain("HOUSE RULE: squash-merge only");
     expect(p).not.toContain("Conventional Commits");
+  });
+
+  it("settles the session on in_review when the PR turn ends", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
+    registry.updateSession(s.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "done" });
+
+    await sup.createPullRequest(s.id);
+    // Mid-push the card must still read as active work, not as a review request.
+    expect(sup.snapshot().sessions.find((x) => x.id === s.id)!.status).not.toBe("in_review");
+
+    for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
+
+    expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("in_review");
+    // …and the live entry agrees, or merge() would keep shadowing the row.
+    expect(sup.snapshot().sessions.find((x) => x.id === s.id)!.status).toBe("in_review");
+  });
+
+  it("leaves an ordinary turn on done, and does not re-review the next one", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
+    registry.updateSession(s.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "done" });
+
+    await sup.sendMessage(s.id, "ще одну правку", "prompt");
+    for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
+    expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("done");
+
+    // The flag is consumed by the turn it was set for: a PR turn followed by an ordinary
+    // one must not leave the session parked on review forever.
+    await sup.createPullRequest(s.id);
+    for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
+    expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("in_review");
+
+    await sup.sendMessage(s.id, "і ще одну", "prompt");
+    for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
+    expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("done");
   });
 });

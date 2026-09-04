@@ -4,7 +4,7 @@ import type { TaskStatus } from "../src/types";
 
 const ALL: TaskStatus[] = [
   "backlog", "queued", "thinking", "tool", "waiting_input",
-  "done", "error", "stopped", "merged", "conflict",
+  "done", "in_review", "error", "stopped", "merged", "conflict",
 ];
 
 test("taskStatusFromSession is the identity map today", () => {
@@ -17,8 +17,8 @@ test("taskStatusFromSession ignores everything except status", () => {
   expect(taskStatusFromSession({ status: "thinking", contextPercent: 42 } as { status: TaskStatus })).toBe("thinking");
 });
 
-test("isTerminalTaskStatus marks exactly the five end states", () => {
-  expect(ALL.filter(isTerminalTaskStatus)).toEqual(["done", "error", "stopped", "merged", "conflict"]);
+test("isTerminalTaskStatus marks exactly the six end states", () => {
+  expect(ALL.filter(isTerminalTaskStatus)).toEqual(["done", "in_review", "error", "stopped", "merged", "conflict"]);
 });
 
 test("isTerminalTaskStatus rejects the active and backlog states", () => {

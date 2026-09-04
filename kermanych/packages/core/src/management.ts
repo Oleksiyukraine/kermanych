@@ -111,7 +111,19 @@ export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
     hint: "зміни по релізах",
     capability: "read_write",
   },
-  { name: "management-capacity", path: "team-capacity", label: "Team Capacity", hint: "навантаження команди", capability: "none", limitation: NOT_BUILT },
+  // Readable since Team Capacity got a screen: it shows Jira's estimates and worklogs
+  // against an 8 h/day baseline. Nothing on it is ours to write — load changes by editing
+  // tickets in Jira — so the assistant describes it (from the digest in its context) and
+  // refuses to change it with this sentence.
+  {
+    name: "management-capacity",
+    path: "team-capacity",
+    label: "Team Capacity",
+    hint: "навантаження команди",
+    capability: "read",
+    limitation:
+      "розділ лише читає оцінки й ворклоги Jira — навантаження змінюється редагуванням тікетів у Jira, не з чату",
+  },
   {
     name: "management-integrations",
     path: "integrations",

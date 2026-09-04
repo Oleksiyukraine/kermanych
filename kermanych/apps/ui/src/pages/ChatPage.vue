@@ -5,148 +5,90 @@
       {{ t('chat.page.blank') }}
     </div>
 
-    <div v-else class="chat__card">
-      <!-- header — chat title + chat→task / backlog / new-chat actions -->
-      <header class="chat__head">
-        <div class="chat__head-title">
-          <KStatusDot v-if="chatSession" :status="chatSession.status" />
-          <span>{{ t('chat.page.title') }}</span>
-        </div>
-        <div class="chat__head-actions">
-          <KIconButton
-            :disabled="!isBound || promoting || !chatId"
-            :title="promoting ? t('chat.page.promoting') : !isBound ? BIND_HINT : t('chat.page.promoteTip')"
-            @click="promote"
-          >▶</KIconButton>
-          <KIconButton
-            :disabled="!chatId"
-            :title="t('chat.page.toBacklogTip')"
-            @click="toBacklog"
-          >⊕</KIconButton>
-          <KIconButton
-            :disabled="!chatId"
-            :title="t('chat.page.clearTip')"
-            @click="clearChat"
-          >✕</KIconButton>
-        </div>
-      </header>
-      <!-- scrollable transcript -->
-      <div ref="messagesEl" class="chat__messages">
-        <template v-if="blocks.length">
-          <template v-for="block in blocks" :key="block.id">
-            <KChatMessage v-if="block.request" role="user">{{ block.request.text }}</KChatMessage>
-
-            <template v-for="(item, i) in block.items" :key="block.id + ':' + i">
-              <template v-if="item.kind === 'group'">
-                <KToolRow
-                  v-for="m in item.members"
-                  :key="m.id"
-                  :entry="m"
-                  :session-id="chatId ?? ''"
-                  :expand-all="EXPAND_ALL_NONE"
-                />
-              </template>
-
-              <template v-else-if="item.kind === 'entry'">
-                <KChatMessage v-if="item.entry.kind === 'assistant_text'" role="assistant">
-                  <div class="k-log__markdown" v-html="renderMarkdown(item.entry.text)"></div>
-                </KChatMessage>
-
-                <KThoughtToggle
-                  v-else-if="item.entry.kind === 'assistant_thinking'"
-                  :label="t('chat.page.thought')"
-                  :open="openThoughts.has(item.entry.id)"
-                  @toggle="toggleThought(item.entry.id)"
-                >
-                  <div class="k-log__markdown" v-html="renderMarkdown(item.entry.text)"></div>
-                </KThoughtToggle>
-
-                <KToolRow
-                  v-else-if="item.entry.kind === 'tool'"
-                  :entry="item.entry"
-                  :session-id="chatId ?? ''"
-                  :expand-all="EXPAND_ALL_NONE"
-                />
-
-                <div
-                  v-else-if="item.entry.kind === 'notice'"
-                  class="chat__notice mono"
-                  :class="`chat__notice--${item.entry.level}`"
-                >{{ noticeText(item.entry) }}</div>
-              </template>
-            </template>
-          </template>
-        </template>
-        <div v-else class="chat__empty mono">{{ t('chat.page.empty') }}</div>
-      </div>
-
-      <!-- composer pinned to the bottom -->
-      <div class="chat__composer">
-        <KComposer
-          v-model="draft"
-          :model="chatSession?.model"
-          :models="store.models"
-          :effort="chatSession?.effort"
-          :context="chatSession?.contextPercent"
-          :usage="chatSession?.usage"
-          :placeholder="t('chat.page.placeholder')"
-          @send="onSend"
-          @effort="onEffort"
-          @set-model="onSetModel"
+    <!-- The chat IS the agent panel: the exact same KPanel + KRequestBlock stack the Агенти
+         page renders, so the two chats are one component. Only the page chrome differs — here
+         it is full-width and standalone, there it sits in a resizable detail column. The
+         chat-only header actions (promote ▶, backlog ⊕, new chat ✕) live inside KPanel,
+         gated on `session.kind === 'chat'`. -->
+    <KPanel
+      v-else-if="chatSession"
+      class="chat__panel"
+      :session="chatSession"
+      :promoting="promoting"
+      :refreshing="refreshing"
+      :models="store.models"
+      :placeholder="t('chat.page.placeholder')"
+      @stop="onStop"
+      @send="onSend"
+      @answer="onAnswer"
+      @editor="onEditor"
+      @restart="onRestart"
+      @refresh="onRefresh"
+      @summary="onSummary"
+      @newTask="onNewTask"
+      @promoteAgent="promote"
+      @promoteTask="toBacklog"
+      @clear="clearChat"
+      @expand-all="onExpandAll"
+      @effort="onEffort"
+      @set-model="onSetModel"
+    >
+      <template v-if="blocks.length">
+        <KRequestBlock
+          v-for="(block, i) in blocks"
+          :key="chatSession.id + ':' + block.id"
+          :block="block"
+          :session-id="chatSession.id"
+          :open="i === blocks.length - 1"
+          :expand-all="expandAll"
         />
-      </div>
-    </div>
+      </template>
+      <div v-else class="chat__log-empty mono">{{ t('chat.page.empty') }}</div>
+    </KPanel>
   </main>
 </template>
 
 <script setup lang="ts">
-// v3 Чат — a standalone, full-width chat over one `kind: 'chat'` session per project.
-// It reuses the most recent chat for the selected project (or creates one), renders its
-// transcript through the shared `buildChatBlocks` grouping, and sends via the store.
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
+// v3 Чат — a standalone, full-width chat over one `kind: 'chat'` session per project. It
+// reuses the most recent chat for the selected project (or creates one) and renders its
+// transcript through the SAME KPanel + KRequestBlock stack as the Агенти page's chat, so
+// the two are one component: log grouping, decision block, stall banner, live status, todo
+// lane, my-message navigation and the composer's model/effort chips all come for free.
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { buildChatBlocks, taskNameFromText } from '@kermanych/core';
-import type { ImageInput, ThinkingLevel, TranscriptEntry } from '@kermanych/core';
-import { localizeNotice } from '../lib/i18n-coded';
+import type { ImageInput, RpcExtensionUIResponse, Session, ThinkingLevel } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useBoard } from 'stores/board';
 import { useAuth } from 'stores/auth';
 import { useProjects } from 'stores/projects';
-import { renderMarkdown } from '../lib/markdown';
+import type { MessageMode } from '../lib/api';
 import { taskInsertFromDraft } from '../lib/tasks-view';
-import { EXPAND_ALL_NONE } from '../lib/expand-all';
-import KChatMessage from 'components/kit/KChatMessage.vue';
-import KThoughtToggle from 'components/kit/KThoughtToggle.vue';
-import KToolRow from 'components/kit/KToolRow.vue';
-import KComposer from 'components/kit/KComposer.vue';
-import KStatusDot from 'components/kit/KStatusDot.vue';
-import KIconButton from 'components/kit/KIconButton.vue';
+import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
+import KPanel from 'components/kit/KPanel.vue';
+import KRequestBlock from 'components/kit/KRequestBlock.vue';
 
 const store = useOrchestrator();
 const board = useBoard();
 const auth = useAuth();
 const projects = useProjects();
-const { t, te } = useI18n();
-
-// A transcript notice: server Ukrainian `text`, re-rendered from `code`+`params` when the
-// build knows the code (falls back to `text` otherwise). See lib/i18n-coded.ts.
-const noticeText = (entry: Extract<TranscriptEntry, { kind: 'notice' }>): string =>
-  localizeNotice({ t, te }, entry);
-
-const draft = ref('');
-const chatId = ref<string | undefined>(undefined);
-const messagesEl = ref<HTMLElement | null>(null);
-
 const router = useRouter();
-const BIND_HINT = computed(() => t('chat.page.bindHint'));
-// Promotion spins up a worktree, so it is blocked until the project is bound.
+const { t } = useI18n();
+
+const chatId = ref<string | undefined>(undefined);
+// Promotion spins up a worktree and respawns omp; the ▶ stays down until the server answers.
 const promoting = ref(false);
+// The composer's ↻ (rehydrate) stays down until the server answers.
+const refreshing = ref(false);
+// «розгорнути / стиснути все» is per-session detail state — reset on a chat switch so a
+// stale command is not adopted by the newly opened session's rows.
+const expandAll = ref<ExpandAllCommand>(EXPAND_ALL_NONE);
+
+const BIND_HINT = computed(() => t('chat.page.bindHint'));
 const selectedProject = computed(() => store.projects.find((p) => p.id === store.selectedProjectId));
 const isBound = computed(() => !!selectedProject.value?.localRepoPath);
 const chatSession = computed(() => store.sessions.find((s) => s.id === chatId.value));
-// Reasoning traces start collapsed; the set tracks the ones the operator opened.
-const openThoughts = reactive(new Set<string>());
 // Guard against a double-create if the project changes mid-flight while a create is pending.
 let ensuring = false;
 
@@ -154,32 +96,140 @@ const blocks = computed(() =>
   chatId.value ? buildChatBlocks(store.transcripts[chatId.value] ?? []) : [],
 );
 
-// The composer's effort chip. A chat thinks as hard as it is told to, same as an agent; the
-// api answers with the saved row, so a refusal from omp must surface rather than pass silently.
+// Which omp message mode the next message takes. A fresh chat starts its first turn with a
+// prompt; a settled chat gets a follow-up; a live one is steered mid-turn. Same rule as the
+// Агенти panel, so a chat and an agent read identically.
+function nextMode(s: Session): MessageMode {
+  const history = store.transcripts[s.id] ?? [];
+  const hasTurn = history.some((e) => e.kind === 'user_text' || e.kind === 'assistant_text');
+  return !hasTurn ? 'prompt' : s.status === 'done' ? 'follow_up' : 'steer';
+}
+
+async function onSend(text: string, images: ImageInput[]): Promise<void> {
+  const s = chatSession.value;
+  if (!s) return;
+  try {
+    await store.sendMessage(s.id, text, nextMode(s), images);
+  } catch (e) {
+    // A failed send (e.g. the omp child died and could not be respawned) must be visible,
+    // not swallowed — otherwise the chat looks silently stuck.
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+function onStop(): void {
+  const s = chatSession.value;
+  if (s) void store.stopSession(s.id);
+}
+
+function onAnswer(res: RpcExtensionUIResponse): void {
+  const s = chatSession.value;
+  if (s) void store.answerUi(s.id, res);
+}
+
+function onEditor(): void {
+  const s = chatSession.value;
+  if (s) void store.openEditor(s.id).catch(() => {});
+}
+
+async function onRestart(): Promise<void> {
+  const s = chatSession.value;
+  if (!s) return;
+  try {
+    await store.restartSession(s.id);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+// Composer ↻ — wake a dormant chat so its history comes back. After an app restart the api
+// has no omp child for the session, so the transcript reads empty; this respawns the child
+// and reloads its transcript without sending anything.
+async function onRefresh(): Promise<void> {
+  const s = chatSession.value;
+  if (!s || refreshing.value) return;
+  refreshing.value = true;
+  try {
+    await store.resumeSession(s.id);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    refreshing.value = false;
+  }
+}
+
+// Composer ≡ — ask the chat itself to recap. The same canned operator message as the Агенти
+// panel, so the summary reads the same wherever it is asked for.
+async function onSummary(): Promise<void> {
+  const s = chatSession.value;
+  if (!s) return;
+  try {
+    await store.sendMessage(s.id, t('agents.prompt.summary'), nextMode(s));
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+function onExpandAll(on: boolean): void {
+  expandAll.value = nextExpandAll(expandAll.value, on);
+}
+
+// The composer's effort chip. omp refuses a level its provider cannot run and the api reports
+// that refusal rather than writing the row — so a failure surfaces, or the chip snaps back
+// with no explanation.
 async function onEffort(level: ThinkingLevel): Promise<void> {
-  const id = chatId.value;
-  if (!id) return;
+  const s = chatSession.value;
+  if (!s) return;
   try {
-    await store.setEffort(id, level);
+    await store.setEffort(s.id, level);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
 }
 
-// The composer's model picker on the chat — mirror of onEffort.
+// The composer's model picker — mirror of onEffort.
 async function onSetModel(patch: { model: string; provider?: string }): Promise<void> {
-  const id = chatId.value;
-  if (!id) return;
+  const s = chatSession.value;
+  if (!s) return;
   try {
-    await store.setSessionModel(id, patch);
+    await store.setSessionModel(s.id, patch);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
 }
 
-function toggleThought(id: string): void {
-  if (openThoughts.has(id)) openThoughts.delete(id);
-  else openThoughts.add(id);
+// A text selection in the transcript → a backlog card: the same «В беклог» path as the
+// header ⊕, but seeded from the picked passage instead of the opening ask.
+async function onNewTask(text: string): Promise<void> {
+  const pid = store.selectedProjectId;
+  const userId = auth.user?.id;
+  const seed = text.trim();
+  if (!pid || !userId || !seed) return;
+  if (!projects.byId.has(pid)) {
+    store.notify(t('chat.page.notifyNotCloudTask'), 'error');
+    return;
+  }
+  try {
+    const card = await board.createTask(
+      taskInsertFromDraft(
+        {
+          name: taskNameFromText(seed),
+          task: seed,
+          model: chatSession.value?.model,
+          prefix: 'feature',
+          worktree: true,
+          hidden: false,
+        },
+        pid,
+        userId,
+      ),
+    );
+    if (!card) return; // the store has already said why
+    store.setBucket('tasks');
+    void router.push({ name: 'agents' });
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
 }
 
 // Reuse the most recent chat session for the selected project, else create one. Then make
@@ -213,22 +263,12 @@ async function ensureChat(): Promise<void> {
   }
 }
 
-async function onSend(text: string, images: ImageInput[]): Promise<void> {
-  const id = chatId.value;
-  if (!id) return;
-  try {
-    await store.sendMessage(id, text, 'prompt', images);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
-}
-
 // Promotion grows a worktree and starts building, so it is agent work and needs a card —
 // otherwise its status mirrors nowhere and the team never sees the run. The card is minted
 // first and its id travels into the promotion, which stamps it on the row.
 async function promote(): Promise<void> {
-  // The button's `:disabled` is not a guarantee: keyboard and programmatic activation
-  // reach here regardless, and a second run would mint a second card.
+  // The button's `:disabled` is not a guarantee: keyboard and programmatic activation reach
+  // here regardless, and a second run would mint a second card.
   if (promoting.value) return;
   const id = chatId.value;
   const pid = store.selectedProjectId;
@@ -239,8 +279,8 @@ async function promote(): Promise<void> {
     store.notify(t('chat.page.notifyNotCloudAgent'), 'error');
     return;
   }
-  // The other half of what the disabled button says: promotion grows a worktree, so without
-  // a local binding the card would be minted and then refused server-side, orphaning it.
+  // Promotion grows a worktree, so without a local binding the card would be minted and then
+  // refused server-side, orphaning it.
   if (!isBound.value) {
     store.notify(BIND_HINT.value, 'error');
     return;
@@ -299,6 +339,7 @@ async function toBacklog(): Promise<void> {
           model: chatSession.value?.model,
           prefix: 'feature',
           worktree: true,
+          hidden: false,
         },
         pid,
         userId,
@@ -328,17 +369,10 @@ async function clearChat(): Promise<void> {
 
 onMounted(() => void ensureChat());
 watch(() => store.selectedProjectId, () => void ensureChat());
-
-// Keep the newest turn in view as the transcript grows.
-watch(
-  () => (chatId.value ? store.transcripts[chatId.value] : undefined),
-  () =>
-    void nextTick(() => {
-      const el = messagesEl.value;
-      if (el) el.scrollTop = el.scrollHeight;
-    }),
-  { deep: true },
-);
+// A chat switch resets the detail toolbar so the new session's rows start neutral.
+watch(chatId, () => {
+  expandAll.value = EXPAND_ALL_NONE;
+});
 </script>
 
 <style scoped lang="scss">
@@ -346,17 +380,15 @@ watch(
   height: calc(100vh - 82px);
   overflow: hidden;
   padding: var(--k-sp-3);
-}
-
-.chat__card {
-  height: 100%;
   display: flex;
   flex-direction: column;
+}
+
+// The panel fills the page; `min-height: 0` lets its inner log scroll instead of the panel
+// growing past the viewport.
+.chat__panel {
+  flex: 1;
   min-height: 0;
-  background: var(--k-bg);
-  border: 1px solid var(--k-line);
-  border-radius: var(--k-r-lg);
-  overflow: hidden;
 }
 
 .chat__blank {
@@ -368,66 +400,9 @@ watch(
   font-size: var(--k-fs-sm);
 }
 
-.chat__messages {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--k-sp-4);
-  padding: var(--k-sp-5);
-}
-
-.chat__empty {
+.chat__log-empty {
   margin: auto;
   color: var(--k-faint);
   font-size: var(--k-fs-sm);
-}
-
-.chat__notice {
-  color: var(--k-muted);
-  font-size: var(--k-fs-sm);
-}
-
-.chat__notice--warn {
-  color: var(--k-warning);
-}
-
-.chat__notice--error {
-  color: var(--k-danger);
-}
-
-.chat__composer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--k-sp-2);
-  padding: var(--k-sp-4) var(--k-sp-5);
-  border-top: 1px solid var(--k-line-strong);
-}
-
-.chat__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--k-sp-3);
-  flex: none;
-  padding: var(--k-sp-3) var(--k-sp-5);
-  border-bottom: 2px solid var(--k-line-strong);
-}
-
-.chat__head-title {
-  display: flex;
-  align-items: center;
-  gap: var(--k-sp-2);
-  font-family: var(--k-font-ui);
-  font-size: var(--k-fs-md);
-  font-weight: var(--k-fw-semibold);
-  color: var(--k-text);
-}
-
-.chat__head-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--k-sp-1);
 }
 </style>

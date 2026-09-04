@@ -80,12 +80,16 @@
           :placeholder="t('management.releases.projectPlaceholder')"
         />
         <div class="rel__form-row">
+          <!-- `searchable`: the options are the bound repo's whole `refs/heads`, and a
+               release is written off a release branch whose name the operator knows — so
+               the way to it is to type it, not to scroll the repo's history of branches. -->
           <KSelect
             v-model="gen.branch"
             :label="t('management.releases.branchLabel')"
             :options="branches"
             :placeholder="branchPlaceholder"
             :disabled="!branches.length"
+            searchable
           />
           <div class="rel__form-range">
             <KDateField v-model="gen.rangeFrom" :label="t('management.releases.rangeFromLabel')" />

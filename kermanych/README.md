@@ -139,6 +139,16 @@ could not be published because its project exists only on this machine; it stays
 the list under the note «Лише на цій машині: проєкт цих задач ще не у хмарі, тому
 команда їх не бачить».
 
+**«Приховати з дошки» keeps a card off «Дошка» without hiding it from you.** The
+launcher's checkbox, off by default, marks the card as yours alone to look at: it
+never reaches the kanban columns, and neither does its status while it runs. It is
+still an ordinary task in every other respect — it sits in your «Задачі» inbox and
+in the sidebar's count, it launches a session the usual way, it pushes status back,
+and every member of the workspace can still read the row. Hiding is a view, never a
+permission. Un-hiding is the same checkbox: open the card from «Задачі», clear it,
+«Зберегти». That is the only way back, because a hidden card has no card on the
+board to click.
+
 ### Jira
 
 A workspace can mirror **one Jira Cloud board** onto «Дошка». The owner connects it
@@ -425,8 +435,12 @@ developer's machine. The direction is always task → session.
    default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
    ordinary local session: it appears on the Агенти board and you drive it there.
 5. **Status flows back** — the local API mirrors the session's coarse status
-   (`queued → thinking → tool → waiting_input → done | error | stopped | merged |
-   conflict`) to the task, and everyone's board updates live over Supabase Realtime.
+   (`queued → thinking → tool → waiting_input → done | in_review | error | stopped |
+   merged | conflict`) to the task, and everyone's board updates live over Supabase
+   Realtime. `in_review` is the pull-request outcome: «Завершити» → «Створити ПР» has the
+   agent commit, push and open the PR, and when that turn ends the card lands in the
+   board's «На ревʼю» column — settled, but waiting on a human reviewer rather than
+   closed. «Завершити» → «Влити» is the other exit and still lands on `merged`.
 
 Nothing else leaves your machine. Transcripts, the current tool, context usage, todo
 phases, interactive prompts and the provider-plan spend under the account name (read from
@@ -474,7 +488,7 @@ it will simply push its real status again.
 
 ## The Менеджмент tab and its assistant
 
-Менеджмент is the non-code half of the product: six workspace-scoped sections
+Менеджмент is the non-code half of the product: seven workspace-scoped sections
 (`packages/core/src/management.ts` is the one table that names them) plus a chat
 field docked to the foot of the page.
 
@@ -516,6 +530,16 @@ That field is a real assistant, and it is deliberately narrow:
   clue the range or the branch was not the one you meant. A failed run keeps a row on the
   section screen with its reason and a retry. Editing, copying and deleting a stored note
   stay on the screen; the assistant has no verb for them and the prompt says so.
+- **It reads the team's capacity.** Team Capacity is the one section marked `read`: the
+  screen adds up the Jira board's remaining estimates (spread over business days up to
+  each ticket's due date) and its worklogs against 8 h per person per business day, for a
+  date range you pick, as a chart or a table, for the whole team or one assignee. The
+  browser hands the assistant the same numbers by week — two weeks back, six ahead — as
+  `context.capacity` on every turn, so «what's Marina's load for the next two weeks» is
+  answered from the figures on the screen, never from the model's memory. Nothing there is
+  writable: load changes by editing tickets in Jira, and the assistant says so. A
+  workspace without a Jira board has no capacity to show — the native board carries no
+  estimates — and both the screen and the context block state that.
 - **It files tickets on «Дошка».** Say «створи тікет: …» and the ticket appears on the board
   — the board is not a Менеджмент section, so this works from any section, and «створи тікет»
   is never answered with a refusal. Six rules make the ticket worth having:
@@ -595,8 +619,9 @@ That field is a real assistant, and it is deliberately narrow:
 
 ### Giving another section something it can write
 
-The Risk Registry and Release Notes are wired end to end; every remaining section is `none`
-or `read`, and the chat has no write path into them on purpose. Adding one is three edits,
+The Risk Registry and Release Notes are wired end to end; Team Capacity is `read` (a screen
+and a context digest, nothing to write); every remaining section is `none`, and the chat
+has no write path into them on purpose. Adding one is three edits,
 and they belong to the branch that owns the screen being written to:
 
 1. flip that section's row in `packages/core/src/management.ts` to `capability:

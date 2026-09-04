@@ -31,7 +31,7 @@ import {
   upsertJiraIntegration,
   upsertJiraIssues,
 } from "../src/jira";
-import { createTask, getTask } from "../src/tasks";
+import { createTask, getTask, patchTask } from "../src/tasks";
 
 const URL = process.env.SUPABASE_TEST_URL;
 const ANON = process.env.SUPABASE_TEST_ANON_KEY;
@@ -521,6 +521,35 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
       .single();
     expect(inPlace.error).toBeNull();
     expect(inPlace.data!.worktree).toBe(false);
+  });
+
+  // «Приховати з дошки», through the TYPED surface rather than raw PostgREST: the whole
+  // point of the flag is that BoardPage sees `hidden === true` on a card it read with
+  // listTasks/getTask, and that only holds if the column is in TASK_COLUMNS and survives
+  // toTask. A raw `select("hidden")` would pass even with the mapper broken.
+  it("defaults hidden to false, accepts true at creation, and patches back to visible", async () => {
+    const def = await createTask(owner.client, {
+      projectId,
+      title: "a visible card",
+      createdBy: owner.id,
+    });
+    expect(def.hidden).toBe(false);
+
+    const secret = await createTask(owner.client, {
+      projectId,
+      title: "an errand nobody needs to see",
+      createdBy: owner.id,
+      hidden: true,
+    });
+    expect(secret.hidden).toBe(true);
+    expect((await getTask(owner.client, secret.id))?.hidden).toBe(true);
+
+    // The only way back onto the board: the launcher unchecks the box and patches.
+    expect((await patchTask(owner.client, secret.id, { hidden: false })).hidden).toBe(false);
+
+    // Hiding is not authorization: a plain member of the workspace still reads the row.
+    await patchTask(owner.client, secret.id, { hidden: true });
+    expect((await getTask(member.client, secret.id))?.hidden).toBe(true);
   });
 
   // ── project_skills ──────────────────────────────────────────────────────────
@@ -1096,6 +1125,9 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
           originalEstimate: "",
           timeSpent: "",
           remainingEstimate: "",
+          originalEstimateSeconds: 0,
+          timeSpentSeconds: 0,
+          remainingEstimateSeconds: 0,
           startDate: "",
           dueDate: "2026-09-30",
           statusId: "1",

@@ -8,7 +8,7 @@
 
     <div v-else class="agents__content" ref="contentEl" :class="{ 'agents__content--resizing': resizing }">
       <!-- BOARD — one card per session in scope: one project, or every project of a workspace -->
-      <section class="agents__board" :style="{ width: detailWidth + 'px' }">
+      <section ref="boardEl" class="agents__board" :style="{ width: detailWidth + 'px' }">
         <header class="agents__board-head">
           <div class="agents__board-title">
             <span class="agents__bucket-label">{{ bucketLabel }}</span>
@@ -27,6 +27,23 @@
           </div>
         </header>
 
+        <!-- SEARCH — sticky at the top of the scrolling column, so a query typed over a long
+             board stays reachable while the cards move under it. It narrows the ROWS only:
+             the bucket the rail chose still decides which rows are candidates, the header
+             keeps counting the whole bucket, and «знайдено N з M» beside the box is where the
+             matched figure is stated. -->
+        <div class="agents__search">
+          <KField
+            v-model="query"
+            class="agents__search-field"
+            type="search"
+            :placeholder="t('agents.board.searchPlaceholder')"
+          />
+          <span v-if="filtering" class="agents__search-count mono">
+            {{ t('agents.board.searchCount', { n: matchedCount, total: boardCount }) }}
+          </span>
+        </div>
+
         <!-- Muted lines about the SCOPE, above the cards the scope decided. Both state
              something the operator can act on; the rule beneath keeps the cards reading as a
              separate list rather than as their continuation. -->
@@ -35,62 +52,66 @@
           <p v-if="outsideScopeNote" class="agents__note">{{ outsideScopeNote }}</p>
         </div>
 
-        <!-- «Задачі» is my cloud backlog: the cards assigned to me, above whatever stranded
-             pre-cutover local rows the session list below still holds. -->
-        <div v-if="showTasks && taskCards.length" class="agents__cards">
-          <template v-for="g in taskGroups" :key="g.projectId">
-            <div v-if="groupByProject" class="agents__group-label mono">{{ g.name }}</div>
-            <!-- `branch` is deliberately EMPTY here, and must stay empty: KSessionCard heads
-                 the card with `branch || title`, so anything passed wins over the title. A
-                 card's `t.branch` is its BASE branch («Базова гілка»), seeded from the
-                 project default — passing it made every card in the inbox read «main» and
-                 hid the title in the ✕ tooltip. A BACKLOG card has no branch of its own to
-                 name; the session cards below do, which is why they pass theirs. -->
+        <!-- THE LIST — one flat, windowed run of rows: under «Задачі» my cloud backlog cards
+             first, then the note about whatever stranded pre-cutover local rows follow, then
+             the session cards. Flat because it is VIRTUALISED — only the pages around the fold
+             are mounted and two spacers stand in for the rest, which a nest of
+             group-then-cards blocks cannot express. `data-vkey` on every row is how
+             useVirtualList finds a height and whose it is. -->
+        <div v-if="boardItems.length" ref="listEl" class="agents__cards">
+          <div class="agents__pad" aria-hidden="true" :style="{ height: listWindow.padTop + 'px' }"></div>
+          <div v-for="item in visibleItems" :key="item.key" class="agents__vrow" :data-vkey="item.key">
+            <!-- Which project a run of cards belongs to; rendered only under a workspace scope. -->
+            <div
+              v-if="item.kind === 'group'"
+              class="agents__group-label mono"
+              :class="{ 'agents__group-label--lead': item.lead }"
+            >{{ item.name }}</div>
+            <!-- Whatever survived the publication pass: rows whose project has no cloud row at
+                 all, so there is nothing for a card to point at. Only under «Задачі» — in every
+                 other bucket these are ordinary local sessions. -->
+            <p v-else-if="item.kind === 'note'" class="agents__note agents__note--stranded mono">
+              {{ t('agents.board.stranded') }}
+            </p>
+            <!-- `branch` is deliberately EMPTY for a card, and must stay empty: KSessionCard
+                 heads the card with `branch || title`, so anything passed wins over the title.
+                 A card's `branch` is its BASE branch («Базова гілка»), seeded from the project
+                 default — passing it made every card in the inbox read «main» and hid the
+                 title in the ✕ tooltip. A BACKLOG card has no branch of its own to name; the
+                 session cards do, which is why they pass theirs. -->
             <KSessionCard
-              v-for="card in g.rows"
-              :key="card.id"
+              v-else-if="item.kind === 'card'"
               :branch="''"
-              :title="card.title"
-              :time="renderTime(t, relativeTime(card.updatedAt, now))"
-              :status="card.status"
-              :status-line="card.description ?? ''"
-              :model="card.model"
+              :title="item.card.title"
+              :time="renderTime(t, relativeTime(item.card.updatedAt, now))"
+              :status="item.card.status"
+              :status-line="item.card.description ?? ''"
+              :model="item.card.model"
               :selected="false"
               removable
-              :remove-title="t('agents.board.removeTask', { title: card.title })"
-              @click="openLauncher(card)"
-              @remove="onDeleteCard(card)"
+              :remove-title="t('agents.board.removeTask', { title: item.card.title })"
+              @click="openLauncher(item.card)"
+              @remove="onDeleteCard(item.card)"
             />
-          </template>
-        </div>
-        <!-- Whatever survived the publication pass: rows whose project has no cloud row at
-             all, so there is nothing for a card to point at. Only under «Задачі» — in every
-             other bucket these are ordinary local sessions. -->
-        <p v-if="showTasks && boardRows.length" class="agents__note agents__note--stranded mono">
-          {{ t('agents.board.stranded') }}
-        </p>
-        <div v-if="boardRows.length" class="agents__cards">
-          <template v-for="g in boardGroups" :key="g.projectId">
-            <div v-if="groupByProject" class="agents__group-label mono">{{ g.name }}</div>
             <KSessionCard
-              v-for="s in g.rows"
-              :key="s.id"
-              :branch="s.branch"
-              :title="s.name"
-              :time="renderTime(t, relativeTime(s.lastActivityAt, now))"
-              :status="s.status"
-              :status-line="activityOf(s) || statusWord(s)"
-              :model="s.model"
-              :usage="s.usage"
-              :selected="store.selectedSessionId === s.id"
-              :removable="s.kind === 'task'"
-              :remove-title="t('agents.board.removeStranded', { name: s.name })"
-              @click="onRowClick(s)"
-              @remove="onDeleteStranded(s)"
+              v-else-if="item.kind === 'session'"
+              :branch="item.session.branch"
+              :title="item.session.name"
+              :time="renderTime(t, relativeTime(item.session.lastActivityAt, now))"
+              :status="item.session.status"
+              :status-line="activityOf(item.session) || statusWord(item.session)"
+              :model="item.session.model"
+              :usage="item.session.usage"
+              :selected="store.selectedSessionId === item.session.id"
+              :removable="item.session.kind === 'task'"
+              :remove-title="t('agents.board.removeStranded', { name: item.session.name })"
+              @click="onRowClick(item.session)"
+              @remove="onDeleteStranded(item.session)"
             />
-          </template>
+          </div>
+          <div class="agents__pad" aria-hidden="true" :style="{ height: listWindow.padBottom + 'px' }"></div>
         </div>
-        <div v-else-if="!showTasks || !taskCards.length" class="agents__empty mono">{{ emptyText }}</div>
+        <div v-else class="agents__empty mono">{{ emptyText }}</div>
       </section>
 
       <!-- RESIZER — drag the seam to widen / narrow the chat section -->
@@ -110,30 +131,32 @@
       <!-- DETAIL — the full panel for the selected session -->
       <aside class="agents__detail">
         <template v-if="selectedSession">
+        <!-- CONSOLIDATED HEADER — identity on the left, live status + controls on the right.
+             One bar for the whole chat column: the embedded KPanel runs `bare`, so this is the
+             only place the session's dot, name, branch, harness and actions appear. -->
         <div class="agents__detail-bar">
-          <div class="agents__detail-path">
-            <!-- A branch names the agent it was forked off, and opens it. -->
-            <template v-if="parentOfSelected">
-              <button
-                type="button"
-                class="agents__detail-parent"
-                v-tip="t('agents.detail.openParent')"
-                :aria-label="t('agents.detail.openParentAria', { name: parentOfSelected.name })"
-                @click="store.selectSession(parentOfSelected.id)"
-              >
-                <span class="agents__detail-parent-mark" aria-hidden="true">↑</span>
-                <span class="agents__detail-parent-name mono">
-                  {{ parentOfSelected.branch || parentOfSelected.name }}
-                </span>
-              </button>
-              <span class="agents__detail-sep mono" aria-hidden="true">/</span>
-            </template>
-            <span class="agents__detail-label mono">{{ selectedSession.name }}</span>
+          <div class="agents__detail-id">
+            <!-- A forked branch names the agent it hangs off, and opens it. -->
+            <button
+              v-if="parentOfSelected"
+              type="button"
+              class="agents__detail-parent"
+              v-tip="t('agents.detail.openParent')"
+              :aria-label="t('agents.detail.openParentAria', { name: parentOfSelected.name })"
+              @click="store.selectSession(parentOfSelected.id)"
+            >
+              <span class="agents__detail-parent-mark" aria-hidden="true">↑</span>
+              <span class="agents__detail-parent-name mono">{{ parentOfSelected.branch || parentOfSelected.name }}</span>
+            </button>
+            <KStatusDot :status="selectedSession.status" />
+            <span class="agents__detail-name">{{ selectedSession.name }}</span>
+            <KTag v-if="selectedSession.branch" class="agents__detail-branch">⑂ {{ selectedSession.branch }}</KTag>
           </div>
-          <!-- WHAT CAN BE DONE TO THIS SESSION, and the way out. Moved out of the «Сесія»
-               pane's foot so every session-level action — preview above all — is on screen in
-               Лог, Зміни and Сесія alike, one control column that outlives the tab choice. -->
+
           <div class="agents__detail-controls">
+            <span class="agents__detail-status mono">{{ harnessLabel }} · {{ statusWord(selectedSession) }}</span>
+            <!-- Primary session actions — one column that outlives the tab choice, so preview,
+                 finish and defer are on screen in Лог, Зміни, Файли and Сесія alike. -->
             <div class="agents__actions">
               <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
                 <KIconButton
@@ -141,29 +164,16 @@
                   :title="selectedSession.kind === 'review' ? t('agents.merge.reviewTitle') : t('agents.actions.mergeTip')"
                   @click="openMerge(selectedSession)"
                 >⤴</KIconButton>
-                <KIconButton
-                  :title="selectedSession.kind === 'review' ? t('agents.actions.discardReview') : t('agents.actions.discardBranch')"
-                  @click="onDiscardRow(selectedSession)"
-                >✕</KIconButton>
               </template>
               <template v-else-if="!selectedSession.archived">
-                <!-- `title` names the action even while disabled, and never explains the
-                     disabling: KIconButton feeds it to BOTH v-tip and aria-label, and a
-                     disabled button dispatches no mouseenter/focusin and cannot take focus, so
-                     a reason parked there is unreachable — while an aria-label holding an
-                     instruction gives the control no name at all. The reason is the visible
-                     line under this bar. -->
+                <!-- `title` names the action even while disabled; the reason a disabled ▶ can't
+                     act is the visible line under this bar. -->
                 <KIconButton
                   :active="!!store.previews[selectedSession.id]"
                   :disabled="!isBoundFor(selectedSession.projectId)"
                   :title="store.previews[selectedSession.id] ? t('agents.actions.previewStop') : t('agents.actions.previewStart')"
                   @click="togglePreview(selectedSession)"
                 >{{ store.previews[selectedSession.id] ? '◼' : '▶' }}</KIconButton>
-                <KIconButton
-                  v-if="canReview(selectedSession)"
-                  :title="t('agents.actions.review')"
-                  @click="onReview(selectedSession)"
-                >⚖</KIconButton>
                 <KIconButton
                   v-if="selectedSession.status !== 'merged'"
                   :title="t('agents.actions.finish')"
@@ -175,13 +185,76 @@
                   @click="onReopen(selectedSession)"
                 >↻</KIconButton>
                 <KIconButton :title="t('agents.actions.archive')" @click="onArchive(selectedSession)">⤓</KIconButton>
-                <KIconButton :title="t('agents.actions.delete')" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
               </template>
               <template v-else>
                 <KIconButton :title="t('agents.actions.unarchive')" @click="onUnarchive(selectedSession)">⤒</KIconButton>
-                <KIconButton :title="t('agents.actions.delete')" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
               </template>
             </div>
+
+            <!-- Overflow — the actions that don't earn a permanent glyph, plus the two
+                 destructive ones, kept one click (or ⌘⌫) away so a slip can't fire them. -->
+            <div class="agents__menu" ref="menuEl">
+              <KIconButton
+                :title="t('agents.detail.more')"
+                :active="menuOpen"
+                @click.stop="menuOpen = !menuOpen"
+              >⋯</KIconButton>
+              <div v-if="menuOpen" class="agents__menu-pop" role="menu">
+                <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
+                  <button type="button" class="agents__menu-item" role="menuitem" @click="menuEditor">
+                    <span class="agents__menu-mark" aria-hidden="true">⧉</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.editor') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘E</KKbd>
+                  </button>
+                  <div class="agents__menu-sep" role="separator"></div>
+                  <button v-if="runningSelected" type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuStop">
+                    <span class="agents__menu-mark" aria-hidden="true">■</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.stop') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘.</KKbd>
+                  </button>
+                  <button type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuDiscard">
+                    <span class="agents__menu-mark" aria-hidden="true">✕</span>
+                    <span class="agents__menu-label">{{ selectedSession.kind === 'review' ? t('agents.actions.discardReview') : t('agents.actions.discardBranch') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘⌫</KKbd>
+                  </button>
+                </template>
+                <template v-else-if="!selectedSession.archived">
+                  <button v-if="canReview(selectedSession)" type="button" class="agents__menu-item" role="menuitem" @click="menuReview">
+                    <span class="agents__menu-mark" aria-hidden="true">⚖</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.review') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘D</KKbd>
+                  </button>
+                  <button v-if="selectedSession.kind === 'agent'" type="button" class="agents__menu-item" role="menuitem" @click="menuBranch">
+                    <span class="agents__menu-mark" aria-hidden="true">⑂</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.branch') }}</span>
+                  </button>
+                  <button type="button" class="agents__menu-item" role="menuitem" @click="menuEditor">
+                    <span class="agents__menu-mark" aria-hidden="true">⧉</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.editor') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘E</KKbd>
+                  </button>
+                  <div class="agents__menu-sep" role="separator"></div>
+                  <button v-if="selectedSession.kind === 'agent'" type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuStop">
+                    <span class="agents__menu-mark" aria-hidden="true">■</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.stop') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘.</KKbd>
+                  </button>
+                  <button type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuDelete">
+                    <span class="agents__menu-mark" aria-hidden="true">✕</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.delete') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘⌫</KKbd>
+                  </button>
+                </template>
+                <template v-else>
+                  <button type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuDelete">
+                    <span class="agents__menu-mark" aria-hidden="true">✕</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.delete') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘⌫</KKbd>
+                  </button>
+                </template>
+              </div>
+            </div>
+
             <button
               type="button"
               class="agents__close"
@@ -194,10 +267,18 @@
         <!-- The reason the ▶ above is down, on its own strip so it shows in every tab the
              disabled button is — a disabled control carries no reachable tooltip. -->
         <p v-if="previewBlocked" class="agents__detail-note">{{ previewBindHint }}</p>
-        <KTabs v-model="detailTab" :tabs="detailTabs" class="agents__detail-tabs" />
+        <KTabs v-model="detailTab" :tabs="detailTabs" class="agents__detail-tabs">
+          <template #end>
+            <template v-if="detailTab === 'log'">
+              <button type="button" class="agents__log-ctl" @click="onExpandAll(true)">{{ t('agents.detail.expandAll') }}</button>
+              <button type="button" class="agents__log-ctl" @click="onExpandAll(false)">{{ t('agents.detail.collapseAll') }}</button>
+            </template>
+          </template>
+        </KTabs>
         <div v-show="detailTab === 'log'" class="agents__tabpane agents__tabpane--log">
           <KPanel
             class="agents__panel"
+            :bare="true"
             :session="selectedSession"
             :refreshing="refreshingId === selectedSession.id"
             :models="store.models"
@@ -306,6 +387,20 @@
           </template>
         </div>
         <div v-if="detailTab === 'session'" class="agents__tabpane agents__session">
+          <section class="agents__task">
+            <h3 class="agents__task-title">{{ t('agents.session.description') }}</h3>
+            <p v-if="selectedSession.task" class="agents__task-desc">{{ selectedSession.task }}</p>
+            <p v-else class="agents__task-empty">{{ t('agents.session.descriptionEmpty') }}</p>
+            <div v-if="taskImages.length" class="agents__task-images">
+              <img
+                v-for="(src, i) in taskImages"
+                :key="i"
+                :src="src"
+                class="agents__task-img"
+                :alt="t('agents.session.imageAlt')"
+              />
+            </div>
+          </section>
           <dl class="agents__meta">
             <div class="agents__meta-row">
               <dt class="agents__meta-label">{{ t('agents.session.status') }}</dt>
@@ -466,7 +561,26 @@
             </div>
             <div v-if="draftWorktree" class="agents-launcher__from">
               <span class="agents-launcher__from-label mono">{{ t('agents.launcher.from') }}</span>
-              <KSelect v-model="draftBaseBranch" :options="launchBranches" />
+              <!-- `searchable`: `listBranches` hands over every local `refs/heads`, and in a
+                   long-lived repo that is hundreds of rows sharing a handful of prefixes
+                   («feature/…», «fix/…»). Scrolling to the base is hopeless there and
+                   closed-list prefix type-ahead only walks the prefix; typing «csp» has to
+                   find «fix/csp-iframe». -->
+              <KSelect v-model="draftBaseBranch" :options="launchBranches" searchable />
+            </div>
+          </div>
+
+          <!-- «Приховати з дошки» — a VIEW flag, so it sits beside the other launch
+               switches rather than in the footer: it changes nothing about how the agent
+               runs, only who has to look at the card. Not conditional on `draftWorktree`
+               and not conditional on edit mode — unchecking it here is the only way back
+               onto the board, since a hidden card has no card to click there. -->
+          <div class="agents-launcher__block">
+            <div class="agents-launcher__check">
+              <KCheckbox v-model="draftHidden" :label="t('agents.launcher.hiddenLabel')" />
+              <p class="agents-launcher__check-desc">
+                {{ t('agents.launcher.hiddenDesc') }}
+              </p>
             </div>
           </div>
 
@@ -588,7 +702,7 @@
       </template>
     </KModal>
 
-    <!-- FINISH — merge the session branch into the project branch, retire the worktree -->
+    <!-- FINISH — retire the session: the worktree goes, the branch stays for its pull request -->
     <KModal v-model="finishOpen" :title="t('agents.finish.title')" persistent>
       <div class="agents__form">
         <div v-show="finishFiles.length">
@@ -605,11 +719,10 @@
         </div>
         <div v-show="!finishFiles.length">
           <p v-if="finishData">
-            {{ t('agents.finish.pour') }} <code class="mono">{{ finishData.branch }}</code> →
-            <code class="mono">{{ finishData.target }}</code>
+            {{ t('agents.finish.action') }} <code class="mono">{{ finishData.branch }}</code>
           </p>
           <p v-if="finishData" class="agents__hint mono">
-            {{ t('agents.finish.aheadInfo', { n: finishData.ahead, dirty: finishData.dirty ? t('agents.finish.aheadDirty') : '' }, finishData.ahead) }}
+            {{ t('agents.finish.aheadInfo', { n: finishData.ahead, base: finishData.target, dirty: finishData.dirty ? t('agents.finish.aheadDirty') : '' }, finishData.ahead) }}
           </p>
           <p v-else class="agents__hint mono">{{ t('agents.changes.preparing') }}</p>
         </div>
@@ -626,16 +739,16 @@
         >{{ t('agents.finish.createPr') }}</KBtn>
         <KBtn
           variant="primary"
-          :disabled="finishBusy || (!finishData && !finishFiles.length)"
+          :disabled="finishBusy || !!finishFiles.length || !finishData"
           @click="submitFinish"
-        >{{ finishFiles.length ? t('agents.finish.tryAgain') : t('agents.finish.pour') }}</KBtn>
+        >{{ t('agents.finish.action') }}</KBtn>
       </template>
     </KModal>
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   slugify,
@@ -665,9 +778,11 @@ import { sessionScopedProjectIds } from '../lib/scope';
 import type { Bucket } from '../lib/buckets';
 import { myBacklogTasks, taskInsertFromDraft, taskPatchFromDraft } from '../lib/tasks-view';
 import { planBacklogPublication } from '../lib/publish-backlog';
+import { byNewestSession, byNewestTask, filterSessions, filterTaskCards, newestActivityAt, newestUpdateAt } from '../lib/agents-board';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
+import KTag from 'components/kit/KTag.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KDiffView from 'components/kit/KDiffView.vue';
@@ -679,6 +794,7 @@ import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
+import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import { BRANCH_PREFIXES, PLATFORMS, type BranchPrefix, type Platform } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
@@ -688,6 +804,7 @@ import { tokens, usageTokens, usd } from '../lib/format';
 import { EFFORT_OPTIONS } from '../lib/effort';
 import { modelOptions, effortOptions } from '../lib/models';
 import { useResizableWidth } from '../composables/useResizableWidth';
+import { useVirtualList } from '../composables/useVirtualList';
 
 // The Агенти screen (design-system section 07): the board of session cards for whatever is
 // in scope — one project, or every project of a workspace — plus the full panel for the
@@ -710,9 +827,9 @@ const now = useNow();
 const router = useRouter();
 
 // Board buckets mirror the sidebar (lib/buckets.ts): completed (merged or set aside) wins,
-// then backlog → Задачі, error/conflict → Помилки, done/stopped → Очікують, everything else
-// → Активні. Driven by store.selectedBucket.
-const WAITING_STATUSES: readonly SessionStatus[] = ['done', 'stopped'];
+// then backlog → Задачі, error/conflict → Помилки, done/in_review/stopped → Очікують,
+// everything else → Активні. Driven by store.selectedBucket.
+const WAITING_STATUSES: readonly SessionStatus[] = ['done', 'in_review', 'stopped'];
 const ERROR_STATUSES: readonly SessionStatus[] = ['error', 'conflict'];
 // Active = an agent whose process is alive or is blocked on the operator. Shared: archiving
 // refuses these (the API re-checks with core's ACTIVE_STATUSES) and the out-of-scope note
@@ -723,6 +840,22 @@ const ACTIVE_STATUSES: readonly SessionStatus[] = ['queued', 'thinking', 'tool',
 // keeps its reopen/delete controls.
 const showCompleted = computed(() => store.selectedBucket === 'completed');
 const showTasks = computed(() => store.selectedBucket === 'tasks');
+
+// ── Search ────────────────────────────────────────────────────────────────
+// One query over both kinds of row the column holds. It narrows what is RENDERED and nothing
+// else: the rail still decides which bucket, and the header still counts that bucket whole.
+const query = ref('');
+const filtering = computed(() => query.value.trim() !== '');
+// A query belongs to the list in front of the operator, so it dies with that list: a
+// leftover «auth» after a click on another bucket or another project reads as an empty
+// board, and that bucket's own empty-state text would then be a lie about what is there.
+watch(
+  () => [store.selectedBucket, store.selectedProjectId, store.selectedWorkspaceId],
+  () => {
+    query.value = '';
+  },
+);
+
 // Row order for the agents table. Sessions are bucketed into status tiers and
 // sorted by creation time within each tier. Ranking by tier — not by the live
 // status — is what stops rows from jumping while agents run: every "process
@@ -738,6 +871,7 @@ const STATUS_RANK: Record<SessionStatus, number> = {
   error: 1,
   conflict: 1,
   done: 2,
+  in_review: 2,
   stopped: 2,
   merged: 3,
 };
@@ -761,21 +895,31 @@ const scopedIds = computed(() =>
 );
 const inScope = computed(() => new Set(scopedIds.value));
 
+// Every row the bucket holds, before the search box narrows it. The header's count and the
+// «знайдено N з M» line are both stated against this, which is what keeps the figure beside
+// the bucket label agreeing with the rail's badge while a query is open.
+const scopedSessions = computed(() =>
+  store.sessions.filter((s) => {
+    if (!inScope.value.has(s.projectId)) return false;
+    if (store.selectedBucket === 'completed') return !!s.archived || s.status === 'merged';
+    if (s.archived) return false;
+    if (store.selectedBucket === 'tasks') return s.status === 'backlog';
+    if (store.selectedBucket === 'errors') return ERROR_STATUSES.includes(s.status);
+    if (store.selectedBucket === 'waiting') return WAITING_STATUSES.includes(s.status);
+    return ACTIVE_STATUSES.includes(s.status);
+  }),
+);
+
+// What the column orders: the rows the query kept, freshest first.
+//
+// Recency, and no longer a status tier. The list used to rank by status — every «process
+// alive» status sharing one rank — so that an agent flipping between `thinking` and `tool`
+// never reordered the table. `lastActivityAt` moves for the same reason, but it moves
+// TOWARDS the top, and the top is where the operator is looking: a working agent leads, a
+// finished one sinks as newer work arrives. The cost is real and accepted — two agents
+// running at once do trade places as their events land.
 const projectSessions = computed(() =>
-  store.sessions
-    .filter((s) => {
-      if (!inScope.value.has(s.projectId)) return false;
-      if (store.selectedBucket === 'completed') return !!s.archived || s.status === 'merged';
-      if (s.archived) return false;
-      if (store.selectedBucket === 'tasks') return s.status === 'backlog';
-      if (store.selectedBucket === 'errors') return ERROR_STATUSES.includes(s.status);
-      if (store.selectedBucket === 'waiting') return WAITING_STATUSES.includes(s.status);
-      return ACTIVE_STATUSES.includes(s.status);
-    })
-    .sort((a, b) => {
-      const byStatus = STATUS_RANK[a.status] - STATUS_RANK[b.status];
-      return byStatus !== 0 ? byStatus : a.createdAt.localeCompare(b.createdAt);
-    }),
+  [...filterSessions(scopedSessions.value, query.value)].sort(byNewestSession),
 );
 
 // Board order: each discussion child immediately follows its parent (a one-level
@@ -804,62 +948,129 @@ function projectName(id: string): string {
 // column is 300px wide and a per-card label would cost more than it tells. Under a project
 // scope there is one group and no label — the rail already says which project that is.
 //
-// Group ORDER is the best STATUS_RANK the group holds, so the project with the most urgent
-// agent leads, and it is seeded explicitly rather than taken from first appearance in
-// boardRows. First appearance looks equivalent and is not: projectSessions filters by BUCKET
-// first, so in Активні a `merged` parent is not in the list at all and its still-running
-// child falls through boardRows' orphan sweep to the very END. Its project then sorts below
-// a project whose most urgent session is an `error` (rank 1) — the reachable worst case, and
-// the shape the browser check built. Only Активні can produce that orphan: in the buckets
-// where a rank-2 `done` survives, the parent survives with it and no child is orphaned. An
-// agent waiting on a question must not sit under another project's settled work, which is
-// the whole reason the list is tiered in the first place.
-//
-// Ties keep first-appearance order (Array#sort is stable), so within one rank the grouping
-// changes nothing about the order the sessions already had.
+// Group ORDER follows the rows' own promise: a project leads on its freshest row, so «newest
+// at the top» holds across the whole column and not merely inside each group. Taken from the
+// group's rows rather than from the first one pushed into it, which is not equivalent: a fork
+// may be newer than the parent it follows, and boardRows sweeps orphans (a child whose parent
+// the bucket filtered out) to the very END.
 const groupByProject = computed(() => !store.selectedProjectId);
-type BoardGroup = { projectId: string; name: string; rank: number; rows: Session[] };
+type BoardGroup = { projectId: string; name: string; newest: number; rows: Session[] };
 const boardGroups = computed<BoardGroup[]>(() => {
   const groups = new Map<string, BoardGroup>();
   for (const s of boardRows.value) {
     let group = groups.get(s.projectId);
     if (!group) {
-      group = { projectId: s.projectId, name: projectName(s.projectId), rank: Number.MAX_SAFE_INTEGER, rows: [] };
+      group = { projectId: s.projectId, name: projectName(s.projectId), newest: 0, rows: [] };
       groups.set(s.projectId, group);
     }
     group.rows.push(s);
-    // Accumulated in the same pass rather than recomputed per comparison.
-    group.rank = Math.min(group.rank, STATUS_RANK[s.status]);
   }
-  return [...groups.values()].sort((a, b) => a.rank - b.rank);
+  const out = [...groups.values()];
+  for (const g of out) g.newest = newestActivityAt(g.rows);
+  return out.sort((a, b) => b.newest - a.newest);
 });
 
 // My backlog inbox: the cards I have to work, in the same scope the session list uses, so
 // one sidebar click narrows both. Unclaimed team cards live on Дошка by design.
-const taskCards = computed(() => myBacklogTasks(board.tasks, auth.user?.id ?? '', scopedIds.value));
+const scopedCards = computed(() =>
+  myBacklogTasks(board.tasks, auth.user?.id ?? '', scopedIds.value),
+);
+// myBacklogTasks filters WITHOUT sorting — listTasks hands the rows over `created_at`
+// ascending — so this is where the inbox's order is decided: the card touched last leads.
+const taskCards = computed(() =>
+  [...filterTaskCards(scopedCards.value, query.value)].sort(byNewestTask),
+);
 
-type TaskGroup = { projectId: string; name: string; rows: Task[] };
-// Cards are all `backlog`, so there is no STATUS_RANK to order groups by: project name is
-// the only stable order available, and it matches what the rail shows.
+type TaskGroup = { projectId: string; name: string; newest: number; rows: Task[] };
+// Cards are all `backlog`, so there is no status to order groups by — and no need for one:
+// the freshest card leads its project, the same rule the session groups follow.
 const taskGroups = computed<TaskGroup[]>(() => {
   const groups = new Map<string, TaskGroup>();
-  for (const t of taskCards.value) {
-    let group = groups.get(t.projectId);
+  for (const c of taskCards.value) {
+    let group = groups.get(c.projectId);
     if (!group) {
-      group = { projectId: t.projectId, name: projectName(t.projectId), rows: [] };
-      groups.set(t.projectId, group);
+      group = { projectId: c.projectId, name: projectName(c.projectId), newest: 0, rows: [] };
+      groups.set(c.projectId, group);
     }
-    group.rows.push(t);
+    group.rows.push(c);
   }
-  return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const out = [...groups.values()];
+  for (const g of out) g.newest = newestUpdateAt(g.rows);
+  return out.sort((a, b) => b.newest - a.newest);
 });
 
-// The header counts what the column RENDERS, and under «Задачі» that is the cards plus any
-// stranded pre-cutover local row — the same sum the rail's badge shows. A header reading 0
-// above a list of cards would be the disagreement MainLayout.bucketCounts exists to avoid.
+// The header counts what the BUCKET holds — the same sum the rail's badge shows — and not
+// what the search box left on screen: a header disagreeing with the badge is the drift
+// MainLayout.bucketCounts exists to avoid. The matched figure gets its own line, beside the
+// box that produced it.
 const boardCount = computed(
+  () =>
+    scopedSessions.value.filter((s) => s.kind !== 'chat').length +
+    (showTasks.value ? scopedCards.value.length : 0),
+);
+const matchedCount = computed(
   () => boardRows.value.length + (showTasks.value ? taskCards.value.length : 0),
 );
+
+// ── The rendered list ─────────────────────────────────────────────────────
+// One flat row model for the whole column, because the list is virtualised: a windowed list
+// mounts rows by INDEX, and a nest of «group label, then its cards» blocks cannot answer what
+// row 37 is. `lead` marks the very first row, so the leading group label drops the padding
+// that separates the later ones from the cards above them.
+type BoardItem =
+  | { kind: 'group'; key: string; name: string; lead: boolean }
+  | { kind: 'note'; key: string }
+  | { kind: 'card'; key: string; card: Task }
+  | { kind: 'session'; key: string; session: Session };
+
+const boardItems = computed<BoardItem[]>(() => {
+  const items: BoardItem[] = [];
+  if (showTasks.value) {
+    for (const g of taskGroups.value) {
+      if (groupByProject.value)
+        items.push({ kind: 'group', key: `tg:${g.projectId}`, name: g.name, lead: !items.length });
+      for (const c of g.rows) items.push({ kind: 'card', key: `t:${c.id}`, card: c });
+    }
+    if (boardRows.value.length) items.push({ kind: 'note', key: 'stranded' });
+  }
+  for (const g of boardGroups.value) {
+    if (groupByProject.value)
+      items.push({ kind: 'group', key: `sg:${g.projectId}`, name: g.name, lead: !items.length });
+    for (const s of g.rows) items.push({ kind: 'session', key: `s:${s.id}`, session: s });
+  }
+  return items;
+});
+
+// Rows per mounted page. The board is the one list in the app with no upper bound on its
+// length — every agent a machine has ever run ends up in «Завершені» — and every row is a
+// KSessionCard subtree with a status dot, a relative clock and an accounting line, so the
+// cost of mounting them all is paid on every tick of `now`. Twenty is a screenful and a half
+// at the 300px column's card height, which is what makes a page boundary invisible.
+const BOARD_PAGE = 20;
+// A card with no accounting line measures ~76px and one with ~104px; the estimate only has to
+// make the scrollbar plausible for rows nobody has scrolled to yet, and is replaced by the
+// real height the moment a row is mounted.
+const BOARD_ROW_ESTIMATE = 96;
+const boardEl = ref<HTMLElement | null>(null);
+const listEl = ref<HTMLElement | null>(null);
+const { window: listWindow } = useVirtualList({
+  root: boardEl,
+  list: listEl,
+  count: () => boardItems.value.length,
+  keyAt: (i) => boardItems.value[i]!.key,
+  page: BOARD_PAGE,
+  estimate: BOARD_ROW_ESTIMATE,
+});
+const visibleItems = computed(() =>
+  boardItems.value.slice(listWindow.value.start, listWindow.value.end),
+);
+
+// Back to the top whenever the list itself changes meaning: a narrowed list shown from its
+// middle hides its best matches above the fold, and a bucket switch that kept the old scroll
+// offset would open the new list somewhere in its past.
+watch([query, () => store.selectedBucket], () => {
+  if (boardEl.value) boardEl.value.scrollTop = 0;
+});
 
 // Active agents the current scope hides — an agent that is running, or waiting for an answer,
 // and left the screen because the operator clicked elsewhere in the rail. The page must not
@@ -965,6 +1176,17 @@ const entries = computed<TranscriptEntry[]>(() =>
     : [],
 );
 
+// The images the operator attached at task creation ride the FIRST user message into the
+// transcript (supervisor.userEntry maps them to data URLs). The «Сесія» tab surfaces them
+// beside the full task text so the brief is visible without scrolling the whole log; a
+// session created without attachments simply has none.
+const taskImages = computed<string[]>(() => {
+  const first = entries.value.find(
+    (e): e is Extract<TranscriptEntry, { kind: 'user_text' }> => e.kind === 'user_text',
+  );
+  return first?.images ?? [];
+});
+
 // Which library skills this session took, read straight off the transcript rows the
 // reducer already produced — the «Сесія» tab needs no state of its own for it.
 const usedSkills = computed(() => skillsUsed(entries.value));
@@ -1022,6 +1244,9 @@ const bucketLabel = computed(() => t(`agents.bucket.${store.selectedBucket}`));
 // dead end there. The click that unblocks it is NOT repeated here — PICK_PROJECT_HINT is
 // already on screen a few pixels above, and saying it twice reads as two different problems.
 const emptyText = computed(() => {
+  // A query that matched nothing is a different problem from an empty bucket, and it names
+  // its own cure: change the words, not the scope.
+  if (filtering.value) return t('agents.board.searchEmpty', { q: query.value.trim() });
   if (showCompleted.value) return t('agents.empty.completed');
   if (store.selectedBucket === 'waiting') return t('agents.empty.waiting');
   if (store.selectedBucket === 'errors') return t('agents.empty.errors');
@@ -1048,12 +1273,15 @@ watch(
 // The right panel splits the session into three views. The choice is persisted
 // per session (localStorage `kermanych.agents.tab.<id>`) so reopening an agent lands where the
 // operator left it; a fresh session defaults to the log.
-const detailTabs = computed(() => [
-  { value: 'log', label: t('agents.tabs.log') },
-  { value: 'changes', label: t('agents.tabs.changes') },
-  { value: 'files', label: t('agents.tabs.files') },
-  { value: 'session', label: t('agents.tabs.session') },
-]);
+const detailTabs = computed(() => {
+  const tabs: { value: string; label: string; count?: number }[] = [
+    { value: 'log', label: t('agents.tabs.log') },
+    { value: 'changes', label: t('agents.tabs.changes'), count: changesInfo.value?.files.length ?? 0 },
+    { value: 'files', label: t('agents.tabs.files'), count: treeRoot.value.length },
+    { value: 'session', label: t('agents.tabs.session') },
+  ];
+  return tabs;
+});
 const detailTab = ref('log');
 watch(
   () => store.selectedSessionId,
@@ -1067,6 +1295,73 @@ watch(
 watch(detailTab, (t) => {
   const id = store.selectedSessionId;
   if (id) localStorage.setItem(`kermanych.agents.tab.${id}`, t);
+});
+
+// ── Consolidated header: overflow menu + keyboard shortcuts ─────────────────
+// The chat column carries ONE header (the embedded KPanel runs `bare`): the session's
+// harness and live status, the primary session actions, and — behind ⋯ — the rest.
+const harnessLabel = computed(() => selectedSession.value?.runtime || 'omp');
+const runningSelected = computed(
+  () => selectedSession.value?.status === 'thinking' || selectedSession.value?.status === 'tool',
+);
+
+const menuOpen = ref(false);
+const menuEl = ref<HTMLElement | null>(null);
+// Any pointerdown outside the ⋯ cluster dismisses the menu; captured so a click on another
+// control closes the menu before that control's own handler runs.
+function onMenuOutside(e: PointerEvent): void {
+  if (menuEl.value && !menuEl.value.contains(e.target as Node)) menuOpen.value = false;
+}
+watch(menuOpen, (open) => {
+  if (open) document.addEventListener('pointerdown', onMenuOutside, true);
+  else document.removeEventListener('pointerdown', onMenuOutside, true);
+});
+// A session switch (deselect included) drops an open menu — it belonged to the old session.
+watch(() => store.selectedSessionId, () => { menuOpen.value = false; });
+
+function menuReview(): void { const s = selectedSession.value; menuOpen.value = false; if (s) void onReview(s); }
+function menuBranch(): void { menuOpen.value = false; void onBranch(); }
+function menuEditor(): void { menuOpen.value = false; onEditor(); }
+function menuStop(): void { menuOpen.value = false; onStop(); }
+function menuDelete(): void { const s = selectedSession.value; menuOpen.value = false; if (s) void onDeleteAgent(s); }
+function menuDiscard(): void { const s = selectedSession.value; menuOpen.value = false; if (s) onDiscardRow(s); }
+
+// The menu's shortcuts, live whenever a session is open: ⌘ (or Ctrl) + key. Never while the
+// operator is typing, and each is guarded by the same condition that renders its menu item —
+// so a shortcut can't fire an action the header doesn't currently offer.
+function onDetailShortcut(e: KeyboardEvent): void {
+  const s = selectedSession.value;
+  if (!s) return;
+  if (e.key === 'Escape') {
+    if (menuOpen.value) { menuOpen.value = false; e.preventDefault(); }
+    return;
+  }
+  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+  const el = e.target as HTMLElement | null;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+  const branchKind = s.kind === 'discussion' || s.kind === 'review';
+  switch (e.key.toLowerCase()) {
+    case 'd':
+      if (!branchKind && !s.archived && canReview(s)) { e.preventDefault(); menuOpen.value = false; void onReview(s); }
+      break;
+    case 'e':
+      if (!s.archived) { e.preventDefault(); menuOpen.value = false; onEditor(); }
+      break;
+    case '.':
+      if (runningSelected.value) { e.preventDefault(); menuOpen.value = false; onStop(); }
+      break;
+    case 'backspace':
+      e.preventDefault();
+      menuOpen.value = false;
+      if (branchKind) onDiscardRow(s);
+      else void onDeleteAgent(s);
+      break;
+  }
+}
+onMounted(() => window.addEventListener('keydown', onDetailShortcut));
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onDetailShortcut);
+  document.removeEventListener('pointerdown', onMenuOutside, true);
 });
 
 // ── Зміни tab (finishInfo: ahead/dirty/conflicts + changed files) ──────────
@@ -1213,16 +1508,19 @@ function closeTreeFile(): void {
 }
 
 watch(
-  [() => store.selectedSessionId, detailTab],
-  ([id, tab]) => {
-    // Another session (or a trip through another tab) invalidates whatever file was open.
+  () => store.selectedSessionId,
+  (id) => {
+    // A new session invalidates whatever file was open in either git-backed pane.
     closeFile();
     closeTreeFile();
-    // A retired worktree has nothing to read; the empty-state renders from `worktreeGone`
-    // instead, so neither pane issues a request that can only come back as an error.
-    if (worktreeGone.value) return;
-    if (tab === 'changes' && id) void loadChanges(id, true);
-    if (tab === 'files' && id) void loadTreeRoot(id);
+    changesInfo.value = null;
+    treeRoot.value = [];
+    // Load both up front — not on tab-open — so the «Зміни»/«Файли» tab counts are truthful
+    // the moment the session opens, and switching to either pane is then instant. A retired
+    // worktree has nothing to read; the panes render `worktreeGone` instead.
+    if (!id || worktreeGone.value) return;
+    void loadChanges(id, true);
+    void loadTreeRoot(id);
   },
   { immediate: true },
 );
@@ -1235,11 +1533,11 @@ let changesTimer: ReturnType<typeof setTimeout> | undefined;
 watch(
   () => selectedSession.value?.lastActivityAt,
   () => {
-    if (detailTab.value !== 'changes' || changesTimer || worktreeGone.value) return;
+    if (changesTimer || worktreeGone.value || !selectedSession.value?.worktree) return;
     changesTimer = setTimeout(() => {
       changesTimer = undefined;
       const id = store.selectedSessionId;
-      if (detailTab.value === 'changes' && id) void loadChanges(id, false);
+      if (id) void loadChanges(id, false);
     }, CHANGES_REFRESH_MS);
   },
 );
@@ -1270,6 +1568,8 @@ function statusWord(s: Session): string {
       return t('agents.statusWord.waiting');
     case 'done':
       return t('agents.statusWord.done');
+    case 'in_review':
+      return t('agents.statusWord.review');
     case 'error':
       return t('agents.statusWord.error');
     case 'queued':
@@ -1321,6 +1621,9 @@ const effortPickOptions = computed(() => {
 });
 const draftPlatform = ref<Platform | undefined>(undefined);
 const draftWorktree = ref(true);
+// «Приховати з дошки». Off by default: a card is team work unless its author says
+// otherwise, and a default-hidden launcher would quietly empty the board.
+const draftHidden = ref(false);
 const nameEdited = ref(false);
 const draftBaseBranch = ref('');
 const launchBranches = ref<string[]>([]);
@@ -1426,6 +1729,7 @@ function openLauncher(card?: Task): void {
     ? (card!.platform as Platform)
     : undefined;
   draftWorktree.value = card?.worktree ?? true;
+  draftHidden.value = card?.hidden ?? false;
   // `tasks.branch` IS the base branch (the board labels it «Базова гілка»).
   void loadLaunchBranches(card?.branch);
   nameEdited.value = !!card;
@@ -1456,6 +1760,7 @@ function openTaskFromText(text: string): void {
   draftPrefix.value = 'feature';
   draftPlatform.value = undefined;
   draftWorktree.value = true;
+  draftHidden.value = false;
   void loadLaunchBranches(undefined);
   nameEdited.value = true;
   launcherError.value = null;
@@ -1497,6 +1802,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     prefix: draftPrefix.value,
     platform: draftPlatform.value,
     worktree: draftWorktree.value,
+    hidden: draftHidden.value,
     baseBranch: draftBaseBranch.value || undefined,
   };
   const images = launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));
@@ -1834,22 +2140,21 @@ async function onUnarchive(s: Session): Promise<void> {
   }
 }
 
-// ── Finish (merge session branch → project branch, retire worktree) ────────
+// ── Finish (retire the worktree; the branch stays for its PR) ──────────────
 const finishOpen = ref(false);
 const finishFor = ref<Session | null>(null);
 const finishData = ref<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[] } | null>(null);
-const finishConflict = ref<string[] | null>(null);
 const finishError = ref<string | null>(null);
 const finishBusy = ref(false);
 const prBusy = ref(false);
 
-// Files to resolve: from a just-attempted merge, else the worktree's current state.
-const finishFiles = computed(() => finishConflict.value ?? finishData.value?.conflicts ?? []);
+// Files still to resolve in the worktree: a tree left mid-merge (the agent folded the base
+// in) cannot be retired, so the modal shows them instead of the finish summary.
+const finishFiles = computed(() => finishData.value?.conflicts ?? []);
 
 async function openFinish(s: Session): Promise<void> {
   finishFor.value = s;
   finishData.value = null;
-  finishConflict.value = null;
   finishError.value = null;
   finishBusy.value = false;
   finishOpen.value = true;
@@ -1913,7 +2218,6 @@ async function resolveAuto(): Promise<void> {
   if (!s) return;
   try {
     await store.resolveConflict(s.id);
-    finishConflict.value = null;
     finishOpen.value = false; // agent resolves in the background — watch it on the card
     store.selectSession(s.id);
   } catch (e) {
@@ -1927,18 +2231,8 @@ async function submitFinish(): Promise<void> {
   finishBusy.value = true;
   finishError.value = null;
   try {
-    const res = await store.finishSession(s.id);
-    if ('conflict' in res && res.conflict) {
-      finishConflict.value = res.files;
-    } else {
-      finishConflict.value = null;
-      finishOpen.value = false;
-      // Merged, but the push back to origin did not land — say so, because the work is only
-      // local until the operator pulls and pushes it.
-      if ('pushed' in res && res.pushed === false) {
-        store.notify(t('agents.notify.pushBlocked', { name: s.name, reason: res.reason ?? t('agents.notify.pushReasonDefault') }), 'error');
-      }
-    }
+    await store.finishSession(s.id);
+    finishOpen.value = false;
   } catch (e) {
     finishError.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -2178,6 +2472,43 @@ async function submitPreviewConfig(): Promise<void> {
   gap: 12px;
 }
 
+// The search box, pinned to the top of the scrolling column so a query typed over a long
+// board stays reachable while the cards move under it. The cards pass BEHIND the bar — hence
+// the opaque fill (the same --k-bg the board sits on) and the rule beneath it, which is what
+// tells a scrolled card from the box.
+//
+// The offsets are the column's own padding, twice over, and neither is decoration. A sticky
+// element is constrained to its scroller's CONTENT box, so `top: 0` parks the bar 16px below
+// the scrollport edge and cards ride visibly through the band above it — measured in
+// Chromium at exactly --k-sp-4. The negative side margins are the same story sideways: the
+// bar has to reach the padding edges, or a card shows through the strips either side of it.
+.agents__search {
+  position: sticky;
+  top: calc(-1 * var(--k-sp-4));
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--k-sp-2);
+  margin: 0 calc(-1 * var(--k-sp-4)) var(--k-sp-2);
+  padding: var(--k-sp-2) var(--k-sp-4);
+  background: var(--k-bg);
+  border-bottom: var(--k-rule-thin) solid var(--k-line);
+}
+
+.agents__search-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+// Wraps under the field in a narrow column rather than squeezing it: the board can be
+// dragged down to 300px, where the two side by side leave no room to read either.
+.agents__search-count {
+  flex: none;
+  font-size: var(--k-fs-xs);
+  color: var(--k-faint);
+}
+
 .agents__bucket-label {
   font-family: var(--k-font-ui);
   font-size: var(--k-fs-md);
@@ -2241,10 +2572,13 @@ async function submitPreviewConfig(): Promise<void> {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--k-faint);
+}
 
-  &:first-child {
-    padding-top: 0;
-  }
+// The list's very first row — a `:first-child` rule cannot say this any more: each row sits
+// in its own wrapper, where every label is a first child, and the leading one is a matter of
+// the row model (BoardItem.lead) rather than of the DOM.
+.agents__group-label--lead {
+  padding-top: 0;
 }
 
 // ── Detail column ─────────────────────────────────────────────────────────
@@ -2307,30 +2641,25 @@ async function submitPreviewConfig(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  height: 34px;
-  // `height` is border-box, so the 2px rule below is taken out of the interior and
-  // `align-items: center` then centres the title and the ✕ in the 32px ABOVE the rule —
-  // 1px high in a bar the eye reads as its full 34px, which measures as 10.8px of air over
-  // the glyphs and 14px under them. The 2px of top padding is that rule's counterweight:
-  // the content centres on the strip's own middle, and the ~0.5px that remains is the
-  // font's ink bias (a line box centres 5px over the baseline, cap ink 4.5px), which every
-  // centred label in the app shares.
-  padding: 2px 6px 0 12px;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 6px 0 12px;
   background: var(--k-bg);
   border-bottom: 2px solid var(--k-line-strong);
   flex: none;
 }
 
-// The bar's left half: for a branch, the parent it hangs off, then this session's own name.
-.agents__detail-path {
+// The bar's left half: for a branch, the parent it hangs off; then the status dot, the
+// session's own name, and its branch tag.
+.agents__detail-id {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
   min-width: 0;
 }
 
-// The way back up to the agent this branch was forked off.
+// The way back up to the agent this branch was forked off. A trailing «/» separates it from
+// the session name, so the two read as one path.
 .agents__detail-parent {
   display: inline-flex;
   align-items: center;
@@ -2344,13 +2673,13 @@ async function submitPreviewConfig(): Promise<void> {
   font-size: 12px;
   cursor: pointer;
 
-  &:hover {
-    color: var(--k-accent);
-  }
+  &:hover { color: var(--k-accent); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
 
-  &:focus-visible {
-    outline: 1px solid var(--k-accent);
-    outline-offset: 2px;
+  &::after {
+    content: '/';
+    margin-left: 5px;
+    color: var(--k-faint);
   }
 }
 
@@ -2367,23 +2696,49 @@ async function submitPreviewConfig(): Promise<void> {
   white-space: nowrap;
 }
 
-.agents__detail-sep {
-  flex: none;
-  font-size: 12px;
-  color: var(--k-faint);
-}
-
-.agents__detail-label {
-  font-size: 12px;
-  color: var(--k-muted);
+// The session's own name — the bar's title, so it carries the UI face at full text colour,
+// not the muted mono the old path label wore.
+.agents__detail-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-md);
+  font-weight: var(--k-fw-semibold);
+  color: var(--k-text);
 }
 
-// The house 28px glyph box (KIconButton's size), so this ✕ centres on the same column as
-// the panel controls in the bar right below it; borderless, because a title bar is not an
-// actions cluster. A 24px box put it 2px off that column.
+// The branch tag ellipsises before the name does: a branch name is recognisable from its
+// head, and the name is the thing being labelled. `display: block` is what makes
+// `text-overflow` bite on the tag's own text (its inline-flex would wrap it in an item).
+.agents__detail-branch {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+// The bar's right half: the live status word, the primary session glyphs, the overflow menu,
+// then the way out. `flex: none` so the cluster keeps its width and the name yields instead.
+.agents__detail-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+// Harness · status — «omp · готово». The one place the session's runtime is named now that
+// the embedded panel is `bare`.
+.agents__detail-status {
+  font-size: 11px;
+  color: var(--k-muted);
+  white-space: nowrap;
+}
+
+// The house 28px glyph box (KIconButton's size), so this ✕ centres on the same column as the
+// panel controls; borderless, because a title bar is not an actions cluster.
 .agents__close {
   width: 28px;
   height: 28px;
@@ -2396,25 +2751,78 @@ async function submitPreviewConfig(): Promise<void> {
   font-size: 13px;
   cursor: pointer;
 
-  &:hover {
-    color: var(--k-text);
-  }
-
-  &:focus-visible {
-    outline: 1px solid var(--k-accent);
-    outline-offset: -1px;
-  }
+  &:hover { color: var(--k-text); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: -1px; }
 }
 
-// The bar's right half: the session's action glyphs, then the way out. `flex: none` so the
-// cluster keeps its width and the ellipsised name yields instead.
-.agents__detail-controls {
+// ── Overflow menu ──────────────────────────────────────────────────────────
+.agents__menu {
+  position: relative;
   display: flex;
   align-items: center;
-  // Wider than the 6px INSIDE the cluster, so «Закрити» reads as a separate thing from the
-  // action it sits next to — «Видалити агента», the other ✕ in this bar.
+}
+
+.agents__menu-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 224px;
+  padding: var(--k-sp-1);
+  display: flex;
+  flex-direction: column;
+  background: var(--k-surface);
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  box-shadow: var(--k-shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.4));
+}
+
+.agents__menu-item {
+  display: flex;
+  align-items: center;
   gap: 10px;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  border-radius: var(--k-r-sm);
+  background: transparent;
+  color: var(--k-text);
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+
+  &:hover { background: var(--k-surface2); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: -1px; }
+}
+
+// The destructive rows carry the accent, and take a faint accent wash on hover.
+.agents__menu-item--danger {
+  color: var(--k-accent);
+
+  &:hover { background: var(--k-accent-weak, var(--k-surface2)); }
+}
+
+.agents__menu-mark {
   flex: none;
+  width: 16px;
+  text-align: center;
+  font-size: var(--k-icon-sm);
+  line-height: 1;
+  color: var(--k-muted);
+}
+
+.agents__menu-item--danger .agents__menu-mark { color: inherit; }
+
+.agents__menu-label { flex: 1; }
+
+.agents__menu-kbd { flex: none; }
+
+.agents__menu-sep {
+  height: 1px;
+  margin: var(--k-sp-1) 6px;
+  background: var(--k-line);
 }
 
 // The preview-blocked reason, on its own strip below the bar so it is on screen in every tab
@@ -2440,16 +2848,39 @@ async function submitPreviewConfig(): Promise<void> {
   background: transparent;
 }
 
+// The virtualised list: a plain block, NOT a flex column with a gap. The gap moves onto each
+// row (.agents__vrow) so that the height useVirtualList measures CONTAINS it — a flex gap
+// lives between children instead, and the spacers would then be short by one gap per page,
+// which reads as a scrollbar drifting as the column is scrolled.
 .agents__cards {
-  display: flex;
-  flex-direction: column;
-  gap: var(--k-sp-3);
+  display: block;
+}
+
+// One virtualised row: a card, a group label or the stranded note, plus the vertical gap
+// below it as PADDING for the reason above.
+.agents__vrow {
+  padding-bottom: var(--k-sp-3);
 }
 
 // ── Detail tabs + panes ────────────────────────────────────────────────────
 .agents__detail-tabs {
   flex: none;
   padding: 0 12px;
+}
+
+// The log's density switch, moved off the old panel toolbar onto the tab row's right edge.
+.agents__log-ctl {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
+  cursor: pointer;
+  transition: color 0.12s;
+
+  &:hover { color: var(--k-text); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
 }
 
 .agents__tabpane {
@@ -2555,6 +2986,44 @@ async function submitPreviewConfig(): Promise<void> {
 .agents__diff-add { color: var(--k-diff-add); }
 .agents__diff-del { color: var(--k-diff-del); }
 
+// ── Task brief (full description + creation images) ────────────────────────
+.agents__task {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.agents__task-title {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+  font-weight: 600;
+}
+.agents__task-desc {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--k-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agents__task-empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--k-muted);
+}
+.agents__task-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.agents__task-img {
+  display: block;
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: 4px;
+  border: 1px solid var(--k-line);
+}
 // ── Session metadata + actions ─────────────────────────────────────────────
 .agents__meta {
   margin: 0;

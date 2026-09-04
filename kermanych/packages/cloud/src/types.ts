@@ -4,7 +4,7 @@
 import type { AgentRuntime, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
-// The Postgres type `task_status` carries the same ten labels.
+// The Postgres type `task_status` carries the same eleven labels.
 export type TaskStatus = SessionStatus;
 
 export type Profile = {
@@ -81,6 +81,11 @@ export type Task = {
   // run in the project folder itself. createSessionFromTask honours that only for the
   // card's author (a shared card must never commandeer another developer's checkout).
   worktree: boolean;
+  // `tasks.hidden` is `not null default false`, so like `worktree` this key is always
+  // present. `true` means the launcher's «Приховати з дошки» was checked: the card stays a
+  // full task — its assignee sees it in «Задачі», it launches and pushes status like any
+  // other — but the kanban columns skip it. Visibility only, never permission.
+  hidden: boolean;
   kind?: string;
   branch?: string;
   // Storage object paths in the `task-images` bucket (private). The board mints signed
@@ -107,6 +112,7 @@ export type TaskInsert = {
   // trick as CloudProjectInsert.id (projects.ts:95).
   id?: string;
   worktree?: boolean;
+  hidden?: boolean;
   kind?: string;
   branch?: string;
   imagePaths?: string[];
@@ -122,6 +128,7 @@ export type TaskPatch = {
   prefix?: string;
   platform?: string;
   worktree?: boolean;
+  hidden?: boolean;
   kind?: string;
   branch?: string;
   imagePaths?: string[];
@@ -403,6 +410,11 @@ export type JiraIssue = {
   originalEstimate: string;
   timeSpent: string;
   remainingEstimate: string;
+  // The same three counters in SECONDS, straight from Jira's `timetracking.*Seconds` —
+  // the only form Team Capacity can add up. 0 = Jira holds none.
+  originalEstimateSeconds: number;
+  timeSpentSeconds: number;
+  remainingEstimateSeconds: number;
   // Jira's planning dates in Jira's own spelling (YYYY-MM-DD); blank = not set.
   // `dueDate` is the system `duedate`; `startDate` is the site's «Start date» field,
   // which a site may not have at all — then it stays blank and is not editable.

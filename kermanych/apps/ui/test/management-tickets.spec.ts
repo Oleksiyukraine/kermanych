@@ -80,6 +80,9 @@ vi.mock('../src/stores/jira', () => ({
     get assignable() {
       return jiraState.assignable;
     },
+    issues: [],
+    loadBoard: vi.fn(),
+    fetchWorklogs: vi.fn(async () => []),
     probe: vi.fn(),
     loadAssignable: (ws: string) => jiraLoadAssignable(ws),
     upsert: (issue: unknown) => jiraUpsert(issue),
