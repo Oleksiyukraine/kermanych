@@ -702,7 +702,7 @@
       </template>
     </KModal>
 
-    <!-- FINISH — merge the session branch into the project branch, retire the worktree -->
+    <!-- FINISH — retire the session: the worktree goes, the branch stays for its pull request -->
     <KModal v-model="finishOpen" :title="t('agents.finish.title')" persistent>
       <div class="agents__form">
         <div v-show="finishFiles.length">
@@ -719,11 +719,10 @@
         </div>
         <div v-show="!finishFiles.length">
           <p v-if="finishData">
-            {{ t('agents.finish.pour') }} <code class="mono">{{ finishData.branch }}</code> →
-            <code class="mono">{{ finishData.target }}</code>
+            {{ t('agents.finish.action') }} <code class="mono">{{ finishData.branch }}</code>
           </p>
           <p v-if="finishData" class="agents__hint mono">
-            {{ t('agents.finish.aheadInfo', { n: finishData.ahead, dirty: finishData.dirty ? t('agents.finish.aheadDirty') : '' }, finishData.ahead) }}
+            {{ t('agents.finish.aheadInfo', { n: finishData.ahead, base: finishData.target, dirty: finishData.dirty ? t('agents.finish.aheadDirty') : '' }, finishData.ahead) }}
           </p>
           <p v-else class="agents__hint mono">{{ t('agents.changes.preparing') }}</p>
         </div>
@@ -740,9 +739,9 @@
         >{{ t('agents.finish.createPr') }}</KBtn>
         <KBtn
           variant="primary"
-          :disabled="finishBusy || (!finishData && !finishFiles.length)"
+          :disabled="finishBusy || !!finishFiles.length || !finishData"
           @click="submitFinish"
-        >{{ finishFiles.length ? t('agents.finish.tryAgain') : t('agents.finish.pour') }}</KBtn>
+        >{{ t('agents.finish.action') }}</KBtn>
       </template>
     </KModal>
   </main>
@@ -2141,22 +2140,21 @@ async function onUnarchive(s: Session): Promise<void> {
   }
 }
 
-// ── Finish (merge session branch → project branch, retire worktree) ────────
+// ── Finish (retire the worktree; the branch stays for its PR) ──────────────
 const finishOpen = ref(false);
 const finishFor = ref<Session | null>(null);
 const finishData = ref<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[] } | null>(null);
-const finishConflict = ref<string[] | null>(null);
 const finishError = ref<string | null>(null);
 const finishBusy = ref(false);
 const prBusy = ref(false);
 
-// Files to resolve: from a just-attempted merge, else the worktree's current state.
-const finishFiles = computed(() => finishConflict.value ?? finishData.value?.conflicts ?? []);
+// Files still to resolve in the worktree: a tree left mid-merge (the agent folded the base
+// in) cannot be retired, so the modal shows them instead of the finish summary.
+const finishFiles = computed(() => finishData.value?.conflicts ?? []);
 
 async function openFinish(s: Session): Promise<void> {
   finishFor.value = s;
   finishData.value = null;
-  finishConflict.value = null;
   finishError.value = null;
   finishBusy.value = false;
   finishOpen.value = true;
@@ -2220,7 +2218,6 @@ async function resolveAuto(): Promise<void> {
   if (!s) return;
   try {
     await store.resolveConflict(s.id);
-    finishConflict.value = null;
     finishOpen.value = false; // agent resolves in the background — watch it on the card
     store.selectSession(s.id);
   } catch (e) {
@@ -2234,18 +2231,8 @@ async function submitFinish(): Promise<void> {
   finishBusy.value = true;
   finishError.value = null;
   try {
-    const res = await store.finishSession(s.id);
-    if ('conflict' in res && res.conflict) {
-      finishConflict.value = res.files;
-    } else {
-      finishConflict.value = null;
-      finishOpen.value = false;
-      // Merged, but the push back to origin did not land — say so, because the work is only
-      // local until the operator pulls and pushes it.
-      if ('pushed' in res && res.pushed === false) {
-        store.notify(t('agents.notify.pushBlocked', { name: s.name, reason: res.reason ?? t('agents.notify.pushReasonDefault') }), 'error');
-      }
-    }
+    await store.finishSession(s.id);
+    finishOpen.value = false;
   } catch (e) {
     finishError.value = e instanceof Error ? e.message : String(e);
   } finally {

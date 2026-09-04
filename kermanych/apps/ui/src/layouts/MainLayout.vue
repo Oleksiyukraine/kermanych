@@ -191,8 +191,8 @@
     </q-page-container>
 
     <!-- STATUS BAR — a VS Code-style footer; for now just git pull for the selected repo.
-         There is deliberately no Push: work leaves the machine through «Влити» (merge) and
-         the PR flow, never as a blind push of whatever branch the project repo sits on. -->
+         There is deliberately no Push: work leaves the machine through the PR flow only,
+         never as a blind push of whatever branch the project repo sits on. -->
     <q-footer class="shell__footer">
       <button
         type="button"
