@@ -7,7 +7,9 @@ import type { TaskStatus } from "./types";
 // A terminal task never moves again on its own: the board may stop showing a
 // stale-age hint for it, and the outbox may drop pending pushes behind it.
 // Mirrors the ACTIVE_STATUSES / NOTIFY_STATUSES convention in @kermanych/core.
-export const TERMINAL_TASK_STATUSES: readonly TaskStatus[] = ["done", "error", "stopped", "merged", "conflict"];
+// `in_review` belongs here: the branch is pushed and the card sits still until a human
+// reviewer moves it, so age says nothing about it either.
+export const TERMINAL_TASK_STATUSES: readonly TaskStatus[] = ["done", "in_review", "error", "stopped", "merged", "conflict"];
 
 export function taskStatusFromSession(s: Pick<Session, "status">): TaskStatus {
   return s.status;

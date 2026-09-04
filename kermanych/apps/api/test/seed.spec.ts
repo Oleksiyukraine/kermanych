@@ -18,11 +18,11 @@ test("seedDemo populates an empty registry across every status, both modes, and 
   expect(ids.size).toBe(2);
   expect(reg.listSessions().every((s) => ids.has(s.projectId))).toBe(true);
   const sessions = reg.listSessions();
-  expect(sessions.length).toBe(15);
+  expect(sessions.length).toBe(16);
 
   // Every SessionStatus the board can render is present, so no status dot is left untested.
   const ALL: SessionStatus[] = [
-    "queued", "thinking", "tool", "waiting_input", "done", "error", "stopped", "merged", "conflict",
+    "queued", "thinking", "tool", "waiting_input", "done", "in_review", "error", "stopped", "merged", "conflict",
   ];
   const seen = new Set(sessions.map((s) => s.status));
   for (const st of ALL) expect(seen.has(st)).toBe(true);

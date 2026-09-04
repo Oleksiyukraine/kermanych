@@ -227,6 +227,7 @@ export const en: MessageSchema = {
       tool: 'running',
       waiting: 'waiting',
       done: 'done',
+      review: 'in review',
       error: 'error',
       queued: 'queued',
       stopped: 'stopped',
@@ -239,6 +240,7 @@ export const en: MessageSchema = {
       error: 'error',
       conflict: 'merge conflict',
       done: 'done',
+      in_review: 'in review — PR opened',
     },
     launcher: {
       esc: 'Esc — close',
@@ -401,6 +403,7 @@ export const en: MessageSchema = {
       queued: 'Queued',
       running: 'In progress',
       waiting: 'Awaiting reply',
+      review: 'In review',
       closed: 'Done',
     },
     editor: {
@@ -1306,6 +1309,7 @@ export const en: MessageSchema = {
         running: 'running',
         waiting: 'waiting',
         done: 'done',
+        review: 'in review',
         error: 'error',
         queued: 'queued',
         stopped: 'stopped',

@@ -425,8 +425,12 @@ developer's machine. The direction is always task → session.
    default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
    ordinary local session: it appears on the Агенти board and you drive it there.
 5. **Status flows back** — the local API mirrors the session's coarse status
-   (`queued → thinking → tool → waiting_input → done | error | stopped | merged |
-   conflict`) to the task, and everyone's board updates live over Supabase Realtime.
+   (`queued → thinking → tool → waiting_input → done | in_review | error | stopped |
+   merged | conflict`) to the task, and everyone's board updates live over Supabase
+   Realtime. `in_review` is the pull-request outcome: «Завершити» → «Створити ПР» has the
+   agent commit, push and open the PR, and when that turn ends the card lands in the
+   board's «На ревʼю» column — settled, but waiting on a human reviewer rather than
+   closed. «Завершити» → «Влити» is the other exit and still lands on `merged`.
 
 Nothing else leaves your machine. Transcripts, the current tool, context usage, todo
 phases, interactive prompts and the provider-plan spend under the account name (read from
