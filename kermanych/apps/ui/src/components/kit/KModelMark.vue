@@ -41,13 +41,16 @@ const mark = computed(() => (props.model ? MARKS.find((m) => m.test.test(props.m
 </script>
 
 <style scoped lang="scss">
-// Sized a touch under the UI text beside it: a filled mark at the same box as a line icon
-// reads heavier than the type it labels. Callers retune with `--k-mark-size`.
+// A step below KIcon's `lg`, because this mark is FILLED: solid ink at the same box as a
+// 1.75-stroke line icon reads heavier than the type it labels, so matching boxes would make
+// the vendor logo the loudest thing in the chip. `sm` is as low as it goes — `xs` is the
+// scale's legibility floor and this mark carries brand detail that dies below it.
+// Callers retune with `--k-mark-size`, using a scale step rather than a literal.
 .k-model-mark {
   display: block;
   flex: none;
-  width: var(--k-mark-size, 13px);
-  height: var(--k-mark-size, 13px);
+  width: var(--k-mark-size, var(--k-icon-sm));
+  height: var(--k-mark-size, var(--k-icon-sm));
 }
 
 // The fallback is type, not geometry, so it needs the line box back.

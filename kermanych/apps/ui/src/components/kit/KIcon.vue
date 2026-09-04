@@ -133,13 +133,15 @@ const props = defineProps<{ name: KIconName }>();
 </template>
 
 <style scoped lang="scss">
-// Sized by a token with a fallback rather than by `1em`: these marks sit next to 13px UI
-// text where a font-relative icon would come out at 13px and read as a smudge. Callers that
-// need another size set `--k-icon-size` on the host.
+// Sized by a token rather than by `1em`: these marks sit next to 13px UI text where a
+// font-relative icon would come out at 13px and read as a smudge. `--k-icon-lg` is the
+// default because these are standalone marks — in the minified rail they carry the meaning
+// with no label at all. Callers that need another step set `--k-icon-size` on the host, and
+// should set it to one of `--k-icon-xs…xl` rather than to a literal.
 .k-icon {
   display: block;
   flex: none;
-  width: var(--k-icon-size, 18px);
-  height: var(--k-icon-size, 18px);
+  width: var(--k-icon-size, var(--k-icon-lg));
+  height: var(--k-icon-size, var(--k-icon-lg));
 }
 </style>

@@ -956,7 +956,8 @@ const workspaceColor = computed(() => {
   padding: 0;
   background: transparent;
   color: var(--k-muted);
-  font-size: 10px;
+  // Glyph-only control: the icon scale's floor, sized to the 16px box above.
+  font-size: var(--k-icon-xs);
   line-height: 1;
   cursor: pointer;
 

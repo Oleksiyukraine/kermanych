@@ -48,7 +48,10 @@ withDefaults(
   border: 1px solid var(--k-line);
   background: transparent;
   color: var(--k-muted);
-  font-size: 15px;
+  // The glyph is the control's entire content, so the control's font-size IS its icon size:
+  // a step of the icon scale, not of the type scale. `md` — the box is 28px and the mark has
+  // no label anywhere near it to borrow meaning from.
+  font-size: var(--k-icon-md);
   line-height: 1;
   cursor: pointer;
   border-radius: var(--k-r);

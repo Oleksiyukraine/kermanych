@@ -118,7 +118,10 @@ async function onClick(entry: TreeEntry): Promise<void> {
 }
 .k-file-tree__icon {
   flex: none;
-  font-size: 12px;
+  // 📁/📄 are emoji: unlike a stroke glyph they fill their em box, so the floor step carries
+  // them at the density these rows need. Named rather than literal so the row moves with the
+  // scale if the floor ever lifts.
+  font-size: var(--k-icon-xs);
 }
 .k-file-tree__name {
   min-width: 0;

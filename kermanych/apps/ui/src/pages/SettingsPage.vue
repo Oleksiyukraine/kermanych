@@ -1645,7 +1645,9 @@ const badges = computed<Record<string, number | undefined>>(() => ({
   background: transparent;
   border: 0;
   padding: 0;
-  font-size: var(--k-fs-xs);
+  // Glyph-only control: icon scale, not type scale. Same `--k-faint` + 11px compounding the
+  // session card's ✕ had.
+  font-size: var(--k-icon-xs);
   line-height: 1;
   color: var(--k-faint);
   cursor: pointer;
