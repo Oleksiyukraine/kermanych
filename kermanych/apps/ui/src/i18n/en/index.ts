@@ -206,6 +206,9 @@ export const en: MessageSchema = {
       gone: 'This session’s worktree has been retired — its files are no longer on disk. Reopen the session (↻ on the “Session” tab) to bring the worktree back up.',
     },
     session: {
+      description: 'Task description',
+      descriptionEmpty: 'No description',
+      imageAlt: 'Task attachment',
       status: 'Status',
       model: 'Model',
       branch: 'Branch',

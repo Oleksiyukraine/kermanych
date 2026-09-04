@@ -306,6 +306,20 @@
           </template>
         </div>
         <div v-if="detailTab === 'session'" class="agents__tabpane agents__session">
+          <section class="agents__task">
+            <h3 class="agents__task-title">{{ t('agents.session.description') }}</h3>
+            <p v-if="selectedSession.task" class="agents__task-desc">{{ selectedSession.task }}</p>
+            <p v-else class="agents__task-empty">{{ t('agents.session.descriptionEmpty') }}</p>
+            <div v-if="taskImages.length" class="agents__task-images">
+              <img
+                v-for="(src, i) in taskImages"
+                :key="i"
+                :src="src"
+                class="agents__task-img"
+                :alt="t('agents.session.imageAlt')"
+              />
+            </div>
+          </section>
           <dl class="agents__meta">
             <div class="agents__meta-row">
               <dt class="agents__meta-label">{{ t('agents.session.status') }}</dt>
@@ -963,6 +977,17 @@ const entries = computed<TranscriptEntry[]>(() =>
     ? store.transcripts[store.selectedSessionId] ?? []
     : [],
 );
+
+// The images the operator attached at task creation ride the FIRST user message into the
+// transcript (supervisor.userEntry maps them to data URLs). The «Сесія» tab surfaces them
+// beside the full task text so the brief is visible without scrolling the whole log; a
+// session created without attachments simply has none.
+const taskImages = computed<string[]>(() => {
+  const first = entries.value.find(
+    (e): e is Extract<TranscriptEntry, { kind: 'user_text' }> => e.kind === 'user_text',
+  );
+  return first?.images ?? [];
+});
 
 // Which library skills this session took, read straight off the transcript rows the
 // reducer already produced — the «Сесія» tab needs no state of its own for it.
@@ -2554,6 +2579,44 @@ async function submitPreviewConfig(): Promise<void> {
 .agents__diff-add { color: var(--k-diff-add); }
 .agents__diff-del { color: var(--k-diff-del); }
 
+// ── Task brief (full description + creation images) ────────────────────────
+.agents__task {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.agents__task-title {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+  font-weight: 600;
+}
+.agents__task-desc {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--k-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agents__task-empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--k-muted);
+}
+.agents__task-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.agents__task-img {
+  display: block;
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: 4px;
+  border: 1px solid var(--k-line);
+}
 // ── Session metadata + actions ─────────────────────────────────────────────
 .agents__meta {
   margin: 0;
