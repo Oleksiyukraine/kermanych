@@ -561,7 +561,12 @@
             </div>
             <div v-if="draftWorktree" class="agents-launcher__from">
               <span class="agents-launcher__from-label mono">{{ t('agents.launcher.from') }}</span>
-              <KSelect v-model="draftBaseBranch" :options="launchBranches" />
+              <!-- `searchable`: `listBranches` hands over every local `refs/heads`, and in a
+                   long-lived repo that is hundreds of rows sharing a handful of prefixes
+                   («feature/…», «fix/…»). Scrolling to the base is hopeless there and
+                   closed-list prefix type-ahead only walks the prefix; typing «csp» has to
+                   find «fix/csp-iframe». -->
+              <KSelect v-model="draftBaseBranch" :options="launchBranches" searchable />
             </div>
           </div>
 
@@ -823,9 +828,9 @@ const now = useNow();
 const router = useRouter();
 
 // Board buckets mirror the sidebar (lib/buckets.ts): completed (merged or set aside) wins,
-// then backlog → Задачі, error/conflict → Помилки, done/stopped → Очікують, everything else
-// → Активні. Driven by store.selectedBucket.
-const WAITING_STATUSES: readonly SessionStatus[] = ['done', 'stopped'];
+// then backlog → Задачі, error/conflict → Помилки, done/in_review/stopped → Очікують,
+// everything else → Активні. Driven by store.selectedBucket.
+const WAITING_STATUSES: readonly SessionStatus[] = ['done', 'in_review', 'stopped'];
 const ERROR_STATUSES: readonly SessionStatus[] = ['error', 'conflict'];
 // Active = an agent whose process is alive or is blocked on the operator. Shared: archiving
 // refuses these (the API re-checks with core's ACTIVE_STATUSES) and the out-of-scope note
@@ -852,6 +857,25 @@ watch(
   },
 );
 
+// Row order for the agents table. Sessions are bucketed into status tiers and
+// sorted by creation time within each tier. Ranking by tier — not by the live
+// status — is what stops rows from jumping while agents run: every "process
+// alive" status (queued/thinking/tool/waiting_input) shares rank 0, so an agent
+// flipping between `thinking` and `tool` mid-run never reorders the table. Only
+// real lifecycle moves (a run ending, a branch merging) shift a row's tier.
+const STATUS_RANK: Record<SessionStatus, number> = {
+  backlog: 0,
+  queued: 0,
+  thinking: 0,
+  tool: 0,
+  waiting_input: 0,
+  error: 1,
+  conflict: 1,
+  done: 2,
+  in_review: 2,
+  stopped: 2,
+  merged: 3,
+};
 // ── Scope: workspace → project → session ──────────────────────────────────
 // The same three levels the board answers one step up, with the one difference that decides
 // this whole file: a local session needs NO cloud to exist. So the cloud is consulted for
@@ -1545,6 +1569,8 @@ function statusWord(s: Session): string {
       return t('agents.statusWord.waiting');
     case 'done':
       return t('agents.statusWord.done');
+    case 'in_review':
+      return t('agents.statusWord.review');
     case 'error':
       return t('agents.statusWord.error');
     case 'queued':
