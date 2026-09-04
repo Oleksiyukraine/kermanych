@@ -1,7 +1,7 @@
 <template>
   <section ref="rootEl" class="k-panel" :class="{ 'k-panel--active': isActive }">
-    <!-- floor 1 — header (34px) -->
-    <header class="k-panel__header">
+    <!-- floor 1 — header (34px). Hidden when `bare`: the detail column owns the header. -->
+    <header v-if="!bare" class="k-panel__header">
       <div class="k-panel__id">
         <KStatusDot :status="session.status" />
         <span class="k-panel__harness mono">{{ session.runtime || 'omp' }}</span>
@@ -50,7 +50,7 @@
          had no distinguishable accessible name — every name-based consumer, from voice
          control to a text locator, resolved the collapse button to the expand one.
          «стиснути» is the plain antonym and shares no prefix with it. -->
-    <div class="k-panel__tools mono">
+    <div v-if="!bare" class="k-panel__tools mono">
       <span class="k-panel__tools-label">{{ t('kit.panel.detailsLabel') }}</span>
       <button type="button" class="k-panel__tools-btn" @click="emit('expandAll', true)">{{ t('kit.panel.expandAll') }}</button>
       <button type="button" class="k-panel__tools-btn" @click="emit('expandAll', false)">{{ t('kit.panel.collapseAll') }}</button>
@@ -225,8 +225,12 @@ const props = withDefaults(
     refreshing?: boolean;
     // The omp model catalog, forwarded to the composer's model chip so it can offer a picker.
     models?: readonly ModelOption[] | undefined;
+    // Suppresses this panel's own header + density toolbar. The agent detail column
+    // (AgentsPage) owns one consolidated header — identity, status, actions, expand/collapse —
+    // above its tabs, so the embedded panel would only stack a second, redundant one.
+    bare?: boolean;
   }>(),
-  { promoting: false, refreshing: false, models: () => [] },
+  { promoting: false, refreshing: false, models: () => [], bare: false },
 );
 
 // `finish`, `reopen` and `delete` are NOT declared here: завершити / відновити / видалити are

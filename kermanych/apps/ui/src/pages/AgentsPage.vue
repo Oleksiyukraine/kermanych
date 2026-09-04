@@ -110,30 +110,32 @@
       <!-- DETAIL — the full panel for the selected session -->
       <aside class="agents__detail">
         <template v-if="selectedSession">
+        <!-- CONSOLIDATED HEADER — identity on the left, live status + controls on the right.
+             One bar for the whole chat column: the embedded KPanel runs `bare`, so this is the
+             only place the session's dot, name, branch, harness and actions appear. -->
         <div class="agents__detail-bar">
-          <div class="agents__detail-path">
-            <!-- A branch names the agent it was forked off, and opens it. -->
-            <template v-if="parentOfSelected">
-              <button
-                type="button"
-                class="agents__detail-parent"
-                v-tip="t('agents.detail.openParent')"
-                :aria-label="t('agents.detail.openParentAria', { name: parentOfSelected.name })"
-                @click="store.selectSession(parentOfSelected.id)"
-              >
-                <span class="agents__detail-parent-mark" aria-hidden="true">↑</span>
-                <span class="agents__detail-parent-name mono">
-                  {{ parentOfSelected.branch || parentOfSelected.name }}
-                </span>
-              </button>
-              <span class="agents__detail-sep mono" aria-hidden="true">/</span>
-            </template>
-            <span class="agents__detail-label mono">{{ selectedSession.name }}</span>
+          <div class="agents__detail-id">
+            <!-- A forked branch names the agent it hangs off, and opens it. -->
+            <button
+              v-if="parentOfSelected"
+              type="button"
+              class="agents__detail-parent"
+              v-tip="t('agents.detail.openParent')"
+              :aria-label="t('agents.detail.openParentAria', { name: parentOfSelected.name })"
+              @click="store.selectSession(parentOfSelected.id)"
+            >
+              <span class="agents__detail-parent-mark" aria-hidden="true">↑</span>
+              <span class="agents__detail-parent-name mono">{{ parentOfSelected.branch || parentOfSelected.name }}</span>
+            </button>
+            <KStatusDot :status="selectedSession.status" />
+            <span class="agents__detail-name">{{ selectedSession.name }}</span>
+            <KTag v-if="selectedSession.branch" class="agents__detail-branch">⑂ {{ selectedSession.branch }}</KTag>
           </div>
-          <!-- WHAT CAN BE DONE TO THIS SESSION, and the way out. Moved out of the «Сесія»
-               pane's foot so every session-level action — preview above all — is on screen in
-               Лог, Зміни and Сесія alike, one control column that outlives the tab choice. -->
+
           <div class="agents__detail-controls">
+            <span class="agents__detail-status mono">{{ harnessLabel }} · {{ statusWord(selectedSession) }}</span>
+            <!-- Primary session actions — one column that outlives the tab choice, so preview,
+                 finish and defer are on screen in Лог, Зміни, Файли and Сесія alike. -->
             <div class="agents__actions">
               <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
                 <KIconButton
@@ -141,29 +143,16 @@
                   :title="selectedSession.kind === 'review' ? t('agents.merge.reviewTitle') : t('agents.actions.mergeTip')"
                   @click="openMerge(selectedSession)"
                 >⤴</KIconButton>
-                <KIconButton
-                  :title="selectedSession.kind === 'review' ? t('agents.actions.discardReview') : t('agents.actions.discardBranch')"
-                  @click="onDiscardRow(selectedSession)"
-                >✕</KIconButton>
               </template>
               <template v-else-if="!selectedSession.archived">
-                <!-- `title` names the action even while disabled, and never explains the
-                     disabling: KIconButton feeds it to BOTH v-tip and aria-label, and a
-                     disabled button dispatches no mouseenter/focusin and cannot take focus, so
-                     a reason parked there is unreachable — while an aria-label holding an
-                     instruction gives the control no name at all. The reason is the visible
-                     line under this bar. -->
+                <!-- `title` names the action even while disabled; the reason a disabled ▶ can't
+                     act is the visible line under this bar. -->
                 <KIconButton
                   :active="!!store.previews[selectedSession.id]"
                   :disabled="!isBoundFor(selectedSession.projectId)"
                   :title="store.previews[selectedSession.id] ? t('agents.actions.previewStop') : t('agents.actions.previewStart')"
                   @click="togglePreview(selectedSession)"
                 >{{ store.previews[selectedSession.id] ? '◼' : '▶' }}</KIconButton>
-                <KIconButton
-                  v-if="canReview(selectedSession)"
-                  :title="t('agents.actions.review')"
-                  @click="onReview(selectedSession)"
-                >⚖</KIconButton>
                 <KIconButton
                   v-if="selectedSession.status !== 'merged'"
                   :title="t('agents.actions.finish')"
@@ -175,13 +164,76 @@
                   @click="onReopen(selectedSession)"
                 >↻</KIconButton>
                 <KIconButton :title="t('agents.actions.archive')" @click="onArchive(selectedSession)">⤓</KIconButton>
-                <KIconButton :title="t('agents.actions.delete')" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
               </template>
               <template v-else>
                 <KIconButton :title="t('agents.actions.unarchive')" @click="onUnarchive(selectedSession)">⤒</KIconButton>
-                <KIconButton :title="t('agents.actions.delete')" @click="onDeleteAgent(selectedSession)">✕</KIconButton>
               </template>
             </div>
+
+            <!-- Overflow — the actions that don't earn a permanent glyph, plus the two
+                 destructive ones, kept one click (or ⌘⌫) away so a slip can't fire them. -->
+            <div class="agents__menu" ref="menuEl">
+              <KIconButton
+                :title="t('agents.detail.more')"
+                :active="menuOpen"
+                @click.stop="menuOpen = !menuOpen"
+              >⋯</KIconButton>
+              <div v-if="menuOpen" class="agents__menu-pop" role="menu">
+                <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
+                  <button type="button" class="agents__menu-item" role="menuitem" @click="menuEditor">
+                    <span class="agents__menu-mark" aria-hidden="true">⧉</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.editor') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘E</KKbd>
+                  </button>
+                  <div class="agents__menu-sep" role="separator"></div>
+                  <button v-if="runningSelected" type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuStop">
+                    <span class="agents__menu-mark" aria-hidden="true">■</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.stop') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘.</KKbd>
+                  </button>
+                  <button type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuDiscard">
+                    <span class="agents__menu-mark" aria-hidden="true">✕</span>
+                    <span class="agents__menu-label">{{ selectedSession.kind === 'review' ? t('agents.actions.discardReview') : t('agents.actions.discardBranch') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘⌫</KKbd>
+                  </button>
+                </template>
+                <template v-else-if="!selectedSession.archived">
+                  <button v-if="canReview(selectedSession)" type="button" class="agents__menu-item" role="menuitem" @click="menuReview">
+                    <span class="agents__menu-mark" aria-hidden="true">⚖</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.review') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘D</KKbd>
+                  </button>
+                  <button v-if="selectedSession.kind === 'agent'" type="button" class="agents__menu-item" role="menuitem" @click="menuBranch">
+                    <span class="agents__menu-mark" aria-hidden="true">⑂</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.branch') }}</span>
+                  </button>
+                  <button type="button" class="agents__menu-item" role="menuitem" @click="menuEditor">
+                    <span class="agents__menu-mark" aria-hidden="true">⧉</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.editor') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘E</KKbd>
+                  </button>
+                  <div class="agents__menu-sep" role="separator"></div>
+                  <button v-if="selectedSession.kind === 'agent'" type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuStop">
+                    <span class="agents__menu-mark" aria-hidden="true">■</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.stop') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘.</KKbd>
+                  </button>
+                  <button type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuDelete">
+                    <span class="agents__menu-mark" aria-hidden="true">✕</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.delete') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘⌫</KKbd>
+                  </button>
+                </template>
+                <template v-else>
+                  <button type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuDelete">
+                    <span class="agents__menu-mark" aria-hidden="true">✕</span>
+                    <span class="agents__menu-label">{{ t('agents.detail.menu.delete') }}</span>
+                    <KKbd tone="muted" class="agents__menu-kbd">⌘⌫</KKbd>
+                  </button>
+                </template>
+              </div>
+            </div>
+
             <button
               type="button"
               class="agents__close"
@@ -194,10 +246,18 @@
         <!-- The reason the ▶ above is down, on its own strip so it shows in every tab the
              disabled button is — a disabled control carries no reachable tooltip. -->
         <p v-if="previewBlocked" class="agents__detail-note">{{ previewBindHint }}</p>
-        <KTabs v-model="detailTab" :tabs="detailTabs" class="agents__detail-tabs" />
+        <KTabs v-model="detailTab" :tabs="detailTabs" class="agents__detail-tabs">
+          <template #end>
+            <template v-if="detailTab === 'log'">
+              <button type="button" class="agents__log-ctl" @click="onExpandAll(true)">{{ t('agents.detail.expandAll') }}</button>
+              <button type="button" class="agents__log-ctl" @click="onExpandAll(false)">{{ t('agents.detail.collapseAll') }}</button>
+            </template>
+          </template>
+        </KTabs>
         <div v-show="detailTab === 'log'" class="agents__tabpane agents__tabpane--log">
           <KPanel
             class="agents__panel"
+            :bare="true"
             :session="selectedSession"
             :refreshing="refreshingId === selectedSession.id"
             :models="store.models"
@@ -663,7 +723,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   slugify,
@@ -696,6 +756,7 @@ import { planBacklogPublication } from '../lib/publish-backlog';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
+import KTag from 'components/kit/KTag.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KDiffView from 'components/kit/KDiffView.vue';
@@ -1087,12 +1148,15 @@ watch(
 // The right panel splits the session into three views. The choice is persisted
 // per session (localStorage `kermanych.agents.tab.<id>`) so reopening an agent lands where the
 // operator left it; a fresh session defaults to the log.
-const detailTabs = computed(() => [
-  { value: 'log', label: t('agents.tabs.log') },
-  { value: 'changes', label: t('agents.tabs.changes') },
-  { value: 'files', label: t('agents.tabs.files') },
-  { value: 'session', label: t('agents.tabs.session') },
-]);
+const detailTabs = computed(() => {
+  const tabs: { value: string; label: string; count?: number }[] = [
+    { value: 'log', label: t('agents.tabs.log') },
+    { value: 'changes', label: t('agents.tabs.changes'), count: changesInfo.value?.files.length ?? 0 },
+    { value: 'files', label: t('agents.tabs.files'), count: treeRoot.value.length },
+    { value: 'session', label: t('agents.tabs.session') },
+  ];
+  return tabs;
+});
 const detailTab = ref('log');
 watch(
   () => store.selectedSessionId,
@@ -1106,6 +1170,73 @@ watch(
 watch(detailTab, (t) => {
   const id = store.selectedSessionId;
   if (id) localStorage.setItem(`kermanych.agents.tab.${id}`, t);
+});
+
+// ── Consolidated header: overflow menu + keyboard shortcuts ─────────────────
+// The chat column carries ONE header (the embedded KPanel runs `bare`): the session's
+// harness and live status, the primary session actions, and — behind ⋯ — the rest.
+const harnessLabel = computed(() => selectedSession.value?.runtime || 'omp');
+const runningSelected = computed(
+  () => selectedSession.value?.status === 'thinking' || selectedSession.value?.status === 'tool',
+);
+
+const menuOpen = ref(false);
+const menuEl = ref<HTMLElement | null>(null);
+// Any pointerdown outside the ⋯ cluster dismisses the menu; captured so a click on another
+// control closes the menu before that control's own handler runs.
+function onMenuOutside(e: PointerEvent): void {
+  if (menuEl.value && !menuEl.value.contains(e.target as Node)) menuOpen.value = false;
+}
+watch(menuOpen, (open) => {
+  if (open) document.addEventListener('pointerdown', onMenuOutside, true);
+  else document.removeEventListener('pointerdown', onMenuOutside, true);
+});
+// A session switch (deselect included) drops an open menu — it belonged to the old session.
+watch(() => store.selectedSessionId, () => { menuOpen.value = false; });
+
+function menuReview(): void { const s = selectedSession.value; menuOpen.value = false; if (s) void onReview(s); }
+function menuBranch(): void { menuOpen.value = false; void onBranch(); }
+function menuEditor(): void { menuOpen.value = false; onEditor(); }
+function menuStop(): void { menuOpen.value = false; onStop(); }
+function menuDelete(): void { const s = selectedSession.value; menuOpen.value = false; if (s) void onDeleteAgent(s); }
+function menuDiscard(): void { const s = selectedSession.value; menuOpen.value = false; if (s) onDiscardRow(s); }
+
+// The menu's shortcuts, live whenever a session is open: ⌘ (or Ctrl) + key. Never while the
+// operator is typing, and each is guarded by the same condition that renders its menu item —
+// so a shortcut can't fire an action the header doesn't currently offer.
+function onDetailShortcut(e: KeyboardEvent): void {
+  const s = selectedSession.value;
+  if (!s) return;
+  if (e.key === 'Escape') {
+    if (menuOpen.value) { menuOpen.value = false; e.preventDefault(); }
+    return;
+  }
+  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+  const el = e.target as HTMLElement | null;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+  const branchKind = s.kind === 'discussion' || s.kind === 'review';
+  switch (e.key.toLowerCase()) {
+    case 'd':
+      if (!branchKind && !s.archived && canReview(s)) { e.preventDefault(); menuOpen.value = false; void onReview(s); }
+      break;
+    case 'e':
+      if (!s.archived) { e.preventDefault(); menuOpen.value = false; onEditor(); }
+      break;
+    case '.':
+      if (runningSelected.value) { e.preventDefault(); menuOpen.value = false; onStop(); }
+      break;
+    case 'backspace':
+      e.preventDefault();
+      menuOpen.value = false;
+      if (branchKind) onDiscardRow(s);
+      else void onDeleteAgent(s);
+      break;
+  }
+}
+onMounted(() => window.addEventListener('keydown', onDetailShortcut));
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onDetailShortcut);
+  document.removeEventListener('pointerdown', onMenuOutside, true);
 });
 
 // ── Зміни tab (finishInfo: ahead/dirty/conflicts + changed files) ──────────
@@ -1252,16 +1383,19 @@ function closeTreeFile(): void {
 }
 
 watch(
-  [() => store.selectedSessionId, detailTab],
-  ([id, tab]) => {
-    // Another session (or a trip through another tab) invalidates whatever file was open.
+  () => store.selectedSessionId,
+  (id) => {
+    // A new session invalidates whatever file was open in either git-backed pane.
     closeFile();
     closeTreeFile();
-    // A retired worktree has nothing to read; the empty-state renders from `worktreeGone`
-    // instead, so neither pane issues a request that can only come back as an error.
-    if (worktreeGone.value) return;
-    if (tab === 'changes' && id) void loadChanges(id, true);
-    if (tab === 'files' && id) void loadTreeRoot(id);
+    changesInfo.value = null;
+    treeRoot.value = [];
+    // Load both up front — not on tab-open — so the «Зміни»/«Файли» tab counts are truthful
+    // the moment the session opens, and switching to either pane is then instant. A retired
+    // worktree has nothing to read; the panes render `worktreeGone` instead.
+    if (!id || worktreeGone.value) return;
+    void loadChanges(id, true);
+    void loadTreeRoot(id);
   },
   { immediate: true },
 );
@@ -1274,11 +1408,11 @@ let changesTimer: ReturnType<typeof setTimeout> | undefined;
 watch(
   () => selectedSession.value?.lastActivityAt,
   () => {
-    if (detailTab.value !== 'changes' || changesTimer || worktreeGone.value) return;
+    if (changesTimer || worktreeGone.value || !selectedSession.value?.worktree) return;
     changesTimer = setTimeout(() => {
       changesTimer = undefined;
       const id = store.selectedSessionId;
-      if (detailTab.value === 'changes' && id) void loadChanges(id, false);
+      if (id) void loadChanges(id, false);
     }, CHANGES_REFRESH_MS);
   },
 );
@@ -2352,30 +2486,25 @@ async function submitPreviewConfig(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  height: 34px;
-  // `height` is border-box, so the 2px rule below is taken out of the interior and
-  // `align-items: center` then centres the title and the ✕ in the 32px ABOVE the rule —
-  // 1px high in a bar the eye reads as its full 34px, which measures as 10.8px of air over
-  // the glyphs and 14px under them. The 2px of top padding is that rule's counterweight:
-  // the content centres on the strip's own middle, and the ~0.5px that remains is the
-  // font's ink bias (a line box centres 5px over the baseline, cap ink 4.5px), which every
-  // centred label in the app shares.
-  padding: 2px 6px 0 12px;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 6px 0 12px;
   background: var(--k-bg);
   border-bottom: 2px solid var(--k-line-strong);
   flex: none;
 }
 
-// The bar's left half: for a branch, the parent it hangs off, then this session's own name.
-.agents__detail-path {
+// The bar's left half: for a branch, the parent it hangs off; then the status dot, the
+// session's own name, and its branch tag.
+.agents__detail-id {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
   min-width: 0;
 }
 
-// The way back up to the agent this branch was forked off.
+// The way back up to the agent this branch was forked off. A trailing «/» separates it from
+// the session name, so the two read as one path.
 .agents__detail-parent {
   display: inline-flex;
   align-items: center;
@@ -2389,13 +2518,13 @@ async function submitPreviewConfig(): Promise<void> {
   font-size: 12px;
   cursor: pointer;
 
-  &:hover {
-    color: var(--k-accent);
-  }
+  &:hover { color: var(--k-accent); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
 
-  &:focus-visible {
-    outline: 1px solid var(--k-accent);
-    outline-offset: 2px;
+  &::after {
+    content: '/';
+    margin-left: 5px;
+    color: var(--k-faint);
   }
 }
 
@@ -2412,23 +2541,49 @@ async function submitPreviewConfig(): Promise<void> {
   white-space: nowrap;
 }
 
-.agents__detail-sep {
-  flex: none;
-  font-size: 12px;
-  color: var(--k-faint);
-}
-
-.agents__detail-label {
-  font-size: 12px;
-  color: var(--k-muted);
+// The session's own name — the bar's title, so it carries the UI face at full text colour,
+// not the muted mono the old path label wore.
+.agents__detail-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-md);
+  font-weight: var(--k-fw-semibold);
+  color: var(--k-text);
 }
 
-// The house 28px glyph box (KIconButton's size), so this ✕ centres on the same column as
-// the panel controls in the bar right below it; borderless, because a title bar is not an
-// actions cluster. A 24px box put it 2px off that column.
+// The branch tag ellipsises before the name does: a branch name is recognisable from its
+// head, and the name is the thing being labelled. `display: block` is what makes
+// `text-overflow` bite on the tag's own text (its inline-flex would wrap it in an item).
+.agents__detail-branch {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+// The bar's right half: the live status word, the primary session glyphs, the overflow menu,
+// then the way out. `flex: none` so the cluster keeps its width and the name yields instead.
+.agents__detail-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+// Harness · status — «omp · готово». The one place the session's runtime is named now that
+// the embedded panel is `bare`.
+.agents__detail-status {
+  font-size: 11px;
+  color: var(--k-muted);
+  white-space: nowrap;
+}
+
+// The house 28px glyph box (KIconButton's size), so this ✕ centres on the same column as the
+// panel controls; borderless, because a title bar is not an actions cluster.
 .agents__close {
   width: 28px;
   height: 28px;
@@ -2441,25 +2596,78 @@ async function submitPreviewConfig(): Promise<void> {
   font-size: 13px;
   cursor: pointer;
 
-  &:hover {
-    color: var(--k-text);
-  }
-
-  &:focus-visible {
-    outline: 1px solid var(--k-accent);
-    outline-offset: -1px;
-  }
+  &:hover { color: var(--k-text); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: -1px; }
 }
 
-// The bar's right half: the session's action glyphs, then the way out. `flex: none` so the
-// cluster keeps its width and the ellipsised name yields instead.
-.agents__detail-controls {
+// ── Overflow menu ──────────────────────────────────────────────────────────
+.agents__menu {
+  position: relative;
   display: flex;
   align-items: center;
-  // Wider than the 6px INSIDE the cluster, so «Закрити» reads as a separate thing from the
-  // action it sits next to — «Видалити агента», the other ✕ in this bar.
+}
+
+.agents__menu-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 224px;
+  padding: var(--k-sp-1);
+  display: flex;
+  flex-direction: column;
+  background: var(--k-surface);
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  box-shadow: var(--k-shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.4));
+}
+
+.agents__menu-item {
+  display: flex;
+  align-items: center;
   gap: 10px;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  border-radius: var(--k-r-sm);
+  background: transparent;
+  color: var(--k-text);
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+
+  &:hover { background: var(--k-surface2); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: -1px; }
+}
+
+// The destructive rows carry the accent, and take a faint accent wash on hover.
+.agents__menu-item--danger {
+  color: var(--k-accent);
+
+  &:hover { background: var(--k-accent-weak, var(--k-surface2)); }
+}
+
+.agents__menu-mark {
   flex: none;
+  width: 16px;
+  text-align: center;
+  font-size: var(--k-icon-sm);
+  line-height: 1;
+  color: var(--k-muted);
+}
+
+.agents__menu-item--danger .agents__menu-mark { color: inherit; }
+
+.agents__menu-label { flex: 1; }
+
+.agents__menu-kbd { flex: none; }
+
+.agents__menu-sep {
+  height: 1px;
+  margin: var(--k-sp-1) 6px;
+  background: var(--k-line);
 }
 
 // The preview-blocked reason, on its own strip below the bar so it is on screen in every tab
@@ -2495,6 +2703,21 @@ async function submitPreviewConfig(): Promise<void> {
 .agents__detail-tabs {
   flex: none;
   padding: 0 12px;
+}
+
+// The log's density switch, moved off the old panel toolbar onto the tab row's right edge.
+.agents__log-ctl {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
+  cursor: pointer;
+  transition: color 0.12s;
+
+  &:hover { color: var(--k-text); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
 }
 
 .agents__tabpane {
