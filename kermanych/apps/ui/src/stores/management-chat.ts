@@ -536,6 +536,39 @@ export const useManagementChat = defineStore('management-chat', () => {
       }
       return;
     }
+    if (action.kind === 'risk.delete') {
+      // Resolved against the register the browser already holds, exactly as `risk.update`
+      // resolves it — and for a sharper reason here. A delete sends only an id, and postgrest
+      // answers a delete that matched no row the same way it answers one that matched, so
+      // «R-999» would otherwise be reported as a successful deletion of nothing.
+      const row = findRiskByCode(risks.byWorkspace[workspaceId] ?? [], action.code);
+      if (!row) {
+        result(workspaceId, 'warn', globalTr.t('management.chat.riskNotFound', { code: action.code }));
+        return;
+      }
+      try {
+        await risks.remove(workspaceId, row.id);
+        // The code AND the statement, unlike the update line: after this call the row is
+        // gone from the register, so the transcript is the only place left that says what
+        // R-004 actually was. A bare code would leave the operator unable to tell what they
+        // had just agreed to lose.
+        result(
+          workspaceId,
+          'info',
+          globalTr.t('management.chat.riskDeleted', { code: row.code, event: row.event }),
+        );
+      } catch (e) {
+        // Verbatim, and the one refusal here an operator can act on is a permission one:
+        // delete is workspace-owner while everything else in this register is member-level,
+        // so «row-level security» in this line means «ask the owner», not «try again».
+        result(
+          workspaceId,
+          'error',
+          globalTr.t('management.chat.riskDeleteFailed', { code: row.code, error: errorText(e) }),
+        );
+      }
+      return;
+    }
     if (action.kind === 'release.notes') {
       startReleaseNotes(workspaceId, action);
       return;

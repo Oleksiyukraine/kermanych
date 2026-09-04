@@ -3,9 +3,19 @@
 // RLS policies (read and write = workspace member) are the authorization surface and refusals
 // surface as thrown postgrest messages.
 //
-// There is deliberately NO deleteWorkspaceRisk. A risk leaves the register by moving to
-// `closed` or `materialized` with a closure note — the table grants no `delete` to anyone,
-// so a function here could only ever throw.
+// A risk normally leaves the register by moving to `closed` or `materialized` with a closure
+// note: that keeps the row, its scores and its history as the lessons-learned input the
+// register exists to produce, and it is still the right way out for a risk that actually
+// happened or actually went away.
+//
+// `deleteWorkspaceRisk` is the OTHER way out, added deliberately and later (migration
+// 20260904090000_risk_delete.sql) for the case closing does not cover: a row that should
+// never have been in the register at all — a test row, a duplicate, a mis-filed entry.
+// Closing those pollutes the lessons-learned set with rows that carry no lesson.
+//
+// It is a hard delete and the audit trail goes with it (`workspace_risk_events` cascades),
+// which is exactly why the grant behind it is narrower than every other write on this
+// table: insert and update are workspace-member, delete is workspace-OWNER.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   RiskCategory,
@@ -211,6 +221,20 @@ export async function patchWorkspaceRisk(
     .single();
   if (error) throw new Error(error.message);
   return toWorkspaceRisk(data as RiskRow);
+}
+
+// Removes one risk and, through `on delete cascade`, its whole event history. Returns
+// nothing and selects nothing: the row is gone, so there is no shape left to map.
+//
+// Note what this does NOT do — report whether a row was actually removed. Postgres answers
+// a delete that matched nothing exactly as it answers one that matched a row, and under RLS
+// «no such id», «not your workspace» and «not the owner» all collapse into that same empty
+// answer. The caller therefore checks the register it already holds BEFORE calling (the
+// chat resolves the code to a row; the screen deletes a row it is displaying), and a
+// genuine permission refusal still arrives here as a thrown postgrest message.
+export async function deleteWorkspaceRisk(client: SupabaseClient, id: string): Promise<void> {
+  const { error } = await client.from("workspace_risks").delete().eq("id", id);
+  if (error) throw new Error(error.message);
 }
 
 // The audit trail behind one risk, newest first. Read on demand — the register lists dozens

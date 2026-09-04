@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   createWorkspaceRisk,
+  deleteWorkspaceRisk,
   listRiskEvents,
   listWorkspaceRisks,
   patchWorkspaceRisk,
@@ -25,7 +26,7 @@ function fakeClient(...results: Result[]) {
       const builder: Record<string, unknown> = {
         then: (resolve: (v: Result) => unknown) => Promise.resolve(result).then(resolve),
       };
-      for (const op of ["select", "insert", "update", "eq", "order", "single"]) {
+      for (const op of ["select", "insert", "update", "delete", "eq", "order", "single"]) {
         builder[op] = (...args: unknown[]) => {
           q.ops.push([op, ...args]);
           return builder;
@@ -218,6 +219,37 @@ describe("patchWorkspaceRisk", () => {
       { last_reviewed_at: "2026-09-06T09:00:00.000Z" },
     ]);
     expect(queries[0]!.ops.some(([op]) => op === "single")).toBe(true);
+  });
+});
+
+describe("deleteWorkspaceRisk", () => {
+  it("deletes by id and reads nothing back", async () => {
+    const { client, queries } = fakeClient({ data: null, error: null });
+
+    await deleteWorkspaceRisk(client, "r1");
+
+    expect(queries[0]!.table).toBe("workspace_risks");
+    expect(queries[0]!.ops).toContainEqual(["delete"]);
+    expect(queries[0]!.ops).toContainEqual(["eq", "id", "r1"]);
+    // No `select` and no `single`: the row is gone, so there is nothing to map back, and
+    // asking postgrest to return the deleted row would only give the caller a corpse to
+    // put in the store it is about to drop it from.
+    expect(queries[0]!.ops.some(([op]) => op === "select")).toBe(false);
+    expect(queries[0]!.ops.some(([op]) => op === "single")).toBe(false);
+  });
+
+  // The refusal a non-owner earns. RLS is the real gate, and it surfaces here as a thrown
+  // postgrest message rather than a silent success — the store and the chat both rely on
+  // this throwing to say the risk is still in the register.
+  it("throws the postgrest message when the delete is refused", async () => {
+    const { client } = fakeClient({
+      data: null,
+      error: { message: "new row violates row-level security policy" },
+    });
+
+    await expect(deleteWorkspaceRisk(client, "r1")).rejects.toThrow(
+      "new row violates row-level security policy",
+    );
   });
 });
 
