@@ -13,10 +13,12 @@ import type { Session } from '@kermanych/core';
 //   errors     — a conflict or any other error that needs a human
 export type Bucket = 'active' | 'waiting' | 'completed' | 'errors' | 'tasks';
 
-// The agent finished on its own but the work is not closed out — it is waiting for a PR or
-// for the operator to retire it. `stopped` sits here too: an interrupted run is settled but
-// undecided, not done.
-const WAITING: readonly Session['status'][] = ['done', 'stopped'];
+// The agent finished on its own but the work is not closed out — it is waiting for a merge
+// or a review. `in_review` sits here rather than in «Завершені»: a pushed PR is exactly the
+// «not merged» case this bucket is named for, and filing it as completed would hide the very
+// cards somebody still has to review. `stopped` sits here too: an interrupted run is settled
+// but undecided, not done.
+const WAITING: readonly Session['status'][] = ['done', 'in_review', 'stopped'];
 
 // Needs a human before it can move: a conflict, or a crashed run.
 const ERRORS: readonly Session['status'][] = ['error', 'conflict'];

@@ -138,6 +138,9 @@ export const en: MessageSchema = {
     },
     board: {
       newTask: 'New task',
+      searchPlaceholder: 'Search: name, branch, model, brief',
+      searchCount: '{n} of {total} matched',
+      searchEmpty: 'Nothing matched “{q}”',
       resizeAria: 'Resize the chat section',
       resizeTip: 'Drag to resize the chat section',
       stranded: 'Only on this machine: these tasks’ project isn’t in the cloud yet, so the team can’t see them. Publish the project and they’ll move to the board.',
@@ -237,6 +240,7 @@ export const en: MessageSchema = {
       tool: 'running',
       waiting: 'waiting',
       done: 'done',
+      review: 'in review',
       error: 'error',
       queued: 'queued',
       stopped: 'stopped',
@@ -249,6 +253,7 @@ export const en: MessageSchema = {
       error: 'error',
       conflict: 'merge conflict',
       done: 'done',
+      in_review: 'in review — PR opened',
     },
     launcher: {
       esc: 'Esc — close',
@@ -410,6 +415,7 @@ export const en: MessageSchema = {
       queued: 'Queued',
       running: 'In progress',
       waiting: 'Awaiting reply',
+      review: 'In review',
       closed: 'Done',
     },
     editor: {
@@ -1316,6 +1322,7 @@ export const en: MessageSchema = {
         running: 'running',
         waiting: 'waiting',
         done: 'done',
+        review: 'in review',
         error: 'error',
         queued: 'queued',
         stopped: 'stopped',

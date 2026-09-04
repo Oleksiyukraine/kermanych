@@ -62,6 +62,11 @@ type Live = {
   // header of a call are only reducible once its end frame arrives, several calls later.
   toolStarted: Map<string, number>;
   toolArgs: Map<string, Record<string, unknown>>;
+  // The operator pressed «Створити ПР» and the turn now running is the PR turn. Set when the
+  // request is delivered, consumed by the turn's `agent_end`, which then settles the session
+  // at `in_review` instead of the generic `done`. Live-only on purpose: it describes the turn
+  // in flight, and an api restart mid-turn loses the turn's end event too.
+  prRequested?: boolean;
   // Whether the "which model is this child actually running" question has been settled for
   // this child (refreshState). One lookup per omp process, not one per two-second poll.
   modelResolved?: boolean;
@@ -190,18 +195,21 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // Stop the resident omp child of every FINISHED session (status "done") that has been silent
-  // past CHILD_IDLE_TTL_MS. The Live stays, so getTranscript still serves the rendered history
-  // with no rehydrate; the next send respawns through liveOrResume, exactly as a dormant session
-  // does. Only "done": the isAlive guard already skips stopped/merged/most errored children
-  // (their child is gone), and stopping a still-live conflict/error child would make wireLive's
-  // onExit wrongly flip the row to "error". "done" is the state a big finished run rests at — the
-  // exact memory target. Idempotent (a reaped child reads !isAlive) and never mid-resume.
+  // Stop the resident omp child of every SETTLED session ("done" or "in_review") that has been
+  // silent past CHILD_IDLE_TTL_MS. The Live stays, so getTranscript still serves the rendered
+  // history with no rehydrate; the next send respawns through liveOrResume, exactly as a dormant
+  // session does. Only these two: the isAlive guard already skips stopped/merged/most errored
+  // children (their child is gone), and stopping a still-live conflict/error child would make
+  // wireLive's onExit wrongly flip the row to "error" — which is also why `in_review` is named
+  // in that guard. "done" is the state a big finished run rests at and "in_review" is where a
+  // pushed PR rests, so both are the memory target, and a session waiting on a human reviewer
+  // is by definition idle for as long as the review takes. Idempotent (a reaped child reads
+  // !isAlive) and never mid-resume.
   private reapIdleChildren(now = Date.now()): void {
     const cutoff = now - SupervisorService.CHILD_IDLE_TTL_MS;
     for (const [id, l] of this.map) {
       if (!l.rpc.isAlive()) continue;
-      if (l.live.status !== "done") continue;
+      if (l.live.status !== "done" && l.live.status !== "in_review") continue;
       if (this.resuming.has(id)) continue;
       if ((l.live.lastEventAt ?? now) > cutoff) continue;
       this.stopPoll(l);
@@ -954,7 +962,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     l.live.currentTool = l.state.currentTool;
     if (l.state.status !== "waiting_input") l.live.pendingUiRequest = undefined;
     if (e.type === "agent_end" && (e as Extract<RpcEvent, { type: "agent_end" }>).isTerminal !== false) {
-      this.registry.updateSession(id, { status: "done" });
+      // A turn the operator opened with «Створити ПР» settles at `in_review`, not `done`: the
+      // branch has just been pushed and a human owes it a review. Written over the reducer's
+      // verdict rather than taught to `reduceStatus` on purpose — the reducer sees only the
+      // event stream, and «why this turn was started» is Kermanych's own knowledge. Both the
+      // live entry and the row are set, or `merge()` would keep shadowing the row with `done`.
+      const settled: Session["status"] = l.prRequested ? "in_review" : "done";
+      l.prRequested = false;
+      l.state = { status: settled };
+      l.live.status = settled;
+      this.registry.updateSession(id, { status: settled });
       this.refreshState(id);
       this.stopPoll(l);
       // A turn cannot end with a tool still running, so anything left here belongs to a call
@@ -1291,6 +1308,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // ### PR/Commit Conventions when present and Kermanych's fallback otherwise, then commits,
   // pushes, and opens the PR via `gh`. Async — progress streams on the session's normal feed,
   // mirroring resolveConflict; the branch/worktree are left intact (the PR lives on the remote).
+  //
+  // The card's status is NOT moved here. Committing and pushing is real work and has to read
+  // as active on the board; what the request buys is the turn's OUTCOME — `prRequested` makes
+  // that turn's `agent_end` settle the session at `in_review` (onRpcEvent) instead of `done`.
   async createPullRequest(id: string): Promise<{ ok: true }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
@@ -1311,6 +1332,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       }) + block;
 
     await this.sendAsKermanych(id, prompt, "prompt");
+    // After the send, never before: the flag must belong to the turn this call just started,
+    // and `deliver` awaits a respawn for a dormant session — a stale `agent_end` arriving
+    // during that await must not consume it. `deliver` ends in a synchronous `rpc.prompt`,
+    // so no event can be processed between it and this line.
+    const l = this.map.get(id);
+    if (l) l.prRequested = true;
     return { ok: true };
   }
   answerUi(id: string, res: RpcExtensionUIResponse) {
@@ -1562,7 +1589,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.map.set(sessionId, live);
     rpc.onExit((_code, reason) => {
       this.stopPoll(live);
-      if (live.live.status !== "stopped" && live.live.status !== "done") {
+      // `in_review` counts as ended cleanly: the PR turn finished, and the reaper stops that
+      // child on purpose (a review takes as long as a human takes). Without it here, every
+      // reaped review session would flip to `error` on its own child's exit.
+      if (live.live.status !== "stopped" && live.live.status !== "done" && live.live.status !== "in_review") {
         live.live.status = "error";
         live.live.error = reason;
         this.registry.updateSession(sessionId, { status: "error" });

@@ -10,7 +10,9 @@ export const INTERACTIVE_UI_METHODS: Record<string, true> = { select: true, conf
 export const ACTIVE_STATUSES: readonly SessionStatus[] = ["queued", "thinking", "tool", "waiting_input"];
 
 // Statuses worth a native notification: the agent needs the operator, or it finished.
-export const NOTIFY_STATUSES: readonly SessionStatus[] = ["waiting_input", "error", "conflict", "done"];
+// `in_review` is the PR half of "it finished" — the branch is pushed and a human now owes
+// it a review, which is exactly the moment the operator has to hear about.
+export const NOTIFY_STATUSES: readonly SessionStatus[] = ["waiting_input", "error", "conflict", "done", "in_review"];
 
 // True only on a transition INTO a notify status (never on same-status repeats),
 // so callers fire one notification per meaningful change.

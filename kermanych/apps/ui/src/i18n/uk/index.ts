@@ -142,6 +142,9 @@ export const uk = {
     },
     board: {
       newTask: 'Нова задача',
+      searchPlaceholder: 'Пошук: назва, гілка, модель, текст задачі',
+      searchCount: 'знайдено {n} з {total}',
+      searchEmpty: 'Нічого не знайдено за запитом «{q}»',
       resizeAria: 'Змінити ширину секції з чатом',
       resizeTip: 'Перетягніть, щоб змінити ширину секції з чатом',
       stranded: 'Лише на цій машині: проєкт цих задач ще не у хмарі, тому команда їх не бачить. Опублікуйте проєкт — і вони переїдуть на дошку.',
@@ -241,6 +244,7 @@ export const uk = {
       tool: 'виконує',
       waiting: 'чекає',
       done: 'готово',
+      review: 'на ревʼю',
       error: 'помилка',
       queued: 'у черзі',
       stopped: 'зупинено',
@@ -253,6 +257,7 @@ export const uk = {
       error: 'помилка',
       conflict: 'конфлікт злиття',
       done: 'завершено',
+      in_review: 'на ревʼю — ПР відкрито',
     },
     launcher: {
       esc: 'Esc — закрити',
@@ -414,6 +419,7 @@ export const uk = {
       queued: 'У черзі',
       running: 'В роботі',
       waiting: 'Чекає відповіді',
+      review: 'На ревʼю',
       closed: 'Завершені',
     },
     editor: {
@@ -1320,6 +1326,7 @@ export const uk = {
         running: 'виконує',
         waiting: 'чекає',
         done: 'готово',
+        review: 'на ревʼю',
         error: 'помилка',
         queued: 'у черзі',
         stopped: 'зупинено',

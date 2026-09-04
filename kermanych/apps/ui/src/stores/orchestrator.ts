@@ -31,6 +31,7 @@ const STATUS_LABEL_KEY: Partial<Record<Session['status'], string>> = {
   error: 'agents.sessionStatus.error',
   conflict: 'agents.sessionStatus.conflict',
   done: 'agents.sessionStatus.done',
+  in_review: 'agents.sessionStatus.in_review',
 };
 
 export const useOrchestrator = defineStore('orchestrator', () => {

@@ -8,7 +8,7 @@
 
     <div v-else class="agents__content" ref="contentEl" :class="{ 'agents__content--resizing': resizing }">
       <!-- BOARD — one card per session in scope: one project, or every project of a workspace -->
-      <section class="agents__board" :style="{ width: detailWidth + 'px' }">
+      <section ref="boardEl" class="agents__board" :style="{ width: detailWidth + 'px' }">
         <header class="agents__board-head">
           <div class="agents__board-title">
             <span class="agents__bucket-label">{{ bucketLabel }}</span>
@@ -27,6 +27,23 @@
           </div>
         </header>
 
+        <!-- SEARCH — sticky at the top of the scrolling column, so a query typed over a long
+             board stays reachable while the cards move under it. It narrows the ROWS only:
+             the bucket the rail chose still decides which rows are candidates, the header
+             keeps counting the whole bucket, and «знайдено N з M» beside the box is where the
+             matched figure is stated. -->
+        <div class="agents__search">
+          <KField
+            v-model="query"
+            class="agents__search-field"
+            type="search"
+            :placeholder="t('agents.board.searchPlaceholder')"
+          />
+          <span v-if="filtering" class="agents__search-count mono">
+            {{ t('agents.board.searchCount', { n: matchedCount, total: boardCount }) }}
+          </span>
+        </div>
+
         <!-- Muted lines about the SCOPE, above the cards the scope decided. Both state
              something the operator can act on; the rule beneath keeps the cards reading as a
              separate list rather than as their continuation. -->
@@ -35,62 +52,66 @@
           <p v-if="outsideScopeNote" class="agents__note">{{ outsideScopeNote }}</p>
         </div>
 
-        <!-- «Задачі» is my cloud backlog: the cards assigned to me, above whatever stranded
-             pre-cutover local rows the session list below still holds. -->
-        <div v-if="showTasks && taskCards.length" class="agents__cards">
-          <template v-for="g in taskGroups" :key="g.projectId">
-            <div v-if="groupByProject" class="agents__group-label mono">{{ g.name }}</div>
-            <!-- `branch` is deliberately EMPTY here, and must stay empty: KSessionCard heads
-                 the card with `branch || title`, so anything passed wins over the title. A
-                 card's `t.branch` is its BASE branch («Базова гілка»), seeded from the
-                 project default — passing it made every card in the inbox read «main» and
-                 hid the title in the ✕ tooltip. A BACKLOG card has no branch of its own to
-                 name; the session cards below do, which is why they pass theirs. -->
+        <!-- THE LIST — one flat, windowed run of rows: under «Задачі» my cloud backlog cards
+             first, then the note about whatever stranded pre-cutover local rows follow, then
+             the session cards. Flat because it is VIRTUALISED — only the pages around the fold
+             are mounted and two spacers stand in for the rest, which a nest of
+             group-then-cards blocks cannot express. `data-vkey` on every row is how
+             useVirtualList finds a height and whose it is. -->
+        <div v-if="boardItems.length" ref="listEl" class="agents__cards">
+          <div class="agents__pad" aria-hidden="true" :style="{ height: listWindow.padTop + 'px' }"></div>
+          <div v-for="item in visibleItems" :key="item.key" class="agents__vrow" :data-vkey="item.key">
+            <!-- Which project a run of cards belongs to; rendered only under a workspace scope. -->
+            <div
+              v-if="item.kind === 'group'"
+              class="agents__group-label mono"
+              :class="{ 'agents__group-label--lead': item.lead }"
+            >{{ item.name }}</div>
+            <!-- Whatever survived the publication pass: rows whose project has no cloud row at
+                 all, so there is nothing for a card to point at. Only under «Задачі» — in every
+                 other bucket these are ordinary local sessions. -->
+            <p v-else-if="item.kind === 'note'" class="agents__note agents__note--stranded mono">
+              {{ t('agents.board.stranded') }}
+            </p>
+            <!-- `branch` is deliberately EMPTY for a card, and must stay empty: KSessionCard
+                 heads the card with `branch || title`, so anything passed wins over the title.
+                 A card's `branch` is its BASE branch («Базова гілка»), seeded from the project
+                 default — passing it made every card in the inbox read «main» and hid the
+                 title in the ✕ tooltip. A BACKLOG card has no branch of its own to name; the
+                 session cards do, which is why they pass theirs. -->
             <KSessionCard
-              v-for="card in g.rows"
-              :key="card.id"
+              v-else-if="item.kind === 'card'"
               :branch="''"
-              :title="card.title"
-              :time="renderTime(t, relativeTime(card.updatedAt, now))"
-              :status="card.status"
-              :status-line="card.description ?? ''"
-              :model="card.model"
+              :title="item.card.title"
+              :time="renderTime(t, relativeTime(item.card.updatedAt, now))"
+              :status="item.card.status"
+              :status-line="item.card.description ?? ''"
+              :model="item.card.model"
               :selected="false"
               removable
-              :remove-title="t('agents.board.removeTask', { title: card.title })"
-              @click="openLauncher(card)"
-              @remove="onDeleteCard(card)"
+              :remove-title="t('agents.board.removeTask', { title: item.card.title })"
+              @click="openLauncher(item.card)"
+              @remove="onDeleteCard(item.card)"
             />
-          </template>
-        </div>
-        <!-- Whatever survived the publication pass: rows whose project has no cloud row at
-             all, so there is nothing for a card to point at. Only under «Задачі» — in every
-             other bucket these are ordinary local sessions. -->
-        <p v-if="showTasks && boardRows.length" class="agents__note agents__note--stranded mono">
-          {{ t('agents.board.stranded') }}
-        </p>
-        <div v-if="boardRows.length" class="agents__cards">
-          <template v-for="g in boardGroups" :key="g.projectId">
-            <div v-if="groupByProject" class="agents__group-label mono">{{ g.name }}</div>
             <KSessionCard
-              v-for="s in g.rows"
-              :key="s.id"
-              :branch="s.branch"
-              :title="s.name"
-              :time="renderTime(t, relativeTime(s.lastActivityAt, now))"
-              :status="s.status"
-              :status-line="activityOf(s) || statusWord(s)"
-              :model="s.model"
-              :usage="s.usage"
-              :selected="store.selectedSessionId === s.id"
-              :removable="s.kind === 'task'"
-              :remove-title="t('agents.board.removeStranded', { name: s.name })"
-              @click="onRowClick(s)"
-              @remove="onDeleteStranded(s)"
+              v-else-if="item.kind === 'session'"
+              :branch="item.session.branch"
+              :title="item.session.name"
+              :time="renderTime(t, relativeTime(item.session.lastActivityAt, now))"
+              :status="item.session.status"
+              :status-line="activityOf(item.session) || statusWord(item.session)"
+              :model="item.session.model"
+              :usage="item.session.usage"
+              :selected="store.selectedSessionId === item.session.id"
+              :removable="item.session.kind === 'task'"
+              :remove-title="t('agents.board.removeStranded', { name: item.session.name })"
+              @click="onRowClick(item.session)"
+              @remove="onDeleteStranded(item.session)"
             />
-          </template>
+          </div>
+          <div class="agents__pad" aria-hidden="true" :style="{ height: listWindow.padBottom + 'px' }"></div>
         </div>
-        <div v-else-if="!showTasks || !taskCards.length" class="agents__empty mono">{{ emptyText }}</div>
+        <div v-else class="agents__empty mono">{{ emptyText }}</div>
       </section>
 
       <!-- RESIZER — drag the seam to widen / narrow the chat section -->
@@ -540,7 +561,12 @@
             </div>
             <div v-if="draftWorktree" class="agents-launcher__from">
               <span class="agents-launcher__from-label mono">{{ t('agents.launcher.from') }}</span>
-              <KSelect v-model="draftBaseBranch" :options="launchBranches" />
+              <!-- `searchable`: `listBranches` hands over every local `refs/heads`, and in a
+                   long-lived repo that is hundreds of rows sharing a handful of prefixes
+                   («feature/…», «fix/…»). Scrolling to the base is hopeless there and
+                   closed-list prefix type-ahead only walks the prefix; typing «csp» has to
+                   find «fix/csp-iframe». -->
+              <KSelect v-model="draftBaseBranch" :options="launchBranches" searchable />
             </div>
           </div>
 
@@ -752,6 +778,7 @@ import { sessionScopedProjectIds } from '../lib/scope';
 import type { Bucket } from '../lib/buckets';
 import { myBacklogTasks, taskInsertFromDraft, taskPatchFromDraft } from '../lib/tasks-view';
 import { planBacklogPublication } from '../lib/publish-backlog';
+import { byNewestSession, byNewestTask, filterSessions, filterTaskCards, newestActivityAt, newestUpdateAt } from '../lib/agents-board';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
@@ -767,6 +794,7 @@ import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
+import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import { BRANCH_PREFIXES, PLATFORMS, type BranchPrefix, type Platform } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
@@ -776,6 +804,7 @@ import { tokens, usageTokens, usd } from '../lib/format';
 import { EFFORT_OPTIONS } from '../lib/effort';
 import { modelOptions, effortOptions } from '../lib/models';
 import { useResizableWidth } from '../composables/useResizableWidth';
+import { useVirtualList } from '../composables/useVirtualList';
 
 // The Агенти screen (design-system section 07): the board of session cards for whatever is
 // in scope — one project, or every project of a workspace — plus the full panel for the
@@ -798,9 +827,9 @@ const now = useNow();
 const router = useRouter();
 
 // Board buckets mirror the sidebar (lib/buckets.ts): completed (merged or set aside) wins,
-// then backlog → Задачі, error/conflict → Помилки, done/stopped → Очікують, everything else
-// → Активні. Driven by store.selectedBucket.
-const WAITING_STATUSES: readonly SessionStatus[] = ['done', 'stopped'];
+// then backlog → Задачі, error/conflict → Помилки, done/in_review/stopped → Очікують,
+// everything else → Активні. Driven by store.selectedBucket.
+const WAITING_STATUSES: readonly SessionStatus[] = ['done', 'in_review', 'stopped'];
 const ERROR_STATUSES: readonly SessionStatus[] = ['error', 'conflict'];
 // Active = an agent whose process is alive or is blocked on the operator. Shared: archiving
 // refuses these (the API re-checks with core's ACTIVE_STATUSES) and the out-of-scope note
@@ -811,6 +840,22 @@ const ACTIVE_STATUSES: readonly SessionStatus[] = ['queued', 'thinking', 'tool',
 // keeps its reopen/delete controls.
 const showCompleted = computed(() => store.selectedBucket === 'completed');
 const showTasks = computed(() => store.selectedBucket === 'tasks');
+
+// ── Search ────────────────────────────────────────────────────────────────
+// One query over both kinds of row the column holds. It narrows what is RENDERED and nothing
+// else: the rail still decides which bucket, and the header still counts that bucket whole.
+const query = ref('');
+const filtering = computed(() => query.value.trim() !== '');
+// A query belongs to the list in front of the operator, so it dies with that list: a
+// leftover «auth» after a click on another bucket or another project reads as an empty
+// board, and that bucket's own empty-state text would then be a lie about what is there.
+watch(
+  () => [store.selectedBucket, store.selectedProjectId, store.selectedWorkspaceId],
+  () => {
+    query.value = '';
+  },
+);
+
 // Row order for the agents table. Sessions are bucketed into status tiers and
 // sorted by creation time within each tier. Ranking by tier — not by the live
 // status — is what stops rows from jumping while agents run: every "process
@@ -826,6 +871,7 @@ const STATUS_RANK: Record<SessionStatus, number> = {
   error: 1,
   conflict: 1,
   done: 2,
+  in_review: 2,
   stopped: 2,
   merged: 3,
 };
@@ -849,21 +895,31 @@ const scopedIds = computed(() =>
 );
 const inScope = computed(() => new Set(scopedIds.value));
 
+// Every row the bucket holds, before the search box narrows it. The header's count and the
+// «знайдено N з M» line are both stated against this, which is what keeps the figure beside
+// the bucket label agreeing with the rail's badge while a query is open.
+const scopedSessions = computed(() =>
+  store.sessions.filter((s) => {
+    if (!inScope.value.has(s.projectId)) return false;
+    if (store.selectedBucket === 'completed') return !!s.archived || s.status === 'merged';
+    if (s.archived) return false;
+    if (store.selectedBucket === 'tasks') return s.status === 'backlog';
+    if (store.selectedBucket === 'errors') return ERROR_STATUSES.includes(s.status);
+    if (store.selectedBucket === 'waiting') return WAITING_STATUSES.includes(s.status);
+    return ACTIVE_STATUSES.includes(s.status);
+  }),
+);
+
+// What the column orders: the rows the query kept, freshest first.
+//
+// Recency, and no longer a status tier. The list used to rank by status — every «process
+// alive» status sharing one rank — so that an agent flipping between `thinking` and `tool`
+// never reordered the table. `lastActivityAt` moves for the same reason, but it moves
+// TOWARDS the top, and the top is where the operator is looking: a working agent leads, a
+// finished one sinks as newer work arrives. The cost is real and accepted — two agents
+// running at once do trade places as their events land.
 const projectSessions = computed(() =>
-  store.sessions
-    .filter((s) => {
-      if (!inScope.value.has(s.projectId)) return false;
-      if (store.selectedBucket === 'completed') return !!s.archived || s.status === 'merged';
-      if (s.archived) return false;
-      if (store.selectedBucket === 'tasks') return s.status === 'backlog';
-      if (store.selectedBucket === 'errors') return ERROR_STATUSES.includes(s.status);
-      if (store.selectedBucket === 'waiting') return WAITING_STATUSES.includes(s.status);
-      return ACTIVE_STATUSES.includes(s.status);
-    })
-    .sort((a, b) => {
-      const byStatus = STATUS_RANK[a.status] - STATUS_RANK[b.status];
-      return byStatus !== 0 ? byStatus : a.createdAt.localeCompare(b.createdAt);
-    }),
+  [...filterSessions(scopedSessions.value, query.value)].sort(byNewestSession),
 );
 
 // Board order: each discussion child immediately follows its parent (a one-level
@@ -892,62 +948,129 @@ function projectName(id: string): string {
 // column is 300px wide and a per-card label would cost more than it tells. Under a project
 // scope there is one group and no label — the rail already says which project that is.
 //
-// Group ORDER is the best STATUS_RANK the group holds, so the project with the most urgent
-// agent leads, and it is seeded explicitly rather than taken from first appearance in
-// boardRows. First appearance looks equivalent and is not: projectSessions filters by BUCKET
-// first, so in Активні a `merged` parent is not in the list at all and its still-running
-// child falls through boardRows' orphan sweep to the very END. Its project then sorts below
-// a project whose most urgent session is an `error` (rank 1) — the reachable worst case, and
-// the shape the browser check built. Only Активні can produce that orphan: in the buckets
-// where a rank-2 `done` survives, the parent survives with it and no child is orphaned. An
-// agent waiting on a question must not sit under another project's settled work, which is
-// the whole reason the list is tiered in the first place.
-//
-// Ties keep first-appearance order (Array#sort is stable), so within one rank the grouping
-// changes nothing about the order the sessions already had.
+// Group ORDER follows the rows' own promise: a project leads on its freshest row, so «newest
+// at the top» holds across the whole column and not merely inside each group. Taken from the
+// group's rows rather than from the first one pushed into it, which is not equivalent: a fork
+// may be newer than the parent it follows, and boardRows sweeps orphans (a child whose parent
+// the bucket filtered out) to the very END.
 const groupByProject = computed(() => !store.selectedProjectId);
-type BoardGroup = { projectId: string; name: string; rank: number; rows: Session[] };
+type BoardGroup = { projectId: string; name: string; newest: number; rows: Session[] };
 const boardGroups = computed<BoardGroup[]>(() => {
   const groups = new Map<string, BoardGroup>();
   for (const s of boardRows.value) {
     let group = groups.get(s.projectId);
     if (!group) {
-      group = { projectId: s.projectId, name: projectName(s.projectId), rank: Number.MAX_SAFE_INTEGER, rows: [] };
+      group = { projectId: s.projectId, name: projectName(s.projectId), newest: 0, rows: [] };
       groups.set(s.projectId, group);
     }
     group.rows.push(s);
-    // Accumulated in the same pass rather than recomputed per comparison.
-    group.rank = Math.min(group.rank, STATUS_RANK[s.status]);
   }
-  return [...groups.values()].sort((a, b) => a.rank - b.rank);
+  const out = [...groups.values()];
+  for (const g of out) g.newest = newestActivityAt(g.rows);
+  return out.sort((a, b) => b.newest - a.newest);
 });
 
 // My backlog inbox: the cards I have to work, in the same scope the session list uses, so
 // one sidebar click narrows both. Unclaimed team cards live on Дошка by design.
-const taskCards = computed(() => myBacklogTasks(board.tasks, auth.user?.id ?? '', scopedIds.value));
+const scopedCards = computed(() =>
+  myBacklogTasks(board.tasks, auth.user?.id ?? '', scopedIds.value),
+);
+// myBacklogTasks filters WITHOUT sorting — listTasks hands the rows over `created_at`
+// ascending — so this is where the inbox's order is decided: the card touched last leads.
+const taskCards = computed(() =>
+  [...filterTaskCards(scopedCards.value, query.value)].sort(byNewestTask),
+);
 
-type TaskGroup = { projectId: string; name: string; rows: Task[] };
-// Cards are all `backlog`, so there is no STATUS_RANK to order groups by: project name is
-// the only stable order available, and it matches what the rail shows.
+type TaskGroup = { projectId: string; name: string; newest: number; rows: Task[] };
+// Cards are all `backlog`, so there is no status to order groups by — and no need for one:
+// the freshest card leads its project, the same rule the session groups follow.
 const taskGroups = computed<TaskGroup[]>(() => {
   const groups = new Map<string, TaskGroup>();
-  for (const t of taskCards.value) {
-    let group = groups.get(t.projectId);
+  for (const c of taskCards.value) {
+    let group = groups.get(c.projectId);
     if (!group) {
-      group = { projectId: t.projectId, name: projectName(t.projectId), rows: [] };
-      groups.set(t.projectId, group);
+      group = { projectId: c.projectId, name: projectName(c.projectId), newest: 0, rows: [] };
+      groups.set(c.projectId, group);
     }
-    group.rows.push(t);
+    group.rows.push(c);
   }
-  return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const out = [...groups.values()];
+  for (const g of out) g.newest = newestUpdateAt(g.rows);
+  return out.sort((a, b) => b.newest - a.newest);
 });
 
-// The header counts what the column RENDERS, and under «Задачі» that is the cards plus any
-// stranded pre-cutover local row — the same sum the rail's badge shows. A header reading 0
-// above a list of cards would be the disagreement MainLayout.bucketCounts exists to avoid.
+// The header counts what the BUCKET holds — the same sum the rail's badge shows — and not
+// what the search box left on screen: a header disagreeing with the badge is the drift
+// MainLayout.bucketCounts exists to avoid. The matched figure gets its own line, beside the
+// box that produced it.
 const boardCount = computed(
+  () =>
+    scopedSessions.value.filter((s) => s.kind !== 'chat').length +
+    (showTasks.value ? scopedCards.value.length : 0),
+);
+const matchedCount = computed(
   () => boardRows.value.length + (showTasks.value ? taskCards.value.length : 0),
 );
+
+// ── The rendered list ─────────────────────────────────────────────────────
+// One flat row model for the whole column, because the list is virtualised: a windowed list
+// mounts rows by INDEX, and a nest of «group label, then its cards» blocks cannot answer what
+// row 37 is. `lead` marks the very first row, so the leading group label drops the padding
+// that separates the later ones from the cards above them.
+type BoardItem =
+  | { kind: 'group'; key: string; name: string; lead: boolean }
+  | { kind: 'note'; key: string }
+  | { kind: 'card'; key: string; card: Task }
+  | { kind: 'session'; key: string; session: Session };
+
+const boardItems = computed<BoardItem[]>(() => {
+  const items: BoardItem[] = [];
+  if (showTasks.value) {
+    for (const g of taskGroups.value) {
+      if (groupByProject.value)
+        items.push({ kind: 'group', key: `tg:${g.projectId}`, name: g.name, lead: !items.length });
+      for (const c of g.rows) items.push({ kind: 'card', key: `t:${c.id}`, card: c });
+    }
+    if (boardRows.value.length) items.push({ kind: 'note', key: 'stranded' });
+  }
+  for (const g of boardGroups.value) {
+    if (groupByProject.value)
+      items.push({ kind: 'group', key: `sg:${g.projectId}`, name: g.name, lead: !items.length });
+    for (const s of g.rows) items.push({ kind: 'session', key: `s:${s.id}`, session: s });
+  }
+  return items;
+});
+
+// Rows per mounted page. The board is the one list in the app with no upper bound on its
+// length — every agent a machine has ever run ends up in «Завершені» — and every row is a
+// KSessionCard subtree with a status dot, a relative clock and an accounting line, so the
+// cost of mounting them all is paid on every tick of `now`. Twenty is a screenful and a half
+// at the 300px column's card height, which is what makes a page boundary invisible.
+const BOARD_PAGE = 20;
+// A card with no accounting line measures ~76px and one with ~104px; the estimate only has to
+// make the scrollbar plausible for rows nobody has scrolled to yet, and is replaced by the
+// real height the moment a row is mounted.
+const BOARD_ROW_ESTIMATE = 96;
+const boardEl = ref<HTMLElement | null>(null);
+const listEl = ref<HTMLElement | null>(null);
+const { window: listWindow } = useVirtualList({
+  root: boardEl,
+  list: listEl,
+  count: () => boardItems.value.length,
+  keyAt: (i) => boardItems.value[i]!.key,
+  page: BOARD_PAGE,
+  estimate: BOARD_ROW_ESTIMATE,
+});
+const visibleItems = computed(() =>
+  boardItems.value.slice(listWindow.value.start, listWindow.value.end),
+);
+
+// Back to the top whenever the list itself changes meaning: a narrowed list shown from its
+// middle hides its best matches above the fold, and a bucket switch that kept the old scroll
+// offset would open the new list somewhere in its past.
+watch([query, () => store.selectedBucket], () => {
+  if (boardEl.value) boardEl.value.scrollTop = 0;
+});
 
 // Active agents the current scope hides — an agent that is running, or waiting for an answer,
 // and left the screen because the operator clicked elsewhere in the rail. The page must not
@@ -1121,6 +1244,9 @@ const bucketLabel = computed(() => t(`agents.bucket.${store.selectedBucket}`));
 // dead end there. The click that unblocks it is NOT repeated here — PICK_PROJECT_HINT is
 // already on screen a few pixels above, and saying it twice reads as two different problems.
 const emptyText = computed(() => {
+  // A query that matched nothing is a different problem from an empty bucket, and it names
+  // its own cure: change the words, not the scope.
+  if (filtering.value) return t('agents.board.searchEmpty', { q: query.value.trim() });
   if (showCompleted.value) return t('agents.empty.completed');
   if (store.selectedBucket === 'waiting') return t('agents.empty.waiting');
   if (store.selectedBucket === 'errors') return t('agents.empty.errors');
@@ -1442,6 +1568,8 @@ function statusWord(s: Session): string {
       return t('agents.statusWord.waiting');
     case 'done':
       return t('agents.statusWord.done');
+    case 'in_review':
+      return t('agents.statusWord.review');
     case 'error':
       return t('agents.statusWord.error');
     case 'queued':
@@ -2344,6 +2472,43 @@ async function submitPreviewConfig(): Promise<void> {
   gap: 12px;
 }
 
+// The search box, pinned to the top of the scrolling column so a query typed over a long
+// board stays reachable while the cards move under it. The cards pass BEHIND the bar — hence
+// the opaque fill (the same --k-bg the board sits on) and the rule beneath it, which is what
+// tells a scrolled card from the box.
+//
+// The offsets are the column's own padding, twice over, and neither is decoration. A sticky
+// element is constrained to its scroller's CONTENT box, so `top: 0` parks the bar 16px below
+// the scrollport edge and cards ride visibly through the band above it — measured in
+// Chromium at exactly --k-sp-4. The negative side margins are the same story sideways: the
+// bar has to reach the padding edges, or a card shows through the strips either side of it.
+.agents__search {
+  position: sticky;
+  top: calc(-1 * var(--k-sp-4));
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--k-sp-2);
+  margin: 0 calc(-1 * var(--k-sp-4)) var(--k-sp-2);
+  padding: var(--k-sp-2) var(--k-sp-4);
+  background: var(--k-bg);
+  border-bottom: var(--k-rule-thin) solid var(--k-line);
+}
+
+.agents__search-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+// Wraps under the field in a narrow column rather than squeezing it: the board can be
+// dragged down to 300px, where the two side by side leave no room to read either.
+.agents__search-count {
+  flex: none;
+  font-size: var(--k-fs-xs);
+  color: var(--k-faint);
+}
+
 .agents__bucket-label {
   font-family: var(--k-font-ui);
   font-size: var(--k-fs-md);
@@ -2407,10 +2572,13 @@ async function submitPreviewConfig(): Promise<void> {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--k-faint);
+}
 
-  &:first-child {
-    padding-top: 0;
-  }
+// The list's very first row — a `:first-child` rule cannot say this any more: each row sits
+// in its own wrapper, where every label is a first child, and the leading one is a matter of
+// the row model (BoardItem.lead) rather than of the DOM.
+.agents__group-label--lead {
+  padding-top: 0;
 }
 
 // ── Detail column ─────────────────────────────────────────────────────────
@@ -2680,10 +2848,18 @@ async function submitPreviewConfig(): Promise<void> {
   background: transparent;
 }
 
+// The virtualised list: a plain block, NOT a flex column with a gap. The gap moves onto each
+// row (.agents__vrow) so that the height useVirtualList measures CONTAINS it — a flex gap
+// lives between children instead, and the spacers would then be short by one gap per page,
+// which reads as a scrollbar drifting as the column is scrolled.
 .agents__cards {
-  display: flex;
-  flex-direction: column;
-  gap: var(--k-sp-3);
+  display: block;
+}
+
+// One virtualised row: a card, a group label or the stranded note, plus the vertical gap
+// below it as PADDING for the reason above.
+.agents__vrow {
+  padding-bottom: var(--k-sp-3);
 }
 
 // ── Detail tabs + panes ────────────────────────────────────────────────────
