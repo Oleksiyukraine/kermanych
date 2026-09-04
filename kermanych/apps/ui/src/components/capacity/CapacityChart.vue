@@ -1,11 +1,17 @@
 <template>
-  <figure class="capchart" :aria-label="t('management.capacity.chartAria')">
-    <svg class="capchart__svg" :viewBox="`0 0 ${width} ${HEIGHT}`" :style="{ minWidth: `${width}px` }" role="img">
+  <figure class="capchart">
+    <svg
+      class="capchart__svg"
+      :viewBox="`0 0 ${width} ${HEIGHT}`"
+      :style="{ minWidth: `${width}px` }"
+      role="img"
+      :aria-label="t('management.capacity.chartAria')"
+    >
       <defs>
         <!-- Planned time is a forecast; logged time happened. Same colour per person, the
              forecast hatched — so the eye reads the today rule as a change of fact, not of
              person. -->
-        <pattern id="capchart-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <pattern :id="hatchId" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <line x1="0" y1="0" x2="0" y2="6" stroke="var(--k-bg)" stroke-width="2.5" stroke-opacity="0.55" />
         </pattern>
       </defs>
@@ -36,7 +42,7 @@
           :y="seg.y"
           :width="BAR_W"
           :height="seg.h"
-          fill="url(#capchart-hatch)"
+          :fill="`url(#${hatchId})`"
           pointer-events="none"
         />
         <!-- Capacity tick: where the bar should stop. -->
@@ -93,14 +99,14 @@
 
 <script setup lang="ts">
 // The capacity chart: one stacked bar per period, one segment per person, a capacity tick
-// per bar. Hand-rolled SVG like RiskMatrix — the app has no chart library and its palette
-// is the token set, which a library would not read.
+// per bar. Hand-rolled SVG — the app has no chart library, and its palette is the token
+// set (RiskMatrix's CSS-grid heat map is the same policy).
 //
 // Everything numeric arrives in the report; this file only decides pixels. Persons beyond
 // the top MAX_SERIES by load are folded into «Others» so a twelve-person board stays
 // legible, and the unassigned bucket keeps its own muted swatch because it is load with
 // nobody's hours behind it.
-import { computed } from 'vue';
+import { computed, useId } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { hoursOf, sumCells, type CapacityReport } from '../../lib/capacity';
 import { formatIsoDate } from '../../lib/calendar';
@@ -109,6 +115,9 @@ import { UNASSIGNED } from '../../lib/jira-view';
 const props = defineProps<{ report: CapacityReport }>();
 const emit = defineEmits<{ pick: [personId: string] }>();
 const { t } = useI18n();
+// Scoped so two charts on the same page (e.g. team + drill-down) don't collide on a
+// document-global pattern id.
+const hatchId = `capchart-hatch-${useId()}`;
 
 const HEIGHT = 260;
 const PAD_L = 40;
@@ -193,8 +202,10 @@ type Bar = { segments: Segment[]; capacity: number; top: number; over: boolean }
 const bars = computed<Bar[]>(() =>
   props.report.periods.map((p, i) => {
     const segments: Segment[] = [];
-    let stack = 0;
-    const name = (s: Series) => s.name;
+    // Accumulate in seconds and convert once per boundary — rounding each segment to 0.1h
+    // independently would drift the drawn stack from the reported total, and the
+    // over-capacity outline (below) is decided from that same total.
+    let stackSecs = 0;
     const period = periodLabel(i);
     for (const s of series.value) {
       const cell = sumCells(s.members.map((id) => props.report.cells[id]![i]!));
@@ -202,23 +213,22 @@ const bars = computed<Bar[]>(() =>
       for (const planned of [false, true]) {
         const secs = planned ? cell.plannedSeconds : cell.loggedSeconds;
         if (secs <= 0) continue;
-        const h = hoursOf(secs);
-        const yTop = y(stack + h);
-        const yBottom = y(stack);
+        const yTop = y(hoursOf(stackSecs + secs));
+        const yBottom = y(hoursOf(stackSecs));
         segments.push({
           key: `${s.id}:${planned ? 'plan' : 'log'}`,
           y: yTop,
           h: Math.max(yBottom - yTop, 1),
           color: s.color,
           planned,
-          tip: t('management.capacity.tip', { name: name(s), load: h, cap, period }),
+          tip: t('management.capacity.tip', { name: s.name, load: hoursOf(secs), cap, period }),
         });
-        stack += h;
+        stackSecs += secs;
       }
     }
     const total = props.report.totals[i]!;
     const capacity = hoursOf(total.capacitySeconds);
-    return { segments, capacity, top: y(stack), over: capacity > 0 && hoursOf(total.loadSeconds) > capacity };
+    return { segments, capacity, top: y(hoursOf(stackSecs)), over: capacity > 0 && hoursOf(total.loadSeconds) > capacity };
   }),
 );
 
@@ -242,7 +252,10 @@ const todayX = computed<number | undefined>(() => {
 
 .capchart__svg {
   display: block;
-  width: 100%;
+  // Never upscale past 1:1 (a few-period chart stretched across a wide pane makes 9px
+  // text huge) — but still shrink and let the figure scroll when narrower than natural width.
+  width: auto;
+  max-width: 100%;
   height: auto;
 }
 
