@@ -9,6 +9,7 @@ import type {
 } from '@kermanych/cloud';
 import {
   createWorkspaceRisk as cloudCreateRisk,
+  deleteWorkspaceRisk as cloudDeleteRisk,
   listWorkspaceRisks as cloudListRisks,
   listRiskEvents as cloudListRiskEvents,
   patchWorkspaceRisk as cloudPatchRisk,
@@ -132,6 +133,33 @@ export const useRisks = defineStore('risks', () => {
     }
   }
 
+  // Removes a risk from the register for good. THROWS like create and save, and for the same
+  // reason: both callers — the screen's delete button and the chat's action executor — have
+  // something specific to say about a failure, and the commonest failure here is one an
+  // operator can act on («delete is owner-only»), which a swallowed toast would reduce to
+  // «не вдалося».
+  //
+  // Not optimistic, unlike board.ts's deleteTask. There the rollback is honest: a task that
+  // fails to delete comes back exactly as it was. Here the row would have to be re-inserted
+  // into a list ordered by exposure, and — more to the point — a register that flickers a
+  // risk out of existence and then back in is a register nobody trusts. The row leaves once
+  // Postgres has agreed it left.
+  //
+  // The event cache goes with it. Those rows are already gone in the database (the risk_id
+  // foreign key cascades), so a cached history for a deleted risk is not stale, it is a
+  // record of something that no longer exists.
+  async function remove(workspaceId: string, id: string): Promise<void> {
+    if (!auth.user) throw new Error(globalTr.t('common.notify.signInFirst'));
+    await cloudDeleteRisk(auth.client, id);
+    byWorkspace.value = {
+      ...byWorkspace.value,
+      [workspaceId]: (byWorkspace.value[workspaceId] ?? []).filter((r) => r.id !== id),
+    };
+    const next = { ...eventsByRisk.value };
+    delete next[id];
+    eventsByRisk.value = next;
+  }
+
   async function loadEvents(riskId: string): Promise<void> {
     if (IS_PREVIEW || !auth.user || eventsByRisk.value[riskId]) return;
     try {
@@ -144,5 +172,5 @@ export const useRisks = defineStore('risks', () => {
     }
   }
 
-  return { byWorkspace, eventsByRisk, loading, loadError, load, create, save, markReviewed, loadEvents };
+  return { byWorkspace, eventsByRisk, loading, loadError, load, create, save, remove, markReviewed, loadEvents };
 });

@@ -151,8 +151,7 @@
         <template #cell-actions="{ row }">
           <div class="risk__actions">
             <!-- Recording a review is one click, because a cadence that costs a modal is a
-                 cadence nobody keeps. There is no delete button: the register is append-only
-                 and a risk leaves it through its status. -->
+                 cadence nobody keeps. -->
             <KIconButton
               :title="t('management.risks.reviewMark')"
               :disabled="!isLive(row) || reviewing === row.id"
@@ -161,6 +160,23 @@
               ✓
             </KIconButton>
             <KIconButton :title="t('management.risks.open')" @click.stop="edit(row)">✎</KIconButton>
+            <!-- Delete is for the row that should never have been filed — a test entry, a
+                 duplicate, a mis-scoped one. It is NOT how a real risk leaves the register:
+                 that is still a status change to closed/materialized with a closure note,
+                 which keeps the row as lessons-learned material. The two are one click apart
+                 here, so the button is shown only to the workspace owner (matching the
+                 owner-only RLS policy behind it) and never renders as a dead control for
+                 everyone else. `v-if`, not `:disabled`: a greyed-out delete invites people
+                 to hunt for the permission, and a member cannot grant it to themselves. -->
+            <KIconButton
+              v-if="canDelete"
+              class="risk__danger"
+              :title="t('management.risks.deleteTitle')"
+              :disabled="deleting === row.id"
+              @click.stop="remove(row)"
+            >
+              ✕
+            </KIconButton>
           </div>
         </template>
       </KTable>
@@ -206,6 +222,7 @@ import RiskMatrix from 'components/risk/RiskMatrix.vue';
 import RiskEditor from 'components/risk/RiskEditor.vue';
 import { useRisks } from 'stores/risks';
 import { useProjects } from 'stores/projects';
+import { useOrchestrator } from 'stores/orchestrator';
 import { useNow } from '../composables/useNow';
 import { relativeTime, renderTime } from '../lib/time';
 import {
@@ -243,6 +260,10 @@ const props = defineProps<{ workspaceId: string; workspaceName: string }>();
 
 const store = useRisks();
 const projects = useProjects();
+// Only for the delete failure. Every other write on this screen either keeps a form open to
+// carry its own error (the editor) or reports through the store (markReviewed); a delete has
+// neither — the row it failed on is still in the table, saying nothing.
+const { notify } = useOrchestrator();
 
 const { t } = useI18n();
 // Proximity, overdue reviews and «переглянуто N дн тому» are all relative, so the page needs
@@ -278,6 +299,10 @@ const editing = ref<WorkspaceRisk | undefined>(undefined);
 // The row whose review is being recorded, so its tick cannot be double-clicked into two
 // writes while the first is in flight.
 const reviewing = ref('');
+// Same guard for the delete, and it matters more here: the second click of a double-click
+// would land on a row the first has already removed, and earn a postgrest error about an
+// id that no longer exists.
+const deleting = ref('');
 
 // The register is read on open and whenever the sidebar moves to another workspace. No
 // Realtime channel: see the header of stores/risks.ts.
@@ -378,6 +403,40 @@ async function review(risk: WorkspaceRisk): Promise<void> {
   reviewing.value = risk.id;
   await store.markReviewed(props.workspaceId, risk.id);
   reviewing.value = '';
+}
+
+// UX only — the owner-only RLS policy is the real gate and refuses a non-owner delete
+// whatever this returns. It decides whether the button is worth showing, nothing more.
+const canDelete = computed(() => projects.isWorkspaceOwner(props.workspaceId));
+
+// The confirm is the whole safety mechanism on this path, so it quotes the code AND the
+// statement rather than asking «are you sure?»: the operator is agreeing to lose a specific
+// row, and a generic prompt is one people learn to click through. `window.confirm` is the
+// app's established pattern for destructive acts (AgentsPage, SettingsPage).
+//
+// This is also the one place the deletion's real cost is stated in the operator's own
+// language — that the event history goes with the row — because after this click there is
+// nothing left to read it from.
+async function remove(risk: WorkspaceRisk): Promise<void> {
+  const statement = risk.event.trim() || risk.code;
+  if (!window.confirm(t('management.risks.deleteConfirm', { code: risk.code, event: statement })))
+    return;
+  deleting.value = risk.id;
+  try {
+    await store.remove(props.workspaceId, risk.id);
+    // The editor may be open on the row that no longer exists — the top-N list and the
+    // matrix both open it, and a modal bound to a deleted risk would save into nothing.
+    if (editing.value?.id === risk.id) {
+      editorOpen.value = false;
+      editing.value = undefined;
+    }
+  } catch (e) {
+    // Verbatim, and not swallowed: the store throws so this screen can say WHY. The likely
+    // refusal is the owner-only policy, which is something the operator can act on.
+    notify(t('management.risks.deleteFailed', { code: risk.code, error: e instanceof Error ? e.message : String(e) }), 'error');
+  } finally {
+    deleting.value = '';
+  }
 }
 
 // Two row states worth seeing without reading a cell: over the tolerance line, and overdue
@@ -713,6 +772,15 @@ function rowClass(risk: WorkspaceRisk): string | undefined {
 .risk__actions {
   display: inline-flex;
   gap: 4px;
+}
+
+// The one irreversible control on this screen, and it sits one click from «open». It stays
+// neutral at rest so a register of forty rows is not forty red crosses shouting at the
+// reader, and turns to the danger colour on approach — which is the moment the warning is
+// worth anything.
+.risk__danger:hover,
+.risk__danger:focus-visible {
+  color: var(--k-danger);
 }
 
 // Row state rides in through KTable's `rowClass`, so the rule has to reach into the table.

@@ -105,6 +105,7 @@ describe("buildManagementTurn", () => {
     const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
     expect(out).toContain('"kind": "risk.create"');
     expect(out).toContain('"kind": "risk.update"');
+    expect(out).toContain('"kind": "risk.delete"');
     for (const c of RISK_CATEGORY_VALUES) expect(out).toContain(c);
     for (const s of RISK_STATUS_VALUES) expect(out).toContain(s);
     expect(out).toContain(`threat → ${RISK_RESPONSES_BY_KIND.threat.join(", ")}`);
@@ -112,6 +113,22 @@ describe("buildManagementTurn", () => {
     // Server-owned columns are never offered: a model that sends `code` is guessing at a
     // value the trigger mints under an advisory lock.
     expect(out).toContain("Не передавай code, exposure, emv");
+  });
+
+  // The distinction the delete action stands or falls on. Deleting a risk that HAPPENED
+  // destroys the lessons-learned input the register exists to produce, so the prompt has to
+  // teach «закрити» and «видалити» as different answers to different questions — and say
+  // that the second is irreversible and owner-only. Prose the model can read past is not
+  // enough here: this is the one action with no undo behind it.
+  it("teaches closing and deleting a risk as different acts, and says delete is final", () => {
+    const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
+    expect(out).toContain("ЗАКРИТИ ЧИ ВИДАЛИТИ");
+    expect(out).toContain("НАЗАВЖДИ");
+    // The legitimate case is named, so a «прибери тестовий рядок» is not refused as
+    // unsupported the way it was before the action existed.
+    expect(out).toContain("тестовий запис");
+    // And the gate is stated, so the assistant does not promise a delete it cannot perform.
+    expect(out).toContain("лише ВЛАСНИК воркспейсу");
   });
 
   it("omits the contract on a follow-up but keeps the context and the message", () => {

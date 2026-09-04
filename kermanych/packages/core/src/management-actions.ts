@@ -169,6 +169,20 @@ export type ManagementAction =
   // Change one, named by the register code the operator sees (`R-003`) — never by uuid,
   // which the model has no honest way to know and every way to invent.
   | { kind: "risk.update"; code: string; patch: ManagementRiskPatch }
+  // Remove one from the register entirely, named by the same register code `risk.update`
+  // names. This is a HARD delete: the row goes, and `workspace_risk_events` follows it
+  // through `on delete cascade`, so the risk's audit trail goes with it.
+  //
+  // It carries no other field on purpose. A delete has nothing to shape — there is no
+  // patch to validate and no body to state — and a `reason` here would be a string written
+  // into nothing, since the row that would have held it is the row being removed. The
+  // operator's reason lives in the chat transcript, which survives the risk.
+  //
+  // Note this is the one risk action whose RLS gate is narrower than the register's own:
+  // insert and update are workspace-member, delete is workspace-OWNER. A member who asks
+  // the assistant to delete gets a postgrest refusal printed verbatim into the transcript
+  // rather than a silent no-op — see the executor in stores/management-chat.ts.
+  | { kind: "risk.delete"; code: string }
   // Write a new release note for one project of the workspace and store it. The project is
   // named the way the model was shown it — by NAME, in the prompt's repository list — for
   // the reason `risk.update` names a register code: a uuid is something the model has no
@@ -249,6 +263,7 @@ export type ManagementActionKind = ManagementAction["kind"];
 export type ManagementUnsupported = Extract<ManagementAction, { kind: "unsupported" }>;
 export type ManagementRiskCreate = Extract<ManagementAction, { kind: "risk.create" }>;
 export type ManagementRiskUpdate = Extract<ManagementAction, { kind: "risk.update" }>;
+export type ManagementRiskDelete = Extract<ManagementAction, { kind: "risk.delete" }>;
 export type ManagementReleaseNotes = Extract<ManagementAction, { kind: "release.notes" }>;
 export type ManagementTicketCreate = Extract<ManagementAction, { kind: "ticket.create" }>;
 export type ManagementJiraTicketCreate = Extract<ManagementAction, { kind: "jira.ticket.create" }>;
@@ -885,6 +900,17 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
     if (Object.keys(p).length === 0)
       return { error: { text: `risk.update ${code} нічого не змінює`, code: "risk_update_empty", params: { code } } };
     return { kind: "risk.update", code, patch: p };
+  }
+  // Deliberately the shortest branch in this function. A delete has one input and therefore
+  // one way to be wrong, and every extra field a model might attach is ignored rather than
+  // refused: it has still named exactly one row, which is the only thing that decides what
+  // happens. The destructive half of this action is gated by RLS (workspace owner) and by
+  // the confirm on the screen — not by finding more here to validate.
+  if (kind === "risk.delete") {
+    const code = str(o.code);
+    if (code === undefined)
+      return { error: { text: "risk.delete без коду ризику (наприклад R-003)", code: "risk_delete_no_code" } };
+    return { kind: "risk.delete", code };
   }
   if (kind === "release.notes") {
     // Named, not guessed: a workspace of five repositories has five different release

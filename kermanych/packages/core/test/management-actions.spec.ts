@@ -188,6 +188,28 @@ test("a risk.update names one register code and changes only what it lists", () 
   );
 });
 
+// A delete names a code and carries nothing else. There is no patch to validate and no
+// nested object to shape — the whole action is «this row, gone» — so the only refusal it
+// can earn is the one `risk.update` earns first: a code the model did not state.
+test("a risk.delete names one register code and takes no other field", () => {
+  expect(validateManagementAction({ kind: "risk.delete", code: "R-003" })).toEqual({
+    kind: "risk.delete",
+    code: "R-003",
+  });
+  // Extra fields are dropped rather than refused, the way every other kind treats them:
+  // a model that helpfully restates the risk body has still named exactly one row.
+  expect(validateManagementAction({ kind: "risk.delete", code: "R-003", patch: { impact: 2 } })).toEqual({
+    kind: "risk.delete",
+    code: "R-003",
+  });
+  const noCode = validateManagementAction({ kind: "risk.delete" });
+  if (!("error" in noCode)) throw new Error("expected a refusal");
+  expect(noCode.error).toMatchObject({
+    code: "risk_delete_no_code",
+    text: "risk.delete без коду ризику (наприклад R-003)",
+  });
+});
+
 // A kind nobody implemented must be REPORTED, never dropped: an action silently discarded
 // while the prose claims success is the one failure the operator cannot see.
 test("an unknown kind is named in the rejection", () => {
