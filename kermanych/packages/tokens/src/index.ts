@@ -45,6 +45,9 @@ export const tokens = {
   font: { ui: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", mono: "'JetBrains Mono', monospace" },
   fontSize: { xs: "11px", sm: "12px", base: "13px", md: "15px", lg: "18px" },
   fontWeight: { regular: 400, medium: 500, semibold: 600 },
+  // Deliberately not the fontSize scale: a mark fills its box, a letter does not,
+  // so every step sits above the type size it pairs with. See tokens.css.
+  iconSize: { xs: "12px", sm: "14px", md: "16px", lg: "18px", xl: "20px" },
   radius: { sm: "6px", base: "8px", lg: "12px", pill: "999px" },
   space: { 1: "4px", 2: "8px", 3: "12px", 4: "16px", 5: "20px", 6: "24px", 7: "32px" },
   rule: { thin: "1px", strong: "2px" },

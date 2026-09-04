@@ -77,7 +77,8 @@ const costLabel = computed(() => usd(props.cost ?? 0));
 }
 
 .k-statusbar__glyph {
-  font-size: 10px;
+  // Glyph-only cell: an icon size, not the 10px it borrowed from the numerals beside it.
+  font-size: var(--k-icon-xs);
   color: var(--k-muted);
 }
 

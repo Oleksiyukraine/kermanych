@@ -580,7 +580,9 @@ async function saveEdit(): Promise<void> {
 // declared locally.
 .rel__row-pulse {
   margin-right: var(--k-sp-1);
-  font-size: 10.5px;
+  // Was 10.5px, the only half-pixel size in the app — it rounded differently per zoom level,
+  // so the marker's weight changed as the operator resized. `xs` is the floor for a mark.
+  font-size: var(--k-icon-xs);
   color: var(--k-accent);
   animation: rel-pulse 1.4s ease-in-out infinite;
 }

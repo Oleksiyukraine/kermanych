@@ -531,7 +531,8 @@ function answerCancel() {
   background: transparent;
   border: none;
   color: var(--k-muted);
-  font-size: 11px;
+  // Glyph-only pager control — an icon size, matched to the 22x20 box.
+  font-size: var(--k-icon-sm);
   cursor: pointer;
   transition: color 0.12s;
 }

@@ -54,6 +54,25 @@ body,
   font-family: var(--k-font-mono);
 }
 
+// Unicode icon glyph sitting INSIDE a run of text (`↓ Pull`, `⚠ 3 failed`).
+//
+// Global rather than per-SFC because it solves a problem no scoped rule can: the glyph and
+// the label share one element, so the element's `font-size` cannot serve both. A ↓ set at the
+// label's own size reads lighter than the label — the glyph's ink is a thin stroke inside the
+// em box where a letter fills its x-height — and the arrow recedes exactly where it is meant
+// to lead. `em` rather than a scale step so the lift tracks whatever type the run is set in;
+// this is the one place a font-relative icon size is right, because here the icon IS in a
+// line box and has to stay on its baseline.
+//
+// Glyph-only controls do NOT want this: they have no label to sit beside, so they set a step
+// of `--k-icon-*` on the control itself.
+.k-glyph {
+  font-size: 1.25em;
+  line-height: 1;
+  // Keeps the taller glyph from opening up the line box it now overhangs.
+  vertical-align: -0.08em;
+}
+
 // Tooltip bubble for `v-tip` (src/lib/tip.ts). One shared node lives under
 // <body>, so the rule is global and `position: fixed` keeps it clear of the
 // scroll containers that would crop an in-flow bubble.

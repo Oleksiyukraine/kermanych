@@ -535,7 +535,7 @@
             :disabled="!canLaunch || !isBound"
             @click="submitLauncher(false)"
           >
-            {{ t('agents.launcher.launch') }}<span class="agents-launcher__kbd mono">⌘⏎</span>
+            {{ t('agents.launcher.launch') }}<KKbd class="agents-launcher__kbd">⌘⏎</KKbd>
           </KBtn>
         </div>
       </template>
@@ -674,6 +674,7 @@ import KDiffView from 'components/kit/KDiffView.vue';
 import KFileTree from 'components/kit/KFileTree.vue';
 import KFileView from 'components/kit/KFileView.vue';
 import KBtn from 'components/kit/KBtn.vue';
+import KKbd from 'components/kit/KKbd.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
@@ -2911,12 +2912,13 @@ async function submitPreviewConfig(): Promise<void> {
   gap: 12px;
 }
 .agents-launcher__foot-hint {
-  font-size: 11.5px;
+  font-size: var(--k-fs-xs);
   color: var(--k-muted);
 }
+// Spacing only. The chip's size and colour are KKbd's business — this row used to set an
+// 11px font-size and `opacity: .7` on top of each other, and the two reductions compounded
+// into a shortcut nobody could read on the accent fill.
 .agents-launcher__kbd {
-  margin-left: 10px;
-  font-size: 11px;
-  opacity: 0.7;
+  margin-left: var(--k-sp-2);
 }
 </style>

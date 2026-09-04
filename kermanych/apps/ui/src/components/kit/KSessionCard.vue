@@ -158,7 +158,9 @@ const spend = computed(() => {
   border-radius: var(--k-r-sm);
   background: transparent;
   color: var(--k-faint);
-  font-size: var(--k-fs-xs);
+  // Glyph-only control, so the icon scale rather than `--k-fs-xs`: this ✕ is `--k-faint`,
+  // the quietest colour in the set, and at 11px the two reductions compounded.
+  font-size: var(--k-icon-xs);
   line-height: 1;
   cursor: pointer;
   opacity: 0;

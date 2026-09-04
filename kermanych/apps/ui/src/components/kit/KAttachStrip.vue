@@ -60,7 +60,10 @@ const { t } = useI18n();
   border: 1px solid var(--k-line-strong);
   background: var(--k-bg);
   color: var(--k-text);
-  font-size: 9px;
+  // Was 9px — the smallest mark in the app, on a control whose whole job is «remove this
+  // attachment». `xs` is the scale's floor and this is what the floor is for: a 16px box,
+  // too tight for `sm`, but a ✕ under 12px stops reading as a cross at all.
+  font-size: var(--k-icon-xs);
   line-height: 1;
   cursor: pointer;
   border-radius: var(--k-r-sm);

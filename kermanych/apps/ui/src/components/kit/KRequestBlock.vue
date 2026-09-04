@@ -211,9 +211,9 @@ const summary = computed(() => {
    those rows, so its tool name has to land on the same 60px grid — with the same
    ellipsis backstop for names past eight characters. */
 .k-rb__gt { flex: none; width: 60px; overflow: hidden; text-overflow: ellipsis; color: var(--k-text); }
-.k-rb__gx { flex: none; font-size: 11px; }
+.k-rb__gx { flex: none; font-size: var(--k-icon-xs); }
 .k-rb__gtg { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .k-rb__gst { flex: none; font-size: 11.5px; color: var(--k-text); }
-.k-rb__gch { flex: none; width: 10px; text-align: right; font-size: 11px; color: var(--k-line-strong); }
+.k-rb__gch { flex: none; width: 10px; text-align: right; font-size: var(--k-icon-xs); color: var(--k-line-strong); }
 .k-rb__members { padding-left: 17px; }
 </style>

@@ -35,6 +35,28 @@
   --k-font-mono:'JetBrains Mono',ui-monospace,monospace;
   --k-fs-xs:11px; --k-fs-sm:12px; --k-fs-base:13px; --k-fs-md:15px; --k-fs-lg:18px;
   --k-fw-regular:400; --k-fw-medium:500; --k-fw-semibold:600;
+  /* icons — a scale of its own, NOT the type scale.
+   *
+   * An icon and a letter at the same px are not the same weight. `--k-fs-base`
+   * type sits on a ~9px x-height inside its 13px em box, while a drawn mark fills
+   * its box edge to edge; a glyph icon (✕, ↻) fills even less, because the font
+   * centres it with side bearings. Sizing marks off `--k-fs-*` is what produced
+   * the 9-11px glyphs that read as smudges beside the very text they label.
+   *
+   * The steps are therefore picked so each one MATCHES THE OPTICAL WEIGHT of the
+   * text it stands next to, which puts every step above the type size it pairs
+   * with. `md` is the default: 16px beside 13px UI text is the pairing most of
+   * this app needs.
+   *
+   * `xs` is a floor, not a step to reach for — 12px is the smallest mark that
+   * survives at 1x on a non-retina panel, and nothing decorative should go under
+   * it. Marks that are pure geometry rather than icons (status dots, carets)
+   * are exempt and stay in their own components.
+   *
+   * Theme-independent, like type and spacing: the light block below overrides
+   * colour only.
+   */
+  --k-icon-xs:12px; --k-icon-sm:14px; --k-icon-md:16px; --k-icon-lg:18px; --k-icon-xl:20px;
   /* radii */
   --k-r-sm:6px; --k-r:8px; --k-r-lg:12px; --k-r-pill:999px;
   /* spacing (8pt) */

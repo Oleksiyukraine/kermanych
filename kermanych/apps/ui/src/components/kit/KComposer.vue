@@ -403,19 +403,20 @@ function submit(): void {
   white-space: nowrap;
 }
 
-// The isolation mark: a drawn KIcon, so its size is a box and not a font-size. 15px against
-// 12px mono text — a stroked line mark at the type's own size reads lighter than the type,
-// which is exactly how the old `⑂` disappeared.
+// The isolation mark: a drawn KIcon, so its size is a box and not a font-size. `md` against
+// the chip's 12px mono text — a stroked line mark at the type's own size reads lighter than
+// the type, which is exactly how the old `⑂` disappeared. It steps down from KIcon's `lg`
+// default because the mark is inline in a dense chip row here, not standing alone in a rail.
 .k-composer__chip-icon {
-  --k-icon-size: 15px;
+  --k-icon-size: var(--k-icon-md);
 }
 
 // The model is the one fact worth a colour: it is what the operator changes screens to check.
-// The vendor mark inherits it through `fill: currentColor`, and sits a hair below the cap
-// height of the id beside it — a filled logo matched to the type size reads heavier than it.
+// The vendor mark inherits it through `fill: currentColor`. No `--k-mark-size` here: KModelMark
+// already defaults to `sm`, one step under the stroked mark beside it, which is the gap a
+// filled logo needs to stop out-shouting it. Overriding would only restate the default.
 .k-composer__chip-mark {
   color: var(--k-accent);
-  --k-mark-size: 12px;
 }
 
 // Context / tokens / spend — the session's numbers, quietest type in the row: they are

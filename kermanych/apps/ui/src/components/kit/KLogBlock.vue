@@ -137,7 +137,7 @@ const chip = computed(() => {
 }
 .k-log__reason-toggle:hover { color: var(--k-text); }
 .k-log__reason-toggle:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
-.k-log__reason-caret { font-size: 10px; font-style: normal; }
+.k-log__reason-caret { font-size: var(--k-icon-xs); font-style: normal; }
 .k-log__reason-body {
   margin-top: 6px;
   padding-left: 14px;

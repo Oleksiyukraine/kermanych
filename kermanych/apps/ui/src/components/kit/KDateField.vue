@@ -536,10 +536,13 @@ onBeforeUnmount(close);
   }
 }
 
-// The same clipped triangle the rest of the kit uses for direction marks.
+// The same clipped triangle the rest of the kit uses for direction marks — and now the same
+// 6x10 footprint too. This said "the same" while drawing 5x9, a step under `.k-ws__caret` and
+// `.mgmt__log-caret`: the only direction mark in the kit that is also the whole content of a
+// 26px BUTTON, and it was the smallest of the set while carrying the most click.
 .k-date__chev {
-  width: 5px;
-  height: 9px;
+  width: 6px;
+  height: 10px;
   background: currentColor;
   clip-path: polygon(0 0, 100% 50%, 0 100%);
 }

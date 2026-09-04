@@ -98,7 +98,10 @@ withDefaults(
   border-color: var(--k-line);
   color: var(--k-muted);
   font-weight: 400;
-  font-size: 15px;
+  // Glyph-only control, so this is an icon size, not a type size. A step ABOVE KIconButton's
+  // `md`: that control is the compact 28px one that packs into clusters, this is the 34px
+  // standalone, and the two are only telling apart at a glance if the mark scales with the box.
+  font-size: var(--k-icon-lg);
 
   &:hover:not(.k-btn--disabled) {
     border-color: var(--k-line-strong);

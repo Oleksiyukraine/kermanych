@@ -62,7 +62,9 @@ const rest = computed(() => props.totalLines - props.lines.length);
 .k-tc__body--wrap .k-tc__n { display: inline-block; width: 34px; }
 .k-tc__body--wrap .k-tc__s { display: inline-block; width: 11px; }
 .k-tc__body--wrap .k-tc__tx { display: inline; overflow: visible; text-overflow: clip; }
-.k-tc__gap { padding-left: 34px; font-family: var(--k-font-mono); font-size: 11px; line-height: 1.4; color: var(--k-line-strong); }
+/* Holds `⋯`, a glyph and not text, so it takes the icon scale while `.k-tc__head` and
+   `.k-tc__more` beside it stay on the 11px mono type they actually set. */
+.k-tc__gap { padding-left: 34px; font-family: var(--k-font-mono); font-size: var(--k-icon-xs); line-height: 1.4; color: var(--k-line-strong); }
 .k-tc__head { padding: 4px 0 1px 6px; font-family: var(--k-font-mono); font-size: 11px; color: var(--k-text); }
 .k-tc__more { margin-top: 5px; padding: 0; background: transparent; border: none; font-family: var(--k-font-mono); font-size: 11px; color: var(--k-accent); cursor: pointer; }
 .k-tc__more:disabled { color: var(--k-muted); cursor: default; }

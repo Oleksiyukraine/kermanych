@@ -135,7 +135,7 @@ async function loadFull(): Promise<void> {
 /* Capped so the stat ellipsises instead of starving the target, which is the only
    shrinkable cell, at the panel's 360px minimum. */
 .k-tr__st { flex: 0 1 auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: var(--k-text); }
-.k-tr__ch { flex: none; width: 10px; text-align: right; font-size: 11px; color: var(--k-line-strong); }
+.k-tr__ch { flex: none; width: 10px; text-align: right; font-size: var(--k-icon-xs); color: var(--k-line-strong); }
 .k-tr__empty { margin: 2px 0 8px 17px; font-size: 11.5px; color: var(--k-muted); }
 /* Same treatment the card gives the intent, so the pending row reads identically. */
 .k-tr__intent { font-family: var(--k-font-ui); font-size: 12px; font-style: italic; }

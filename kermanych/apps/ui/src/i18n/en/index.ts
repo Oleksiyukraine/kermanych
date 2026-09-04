@@ -1455,6 +1455,7 @@ export const en: MessageSchema = {
         statuses: '03 · Agent statuses',
         buttons: '04 · Buttons',
         actionButtons: '04 · Action buttons (table row, panel header)',
+        kbd: '04 · Keyboard shortcuts',
         tags: '04 · Tags & metadata',
         toggles: '04 · Toggles',
         fields: '04 · Fields',
@@ -1530,8 +1531,13 @@ export const en: MessageSchema = {
         changes: 'Changes',
         session: 'Session',
       },
+      kbd: {
+        launch: 'Launch',
+        save: 'Save',
+      },
       cap: {
         actionButtons: '28×28 · a dense control for groups of glyph actions: table row and panel header (tighter than KBtn variant="icon" 34×34). active = accent. The hint is a custom tooltip (v-tip), not the native title.',
+        kbd: 'KKbd · ⌘ and ⏎ carry far less ink than a letter of the same em, so the chip is sized off the ICON scale (--k-icon-sm), never off --k-fs-*, and is never dimmed with opacity. tone="on-accent" inherits the control colour for a chip riding inside a filled button; tone="muted" is the standalone hint. aria-hidden: the keybinding belongs in the control label, not in this span.',
         fields: 'branch={branch} · select(rows)={branchSel} · select(pairs)={wsSel} · select(search)={modelSel} · date={date} — the list shows the name on the right while the model holds the id: a name filter breaks the moment a second workspace with the same name appears. The date lives in the model as YYYY-MM-DD and shows itself as dd.mm.yyyy — either can be typed by hand.',
         lastAction: 'last action: {action}',
         rail: 'To the right of a project — a counter of running agents: a green pill with a number, and a red dot without a number when none are running. The account tile sits at the foot of the rail (click to sign out). With no GitHub picture — initials.',

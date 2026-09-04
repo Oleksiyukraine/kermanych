@@ -201,7 +201,7 @@
         v-tip="isBound ? t('common.nav.pullTip') : BIND_HINT"
         aria-label="Pull"
         @click="gitPull"
-      >↓ Pull</button>
+      ><span class="k-glyph" aria-hidden="true">↓</span> Pull</button>
       <span class="shell__foot-spacer"></span>
       <!-- The path is a STATUS read-out that doubles as the way to change it. It
            used to open the directory picker straight from here, which put the
@@ -1128,9 +1128,9 @@ async function gitPull(): Promise<void> {
   display: none;
 }
 // In the rail the mark IS the control — nothing else is left of the row — so it takes the
-// largest step of KIcon's scale rather than the 18px default it would use beside a label.
+// largest step of the icon scale rather than the `lg` default it would use beside a label.
 .shell--min :deep(.k-nav-item__icon) {
-  --k-icon-size: 20px;
+  --k-icon-size: var(--k-icon-xl);
 }
 .shell--min :deep(.k-rail) {
   justify-content: center;

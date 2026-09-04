@@ -75,6 +75,20 @@
       </div>
     </section>
 
+    <!-- 04b — keyboard shortcut chips. Shown ON the primary fill and on the panel, because
+         the two tones are the whole of KKbd's API and the on-accent case is the one that
+         regressed: sized off the type scale it vanished into the accent. -->
+    <section class="kit__section">
+      <div class="kit__label">{{ t('kit.gallery.sec.kbd') }}</div>
+      <div class="kit__row">
+        <KBtn variant="primary">{{ t('kit.gallery.kbd.launch') }}<KKbd class="kit__kbd">⌘⏎</KKbd></KBtn>
+        <span class="mono">{{ t('kit.gallery.kbd.save') }} <KKbd tone="muted">⌘S</KKbd></span>
+      </div>
+      <div class="kit__caption mono">
+        {{ t('kit.gallery.cap.kbd') }}
+      </div>
+    </section>
+
     <!-- 04 — tags & metadata -->
     <section class="kit__section">
       <div class="kit__label">{{ t('kit.gallery.sec.tags') }}</div>
@@ -452,6 +466,7 @@ import type {
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
+import KKbd from 'components/kit/KKbd.vue';
 import KTag from 'components/kit/KTag.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KField from 'components/kit/KField.vue';
@@ -852,6 +867,11 @@ function onPanelEffort(level: ThinkingLevel) { lastAction.value = `effort: ${lev
   text-transform: uppercase;
   color: var(--k-muted);
   margin-bottom: 18px;
+}
+
+// Spacing only — the chip's size and colour belong to KKbd, which is the point of the sample.
+.kit__kbd {
+  margin-left: var(--k-sp-2);
 }
 
 .kit__row {
