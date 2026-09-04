@@ -403,6 +403,11 @@ export type JiraIssue = {
   originalEstimate: string;
   timeSpent: string;
   remainingEstimate: string;
+  // The same three counters in SECONDS, straight from Jira's `timetracking.*Seconds` —
+  // the only form Team Capacity can add up. 0 = Jira holds none.
+  originalEstimateSeconds: number;
+  timeSpentSeconds: number;
+  remainingEstimateSeconds: number;
   // Jira's planning dates in Jira's own spelling (YYYY-MM-DD); blank = not set.
   // `dueDate` is the system `duedate`; `startDate` is the site's «Start date» field,
   // which a site may not have at all — then it stays blank and is not editable.

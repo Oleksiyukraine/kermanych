@@ -56,6 +56,9 @@ const issueRow = {
   original_estimate: "3d",
   time_spent: "1d 2h",
   remaining_estimate: "1d 6h",
+  original_estimate_seconds: 86400,
+  time_spent_seconds: 36000,
+  remaining_estimate_seconds: 50400,
   start_date: "2026-09-01",
   due_date: "2026-09-30",
   assignee_account_id: "acc1",
@@ -90,6 +93,9 @@ describe("toJiraIssue", () => {
       originalEstimate: "3d",
       timeSpent: "1d 2h",
       remainingEstimate: "1d 6h",
+      originalEstimateSeconds: 86400,
+      timeSpentSeconds: 36000,
+      remainingEstimateSeconds: 50400,
       startDate: "2026-09-01",
       dueDate: "2026-09-30",
       assigneeAccountId: "acc1",
@@ -108,6 +114,18 @@ describe("toJiraIssue", () => {
 
   it("degrades an unknown status category to 'new' rather than crashing", () => {
     expect(toJiraIssue({ ...issueRow, status_category: "someday" }).statusCategory).toBe("new");
+  });
+
+  it("carries the numeric counters beside the display strings", () => {
+    const issue = toJiraIssue(issueRow);
+    expect(issue.originalEstimateSeconds).toBe(86400);
+    expect(issue.timeSpentSeconds).toBe(36000);
+    expect(issue.remainingEstimateSeconds).toBe(50400);
+    expect(toJiraIssueRow(issue)).toMatchObject({
+      original_estimate_seconds: 86400,
+      time_spent_seconds: 36000,
+      remaining_estimate_seconds: 50400,
+    });
   });
 });
 

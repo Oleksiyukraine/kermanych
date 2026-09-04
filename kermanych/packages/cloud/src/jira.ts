@@ -23,7 +23,7 @@ const INTEGRATION_COLUMNS =
   "id, workspace_id, site_url, jira_project_key, board_id, board_name, connected_by, created_at, updated_at";
 
 const ISSUE_COLUMNS =
-  "integration_id, workspace_id, issue_id, key, summary, description_html, type_name, type_icon, priority_name, priority_icon, labels, original_estimate, time_spent, remaining_estimate, start_date, due_date, assignee_account_id, assignee_name, assignee_avatar, reporter_name, status_id, status_name, status_category, parent_key, jira_updated_at, kermanych_project_id, task_id, updated_at";
+  "integration_id, workspace_id, issue_id, key, summary, description_html, type_name, type_icon, priority_name, priority_icon, labels, original_estimate, time_spent, remaining_estimate, original_estimate_seconds, time_spent_seconds, remaining_estimate_seconds, start_date, due_date, assignee_account_id, assignee_name, assignee_avatar, reporter_name, status_id, status_name, status_category, parent_key, jira_updated_at, kermanych_project_id, task_id, updated_at";
 
 type IntegrationRow = {
   id: string;
@@ -67,6 +67,9 @@ type IssueRow = {
   original_estimate: string;
   time_spent: string;
   remaining_estimate: string;
+  original_estimate_seconds: number;
+  time_spent_seconds: number;
+  remaining_estimate_seconds: number;
   start_date: string;
   due_date: string;
   assignee_account_id: string | null;
@@ -158,6 +161,9 @@ export function toJiraIssue(row: IssueRow): JiraIssue {
     originalEstimate: row.original_estimate,
     timeSpent: row.time_spent,
     remainingEstimate: row.remaining_estimate,
+    originalEstimateSeconds: row.original_estimate_seconds ?? 0,
+    timeSpentSeconds: row.time_spent_seconds ?? 0,
+    remainingEstimateSeconds: row.remaining_estimate_seconds ?? 0,
     startDate: row.start_date,
     dueDate: row.due_date,
     statusId: row.status_id,
@@ -196,6 +202,9 @@ export function toJiraIssueRow(issue: JiraIssue): Record<string, unknown> {
     original_estimate: issue.originalEstimate,
     time_spent: issue.timeSpent,
     remaining_estimate: issue.remainingEstimate,
+    original_estimate_seconds: issue.originalEstimateSeconds,
+    time_spent_seconds: issue.timeSpentSeconds,
+    remaining_estimate_seconds: issue.remainingEstimateSeconds,
     start_date: issue.startDate,
     due_date: issue.dueDate,
     assignee_account_id: issue.assigneeAccountId ?? null,
