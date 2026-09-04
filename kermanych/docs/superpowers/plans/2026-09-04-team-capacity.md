@@ -2124,8 +2124,9 @@ type Bar = { segments: Segment[]; capacity: number; top: number; over: boolean }
 const bars = computed<Bar[]>(() =>
   props.report.periods.map((p, i) => {
     const segments: Segment[] = [];
-    let stack = 0;
-    const name = (s: Series) => s.name;
+    // Stack in SECONDS and round once per boundary: rounding each segment to 0.1h before
+    // adding lets the drawn bar drift from the total that decides the over-capacity outline.
+    let stackSecs = 0;
     const period = periodLabel(i);
     for (const s of series.value) {
       const cell = sumCells(s.members.map((id) => props.report.cells[id]![i]!));
@@ -2133,23 +2134,22 @@ const bars = computed<Bar[]>(() =>
       for (const planned of [false, true]) {
         const secs = planned ? cell.plannedSeconds : cell.loggedSeconds;
         if (secs <= 0) continue;
-        const h = hoursOf(secs);
-        const yTop = y(stack + h);
-        const yBottom = y(stack);
+        const yTop = y(hoursOf(stackSecs + secs));
+        const yBottom = y(hoursOf(stackSecs));
         segments.push({
           key: `${s.id}:${planned ? 'plan' : 'log'}`,
           y: yTop,
           h: Math.max(yBottom - yTop, 1),
           color: s.color,
           planned,
-          tip: t('management.capacity.tip', { name: name(s), load: h, cap, period }),
+          tip: t('management.capacity.tip', { name: s.name, load: hoursOf(secs), cap, period }),
         });
-        stack += h;
+        stackSecs += secs;
       }
     }
     const total = props.report.totals[i]!;
     const capacity = hoursOf(total.capacitySeconds);
-    return { segments, capacity, top: y(stack), over: capacity > 0 && hoursOf(total.loadSeconds) > capacity };
+    return { segments, capacity, top: y(hoursOf(stackSecs)), over: capacity > 0 && hoursOf(total.loadSeconds) > capacity };
   }),
 );
 
