@@ -523,9 +523,9 @@ export const en: MessageSchema = {
         blurb: 'What the project is called, which workspace it lives in, and where its folder is on this machine.',
       },
       'project-git': {
-        label: 'Branches & conventions',
-        sub: 'base, PRs and commits',
-        blurb: 'Where the agent branches from and the rules it follows when writing commits and PRs.',
+        label: 'Git settings',
+        sub: 'base, PRs, commits, token',
+        blurb: 'Where the agent branches from, the rules it follows when writing commits and PRs, and the token it uses for git.',
       },
       'project-commands': {
         label: 'Commands',
@@ -658,6 +658,14 @@ export const en: MessageSchema = {
         'Bind a local repository folder — without it there is nothing to read the branch list from.',
       conventions: 'PR and commit conventions (fallback when the repo has none)',
       conventionsPlaceholder: 'Empty — Kermanych will use its own defaults',
+      secrets: 'Secrets',
+      secretsNote:
+        'The value lives in {env} of the bound folder, is copied into every session working folder, and never goes to the cloud.',
+      token: 'Git token (GIT_TOKEN)',
+      tokenPlaceholder: 'ghp_… — an empty field removes the key from .env',
+      tokenBindHint: 'Bind a local repository folder — the token is stored in its {env}.',
+      tokenReveal: 'Show',
+      tokenHide: 'Hide',
     },
     commands: {
       preview: 'Preview command (web)',

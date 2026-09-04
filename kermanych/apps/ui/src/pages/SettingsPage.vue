@@ -113,7 +113,7 @@
           <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
         </div>
 
-        <!-- ── PROJECT · ГІЛКИ Й КОНВЕНЦІЇ ──────────────────────────────────── -->
+        <!-- ── PROJECT · GIT НАЛАШТУВАННЯ ────────────────────────────────────── -->
         <div v-else-if="section.key === 'project-git' && draft" class="set__form">
           <!-- `searchable` for the same reason the launcher's fork base is: the list is the
                repo's whole `refs/heads`, so the default branch is found by typing it, not by
@@ -135,6 +135,40 @@
             :rows="8"
             :disabled="cloudLocked"
           />
+
+          <div class="set__rule"></div>
+
+          <!-- SECRETS. A token is a VALUE, so it lives where every value in this
+               product lives: the bound repo's own `.env` (Requirement 9), which the
+               launch path copies into each worktree via `carryFiles`. That is why
+               this pane now loads the env file too, and why there is no second
+               store, no second Save and no second dirty flag here — the field
+               edits one row of the very table «Змінні середовища» draws.
+               Masked by default for the same reason that table is: this screen is
+               left open. -->
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.git.secrets') }}</span>
+            <template v-if="isBound">
+              <div class="set__row">
+                <KField
+                  v-model="gitToken"
+                  class="set__grow"
+                  :label="t('settings.git.token')"
+                  :placeholder="t('settings.git.tokenPlaceholder')"
+                  :type="tokenRevealed ? 'text' : 'password'"
+                />
+                <KBtn variant="secondary" @click="tokenRevealed = !tokenRevealed">
+                  {{ tokenRevealed ? t('settings.git.tokenHide') : t('settings.git.tokenReveal') }}
+                </KBtn>
+              </div>
+              <i18n-t keypath="settings.git.secretsNote" tag="p" class="set__note">
+                <template #env><span class="mono">.env</span></template>
+              </i18n-t>
+            </template>
+            <i18n-t v-else keypath="settings.git.tokenBindHint" tag="p" class="set__note">
+              <template #env><span class="mono">.env</span></template>
+            </i18n-t>
+          </div>
           <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
         </div>
 
@@ -606,6 +640,7 @@ import {
   changedFields,
   envEdits,
   envRequiredKeys,
+  setEnvValue,
   settingsScopeEntry,
   settingsSection,
   SETTINGS_CATEGORIES,
@@ -865,13 +900,18 @@ const missingRequired = computed(() =>
   envRows.value.filter((r) => r.required && r.key.trim() && !r.value).map((r) => r.key.trim()),
 );
 
-// Lazily, and only for the section that shows it: reading a `.env` is a disk hit
-// the other four project sections have no use for. Skipped while the table is
-// dirty — a refetch there would silently replace typed secrets.
+// Lazily, and only for the sections that show it: reading a `.env` is a disk hit
+// the other project sections have no use for. TWO of them need it — the env table
+// and «Git Налаштування», whose GIT_TOKEN field is one row of the same file — and
+// both go through this one read, so the token cannot be edited against a file the
+// page never loaded. Skipped while the table is dirty — a refetch there would
+// silently replace typed secrets.
+const ENV_SECTIONS = new Set(['project-env', 'project-git']);
+
 watch(
   [() => section.value.key, projectId, isBound],
   async ([key, id, bound]) => {
-    if (key !== 'project-env' || !id || !bound || envDirty.value) return;
+    if (!ENV_SECTIONS.has(key) || !id || !bound || envDirty.value) return;
     try {
       envFile.value = await store.getEnv(id);
       paneError.value = null;
@@ -884,12 +924,30 @@ watch(
   { immediate: true },
 );
 
+const GIT_TOKEN_KEY = 'GIT_TOKEN';
+const tokenRevealed = ref(false);
+
 // A project switch invalidates the loaded file immediately, so the table cannot
 // show one project's secrets under another's name while the fetch above is in
 // flight.
 watch(projectId, () => {
   envFile.value = { entries: [], ignored: true };
   seedEnvRows();
+  // Nor may a revealed token stay revealed under another project's name.
+  tokenRevealed.value = false;
+});
+
+// THE «Секрети» FIELD of «Git Налаштування»: one row of the table above, not a
+// store of its own. A token is a VALUE, and values live in the bound repo's `.env`
+// (Requirement 9) which the launch path copies into every worktree — so writing
+// here marks `envDirty` and rides saveProject() with everything else. The row
+// arithmetic (add / update / drop, and what a required key does instead) is
+// `setEnvValue` in lib/settings.ts, where it is tested.
+const gitToken = computed<string>({
+  get: () => envRows.value.find((r) => r.key === GIT_TOKEN_KEY)?.value ?? '',
+  set: (value) => {
+    envRows.value = setEnvValue(envRows.value, GIT_TOKEN_KEY, value);
+  },
 });
 
 // ── WORKSPACE DRAFT ─────────────────────────────────────────────────────────
@@ -1403,8 +1461,8 @@ const badges = computed<Record<string, number | undefined>>(() => ({
 }
 
 // Two lines per row: the category and what is inside it. The sub-line is what
-// makes the rail navigable without opening every pane — «Гілки й конвенції» alone
-// does not say whether the preview command is in there.
+// makes the rail navigable without opening every pane — «Git Налаштування» alone
+// does not say whether the commit conventions or the token are in there.
 .set__cat {
   display: flex;
   align-items: center;
