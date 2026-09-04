@@ -1,7 +1,14 @@
 <template>
   <div class="jbv">
     <div class="jbv__bar">
-      <span class="jbv__count mono">{{ t('jira.boardView.count', { n: jira.issues.length, board: jira.integration?.boardName ?? '' }, jira.issues.length) }}</span>
+      <span v-if="searching" class="jbv__count mono">{{ t('jira.boardView.searchCount', { n: matched.length, total: jira.issues.length }) }}</span>
+      <span v-else class="jbv__count mono">{{ t('jira.boardView.count', { n: jira.issues.length, board: jira.integration?.boardName ?? '' }, jira.issues.length) }}</span>
+      <KField
+        v-model="query"
+        class="jbv__search"
+        type="search"
+        :placeholder="t('jira.boardView.searchPlaceholder')"
+      />
       <span class="jbv__spacer"></span>
       <span v-if="!jira.tokenPresent" class="jbv__readonly mono" v-tip="readOnlyHint">{{ t('jira.boardView.readOnly') }}</span>
       <KBtn
@@ -17,6 +24,10 @@
     </div>
 
     <p v-if="jira.loadError" class="jbv__error mono">{{ jira.loadError }}</p>
+
+    <p v-else-if="searching && !matched.length && jira.columns.length" class="jbv__error mono">
+      {{ t('jira.boardView.searchEmpty', { q: query.trim() }) }}
+    </p>
 
     <div v-if="jira.columns.length" class="jbv__columns" :style="{ '--cols': jira.columns.length }">
       <div
@@ -105,6 +116,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { JiraColumn, JiraIssue } from '@kermanych/cloud';
 import type { Session, SessionStatus } from '@kermanych/core';
 import KBtn from 'components/kit/KBtn.vue';
+import KField from 'components/kit/KField.vue';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import JiraCard from './JiraCard.vue';
 import JiraIssueEditor from './JiraIssueEditor.vue';
@@ -112,7 +124,7 @@ import JiraLaunchDialog from './JiraLaunchDialog.vue';
 import JiraStatusPickDialog from './JiraStatusPickDialog.vue';
 import JiraTicketDialog from './JiraTicketDialog.vue';
 import { api } from '../../lib/api';
-import { issuesByColumn, transitionChoiceForDrop, type JiraTransitionView } from '../../lib/jira-view';
+import { filterIssues, issuesByColumn, transitionChoiceForDrop, type JiraTransitionView } from '../../lib/jira-view';
 import { useBoard } from 'stores/board';
 import { useJira } from 'stores/jira';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -128,7 +140,12 @@ const jira = useJira();
 const board = useBoard();
 const local = useOrchestrator();
 
-const grouped = computed(() => issuesByColumn(jira.columns, jira.issues));
+// The search box filters the cards, never the columns: an empty column under a query
+// still says which column it is, so the board keeps its shape while you type.
+const query = ref('');
+const matched = computed(() => filterIssues(jira.issues, query.value));
+const searching = computed(() => query.value.trim() !== '');
+const grouped = computed(() => issuesByColumn(jira.columns, matched.value));
 
 // ── detail / editors ──────────────────────────────────────────────────────────
 const openedIssueId = ref<string | null>(null);
@@ -260,6 +277,10 @@ onUnmounted(() => {
 .jbv__count {
   font-size: var(--k-fs-xs);
   color: var(--k-faint);
+}
+
+.jbv__search {
+  width: 220px;
 }
 
 .jbv__spacer {

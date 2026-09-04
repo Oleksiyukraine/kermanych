@@ -1876,6 +1876,9 @@ export const en: MessageSchema = {
     },
     boardView: {
       count: '{n} ticket · {board} | {n} tickets · {board}',
+      searchPlaceholder: 'Search tickets…',
+      searchCount: '{n} of {total} matched',
+      searchEmpty: 'Nothing matched “{q}”',
       readOnly: 'read-only',
       readOnlyHint: 'Add your Jira token in Management → Integrations to act',
       syncHint: 'Poll Jira now: pull all tickets, statuses and board columns',
