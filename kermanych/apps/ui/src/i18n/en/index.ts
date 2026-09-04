@@ -981,6 +981,7 @@ export const en: MessageSchema = {
     section: {
       'management-home': { hint: 'workspace overview', limitation: 'the section isn’t built yet — it has neither a screen nor a data store behind it' },
       'management-storage': { hint: 'files and artifacts', limitation: 'the section isn’t built yet — it has neither a screen nor a data store behind it' },
+      'management-docs': { hint: 'specs and decisions', limitation: 'the section isn’t built yet — it has neither a screen nor a data store behind it' },
       'management-risks': { hint: 'risks and mitigations' },
       'management-releases': { hint: 'changes by release' },
       'management-capacity': { hint: 'team workload', limitation: 'the section isn’t built yet — it has neither a screen nor a data store behind it' },
@@ -1885,6 +1886,10 @@ export const en: MessageSchema = {
       searchPlaceholder: 'Search tickets…',
       searchCount: '{n} of {total} matched · {board}',
       searchEmpty: 'Nothing matched “{q}”',
+      filterEmpty: 'No tickets for this filter',
+      assigneeTitle: 'Filter by assignee',
+      assigneeAll: 'Anyone',
+      assigneeNone: 'Unassigned',
       readOnly: 'read-only',
       readOnlyHint: 'Add your Jira token in Management → Integrations to act',
       syncHint: 'Poll Jira now: pull all tickets, statuses and board columns',

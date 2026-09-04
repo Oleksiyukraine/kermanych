@@ -985,6 +985,7 @@ export const uk = {
     section: {
       'management-home': { hint: 'огляд воркспейсу', limitation: 'розділ ще не реалізований — за ним немає ні екрана, ні сховища даних' },
       'management-storage': { hint: 'файли й артефакти', limitation: 'розділ ще не реалізований — за ним немає ні екрана, ні сховища даних' },
+      'management-docs': { hint: 'специфікації й рішення', limitation: 'розділ ще не реалізований — за ним немає ні екрана, ні сховища даних' },
       'management-risks': { hint: 'ризики й мітигації' },
       'management-releases': { hint: 'зміни по релізах' },
       'management-capacity': { hint: 'навантаження команди', limitation: 'розділ ще не реалізований — за ним немає ні екрана, ні сховища даних' },
@@ -1889,6 +1890,10 @@ export const uk = {
       searchPlaceholder: 'Пошук тікетів…',
       searchCount: 'знайдено {n} з {total} · {board}',
       searchEmpty: 'Нічого не знайдено за запитом «{q}»',
+      filterEmpty: 'Немає тікетів за цим фільтром',
+      assigneeTitle: 'Фільтр за виконавцем',
+      assigneeAll: 'Будь-хто',
+      assigneeNone: 'Без виконавця',
       readOnly: 'лише читання',
       readOnlyHint: 'Додайте свій Jira-токен у Менеджмент → Integrations, щоб діяти',
       syncHint: 'Опитати Jira зараз: підтягнути всі тікети, статуси й колонки дошки',

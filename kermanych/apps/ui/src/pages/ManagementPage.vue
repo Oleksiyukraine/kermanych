@@ -291,6 +291,7 @@ function goSection(name: string): void {
 const SECTION_ICONS: Record<string, KIconName> = {
   'management-home': 'home',
   'management-storage': 'storage',
+  'management-docs': 'docs',
   'management-risks': 'risks',
   'management-releases': 'releases',
   'management-capacity': 'capacity',

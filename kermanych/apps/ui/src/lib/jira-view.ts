@@ -34,6 +34,45 @@ export function filterIssues(issues: readonly JiraIssue[], query: string): reado
   });
 }
 
+// The board's assignee filter, the search box's companion in the same bar.
+//
+// A person's identity here is their Jira account id, falling back to the name: a mirror row
+// written before the account id was stored still names a real, filterable person, and the
+// name is then the only identity there is. `UNASSIGNED` cannot collide with either — Jira
+// account ids are opaque ids and no display name starts with «@».
+export const UNASSIGNED = '@unassigned';
+
+export type JiraAssigneeOption = { id: string; name: string };
+
+function assigneeIdOf(issue: JiraIssue): string | undefined {
+  return issue.assigneeAccountId ?? issue.assigneeName ?? undefined;
+}
+
+// The people the chip offers: everyone who actually holds a card on this board, deduped and
+// sorted by name. Derived from the mirror rather than from Jira's assignable roster, so every
+// row in the list is guaranteed to match at least one ticket, it costs no Jira call, and it
+// works offline. Tickets with nobody on them contribute no option — the chip's own
+// «Unassigned» row reaches those.
+export function assigneeOptions(issues: readonly JiraIssue[]): JiraAssigneeOption[] {
+  const byId = new Map<string, JiraAssigneeOption>();
+  for (const issue of issues) {
+    const id = assigneeIdOf(issue);
+    if (id && !byId.has(id)) byId.set(id, { id, name: issue.assigneeName ?? id });
+  }
+  // localeCompare, not the default sort: «Олексій» must land after «Андрій» by the alphabet
+  // the names are written in, not by code point.
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// `selected` is '' (anyone), UNASSIGNED, or a person's id from `assigneeOptions`. Like
+// `filterIssues`, the «nothing picked» case returns the input array itself rather than a copy
+// — it is the common one, and this recomputes whenever the board does.
+export function filterByAssignee(issues: readonly JiraIssue[], selected: string): readonly JiraIssue[] {
+  if (!selected) return issues;
+  if (selected === UNASSIGNED) return issues.filter((i) => !assigneeIdOf(i));
+  return issues.filter((i) => assigneeIdOf(i) === selected);
+}
+
 // Cards grouped the way Jira's own board groups them: an issue belongs to the first
 // column whose status set holds its status. An issue mapped to NO column is invisible —
 // that is Jira's rule too (an unmapped status does not render on the board), and the
