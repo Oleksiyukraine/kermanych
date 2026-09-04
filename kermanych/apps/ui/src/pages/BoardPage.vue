@@ -320,7 +320,7 @@ import { api } from '../lib/api';
 import { installReconcile } from '../lib/reconcile';
 import { UNASSIGNED, filterTasks, scopedProjectIds } from '../lib/scope';
 import { ASSIGNMENT_REFUSALS } from '../lib/cloud-errors';
-import { canAssignTask, canRunTask } from '../lib/tasks-view';
+import { boardTasks, canAssignTask, canRunTask } from '../lib/tasks-view';
 import JiraBoardView from 'components/jira/JiraBoardView.vue';
 import { useJira } from 'stores/jira';
 
@@ -567,11 +567,10 @@ const scopeHeading = computed(() => {
   return cloud.listRead ? t('board.heading.team') : t('board.heading.reading');
 });
 
-// `!t.jiraKey`: shadow tasks minted by Jira-ticket launches belong to the Jira view,
-// where the ticket card wears their status chip; the native columns must not show the
-// same work twice.
+// Which cards the columns may show at all is lib/tasks-view.boardTasks (Jira shadows and
+// «Приховати з дошки»); what is left is narrowed by the operator's own scope and filters.
 const visibleTasks = computed(() =>
-  filterTasks(board.tasks.filter((t) => !t.jiraKey), {
+  filterTasks(boardTasks(board.tasks), {
     scopedProjectIds: scoped.value,
     projectFilter: projectFilter.value,
     assigneeFilter: assigneeFilter.value,

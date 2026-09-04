@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from '@kermanych/cloud';
 import {
+  boardTasks,
   canAssignTask,
   canRunTask,
   myBacklogTasks,
@@ -18,6 +19,7 @@ function task(over: Partial<Task> & { id: string }): Task {
     title: over.id,
     status: 'backlog',
     worktree: true,
+    hidden: false,
     createdAt: '2026-08-30T10:00:00.000Z',
     updatedAt: '2026-08-30T10:00:00.000Z',
     ...over,
@@ -32,6 +34,7 @@ const draft: LauncherDraft = {
   prefix: 'feature',
   platform: 'backend',
   worktree: true,
+  hidden: false,
   baseBranch: 'develop',
 };
 
@@ -49,6 +52,7 @@ describe('taskInsertFromDraft', () => {
       prefix: 'feature',
       platform: 'backend',
       worktree: true,
+      hidden: false,
       branch: 'develop',
       assigneeId: ME,
     });
@@ -64,12 +68,12 @@ describe('taskInsertFromDraft', () => {
 
   it('omits absent optional params instead of sending undefined keys', () => {
     const insert = taskInsertFromDraft(
-      { name: 'T', task: 'body', prefix: 'fix', worktree: true },
+      { name: 'T', task: 'body', prefix: 'fix', worktree: true, hidden: false },
       'p1',
       ME,
     );
     expect(Object.keys(insert).sort()).toEqual(
-      ['assigneeId', 'description', 'prefix', 'projectId', 'title', 'worktree'].sort(),
+      ['assigneeId', 'description', 'hidden', 'prefix', 'projectId', 'title', 'worktree'].sort(),
     );
   });
 });
@@ -84,8 +88,23 @@ describe('taskPatchFromDraft', () => {
       prefix: 'feature',
       platform: '',
       worktree: true,
+      hidden: false,
       branch: 'develop',
     });
+  });
+});
+
+// «Приховати» is a board-visibility flag, so it travels on both writes — the launcher is
+// the only editor a hidden card has, and a patch that omitted the key could never un-hide
+// one.
+describe('hidden on a launcher draft', () => {
+  it('sends hidden:true on create, so the card is off the board from birth', () => {
+    expect(taskInsertFromDraft({ ...draft, hidden: true }, 'p1', ME).hidden).toBe(true);
+  });
+
+  it('sends hidden on every patch, in both directions', () => {
+    expect(taskPatchFromDraft({ ...draft, hidden: true }).hidden).toBe(true);
+    expect(taskPatchFromDraft({ ...draft, hidden: false }).hidden).toBe(false);
   });
 });
 
@@ -102,8 +121,37 @@ describe('myBacklogTasks', () => {
     expect(rows.map((t) => t.id)).toEqual(['a']);
   });
 
+  // The whole contract of «приховати»: off the team board, still in my own list. If this
+  // ever filtered, the flag would silently discard work instead of quietening it — and the
+  // sidebar badge, which calls this same function, would agree with the wrong list.
+  it('keeps a hidden card — the flag is the board\'s business, not the inbox\'s', () => {
+    const rows = myBacklogTasks([task({ id: 'a', assigneeId: ME, hidden: true })], ME, ['p1']);
+    expect(rows.map((t) => t.id)).toEqual(['a']);
+  });
+
   it('is empty for a signed-out reader rather than showing everyone', () => {
     expect(myBacklogTasks([task({ id: 'a', assigneeId: ME })], '', ['p1'])).toEqual([]);
+  });
+});
+
+describe('boardTasks', () => {
+  // The kanban's whole guest list. Order is preserved — the columns rely on listTasks'
+  // `created_at` ascending — and the two exclusions are the card's own properties, not the
+  // operator's filters, which is why they are decided before filterTasks runs.
+  it('drops hidden cards and Jira shadows, keeps everything else in order', () => {
+    const plain = task({ id: 'a', assigneeId: ME });
+    const hidden = task({ id: 'b', assigneeId: ME, hidden: true });
+    const shadow = task({ id: 'c', jiraKey: 'KAN-42' });
+    const theirs = task({ id: 'd', assigneeId: OTHER });
+
+    expect(boardTasks([plain, hidden, shadow, theirs]).map((t) => t.id)).toEqual(['a', 'd']);
+  });
+
+  // A hidden card that is RUNNING is still hidden: the flag is about the board, not about
+  // the backlog column, so a launched errand does not reappear as a «в роботі» card.
+  it('hides a hidden card in every status, not just backlog', () => {
+    const running = task({ id: 'a', assigneeId: ME, hidden: true, status: 'thinking' });
+    expect(boardTasks([running])).toEqual([]);
   });
 });
 

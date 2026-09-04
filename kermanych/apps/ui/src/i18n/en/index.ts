@@ -255,6 +255,8 @@ export const en: MessageSchema = {
       optional: 'optional',
       worktreeLabel: 'Isolate in a worktree',
       worktreeDesc: 'A separate folder, a separate checkout. The agent won’t touch your working state.',
+      hiddenLabel: 'Hide from the board',
+      hiddenDesc: 'The task stays in Tasks and launches like any other — it just won’t take a column slot on the team board.',
       from: 'from',
       defaultOption: 'default',
       effortLabel: 'Reasoning effort',

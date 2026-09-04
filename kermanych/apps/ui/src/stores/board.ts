@@ -186,6 +186,12 @@ export const useBoard = defineStore('board', () => {
     if (patch.platform !== undefined) next.platform = patch.platform;
     if (patch.kind !== undefined) next.kind = patch.kind;
     if (patch.branch !== undefined) next.branch = patch.branch;
+    // The two booleans, which have no "clear it" spelling: `false` is a value. They were
+    // missing here while `worktree` was the only one, and the launcher sends both on every
+    // save — leaving `hidden` out would keep a just-hidden card on the board until the
+    // Realtime echo landed, which is exactly the flicker this function exists to prevent.
+    if (patch.worktree !== undefined) next.worktree = patch.worktree;
+    if (patch.hidden !== undefined) next.hidden = patch.hidden;
     // '' is the «за замовчуванням» clear (toTaskRow nulls it), so drop the key rather than
     // storing a blank that is not a valid ThinkingLevel.
     if (patch.effort !== undefined) {

@@ -484,6 +484,20 @@
             </div>
           </div>
 
+          <!-- «Приховати з дошки» — a VIEW flag, so it sits beside the other launch
+               switches rather than in the footer: it changes nothing about how the agent
+               runs, only who has to look at the card. Not conditional on `draftWorktree`
+               and not conditional on edit mode — unchecking it here is the only way back
+               onto the board, since a hidden card has no card to click there. -->
+          <div class="agents-launcher__block">
+            <div class="agents-launcher__check">
+              <KCheckbox v-model="draftHidden" :label="t('agents.launcher.hiddenLabel')" />
+              <p class="agents-launcher__check-desc">
+                {{ t('agents.launcher.hiddenDesc') }}
+              </p>
+            </div>
+          </div>
+
           <div class="agents-launcher__block">
             <div class="agents-launcher__label">{{ t('agents.session.model') }}</div>
             <!-- `searchable`: the catalog is ~26 rows all named «Claude …», so the way to
@@ -1346,6 +1360,9 @@ const effortPickOptions = computed(() => {
 });
 const draftPlatform = ref<Platform | undefined>(undefined);
 const draftWorktree = ref(true);
+// «Приховати з дошки». Off by default: a card is team work unless its author says
+// otherwise, and a default-hidden launcher would quietly empty the board.
+const draftHidden = ref(false);
 const nameEdited = ref(false);
 const draftBaseBranch = ref('');
 const launchBranches = ref<string[]>([]);
@@ -1451,6 +1468,7 @@ function openLauncher(card?: Task): void {
     ? (card!.platform as Platform)
     : undefined;
   draftWorktree.value = card?.worktree ?? true;
+  draftHidden.value = card?.hidden ?? false;
   // `tasks.branch` IS the base branch (the board labels it «Базова гілка»).
   void loadLaunchBranches(card?.branch);
   nameEdited.value = !!card;
@@ -1481,6 +1499,7 @@ function openTaskFromText(text: string): void {
   draftPrefix.value = 'feature';
   draftPlatform.value = undefined;
   draftWorktree.value = true;
+  draftHidden.value = false;
   void loadLaunchBranches(undefined);
   nameEdited.value = true;
   launcherError.value = null;
@@ -1522,6 +1541,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     prefix: draftPrefix.value,
     platform: draftPlatform.value,
     worktree: draftWorktree.value,
+    hidden: draftHidden.value,
     baseBranch: draftBaseBranch.value || undefined,
   };
   const images = launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));

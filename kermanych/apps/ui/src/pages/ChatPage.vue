@@ -299,6 +299,7 @@ async function toBacklog(): Promise<void> {
           model: chatSession.value?.model,
           prefix: 'feature',
           worktree: true,
+          hidden: false,
         },
         pid,
         userId,
