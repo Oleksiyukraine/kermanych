@@ -13,7 +13,7 @@
 // the same choice is already made for the brand mark and the integration logos.
 //
 // The second group (home…integrations) marks the Менеджмент section rail, where the label
-// IS visible: there the mark is not the meaning but the anchor — six two-line rows of the
+// IS visible: there the mark is not the meaning but the anchor — seven two-line rows of the
 // same weight are scanned by shape, and «Release Notes» vs «Risk Registry» at a glance is
 // exactly what the eye was failing at.
 //
@@ -28,6 +28,7 @@ export type KIconName =
   | 'alert'
   | 'home'
   | 'storage'
+  | 'docs'
   | 'risks'
   | 'releases'
   | 'capacity'
@@ -74,6 +75,14 @@ const ICONS: Record<KIconName, readonly string[]> = {
     'M3 5.5a9 3 0 1 0 18 0a9 3 0 1 0-18 0',
     'M3 5.5v13c0 1.66 4.03 3 9 3s9-1.34 9-3v-13',
     'M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3',
+  ],
+  // Project Documentation — an open book. The two neighbouring marks are already a drum
+  // stack and a single page, so the section needed a third «paper» silhouette that is
+  // neither: a spread book reads as «something you read through», not as one file you open
+  // or a place files are kept.
+  docs: [
+    'M12 7.5v13',
+    'M3 18.5a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4a4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3a3 3 0 0 0-3-3z',
   ],
   // Risk Registry — the warning triangle. The only mark here that carries urgency, which is
   // the register's whole subject; the bar and dot survive at 18px where a thinner ! would not.

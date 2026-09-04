@@ -55,6 +55,18 @@ const NOT_BUILT = "розділ ще не реалізований — за ни
 export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
   { name: "management-home", path: "home", label: "Home", hint: "огляд воркспейсу", capability: "none", limitation: NOT_BUILT },
   { name: "management-storage", path: "storage", label: "Storage", hint: "файли й артефакти", capability: "none", limitation: NOT_BUILT },
+  // Sits beside Storage rather than beside Release Notes on purpose: Storage keeps the
+  // artifacts a project PRODUCES, this keeps the ones it is BUILT FROM — specs, decisions,
+  // the reasoning a new member reads first. Release Notes is neither; it is a generated
+  // record of what changed.
+  {
+    name: "management-docs",
+    path: "project-documentation",
+    label: "Project Documentation",
+    hint: "специфікації й рішення",
+    capability: "none",
+    limitation: NOT_BUILT,
+  },
   // A section the assistant can WRITE, because it has a real store behind it:
   // `workspace_risks` (threat vs opportunity, cause·event·consequence, 1-5 probability ×
   // impact, PMI response strategies, an append-only event log). Three pieces make that true
