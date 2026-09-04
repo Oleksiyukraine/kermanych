@@ -1,14 +1,8 @@
 <template>
   <div class="jbv">
     <div class="jbv__bar">
-      <span v-if="searching" class="jbv__count mono">{{ t('jira.boardView.searchCount', { n: matched.length, total: jira.issues.length }) }}</span>
-      <span v-else class="jbv__count mono">{{ t('jira.boardView.count', { n: jira.issues.length, board: jira.integration?.boardName ?? '' }, jira.issues.length) }}</span>
-      <KField
-        v-model="query"
-        class="jbv__search"
-        type="search"
-        :placeholder="t('jira.boardView.searchPlaceholder')"
-      />
+      <span v-if="searching" class="jbv__count mono">{{ t('jira.boardView.searchCount', { n: matched.length, total: jira.issues.length, board: boardName }) }}</span>
+      <span v-else class="jbv__count mono">{{ t('jira.boardView.count', { n: jira.issues.length, board: boardName }, jira.issues.length) }}</span>
       <span class="jbv__spacer"></span>
       <span v-if="!jira.tokenPresent" class="jbv__readonly mono" v-tip="readOnlyHint">{{ t('jira.boardView.readOnly') }}</span>
       <KBtn
@@ -21,6 +15,12 @@
       <KBtn variant="primary" :disabled="!jira.tokenPresent" :title="jira.tokenPresent ? '' : readOnlyHint" @click="creatorOpen = true">
         {{ t('jira.boardView.newTicket') }}
       </KBtn>
+      <KField
+        v-model="query"
+        class="jbv__search"
+        type="search"
+        :placeholder="t('jira.boardView.searchPlaceholder')"
+      />
     </div>
 
     <p v-if="jira.loadError" class="jbv__error mono">{{ jira.loadError }}</p>
@@ -143,6 +143,9 @@ const local = useOrchestrator();
 // The search box filters the cards, never the columns: an empty column under a query
 // still says which column it is, so the board keeps its shape while you type.
 const query = ref('');
+// The board name stays in the bar while filtering too — it says WHICH board you are
+// searching, and losing it mid-search reads as the board having changed.
+const boardName = computed(() => jira.integration?.boardName ?? '');
 const matched = computed(() => filterIssues(jira.issues, query.value));
 const searching = computed(() => query.value.trim() !== '');
 const grouped = computed(() => issuesByColumn(jira.columns, matched.value));
