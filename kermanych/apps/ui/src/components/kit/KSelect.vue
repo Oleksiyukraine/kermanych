@@ -146,7 +146,7 @@ let seq = 0;
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { filterByQuery, matchByPrefix, placeMenu } from '../../lib/menu';
+import { filterByQuery, isAnchorOffscreen, matchByPrefix, placeMenu } from '../../lib/menu';
 
 const { t } = useI18n();
 
@@ -324,10 +324,11 @@ function place(): void {
   const p = popEl.value;
   if (!t || !p) return;
   const r = t.getBoundingClientRect();
+  const viewport = { width: window.innerWidth, height: window.innerHeight };
   // A trigger scrolled out of sight leaves the list an orphan: it would be clamped to the
   // viewport edge, floating beside nothing, and a pick would write to a control the user
   // can no longer see. Close instead — the same call that keeps it glued while visible.
-  if (r.bottom <= 0 || r.top >= window.innerHeight || r.right <= 0 || r.left >= window.innerWidth) {
+  if (isAnchorOffscreen(r, viewport)) {
     close();
     return;
   }
@@ -338,11 +339,7 @@ function place(): void {
     p.style.maxHeight = '';
     naturalH = p.offsetHeight;
   }
-  const at = placeMenu(
-    r,
-    { width: p.offsetWidth, height: naturalH },
-    { width: window.innerWidth, height: window.innerHeight },
-  );
+  const at = placeMenu(r, { width: p.offsetWidth, height: naturalH }, viewport);
   p.style.left = `${at.left}px`;
   p.style.top = `${at.top}px`;
   p.style.maxHeight = `${at.maxHeight}px`;

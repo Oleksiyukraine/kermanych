@@ -4,6 +4,7 @@ import {
   MENU_GAP_PX,
   MENU_MAX_H_PX,
   filterByQuery,
+  isAnchorOffscreen,
   matchByPrefix,
   placeMenu,
 } from '../src/lib/menu';
@@ -80,6 +81,61 @@ describe('placeMenu', () => {
     expect(at.left).toBe(Math.round(at.left));
     expect(at.top).toBe(Math.round(at.top));
     expect(at.maxHeight).toBe(Math.round(at.maxHeight));
+  });
+
+  // KChipSelect's first home is the composer's control row at the very bottom of the screen,
+  // where a menu that merely «fits below» still opens into the last 40px of the window. That
+  // chip asks for a side; the flip is what happens when the ask cannot be honoured.
+  it('honours a preferred side even when the other one also fits', () => {
+    const anchor = anchorAt(100, 400);
+    const menu = { width: 200, height: 180 };
+
+    // Identical geometry, opposite answers — room on both sides, so only the preference
+    // decides.
+    expect(placeMenu(anchor, menu, VIEWPORT).side).toBe('bottom');
+    expect(placeMenu(anchor, menu, VIEWPORT, 'top').side).toBe('top');
+  });
+
+  it('flips a preferred-up menu down when there is no room above', () => {
+    // A chip in a toolbar at the top of the view: 6px over it, 730 under it.
+    const at = placeMenu(anchorAt(100, 20), { width: 200, height: 300 }, VIEWPORT, 'top');
+
+    expect(at.side).toBe('bottom');
+    expect(at.top).toBe(56 + MENU_GAP_PX);
+  });
+
+  it('gives a preferred-up menu the roomier side when it fits neither', () => {
+    // 136px over the trigger, 300 under it, and a list that fits neither: opening up would
+    // only make it shorter than it has to be.
+    const at = placeMenu(anchorAt(100, 150), { width: 200, height: 500 }, { width: 1280, height: 500 }, 'top');
+
+    expect(at.side).toBe('bottom');
+  });
+});
+
+// Extracted from KSelect.place(), which has always closed on a trigger that scrolled out of
+// its pane — otherwise the menu is clamped to the viewport edge, floating beside nothing,
+// and a pick writes to a control the operator can no longer see. KChipSelect needs the same
+// rule, and the awkward cases are cheaper to pin down here than in a browser.
+describe('isAnchorOffscreen', () => {
+  it('accepts a trigger anywhere in view, including flush against an edge', () => {
+    expect(isAnchorOffscreen(anchorAt(100, 200), VIEWPORT)).toBe(false);
+    expect(isAnchorOffscreen(anchorAt(0, 0), VIEWPORT)).toBe(false);
+    expect(isAnchorOffscreen(anchorAt(1080, 764), VIEWPORT)).toBe(false);
+  });
+
+  it('reports a trigger scrolled off the top or bottom', () => {
+    // Scrolled up until its bottom edge crosses y=0 — one pixel of it left is still in view.
+    expect(isAnchorOffscreen(anchorAt(100, -36), VIEWPORT)).toBe(true);
+    expect(isAnchorOffscreen(anchorAt(100, -35), VIEWPORT)).toBe(false);
+    expect(isAnchorOffscreen(anchorAt(100, 800), VIEWPORT)).toBe(true);
+  });
+
+  it('reports a trigger scrolled off the left or right of a horizontal pane', () => {
+    // The Jira board's columns scroll sideways, so this is not a hypothetical axis.
+    expect(isAnchorOffscreen(anchorAt(-200, 200), VIEWPORT)).toBe(true);
+    expect(isAnchorOffscreen(anchorAt(-199, 200), VIEWPORT)).toBe(false);
+    expect(isAnchorOffscreen(anchorAt(1280, 200), VIEWPORT)).toBe(true);
   });
 });
 
