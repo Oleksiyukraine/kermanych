@@ -605,7 +605,7 @@ import {
   buildEnvRows,
   changedFields,
   envEdits,
-  envRequiredKeys,
+  envKeysChange,
   settingsScopeEntry,
   settingsSection,
   SETTINGS_CATEGORIES,
@@ -844,6 +844,11 @@ const defaultEffortPickOptions = computed(() => {
 const envFile = ref<EnvFileView>({ entries: [], ignored: true });
 const envRows = ref<EnvRow[]>([]);
 const envBase = ref<EnvRow[]>([]);
+// Whether the table below reflects a `.env` this machine really read for the
+// CURRENT project. It is what stops a save made in any other section from
+// patching `envKeys` off an empty table and wiping the shared checklist —
+// see `envKeysChange`.
+const envLoaded = ref(false);
 
 function seedEnvRows(): void {
   const rows = buildEnvRows(envFile.value.entries, cloudRow.value?.envKeys ?? []);
@@ -874,9 +879,11 @@ watch(
     if (key !== 'project-env' || !id || !bound || envDirty.value) return;
     try {
       envFile.value = await store.getEnv(id);
+      envLoaded.value = true;
       paneError.value = null;
     } catch (e) {
       envFile.value = { entries: [], ignored: true };
+      envLoaded.value = false;
       paneError.value = e instanceof Error ? e.message : String(e);
     }
     seedEnvRows();
@@ -889,6 +896,7 @@ watch(
 // flight.
 watch(projectId, () => {
   envFile.value = { entries: [], ignored: true };
+  envLoaded.value = false;
   seedEnvRows();
 });
 
@@ -1026,13 +1034,12 @@ async function saveProject(): Promise<void> {
       envFile.value = await store.saveEnv(id, edits);
     }
   }
-  const required = envRequiredKeys(envRows.value);
-  const keysChanged = required.join('\n') !== (cloudRow.value?.envKeys ?? []).join('\n');
+  const envKeys = envKeysChange(envLoaded.value, envRows.value, cloudRow.value?.envKeys ?? []);
   // `workspaceId` is sent only when it CHANGED. Re-sending the current one would
   // pass WITH CHECK anyway, but it would make every unrelated config save depend
   // on the move policy — and it is what tells the catch which refusal to expect.
   const moved = !!d.workspaceId && d.workspaceId !== cloudRow.value?.workspaceId;
-  if (isInCloud.value && (configDirty.value.length > 0 || keysChanged)) {
+  if (isInCloud.value && (configDirty.value.length > 0 || envKeys)) {
     // CLOUD first for config (design D1: it is the source of truth), and patch()
     // then mirrors the returned row into the local registry — so the offline cache
     // the launch path reads matches what the team sees. Empty strings become NULLs
@@ -1050,7 +1057,7 @@ async function saveProject(): Promise<void> {
       // Never store an empty carry list: the launch path would copy nothing into
       // the worktree.
       carryFiles: d.carryFiles.length ? d.carryFiles : ['.env'],
-      ...(keysChanged ? { envKeys: required } : {}),
+      ...(envKeys ? { envKeys } : {}),
       ...(moved ? { workspaceId: d.workspaceId } : {}),
     });
   }

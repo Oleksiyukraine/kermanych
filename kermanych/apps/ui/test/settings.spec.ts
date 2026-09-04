@@ -4,6 +4,7 @@ import {
   buildEnvRows,
   changedFields,
   envEdits,
+  envKeysChange,
   envRequiredKeys,
   settingsScopeEntry,
   settingsSection,
@@ -164,6 +165,30 @@ describe('envRequiredKeys', () => {
       { key: '  ', value: 'q', required: true },
     ];
     expect(envRequiredKeys(rows)).toEqual(['B', 'A']);
+  });
+});
+
+describe('envKeysChange', () => {
+  // The bug this guards: the env table is loaded for the env section alone, so a save
+  // made in «Основне» used to compute an empty required list and patch the cloud's
+  // shared checklist away as a side effect of renaming the project.
+  it('says nothing about the keys while the file has not been read', () => {
+    expect(envKeysChange(false, [], ['GITHUB_TOKEN'])).toBeNull();
+  });
+
+  it('sends the emptied list once the table is real, because clearing is an edit', () => {
+    expect(envKeysChange(true, [], ['GITHUB_TOKEN'])).toEqual([]);
+  });
+
+  it('stays quiet when a loaded table matches the cloud', () => {
+    expect(envKeysChange(true, buildEnvRows(FILE, ['LOG_LEVEL']), ['LOG_LEVEL'])).toBeNull();
+  });
+
+  it('sends the new list when the operator flags another key', () => {
+    expect(envKeysChange(true, buildEnvRows(FILE, ['LOG_LEVEL', 'GITHUB_TOKEN']), ['LOG_LEVEL'])).toEqual([
+      'LOG_LEVEL',
+      'GITHUB_TOKEN',
+    ]);
   });
 });
 

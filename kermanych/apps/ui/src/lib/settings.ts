@@ -376,6 +376,30 @@ export function envRequiredKeys(rows: readonly EnvRow[]): string[] {
 }
 
 /**
+ * THE `envKeys` A PROJECT SAVE SHOULD SEND — or `null` for «say nothing about
+ * them», which is not the same as «there are none».
+ *
+ * The required list lives in the env TABLE, and that table exists only after the
+ * bound repo's `.env` has actually been read — a disk hit made for the env
+ * section alone. In every other section the table is still empty, and an empty
+ * table means NOT LOADED, not «no required keys». Deriving the patch from it
+ * would erase the team's shared checklist as a side effect of renaming the
+ * project, so `loaded` is what separates the two readings.
+ *
+ * A loaded table that matches the cloud also returns `null`: the field is sent
+ * only when it changed, for the reason `workspaceId` is (see the save path).
+ */
+export function envKeysChange(
+  loaded: boolean,
+  rows: readonly EnvRow[],
+  current: readonly string[],
+): string[] | null {
+  if (!loaded) return null;
+  const next = envRequiredKeys(rows);
+  return next.join('\n') === current.join('\n') ? null : next;
+}
+
+/**
  * The PUT /projects/:id/env payload for a table against the file it was built
  * from.
  *
