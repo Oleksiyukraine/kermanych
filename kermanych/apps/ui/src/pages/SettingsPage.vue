@@ -115,12 +115,16 @@
 
         <!-- ── PROJECT · ГІЛКИ Й КОНВЕНЦІЇ ──────────────────────────────────── -->
         <div v-else-if="section.key === 'project-git' && draft" class="set__form">
+          <!-- `searchable` for the same reason the launcher's fork base is: the list is the
+               repo's whole `refs/heads`, so the default branch is found by typing it, not by
+               scrolling past every feature branch anybody ever left behind. -->
           <KSelect
             v-model="draft.defaultBranch"
             :label="t('settings.git.defaultBranch')"
             :options="branches"
             :disabled="cloudLocked || !isBound"
             :placeholder="t('settings.git.branchPlaceholder')"
+            searchable
           />
           <p v-if="!isBound" class="set__note">{{ t('settings.git.branchBindHint') }}</p>
           <KField
