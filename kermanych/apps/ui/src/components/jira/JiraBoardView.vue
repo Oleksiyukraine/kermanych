@@ -7,7 +7,15 @@
         type="search"
         :placeholder="t('jira.boardView.searchPlaceholder')"
       />
-      <span v-if="searching" class="jbv__count mono">{{ t('jira.boardView.searchCount', { n: matched.length, total: jira.issues.length, board: boardName }) }}</span>
+      <KChipSelect
+        :model-value="assignee"
+        :options="assigneeChoices"
+        icon="👤"
+        placement="down"
+        :title="t('jira.boardView.assigneeTitle')"
+        @update:model-value="assignee = $event"
+      />
+      <span v-if="filtering" class="jbv__count mono">{{ t('jira.boardView.searchCount', { n: matched.length, total: jira.issues.length, board: boardName }) }}</span>
       <span v-else class="jbv__count mono">{{ t('jira.boardView.count', { n: jira.issues.length, board: boardName }, jira.issues.length) }}</span>
       <span class="jbv__spacer"></span>
       <span v-if="!jira.tokenPresent" class="jbv__readonly mono" v-tip="readOnlyHint">{{ t('jira.boardView.readOnly') }}</span>
@@ -25,8 +33,11 @@
 
     <p v-if="jira.loadError" class="jbv__error mono">{{ jira.loadError }}</p>
 
-    <p v-else-if="searching && !matched.length && jira.columns.length" class="jbv__error mono">
-      {{ t('jira.boardView.searchEmpty', { q: query.trim() }) }}
+    <!-- The empty line names the filter the user can actually see: with something typed, the
+         query it failed to match; with only the assignee chip narrowing, the query is blank,
+         so quoting it would say «nothing matched “”». -->
+    <p v-else-if="filtering && !matched.length && jira.columns.length" class="jbv__error mono">
+      {{ query.trim() ? t('jira.boardView.searchEmpty', { q: query.trim() }) : t('jira.boardView.filterEmpty') }}
     </p>
 
     <div v-if="jira.columns.length" class="jbv__columns" :style="{ '--cols': jira.columns.length }">
@@ -116,6 +127,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { JiraColumn, JiraIssue } from '@kermanych/cloud';
 import type { Session, SessionStatus } from '@kermanych/core';
 import KBtn from 'components/kit/KBtn.vue';
+import KChipSelect from 'components/kit/KChipSelect.vue';
 import KField from 'components/kit/KField.vue';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import JiraCard from './JiraCard.vue';
@@ -124,7 +136,15 @@ import JiraLaunchDialog from './JiraLaunchDialog.vue';
 import JiraStatusPickDialog from './JiraStatusPickDialog.vue';
 import JiraTicketDialog from './JiraTicketDialog.vue';
 import { api } from '../../lib/api';
-import { filterIssues, issuesByColumn, transitionChoiceForDrop, type JiraTransitionView } from '../../lib/jira-view';
+import {
+  assigneeOptions,
+  filterByAssignee,
+  filterIssues,
+  issuesByColumn,
+  transitionChoiceForDrop,
+  UNASSIGNED,
+  type JiraTransitionView,
+} from '../../lib/jira-view';
 import { useBoard } from 'stores/board';
 import { useJira } from 'stores/jira';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -143,12 +163,33 @@ const local = useOrchestrator();
 // The search box filters the cards, never the columns: an empty column under a query
 // still says which column it is, so the board keeps its shape while you type.
 const query = ref('');
+// The assignee chip: '' is «anyone» and the board's resting state. Deliberately NOT
+// persisted, exactly like `query` — a filter you cannot see the origin of, restored days
+// later, reads as tickets having disappeared.
+const assignee = ref('');
 // The board name stays in the bar while filtering too — it says WHICH board you are
 // searching, and losing it mid-search reads as the board having changed.
 const boardName = computed(() => jira.integration?.boardName ?? '');
-const matched = computed(() => filterIssues(jira.issues, query.value));
-const searching = computed(() => query.value.trim() !== '');
+
+// «Anyone» and «Unassigned» lead, then the people actually holding cards. The two standing
+// rows come from i18n, so they sort with the list rather than into it.
+const assigneeChoices = computed(() => [
+  { value: '', label: t('jira.boardView.assigneeAll') },
+  { value: UNASSIGNED, label: t('jira.boardView.assigneeNone') },
+  ...assigneeOptions(jira.issues).map((o) => ({ value: o.id, label: o.name })),
+]);
+
+// Both narrowings, one after the other: the search box over the assignee's cards.
+const matched = computed(() => filterByAssignee(filterIssues(jira.issues, query.value), assignee.value));
+const filtering = computed(() => query.value.trim() !== '' || assignee.value !== '');
 const grouped = computed(() => issuesByColumn(jira.columns, matched.value));
+
+// A sync (or a reassignment in Jira) can retire the very person the chip is filtering by,
+// which would leave the board empty with no cards to explain why. Falling back to «anyone»
+// keeps the board readable; «Unassigned» is always a valid choice, so it never expires.
+watch(assigneeChoices, (choices) => {
+  if (assignee.value && !choices.some((c) => c.value === assignee.value)) assignee.value = '';
+});
 
 // ── detail / editors ──────────────────────────────────────────────────────────
 const openedIssueId = ref<string | null>(null);
