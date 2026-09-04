@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { JiraIssue, JiraWorklog } from '@kermanych/cloud';
 import {
   businessDays,
+  capacityDigest,
   capacityPeriods,
   capacityReport,
   defaultGranularity,
+  digestRange,
   eachDay,
+  hoursOf,
   isBusinessDay,
   normalizeRange,
   planIssue,
@@ -217,5 +220,44 @@ describe('capacityReport', () => {
     expect(r.persons).toEqual([]);
     expect(r.totals).toHaveLength(7);
     expect(r.summary).toEqual({ capacitySeconds: 0, plannedSeconds: 0, loggedSeconds: 0, loadSeconds: 0, utilization: 0 });
+  });
+});
+
+describe('digest', () => {
+  it('windows two weeks back and six ahead from the Monday of today', () => {
+    expect(digestRange(TODAY)).toEqual({ from: '2026-08-17', to: '2026-10-11' });
+  });
+
+  it('rounds hours to one decimal', () => {
+    expect(hoursOf(3600)).toBe(1);
+    expect(hoursOf(5400)).toBe(1.5);
+    expect(hoursOf(100)).toBe(0);
+    expect(hoursOf(0)).toBe(0);
+  });
+
+  it('compresses a weekly report into the assistant digest', () => {
+    const range = digestRange(TODAY);
+    const r = capacityReport(
+      [
+        issue({ key: 'KAN-1', assigneeAccountId: 'acc1', assigneeName: 'Andrii', remainingEstimateSeconds: 10 * H, dueDate: '2026-09-08' }),
+        issue({ key: 'KAN-2', assigneeAccountId: 'acc1', assigneeName: 'Andrii', remainingEstimateSeconds: H }),
+        issue({ key: 'KAN-3', remainingEstimateSeconds: H, dueDate: '2026-09-01' }),
+      ],
+      [worklog({ authorAccountId: 'acc1', seconds: 4 * H, startedAt: '2026-08-25T10:00:00.000Z' })],
+      { range, today: TODAY, granularity: 'week' },
+    );
+    const d = capacityDigest(r);
+    expect(d.from).toBe('2026-08-17');
+    expect(d.hoursPerDay).toBe(8);
+    expect(d.team).toHaveLength(8);
+    expect(d.team[1]).toEqual({ week: '2026-08-24', capacityH: 40, plannedH: 0, loggedH: 4 });
+    expect(d.persons.map((p) => p.name)).toEqual(['Andrii', '']);
+    const andrii = d.persons[0]!;
+    expect(andrii).toMatchObject({ openIssues: 2, unscheduled: 1, overdue: 0 });
+    // 10h over Fri 04, Mon 07, Tue 08 → 3.3h this week, 6.7h next.
+    expect(andrii.weeks[2]!.plannedH).toBeCloseTo(3.3, 1);
+    expect(andrii.weeks[3]!.plannedH).toBeCloseTo(6.7, 1);
+    expect(d.unscheduled).toBe(1);
+    expect(d.overdue).toBe(1);
   });
 });

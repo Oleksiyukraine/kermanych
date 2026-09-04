@@ -988,7 +988,7 @@ export const uk = {
       'management-docs': { hint: 'специфікації й рішення', limitation: 'розділ ще не реалізований — за ним немає ні екрана, ні сховища даних' },
       'management-risks': { hint: 'ризики й мітигації' },
       'management-releases': { hint: 'зміни по релізах' },
-      'management-capacity': { hint: 'навантаження команди', limitation: 'розділ ще не реалізований — за ним немає ні екрана, ні сховища даних' },
+      'management-capacity': { hint: 'навантаження команди', limitation: 'розділ лише читає оцінки й ворклоги Jira — навантаження змінюється редагуванням тікетів у Jira, не з чату' },
       'management-integrations': { hint: 'Linear, Jira, Slack', limitation: 'розділ лише показує список провайдерів (Linear, Jira, Slack) — жодне підключення не зроблено і стан ніде не зберігається' },
     },
     placeholder: {

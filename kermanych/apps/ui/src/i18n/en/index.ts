@@ -984,7 +984,7 @@ export const en: MessageSchema = {
       'management-docs': { hint: 'specs and decisions', limitation: 'the section isn’t built yet — it has neither a screen nor a data store behind it' },
       'management-risks': { hint: 'risks and mitigations' },
       'management-releases': { hint: 'changes by release' },
-      'management-capacity': { hint: 'team workload', limitation: 'the section isn’t built yet — it has neither a screen nor a data store behind it' },
+      'management-capacity': { hint: 'team workload', limitation: 'the section only reads Jira estimates and worklogs — workload changes by editing tickets in Jira, not from the chat' },
       'management-integrations': { hint: 'Linear, Jira, Slack', limitation: 'the section only lists providers (Linear, Jira, Slack) — no connection is set up and nothing is stored anywhere' },
     },
     placeholder: {

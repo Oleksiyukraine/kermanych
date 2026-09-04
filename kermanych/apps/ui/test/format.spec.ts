@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { percent, planWindow, tokens, usageTokens, usd } from '../src/lib/format';
+import { hours, percent, planWindow, tokens, usageTokens, usd } from '../src/lib/format';
 
 describe('tokens', () => {
   it('keeps small counts exact', () => {
@@ -97,5 +97,15 @@ describe('usageTokens', () => {
 
   it('is zero for a counted-but-idle session', () => {
     expect(usageTokens({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 })).toBe(0);
+  });
+});
+
+describe('hours', () => {
+  it('prints whole hours bare and fractions to one decimal', () => {
+    expect(hours(0)).toBe('0');
+    expect(hours(3600)).toBe('1');
+    expect(hours(5400)).toBe('1.5');
+    expect(hours(28800)).toBe('8');
+    expect(hours(100)).toBe('0');
   });
 });

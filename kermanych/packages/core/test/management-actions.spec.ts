@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import { MANAGEMENT_SECTIONS, managementSection } from "../src/management";
 import { parseManagementReply, renderTicketDescription, validateManagementAction } from "../src/management-actions";
 import type { ManagementRejection } from "../src/i18n-codes";
@@ -568,4 +568,12 @@ test("renderTicketDescription omits the sections a ticket does not have", () => 
   expect(renderTicketDescription({ title: "T", context: "C", acceptanceCriteria: ["Visible on the screen"] })).toBe(
     ["## Context", "C", "", "## Acceptance criteria", "- [ ] Visible on the screen"].join("\n"),
   );
+});
+
+describe("management-capacity section", () => {
+  it("is readable, not writable, and states why", () => {
+    const s = managementSection("management-capacity")!;
+    expect(s.capability).toBe("read");
+    expect(s.limitation).toContain("Jira");
+  });
 });

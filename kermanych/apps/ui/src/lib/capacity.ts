@@ -10,6 +10,7 @@
 // `Date` of such a string is UTC midnight, which is yesterday for half of Europe.
 import { isoOf, isoParts, shiftDays, shiftMonths, todayIso } from './calendar';
 import type { JiraIssue, JiraStatusCategory, JiraWorklog } from '@kermanych/cloud';
+import type { ManagementCapacity, ManagementCapacityWeek } from '@kermanych/core';
 import { UNASSIGNED } from './jira-view';
 
 export const DEFAULT_HOURS_PER_DAY = 8;
@@ -364,5 +365,46 @@ export function capacityReport(
     issues: rows,
     unscheduled: rows.filter((r) => r.flag === 'unscheduled'),
     overdue: rows.filter((r) => r.flag === 'overdue'),
+  };
+}
+
+// The assistant's window: the two weeks behind (what got logged) and six ahead including
+// this one (what is planned), by week. Fixed rather than asked for, because the model's
+// only channel back is prose — it cannot ask the app for another range — and this is the
+// span a manager's «how are we next two weeks / this month» falls inside.
+export const DIGEST_WEEKS_BACK = 2;
+export const DIGEST_WEEKS_AHEAD = 6;
+
+export function digestRange(today: string): CapacityRange {
+  const monday = weekMonday(today);
+  return { from: shiftDays(monday, -7 * DIGEST_WEEKS_BACK), to: shiftDays(monday, 7 * DIGEST_WEEKS_AHEAD - 1) };
+}
+
+/** Seconds as hours with one decimal — the resolution a prompt line or a table cell needs. */
+export function hoursOf(seconds: number): number {
+  return Math.round(seconds / 360) / 10;
+}
+
+export function capacityDigest(report: CapacityReport): ManagementCapacity {
+  const week = (c: CapacityCell, p: CapacityPeriod): ManagementCapacityWeek => ({
+    week: p.key,
+    capacityH: hoursOf(c.capacitySeconds),
+    plannedH: hoursOf(c.plannedSeconds),
+    loggedH: hoursOf(c.loggedSeconds),
+  });
+  return {
+    from: report.range.from,
+    to: report.range.to,
+    hoursPerDay: report.hoursPerDay,
+    team: report.periods.map((p, i) => week(report.totals[i]!, p)),
+    persons: report.persons.map((person) => ({
+      name: person.id === UNASSIGNED ? '' : person.name,
+      weeks: report.periods.map((p, i) => week(report.cells[person.id]![i]!, p)),
+      openIssues: report.issues.filter((r) => r.person.id === person.id).length,
+      unscheduled: report.unscheduled.filter((r) => r.person.id === person.id).length,
+      overdue: report.overdue.filter((r) => r.person.id === person.id).length,
+    })),
+    unscheduled: report.unscheduled.length,
+    overdue: report.overdue.length,
   };
 }
