@@ -53,7 +53,6 @@ const silence = computed(() => {
   align-items: center;
   gap: 8px;
   padding: 5px 12px;
-  border-top: 1px solid var(--k-line-strong);
   font-size: 11px;
   color: var(--k-muted);
   white-space: nowrap;
