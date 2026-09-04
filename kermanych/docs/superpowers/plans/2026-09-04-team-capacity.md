@@ -684,8 +684,9 @@ describe('capacityReport', () => {
     // Quiet only has a done issue but is still a person with capacity.
     expect(r.cells.acc3!.map((c) => c.loadSeconds)).toEqual([0, 0, 0, 0, 0, 0, 0]);
     expect(r.cells.acc3![0]!.capacitySeconds).toBe(8 * H);
-    // Unassigned work is load without capacity.
-    expect(r.cells[UNASSIGNED]!.map((c) => c.plannedSeconds)).toEqual([0, 0, 0, 0, 0, 4 * H, 0]);
+    // Unassigned work is load without capacity. KAN-6 is due Monday with today = Friday, so its 4h
+    // spreads over the two business days Fri 04 + Mon 07.
+    expect(r.cells[UNASSIGNED]!.map((c) => c.plannedSeconds)).toEqual([0, 0, 2 * H, 0, 0, 2 * H, 0]);
     expect(r.cells[UNASSIGNED]![5]!.capacitySeconds).toBe(0);
   });
 
