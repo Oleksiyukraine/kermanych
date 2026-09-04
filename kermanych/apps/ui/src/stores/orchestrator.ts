@@ -218,8 +218,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // Fetched once: the catalog only changes when omp is upgraded or a provider credential
   // appears, neither of which happens while the window is open. Failures are swallowed — the
   // list is a convenience over omp's own default, and a «за замовчуванням»-only picker is fine.
-  async function loadModels() {
-    if (models.value.length) return;
+  async function loadModels(force = false) {
+    if (models.value.length && !force) return;
     try {
       models.value = await api.models();
     } catch {

@@ -80,3 +80,32 @@ describe("mapClaudeModels", () => {
     expect(mapClaudeModels(infos)).toEqual([{ id: "dup", name: "First", provider: "anthropic", efforts: [] }]);
   });
 });
+
+
+describe("ModelsService.validModel (cross-runtime guard)", () => {
+  const CLAUDE: ModelOption[] = [{ id: "claude-opus-4-8", name: "Opus 4.8", provider: "anthropic", efforts: [] }];
+
+  it("drops a model absent from the target runtime's catalog", async () => {
+    // A claude model left selected after switching to omp: omp's catalog is [gpt-5], so it is
+    // dropped to undefined and the spawned runtime falls back to its own default.
+    const svc = svcWith(async () => CLAUDE, OMP_RAW);
+    expect(await svc.validModel("omp", "claude-opus-4-8")).toBeUndefined();
+  });
+
+  it("keeps a model the target runtime lists", async () => {
+    const svc = svcWith(async () => CLAUDE, OMP_RAW);
+    expect(await svc.validModel("omp", "gpt-5")).toBe("gpt-5");
+    expect(await svc.validModel("claude-code", "claude-opus-4-8")).toBe("claude-opus-4-8");
+  });
+
+  it("returns undefined when no model is wanted", async () => {
+    const svc = svcWith(async () => CLAUDE, OMP_RAW);
+    expect(await svc.validModel("omp", undefined)).toBeUndefined();
+  });
+
+  it("keeps the wanted id when the catalog is unreadable ([]), never clobbering on a transient failure", async () => {
+    const svc = svcWith(async () => { throw new Error("no SDK"); }, { models: [] });
+    expect(await svc.validModel("claude-code", "claude-opus-4-8")).toBe("claude-opus-4-8");
+    expect(await svc.validModel("omp", "gpt-5")).toBe("gpt-5");
+  });
+});
