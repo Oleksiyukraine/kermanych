@@ -3044,6 +3044,27 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+## Amendments made during execution
+
+Rulings taken while executing (the ledger has the reasoning; the code is authoritative where it
+differs from the task text above):
+
+- **Task 5 / 8 fixtures:** the spread rule (max(start, today) → due) applies to every fixture;
+  the KAN-6 and 2099 expectations above were corrected to match it.
+- **Task 6:** `apps/ui/test/management-actions.spec.ts` pins the section limitation and was
+  updated to the new text.
+- **Task 10:** the chart stacks in seconds and rounds once per boundary; the hatch pattern id
+  is per-instance (`useId`); the SVG never upscales (`width: auto; max-width: 100%`); the
+  accessible name sits on the `<svg role="img">`. The per-person `cap` in the tooltip is by
+  design.
+- **Task 11:** `KChipSelect` needs an option for the custom state → `management.capacity.
+  preset.custom` in both locales and `presetModel` maps `''` ↔ `'custom'`. User date edits go
+  through an explicit `editDate()` handler that clears the preset and the Days/Weeks override
+  (the `watch([from, to])` is gone). `useJira().open()` returns a token and `close(token)`
+  ignores stale tokens; the page opens in `onMounted` (after a leaving Jira board's
+  post-flush `close()`) and closes with its token. Saved presets/granularity are validated
+  before use.
+
 ## Self-review notes
 
 - **Spec coverage:** §1 data → Tasks 1–3; §2 model → Tasks 4–6; §3 store → Task 8; §4 screen (gate, toolbar, presets, person, view, granularity, tiles, chart, table, empty/error states, localStorage) → Tasks 10–11; §5 chat (capability `read`, types, digest window, prompt lines, protocol, sanitizer) → Tasks 6–8; §6 i18n + README → Tasks 6, 9, 12. §8 «Later» intentionally unbuilt.
