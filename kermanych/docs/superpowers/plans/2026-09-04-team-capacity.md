@@ -1147,7 +1147,7 @@ In `ManagementContext`, after `jira?: ManagementJiraBoard;` add:
 - [ ] **Step 5: Run core tests**
 
 Run: `pnpm --filter @kermanych/core test && pnpm --filter @kermanych/core build`
-Expected: PASS. (`apps/ui/test/management-actions.spec.ts:61` and `packages/core/test/management-actions.spec.ts` refusal tests still pass — an `unsupported` aimed at a `read` section is still a refusal.)
+Expected: PASS. (`packages/core/test/management-actions.spec.ts` refusal tests still pass — an `unsupported` aimed at a `read` section is still a refusal. `apps/ui/test/management-actions.spec.ts:63` pins the OLD limitation string and goes red: update its expected text to the new limitation — the test's intent, "a refusal quotes the section table", is unchanged.)
 
 - [ ] **Step 6: Write the failing digest + format tests**
 
