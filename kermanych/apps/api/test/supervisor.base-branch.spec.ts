@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AuthService } from "../src/auth/auth.service";
+import type { ModelsService } from "../src/models/models.service";
 import type { CloudProject, Task } from "@kermanych/cloud";
+
+// The runtime-aware model guard (ModelsService.validModel) is not under test here; an identity
+// stub returns the wanted model unchanged so createSessionFromTask keeps task.model as before.
+function stubModels(): ModelsService {
+  return { validModel: async (_r: string, w: string | undefined) => w } as unknown as ModelsService;
+}
 
 // Capture spawned RpcSessions so a launch can be proven; no real omp child.
 const started: unknown[] = [];
@@ -97,7 +104,7 @@ function make() {
     hasUncommitted: vi.fn().mockResolvedValue(false),
     listBranches: vi.fn().mockResolvedValue(["main", "develop"]),
   };
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, signedIn, stubSkills());
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, signedIn, stubSkills(), stubModels());
   return { sup, registry, worktree };
 }
 

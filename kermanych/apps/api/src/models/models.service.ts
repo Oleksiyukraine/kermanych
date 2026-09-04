@@ -56,6 +56,18 @@ export class ModelsService {
     return (await this.list()).find((m) => m.id === modelId)?.provider;
   }
 
+  // A model belongs to a runtime only if that runtime's catalog lists it. A selection carried
+  // across a runtime switch — e.g. a claude model left over after the operator switches to omp —
+  // is dropped to undefined so the spawned backend falls back to its own default rather than
+  // running the wrong provider's model. An unreadable catalog ([]) keeps the wanted id untouched:
+  // a transient failure must never clobber a launch parameter (the column is free-form TEXT).
+  async validModel(runtime: AgentRuntimeKind, wanted: string | undefined): Promise<string | undefined> {
+    if (!wanted) return undefined;
+    const catalog = await this.list(runtime);
+    if (catalog.length === 0) return wanted;
+    return catalog.some((m) => m.id === wanted) ? wanted : undefined;
+  }
+
   private async load(runtime: AgentRuntimeKind): Promise<ModelOption[]> {
     const at = Date.now();
     const value =

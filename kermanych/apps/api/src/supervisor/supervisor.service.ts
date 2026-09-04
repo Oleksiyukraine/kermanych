@@ -391,6 +391,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       undefined,
       task.branch ?? project.defaultBranch,
     );
+    const runtime = this.runtimeFor();
+    // A model chosen under a different runtime (e.g. a claude model left selected after the
+    // operator switches to omp) is dropped so the spawned backend uses its own default rather
+    // than running the wrong provider's model; an unreadable catalog keeps the id untouched.
+    const model = await this.models.validModel(runtime, task.model);
     const session = this.registry.createSession({
       projectId: project.id,
       taskId: task.id,
@@ -400,13 +405,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       branch,
       worktree,
       baseBranch,
-      model: task.model,
-      // Unvalidated, exactly like `model`: the board stores a free-text launch parameter and
-      // omp is the only authority on what it accepts — clamping happens there, not here.
+      model,
+      // Unvalidated free-text, exactly like `effort`: omp clamps what it accepts. The only
+      // clamp here is cross-runtime (validModel above), so an omp task never inherits a claude
+      // model left selected from a previous session.
       effort: task.effort,
       prefix,
       platform,
-      runtime: this.runtimeFor(),
+      runtime,
     });
     try {
       return await this.launch(session, project, { images });
