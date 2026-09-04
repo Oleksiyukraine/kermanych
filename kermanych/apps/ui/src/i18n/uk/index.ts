@@ -417,6 +417,8 @@ export const uk = {
       titlePlaceholder: 'що саме треба зробити',
       description: 'Опис',
       descriptionPlaceholder: 'Один абзац — далі агент поставить уточнення.',
+      image: '⛶ Зображення',
+      dragHint: 'встав із буфера (⌘V), перетягни сюди або натисни ⛶',
       model: 'Модель',
       default: 'за замовчуванням',
       effort: 'Рівень роздумів',
