@@ -402,3 +402,23 @@ export function envEdits(
   const remove = entries.map((e) => e.key).filter((k) => !Object.hasOwn(set, k));
   return { set, remove };
 }
+
+/**
+ * THE TABLE WITH ONE KEY SET — what a single-secret field (the GIT_TOKEN box in
+ * «Git Налаштування») edits, since a token is a VALUE and every value in this
+ * product lives in the bound repo's `.env`. One row of the same table
+ * «Змінні середовища» draws, so there is no second store and no second save path.
+ *
+ * An empty value DROPS the row rather than storing `KEY=`: `envEdits` then lists
+ * the key in `remove` and the line leaves the file, because a carried empty secret
+ * fails further from the cause than a missing one. The exception is a row the cloud
+ * DECLARED required — dropping that one would also drop the name from
+ * `projects.env_keys`, which is shared config and nobody's idea of «clear my
+ * token», so it keeps its row and empties in place.
+ */
+export function setEnvValue(rows: readonly EnvRow[], key: string, value: string): EnvRow[] {
+  const i = rows.findIndex((r) => r.key === key);
+  if (i < 0) return value ? [...rows, { key, value, required: false }] : [...rows];
+  if (value || rows[i]!.required) return rows.map((r, j) => (j === i ? { ...r, value } : r));
+  return rows.filter((_, j) => j !== i);
+}

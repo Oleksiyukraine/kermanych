@@ -5,6 +5,7 @@ import {
   changedFields,
   envEdits,
   envRequiredKeys,
+  setEnvValue,
   settingsScopeEntry,
   settingsSection,
   SETTINGS_CATEGORIES,
@@ -211,5 +212,49 @@ describe('envEdits', () => {
 
   it('removes every key when the table is emptied', () => {
     expect(envEdits([], FILE)).toEqual({ set: {}, remove: ['DATABASE_URL', 'LOG_LEVEL'] });
+  });
+});
+
+// The GIT_TOKEN box in «Git Налаштування». It writes into the very table above,
+// so its whole contract is which row it touches and what «cleared» means.
+describe('setEnvValue', () => {
+  it('appends a row for a key the table does not hold', () => {
+    expect(setEnvValue([], 'GIT_TOKEN', 'ghp_x')).toEqual([
+      { key: 'GIT_TOKEN', value: 'ghp_x', required: false },
+    ]);
+  });
+
+  it('rewrites the existing row in place, keeping its required flag', () => {
+    const rows = buildEnvRows([{ key: 'GIT_TOKEN', value: 'old' }], ['GIT_TOKEN']);
+    expect(setEnvValue(rows, 'GIT_TOKEN', 'ghp_new')).toEqual([
+      { key: 'GIT_TOKEN', value: 'ghp_new', required: true },
+    ]);
+  });
+
+  // Clearing the field must take the LINE out, not leave `GIT_TOKEN=` behind: the
+  // `.env` is copied into every worktree, and an empty secret there fails further
+  // from the cause than a missing one.
+  it('drops the row when the value is cleared, so envEdits removes the key', () => {
+    const rows = buildEnvRows([...FILE, { key: 'GIT_TOKEN', value: 'ghp_x' }], []);
+    const next = setEnvValue(rows, 'GIT_TOKEN', '');
+    expect(next.map((r) => r.key)).toEqual(['DATABASE_URL', 'LOG_LEVEL']);
+    expect(envEdits(next, [...FILE, { key: 'GIT_TOKEN', value: 'ghp_x' }]).remove).toEqual([
+      'GIT_TOKEN',
+    ]);
+  });
+
+  // A required key is a NAME the cloud shares (projects.env_keys). Dropping its row
+  // would delete that declaration for the whole team, which is not what clearing a
+  // local value asks for.
+  it('empties a required row in place instead of dropping it', () => {
+    const rows = buildEnvRows([{ key: 'GIT_TOKEN', value: 'ghp_x' }], ['GIT_TOKEN']);
+    expect(setEnvValue(rows, 'GIT_TOKEN', '')).toEqual([
+      { key: 'GIT_TOKEN', value: '', required: true },
+    ]);
+  });
+
+  it('leaves the table alone when clearing a key it never held', () => {
+    const rows = buildEnvRows(FILE, []);
+    expect(setEnvValue(rows, 'GIT_TOKEN', '')).toEqual(rows);
   });
 });
