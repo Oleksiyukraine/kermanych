@@ -540,7 +540,12 @@
             </div>
             <div v-if="draftWorktree" class="agents-launcher__from">
               <span class="agents-launcher__from-label mono">{{ t('agents.launcher.from') }}</span>
-              <KSelect v-model="draftBaseBranch" :options="launchBranches" />
+              <!-- `searchable`: `listBranches` hands over every local `refs/heads`, and in a
+                   long-lived repo that is hundreds of rows sharing a handful of prefixes
+                   («feature/…», «fix/…»). Scrolling to the base is hopeless there and
+                   closed-list prefix type-ahead only walks the prefix; typing «csp» has to
+                   find «fix/csp-iframe». -->
+              <KSelect v-model="draftBaseBranch" :options="launchBranches" searchable />
             </div>
           </div>
 
