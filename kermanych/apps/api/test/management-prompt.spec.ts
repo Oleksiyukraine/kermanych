@@ -7,6 +7,7 @@ import {
   RISK_CATEGORY_VALUES,
   RISK_RESPONSES_BY_KIND,
   RISK_STATUS_VALUES,
+  type ManagementCapacity,
   type ManagementContext,
   type ManagementMember,
   type ManagementRepo,
@@ -413,5 +414,40 @@ describe("todayIso", () => {
   it("formats the local calendar date, zero-padded", () => {
     expect(todayIso(new Date(2026, 8, 1, 23, 30))).toBe("2026-09-01");
     expect(todayIso(new Date(2026, 11, 31, 0, 5))).toBe("2026-12-31");
+  });
+});
+
+describe("capacity lines", () => {
+  const capacity: ManagementCapacity = {
+    from: "2026-08-17",
+    to: "2026-10-11",
+    hoursPerDay: 8,
+    team: [{ week: "2026-08-31", capacityH: 80, plannedH: 30, loggedH: 12 }],
+    persons: [
+      { name: "Марина", weeks: [{ week: "2026-08-31", capacityH: 40, plannedH: 30, loggedH: 12 }], openIssues: 4, unscheduled: 1, overdue: 0 },
+      { name: "", weeks: [{ week: "2026-08-31", capacityH: 0, plannedH: 2.5, loggedH: 0 }], openIssues: 1, unscheduled: 0, overdue: 1 },
+    ],
+    unscheduled: 1,
+    overdue: 1,
+  };
+
+  it("prints the team line, one line per person and the unassigned bucket", () => {
+    const text = buildManagementTurn({ first: false, repos: [], context: { ...context, capacity }, today: TODAY, text: "?" });
+    expect(text).toContain("Навантаження команди Jira (Team Capacity), 2026-08-17 … 2026-10-11");
+    expect(text).toContain("8 год/робочий день");
+    expect(text).toContain("- КОМАНДА РАЗОМ · без дати 1 · прострочено 1 · 2026-08-31: 42/80 год (лог 12 · план 30)");
+    expect(text).toContain("- Марина · відкритих 4 · без дати 1 · прострочено 0 · 2026-08-31: 42/40 год (лог 12 · план 30)");
+    expect(text).toContain("- (не призначено) · відкритих 1 · без дати 0 · прострочено 1 · 2026-08-31: 2.5/0 год (лог 0 · план 2.5)");
+  });
+
+  it("says capacity is unavailable without a Jira board", () => {
+    const text = buildManagementTurn({ first: false, repos: [], context, today: TODAY, text: "?" });
+    expect(text).toContain("Навантаження команди (Team Capacity): недоступне");
+  });
+
+  it("carries the capacity protocol in the contract", () => {
+    const text = buildManagementTurn({ first: true, repos: [], context, today: TODAY, text: "?" });
+    expect(text).toContain("НАВАНТАЖЕННЯ КОМАНДИ (management-capacity)");
+    expect(text).toContain("management-capacity · Team Capacity · capability=read");
   });
 });

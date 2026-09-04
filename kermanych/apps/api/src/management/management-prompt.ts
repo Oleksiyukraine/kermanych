@@ -21,6 +21,9 @@ import {
   RISK_SCORE_MAX,
   RISK_SCORE_MIN,
   RISK_STATUS_VALUES,
+  type ManagementCapacity,
+  type ManagementCapacityPerson,
+  type ManagementCapacityWeek,
   type ManagementContext,
   type ManagementJiraBoard,
   type ManagementRepo,
@@ -140,6 +143,8 @@ function contract(locale: Locale | undefined): string {
     releaseProtocol(),
     "",
     ticketProtocol(),
+    "",
+    capacityProtocol(),
     "",
     "ПРАВИЛА:",
     `(а) якщо просять ЗМІНИТИ розділ з capability=read_write (${writable}) — віддай відповідний блок дії. Дію виконує застосунок, не ти: у прозі опиши, ЩО саме робиш, і не пиши, що це вже зроблено — результат («Ризик R-004 занесено…», «Реліз-ноти готові…») чат покаже сам;`,
@@ -328,6 +333,28 @@ function ticketProtocol(): string {
   ].join("\n");
 }
 
+// Team Capacity is the one section the assistant READS but never writes, and the protocol
+// spends its words on what the numbers mean: a manager who hears «45 of 40 hours» has to
+// know whether that is time logged or time still estimated, and a model left to guess says
+// «planned» about a week that already happened.
+function capacityProtocol(): string {
+  return [
+    "НАВАНТАЖЕННЯ КОМАНДИ (management-capacity). Розділ лише читається: єдина дія для нього — unsupported.",
+    "Питання «яка потужність / яке навантаження команди або людини» — відповідай ПРОЗОЮ і ТІЛЬКИ з блоку",
+    "«Навантаження команди Jira» у контексті:",
+    "  • дай розбивку по людях і по тижнях: навантаження проти потужності, у годинах і у відсотках;",
+    "    назви, хто перевантажений (понад 100%) і хто недовантажений (менше 80%);",
+    "  • минулі тижні — це ЗАЛОГОВАНИЙ час (факт); поточний і майбутні — ОЦІНКИ, що лишилися по відкритих тікетах,",
+    "    розкладені рівномірно між датою початку (або сьогодні) і дедлайном;",
+    "  • тікети без дедлайну в тижні не входять — назви їх кількість окремо: це робота, якої графік не показує;",
+    "    прострочені лягають цілком на сьогодні;",
+    "  • «потужність проєкту» — це ця дошка Jira; «людина» — виконавець Jira з цього блоку. Не вигадуй людей і",
+    "    чисел, яких у блоці немає; «(не призначено)» — робота без виконавця, потужності в неї нема;",
+    "  • період поза вікном блоку — скажи це прямо і відправ на екран Team Capacity, де є вибір дат.",
+    "    Блоку немає — воркспейс без дошки Jira, оцінок узяти нізвідки.",
+  ].join("\n");
+}
+
 // One attached file of the conversation, as the message states it. Documents carry the
 // absolute path the api wrote them to (the read tool's subject); images carry no path —
 // they ride their own message through omp's image slots and the line only names them.
@@ -411,6 +438,30 @@ function jiraLines(jira: ManagementJiraBoard | undefined): string {
   ].join("\n");
 }
 
+function hoursText(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+function capacityWeek(w: ManagementCapacityWeek): string {
+  return `${w.week}: ${hoursText(Math.round((w.loggedH + w.plannedH) * 10) / 10)}/${hoursText(w.capacityH)} год (лог ${hoursText(w.loggedH)} · план ${hoursText(w.plannedH)})`;
+}
+
+function capacityPerson(p: ManagementCapacityPerson): string {
+  return `- ${p.name || "(не призначено)"} · відкритих ${p.openIssues} · без дати ${p.unscheduled} · прострочено ${p.overdue} · ${p.weeks.map(capacityWeek).join(" · ")}`;
+}
+
+// The Team Capacity digest, one line per person. Absent means the workspace has no Jira
+// board, and the line says so: the alternative is a model that invents a team's hours.
+function capacityLines(c: ManagementCapacity | undefined): string {
+  if (c === undefined)
+    return "Навантаження команди (Team Capacity): недоступне — у воркспейсу немає дошки Jira, а оцінки є тільки там";
+  return [
+    `Навантаження команди Jira (Team Capacity), ${c.from} … ${c.to}, тижні від понеділка, потужність ${c.hoursPerDay} год/робочий день на людину; тиждень читається як «понеділок: навантаження/потужність год (лог · план)»:`,
+    `- КОМАНДА РАЗОМ · без дати ${c.unscheduled} · прострочено ${c.overdue} · ${c.team.map(capacityWeek).join(" · ")}`,
+    ...c.persons.map(capacityPerson),
+  ].join("\n");
+}
+
 function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: string): string {
   const s = managementSection(c.section);
   // An unresolved section name is still printed: the model must be able to say WHICH
@@ -438,6 +489,7 @@ function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: stri
     `Команда воркспейсу (${c.members.length}) — імʼя · роль (виконавця тікета на ВЛАСНІЙ дошці називай саме цим імʼям):`,
     c.members.length ? c.members.map((m) => `- ${m.name} · ${m.role}`).join("\n") : "- список недоступний",
     jiraLines(c.jira),
+    capacityLines(c.capacity),
   ].join("\n");
 }
 
