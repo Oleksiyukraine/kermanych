@@ -474,7 +474,7 @@ it will simply push its real status again.
 
 ## The Менеджмент tab and its assistant
 
-Менеджмент is the non-code half of the product: six workspace-scoped sections
+Менеджмент is the non-code half of the product: seven workspace-scoped sections
 (`packages/core/src/management.ts` is the one table that names them) plus a chat
 field docked to the foot of the page.
 
@@ -516,6 +516,16 @@ That field is a real assistant, and it is deliberately narrow:
   clue the range or the branch was not the one you meant. A failed run keeps a row on the
   section screen with its reason and a retry. Editing, copying and deleting a stored note
   stay on the screen; the assistant has no verb for them and the prompt says so.
+- **It reads the team's capacity.** Team Capacity is the one section marked `read`: the
+  screen adds up the Jira board's remaining estimates (spread over business days up to
+  each ticket's due date) and its worklogs against 8 h per person per business day, for a
+  date range you pick, as a chart or a table, for the whole team or one assignee. The
+  browser hands the assistant the same numbers by week — two weeks back, six ahead — as
+  `context.capacity` on every turn, so «what's Marina's load for the next two weeks» is
+  answered from the figures on the screen, never from the model's memory. Nothing there is
+  writable: load changes by editing tickets in Jira, and the assistant says so. A
+  workspace without a Jira board has no capacity to show — the native board carries no
+  estimates — and both the screen and the context block state that.
 - **It files tickets on «Дошка».** Say «створи тікет: …» and the ticket appears on the board
   — the board is not a Менеджмент section, so this works from any section, and «створи тікет»
   is never answered with a refusal. Six rules make the ticket worth having:
@@ -595,8 +605,9 @@ That field is a real assistant, and it is deliberately narrow:
 
 ### Giving another section something it can write
 
-The Risk Registry and Release Notes are wired end to end; every remaining section is `none`
-or `read`, and the chat has no write path into them on purpose. Adding one is three edits,
+The Risk Registry and Release Notes are wired end to end; Team Capacity is `read` (a screen
+and a context digest, nothing to write); every remaining section is `none`, and the chat
+has no write path into them on purpose. Adding one is three edits,
 and they belong to the branch that owns the screen being written to:
 
 1. flip that section's row in `packages/core/src/management.ts` to `capability:
