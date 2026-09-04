@@ -50,16 +50,30 @@ function clamp(v: number, lo: number, hi: number): number {
 /**
  * Where to pin a menu opened from `anchor`.
  *
- * Opens downward whenever the room below can hold the list, or when below is simply the
- * roomier side; flips up otherwise. The result is rounded to whole pixels — half-pixel
- * `left` on a fixed node blurs 12px mono text on a 1× display.
+ * Opens on `prefer` whenever that side can hold the list, or is simply the roomier one;
+ * flips otherwise. `prefer` defaults to 'bottom', which is what a control in a form or a
+ * toolbar wants. A chip in the composer's control row — pinned to the very bottom of the
+ * window, where «fits below» still means «opens into the last 40px» — passes 'top'.
+ *
+ * The result is rounded to whole pixels — half-pixel `left` on a fixed node blurs 12px
+ * mono text on a 1× display.
  */
-export function placeMenu(anchor: AnchorRect, menu: MenuBox, viewport: Viewport): MenuPlacement {
+export function placeMenu(
+  anchor: AnchorRect,
+  menu: MenuBox,
+  viewport: Viewport,
+  prefer: 'top' | 'bottom' = 'bottom',
+): MenuPlacement {
   const below = viewport.height - anchor.bottom - MENU_GAP_PX - MENU_EDGE_PX;
   const above = anchor.top - MENU_GAP_PX - MENU_EDGE_PX;
   const wanted = Math.min(menu.height, MENU_MAX_H_PX);
 
-  const side: 'top' | 'bottom' = below >= wanted || below >= above ? 'bottom' : 'top';
+  // The preferred side keeps the menu unless it cannot hold the list AND is the tighter of
+  // the two: a flip that only buys fewer visible rows is a flip that should not happen.
+  const first = prefer === 'top' ? above : below;
+  const second = prefer === 'top' ? below : above;
+  const other: 'top' | 'bottom' = prefer === 'top' ? 'bottom' : 'top';
+  const side: 'top' | 'bottom' = first >= wanted || first >= second ? prefer : other;
   const room = side === 'bottom' ? below : above;
 
   // `max(room, MIN)` before the MAX cap: a cramped side gets the floor, never a negative
@@ -75,6 +89,23 @@ export function placeMenu(anchor: AnchorRect, menu: MenuBox, viewport: Viewport)
   const left = clamp(anchor.left, MENU_EDGE_PX, viewport.width - MENU_EDGE_PX - menu.width);
 
   return { left: Math.round(left), top: Math.round(top), maxHeight: Math.round(maxHeight), side };
+}
+
+/**
+ * Whether `anchor` has scrolled entirely out of the viewport.
+ *
+ * A menu whose trigger is gone is an orphan: it gets clamped to the viewport edge, floats
+ * beside nothing, and a pick writes to a control the operator can no longer see. Callers
+ * close on true. Touching an edge still counts as visible — one pixel of a trigger is
+ * enough to keep the pair readable as one object.
+ */
+export function isAnchorOffscreen(anchor: AnchorRect, viewport: Viewport): boolean {
+  return (
+    anchor.bottom <= 0 ||
+    anchor.top >= viewport.height ||
+    anchor.left + anchor.width <= 0 ||
+    anchor.left >= viewport.width
+  );
 }
 
 /**

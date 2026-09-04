@@ -312,8 +312,12 @@ onUnmounted(() => {
   min-height: 0;
 }
 
+// Wraps rather than overflowing: search + assignee chip + count + two buttons need ~700px,
+// and the board is routinely opened in a half-width Electron window or beside a side panel.
+// Without this the Sync and New-ticket buttons were simply pushed out of reach.
 .jbv__bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--k-sp-3);
 }
@@ -323,8 +327,12 @@ onUnmounted(() => {
   color: var(--k-faint);
 }
 
+// 220px is the preferred width, not a fixed one: the field gives room back to the chip and
+// the buttons before the bar is forced to wrap, and `min-width: 0` lets it shrink below the
+// placeholder's natural width instead of pushing its neighbours off the row.
 .jbv__search {
-  width: 220px;
+  flex: 0 1 220px;
+  min-width: 0;
 }
 
 .jbv__spacer {
