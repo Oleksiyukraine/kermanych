@@ -3,7 +3,8 @@
     <svg
       class="capchart__svg"
       :viewBox="`0 0 ${width} ${HEIGHT}`"
-      :style="{ width: `${width}px` }"
+      :width="displayWidth"
+      :height="DISPLAY_HEIGHT"
       role="img"
       :aria-label="t('management.capacity.chartAria')"
     >
@@ -120,6 +121,10 @@ const { t } = useI18n();
 const hatchId = `capchart-hatch-${useId()}`;
 
 const HEIGHT = 260;
+// The chart's coordinate space is HEIGHT tall; DISPLAY_HEIGHT is what it actually renders
+// at on screen — small on purpose, so the chart stays inside the viewport and the page
+// never scrolls to show it. Width follows so the aspect ratio (and every bar) is undistorted.
+const DISPLAY_HEIGHT = 220;
 const PAD_L = 40;
 const PAD_R = 12;
 const PAD_T = 18;
@@ -160,6 +165,7 @@ const series = computed<Series[]>(() => {
 });
 
 const width = computed(() => PAD_L + props.report.periods.length * (BAR_W + GAP) + PAD_R);
+const displayWidth = computed(() => Math.round((width.value * DISPLAY_HEIGHT) / HEIGHT));
 
 // Y axis in hours, topped at a multiple of 8 above the tallest bar or tick.
 const yMaxHours = computed(() => {
@@ -251,12 +257,12 @@ const todayX = computed<number | undefined>(() => {
 }
 
 .capchart__svg {
+  // Size is set explicitly on the element (see displayWidth/DISPLAY_HEIGHT): a fixed, small
+  // display height keeps the chart compact and inside the viewport, so the page never has
+  // to scroll to see it, and the width follows the viewBox aspect ratio so nothing stretches.
+  // Explicit dimensions are also why the flex-column parent can't stretch the SVG to full
+  // pane width (which would letterbox it); a wide many-day chart scrolls inside the figure.
   display: block;
-  // Width is pinned to the chart's natural pixel size inline, so the chart is drawn 1:1:
-  // never upscaled to fill a wide pane (which blew a few-period chart up and made the 9px
-  // axis text huge), never downscaled to fit a narrow one (which would shrink a month
-  // view's text to nothing). When the pane is narrower than natural, the figure scrolls.
-  height: auto;
 }
 
 .capchart__grid line {
