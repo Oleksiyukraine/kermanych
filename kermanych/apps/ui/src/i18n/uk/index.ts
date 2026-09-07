@@ -1126,6 +1126,7 @@ export const uk = {
         custom: 'Свій період',
       },
       wholeTeam: 'Уся команда',
+      selected: '{count} з {total}',
       unassigned: 'Не призначено',
       others: 'Інші',
       view: { chart: 'Графік', table: 'Таблиця' },
