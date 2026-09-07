@@ -1158,7 +1158,6 @@ export const en: MessageSchema = {
       legendCapacity: 'capacity',
       legendLogged: 'logged',
       legendPlanned: 'planned',
-      today: 'today',
       capacityLabel: 'Capacity',
       hPerDay: 'h/day',
       capMode: { team: 'Whole team', member: 'Per member' },

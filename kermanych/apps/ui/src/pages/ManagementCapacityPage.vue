@@ -687,9 +687,13 @@ const issueRows = computed<CapacityIssueRow[]>(() =>
 }
 
 .cap__members {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-auto-rows: 34px;
+  align-content: start;
   gap: var(--k-sp-2) var(--k-sp-4);
+  max-height: calc(34px * 2 + var(--k-sp-2) + var(--k-sp-3) * 2 + var(--k-rule-thin) * 2);
+  overflow-y: auto;
   padding: var(--k-sp-3);
   background: color-mix(in srgb, var(--k-surface2) 30%, transparent);
   border: var(--k-rule-thin) solid var(--k-line);
@@ -697,13 +701,18 @@ const issueRows = computed<CapacityIssueRow[]>(() =>
 }
 
 .cap__member {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: var(--k-sp-2);
+  min-width: 0;
 }
 
 .cap__member-name {
-  min-width: 90px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--k-fs-xs);
   color: var(--k-muted);
 }

@@ -1163,7 +1163,6 @@ export const uk = {
       legendCapacity: 'потужність',
       legendLogged: 'залоговано',
       legendPlanned: 'заплановано',
-      today: 'сьогодні',
       capacityLabel: 'Потужність',
       hPerDay: 'год/день',
       capMode: { team: 'Уся команда', member: 'По людині' },
