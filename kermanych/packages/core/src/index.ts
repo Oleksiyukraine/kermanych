@@ -71,6 +71,7 @@ export {
   type SkillDef,
   type SkillView,
 } from "./skills";
+export { isDocPath, docsRead } from "./docs";
 export {
   DEFAULT_HELPERS,
   expandHelpers,

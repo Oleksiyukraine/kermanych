@@ -446,6 +446,46 @@
             </div>
           </dl>
         </div>
+        <div v-if="detailTab === 'docs'" class="agents__tabpane agents__docs">
+          <template v-if="readDocs.length || changedDocs.length">
+            <section v-if="readDocs.length" class="agents__docs-group">
+              <h3 v-tip="docsUsedHint" class="agents__docs-title">{{ t('agents.docs.usedTitle') }}</h3>
+              <ul class="agents__docs-read">
+                <li v-for="p in readDocs" :key="p" class="agents__docs-read-item mono">{{ p }}</li>
+              </ul>
+            </section>
+            <section v-if="changedDocs.length" class="agents__docs-group">
+              <h3 class="agents__docs-title">{{ t('agents.docs.changedTitle') }}</h3>
+              <ul class="agents__file-list">
+                <li v-for="f in changedDocs" :key="f.path" class="agents__file-item">
+                  <button
+                    type="button"
+                    class="agents__file-row"
+                    :class="{ 'agents__file-row--open': openFile === f.path }"
+                    :aria-expanded="openFile === f.path"
+                    @click="toggleFile(f.path)"
+                  >
+                    <span class="agents__file-path mono">{{ f.path }}</span>
+                    <span class="agents__file-stat mono">
+                      <span class="agents__diff-add">+{{ f.added }}</span>
+                      <span class="agents__diff-del">−{{ f.removed }}</span>
+                    </span>
+                  </button>
+                  <KDiffView
+                    v-if="openFile === f.path"
+                    class="agents__file-diff"
+                    :path="f.path"
+                    :diff="fileDiff"
+                    :loading="fileDiffLoading"
+                    :error="fileDiffError"
+                    @close="closeFile"
+                  />
+                </li>
+              </ul>
+            </section>
+          </template>
+          <p v-else class="agents__log-empty mono">{{ t('agents.docs.empty') }}</p>
+        </div>
         </template>
         <div v-else class="agents__detail-blank mono">{{ t('agents.detail.blank') }}</div>
       </aside>
@@ -756,6 +796,8 @@ import {
   branchName,
   taskNameFromText,
   skillsUsed,
+  docsRead,
+  isDocPath,
   type ImageInput,
   type Session,
   type SessionStatus,
@@ -1269,8 +1311,18 @@ watch(
   { immediate: true },
 );
 
-// ── Detail tabs (Лог / Зміни / Сесія) ─────────────────────────────────────
-// The right panel splits the session into three views. The choice is persisted
+// ── Документація tab: docs the agent used vs docs it wrote ──────────────────
+// Both halves are derived from data the page already holds, so the tab needs no request of
+// its own. `readDocs` is the documentation the agent READ — off the transcript, the same way
+// usedSkills is — as the shortened display paths, hence list-only. `changedDocs` is the
+// documentation among the Зміни listing, so it carries full paths and opens the same diff
+// view. A doc read and then edited legitimately appears in both.
+const readDocs = computed(() => docsRead(entries.value));
+const changedDocs = computed(() => changesInfo.value?.files.filter((f) => isDocPath(f.path)) ?? []);
+const docsUsedHint = computed(() => t('agents.docs.usedHint'));
+
+// ── Detail tabs (Лог / Зміни / Файли / Сесія / Документація) ────────────────
+// The right panel splits the session into five views. The choice is persisted
 // per session (localStorage `kermanych.agents.tab.<id>`) so reopening an agent lands where the
 // operator left it; a fresh session defaults to the log.
 const detailTabs = computed(() => {
@@ -1279,6 +1331,7 @@ const detailTabs = computed(() => {
     { value: 'changes', label: t('agents.tabs.changes'), count: changesInfo.value?.files.length ?? 0 },
     { value: 'files', label: t('agents.tabs.files'), count: treeRoot.value.length },
     { value: 'session', label: t('agents.tabs.session') },
+    { value: 'docs', label: t('agents.tabs.docs'), count: readDocs.value.length + changedDocs.value.length },
   ];
   return tabs;
 });
@@ -1288,7 +1341,9 @@ watch(
   (id) => {
     const saved = id ? localStorage.getItem(`kermanych.agents.tab.${id}`) : null;
     detailTab.value =
-      saved === 'changes' || saved === 'session' || saved === 'files' ? saved : 'log';
+      saved === 'changes' || saved === 'session' || saved === 'files' || saved === 'docs'
+        ? saved
+        : 'log';
   },
   { immediate: true },
 );
@@ -2891,7 +2946,8 @@ async function submitPreviewConfig(): Promise<void> {
 }
 
 .agents__changes,
-.agents__session {
+.agents__session,
+.agents__docs {
   overflow-y: auto;
   gap: 14px;
   padding: 16px 12px;
@@ -2985,6 +3041,26 @@ async function submitPreviewConfig(): Promise<void> {
 }
 .agents__diff-add { color: var(--k-diff-add); }
 .agents__diff-del { color: var(--k-diff-del); }
+
+// ── Документація tab: read list (transcript) + changed-docs list (shares the changes pane).
+.agents__docs-group { display: flex; flex-direction: column; gap: 8px; }
+.agents__docs-title {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+}
+.agents__docs-read { margin: 0; padding: 0; list-style: none; }
+.agents__docs-read-item {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--k-line);
+  color: var(--k-text);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 // ── Task brief (full description + creation images) ────────────────────────
 .agents__task {
