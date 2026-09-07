@@ -12,10 +12,10 @@ export interface KTableColumn {
 </script>
 
 <script setup lang="ts" generic="T">
-// Modernist data table (design-system: radius 0, hairline rules, mono header,
-// single accent for the selected row). Presentational only — cells are driven
-// by `#cell-<key>` scoped slots ({ row, value }); the fallback renders the raw
-// field as text. Row state (e.g. "running") rides in via `rowClass`.
+// Modernist data table (design-system: rounded container, hairline rules, mono
+// header, single accent for the selected row). Presentational only — cells are
+// driven by `#cell-<key>` scoped slots ({ row, value }); the fallback renders the
+// raw field as text. Row state (e.g. "running") rides in via `rowClass`.
 const props = withDefaults(
   defineProps<{
     columns: KTableColumn[];
@@ -90,8 +90,13 @@ function onRowClick(row: T): void {
 <style scoped lang="scss">
 .k-table {
   width: 100%;
-  border-collapse: collapse;
+  // Separate model so the container radius can clip the header/last-row fills;
+  // collapsed borders ignore border-radius.
+  border-collapse: separate;
+  border-spacing: 0;
   border: 1px solid var(--k-line);
+  border-radius: var(--k-r-lg);
+  overflow: hidden;
   background: var(--k-surface);
   font-family: var(--k-font-ui);
 }
