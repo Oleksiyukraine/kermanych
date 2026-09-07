@@ -192,6 +192,7 @@ export const en: MessageSchema = {
       changes: 'Changes',
       files: 'Files',
       session: 'Session',
+      docs: 'Documentation',
     },
     actions: {
       mergeTip: 'Merge the conclusion into the parent agent',
@@ -234,6 +235,12 @@ export const en: MessageSchema = {
       tokens: 'Tokens',
       cost: 'Cost',
       tokenTotal: '{n} tok',
+    },
+    docs: {
+      usedTitle: 'Documentation used',
+      usedHint: 'Documentation files the agent read while working — taken from the session transcript. The path is shown as it appears in the log, so it cannot be opened from here.',
+      changedTitle: 'Created or updated',
+      empty: 'This session neither read nor changed any documentation.',
     },
     statusWord: {
       thinking: 'thinking',
