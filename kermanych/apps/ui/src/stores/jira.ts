@@ -11,12 +11,13 @@
 //               cost one actual poller.
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { JiraColumn, JiraIntegration, JiraIssue, JiraIssueChildren } from '@kermanych/cloud';
+import type { JiraColumn, JiraIntegration, JiraIssue, JiraIssueChildren, JiraWorklog } from '@kermanych/cloud';
 import {
   getJiraIntegration,
   listJiraColumns,
   listJiraIssueChildren,
   listJiraIssues,
+  listJiraWorklogsBetween,
   subscribeJiraIssues,
 } from '@kermanych/cloud';
 import { api, type JiraAssignableUser } from '../lib/api';
@@ -24,6 +25,8 @@ import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { IS_PREVIEW } from '../lib/preview';
 import { globalTr } from '../boot/i18n';
+import { shiftDays } from '../lib/calendar';
+import type { CapacityRange } from '../lib/capacity';
 
 const SYNC_TICK_MS = 30_000;
 
@@ -155,13 +158,36 @@ export const useJira = defineStore('jira', () => {
     }
   }
 
+  // Worklogs of the whole board for a calendar range — Team Capacity's read. Returned, not
+  // stored: the screen and the Менеджмент chat ask for different ranges at the same time,
+  // and one `worklogs` ref would have them overwrite each other. A day of slack on both
+  // ends because `started_at` is an instant and the range is the operator's wall calendar;
+  // lib/capacity.ts buckets by local day and drops what falls outside.
+  async function fetchWorklogs(range: CapacityRange): Promise<JiraWorklog[]> {
+    const row = integration.value;
+    if (!row) return [];
+    return listJiraWorklogsBetween(
+      auth.client,
+      row.id,
+      `${shiftDays(range.from, -1)}T00:00:00.000Z`,
+      `${shiftDays(range.to, 2)}T00:00:00.000Z`,
+    );
+  }
+
+  // Which caller currently owns the session. The board and Team Capacity both open/close
+  // this singleton; a view that is leaving must not tear down the session the arriving
+  // view just built, so close() is a no-op for any token but the latest.
+  let opener = 0;
+
   // The Jira view's lifecycle: probe + board + realtime + the sync ticker. Idempotent —
-  // reopening rebuilds one channel and one ticker, never two.
-  async function open(workspaceId: string): Promise<void> {
+  // reopening rebuilds one channel and one ticker, never two. Returns a token the caller
+  // hands back to close(), so a stale unmount cannot tear down a session it no longer owns.
+  async function open(workspaceId: string): Promise<number> {
+    const token = ++opener;
     close();
     await probe(workspaceId);
     const row = integration.value;
-    if (!row) return;
+    if (!row) return token;
     await loadBoard();
 
     unsubscribe = subscribeJiraIssues(auth.client, row.id, (change) => {
@@ -185,6 +211,7 @@ export const useJira = defineStore('jira', () => {
     };
     void tick();
     ticker = setInterval(() => void tick(), SYNC_TICK_MS);
+    return token;
   }
 
   // The «Синхронізувати» button. A deliberate human act, so it differs from the tick in
@@ -214,7 +241,8 @@ export const useJira = defineStore('jira', () => {
     }
   }
 
-  function close(): void {
+  function close(token?: number): void {
+    if (token !== undefined && token !== opener) return;
     generation++;
     unsubscribe?.();
     unsubscribe = undefined;
@@ -263,6 +291,8 @@ export const useJira = defineStore('jira', () => {
     syncing,
     probe,
     loadAssignable,
+    loadBoard,
+    fetchWorklogs,
     open,
     syncNow,
     close,

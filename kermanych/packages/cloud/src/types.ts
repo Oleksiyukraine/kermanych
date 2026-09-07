@@ -410,6 +410,11 @@ export type JiraIssue = {
   originalEstimate: string;
   timeSpent: string;
   remainingEstimate: string;
+  // The same three counters in SECONDS, straight from Jira's `timetracking.*Seconds` —
+  // the only form Team Capacity can add up. 0 = Jira holds none.
+  originalEstimateSeconds: number;
+  timeSpentSeconds: number;
+  remainingEstimateSeconds: number;
   // Jira's planning dates in Jira's own spelling (YYYY-MM-DD); blank = not set.
   // `dueDate` is the system `duedate`; `startDate` is the site's «Start date» field,
   // which a site may not have at all — then it stays blank and is not editable.
@@ -470,4 +475,65 @@ export type JiraAttachment = {
   size: number;
   authorName: string;
   jiraCreatedAt: string;
+};
+
+// ── Password vault ────────────────────────────────────────────────────────────
+// The workspace "Storage" section. A password is split across two rows in Postgres — the
+// TITLE every member may read (`workspace_passwords`) and the SECRET only a manager/owner or
+// an approved developer may read (`workspace_password_secrets`) — because RLS is row-level,
+// so hiding the secret from a title-reader needs a second table, not a second column. See
+// 20260907120000_workspace_passwords.sql. The three types below mirror that split; a
+// developer's client simply never receives a `WorkspacePasswordSecret` it is not entitled to.
+export type WorkspacePassword = {
+  id: string;
+  workspaceId: string;
+  title: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedBy?: string;
+  updatedAt: string;
+};
+
+// The contents, read only when `can_read_password_secret` permits. `secret` may be an empty
+// string — a file-only credential is valid — but the row always exists for a password.
+// `filePath` is the object path in the private `password-files` bucket (never a URL; the
+// screen mints a signed URL on demand); `fileName` is the original name for the download.
+export type WorkspacePasswordSecret = {
+  passwordId: string;
+  secret: string;
+  filePath?: string;
+  fileName?: string;
+  updatedBy?: string;
+  updatedAt: string;
+};
+
+// Create carries both halves in one call from the editor; the cloud module writes the title
+// row, then the secret row, then (if a file was picked) uploads it. Manager/owner only, by RLS.
+export type WorkspacePasswordInsert = {
+  workspaceId: string;
+  title: string;
+  secret: string;
+};
+
+// An absent key leaves a half alone: a title-only rename never rewrites the secret, and vice
+// versa. The file is handled through its own upload/clear calls, not this patch.
+export type WorkspacePasswordPatch = {
+  title?: string;
+  secret?: string;
+};
+
+export type PasswordAccessStatus = "pending" | "approved" | "declined";
+
+// One row of the request -> approve/decline ledger, one per (password, requester). Written
+// only by the `request_password_access` / `decide_password_access` rpcs. A developer sees
+// their own rows; a manager/owner sees every row in the workspace.
+export type WorkspacePasswordAccess = {
+  id: string;
+  passwordId: string;
+  workspaceId: string;
+  requesterId: string;
+  status: PasswordAccessStatus;
+  requestedAt: string;
+  decidedBy?: string;
+  decidedAt?: string;
 };

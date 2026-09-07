@@ -35,7 +35,7 @@ afterEach(() => {
   for (const d of trash) rmSync(d, { recursive: true, force: true });
 });
 
-// A worktree agent that has been merged: worktree retired, branch deleted, status "merged".
+// A worktree agent that has been finished: worktree retired, branch kept, status "merged".
 async function seedMerged(): Promise<string> {
   const g = reg.upsertProject({ id: "p1", name: "g", localRepoPath: repo });
   const parent = mkdtempSync(join(tmpdir(), "kmq-reopen-wt-"));
@@ -55,7 +55,7 @@ async function seedMerged(): Promise<string> {
   return s.id;
 }
 
-test("resuming a merged (worktree-retired) session is refused, never resurrecting it in the project dir", async () => {
+test("resuming a finished (worktree-retired) session is refused, never resurrecting it in the project dir", async () => {
   const id = await seedMerged();
 
   await expect(sup.restartSession(id)).rejects.toThrow(/reopen/i);
@@ -70,7 +70,7 @@ test("finishInfo refuses a worktree session that has no worktree", async () => {
   await expect(sup.finishInfo(id)).rejects.toThrow(/no worktree/i);
 });
 
-test("reopenSession re-forks a worktree + branch from base and re-queues the session", async () => {
+test("reopenSession brings the worktree back on the session's own branch and re-queues it", async () => {
   const id = await seedMerged();
 
   const re = await sup.reopenSession(id);
@@ -79,12 +79,26 @@ test("reopenSession re-forks a worktree + branch from base and re-queues the ses
   expect(re.worktreePath).not.toBe("");
   expect(existsSync(re.worktreePath)).toBe(true); // worktree re-created
   expect(re.status).toBe("done");
-  expect(git(repo, "branch", "--list", re.branch).trim()).not.toBe(""); // branch exists again
-  // Forked from dev, which now holds the merged feature work:
+  expect(re.branch).toBe("feature/task-one"); // the same branch — its PR points at it
+  // Which still carries the session's own work, PR merged or not:
   expect(existsSync(join(re.worktreePath, "feature.txt"))).toBe(true);
   // Finish is possible again now that the worktree is back:
   const info = await sup.finishInfo(id);
-  expect(info.branch).toBe(re.branch);
+  expect(info.branch).toBe("feature/task-one");
+});
+
+// Rows retired before finish kept branches have none left; that one forks afresh off the base.
+test("reopenSession forks the branch afresh off the base when the session's branch is gone", async () => {
+  const id = await seedMerged();
+  git(repo, "branch", "-D", "feature/task-one");
+
+  const re = await sup.reopenSession(id);
+  trash.push(re.worktreePath);
+
+  // The name is re-derived (nothing occupies it any more), but the ref is a fresh fork:
+  expect(git(repo, "branch", "--list", re.branch).trim()).not.toBe("");
+  expect(git(repo, "rev-parse", re.branch).trim()).toBe(git(repo, "rev-parse", "dev").trim());
+  expect(existsSync(join(re.worktreePath, "feature.txt"))).toBe(false); // forked from bare dev
 });
 
 test("reopenSession refuses a session that still owns a worktree", async () => {

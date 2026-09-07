@@ -57,6 +57,10 @@ function toCategory(raw: unknown): JiraStatusCategory {
   return raw === "indeterminate" || raw === "done" ? raw : "new";
 }
 
+function secs(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+}
+
 // ISO-8601 with Jira's `+0000` zone suffix normalised through Date so Postgres and the
 // sync cursor compare timestamps in one spelling.
 function iso(raw: unknown): string {
@@ -153,6 +157,11 @@ export function mapIssue(
     originalEstimate?: string;
     timeSpent?: string;
     remainingEstimate?: string;
+    // The same counters in seconds — Team Capacity's arithmetic. Jira sends them beside
+    // the strings on the same field, so no extra request and no per-site 1d=8h guess.
+    originalEstimateSeconds?: number;
+    timeSpentSeconds?: number;
+    remainingEstimateSeconds?: number;
   };
 
   const issue: JiraIssue = {
@@ -172,6 +181,9 @@ export function mapIssue(
     originalEstimate: str(timetracking.originalEstimate),
     timeSpent: str(timetracking.timeSpent),
     remainingEstimate: str(timetracking.remainingEstimate),
+    originalEstimateSeconds: secs(timetracking.originalEstimateSeconds),
+    timeSpentSeconds: secs(timetracking.timeSpentSeconds),
+    remainingEstimateSeconds: secs(timetracking.remainingEstimateSeconds),
     startDate: startDateFieldId ? dateOnly(f[startDateFieldId]) : "",
     dueDate: dateOnly(f.duedate),
     statusId: str(status.id),

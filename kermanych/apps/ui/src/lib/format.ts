@@ -62,3 +62,10 @@ export function renderWindow(t: (key: string, named?: Record<string, unknown>) =
 export function usageTokens(u: Usage): number {
   return u.input + u.output + u.cacheRead + u.cacheWrite;
 }
+
+// Seconds as hours for a capacity cell: `8`, `2.5`, `0`. Bare number — the unit word sits
+// with the caller (`h` / `год`), like `tokens` above.
+export function hours(seconds: number): string {
+  const h = Math.round(seconds / 360) / 10;
+  return Number.isInteger(h) ? String(h) : h.toFixed(1);
+}

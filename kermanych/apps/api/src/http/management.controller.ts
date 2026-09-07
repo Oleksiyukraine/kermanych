@@ -7,6 +7,9 @@ import {
   isRiskResponse,
   isRiskStatus,
   type ManagementAttachment,
+  type ManagementCapacity,
+  type ManagementCapacityPerson,
+  type ManagementCapacityWeek,
   type ManagementChatAsk,
   type ManagementChatReply,
   type ManagementContext,
@@ -117,6 +120,61 @@ function jiraBoard(v: unknown): ManagementJiraBoard | undefined {
   };
 }
 
+// The Team Capacity digest as the browser sent it, rebuilt field by field for `riskRows`'
+// reason: it is printed into the prompt as fact. Caps keep a pathological board from
+// turning every turn into a page of numbers; negatives and NaN become 0, never a lie.
+const MAX_CAPACITY_PERSONS = 60;
+const MAX_CAPACITY_WEEKS = 12;
+
+function hoursNum(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.round(v * 10) / 10 : 0;
+}
+
+function countNum(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
+}
+
+function capacityWeeks(v: unknown): ManagementCapacityWeek[] {
+  if (!Array.isArray(v)) return [];
+  const out: ManagementCapacityWeek[] = [];
+  for (const w of v.slice(0, MAX_CAPACITY_WEEKS)) {
+    if (!w || typeof w !== "object") continue;
+    const x = w as Record<string, unknown>;
+    if (typeof x.week !== "string" || !isReleaseDate(x.week)) continue;
+    out.push({ week: x.week, capacityH: hoursNum(x.capacityH), plannedH: hoursNum(x.plannedH), loggedH: hoursNum(x.loggedH) });
+  }
+  return out;
+}
+
+function capacityDigest(v: unknown): ManagementCapacity | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const x = v as Record<string, unknown>;
+  if (typeof x.from !== "string" || !isReleaseDate(x.from) || typeof x.to !== "string" || !isReleaseDate(x.to)) return undefined;
+  const persons: ManagementCapacityPerson[] = [];
+  if (Array.isArray(x.persons)) {
+    for (const p of x.persons.slice(0, MAX_CAPACITY_PERSONS)) {
+      if (!p || typeof p !== "object") continue;
+      const y = p as Record<string, unknown>;
+      persons.push({
+        name: typeof y.name === "string" ? y.name.trim() : "",
+        weeks: capacityWeeks(y.weeks),
+        openIssues: countNum(y.openIssues),
+        unscheduled: countNum(y.unscheduled),
+        overdue: countNum(y.overdue),
+      });
+    }
+  }
+  return {
+    from: x.from,
+    to: x.to,
+    hoursPerDay: hoursNum(x.hoursPerDay) || 8,
+    team: capacityWeeks(x.team),
+    persons,
+    unscheduled: countNum(x.unscheduled),
+    overdue: countNum(x.overdue),
+  };
+}
+
 // The Менеджмент assistant, over REST rather than the sessions WebSocket: one question,
 // one answer, no board row and no live transcript to stream. Auto-guarded by the global
 // SupabaseAuthGuard (app.module.ts), so there is no @Public() here — the chat spends the
@@ -158,12 +216,14 @@ export class ManagementController {
     // Rebuilt rather than forwarded: `risks` is printed into the prompt as the state the
     // write actions operate on, and the rest of the block is prose the model reads as fact.
     const jira = jiraBoard(b.context.jira);
+    const capacity = capacityDigest(b.context.capacity);
     const context: ManagementContext = {
       workspaceName: typeof b.context.workspaceName === "string" ? b.context.workspaceName : "",
       section: typeof b.context.section === "string" ? b.context.section : "",
       risks: riskRows(b.context.risks),
       members: memberRows(b.context.members),
       ...(jira ? { jira } : {}),
+      ...(capacity ? { capacity } : {}),
     };
     try {
       return await this.chat.ask({ ...b, conversationId, text, workspaceId, workspaceProjects, context, attachments });

@@ -382,6 +382,34 @@ export type ManagementJiraBoard = {
   assignees: string[];
 };
 
+// One week of somebody's (or everybody's) capacity, in hours with one decimal. `week` is
+// the Monday, YYYY-MM-DD. Past weeks carry `loggedH` (worklogs), future weeks `plannedH`
+// (remaining estimates spread to their due dates); the current week carries both.
+export type ManagementCapacityWeek = { week: string; capacityH: number; plannedH: number; loggedH: number };
+
+// One Jira assignee. `name` blank = the unassigned bucket. Not a `ManagementMember`: the
+// estimates belong to Jira accounts, and the two rosters only overlap.
+export type ManagementCapacityPerson = {
+  name: string;
+  weeks: ManagementCapacityWeek[];
+  openIssues: number;
+  unscheduled: number;
+  overdue: number;
+};
+
+// The Team Capacity digest: a fixed window of weeks around today, computed in the browser by
+// the same function the screen renders (apps/ui/src/lib/capacity.ts), so the assistant's
+// numbers are the screen's. Travels on the ask like the register: the mirror is behind RLS.
+export type ManagementCapacity = {
+  from: string;
+  to: string;
+  hoursPerDay: number;
+  team: ManagementCapacityWeek[];
+  persons: ManagementCapacityPerson[];
+  unscheduled: number;
+  overdue: number;
+};
+
 export type ManagementContext = {
   workspaceName: string;
   // Deliberately NO project name. Nothing on this surface states a «current project» any
@@ -407,6 +435,9 @@ export type ManagementContext = {
   // may not offer Jira at all — which is also why this is context and not contract: an
   // integration connected mid-conversation must reach the model on the next turn.
   jira?: ManagementJiraBoard;
+  // Team Capacity, present only when the workspace has a Jira board. Re-sent every turn:
+  // estimates move between turns.
+  capacity?: ManagementCapacity;
 };
 
 export type ManagementChatAsk = {

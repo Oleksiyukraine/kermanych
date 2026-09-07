@@ -9,6 +9,7 @@ import type {
   CloudWorkspacePatch,
   Workspace,
   WorkspaceMember,
+  WorkspaceRole,
 } from '@kermanych/cloud';
 import {
   createProject as cloudCreateProject,
@@ -399,6 +400,25 @@ export const useProjects = defineStore('projects', () => {
     return !!uid && workspaceById.value.get(workspaceId)?.ownerId === uid;
   }
 
+  // The caller's role in a workspace: 'owner' from workspaces.owner_id, otherwise whatever
+  // seat workspace_members gives them. `undefined` when signed out or not a member. Reads the
+  // already-loaded roster, so a screen that needs it calls loadMembers first.
+  function myRole(workspaceId: string): WorkspaceRole | undefined {
+    const uid = auth.user?.id;
+    if (!uid) return undefined;
+    if (workspaceById.value.get(workspaceId)?.ownerId === uid) return 'owner';
+    return (members.value[workspaceId] ?? []).find((m) => m.userId === uid)?.role;
+  }
+
+  // May the caller administer the workspace's password vault — create/edit/delete a
+  // password, read any secret, decide access requests. Owner OR a seated manager. UX gate
+  // only; can_manage_workspace_passwords is the real one. The password vault is the first
+  // surface where the manager role carries authorization weight.
+  function canManageWorkspace(workspaceId: string): boolean {
+    const r = myRole(workspaceId);
+    return r === 'owner' || r === 'manager';
+  }
+
   // Keeps its name and signature: the question "may I administer this project" is
   // still the right one, only the answer now comes from the project's workspace. That
   // leaves its three callers (MainLayout, BoardPage, AgentsPage) unrewritten.
@@ -432,5 +452,7 @@ export const useProjects = defineStore('projects', () => {
     setMemberRole,
     isOwner,
     isWorkspaceOwner,
+    myRole,
+    canManageWorkspace,
   };
 });

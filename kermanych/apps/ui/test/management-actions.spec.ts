@@ -55,12 +55,12 @@ describe('findRiskByCode', () => {
 });
 
 describe('refusalText', () => {
-  // A section that is still a placeholder keeps the not-built sentence — verbatim, and never
+  // A read-only section quotes the section table's own limitation — verbatim, and never
   // one the model supplied.
-  it('quotes the not-built limitation for a placeholder section', () => {
+  it('quotes the read-only limitation for a section that only reads Jira', () => {
     const line = refusalText({ kind: 'unsupported', section: 'management-capacity', request: 'додай людину' });
     expect(line).toContain('«Team Capacity»');
-    expect(line).toContain('розділ ще не реалізований');
+    expect(line).toContain('розділ лише читає оцінки й ворклоги Jira');
     expect(line).not.toContain('додай людину');
   });
 

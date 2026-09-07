@@ -38,6 +38,7 @@ import { findMemberByName, findProjectByName, findRiskByCode, refusalText } from
 import { renderTicketDescription } from '@kermanych/core';
 import type {
   ManagementAction,
+  ManagementCapacity,
   ManagementChatAsk,
   ManagementJiraBoard,
   ManagementJiraTicketCreate,
@@ -56,6 +57,8 @@ import { locale } from '../lib/locale';
 import { api } from '../lib/api';
 import type { JiraIssueDraftWire } from '../lib/api';
 import { handleOf } from '../lib/members';
+import { capacityDigest, capacityReport, digestRange, todayIso } from '../lib/capacity';
+import { readCapacityPrefs } from '../lib/capacity-prefs';
 import { useBoard } from './board';
 import { useJira } from './jira';
 import { useOrchestrator } from './orchestrator';
@@ -261,6 +264,39 @@ export const useManagementChat = defineStore('management-chat', () => {
       canWrite: jira.tokenPresent,
       assignees: (await jira.loadAssignable(workspaceId)).map((u) => u.displayName),
     };
+  }
+
+  // Team Capacity as the assistant is shown it: the same `capacityReport` the screen renders,
+  // over the fixed digest window, by week. The operator's own view of the team travels with
+  // it — the inactive marks (`excluded`) and the configured hours — so the assistant reasons
+  // about the people who actually count and quotes the same capacity the screen does, not a
+  // roster padded with muted or non-participating accounts. Only with a Jira board — the
+  // native board has no estimates — and never fatal: a failed read costs the assistant this
+  // one block, and the prompt then says capacity is unavailable rather than inventing it.
+  async function capacityDigestFor(workspaceId: string): Promise<ManagementCapacity | undefined> {
+    if (!jira.integration) return undefined;
+    try {
+      if (!jira.issues.length) await jira.loadBoard();
+      const today = todayIso(Date.now());
+      const range = digestRange(today);
+      const worklogs = await jira.fetchWorklogs(range);
+      const prefs = readCapacityPrefs(workspaceId);
+      const excluded = Array.isArray(prefs?.excluded) ? prefs.excluded : [];
+      const hoursPerDay = typeof prefs?.teamHoursPerDay === 'number' ? prefs.teamHoursPerDay : undefined;
+      const hoursPerDayByPerson = prefs?.capacityMode === 'member' && prefs.memberHours ? prefs.memberHours : undefined;
+      return capacityDigest(
+        capacityReport(jira.issues, worklogs, {
+          range,
+          today,
+          granularity: 'week',
+          excluded,
+          ...(hoursPerDay !== undefined ? { hoursPerDay } : {}),
+          ...(hoursPerDayByPerson ? { hoursPerDayByPerson } : {}),
+        }),
+      );
+    } catch {
+      return undefined;
+    }
   }
 
   // The assignee a ticket named, resolved to the uuid the row carries — or a refusal.
@@ -665,6 +701,7 @@ export const useManagementChat = defineStore('management-chat', () => {
         }
       if (jira.integration === undefined) await jira.probe(workspaceId);
       const jiraBoard = await jiraDigest(workspaceId);
+      const capacity = await capacityDigestFor(workspaceId);
       const ask: ManagementChatAsk = {
         conversationId: conversationId(workspaceId),
         workspaceId,
@@ -676,6 +713,7 @@ export const useManagementChat = defineStore('management-chat', () => {
           risks: riskDigest(workspaceId),
           members: memberDigest(workspaceId),
           ...(jiraBoard ? { jira: jiraBoard } : {}),
+          ...(capacity ? { capacity } : {}),
         },
         // The model is told to answer in the operator's active locale (api rule ґ); the
         // prompt body stays Ukrainian.
