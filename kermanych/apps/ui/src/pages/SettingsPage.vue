@@ -639,6 +639,7 @@ import {
   buildEnvRows,
   changedFields,
   envEdits,
+  envKeysChange,
   envRequiredKeys,
   setEnvValue,
   settingsScopeEntry,
