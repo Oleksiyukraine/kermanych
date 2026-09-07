@@ -1,10 +1,10 @@
-// Data access for «ШІ команда» assignments: which skills a project hands to each of
-// Kermanych's agents. Owns the snake_case <-> camelCase boundary for
+// Data access for «ШІ-команда» assignments: the ordered skill sequence a project hands to
+// each of Kermanych's agents. Owns the snake_case <-> camelCase boundary for
 // `project_agent_skills`. Every call runs under the caller's JWT: the RLS policies (read =
 // project member, write = workspace owner) are the authorization surface, and refusals
 // surface as thrown postgrest messages.
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { AgentSkill, AgentSkillInsert } from "./types";
+import type { AgentSkill } from "./types";
 
 // The audit columns are deliberately absent: they exist so a write cannot be forged, and
 // nothing in the UI renders them for an assignment.
@@ -46,50 +46,37 @@ export async function listAgentSkills(
   return (data as AgentSkillRow[]).map(toAgentSkill);
 }
 
-// Upsert on the composite key: assigning a skill and reordering an already-assigned one are
-// the same write.
-export async function setAgentSkill(
-  client: SupabaseClient,
-  input: AgentSkillInsert,
-): Promise<AgentSkill> {
-  const { data, error } = await client
-    .from("project_agent_skills")
-    .upsert(
-      {
-        project_id: input.projectId,
-        agent_id: input.agentId,
-        skill_name: input.skillName,
-        position: input.position ?? 0,
-      },
-      { onConflict: "project_id,agent_id,skill_name" },
-    )
-    .select(AGENT_SKILL_COLUMNS)
-    .single();
-  if (error) throw new Error(error.message);
-  return toAgentSkill(data as AgentSkillRow);
-}
-
-// A DELETE the owner-only USING clause filters out matches zero rows and reports NO error,
-// so a member's refusal and an already-gone assignment would both look like success — while
-// an unauthorized upsert raises 42501. `.select()` closes that asymmetry: the deleted rows
-// come back, and an empty set is the refusal the editor must not treat as an unassignment.
-export async function deleteAgentSkill(
+/**
+ * Replace an agent's whole skill sequence. `names` in order; empty clears it. The trigger
+ * side of «ШІ-команда» is written the same way — see setTriggerSkills for why the two
+ * statements are not a transaction and why the delete goes first.
+ */
+export async function setAgentSkills(
   client: SupabaseClient,
   projectId: string,
   agentId: string,
-  skillName: string,
+  names: readonly string[],
 ): Promise<void> {
-  const { data, error } = await client
+  let del = client
     .from("project_agent_skills")
     .delete()
     .eq("project_id", projectId)
-    .eq("agent_id", agentId)
-    .eq("skill_name", skillName)
-    .select(AGENT_SKILL_COLUMNS);
+    .eq("agent_id", agentId);
+  // The names survive the check regex, so none can contain a comma or a quote that would
+  // break out of this filter list.
+  if (names.length > 0) del = del.not("skill_name", "in", `(${names.join(",")})`);
+  const { error: deleteError } = await del;
+  if (deleteError) throw new Error(deleteError.message);
+
+  if (names.length === 0) return;
+  const { error } = await client.from("project_agent_skills").upsert(
+    names.map((skillName, index) => ({
+      project_id: projectId,
+      agent_id: agentId,
+      skill_name: skillName,
+      position: index,
+    })),
+    { onConflict: "project_id,agent_id,skill_name" },
+  );
   if (error) throw new Error(error.message);
-  if (!data || data.length === 0) {
-    throw new Error(
-      `skill "${skillName}" was not unassigned from agent "${agentId}": the delete was refused or the assignment is already gone`,
-    );
-  }
 }

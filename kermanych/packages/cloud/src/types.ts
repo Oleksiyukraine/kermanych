@@ -163,11 +163,27 @@ export type AgentSkill = {
   position: number;
 };
 
-export type AgentSkillInsert = { projectId: string; agentId: string; skillName: string; position?: number };
+/**
+ * A per-project override of an agent's compile-time instruction. A MISSING row means «use
+ * the default from core's AGENTS registry», so deleting the row is how a project resets.
+ */
+export type ProjectAgent = {
+  projectId: string;
+  agentId: string;
+  instruction: string;
+  updatedAt: string;
+  updatedBy?: string;
+};
+
+export type ProjectAgentInsert = { projectId: string; agentId: string; instruction: string };
 
 export type TriggerSource = "operator" | "assistant" | "thinking" | "tool";
 
-/** A rule that fires a skill or an agent without the model choosing to. */
+// 'prompt' delivers text and/or a skill sequence into the session; 'agent' launches one of
+// Kermanych's agents and is therefore operator-sourced only (a child cannot call back).
+export type TriggerAction = "prompt" | "agent";
+
+/** A rule that injects an instruction with its skills, or runs an agent, unprompted. */
 export type ProjectTrigger = {
   projectId: string;
   id: string;
@@ -176,15 +192,28 @@ export type ProjectTrigger = {
   source: TriggerSource;
   pattern: string;
   pathGlobs: string[];
-  action: "skill" | "agent";
-  target: string;
+  action: TriggerAction;
+  /** Free-form text injected when the trigger fires. '' when it delivers only skills. */
+  instruction: string;
+  /** Agent id for action:'agent'; '' for 'prompt'. */
+  agentId: string;
+  /** Ordered skill names for action:'prompt'; [] for 'agent'. */
+  skills: string[];
   mode: "remind" | "interrupt";
   repeat: "once" | "after-gap";
 };
 
-export type ProjectTriggerInsert = Omit<ProjectTrigger, "pathGlobs" | "enabled"> & {
+export type ProjectTriggerInsert = Omit<
+  ProjectTrigger,
+  "pathGlobs" | "enabled" | "instruction" | "agentId" | "skills"
+> & {
   pathGlobs?: string[];
   enabled?: boolean;
+  instruction?: string;
+  agentId?: string;
+  // Carried on the insert type so a caller can state «no skills» without a second call;
+  // the sequence itself lives in its own table and is written by setTriggerSkills.
+  skills?: string[];
 };
 
 // ── Risk register ───────────────────────────────────────────────────────────────

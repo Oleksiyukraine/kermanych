@@ -50,16 +50,21 @@
 
           <p class="tg__does">
             <template v-if="t.action === 'agent'">
-              {{ translate('settings.triggers.doesAgent') }} <span class="mono">{{ agentLabel(t.target) }}</span>
+              {{ translate('settings.triggers.doesAgent') }} <span class="mono">{{ agentLabel(t.agentId) }}</span>
             </template>
             <template v-else>
-              {{ translate('settings.triggers.doesSkill') }} <span class="mono">{{ t.target }}</span>
+              {{ translate('settings.triggers.doesPrompt') }}
+              <!-- The sequence itself, in delivery order: a count alone would leave the operator
+                   opening the editor to find out WHICH skills a trigger carries, and the names are
+                   the only part of a prompt trigger the list cannot otherwise show. -->
+              <span v-if="t.skills.length" class="mono">· {{ t.skills.join(', ') }}</span>
             </template>
           </p>
-          <!-- The same dangling reference the runtime reports as a warn notice mid-session,
-               shown here where it can actually be fixed. Only once the library read landed:
-               without it this pane knows nothing about which names resolve. -->
-          <p v-if="danglingNote(t)" class="tg__warn">{{ danglingNote(t) }}</p>
+          <!-- The same dangling reference the runtime reports as an error notice mid-session,
+               shown here where it can actually be fixed. Only the agent case survives the move to
+               sequences: a skill name that resolves to nothing is shown, and removable, inside
+               the editor's sequence list — this row would have nowhere to act on it. -->
+          <p v-if="danglingAgent(t)" class="tg__warn">{{ danglingAgent(t) }}</p>
 
           <div class="tg__actions">
             <KCheckbox
@@ -156,22 +161,38 @@
         />
         <KSelect
           v-if="draft.action === 'agent'"
-          v-model="draft.target"
+          v-model="draft.agentId"
           :label="translate('settings.triggers.agentLabelField')"
           :options="agentOptions"
           :placeholder="translate('settings.triggers.agentPlaceholder')"
         />
+        <!-- A prompt trigger carries BOTH halves and needs neither: the instruction is free text
+             the runtime injects verbatim, the sequence is library skills pasted under it in this
+             order, and the two are joined into one body (SkillsService.materializeTriggers /
+             SupervisorService.matchOperatorTriggers). Either alone is a complete trigger; both
+             empty is nothing at all, which is what `errNoBody` refuses. -->
         <template v-else>
-          <KSelect
-            v-model="draft.target"
-            :label="translate('settings.triggers.skillLabelField')"
-            :options="skillOptions"
-            :placeholder="skillPlaceholder"
-            :disabled="!!libraryError"
+          <KField
+            v-model="draft.instruction"
+            :label="translate('settings.triggers.instructionLabel')"
+            multiline
+            :rows="4"
           />
+          <p class="tg__note">{{ translate('settings.triggers.instructionNote') }}</p>
+
+          <p class="tg__caption">{{ translate('settings.triggers.skillsLabel') }}</p>
+          <SkillSequence
+            :names="draft.skills"
+            :view="view"
+            :body-bytes="bodyBytes"
+            :repo="repo"
+            :disabled="saving"
+            @update:names="draft.skills = $event"
+          />
+          <!-- The library read fails on its own terms — the local api is down, the project is
+               unbound — and costs only the picker, so its message sits with the picker. -->
           <p v-if="libraryError" class="tg__error mono">{{ libraryError }}</p>
         </template>
-        <p class="tg__note">{{ translate('settings.triggers.targetNote') }}</p>
 
         <!-- `mode` and `repeat` exist ONLY in the TTSR rule file, and an operator trigger has
              none: Kermanych matches it before the message is forwarded, so there is no turn to
@@ -210,14 +231,20 @@
 // them owner-only, while the RESOLVED skill view comes from the local API, which is the only
 // party that can see whether the bound checkout shadows a name.
 //
-// The two reads are NOT merged, and that is the difference from the assignment board next
-// door. There a row was a merge of every read, so one failure invalidated the board. Here the
-// list is the cloud rows alone; the library is only what fills the skill picker, so losing it
-// costs the picker and leaves every trigger on screen exactly as true as it was.
+// The two reads are NOT merged, and that is deliberate: the list is the cloud rows alone, while
+// the library only fills the editor's skill sequence — so losing the library costs the sequence
+// editor and leaves every trigger on screen exactly as true as it was.
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AGENTS, SKILL_NAME_RE, type SkillView } from '@kermanych/core';
-import { deleteTrigger, listTriggers, upsertTrigger, type ProjectTrigger } from '@kermanych/cloud';
+import {
+  deleteTrigger,
+  listProjectSkills,
+  listTriggers,
+  setTriggerSkills,
+  upsertTrigger,
+  type ProjectTrigger,
+} from '@kermanych/cloud';
 import { api } from '../../lib/api';
 import { useAuth } from 'stores/auth';
 import { useProjects } from 'stores/projects';
@@ -225,6 +252,7 @@ import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
+import SkillSequence, { measureSkillBytes } from './SkillSequence.vue';
 import {
   triggerActionOptions,
   triggerAgentOptions,
@@ -255,16 +283,20 @@ const REPEAT_OPTIONS = computed(() => [
 const triggers = ref<ProjectTrigger[]>([]);
 const view = ref<SkillView[]>([]);
 // The names the bound checkout's own skill directories define, keyed to the file that owns
-// each. Never offered in the picker — they are not this project's library — but a target in
-// here resolves at launch, so the list needs it to tell a dangling trigger from a repo one.
+// each. Never offered in the sequence editor — they are not this project's library — but a name
+// in here does resolve at launch, so the editor needs it to tell a dangling name from a repo one.
 const repo = ref<Record<string, string>>({});
+// What each library name costs a trigger that carries it, keyed by name. Read together with the
+// library view (see `load`): both come from the same pair of reads, and neither is any use to the
+// sequence editor without the other.
+const bodyBytes = ref<Record<string, number>>({});
 // `error` carries the trigger read AND every refused write: both are one line of the same
 // postgrest message. `loaded` is what separates them for the list — a failed read has nothing
 // trustworthy to show, a refused write leaves the rows it was refused on standing.
 const error = ref('');
 const loaded = ref(false);
 // The library read fails on its own terms (the local api is down, the project is unbound) and
-// costs only the skill picker, so it gets its own line inside the editor.
+// costs only the editor's skill sequence, so it gets its own line there.
 const libraryError = ref('');
 const busy = ref(false);
 const editorOpen = ref(false);
@@ -289,8 +321,12 @@ function blankDraft(): Omit<ProjectTrigger, 'projectId' | 'pathGlobs'> {
     enabled: true,
     source: 'operator',
     pattern: '',
-    action: 'skill',
-    target: '',
+    // `prompt` is the action every source can carry, so it is the one a new trigger opens on;
+    // `agent` is reachable from an operator trigger alone.
+    action: 'prompt',
+    instruction: '',
+    agentId: '',
+    skills: [],
     mode: 'remind',
     repeat: 'once',
   };
@@ -307,12 +343,6 @@ function sourceLabel(source: string): string {
 }
 const agentOptions = computed(() =>
   triggerAgentOptions(AGENTS).map((o) => ({ value: o.value, label: translate(o.labelKey) })),
-);
-const skillOptions = computed(() => view.value.map((v) => v.name));
-const skillPlaceholder = computed(() =>
-  view.value.length
-    ? translate('settings.triggers.skillPickPlaceholder')
-    : translate('settings.triggers.libraryEmpty'),
 );
 
 // One evaluation for both lines below: an uncompilable pattern reports its message, anything
@@ -335,30 +365,17 @@ function agentLabel(id: string): string {
   return key ? translate(key) : id;
 }
 
-// What a trigger will actually do when it fires, or the reason it will do nothing. Both cases
-// are ones the runtime already reports mid-session — a warn notice for a skill that resolved
-// to nothing, an error notice for an agent it cannot start — and this is the surface where
-// either can be fixed instead of merely observed.
-function danglingNote(t: ProjectTrigger): string {
-  if (t.action === 'agent') {
-    if (triggerAgentOptions(AGENTS).some((o) => o.value === t.target)) return '';
-    return translate('settings.triggers.danglingAgent', { target: t.target });
-  }
-  // Silent while the library is unknown: «немає в бібліотеці» from a pane that could not read
-  // the library is a claim about the project rather than about this row.
-  if (libraryError.value) return '';
-  if (view.value.some((v) => v.name === t.target)) return '';
-  // A name only the bound checkout defines is NOT offered in the picker — it is not this
-  // project's library — but it does resolve at launch, through the very same resolver the
-  // trigger uses. Calling such a target dangling would be the false alarm.
-  //
-  // `Object.hasOwn`, never a bare `repo.value[target]`: `repo` is a plain JSON-parsed object
-  // and `constructor` is a legal skill name — lowercase, no separators — so it passes both
-  // SKILL_NAME_RE and the DB's identical check on `target`. A trigger aimed at a `constructor`
-  // that exists nowhere would otherwise inherit a truthy `Object.prototype.constructor` and
-  // pass for a live target. Same rule, same reason as assignmentRows and renderRuleFile.
-  if (Object.hasOwn(repo.value, t.target)) return '';
-  return translate('settings.triggers.danglingSkill', { target: t.target });
+// The one reference in a trigger that can dangle where only this pane can see it: an agent id.
+// The runtime reports it mid-session as an error notice «агента … не існує», and this is the
+// surface where it can be fixed instead of merely observed.
+//
+// A prompt trigger's skill names are NOT checked here: they live in the editor's sequence, which
+// badges an unresolvable name and offers the control that removes it. A warning on the row would
+// name a problem the row cannot act on.
+function danglingAgent(t: ProjectTrigger): string {
+  if (t.action !== 'agent') return '';
+  if (triggerAgentOptions(AGENTS).some((o) => o.value === t.agentId)) return '';
+  return translate('settings.triggers.danglingAgent', { target: t.agentId });
 }
 
 async function load(): Promise<void> {
@@ -369,7 +386,10 @@ async function load(): Promise<void> {
   libraryError.value = '';
   const [rows, library] = await Promise.allSettled([
     listTriggers(auth.client, [projectId]),
-    api.projectSkills(projectId),
+    // One outcome for both, because neither half is any use alone: the resolved view is what the
+    // sequence editor offers and badges, the stored rows are the only place its byte figures can
+    // come from. Splitting them would leave the editor listing names it could not price.
+    Promise.all([api.projectSkills(projectId), listProjectSkills(auth.client, [projectId])]),
   ]);
   if (projectId !== props.projectId) return;
   if (rows.status === 'fulfilled') {
@@ -381,11 +401,14 @@ async function load(): Promise<void> {
     error.value = rows.reason instanceof Error ? rows.reason.message : String(rows.reason);
   }
   if (library.status === 'fulfilled') {
-    view.value = library.value.view;
-    repo.value = library.value.repo;
+    const [resolved, stored] = library.value;
+    view.value = resolved.view;
+    repo.value = resolved.repo;
+    bodyBytes.value = measureSkillBytes(resolved.view, stored);
   } else {
     view.value = [];
     repo.value = {};
+    bodyBytes.value = {};
     libraryError.value =
       library.reason instanceof Error ? library.reason.message : String(library.reason);
   }
@@ -403,6 +426,7 @@ watch(
     triggers.value = [];
     view.value = [];
     repo.value = {};
+    bodyBytes.value = {};
     loaded.value = false;
     void load();
   },
@@ -412,9 +436,9 @@ watch(
 // CHANGING the source or the action drops what no longer applies. Handlers on the selects, NOT
 // watchers on the values, and that distinction is the whole fix: a watcher fires on the value
 // however it moved, and `flush: 'pre'` means it fires on the NEXT flush — so `edit()`, which
-// assigns `action` and then `target` in one synchronous `Object.assign`, had its target wiped
-// afterwards by a watcher that could not tell a prefill from a keystroke. Every operator→agent
-// trigger opened for editing rendered an empty agent picker.
+// assigns `action` and then the action's own fields in one synchronous `Object.assign`, had them
+// wiped afterwards by a watcher that could not tell a prefill from a keystroke. Every
+// operator→agent trigger opened for editing rendered an empty agent picker.
 //
 // A guard flag around the prefill would have suppressed the symptom; moving the reset onto the
 // gesture removes the class. «The operator picked another action, so the old target is stale» is
@@ -431,20 +455,26 @@ function onSource(value: string): void {
   // constraint: keeping it would offer a choice the option list no longer contains and a save
   // postgrest would refuse.
   if (source !== 'operator' && draft.action === 'agent') {
-    draft.action = 'skill';
-    draft.target = '';
+    draft.action = 'prompt';
+    draft.agentId = '';
   }
   // Globs scope the files a tool touched; nothing else has a path to scope on.
   if (source !== 'tool') globs.value = '';
 }
 
-// A skill name and an agent id are different namespaces: keeping the old value would leave the
-// picker showing a target the new action cannot resolve.
+// The two actions share no field: an agent id is not an instruction and not a sequence, so
+// keeping either across the switch would leave the editor holding a body the new action never
+// delivers — and `save` would write it.
 function onAction(value: string): void {
   const action = triggerActionOptions(draft.source).find((o) => o.value === value)?.value;
   if (!action) return;
   draft.action = action;
-  draft.target = '';
+  if (action === 'agent') {
+    draft.instruction = '';
+    draft.skills = [];
+  } else {
+    draft.agentId = '';
+  }
 }
 
 function resetDraft(): void {
@@ -475,7 +505,11 @@ function edit(t: ProjectTrigger): void {
     source: t.source,
     pattern: t.pattern,
     action: t.action,
-    target: t.target,
+    instruction: t.instruction,
+    agentId: t.agentId,
+    // Copied, never aliased: the editor mutates this array on every reorder, and the row it came
+    // from is what the list behind the modal still renders — «Скасувати» has to leave it alone.
+    skills: [...t.skills],
     mode: t.mode,
     repeat: t.repeat,
   });
@@ -509,8 +543,16 @@ async function save(): Promise<void> {
     formError.value = translate('settings.triggers.errPatternBroken');
     return;
   }
-  if (!SKILL_NAME_RE.test(draft.target)) {
-    formError.value = draft.action === 'agent' ? translate('settings.triggers.errPickAgent') : translate('settings.triggers.errPickSkill');
+  if (draft.action === 'agent' && !SKILL_NAME_RE.test(draft.agentId)) {
+    formError.value = translate('settings.triggers.errPickAgent');
+    return;
+  }
+  // A prompt trigger that delivers NOTHING. The runtime skips a blank body — materializeTriggers
+  // writes no rule file for it, matchOperatorTriggers injects no notice — so such a row would sit
+  // in the list looking like a live rule and fire in silence forever. Either half alone is enough:
+  // an instruction with no skills is a reminder, skills with no instruction are the assigned block.
+  if (draft.action === 'prompt' && !draft.instruction.trim() && draft.skills.length === 0) {
+    formError.value = translate('settings.triggers.errNoBody');
     return;
   }
   saving.value = true;
@@ -527,10 +569,27 @@ async function save(): Promise<void> {
       pattern: draft.pattern,
       pathGlobs: draft.source === 'tool' ? parseGlobs(globs.value) : [],
       action: draft.action,
-      target: draft.target,
+      // Each action stores only its own half: a leftover instruction on an `agent` row would be
+      // dead text in the database, and the check constraint refuses an agent id on a `prompt`.
+      instruction: draft.action === 'prompt' ? draft.instruction : '',
+      agentId: draft.action === 'agent' ? draft.agentId : '',
       mode: draft.mode,
       repeat: draft.repeat,
     });
+    // The sequence is a second write — a different table — and it runs for BOTH actions: after a
+    // switch to `agent` the rows the trigger used to carry must go, and `setTriggerSkills` with an
+    // empty list is what removes them.
+    //
+    // NOT swallowed, and the modal stays open on failure: the row landed but its sequence did not,
+    // so the operator has to know that the trigger will fire with the wrong body. Pressing
+    // «Зберегти» again is safe — the row write is an upsert and the sequence write is a
+    // replace-all, so a retry converges rather than duplicating anything.
+    await setTriggerSkills(
+      auth.client,
+      projectId,
+      draft.id,
+      draft.action === 'prompt' ? [...draft.skills] : [],
+    );
     if (projectId !== props.projectId) return;
     editorOpen.value = false;
     await load();
@@ -630,6 +689,9 @@ async function drop(id: string): Promise<void> {
 .tg__error { font-size: 11.5px; color: var(--k-accent); overflow-wrap: anywhere; }
 .tg__form { display: grid; gap: 12px; text-align: left; }
 .tg__note { margin: -6px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--k-muted); }
+/* The sequence editor has no label of its own — it is a list, not a field — so the caption that
+   names it matches a KField's label rather than the muted notes around it. */
+.tg__caption { margin: -2px 0 -6px; font-size: 13px; color: var(--k-text); }
 /* A hit and a miss are both ordinary answers, so only the hit takes the accent — it is the one
    that says «this would fire». Neither is an error; the error line above is. */
 .tg__hit { margin: -6px 0 0; font-size: 11.5px; color: var(--k-accent); }

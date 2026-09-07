@@ -3,8 +3,9 @@
     <i18n-t keypath="settings.skillsLibrary.lead" tag="p" class="sk__lead">
       <template #project><span class="sk__lead-project mono">{{ projectName }}</span></template>
     </i18n-t>
-    <!-- The library is opt-in by the agent. Handing a skill to a role unconditionally is the
-         next pane's job, and the distinction is easy to miss from here. -->
+    <!-- The library is opt-in by the agent. Handing a skill to a role or a trigger
+         unconditionally is what «Агенти» and «Тригери» are for, and the distinction is easy to
+         miss from here. -->
     <p class="sk__lead">{{ t('settings.skillsLibrary.assignHint') }}</p>
 
     <p v-if="error" class="sk__error mono">{{ error }}</p>

@@ -144,7 +144,7 @@ export function skillsUsed(entries: readonly TranscriptEntry[]): string[] {
  * already has in front of it.
  */
 export const ASSIGNED_BLOCK_HEADER =
-  "## Скіли, призначені цій ролі\nНаведені повністю — не читай їх повторно через `skill://`.";
+  "## Навички, призначені цій ролі\nНаведені повністю — не читай їх повторно через `skill://`.";
 
 // Appended to a rendered instruction, so it opens with its own blank line: the caller
 // concatenates and never has to know the shape. An empty assignment adds NOTHING — a bare

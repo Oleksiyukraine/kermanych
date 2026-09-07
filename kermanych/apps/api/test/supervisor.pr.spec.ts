@@ -31,12 +31,13 @@ import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
 import { offlineAuth } from "./offline-auth";
 import { stubSkills } from "./skills-stub";
+import type { SkillsService } from "../src/skills/skills.service";
 
-function make() {
+function make(skills: SkillsService = stubSkills()) {
   const registry = new RegistryService(":memory:");
   const worktree = { currentBranch: vi.fn().mockResolvedValue("main") };
   // Partial mock: createPullRequest only resumes the agent — the DI seam is cast once.
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth(), stubSkills());
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth(), skills);
   return { sup, registry };
 }
 beforeEach(() => { started.length = 0; prompts.length = 0; eventCbs.length = 0; });
@@ -79,6 +80,28 @@ describe("createPullRequest", () => {
     const p = prompts.at(-1)!;
     expect(p).toContain("HOUSE RULE: squash-merge only");
     expect(p).not.toContain("Conventional Commits");
+  });
+
+  // The whole point of an editable instruction: what reaches the child is the PROJECT's text,
+  // holes filled from the same session state, with its assigned skills still trailing it.
+  it("renders the project's own instruction when one exists, skills block and all", async () => {
+    const skills = {
+      ...stubSkills(),
+      assignedFor: async () => ({ block: "\n\nSKILL BLOCK", view: [], missing: [] }),
+      instructionFor: async () => "Відкрий ПР для {{branch}}. {{conventions}} {{baseLine}}",
+    } as unknown as SkillsService;
+    const { sup, registry } = make(skills);
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
+    registry.updateSession(s.id, { status: "done" });
+
+    await sup.createPullRequest(s.id);
+
+    const p = prompts.at(-1)!;
+    expect(p.startsWith("Відкрий ПР для feature/aaa.")).toBe(true);
+    expect(p).toContain("Target the PR at `dev`");
+    expect(p).not.toMatch(/gh pr create/); // the default text is gone, not appended to
+    expect(p.endsWith("SKILL BLOCK")).toBe(true);
   });
 
   it("settles the session on in_review when the PR turn ends", async () => {

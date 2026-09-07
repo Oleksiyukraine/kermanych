@@ -235,7 +235,8 @@ describe("trigger-driven promotion", () => {
   const USER = "11111111-1111-1111-1111-111111111111";
   const trigger: ProjectTrigger = {
     projectId: "p1", id: "start", label: "Берись", enabled: true, source: "operator",
-    pattern: "берись за роботу", pathGlobs: [], action: "agent", target: "promote",
+    pattern: "берись за роботу", pathGlobs: [], action: "agent",
+    instruction: "", agentId: "promote", skills: [],
     mode: "remind", repeat: "once",
   };
 

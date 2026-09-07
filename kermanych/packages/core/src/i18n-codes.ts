@@ -20,9 +20,9 @@ export type NoticeCode =
   | "frames_lost" // management-chat.service.ts:291 — some omp frames were dropped (params: { count })
   | "helper_added_instruction" // management-chat.service.ts:165, supervisor.service.ts:1024 — a helper prepended guidance (params: { names, count })
   // supervisor.service.ts — the transcript notices a session turn can append:
-  | "skill_added_by_trigger" // supervisor.service.ts:1074 — a trigger injected a skill (params: { trigger, skill })
+  | "skill_added_by_trigger" // supervisor.service.ts:1074 — a trigger injected skills (params: { trigger, skills } — comma-joined names)
   | "trigger_launches_agent" // supervisor.service.ts:1060 — a trigger launches an agent (params: { trigger, agent })
-  | "trigger_skill_missing" // supervisor.service.ts:1070 — a trigger's skill was not found (params: { trigger, skill })
+  | "trigger_skill_missing" // supervisor.service.ts:1070 — a trigger's skills were not found (params: { trigger, skills } — comma-joined names)
   | "trigger_agent_launch_failed" // supervisor.service.ts:1101 — a trigger failed to launch its agent (params: { trigger, reason })
   | "session_dormant_merged" // supervisor.service.ts:1496 — merged session, reopen to continue (params: none)
   | "session_dormant_inactive"; // supervisor.service.ts:1497 — inactive session, message to resume (params: none)

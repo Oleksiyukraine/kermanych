@@ -91,12 +91,62 @@ export function agentById(id: string): AgentDef | undefined {
   return AGENTS.find((a) => a.id === id);
 }
 
+// The hole grammar, in one place: the renderer that FILLS holes and the validator that
+// audits an operator's rewrite must agree on what a hole is, or a template the editor
+// accepted would blow up at launch. Sharing one global regex is safe: `matchAll` iterates a
+// clone and `replace` resets `lastIndex`, so neither leaves state for the other.
+const HOLE_RE = /\{\{(\w+)\}\}/g;
+
+// Why hole validation is a domain function and not a check in the settings pane: the
+// instruction is now editable per project, and both ways of getting it wrong are invisible
+// at edit time. Drop a declared hole and the agent still runs, silently starved of the
+// context it was written around — no diff, no branch — and answers confidently about
+// nothing. Invent a hole and `renderInstruction` throws mid-session, when the operator is
+// already waiting on the agent. So the editor and the launcher call the same two functions:
+// the pane refuses to save a broken template, and the launcher refuses to use one that
+// reached the database anyway (an older UI, a hand-written row).
+
+/** Every `{{hole}}` a template uses, unique, in first-appearance order. */
+export function instructionHoles(template: string): string[] {
+  const seen = new Set<string>();
+  const holes: string[] = [];
+  for (const m of template.matchAll(HOLE_RE)) {
+    const name = m[1]!;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    holes.push(name);
+  }
+  return holes;
+}
+
+/** What is wrong with an operator-edited template, measured against the agent's declared holes. */
+export function instructionErrors(def: AgentDef, template: string): { missing: string[]; unknown: string[] } {
+  const declared = def.holes ?? [];
+  const used = instructionHoles(template);
+  const usedSet = new Set(used);
+  return {
+    missing: declared.filter((hole) => !usedSet.has(hole)),
+    unknown: used.filter((hole) => !declared.includes(hole)),
+  };
+}
+
+/** The template to render: a valid non-blank override, else the compile-time default (undefined for automations). */
+export function effectiveInstruction(def: AgentDef, override?: string | null): string | undefined {
+  if (!def.instruction) return undefined;
+  const trimmed = override?.trim();
+  if (!trimmed) return def.instruction;
+  const { missing, unknown } = instructionErrors(def, trimmed);
+  return missing.length > 0 || unknown.length > 0 ? def.instruction : trimmed;
+}
+
 // A missing variable throws rather than shipping `{{diff}}` to a model: an unfilled hole is
 // a bug that reads as a bizarre instruction, and it would be invisible until someone read
-// the transcript.
-export function renderInstruction(def: AgentDef, vars: Record<string, string>): string {
+// the transcript. `template` overrides the default text; the refusal to render an automation
+// stays keyed on the AGENT, since what it lacks is a model to instruct, not a text to fill.
+export function renderInstruction(def: AgentDef, vars: Record<string, string>, template?: string): string {
   if (!def.instruction) throw new Error(`agent "${def.id}" has no instruction to render`);
-  return def.instruction.replace(/\{\{(\w+)\}\}/g, (_m, key: string) => {
+  const source = template ?? def.instruction;
+  return source.replace(HOLE_RE, (_m, key: string) => {
     const value = vars[key];
     if (value === undefined) throw new Error(`agent "${def.id}": missing value for {{${key}}}`);
     return value;

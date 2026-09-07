@@ -55,8 +55,10 @@ const trigger = (pattern: string): ProjectTrigger => ({
   source: "operator",
   pattern,
   pathGlobs: [],
-  action: "skill",
-  target: "house-style",
+  action: "prompt",
+  instruction: "",
+  agentId: "",
+  skills: ["house-style"],
   mode: "remind",
   repeat: "once",
 });
@@ -73,7 +75,11 @@ async function chat(triggers: ProjectTrigger[] = []) {
     materialize: async () => ({ view: [] }),
     materializeTriggers: async () => ({}),
     operatorTriggers: async () => triggers,
-    assignedForNames: async () => ({ block: "БЛОК ТРИГЕРА", view: [], missing: [] }),
+    assignedForNames: async () => ({
+      block: "БЛОК ТРИГЕРА",
+      view: [{ name: "house-style", description: "d", source: "project" as const }],
+      missing: [],
+    }),
   } as unknown as SkillsService;
   const sup = new SupervisorService(registry, worktree, offlineAuth(), skills);
   const project = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
