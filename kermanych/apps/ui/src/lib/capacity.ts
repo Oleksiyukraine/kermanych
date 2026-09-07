@@ -385,6 +385,36 @@ export function capacityReport(
   };
 }
 
+// Fold a roster multi-select back onto the muted set. The dropdown ticks the ACTIVE people
+// (plus a `master` «whole team» sentinel row when nobody is muted); KSelect toggles exactly
+// one row per pick, so the change is that single id. Toggling `master` activates or clears
+// the whole roster; any other id flips its own inactive mark. Kept as the exclusion set so an
+// empty selection still reads as the whole team — the same shape the chart legend writes.
+export function toggleActive(
+  personIds: readonly string[],
+  excluded: ReadonlySet<string>,
+  master: string,
+  next: readonly string[],
+): Set<string> {
+  const active = personIds.filter((id) => !excluded.has(id));
+  const allActive = active.length === personIds.length;
+  const before = new Set(allActive ? [master, ...active] : active);
+  const after = new Set(next);
+  let toggled: string | undefined;
+  for (const id of before)
+    if (!after.has(id)) {
+      toggled = id;
+      break;
+    }
+  if (toggled === undefined) toggled = next.find((id) => !before.has(id));
+  if (toggled === undefined) return new Set(excluded);
+  if (toggled === master) return allActive ? new Set(personIds) : new Set();
+  const out = new Set(excluded);
+  if (out.has(toggled)) out.delete(toggled);
+  else out.add(toggled);
+  return out;
+}
+
 // The assistant's window: the two weeks behind (what got logged) and six ahead including
 // this one (what is planned), by week. Fixed rather than asked for, because the model's
 // only channel back is prose — it cannot ask the app for another range — and this is the
@@ -414,13 +444,15 @@ export function capacityDigest(report: CapacityReport): ManagementCapacity {
     to: report.range.to,
     hoursPerDay: report.hoursPerDay,
     team: report.periods.map((p, i) => week(report.totals[i]!, p)),
-    persons: report.persons.map((person) => ({
-      name: person.id === UNASSIGNED ? '' : person.name,
-      weeks: report.periods.map((p, i) => week(report.cells[person.id]![i]!, p)),
-      openIssues: report.issues.filter((r) => r.person.id === person.id).length,
-      unscheduled: report.unscheduled.filter((r) => r.person.id === person.id).length,
-      overdue: report.overdue.filter((r) => r.person.id === person.id).length,
-    })),
+    persons: report.persons
+      .filter((person) => !report.excluded.includes(person.id))
+      .map((person) => ({
+        name: person.id === UNASSIGNED ? '' : person.name,
+        weeks: report.periods.map((p, i) => week(report.cells[person.id]![i]!, p)),
+        openIssues: report.issues.filter((r) => r.person.id === person.id).length,
+        unscheduled: report.unscheduled.filter((r) => r.person.id === person.id).length,
+        overdue: report.overdue.filter((r) => r.person.id === person.id).length,
+      })),
     unscheduled: report.unscheduled.length,
     overdue: report.overdue.length,
   };

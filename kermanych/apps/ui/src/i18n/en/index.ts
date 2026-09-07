@@ -1121,6 +1121,7 @@ export const en: MessageSchema = {
         custom: 'Custom',
       },
       wholeTeam: 'Whole team',
+      selected: '{count} of {total}',
       unassigned: 'Unassigned',
       others: 'Others',
       view: { chart: 'Chart', table: 'Table' },

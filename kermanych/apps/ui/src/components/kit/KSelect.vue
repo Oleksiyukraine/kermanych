@@ -76,7 +76,7 @@
       @keydown="onKeydown"
     >
       <span class="k-select__box">
-        <span class="k-select__value">{{ currentLabel }}</span>
+        <span class="k-select__value">{{ triggerLabel }}</span>
         <!-- Width reservation, not decoration. A native <select> sized itself to its LONGEST
              option; a button sized to the CURRENT one would shift every control beside it on
              each pick (the board's filter strip is a bare flex row). These copies are
@@ -102,6 +102,7 @@
         class="k-select__pop"
         :class="{ 'k-select__pop--placed': placed }"
         role="listbox"
+        :aria-multiselectable="multiple || undefined"
         :aria-labelledby="label ? labelId : undefined"
       >
         <div
@@ -111,16 +112,16 @@
           class="k-select__opt"
           :class="{
             'k-select__opt--active': i === activeIndex,
-            'k-select__opt--selected': opt.value === current,
+            'k-select__opt--selected': isSelected(opt.value),
           }"
           role="option"
-          :aria-selected="opt.value === current"
+          :aria-selected="isSelected(opt.value)"
           @mouseenter="activeIndex = i"
           @mousedown.prevent
           @click="commit(i)"
         >
           <span class="k-select__mark" aria-hidden="true">
-            <span v-if="opt.value === current" class="k-select__check"></span>
+            <span v-if="isSelected(opt.value)" class="k-select__check"></span>
           </span>
           <span class="k-select__opt-label">{{ opt.label }}</span>
         </div>
@@ -178,9 +179,15 @@ const props = defineProps<{
   // every label shares its first word. Left off elsewhere: a four-row picker with a caret
   // that suddenly takes a caret is a text box that looks editable and is not.
   searchable?: boolean;
+  // Multi-select. The single-select model (`modelValue`/`update:modelValue`) is untouched;
+  // in this mode selection is a set carried by `values`/`update:values`, the trigger shows
+  // `summary`, and a pick toggles a row without closing the list.
+  multiple?: boolean;
+  values?: readonly string[];
+  summary?: string;
 }>();
 
-const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
+const emit = defineEmits<{ 'update:modelValue': [value: string]; 'update:values': [value: string[]] }>();
 
 // Ids have to be unique per instance: `aria-activedescendant` points at a row in a panel
 // that lives under <body>, far from this component's subtree. A counter is enough — Vue
@@ -226,7 +233,15 @@ const current = computed(() => props.modelValue ?? '');
 // holds while a query hides that row.
 const selectedIndex = computed(() => items.value.findIndex((o) => o.value === current.value));
 const currentLabel = computed(() => items.value[selectedIndex.value]?.label ?? EMPTY_LABEL);
-const showsPlaceholder = computed(() => !current.value);
+const showsPlaceholder = computed(() => !props.multiple && !current.value);
+
+// Multi-select membership, and the single glyph both modes paint: a check on every chosen
+// row. Single-select keeps naming the value it holds (placeholder '' included); multiple
+// reads the `values` set, so the master «whole team» row and each person tick independently.
+const selectedSet = computed(() => new Set(props.values ?? []));
+const isSelected = (value: string): boolean => (props.multiple ? selectedSet.value.has(value) : value === current.value);
+// The trigger's caption: the chosen option in single-select, the caller's summary in multiple.
+const triggerLabel = computed(() => (props.multiple ? props.summary ?? EMPTY_LABEL : currentLabel.value));
 
 // The live search box, empty unless `searchable` and the operator has typed. Reset by
 // close(), so a reopened list always starts on the whole catalog.
@@ -280,7 +295,7 @@ async function openMenu(): Promise<void> {
   // Opening lands on the current value, so ↑/↓ continue from what the control holds. Resolved
   // against `visible`, because a query typed into the closed field opens the list already
   // filtered — and the held value is usually not among the matches.
-  const at = visible.value.findIndex((o) => o.value === current.value);
+  const at = visible.value.findIndex((o) => isSelected(o.value));
   activeIndex.value = at >= 0 ? at : 0;
   typed = '';
   naturalH = 0;
@@ -311,6 +326,17 @@ function close(): void {
 
 function commit(i: number): void {
   const opt = visible.value[i];
+  // Multi-select stays open — the point is to tick several rows in one visit — and a pick
+  // toggles the row in the `values` set rather than replacing a single held value.
+  if (props.multiple) {
+    if (!opt) return;
+    const next = new Set(selectedSet.value);
+    if (next.has(opt.value)) next.delete(opt.value);
+    else next.add(opt.value);
+    emit('update:values', [...next]);
+    focusTrigger();
+    return;
+  }
   close();
   // Focus goes back to the control, not to <body>: a pick with the keyboard must leave the
   // next ↓ or Tab where the user left off.

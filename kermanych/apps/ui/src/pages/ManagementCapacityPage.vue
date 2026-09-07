@@ -35,7 +35,13 @@
           @update:model-value="(v: string) => editDate('to', v)"
         />
         <KChipSelect v-model="presetModel" :options="presetOptions" :title="t('management.capacity.from')" />
-        <KSelect v-model="person" :options="personOptions" />
+        <KSelect
+          multiple
+          :values="personModel"
+          :options="personOptions"
+          :summary="personSummary"
+          @update:values="onActiveChange"
+        />
         <KTabs v-model="granularityModel" :tabs="granularityTabs" />
         <KTabs v-model="view" :tabs="viewTabs" />
       </div>
@@ -118,7 +124,7 @@
       <CapacityChart v-else-if="view === 'chart' && !flaggedOnly" :report="report" @toggle="toggleSeries" />
 
       <div v-else-if="teamTable" class="cap__table-wrap">
-        <KTable :columns="teamColumns" :rows="teamRows" :row-key="(r: TeamRow) => r.id" clickable @row-click="(r: TeamRow) => pickPerson(r.id)">
+        <KTable :columns="teamColumns" :rows="teamRows" :row-key="(r: TeamRow) => r.id">
           <template #cell-person="{ row }">
             <span :class="{ 'cap__dash': row.id === UNASSIGNED, 'cap__strong': row.id === TEAM }">{{ row.name }}</span>
           </template>
@@ -205,6 +211,7 @@ import {
   normalizeRange,
   presetRange,
   sumCells,
+  toggleActive,
   todayIso,
   type CapacityCell,
   type CapacityGranularity,
@@ -213,6 +220,7 @@ import {
   type CapacityPreset,
   type CapacityRange,
 } from '../lib/capacity';
+import { capacityStorageKey, readCapacityPrefs, type CapacityPrefs } from '../lib/capacity-prefs';
 
 const props = defineProps<{ workspaceId: string; workspaceName: string }>();
 
@@ -230,28 +238,6 @@ const ALL = '';
 const CUSTOM = 'custom';
 
 // ── range ─────────────────────────────────────────────────────────────────────
-
-// Remembered per workspace, like the board's view switch: a manager who looks at «next two
-// weeks» every Monday should not have to pick it every Monday.
-type Saved = {
-  from: string;
-  to: string;
-  preset: CapacityPreset | '';
-  granularity: CapacityGranularity | '';
-  capacityMode?: 'team' | 'member';
-  teamHoursPerDay?: number;
-  memberHours?: Record<string, number>;
-  excluded?: string[];
-};
-const storageKey = () => `capacity:${props.workspaceId}`;
-function readSaved(): Saved | undefined {
-  try {
-    const raw = localStorage.getItem(storageKey());
-    return raw ? (JSON.parse(raw) as Saved) : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 const preset = ref<CapacityPreset | ''>('next2Weeks');
 const from = ref('');
@@ -350,7 +336,7 @@ const granularityTabs = computed(() => [
 watch([from, to, preset, granularityChoice, capacityMode, teamHoursPerDay, memberHours, excluded], () => {
   try {
     localStorage.setItem(
-      storageKey(),
+      capacityStorageKey(props.workspaceId),
       JSON.stringify({
         from: from.value,
         to: to.value,
@@ -360,7 +346,7 @@ watch([from, to, preset, granularityChoice, capacityMode, teamHoursPerDay, membe
         teamHoursPerDay: teamHoursPerDay.value,
         memberHours: memberHours.value,
         excluded: [...excluded.value],
-      } satisfies Saved),
+      } satisfies CapacityPrefs),
     );
   } catch {
     /* private mode: the preference just does not stick */
@@ -369,7 +355,6 @@ watch([from, to, preset, granularityChoice, capacityMode, teamHoursPerDay, membe
 
 // ── person / view ─────────────────────────────────────────────────────────────
 
-const person = ref(ALL);
 // A string, not a union: KTabs emits `string`, and a narrower ref fails vue-tsc on v-model.
 const view = ref<string>('chart');
 const viewTabs = computed(() => [
@@ -383,10 +368,6 @@ function toggleFlagged(): void {
   if (flaggedOnly.value) view.value = 'table';
 }
 
-function pickPerson(id: string): void {
-  if (id === TEAM) return;
-  person.value = person.value === id ? ALL : id;
-}
 
 // ── data ──────────────────────────────────────────────────────────────────────
 
@@ -411,9 +392,8 @@ async function loadWorklogs(): Promise<void> {
 let openToken: number | undefined;
 
 async function enter(id: string): Promise<void> {
-  person.value = ALL;
   flaggedOnly.value = false;
-  const saved = readSaved();
+  const saved = readCapacityPrefs(props.workspaceId);
   // A remembered PRESET is re-resolved against today — «next 2 weeks» saved last Monday
   // means this coming fortnight, not last week's. Only custom dates are kept verbatim. The
   // shape is validated: a hand-edited or future-format blob must not reach presetRange with
@@ -472,19 +452,10 @@ const teamReport = computed(() =>
     excluded: [...excluded.value],
   }),
 );
-const report = computed(() =>
-  person.value === ALL
-    ? teamReport.value
-    : capacityReport(jira.issues, worklogs.value, {
-        range: range.value ?? { from: today.value, to: today.value },
-        today: today.value,
-        granularity: granularityModel.value as CapacityGranularity,
-        person: person.value,
-        hoursPerDay: teamHoursPerDay.value,
-        ...(capacityMode.value === 'member' ? { hoursPerDayByPerson: memberHours.value } : {}),
-        excluded: [...excluded.value],
-      }),
-);
+// Whole team, always: the active roster is the operator's selection, applied through
+// `excluded` inside `teamReport`. There is no per-person «focus» mode — the dropdown decides
+// who counts, and each person still keeps their own row and series below.
+const report = teamReport;
 
 function personName(p: CapacityPerson): string {
   return p.id === UNASSIGNED ? t('management.capacity.unassigned') : p.name || p.id;
@@ -494,9 +465,29 @@ const personOptions = computed<KSelectOption[]>(() => [
   { value: ALL, label: t('management.capacity.wholeTeam') },
   ...teamReport.value.persons.map((p) => ({ value: p.id, label: personName(p) })),
 ]);
+// The dropdown's model is the ACTIVE set — everyone not marked inactive — plus the master
+// «whole team» sentinel when nobody is muted, so its own row ticks. Toggling is folded back
+// onto `excluded` in `onActiveChange`, the one set that also drives the chart legend.
+const personIds = computed(() => teamReport.value.persons.map((p) => p.id));
+const allActive = computed(() => personIds.value.every((id) => !excluded.value.has(id)));
+const activeIds = computed(() => personIds.value.filter((id) => !excluded.value.has(id)));
+const personModel = computed(() => (allActive.value ? [ALL, ...activeIds.value] : activeIds.value));
+const personSummary = computed(() => {
+  if (allActive.value) return t('management.capacity.wholeTeam');
+  const total = personIds.value.filter((id) => id !== UNASSIGNED).length;
+  const count = activeIds.value.filter((id) => id !== UNASSIGNED).length;
+  return t('management.capacity.selected', { count, total });
+});
 
-// Everyone with capacity — the unassigned bucket has none, so it gets no per-member row.
-const members = computed(() => teamReport.value.persons.filter((p) => p.id !== UNASSIGNED));
+// Every pick folds back onto `excluded` (see `toggleActive`), the one set the chart legend
+// writes too, so the dropdown and the legend stay one source of truth.
+function onActiveChange(next: readonly string[]): void {
+  excluded.value = toggleActive(personIds.value, excluded.value, ALL, next);
+}
+
+// Only active members get a workload knob: an inactive account is out of the capacity maths,
+// so a per-day figure for it would set a number that never lands anywhere.
+const members = computed(() => teamReport.value.persons.filter((p) => p.id !== UNASSIGNED && !excluded.value.has(p.id)));
 
 // ── presentation ──────────────────────────────────────────────────────────────
 
@@ -520,7 +511,7 @@ function issueUrl(key: string): string {
 
 type TeamRow = { id: string; name: string; cells: CapacityCell[]; total: CapacityCell; open: number };
 
-const teamTable = computed(() => person.value === ALL && !flaggedOnly.value);
+const teamTable = computed(() => !flaggedOnly.value);
 
 const teamColumns = computed<KTableColumn[]>(() => [
   { key: 'person', label: t('management.capacity.col.person'), width: '160px' },

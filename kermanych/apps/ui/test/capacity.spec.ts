@@ -14,6 +14,7 @@ import {
   planIssue,
   presetRange,
   remainingSeconds,
+  toggleActive,
   weekMonday,
 } from '../src/lib/capacity';
 import { UNASSIGNED } from '../src/lib/jira-view';
@@ -284,5 +285,48 @@ describe('digest', () => {
     expect(andrii.weeks[3]!.plannedH).toBeCloseTo(6.7, 1);
     expect(d.unscheduled).toBe(1);
     expect(d.overdue).toBe(1);
+  });
+
+  it('drops inactive members from the digest — roster and team weeks alike', () => {
+    const range = digestRange(TODAY);
+    const r = capacityReport(
+      [
+        issue({ key: 'KAN-1', assigneeAccountId: 'acc1', assigneeName: 'Andrii', remainingEstimateSeconds: 10 * H, dueDate: '2026-09-08' }),
+        issue({ key: 'KAN-2', assigneeAccountId: 'acc2', assigneeName: 'Olha', remainingEstimateSeconds: 10 * H, dueDate: '2026-09-08' }),
+      ],
+      [],
+      { range, today: TODAY, granularity: 'week', excluded: ['acc2'] },
+    );
+    const d = capacityDigest(r);
+    // Olha is muted: gone from the assistant's roster, and her capacity gone from the week.
+    expect(d.persons.map((p) => p.name)).toEqual(['Andrii']);
+    // One active person × five business days × 8h — not two.
+    expect(d.team[2]!.capacityH).toBe(40);
+  });
+});
+
+describe('toggleActive', () => {
+  const IDS = ['a', 'b', 'c'];
+  const MASTER = '@all';
+  const sorted = (s: Set<string>) => [...s].sort();
+
+  it('mutes one person when unticked from a whole-team selection', () => {
+    expect(sorted(toggleActive(IDS, new Set(), MASTER, [MASTER, 'a', 'c']))).toEqual(['b']);
+  });
+
+  it('reactivates a person when they are re-ticked', () => {
+    expect(sorted(toggleActive(IDS, new Set(['b']), MASTER, ['a', 'c', 'b']))).toEqual([]);
+  });
+
+  it('mutes everyone when the master row is unticked', () => {
+    expect(sorted(toggleActive(IDS, new Set(), MASTER, ['a', 'b', 'c']))).toEqual(['a', 'b', 'c']);
+  });
+
+  it('activates everyone when the master row is ticked', () => {
+    expect(sorted(toggleActive(IDS, new Set(['a', 'b']), MASTER, ['c', MASTER]))).toEqual([]);
+  });
+
+  it('leaves the muted set untouched when nothing actually changed', () => {
+    expect(sorted(toggleActive(IDS, new Set(['a']), MASTER, ['b', 'c']))).toEqual(['a']);
   });
 });

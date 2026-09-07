@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import type { ManagementChatAsk, ManagementChatReply } from '@kermanych/core';
@@ -61,6 +62,7 @@ describe('management chat — capacity digest', () => {
     loadBoard.mockReset();
     jiraState.integration = null;
     jiraState.issues = [];
+    localStorage.clear();
   });
 
   it('sends no capacity without a Jira board', async () => {
@@ -84,6 +86,20 @@ describe('management chat — capacity digest', () => {
     expect(c.team).toHaveLength(8);
     expect(c.persons.map((p) => p.name)).toEqual(['Andrii']);
     expect(c.persons[0]!.openIssues).toBe(0); // starts and ends in 2099: wholly outside the window, unflagged
+  });
+
+  it('honours the operator’s inactive marks and configured hours from localStorage', async () => {
+    jiraState.integration = { id: 'i1', siteUrl: 'https://x.atlassian.net', projectKey: 'KAN', boardName: 'KAN board' };
+    jiraState.issues = [
+      issue({ assigneeAccountId: 'acc1', assigneeName: 'Andrii', remainingEstimateSeconds: 8 * 3600, startDate: '2099-01-04', dueDate: '2099-01-05' }),
+      issue({ key: 'KAN-2', assigneeAccountId: 'acc2', assigneeName: 'Olha', remainingEstimateSeconds: 8 * 3600, startDate: '2099-01-04', dueDate: '2099-01-05' }),
+    ];
+    localStorage.setItem('capacity:w1', JSON.stringify({ excluded: ['acc2'], teamHoursPerDay: 6 }));
+    await useManagementChat().send('capacity?', 'management-capacity');
+    const ask = managementChat.mock.calls[0]![0] as ManagementChatAsk;
+    const c = ask.context.capacity!;
+    expect(c.persons.map((p) => p.name)).toEqual(['Andrii']);
+    expect(c.hoursPerDay).toBe(6);
   });
 
   it('loads the board first when nothing is mirrored yet, and survives a failed read', async () => {
