@@ -15,21 +15,27 @@
         <p class="set__hint">{{ scopeHint }}</p>
       </div>
       <nav class="set__cats" :aria-label="t('settings.rail.categoriesAria', { scope: scopeLabel })">
-        <button
-          v-for="c in scopeCategories"
-          :key="c.key"
-          type="button"
-          class="set__cat"
-          :class="{ 'set__cat--on': c.key === section.key, 'set__cat--danger': c.danger }"
-          :aria-current="c.key === section.key ? 'page' : undefined"
-          @click="goSection(c.key)"
-        >
-          <span class="set__cat-text">
-            <span class="set__cat-label">{{ t('settings.categories.' + c.key + '.label') }}</span>
-            <span class="set__cat-sub">{{ t('settings.categories.' + c.key + '.sub') }}</span>
-          </span>
-          <KCount v-if="badges[c.key] !== undefined" :value="badges[c.key]!" />
-        </button>
+        <template v-for="(c, i) in scopeCategories" :key="c.key">
+          <!-- The group caption prints once, above the first row of the run: «ШІ-команда» is
+               three panes read together, and repeating the words in three sub-lines would cost
+               the sub-line's actual job — saying what is inside each pane. -->
+          <p v-if="c.group === 'ai-team' && scopeCategories[i - 1]?.group !== 'ai-team'" class="set__cat-cap">
+            {{ t('settings.rail.aiTeam') }}
+          </p>
+          <button
+            type="button"
+            class="set__cat"
+            :class="{ 'set__cat--on': c.key === section.key, 'set__cat--danger': c.danger }"
+            :aria-current="c.key === section.key ? 'page' : undefined"
+            @click="goSection(c.key)"
+          >
+            <span class="set__cat-text">
+              <span class="set__cat-label">{{ t('settings.categories.' + c.key + '.label') }}</span>
+              <span class="set__cat-sub">{{ t('settings.categories.' + c.key + '.sub') }}</span>
+            </span>
+            <KCount v-if="badges[c.key] !== undefined" :value="badges[c.key]!" />
+          </button>
+        </template>
       </nav>
     </aside>
 
@@ -244,30 +250,32 @@
           <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
         </div>
 
-        <!-- ── PROJECT · БІБЛІОТЕКА СКІЛІВ ──────────────────────────────────── -->
-        <!-- Mounted, not inlined: the library is a screen's worth of list, modal and
-             cloud writes of its own, and it moved here whole from Менеджмент. Same
-             arrangement as KEnvEditor below. The `v-if` is the type guard the outer
-             chain cannot give: reaching this branch already means a project is
-             selected, but only the narrowing here turns the id into a string. -->
-        <div v-else-if="section.key === 'project-skills'" class="set__form set__form--wide">
-          <SkillsLibraryPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
-        </div>
-
-        <!-- ── PROJECT · ПРИЗНАЧЕННЯ ────────────────────────────────────────── -->
-        <!-- Directly after the library, because it is the library it assigns from. Same
-             `v-if` type guard as the pane above, for the same reason. -->
+        <!-- ── PROJECT · АГЕНТИ ─────────────────────────────────────────────── -->
+        <!-- First pane of «ШІ-команда» and the one the other two modify: it holds each
+             agent's launch instruction and the ordered skills pasted into it, both editable
+             per project. Mounted, not inlined — six agents with a text editor apiece is a
+             screen's worth of panel and its own cloud writes. The `v-if` is the type guard the
+             outer chain cannot give: reaching this branch already means a project is selected,
+             but only the narrowing here turns the id into a string. -->
         <div v-else-if="section.key === 'project-agents'" class="set__form set__form--wide">
-          <AgentSkillsPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
+          <AiAgentsPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
         </div>
 
         <!-- ── PROJECT · ТРИГЕРИ ────────────────────────────────────────────── -->
-        <!-- The last pane of «ШІ команда» and the last arm of this chain. It follows the two
-             above because a trigger names a skill from the same library: the library says what
-             exists, «Призначення» hands it over unconditionally, and a trigger fires it on a
-             pattern. Same `v-if` type guard as both, for the same reason. -->
+        <!-- The other side of the same coin: what fires without the model deciding to. A
+             trigger carries an instruction and an ordered skill list of its own, so it reads
+             beside Агенти rather than after the library. Same `v-if` type guard, same reason. -->
         <div v-else-if="section.key === 'project-triggers'" class="set__form set__form--wide">
           <TriggersPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
+        </div>
+
+        <!-- ── PROJECT · НАВИЧКИ ────────────────────────────────────────────── -->
+        <!-- Last of the group, because it is the library both panes above draw from: it says
+             what exists, and they decide who gets it and when. Mounted for the same reason —
+             a list, a modal and cloud writes of its own, moved here whole from Менеджмент.
+             Same `v-if` type guard as both. -->
+        <div v-else-if="section.key === 'project-skills'" class="set__form set__form--wide">
+          <SkillsLibraryPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
         </div>
 
         <!-- ── PROJECT · ЗМІННІ СЕРЕДОВИЩА ──────────────────────────────────── -->
@@ -442,18 +450,10 @@
           <p class="set__note">{{ t('settings.keymap.note') }}</p>
         </div>
 
-        <!-- ── APP · ШІ КОМАНДА ─────────────────────────────────────────────── -->
-        <!-- Mounted, not inlined, for the same reason the library is: it is a list of its
-             own, and its content — six agents and four English templates — belongs beside
-             the registry it reads, not in this sheet. No props: `AGENTS` is a compile-time
-             constant, so the panel has nothing to be told and nothing to load. -->
-        <div v-else-if="section.key === 'app-agents'" class="set__form set__form--wide">
-          <AgentCatalogPanel />
-        </div>
-
         <!-- ── APP · ХЕЛПЕРИ ────────────────────────────────────────────────── -->
-        <!-- Beside the agent catalogue and for the same reason: `DEFAULT_HELPERS` is a
-             compile-time constant, so the pane has nothing to be told and nothing to load. -->
+        <!-- Mounted, not inlined, for the same reason the library is: it is a list of its
+             own, and `DEFAULT_HELPERS` is a compile-time constant, so the pane has nothing to
+             be told and nothing to load. -->
         <div v-else-if="section.key === 'app-helpers'" class="set__form set__form--wide">
           <HelpersCatalogPanel />
         </div>
@@ -659,10 +659,9 @@ import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KTag from 'components/kit/KTag.vue';
-import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
-import AgentSkillsPanel from 'components/settings/AgentSkillsPanel.vue';
+import AiAgentsPanel from 'components/settings/AiAgentsPanel.vue';
 import TriggersPanel from 'components/settings/TriggersPanel.vue';
-import AgentCatalogPanel from 'components/settings/AgentCatalogPanel.vue';
+import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
 import HelpersCatalogPanel from 'components/settings/HelpersCatalogPanel.vue';
 import KLangToggle from 'components/kit/KLangToggle.vue';
 
@@ -1465,6 +1464,23 @@ const badges = computed<Record<string, number | undefined>>(() => ({
   flex-direction: column;
   gap: 2px;
   padding: var(--k-sp-2);
+}
+
+// The group caption. Same eyebrow vocabulary as the blank state's — 10px with wide
+// tracking — indented to the rows' own padding so it reads as their heading and not as
+// a row of its own; the top margin is what separates the group from the ungrouped rows
+// above it. No `text-transform`: the copy is authored in the case it should render in,
+// the way «КЕРМАНИЧ» is, and «ШІ-команда» uppercased loses the hyphenated abbreviation.
+.set__cat-cap {
+  margin: var(--k-sp-3) 0 2px;
+  padding: 0 10px;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: var(--k-faint);
+
+  &:first-child {
+    margin-top: 0;
+  }
 }
 
 // Two lines per row: the category and what is inside it. The sub-line is what

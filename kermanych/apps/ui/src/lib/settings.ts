@@ -13,11 +13,14 @@
 // listing «Учасники» under a project would name the wrong owner of that data.
 //
 // Everything registered below is backed by real data. Most rows carry a read and a
-// write; a few — «Гарячі клавіші», «ШІ команда» — are reference panes over something
-// the application hard-codes, and say so in the pane itself. Nothing here is a
-// placeholder: harness paths, provider API keys, spend caps, a parallel agent limit,
-// a context-warning threshold and remappable keys have no storage, no endpoint and
-// no column anywhere in the repo, so they get no panel.
+// write; «Гарячі клавіші» and «Хелпери» are reference panes over something the
+// application hard-codes, and say so in the pane itself. «ШІ-команда» is NOT one of
+// them: its three rows — Агенти, Тригери, Навички — are project-scoped editors over
+// cloud tables, because an agent's instruction and the ordered skills behind an agent
+// or a trigger are decisions this project makes, not constants of the harness. Nothing
+// here is a placeholder: harness paths, provider API keys, spend caps, a parallel agent
+// limit, a context-warning threshold and remappable keys have no storage, no endpoint
+// and no column anywhere in the repo, so they get no panel.
 
 import type { AgentDef, EnvEntry, SkillView } from '@kermanych/core';
 import type { AgentSkill, TriggerSource } from '@kermanych/cloud';
@@ -28,6 +31,13 @@ export interface SettingsCategory {
   /** URL segment under /settings AND the rail's nav value. */
   key: string;
   scope: SettingsScope;
+  /**
+   * Rows the rail prints under one caption. «ШІ-команда» is three panes the operator
+   * reads together — an agent's instruction, the triggers that fire without it, and the
+   * library both of them draw skills from — so the rail names the group once instead of
+   * repeating it in three sub-lines.
+   */
+  group?: 'ai-team';
   /** Irreversible actions. Renders in the danger colour, sorts last. */
   danger?: boolean;
 }
@@ -43,9 +53,11 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { key: 'project-git', scope: 'project' },
   { key: 'project-commands', scope: 'project' },
   { key: 'project-defaults', scope: 'project' },
-  { key: 'project-skills', scope: 'project' },
-  { key: 'project-agents', scope: 'project' },
-  { key: 'project-triggers', scope: 'project' },
+  // Агенти first of the group: an agent's instruction is what a trigger interrupts and
+  // what an assigned skill is pasted into, so it is the thing the other two modify.
+  { key: 'project-agents', scope: 'project', group: 'ai-team' },
+  { key: 'project-triggers', scope: 'project', group: 'ai-team' },
+  { key: 'project-skills', scope: 'project', group: 'ai-team' },
   { key: 'project-env', scope: 'project' },
   { key: 'project-danger', scope: 'project', danger: true },
   { key: 'workspace-basics', scope: 'workspace' },
@@ -53,7 +65,6 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { key: 'workspace-danger', scope: 'workspace', danger: true },
   { key: 'app-general', scope: 'app' },
   { key: 'app-keymap', scope: 'app' },
-  { key: 'app-agents', scope: 'app' },
   { key: 'app-helpers', scope: 'app' },
   { key: 'app-runtime', scope: 'app' },
   { key: 'app-account', scope: 'app' },
@@ -113,7 +124,7 @@ export interface AssignedSkill {
  * repository are different places, and the resolver reads either of them for an assigned
  * name (SkillsService.assignedForNames: `if (!hit && !repoPath) missing`). A name the
  * repository alone defines is therefore delivered in full on every launch — calling it
- * «немає скіла» would tell the operator to remove a working assignment, and they would.
+ * «немає навички» would tell the operator to remove a working assignment, and they would.
  * The reachable path is short: assign a repo-shadowed name, then delete its project row in
  * the library pane. The row leaves `view`; the repository still owns the name.
  *
@@ -263,12 +274,16 @@ export function triggerUsesRuleFile(source: string): boolean {
  * trigger matched on the OPERATOR's message can run an agent; the DB carries the same rule as
  * a check constraint (`project_triggers_agent_action_is_operator`), and this is what stops the
  * editor from offering an unsavable choice.
+ *
+ * `prompt` is the action every source has: an instruction of the trigger's own plus an ordered
+ * list of skills, in one body. It is one option rather than two because a trigger with only
+ * skills and a trigger with only text are the same delivery with one half left empty.
  */
-export function triggerActionOptions(source: TriggerSource): { value: 'skill' | 'agent'; labelKey: string }[] {
-  const skill = { value: 'skill' as const, labelKey: 'settings.sourceAction.skill' };
+export function triggerActionOptions(source: TriggerSource): { value: 'prompt' | 'agent'; labelKey: string }[] {
+  const prompt = { value: 'prompt' as const, labelKey: 'settings.sourceAction.prompt' };
   return source === 'operator'
-    ? [skill, { value: 'agent' as const, labelKey: 'settings.sourceAction.agent' }]
-    : [skill];
+    ? [prompt, { value: 'agent' as const, labelKey: 'settings.sourceAction.agent' }]
+    : [prompt];
 }
 
 /**

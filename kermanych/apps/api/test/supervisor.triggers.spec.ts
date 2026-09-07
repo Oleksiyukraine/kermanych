@@ -53,12 +53,18 @@ import { offlineAuth } from "./offline-auth";
 const t = (over: Partial<ProjectTrigger>): ProjectTrigger => ({
   projectId: "p1", id: "wants-pr", label: "Хоче ПР", enabled: true,
   source: "operator", pattern: "хочу зробити ПР", pathGlobs: [],
-  action: "agent", target: "resolve-conflict", mode: "remind", repeat: "once", ...over,
+  action: "agent", instruction: "", agentId: "resolve-conflict", skills: [],
+  mode: "remind", repeat: "once", ...over,
 });
 
-// Only the three members the message path touches. `materializeTriggers` answers for the
-// launch, `operatorTriggers` for the match, `assignedForNames` for a `skill` action's body —
-// and `assignedFor` because the agent a fired trigger runs renders its own instruction.
+// A `prompt` trigger, the shape that carries an instruction and/or an ordered skill list.
+const prompt = (over: Partial<ProjectTrigger>): ProjectTrigger =>
+  t({ action: "prompt", agentId: "", ...over });
+
+// Only the members the message path touches. `materializeTriggers` answers for the launch,
+// `operatorTriggers` for the match, `assignedForNames` for a `prompt` action's skill bodies —
+// and `assignedFor`/`instructionFor` because the agent a fired trigger runs renders its own
+// instruction.
 function make(triggers: ProjectTrigger[], blocks: Record<string, string> = {}) {
   const registry = new RegistryService(":memory:");
   const worktree = {
@@ -70,11 +76,18 @@ function make(triggers: ProjectTrigger[], blocks: Record<string, string> = {}) {
   const skills = {
     materialize: async () => ({ view: [] }),
     assignedFor: async () => ({ block: "", view: [], missing: [] }),
+    instructionFor: async () => undefined,
     materializeTriggers: async () => ({ packagePath: "/tmp/kmq-triggers/s1" }),
     operatorTriggers: async () => triggers,
     assignedForNames: async (_p: string, names: readonly string[]) => {
-      const block = names.map((n) => blocks[n] ?? "").filter(Boolean).join("\n");
-      return { block, view: [], missing: names.filter((n) => !blocks[n]) };
+      const hits = names.filter((n) => blocks[n]);
+      return {
+        block: hits.map((n) => blocks[n]!).join("\n"),
+        // The real resolver's view names exactly what it delivered, in order; the notice
+        // reads the skill names off it.
+        view: hits.map((n) => ({ name: n, description: "d", source: "project" as const })),
+        missing: names.filter((n) => !blocks[n]),
+      };
     },
   } as unknown as SkillsService;
   const sup = new SupervisorService(registry, worktree, offlineAuth(), skills);
@@ -124,7 +137,7 @@ describe("the trigger package reaches the omp child", () => {
 describe("an operator trigger fires before the message is forwarded", () => {
   it("prepends the resolved skill text and still forwards the operator's message", async () => {
     const { sup, project } = make(
-      [t({ id: "env", action: "skill", target: "how-we-add-env", pattern: "env" })],
+      [prompt({ id: "env", skills: ["how-we-add-env"], pattern: "env" })],
       { "how-we-add-env": "ADD ENV THE KERMANYCH WAY" },
     );
     const chat = await sup.createChat(project.id);
@@ -135,7 +148,34 @@ describe("an operator trigger fires before the message is forwarded", () => {
     // visible, so a session that behaved differently can be read back.
     const rows = sup.getTranscript(chat.id);
     expect(rows.find((r) => r.kind === "user_text")).toMatchObject({ text: "додай env для API" });
-    expect(notices(rows)).toEqual(['тригер «Хоче ПР» додав скіл «how-we-add-env»']);
+    expect(notices(rows)).toEqual(["тригер «Хоче ПР» додав навички: how-we-add-env"]);
+  });
+
+  // The gap this feature closes: a trigger is a SEQUENCE, and its own words come first —
+  // the instruction says what to do about the match, the skills say how.
+  it("injects its instruction and then every skill it names, in list order", async () => {
+    const { sup, project } = make(
+      [prompt({ id: "env", instruction: "Спитай, куди її класти.", skills: ["env-policy", "house-style"], pattern: "env" })],
+      { "env-policy": "ENV POLICY", "house-style": "HOUSE STYLE" },
+    );
+    const chat = await sup.createChat(project.id);
+    await sup.sendMessage(chat.id, "додай env для API", "prompt");
+
+    expect(sent.at(-1)!.text).toBe("Спитай, куди її класти.\n\nENV POLICY\nHOUSE STYLE\n\nдодай env для API");
+    expect(notices(sup.getTranscript(chat.id))).toEqual([
+      "тригер «Хоче ПР» додав навички: env-policy, house-style",
+    ]);
+  });
+
+  // An instruction alone is a complete trigger. It adds no skill, so it names none — the
+  // notice would otherwise say «додав навички:» with nothing after it.
+  it("delivers an instruction with no skills and names no skill for it", async () => {
+    const { sup, project } = make([prompt({ instruction: "Спершу спитай.", pattern: "env" })]);
+    const chat = await sup.createChat(project.id);
+    await sup.sendMessage(chat.id, "додай env", "prompt");
+
+    expect(sent.at(-1)!.text).toBe("Спершу спитай.\n\nдодай env");
+    expect(notices(sup.getTranscript(chat.id))).toEqual([]);
   });
 
   it("runs the named agent INSTEAD of forwarding the message", async () => {
@@ -171,7 +211,7 @@ describe("an operator trigger fires before the message is forwarded", () => {
   it("never rewrites an agent Kermanych started on the operator's own click", async () => {
     // Pressing «Вирішити конфлікт» prompts the child with Kermanych's instruction, not the
     // operator's words. A trigger that replaced it would be rewriting Kermanych.
-    const { sup, project } = make([t({ action: "skill", target: "s", pattern: "conflict" })], { s: "NOPE" });
+    const { sup, project } = make([prompt({ skills: ["s"], pattern: "conflict" })], { s: "NOPE" });
     const chat = await sup.createChat(project.id);
     await sup.resolveConflict(chat.id);
 
@@ -199,9 +239,14 @@ describe("an operator trigger fires before the message is forwarded", () => {
         return { view: [] };
       },
       assignedFor: async () => ({ block: "", view: [], missing: [] }),
-      assignedForNames: async () => ({ block: "SKILL", view: [], missing: [] }),
+      assignedForNames: async () => ({
+        block: "SKILL",
+        view: [{ name: "s", description: "d", source: "project" as const }],
+        missing: [],
+      }),
+      instructionFor: async () => undefined,
       materializeTriggers: async () => ({}),
-      operatorTriggers: async () => [t({ id: "aaa", action: "skill", target: "s", pattern: "конфлікт" })],
+      operatorTriggers: async () => [prompt({ id: "aaa", skills: ["s"], pattern: "конфлікт" })],
     } as unknown as SkillsService;
     const sup = new SupervisorService(registry, worktree, offlineAuth(), skills);
     const project = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
@@ -223,13 +268,13 @@ describe("an operator trigger fires before the message is forwarded", () => {
       expect.stringContaining("A git merge is in progress"),
       "SKILL\n\nтут конфлікт",
     ]);
-    expect(notices(sup.getTranscript(chat.id))).toEqual(["тригер «Хоче ПР» додав скіл «s»"]);
+    expect(notices(sup.getTranscript(chat.id))).toEqual(["тригер «Хоче ПР» додав навички: s"]);
   });
 
   it("forwards the message untouched when the agent could not run", async () => {
     // The replacement is only earned while the agent actually ran: swallowing the operator's
     // message AND running nothing is the one outcome worse than either.
-    const { sup, project } = make([t({ target: "no-such-agent", pattern: "запусти" })]);
+    const { sup, project } = make([t({ agentId: "no-such-agent", pattern: "запусти" })]);
     const chat = await sup.createChat(project.id);
     await sup.sendMessage(chat.id, "запусти щось", "prompt");
 
@@ -237,13 +282,28 @@ describe("an operator trigger fires before the message is forwarded", () => {
     expect(notices(sup.getTranscript(chat.id)).at(-1)).toContain("не запустив агента");
   });
 
-  it("reports a dangling skill target instead of dropping it", async () => {
-    const { sup, project } = make([t({ action: "skill", target: "gone", pattern: "env" })]);
+  it("reports a dangling skill instead of dropping it", async () => {
+    const { sup, project } = make([prompt({ skills: ["gone"], pattern: "env" })]);
     const chat = await sup.createChat(project.id);
     await sup.sendMessage(chat.id, "додай env", "prompt");
 
     expect(sent.at(-1)!.text).toBe("додай env");
-    expect(notices(sup.getTranscript(chat.id))).toEqual(['тригер «Хоче ПР»: скіл «gone» не знайдено']);
+    expect(notices(sup.getTranscript(chat.id))).toEqual(["тригер «Хоче ПР»: навички не знайдено: gone"]);
+  });
+
+  // A sequence delivered short still fires — the operator's other skills are real guidance —
+  // but the gap is said out loud, because a trigger that no longer does what its author
+  // wrote is exactly what the dangling-reference reporting exists for.
+  it("delivers what resolved and still reports the skill that did not", async () => {
+    const { sup, project } = make([prompt({ skills: ["gone", "s"], pattern: "env" })], { s: "BODY" });
+    const chat = await sup.createChat(project.id);
+    await sup.sendMessage(chat.id, "додай env", "prompt");
+
+    expect(sent.at(-1)!.text).toBe("BODY\n\nдодай env");
+    expect(notices(sup.getTranscript(chat.id))).toEqual([
+      "тригер «Хоче ПР»: навички не знайдено: gone",
+      "тригер «Хоче ПР» додав навички: s",
+    ]);
   });
 
   it("leaves a non-matching message and its transcript completely alone", async () => {
@@ -257,7 +317,7 @@ describe("an operator trigger fires before the message is forwarded", () => {
 
   it("costs an unparseable pattern its own trigger and nothing else", async () => {
     const { sup, project } = make(
-      [t({ id: "aa-broken", pattern: "([unclosed" }), t({ id: "bb-good", action: "skill", target: "s", pattern: "env" })],
+      [t({ id: "aa-broken", pattern: "([unclosed" }), prompt({ id: "bb-good", skills: ["s"], pattern: "env" })],
       { s: "BODY" },
     );
     const chat = await sup.createChat(project.id);
@@ -266,7 +326,7 @@ describe("an operator trigger fires before the message is forwarded", () => {
   });
 
   it("matches case-insensitively, as prose from a human requires", async () => {
-    const { sup, project } = make([t({ action: "skill", target: "s", pattern: "хочу зробити пр" })], { s: "PR" });
+    const { sup, project } = make([prompt({ skills: ["s"], pattern: "хочу зробити пр" })], { s: "PR" });
     const chat = await sup.createChat(project.id);
     await sup.sendMessage(chat.id, "Хочу зробити ПР", "prompt");
     expect(sent.at(-1)!.text).toBe("PR\n\nХочу зробити ПР");
@@ -276,7 +336,7 @@ describe("an operator trigger fires before the message is forwarded", () => {
     // operatorTriggers hands them over sorted by id, so a message two patterns both match
     // always picks the same winner.
     const { sup, project } = make(
-      [t({ id: "aaa", action: "skill", target: "first", pattern: "env" }), t({ id: "bbb", action: "skill", target: "second", pattern: "env" })],
+      [prompt({ id: "aaa", skills: ["first"], pattern: "env" }), prompt({ id: "bbb", skills: ["second"], pattern: "env" })],
       { first: "FIRST", second: "SECOND" },
     );
     const chat = await sup.createChat(project.id);
@@ -288,7 +348,7 @@ describe("an operator trigger fires before the message is forwarded", () => {
     // An operator pattern comes from the cloud and runs on the api event loop, so a project
     // owner's backtracking regex would cost a MEMBER's process. The subject is bounded; past
     // the bound the trigger simply does not fire, with no exception and no blocked message.
-    const { sup, project } = make([t({ action: "skill", target: "s", pattern: "env" })], { s: "BODY" });
+    const { sup, project } = make([prompt({ skills: ["s"], pattern: "env" })], { s: "BODY" });
     const chat = await sup.createChat(project.id);
 
     await sup.sendMessage(chat.id, "додай env", "prompt");
@@ -300,6 +360,6 @@ describe("an operator trigger fires before the message is forwarded", () => {
     expect(sent.at(-1)!.text).toBe(huge);
     // The operator's own row is still there and the message still went through; only the
     // trigger stayed out, and it added no second notice.
-    expect(notices(sup.getTranscript(chat.id))).toEqual(["тригер «Хоче ПР» додав скіл «s»"]);
+    expect(notices(sup.getTranscript(chat.id))).toEqual(["тригер «Хоче ПР» додав навички: s"]);
   });
 });

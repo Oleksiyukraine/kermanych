@@ -18,8 +18,10 @@ export type {
   ProjectSkill,
   ProjectSkillInsert,
   AgentSkill,
-  AgentSkillInsert,
+  ProjectAgent,
+  ProjectAgentInsert,
   TriggerSource,
+  TriggerAction,
   ProjectTrigger,
   ProjectTriggerInsert,
   RiskKind,
@@ -109,14 +111,22 @@ export {
   deleteProjectSkill,
 } from "./skills";
 
-export {
-  toAgentSkill,
-  listAgentSkills,
-  setAgentSkill,
-  deleteAgentSkill,
-} from "./agent-skills";
+export { toAgentSkill, listAgentSkills, setAgentSkills } from "./agent-skills";
 
-export { toTrigger, listTriggers, upsertTrigger, deleteTrigger } from "./triggers";
+export {
+  toProjectAgent,
+  listProjectAgents,
+  upsertProjectAgent,
+  deleteProjectAgent,
+} from "./project-agents";
+
+export {
+  toTrigger,
+  listTriggers,
+  upsertTrigger,
+  setTriggerSkills,
+  deleteTrigger,
+} from "./triggers";
 
 export {
   toWorkspaceRisk,

@@ -1,7 +1,11 @@
+// The texts Kermanych's own agents are given. Every case here pins the DEFAULT template —
+// the one compiled into the registry, which is what a project that has not edited its agent
+// still gets, byte for byte. The per-project override is the last case: it replaces the
+// template and nothing else, so the assigned-skills block still trails the prompt.
 import { expect, test } from "vitest";
-import { agentById, renderInstruction, PR_CONVENTIONS_FALLBACK } from "@kermanych/core";
+import { agentById, assignedBlock, renderInstruction, PR_CONVENTIONS_FALLBACK } from "@kermanych/core";
 
-test("the review instruction is byte-identical to the text the supervisor used", () => {
+test("the default review instruction is byte-identical to the text the supervisor used", () => {
   const out = renderInstruction(agentById("review")!, {
     task: "TASK", base: "dev", branch: "feature/x", diff: "DIFF",
   });
@@ -19,7 +23,7 @@ test("the review instruction is byte-identical to the text the supervisor used",
   );
 });
 
-test("the conflict instruction is byte-identical", () => {
+test("the default conflict instruction is byte-identical", () => {
   const out = renderInstruction(agentById("resolve-conflict")!, { files: "- a.ts\n- b.ts" });
   expect(out).toBe(
     `A git merge is in progress in this worktree with conflicts in:\n` +
@@ -31,7 +35,7 @@ test("the conflict instruction is byte-identical", () => {
   );
 });
 
-test("the pull-request instruction keeps the conventions fallback and the base sentence", () => {
+test("the default pull-request instruction keeps the conventions fallback and the base sentence", () => {
   const out = renderInstruction(agentById("pull-request")!, {
     branch: "feature/x",
     conventions: PR_CONVENTIONS_FALLBACK,
@@ -43,7 +47,19 @@ test("the pull-request instruction keeps the conventions fallback and the base s
   expect(out.endsWith("Reply with the PR URL when done. Do only this.")).toBe(true);
 });
 
-test("the promote instruction keeps its branch hole", () => {
+test("the default promote instruction keeps its branch hole", () => {
   const out = renderInstruction(agentById("promote")!, { branch: "feature/x" });
   expect(out).toContain("dedicated git worktree on branch `feature/x`, with the full toolset.");
+});
+
+test("a project's own template replaces the default text, and the skills block still trails it", () => {
+  const def = agentById("promote")!;
+  const block = assignedBlock([{ name: "kermanych-session", description: "d", body: "How isolation works." }]);
+  const out = renderInstruction(def, { branch: "feature/x" }, "Наш власний промпт для {{branch}}.") + block;
+
+  expect(out.startsWith("Наш власний промпт для feature/x.")).toBe(true);
+  expect(out).not.toContain(def.instruction!.slice(0, 40));
+  // The block is appended by the caller, not by the template, so an override cannot lose it.
+  expect(out.endsWith(block)).toBe(true);
+  expect(out).toContain("How isolation works.");
 });

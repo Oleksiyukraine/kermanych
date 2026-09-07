@@ -161,17 +161,28 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // The block one agent's assigned skills add to its instruction — the ONE way any of the
-  // four instruction sites gets it. Never throws, for the same reason as ompSkills: the
-  // service degrades on its own for a library reason (offline cloud, unreadable repository
-  // file) and throws for a caller error (an invalid project id), and neither may cost an
-  // agent its run. An empty string appends nothing.
-  private async assignedBlockFor(projectId: string, agentId: string, cwd: string): Promise<string> {
+  // Everything the PROJECT contributes to one agent's prompt: the template to render — its
+  // own edited text, or `undefined` for the compile-time default — and the block its assigned
+  // skills append. The ONE way any of the four instruction sites gets either, and the two
+  // reads are issued together because they are independent and the launch waits for both.
+  // Never throws, for the same reason as ompSkills: the service degrades on its own for a
+  // project reason (offline cloud, unreadable repository file, an override gone stale) and
+  // throws for a caller error (an invalid project id), and neither may cost an agent its run.
+  // No template and an empty block is "this project customised nothing".
+  private async agentPrompt(
+    projectId: string,
+    agentId: string,
+    cwd: string,
+  ): Promise<{ template?: string; block: string }> {
     try {
-      return (await this.skills.assignedFor(projectId, agentId, cwd)).block;
+      const [assigned, template] = await Promise.all([
+        this.skills.assignedFor(projectId, agentId, cwd),
+        this.skills.instructionFor(projectId, agentId),
+      ]);
+      return { ...(template !== undefined ? { template } : {}), block: assigned.block };
     } catch (err) {
-      console.warn(`[supervisor] no assigned skills for ${agentId}: ${(err as Error).message}`);
-      return "";
+      console.warn(`[supervisor] no project instruction or skills for ${agentId}: ${(err as Error).message}`);
+      return { block: "" };
     }
   }
 
@@ -504,8 +515,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // task, its first line the name, and the rest are the project's defaults.
     const name = taskNameFromText(chat.task) || chat.name;
     const { branch, baseBranch } = await this.resolveLaunchParams(project, name, "feature", true, chatId);
-    const block = await this.assignedBlockFor(chat.projectId, "promote", project.localRepoPath);
-    const prompt = renderInstruction(agentById("promote")!, { branch }) + block;
+    const { template, block } = await this.agentPrompt(chat.projectId, "promote", project.localRepoPath);
+    const prompt = renderInstruction(agentById("promote")!, { branch }, template) + block;
 
     // The read-only child must die before the worktree one takes over this row's event stream.
     if (live) {
@@ -749,9 +760,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       runtime: this.runtimeFor(),
     });
 
-    const block = await this.assignedBlockFor(s.projectId, "review", cwd);
+    const { template, block } = await this.agentPrompt(s.projectId, "review", cwd);
     const prompt =
-      renderInstruction(agentById("review")!, { task: s.task, base, branch: s.branch, diff }) + block;
+      renderInstruction(agentById("review")!, { task: s.task, base, branch: s.branch, diff }, template) + block;
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
@@ -1111,22 +1122,24 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // fire a trigger the operator never wrote for.
     const helped = fromOperator ? expandHelpers(text) : { text, used: [] };
     if (helped.used.length) this.appendEntry(id, this.noticeEntry(helperNotice(helped.used)));
-    // `skill`: the resolved body goes in FRONT of what the operator wrote, so the instruction
-    // is read before the request it applies to. The transcript keeps the operator's own text
-    // as the visible row and the notices above say what was prepended to it.
-    const body = fired?.block ? `${fired.block}\n\n${helped.text}` : helped.text;
+    // `prompt`: the trigger's body — its instruction, then its skills — goes in FRONT of what
+    // the operator wrote, so the guidance is read before the request it applies to. The
+    // transcript keeps the operator's own text as the visible row and the notices above say
+    // what was prepended to it.
+    const body = fired?.body ? `${fired.body}\n\n${helped.text}` : helped.text;
     if (mode === "steer") l.rpc.steer(body, images);
     else if (mode === "follow_up") l.rpc.followUp(body, images);
     else l.rpc.prompt(body, images);
   }
 
-  // The first enabled `operator` trigger whose pattern matches, with its `skill` body already
-  // resolved. Never throws and never blocks a message: a trigger is an addition to a session.
+  // The first enabled `operator` trigger whose pattern matches, with a `prompt` action's body
+  // already composed. Never throws and never blocks a message: a trigger is an addition to a
+  // session.
   private async matchOperatorTriggers(
     s: Session,
     id: string,
     text: string,
-  ): Promise<{ trigger: ProjectTrigger; block: string } | undefined> {
+  ): Promise<{ trigger: ProjectTrigger; body: string } | undefined> {
     // Past the cap no trigger fires. That is the degradation everything else on this path
     // uses: never an exception, never a blocked message.
     if (!text.trim() || text.length > MATCH_MAX_CHARS) return undefined;
@@ -1151,40 +1164,49 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
             this.noticeEntry({
               // The fallback text names the raw agent id — the api has no vue-i18n to render
               // its label. A UI that knows the code renders `t('agents.role.<agent>')` for it.
-              text: `тригер «${trigger.label}» запускає «${trigger.target}»`,
+              text: `тригер «${trigger.label}» запускає «${trigger.agentId}»`,
               code: "trigger_launches_agent",
-              params: { trigger: trigger.label, agent: trigger.target },
+              params: { trigger: trigger.label, agent: trigger.agentId },
             }),
           );
-          return { trigger, block: "" };
+          return { trigger, body: "" };
         }
-        // One resolver for every skill body in Kermanych, assignments and triggers alike.
-        const { block, missing } = await this.skills.assignedForNames(s.projectId, [trigger.target], cwd);
-        if (!block.trim()) {
+        // One resolver for every skill body in Kermanych, assignments and triggers alike, and
+        // the same composition the rule-file path uses: the instruction, then the skills it
+        // names, in the operator's order.
+        const { block, view, missing } = await this.skills.assignedForNames(s.projectId, trigger.skills, cwd);
+        const body = [trigger.instruction.trim(), block.trim()].filter(Boolean).join("\n\n");
+        if (missing.length) {
           // Reported, not dropped: a trigger the operator believes is armed and which resolves
-          // to nothing is exactly the state the dangling-reference UI exists to surface.
+          // to nothing is exactly the state the dangling-reference UI exists to surface. Said
+          // even when the rest of the body still fires — a sequence delivered short is a
+          // trigger that no longer does what its author wrote.
           this.appendEntry(
             id,
             this.noticeEntry(
               {
-                text: `тригер «${trigger.label}»: скіл «${missing[0] ?? trigger.target}» не знайдено`,
+                text: `тригер «${trigger.label}»: навички не знайдено: ${missing.join(", ")}`,
                 code: "trigger_skill_missing",
-                params: { trigger: trigger.label, skill: missing[0] ?? trigger.target },
+                params: { trigger: trigger.label, skills: missing.join(", ") },
               },
               "warn",
             ),
           );
-          return undefined;
         }
-        this.appendEntry(
-          id,
-          this.noticeEntry({
-            text: `тригер «${trigger.label}» додав скіл «${trigger.target}»`,
-            code: "skill_added_by_trigger",
-            params: { trigger: trigger.label, skill: trigger.target },
-          }),
-        );
-        return { trigger, block };
+        if (!body) return undefined;
+        // Only what was actually delivered, and only when there is something: a trigger that
+        // carries an instruction alone adds no skill, so there is no skill to name.
+        if (view.length) {
+          this.appendEntry(
+            id,
+            this.noticeEntry({
+              text: `тригер «${trigger.label}» додав навички: ${view.map((v) => v.name).join(", ")}`,
+              code: "skill_added_by_trigger",
+              params: { trigger: trigger.label, skills: view.map((v) => v.name).join(", ") },
+            }),
+          );
+        }
+        return { trigger, body };
       }
       return undefined;
     } catch (err) {
@@ -1201,11 +1223,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     try {
       // The four agents a trigger can run. `finish` and `summary` are automations with no
       // model and no session of their own, so they are not reachable from here.
-      if (trigger.target === "review") await this.reviewSession(id);
-      else if (trigger.target === "promote") await this.promoteChatToAgent(id, await this.promotionCard(id));
-      else if (trigger.target === "pull-request") await this.createPullRequest(id);
-      else if (trigger.target === "resolve-conflict") await this.resolveConflict(id);
-      else throw new Error(`агента «${trigger.target}» не існує`);
+      if (trigger.agentId === "review") await this.reviewSession(id);
+      else if (trigger.agentId === "promote") await this.promoteChatToAgent(id, await this.promotionCard(id));
+      else if (trigger.agentId === "pull-request") await this.createPullRequest(id);
+      else if (trigger.agentId === "resolve-conflict") await this.resolveConflict(id);
+      else throw new Error(`агента «${trigger.agentId}» не існує`);
       return true;
     } catch (err) {
       this.appendEntry(
@@ -1296,9 +1318,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const dir = s.worktreePath || g.localRepoPath;
     const files = await this.worktree.unmergedFiles(dir);
     if (!files.length) throw new Error("no merge conflict to resolve");
-    const block = await this.assignedBlockFor(s.projectId, "resolve-conflict", dir);
+    const { template, block } = await this.agentPrompt(s.projectId, "resolve-conflict", dir);
     const prompt =
-      renderInstruction(agentById("resolve-conflict")!, { files: files.map((f) => `- ${f}`).join("\n") }) + block;
+      renderInstruction(agentById("resolve-conflict")!, { files: files.map((f) => `- ${f}`).join("\n") }, template) +
+      block;
     await this.sendAsKermanych(id, prompt, "prompt");
     return { ok: true };
   }
@@ -1323,13 +1346,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       ? `Target the PR at \`${baseHint}\`, unless the repo's PR conventions dictate a different base.`
       : `Target the PR at the repository's default branch, unless the repo's PR conventions dictate otherwise.`;
 
-    const block = await this.assignedBlockFor(s.projectId, "pull-request", s.worktreePath || g.localRepoPath);
+    const { template, block } = await this.agentPrompt(s.projectId, "pull-request", s.worktreePath || g.localRepoPath);
     const prompt =
-      renderInstruction(agentById("pull-request")!, {
-        branch: s.branch,
-        conventions: (g.conventions || "").trim() || PR_CONVENTIONS_FALLBACK,
-        baseLine,
-      }) + block;
+      renderInstruction(
+        agentById("pull-request")!,
+        {
+          branch: s.branch,
+          conventions: (g.conventions || "").trim() || PR_CONVENTIONS_FALLBACK,
+          baseLine,
+        },
+        template,
+      ) + block;
 
     await this.sendAsKermanych(id, prompt, "prompt");
     // After the send, never before: the flag must belong to the turn this call just started,

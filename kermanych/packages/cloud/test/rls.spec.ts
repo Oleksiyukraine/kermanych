@@ -15,10 +15,11 @@
 // through the admin API — the same provisioning path GitHub OAuth drives.
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
-import { deleteAgentSkill, listAgentSkills, setAgentSkill } from "../src/agent-skills";
+import { listAgentSkills, setAgentSkills } from "../src/agent-skills";
+import { deleteProjectAgent, listProjectAgents, upsertProjectAgent } from "../src/project-agents";
 import { createProject, listProjects, patchProject } from "../src/projects";
 import { deleteProjectSkill, listProjectSkills, upsertProjectSkill } from "../src/skills";
-import { deleteTrigger, listTriggers, upsertTrigger } from "../src/triggers";
+import { deleteTrigger, listTriggers, setTriggerSkills, upsertTrigger } from "../src/triggers";
 import { listMembers } from "../src/workspaces";
 import {
   deleteJiraIntegration,
@@ -621,24 +622,25 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(await listProjectSkills(owner.client, [projectId])).toEqual([]);
   });
 
-  // ── project_agent_skills / project_triggers ─────────────────────────────────
-  // Same policy matrix as project_skills — members read, the workspace owner writes — so
-  // these cases exist to prove the NEW tables carry it, not to re-prove the shape. Placed
-  // before the workspace-membership tests below because the last of those ends with
+  // ── the «ШІ-команда» tables ──────────────────────────────────────────────────
+  // project_agent_skills / project_agents / project_triggers / project_trigger_skills all
+  // carry the same policy matrix as project_skills — members read, the workspace owner
+  // writes — so these cases exist to prove the tables carry it, not to re-prove the shape.
+  // Placed before the workspace-membership tests below because the last of those ends with
   // `member` removed from the workspace, which would make every read here vacuous.
-  it("the workspace owner can assign a skill to an agent and create a trigger", async () => {
-    const assignment = await setAgentSkill(owner.client, {
+  it("the workspace owner can write an agent's sequence, its instruction and a trigger", async () => {
+    await setAgentSkills(owner.client, projectId, "review", ["how-we-review"]);
+    const assignments = await listAgentSkills(owner.client, [projectId]);
+    expect(assignments).toEqual([
+      { projectId, agentId: "review", skillName: "how-we-review", position: 0 },
+    ]);
+
+    const override = await upsertProjectAgent(owner.client, {
       projectId,
       agentId: "review",
-      skillName: "how-we-review",
-      position: 2,
+      instruction: "Дивись лише на те, що змінилось.",
     });
-    expect(assignment).toEqual({
-      projectId,
-      agentId: "review",
-      skillName: "how-we-review",
-      position: 2,
-    });
+    expect(override.instruction).toBe("Дивись лише на те, що змінилось.");
 
     const trigger = await upsertTrigger(owner.client, {
       projectId,
@@ -646,22 +648,37 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
       label: "  Нова env-змінна  ",
       source: "thinking",
       pattern: "нову env|new env var",
-      action: "skill",
-      target: "how-we-add-env",
+      action: "prompt",
+      instruction: "Спитай, куди прописати змінну.",
+      agentId: "",
       mode: "remind",
       repeat: "once",
     });
     // upsertTrigger trims the label and defaults `enabled`; an omitted glob list is stored
-    // as NULL and read back as [], which is the normalisation the whole UI relies on.
+    // as NULL and read back as [], which is the normalisation the whole UI relies on. An
+    // empty agentId is stored as the NULL the 'prompt' check constraint demands.
     expect(trigger.label).toBe("Нова env-змінна");
     expect(trigger.enabled).toBe(true);
     expect(trigger.pathGlobs).toEqual([]);
+    expect(trigger.agentId).toBe("");
   });
 
-  // ai_team_touch() owns both audit columns on both tables, so a writer cannot be forged
-  // and an edit cannot be backdated. Neither column is in the typed surface, so the check
-  // reads them straight off the tables.
-  it("ai_team_touch stamps updated_by and updated_at on both tables", async () => {
+  // The point of the rework: a trigger delivers a SEQUENCE, and the order is the operator's
+  // — so it must survive a round trip, and rewriting it must not leave the dropped name.
+  it("a trigger's skill sequence round-trips in order and is replaced wholesale", async () => {
+    await setTriggerSkills(owner.client, projectId, "env-guard", ["how-we-add-env", "opening-a-pr"]);
+    let triggers = await listTriggers(owner.client, [projectId]);
+    expect(triggers[0]?.skills).toEqual(["how-we-add-env", "opening-a-pr"]);
+
+    await setTriggerSkills(owner.client, projectId, "env-guard", ["opening-a-pr"]);
+    triggers = await listTriggers(owner.client, [projectId]);
+    expect(triggers[0]?.skills).toEqual(["opening-a-pr"]);
+  });
+
+  // ai_team_touch() owns both audit columns on every one of the four tables, so a writer
+  // cannot be forged and an edit cannot be backdated. The assignment tables do not expose
+  // the columns in their typed surface, so those checks read them straight off the table.
+  it("ai_team_touch stamps updated_by and updated_at on the ШІ-команда tables", async () => {
     const assignment = await owner.client
       .from("project_agent_skills")
       .select("updated_at, updated_by")
@@ -673,6 +690,16 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(assignment.data?.updated_by).toBe(owner.id);
     expect(Date.parse(assignment.data?.updated_at as string)).not.toBeNaN();
 
+    const triggerSkill = await owner.client
+      .from("project_trigger_skills")
+      .select("updated_at, updated_by")
+      .eq("project_id", projectId)
+      .eq("trigger_id", "env-guard")
+      .eq("skill_name", "opening-a-pr")
+      .single();
+    expect(triggerSkill.error).toBeNull();
+    expect(triggerSkill.data?.updated_by).toBe(owner.id);
+
     const trigger = await owner.client
       .from("project_triggers")
       .select("updated_at, updated_by")
@@ -682,22 +709,34 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(trigger.error).toBeNull();
     expect(trigger.data?.updated_by).toBe(owner.id);
     expect(Date.parse(trigger.data?.updated_at as string)).not.toBeNaN();
+
+    const [override] = await listProjectAgents(owner.client, [projectId]);
+    expect(override?.updatedBy).toBe(owner.id);
+    expect(Date.parse(override?.updatedAt as string)).not.toBeNaN();
   });
 
-  it("a member reads the project's agent assignments and triggers", async () => {
+  it("a member reads the project's agent sequences, instructions and triggers", async () => {
     const assignments = await listAgentSkills(member.client, [projectId]);
     expect(assignments.map((a) => `${a.agentId}/${a.skillName}`)).toEqual(["review/how-we-review"]);
+
+    expect((await listProjectAgents(member.client, [projectId])).map((a) => a.agentId)).toEqual(["review"]);
 
     const triggers = await listTriggers(member.client, [projectId]);
     expect(triggers.map((t) => t.id)).toEqual(["env-guard"]);
     expect(triggers[0]?.source).toBe("thinking");
+    expect(triggers[0]?.instruction).toBe("Спитай, куди прописати змінну.");
+    expect(triggers[0]?.skills).toEqual(["opening-a-pr"]);
   });
 
   // The configuration a session launches with is the workspace owner's call: a member reads
-  // it and runs under it, but cannot change who does what.
-  it("a member cannot write or delete an assignment or a trigger", async () => {
+  // it and runs under it, but cannot change who does what, with what instruction.
+  it("a member cannot write or delete an assignment, an instruction or a trigger", async () => {
+    await expect(setAgentSkills(member.client, projectId, "plan", ["member-written"])).rejects.toThrow(
+      /row-level security|violates/,
+    );
+
     await expect(
-      setAgentSkill(member.client, { projectId, agentId: "plan", skillName: "member-written" }),
+      upsertProjectAgent(member.client, { projectId, agentId: "plan", instruction: "не моє" }),
     ).rejects.toThrow(/row-level security|violates/);
 
     await expect(
@@ -707,8 +746,9 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
         label: "should never land",
         source: "operator",
         pattern: "anything",
-        action: "skill",
-        target: "how-we-add-env",
+        action: "prompt",
+        instruction: "нічого",
+        agentId: "",
         mode: "remind",
         repeat: "once",
       }),
@@ -716,27 +756,29 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
 
     // A refused DELETE matches zero rows and reports success; both modules turn that empty
     // result into a throw, which is the only thing that makes the refusal visible.
-    await expect(deleteAgentSkill(member.client, projectId, "review", "how-we-review")).rejects.toThrow(
-      /was not unassigned/,
-    );
+    await expect(deleteProjectAgent(member.client, projectId, "review")).rejects.toThrow(/was not reset/);
     await expect(deleteTrigger(member.client, projectId, "env-guard")).rejects.toThrow(/was not deleted/);
 
+    // A refused replace-all has no `.select()` to fall back on — the delete half matches
+    // nothing and reports success — so what proves nothing moved is the owner's own read.
     const assignments = await listAgentSkills(owner.client, [projectId]);
     expect(assignments.map((a) => a.skillName)).toEqual(["how-we-review"]);
     const triggers = await listTriggers(owner.client, [projectId]);
     expect(triggers.map((t) => t.id)).toEqual(["env-guard"]);
+    expect(triggers[0]?.skills).toEqual(["opening-a-pr"]);
   });
 
-  it("a non-member sees zero assignments and zero triggers", async () => {
+  it("a non-member sees zero assignments, zero instructions and zero triggers", async () => {
     expect(await listAgentSkills(outsider.client, [projectId])).toEqual([]);
+    expect(await listProjectAgents(outsider.client, [projectId])).toEqual([]);
     expect(await listTriggers(outsider.client, [projectId])).toEqual([]);
   });
 
   // A child omp process cannot call back into Kermanych, so a trigger that RUNS AN AGENT is
-  // only meaningful when Kermanych itself matched it — that is, `source: 'operator'`. The
-  // editor blocks the combination too; this constraint is what makes it true for psql and
-  // for a direct PostgREST call.
-  it("an agent-action trigger from a non-operator source is refused by the check constraint", async () => {
+  // only meaningful when Kermanych itself matched it — that is, `source: 'operator'` — and
+  // it is nothing at all without an agent id. The editor blocks both; these constraints are
+  // what make it true for psql and for a direct PostgREST call.
+  it("an agent-action trigger needs an operator source and an agent id", async () => {
     await expect(
       upsertTrigger(owner.client, {
         projectId,
@@ -745,7 +787,21 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
         source: "thinking",
         pattern: "щось",
         action: "agent",
-        target: "review",
+        agentId: "review",
+        mode: "remind",
+        repeat: "once",
+      }),
+    ).rejects.toThrow(/project_triggers_agent_action_is_operator/);
+
+    await expect(
+      upsertTrigger(owner.client, {
+        projectId,
+        id: "agent-nobody",
+        label: "агент без агента",
+        source: "operator",
+        pattern: "щось",
+        action: "agent",
+        agentId: "",
         mode: "remind",
         repeat: "once",
       }),
@@ -758,15 +814,29 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
       source: "operator",
       pattern: "перевір",
       action: "agent",
-      target: "review",
+      agentId: "review",
       mode: "interrupt",
       repeat: "after-gap",
       pathGlobs: ["apps/api/**"],
     });
     expect(operatorSourced.action).toBe("agent");
+    expect(operatorSourced.agentId).toBe("review");
     expect(operatorSourced.pathGlobs).toEqual(["apps/api/**"]);
 
     await expect(deleteTrigger(owner.client, projectId, "good-agent")).resolves.toBeUndefined();
+  });
+
+  // The sequence hangs off the trigger by a composite FK, not off the project: dropping the
+  // trigger must not leave its skills behind as rows nothing can reach or delete.
+  it("deleting a trigger cascades its skill sequence away", async () => {
+    await expect(deleteTrigger(owner.client, projectId, "env-guard")).resolves.toBeUndefined();
+    const orphans = await owner.client
+      .from("project_trigger_skills")
+      .select("skill_name")
+      .eq("project_id", projectId)
+      .eq("trigger_id", "env-guard");
+    expect(orphans.error).toBeNull();
+    expect(orphans.data).toEqual([]);
   });
 
   // handle_new_workspace() is the mirror of the retired handle_new_project(): the

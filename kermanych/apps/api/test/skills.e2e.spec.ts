@@ -159,7 +159,8 @@ describe.skipIf(!gated)("a Kermanych trigger fires inside a real omp child", () 
     const trigger: ProjectTrigger = {
       projectId: "p1", id: "probe-thinking", label: "Probezorb policy", enabled: true,
       source: "thinking", pattern: "probezorb", pathGlobs: [],
-      action: "skill", target: "probe-zorb-policy", mode: "remind", repeat: "once",
+      action: "prompt", instruction: "", agentId: "", skills: ["probe-zorb-policy"],
+      mode: "remind", repeat: "once",
     };
     svc.readTriggers = async () => [trigger];
 

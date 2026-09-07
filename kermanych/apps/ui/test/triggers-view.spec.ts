@@ -17,10 +17,11 @@ test('only an operator-sourced trigger may run an agent', () => {
   // A child has no callback into Kermanych, so an `agent` action can only hang off the one
   // source Kermanych itself matches. The DB carries the same rule as a check constraint
   // (project_triggers_agent_action_is_operator); this is what stops the editor from offering
-  // a choice that postgrest would refuse on save.
-  expect(triggerActionOptions('operator').map((o) => o.value)).toEqual(['skill', 'agent']);
+  // a choice that postgrest would refuse on save. Every source gets `prompt`: an instruction
+  // of the trigger's own plus its ordered skills is a delivery, not a callback.
+  expect(triggerActionOptions('operator').map((o) => o.value)).toEqual(['prompt', 'agent']);
   for (const s of ['assistant', 'thinking', 'tool'] as const) {
-    expect(triggerActionOptions(s).map((o) => o.value)).toEqual(['skill']);
+    expect(triggerActionOptions(s).map((o) => o.value)).toEqual(['prompt']);
   }
 });
 

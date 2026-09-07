@@ -9,8 +9,10 @@ import type { Dirent } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  agentById,
   assignedBlock,
   DEFAULT_SKILLS,
+  instructionErrors,
   isSkillName,
   renderSkillFile,
   type ProjectSkillsPayload,
@@ -19,9 +21,11 @@ import {
 } from "@kermanych/core";
 import {
   listAgentSkills,
+  listProjectAgents,
   listProjectSkills,
   listTriggers,
   type AgentSkill,
+  type ProjectAgent,
   type ProjectSkill,
   type ProjectTrigger,
 } from "@kermanych/cloud";
@@ -297,6 +301,39 @@ export class SkillsService {
     listAgentSkills(this.auth.cloudClient(), [projectId]);
   readTriggers = async (projectId: string): Promise<ProjectTrigger[]> =>
     listTriggers(this.auth.cloudClient(), [projectId]);
+  readAgentInstructions = async (projectId: string): Promise<ProjectAgent[]> =>
+    listProjectAgents(this.auth.cloudClient(), [projectId]);
+
+  // The project's own text for one of Kermanych's agents, or `undefined` when the
+  // compile-time default is what must run. The template is checked HERE as well as in the
+  // editor because the row can OUTLIVE the template it was written against: an agent whose
+  // holes change leaves every saved override behind, and neither way of being stale is
+  // visible to the operator. One that lost a hole runs the agent starved of the very context
+  // it was written around — no diff, no branch — and one that names a hole that no longer
+  // exists makes renderInstruction throw mid-session. The default is always renderable, so a
+  // stale override is dropped rather than delivered.
+  async instructionFor(projectId: string, agentId: string): Promise<string | undefined> {
+    const def = agentById(agentId);
+    if (!def) return undefined;
+    let rows: ProjectAgent[];
+    try {
+      assertProjectId(projectId);
+      rows = await this.readAgentInstructions(projectId);
+    } catch {
+      return undefined; // offline, signed out, or an id that is not a project
+    }
+    const template = rows.find((r) => r.agentId === agentId)?.instruction.trim();
+    if (!template) return undefined;
+    const { missing, unknown } = instructionErrors(def, template);
+    if (missing.length === 0 && unknown.length === 0) return template;
+    // Unlike a failed cloud read, this is a project that HAS an instruction and is silently
+    // not getting it — the one degradation on this path worth a line in the log.
+    console.warn(
+      `[skills] instruction for ${agentId} ignored in project ${projectId}:` +
+        ` missing ${missing.join(", ") || "none"}, unknown ${unknown.join(", ") || "none"}`,
+    );
+    return undefined;
+  }
 
   // What one agent's instruction carries for the skills assigned to it: the block to append,
   // the view the UI labels the rows with, and the names that resolved to nothing. Never
@@ -522,16 +559,18 @@ export class SkillsService {
     } catch {
       return {}; // offline or signed out
     }
-    // A trigger's body is the text it fires. `action: "skill"` resolves through the same
-    // three-level precedence as an assignment; `action: "agent"` cannot occur here (a child
-    // has no callback into Kermanych) and is skipped if an older row still carries it.
+    // A trigger's body is the text it fires: the operator's own instruction first, then the
+    // bodies of the skills it names, in the order they were given — the instruction says what
+    // to do about the match and the skills say how, so it reads in that order. `action:
+    // "agent"` cannot occur here (a child has no callback into Kermanych) and is skipped.
     // An empty body is not written: a rule that fires and says nothing spends a turn and
     // makes the model investigate the rule instead of acting (design §2.6).
     const bodies = new Map<string, string>();
     for (const t of triggers) {
-      if (t.action !== "skill") continue;
-      const { block } = await this.assignedForNames(projectId, [t.target], cwd);
-      if (block.trim()) bodies.set(t.id, block.trim());
+      if (t.action === "agent") continue;
+      const { block } = await this.assignedForNames(projectId, t.skills, cwd);
+      const body = [t.instruction.trim(), block.trim()].filter(Boolean).join("\n\n");
+      if (body) bodies.set(t.id, body);
     }
     if (bodies.size === 0) {
       // A package left behind would keep firing rules whose triggers are gone, and an empty

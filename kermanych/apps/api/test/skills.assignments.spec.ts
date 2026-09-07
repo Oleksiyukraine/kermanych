@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_SKILLS } from "@kermanych/core";
-import type { AgentSkill, ProjectSkill } from "@kermanych/cloud";
+import type { AgentSkill, ProjectAgent, ProjectSkill } from "@kermanych/cloud";
 import { SkillsService } from "../src/skills/skills.service";
 
 const P = "11111111-1111-4111-8111-111111111111";
@@ -89,4 +89,53 @@ test("an unreachable cloud degrades to no block instead of failing the launch", 
   const svc = service([], []);
   svc.readAssignments = async () => { throw new Error("offline"); };
   await expect(svc.assignedFor(P, "review", repo)).resolves.toEqual({ block: "", view: [], missing: [] });
+});
+
+// ---- instructionFor -------------------------------------------------------------------
+// The per-project instruction, which the four launch sites render instead of the compile-time
+// default. Validated on the way OUT as well as in the editor: a row outlives the template it
+// was written against.
+
+const override = (instruction: string, agentId = "review"): ProjectAgent =>
+  ({ projectId: P, agentId, instruction, updatedAt: "t" });
+
+test("a project's template is returned once it fills every hole the agent declares", async () => {
+  const svc = service([], []);
+  svc.readAgentInstructions = async () => [
+    override("Дивись {{task}} на {{base}}…{{branch}}: {{diff}}"),
+    override("не для цього агента", "promote"),
+  ];
+  await expect(svc.instructionFor(P, "review")).resolves.toBe("Дивись {{task}} на {{base}}…{{branch}}: {{diff}}");
+});
+
+test("a template that no longer matches the agent's holes is dropped, not delivered", async () => {
+  // Both directions of stale: a hole the agent still fills but the text no longer uses (the
+  // agent would run with no diff and never say so), and one the agent cannot fill at all
+  // (renderInstruction would throw mid-session).
+  const svc = service([], []);
+  svc.readAgentInstructions = async () => [override("Подивись {{task}} на {{base}} у {{branch}}.")];
+  await expect(svc.instructionFor(P, "review")).resolves.toBeUndefined();
+
+  svc.readAgentInstructions = async () => [override("{{task}} {{base}} {{branch}} {{diff}} {{whatever}}")];
+  await expect(svc.instructionFor(P, "review")).resolves.toBeUndefined();
+});
+
+test("no row, a blank row, an unknown agent and an unreachable cloud all mean the default", async () => {
+  // Every one of these is "render the compile-time text": the method has no way to fail that
+  // could cost an agent its run.
+  const svc = service([], []);
+  svc.readAgentInstructions = async () => [];
+  await expect(svc.instructionFor(P, "review")).resolves.toBeUndefined();
+
+  svc.readAgentInstructions = async () => [override("   ")];
+  await expect(svc.instructionFor(P, "review")).resolves.toBeUndefined();
+
+  svc.readAgentInstructions = async () => [override("що завгодно", "not-an-agent")];
+  await expect(svc.instructionFor(P, "not-an-agent")).resolves.toBeUndefined();
+
+  svc.readAgentInstructions = async () => { throw new Error("offline"); };
+  await expect(svc.instructionFor(P, "review")).resolves.toBeUndefined();
+  // And an id that is not a project throws for every other read on this service; here it is
+  // the same degradation, because a launch must not die on it.
+  await expect(svc.instructionFor("../evil", "review")).resolves.toBeUndefined();
 });

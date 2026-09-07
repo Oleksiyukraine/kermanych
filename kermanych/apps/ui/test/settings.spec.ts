@@ -57,43 +57,31 @@ describe('SETTINGS_CATEGORIES', () => {
     expect(scopes).toEqual(firstSeen.flatMap((s) => scopes.filter((x) => x === s)));
   });
 
-  // The skill library used to be a Менеджмент screen of its own. It is a project
-  // setting, so the rail — not the Менеджмент sub-nav — is where it is reached, and
-  // the scope is what keeps it hidden until a project is selected.
-  it('carries the skill library at the project scope', () => {
-    const skills = settingsSection('project-skills');
-    expect(skills.key).toBe('project-skills');
-    expect(skills.scope).toBe('project');
+  // The three AI-team panes are ONE group at the project scope, and the rail prints its
+  // caption from `group` rather than from a hard-coded key list. Order is load-bearing:
+  // Агенти holds the instruction the other two modify, Тригери fires without the model
+  // deciding, and Навички is the library both draw from.
+  it('carries the AI-team group as three consecutive project-scoped rows', () => {
+    const group = SETTINGS_CATEGORIES.filter((c) => c.group === 'ai-team');
+    expect(group.map((c) => c.key)).toEqual(['project-agents', 'project-triggers', 'project-skills']);
+    expect(group.every((c) => c.scope === 'project')).toBe(true);
+    const keys = SETTINGS_CATEGORIES.map((c) => c.key);
+    expect(keys.indexOf('project-triggers')).toBe(keys.indexOf('project-agents') + 1);
+    expect(keys.indexOf('project-skills')).toBe(keys.indexOf('project-triggers') + 1);
   });
 
-  // The agent catalogue is an APP setting, not a project one: `AGENTS` is a compile-time
-  // constant of the harness itself, identical for every project and every workspace.
-  it('carries the agent catalogue at the app scope', () => {
-    const agents = settingsSection('app-agents');
-    expect(agents.key).toBe('app-agents');
-    expect(agents.scope).toBe('app');
+  // The agent catalogue used to be an APP pane over `AGENTS`, on the grounds that the
+  // registry is a compile-time constant. An agent's instruction and its skills are now
+  // per-project cloud rows, so there is nothing app-wide left to show and no app-scoped
+  // row to reach: the whole section is gone, not merely relabelled.
+  it('has no app-scoped agents section', () => {
+    expect(SETTINGS_CATEGORIES.some((c) => c.key === 'app-agents')).toBe(false);
+    // A stale /settings/app-agents bookmark is a typo like any other: it lands on the default.
+    expect(settingsSection('app-agents').key).toBe(SETTINGS_DEFAULT_SECTION);
   });
 
-  // The board is the mirror image of the catalogue above: the team is app-wide, but WHICH
-  // skills each role is handed is a per-project decision, stored per project — so it is the
-  // project scope that keeps the pane hidden until there is a project to write for.
-  it('carries the assignment board at the project scope', () => {
-    const board = settingsSection('project-agents');
-    expect(board.key).toBe('project-agents');
-    expect(board.scope).toBe('project');
-  });
-
-  // Triggers are the third project-scoped pane of «ШІ команда» and the last row of the rail's
-  // project block before the danger zone: a trigger names a skill from THIS project's library
-  // and is stored per project, so it cannot live at the app scope beside the catalogue.
-  it('carries the trigger list at the project scope', () => {
-    const triggers = settingsSection('project-triggers');
-    expect(triggers.key).toBe('project-triggers');
-    expect(triggers.scope).toBe('project');
-  });
-
-  // Хелпери are baked into the app exactly like `AGENTS`, so they sit beside the agent
-  // catalogue at the app scope: nothing here is per-project, and the pane is read-only.
+  // Хелпери are baked into the app — `DEFAULT_HELPERS` is a compile-time constant and the
+  // pane is read-only — so they stay at the app scope now that the agents left it.
   it('carries the helper catalogue at the app scope', () => {
     const helpers = settingsSection('app-helpers');
     expect(helpers.key).toBe('app-helpers');

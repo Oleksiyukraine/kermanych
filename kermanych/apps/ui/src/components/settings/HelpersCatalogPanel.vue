@@ -42,8 +42,9 @@
 <script setup lang="ts">
 // The Хелпери catalogue — read-only, and with nothing to read: `DEFAULT_HELPERS` is a
 // compile-time constant of the app, identical for every project, workspace and machine, so
-// this panel makes no api call and no cloud query. Same stance and same shape as
-// AgentCatalogPanel: the text shown IS the text the model gets, not a description of it.
+// this panel makes no api call and no cloud query. It keeps the stance AiAgentsPanel takes for
+// an agent's instruction: the text shown IS the text the model gets, not a description of it —
+// what it does NOT have is a project override, because a helper is a harness command.
 import { DEFAULT_HELPERS } from '@kermanych/core';
 import { useI18n } from 'vue-i18n';
 

@@ -12,7 +12,8 @@ import { renderRuleFile, SkillsService, triggersRoot } from "../src/skills/skill
 const t = (over: Partial<ProjectTrigger>): ProjectTrigger => ({
   projectId: "p1", id: "env-guard", label: "Нова env-змінна", enabled: true,
   source: "thinking", pattern: "new env var", pathGlobs: [],
-  action: "skill", target: "how-we-add-env", mode: "remind", repeat: "once", ...over,
+  action: "prompt", instruction: "", agentId: "", skills: ["how-we-add-env"],
+  mode: "remind", repeat: "once", ...over,
 });
 
 test("a thinking trigger becomes a rule scoped to thinking, soft by default", () => {
@@ -117,7 +118,7 @@ test("the package is a loadable extension: package.json, an entry point, and one
 });
 
 test("an operator-sourced trigger writes no rule file", async () => {
-  const svc = service([t({ id: "wants-pr", source: "operator", action: "agent", target: "pull-request" })]);
+  const svc = service([t({ id: "wants-pr", source: "operator", action: "agent", skills: [], agentId: "pull-request" })]);
   const { packagePath } = await svc.materializeTriggers("p1", SID, repo);
   expect(packagePath).toBeUndefined();
   expect(existsSync(join(triggersRoot(), SID, "rules", "wants-pr.md"))).toBe(false);
@@ -137,11 +138,32 @@ test("a disabled trigger writes no rule file", async () => {
   expect(await svc.materializeTriggers("p1", SID, repo)).toEqual({});
 });
 
-test("a trigger whose target resolves to nothing writes no rule file", async () => {
+test("a trigger whose skills all resolve to nothing writes no rule file", async () => {
   // A dangling name is reported by the UI, not silently turned into an empty rule: a rule with
   // no body would fire and tell the model nothing.
-  const svc = service([t({ target: "no-such-skill" })], []);
+  const svc = service([t({ skills: ["no-such-skill"] })], []);
   expect(await svc.materializeTriggers("p1", SID, repo)).toEqual({});
+});
+
+// The whole point of the sequence: a trigger delivers its own words and then every skill it
+// names, in the operator's order — one rule file, not one per skill.
+test("the rule body is the instruction followed by every named skill, in order", async () => {
+  const svc = service(
+    [t({ instruction: "Спитай, куди її класти.", skills: ["how-we-add-env", "house-style"] })],
+    [row({ name: "how-we-add-env", body: "ADD ENV" }), row({ name: "house-style", body: "HOUSE STYLE" })],
+  );
+  const { packagePath } = await svc.materializeTriggers("p1", SID, repo);
+  const rule = readFileSync(join(packagePath!, "rules", "env-guard.md"), "utf8");
+  expect(rule.indexOf("Спитай, куди її класти.")).toBeLessThan(rule.indexOf("ADD ENV"));
+  expect(rule.indexOf("ADD ENV")).toBeLessThan(rule.indexOf("HOUSE STYLE"));
+});
+
+// An instruction alone is a complete trigger: the operator wrote the words, so there is
+// nothing left to resolve and the rule still has something to say.
+test("a trigger with an instruction and no skills still writes its rule", async () => {
+  const svc = service([t({ instruction: "Спершу спитай.", skills: [] })]);
+  const { packagePath } = await svc.materializeTriggers("p1", SID, repo);
+  expect(readFileSync(join(packagePath!, "rules", "env-guard.md"), "utf8")).toContain("Спершу спитай.");
 });
 
 test("a repository skill of the same name supplies the rule body", async () => {
@@ -188,7 +210,7 @@ test("ids that would escape the triggers root are refused", async () => {
 
 test("operatorTriggers returns only the enabled operator rows, in a stable order", async () => {
   const svc = service([
-    t({ id: "zeta", source: "operator", action: "agent", target: "review" }),
+    t({ id: "zeta", source: "operator", action: "agent", skills: [], agentId: "review" }),
     t({ id: "alpha", source: "operator" }),
     t({ id: "off", source: "operator", enabled: false }),
     t({ id: "thinker" }),
