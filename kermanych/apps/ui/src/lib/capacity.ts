@@ -185,10 +185,18 @@ export type CapacityOptions = {
   range: CapacityRange;
   // Caller-supplied, as todayIso() everywhere else: the maths must be testable on a fixed day.
   today: string;
+  // The team-wide baseline hours/day, used for any person without an entry in `hoursPerDayByPerson`.
   hoursPerDay?: number;
+  // Per-person hours/day overrides (accountId → hours). A member here is planned and totalled
+  // at their own rate; everyone else falls back to `hoursPerDay`. This is what lets the screen
+  // set one capacity for the whole team or a different one per member.
+  hoursPerDayByPerson?: Record<string, number>;
   granularity?: CapacityGranularity;
   // An assignee's accountId (or UNASSIGNED): restrict the whole report to one person.
   person?: string;
+  // Person ids left out of the team totals/summary. They stay in `persons`/`cells` so the
+  // legend can still show and re-enable them; they just do not count toward the aggregate.
+  excluded?: readonly string[];
 };
 
 export type CapacityReport = {
@@ -208,6 +216,8 @@ export type CapacityReport = {
   issues: CapacityIssueRow[];
   unscheduled: CapacityIssueRow[];
   overdue: CapacityIssueRow[];
+  // The subset of `persons` (echoed back) whose cells are kept out of `totals`/`summary`.
+  excluded: string[];
 };
 
 function cellOf(capacity: number, planned: number, logged: number): CapacityCell {
@@ -320,20 +330,26 @@ export function capacityReport(
     add(logged, id, i, w.seconds);
   }
 
-  const capacityOf = (p: CapacityPeriod) => p.businessDays * hoursPerDay * 3600;
+  // Each person is planned and totalled at their own rate: an explicit override, else the
+  // team-wide baseline. This is the one knob Jira does not have (see the file header).
+  const perPerson = opts.hoursPerDayByPerson;
+  const capacityOf = (p: CapacityPeriod, id: string) => p.businessDays * (perPerson?.[id] ?? hoursPerDay) * 3600;
   const ids = [...persons.keys()];
-  const withCapacity = ids.filter((id) => id !== UNASSIGNED).length;
+  // Excluded ids stay in `persons`/`cells` (so the legend can re-enable them) but drop out
+  // of the aggregate — a manager who mutes a contractor wants a total without them.
+  const excluded = new Set([...(opts.excluded ?? [])].filter((id) => persons.has(id)));
+  const activeIds = ids.filter((id) => !excluded.has(id));
   const cells: Record<string, CapacityCell[]> = {};
   for (const id of ids)
     cells[id] = periods.map((p, i) =>
       // The unassigned bucket is load with nobody's hours behind it.
-      cellOf(id === UNASSIGNED ? 0 : capacityOf(p), planned.get(id)?.[i] ?? 0, logged.get(id)?.[i] ?? 0),
+      cellOf(id === UNASSIGNED ? 0 : capacityOf(p, id), planned.get(id)?.[i] ?? 0, logged.get(id)?.[i] ?? 0),
     );
   const totals = periods.map((p, i) =>
     cellOf(
-      withCapacity * capacityOf(p),
-      ids.reduce((s, id) => s + (planned.get(id)?.[i] ?? 0), 0),
-      ids.reduce((s, id) => s + (logged.get(id)?.[i] ?? 0), 0),
+      activeIds.reduce((s, id) => s + (id === UNASSIGNED ? 0 : capacityOf(p, id)), 0),
+      activeIds.reduce((s, id) => s + (planned.get(id)?.[i] ?? 0), 0),
+      activeIds.reduce((s, id) => s + (logged.get(id)?.[i] ?? 0), 0),
     ),
   );
 
@@ -365,6 +381,7 @@ export function capacityReport(
     issues: rows,
     unscheduled: rows.filter((r) => r.flag === 'unscheduled'),
     overdue: rows.filter((r) => r.flag === 'overdue'),
+    excluded: [...excluded],
   };
 }
 

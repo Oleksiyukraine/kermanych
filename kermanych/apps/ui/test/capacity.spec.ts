@@ -207,6 +207,31 @@ describe('capacityReport', () => {
     expect(r.summary.loggedSeconds).toBe(5 * H);
   });
 
+  it('applies a team-wide hours/day baseline to every person', () => {
+    const r = capacityReport(issues, worklogs, { range, today: TODAY, hoursPerDay: 6 });
+    expect(r.cells.acc1![2]!.capacitySeconds).toBe(6 * H);
+    // Three people with capacity × 5 business days × 6h.
+    expect(r.summary.capacitySeconds).toBe(3 * 5 * 6 * H);
+  });
+
+  it('honours per-person hours/day and falls back to the baseline', () => {
+    const r = capacityReport(issues, worklogs, { range, today: TODAY, hoursPerDay: 8, hoursPerDayByPerson: { acc1: 4 } });
+    expect(r.cells.acc1![2]!.capacitySeconds).toBe(4 * H); // overridden
+    expect(r.cells.acc2![2]!.capacitySeconds).toBe(8 * H); // baseline
+    expect(r.summary.capacitySeconds).toBe((4 + 8 + 8) * 5 * H);
+  });
+
+  it('drops excluded persons from the aggregate but keeps them on the roster', () => {
+    const r = capacityReport(issues, worklogs, { range, today: TODAY, excluded: ['acc2'] });
+    expect(r.excluded).toEqual(['acc2']);
+    // acc2 keeps its own cells for the legend to re-enable…
+    expect(r.persons.map((p) => p.id)).toContain('acc2');
+    expect(r.cells.acc2![2]!.plannedSeconds).toBe(40 * H);
+    // …but is gone from the total: two people with capacity, and no 40h from Olha.
+    expect(r.summary.capacitySeconds).toBe(2 * 5 * 8 * H);
+    expect(r.summary.plannedSeconds).toBe(6 * H + 4 * H);
+  });
+
   it('rolls into weeks with partial-week capacity', () => {
     const r = capacityReport(issues, worklogs, { range: { from: '2026-09-02', to: '2026-09-15' }, today: TODAY, granularity: 'week' });
     expect(r.periods.map((p) => p.key)).toEqual(['2026-08-31', '2026-09-07', '2026-09-14']);

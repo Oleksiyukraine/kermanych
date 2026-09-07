@@ -42,6 +42,43 @@
 
       <p v-if="jira.loadError" class="cap__error">{{ t('management.capacity.loadError', { error: jira.loadError }) }}</p>
 
+      <div class="cap__capbar">
+        <span class="cap__capbar-label mono">{{ t('management.capacity.capacityLabel') }}</span>
+        <KChipSelect v-model="capacityMode" :options="capacityModeOptions" :title="t('management.capacity.capacityLabel')" placement="down" />
+        <label v-if="capacityMode === 'team'" class="cap__capnum">
+          <input
+            class="cap__capnum-input mono"
+            type="number"
+            min="0"
+            max="24"
+            step="0.5"
+            :value="teamHoursPerDay"
+            :aria-label="t('management.capacity.capacityLabel')"
+            @input="(e) => setTeamHours((e.target as HTMLInputElement).value)"
+          />
+          <span class="cap__capnum-unit mono">{{ t('management.capacity.hPerDay') }}</span>
+        </label>
+      </div>
+
+      <div v-if="capacityMode === 'member' && members.length" class="cap__members">
+        <label v-for="p in members" :key="p.id" class="cap__member">
+          <span class="cap__member-name">{{ personName(p) }}</span>
+          <span class="cap__capnum">
+            <input
+              class="cap__capnum-input mono"
+              type="number"
+              min="0"
+              max="24"
+              step="0.5"
+              :value="memberHours[p.id] ?? teamHoursPerDay"
+              :aria-label="personName(p)"
+              @input="(e) => setMemberHours(p.id, (e.target as HTMLInputElement).value)"
+            />
+            <span class="cap__capnum-unit mono">{{ t('management.capacity.hPerDay') }}</span>
+          </span>
+        </label>
+      </div>
+
       <div class="cap__stats">
         <article class="cap__stat">
           <span class="cap__stat-label mono">{{ t('management.capacity.stat.capacity') }}</span>
@@ -78,7 +115,7 @@
         </p>
       </div>
 
-      <CapacityChart v-else-if="view === 'chart' && !flaggedOnly" :report="report" @pick="pickPerson" />
+      <CapacityChart v-else-if="view === 'chart' && !flaggedOnly" :report="report" @toggle="toggleSeries" />
 
       <div v-else-if="teamTable" class="cap__table-wrap">
         <KTable :columns="teamColumns" :rows="teamRows" :row-key="(r: TeamRow) => r.id" clickable @row-click="(r: TeamRow) => pickPerson(r.id)">
@@ -196,7 +233,16 @@ const CUSTOM = 'custom';
 
 // Remembered per workspace, like the board's view switch: a manager who looks at «next two
 // weeks» every Monday should not have to pick it every Monday.
-type Saved = { from: string; to: string; preset: CapacityPreset | ''; granularity: CapacityGranularity | '' };
+type Saved = {
+  from: string;
+  to: string;
+  preset: CapacityPreset | '';
+  granularity: CapacityGranularity | '';
+  capacityMode?: 'team' | 'member';
+  teamHoursPerDay?: number;
+  memberHours?: Record<string, number>;
+  excluded?: string[];
+};
 const storageKey = () => `capacity:${props.workspaceId}`;
 function readSaved(): Saved | undefined {
   try {
@@ -212,6 +258,46 @@ const from = ref('');
 const to = ref('');
 // '' = follow the range length (defaultGranularity); set once the operator chose.
 const granularityChoice = ref<CapacityGranularity | ''>('');
+
+// ── capacity model ──────────────────────────────────────────────────────────────
+// The team-wide baseline hours/day, and — in «per member» mode — the per-person overrides
+// keyed by accountId. Together they set what one person's day is worth, and so the team's.
+const capacityMode = ref<string>('team');
+const teamHoursPerDay = ref<number>(DEFAULT_HOURS_PER_DAY);
+const memberHours = ref<Record<string, number>>({});
+// Legend keys the operator switched off: out of the chart and out of the total alike.
+const excluded = ref<Set<string>>(new Set());
+
+const capacityModeOptions = computed(() => [
+  { value: 'team', label: t('management.capacity.capMode.team') },
+  { value: 'member', label: t('management.capacity.capMode.member') },
+]);
+
+function setTeamHours(raw: string): void {
+  const n = Number(raw);
+  if (raw.trim() !== '' && !Number.isNaN(n)) teamHoursPerDay.value = Math.min(24, Math.max(0, n));
+}
+
+function setMemberHours(id: string, raw: string): void {
+  const n = Number(raw);
+  const next = { ...memberHours.value };
+  // An emptied field means «follow the team baseline», so the override is dropped.
+  if (raw.trim() === '' || Number.isNaN(n)) delete next[id];
+  else next[id] = Math.min(24, Math.max(0, n));
+  memberHours.value = next;
+}
+
+// A legend click toggles a whole series (one person, or every member folded into «Others»):
+// all-off flips them back on, otherwise all off.
+function toggleSeries(ids: string[]): void {
+  const next = new Set(excluded.value);
+  const allOff = ids.every((id) => next.has(id));
+  for (const id of ids) {
+    if (allOff) next.delete(id);
+    else next.add(id);
+  }
+  excluded.value = next;
+}
 
 function applyPreset(p: CapacityPreset): void {
   const r = presetRange(p, today.value);
@@ -261,9 +347,21 @@ const granularityTabs = computed(() => [
   { value: 'week', label: t('management.capacity.granularity.week') },
 ]);
 
-watch([from, to, preset, granularityChoice], () => {
+watch([from, to, preset, granularityChoice, capacityMode, teamHoursPerDay, memberHours, excluded], () => {
   try {
-    localStorage.setItem(storageKey(), JSON.stringify({ from: from.value, to: to.value, preset: preset.value, granularity: granularityChoice.value } satisfies Saved));
+    localStorage.setItem(
+      storageKey(),
+      JSON.stringify({
+        from: from.value,
+        to: to.value,
+        preset: preset.value,
+        granularity: granularityChoice.value,
+        capacityMode: capacityMode.value === 'member' ? 'member' : 'team',
+        teamHoursPerDay: teamHoursPerDay.value,
+        memberHours: memberHours.value,
+        excluded: [...excluded.value],
+      } satisfies Saved),
+    );
   } catch {
     /* private mode: the preference just does not stick */
   }
@@ -327,6 +425,10 @@ async function enter(id: string): Promise<void> {
     preset.value = '';
   } else applyPreset('next2Weeks');
   if (saved?.granularity === 'day' || saved?.granularity === 'week') granularityChoice.value = saved.granularity;
+  capacityMode.value = saved?.capacityMode === 'member' ? 'member' : 'team';
+  teamHoursPerDay.value = typeof saved?.teamHoursPerDay === 'number' ? saved.teamHoursPerDay : DEFAULT_HOURS_PER_DAY;
+  memberHours.value = saved?.memberHours && typeof saved.memberHours === 'object' ? { ...saved.memberHours } : {};
+  excluded.value = new Set(Array.isArray(saved?.excluded) ? saved.excluded : []);
   openToken = await jira.open(id);
   void loadWorklogs();
 }
@@ -365,6 +467,9 @@ const teamReport = computed(() =>
     range: range.value ?? { from: today.value, to: today.value },
     today: today.value,
     granularity: granularityModel.value as CapacityGranularity,
+    hoursPerDay: teamHoursPerDay.value,
+    ...(capacityMode.value === 'member' ? { hoursPerDayByPerson: memberHours.value } : {}),
+    excluded: [...excluded.value],
   }),
 );
 const report = computed(() =>
@@ -375,6 +480,9 @@ const report = computed(() =>
         today: today.value,
         granularity: granularityModel.value as CapacityGranularity,
         person: person.value,
+        hoursPerDay: teamHoursPerDay.value,
+        ...(capacityMode.value === 'member' ? { hoursPerDayByPerson: memberHours.value } : {}),
+        excluded: [...excluded.value],
       }),
 );
 
@@ -386,6 +494,9 @@ const personOptions = computed<KSelectOption[]>(() => [
   { value: ALL, label: t('management.capacity.wholeTeam') },
   ...teamReport.value.persons.map((p) => ({ value: p.id, label: personName(p) })),
 ]);
+
+// Everyone with capacity — the unassigned bucket has none, so it gets no per-member row.
+const members = computed(() => teamReport.value.persons.filter((p) => p.id !== UNASSIGNED));
 
 // ── presentation ──────────────────────────────────────────────────────────────
 
@@ -530,6 +641,71 @@ const issueRows = computed<CapacityIssueRow[]>(() =>
   > :last-child {
     margin-left: auto;
   }
+}
+
+.cap__capbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--k-sp-2) var(--k-sp-3);
+}
+
+.cap__capbar-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--k-faint);
+}
+
+.cap__capnum {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cap__capnum-input {
+  width: 64px;
+  font-family: var(--k-font-mono);
+  font-size: 13px;
+  color: var(--k-text);
+  background: var(--k-surface);
+  border: 1px solid var(--k-line-strong);
+  padding: 6px 8px;
+  border-radius: var(--k-r);
+  outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
+
+  &:focus {
+    border-color: var(--k-accent);
+    box-shadow: inset 0 0 0 1px var(--k-accent);
+  }
+}
+
+.cap__capnum-unit {
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
+}
+
+.cap__members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--k-sp-2) var(--k-sp-4);
+  padding: var(--k-sp-3);
+  background: color-mix(in srgb, var(--k-surface2) 30%, transparent);
+  border: var(--k-rule-thin) solid var(--k-line);
+  border-radius: var(--k-r-lg);
+}
+
+.cap__member {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+}
+
+.cap__member-name {
+  min-width: 90px;
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
 }
 
 .cap__error {

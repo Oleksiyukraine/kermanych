@@ -72,7 +72,7 @@
       <!-- Today: the boundary between what was logged and what is planned. -->
       <g v-if="todayX !== undefined">
         <line :x1="todayX" :x2="todayX" :y1="PAD_T - 4" :y2="PLOT_BOTTOM" class="capchart__today" />
-        <text :x="todayX + 4" :y="PAD_T + 6" class="capchart__axis capchart__axis--today mono">{{ t('management.capacity.today') }}</text>
+        <text :x="todayX + 4" :y="PLOT_BOTTOM - 4" class="capchart__axis capchart__axis--today mono">{{ t('management.capacity.today') }}</text>
       </g>
     </svg>
 
@@ -82,8 +82,10 @@
         :key="s.id"
         type="button"
         class="capchart__key"
-        :disabled="s.id === OTHERS"
-        @click="emit('pick', s.id)"
+        :class="{ 'capchart__key--off': s.excluded }"
+        :aria-pressed="!s.excluded"
+        v-tip="t(s.excluded ? 'management.capacity.legendShow' : 'management.capacity.legendHide', { name: s.name })"
+        @click="emit('toggle', s.members)"
       >
         <i class="capchart__swatch" :style="{ background: s.color }" aria-hidden="true"></i>
         {{ s.name }}
@@ -114,7 +116,7 @@ import { formatIsoDate } from '../../lib/calendar';
 import { UNASSIGNED } from '../../lib/jira-view';
 
 const props = defineProps<{ report: CapacityReport }>();
-const emit = defineEmits<{ pick: [personId: string] }>();
+const emit = defineEmits<{ toggle: [personIds: string[]] }>();
 const { t } = useI18n();
 // Scoped so two charts on the same page (e.g. team + drill-down) don't collide on a
 // document-global pattern id.
@@ -151,16 +153,23 @@ const PALETTE = [
 const OTHERS_COLOR = 'var(--k-muted)';
 const UNASSIGNED_COLOR = 'var(--k-faint)';
 
-type Series = { id: string; name: string; color: string; members: string[] };
+type Series = { id: string; name: string; color: string; members: string[]; excluded: boolean };
+
+// Membership of the muted set — echoed back by the report — decides which legend keys read
+// as «off» and which series the bars skip.
+const excludedIds = computed(() => new Set(props.report.excluded));
 
 const series = computed<Series[]>(() => {
   const named = props.report.persons.filter((p) => p.id !== UNASSIGNED);
   const top = named.slice(0, MAX_SERIES);
   const rest = named.slice(MAX_SERIES);
-  const out: Series[] = top.map((p, i) => ({ id: p.id, name: p.name, color: PALETTE[i % PALETTE.length]!, members: [p.id] }));
-  if (rest.length) out.push({ id: OTHERS, name: t('management.capacity.others'), color: OTHERS_COLOR, members: rest.map((p) => p.id) });
+  const out: Series[] = top.map((p, i) => ({ id: p.id, name: p.name, color: PALETTE[i % PALETTE.length]!, members: [p.id], excluded: excludedIds.value.has(p.id) }));
+  if (rest.length) {
+    const members = rest.map((p) => p.id);
+    out.push({ id: OTHERS, name: t('management.capacity.others'), color: OTHERS_COLOR, members, excluded: members.every((id) => excludedIds.value.has(id)) });
+  }
   if (props.report.persons.some((p) => p.id === UNASSIGNED))
-    out.push({ id: UNASSIGNED, name: t('management.capacity.unassigned'), color: UNASSIGNED_COLOR, members: [UNASSIGNED] });
+    out.push({ id: UNASSIGNED, name: t('management.capacity.unassigned'), color: UNASSIGNED_COLOR, members: [UNASSIGNED], excluded: excludedIds.value.has(UNASSIGNED) });
   return out;
 });
 
@@ -214,6 +223,7 @@ const bars = computed<Bar[]>(() =>
     let stackSecs = 0;
     const period = periodLabel(i);
     for (const s of series.value) {
+      if (s.excluded) continue; // muted from the graph and the reported totals alike
       const cell = sumCells(s.members.map((id) => props.report.cells[id]![i]!));
       const cap = hoursOf(cell.capacitySeconds);
       for (const planned of [false, true]) {
@@ -333,6 +343,17 @@ const todayX = computed<number | undefined>(() => {
 
   &:not(:disabled):not(&--static):hover {
     color: var(--k-text);
+  }
+}
+
+.capchart__key--off {
+  // Deselected: the swatch drains and the name strikes through, so an off person reads as
+  // «still here, click to bring back» rather than gone.
+  color: var(--k-faint);
+  text-decoration: line-through;
+
+  .capchart__swatch {
+    opacity: 0.3;
   }
 }
 
