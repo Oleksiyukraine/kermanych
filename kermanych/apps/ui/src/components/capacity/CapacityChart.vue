@@ -72,7 +72,6 @@
       <!-- Today: the boundary between what was logged and what is planned. -->
       <g v-if="todayX !== undefined">
         <line :x1="todayX" :x2="todayX" :y1="PAD_T - 4" :y2="PLOT_BOTTOM" class="capchart__today" />
-        <text :x="todayX + 4" :y="PLOT_BOTTOM - 4" class="capchart__axis capchart__axis--today mono">{{ t('management.capacity.today') }}</text>
       </g>
     </svg>
 
@@ -287,10 +286,6 @@ const todayX = computed<number | undefined>(() => {
 
 .capchart__axis--past {
   fill: var(--k-muted);
-}
-
-.capchart__axis--today {
-  fill: var(--k-accent);
 }
 
 .capchart__seg {
