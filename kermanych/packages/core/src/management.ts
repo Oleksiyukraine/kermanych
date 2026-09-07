@@ -54,7 +54,19 @@ const NOT_BUILT = "розділ ще не реалізований — за ни
 
 export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
   { name: "management-home", path: "home", label: "Home", hint: "огляд воркспейсу", capability: "none", limitation: NOT_BUILT },
-  { name: "management-storage", path: "storage", label: "Storage", hint: "файли й артефакти", capability: "none", limitation: NOT_BUILT },
+  // The password vault (20260907120000_workspace_passwords.sql). It has a screen and three
+  // tables, so it is no longer a placeholder — but it stays OUT of the assistant's write
+  // reach on purpose: a section that stores secrets must not be openable or editable by a
+  // model, so it is `read` with a limitation the chat shows on any attempt.
+  {
+    name: "management-storage",
+    path: "storage",
+    label: "Storage",
+    hint: "паролі й ключі",
+    capability: "read",
+    limitation:
+      "розділ зберігає секрети — асистент може лише згадати, що вони існують, але не читає й не змінює паролі та файли",
+  },
   // Sits beside Storage rather than beside Release Notes on purpose: Storage keeps the
   // artifacts a project PRODUCES, this keeps the ones it is BUILT FROM — specs, decisions,
   // the reasoning a new member reads first. Release Notes is neither; it is a generated

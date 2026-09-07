@@ -43,6 +43,12 @@ export type {
   JiraComment,
   JiraWorklog,
   JiraAttachment,
+  WorkspacePassword,
+  WorkspacePasswordSecret,
+  WorkspacePasswordInsert,
+  WorkspacePasswordPatch,
+  WorkspacePasswordAccess,
+  PasswordAccessStatus,
 } from "./types";
 
 export type { SupabaseClient, CloudEnv, CloudClientOptions } from "./client";
@@ -129,6 +135,25 @@ export {
   createWorkspaceReleaseNote,
   patchWorkspaceReleaseNote,
 } from "./release-notes";
+
+export {
+  PASSWORD_FILE_BUCKET,
+  toWorkspacePassword,
+  toWorkspacePasswordSecret,
+  toWorkspacePasswordAccess,
+  listWorkspacePasswords,
+  getPasswordSecret,
+  createWorkspacePassword,
+  patchWorkspacePassword,
+  patchPasswordSecret,
+  setPasswordFile,
+  clearPasswordFile,
+  signedPasswordFileUrl,
+  deleteWorkspacePassword,
+  listPasswordAccess,
+  requestPasswordAccess,
+  decidePasswordAccess,
+} from "./passwords";
 
 export type { JiraIssueChange, JiraIssueChildren } from "./jira";
 export {

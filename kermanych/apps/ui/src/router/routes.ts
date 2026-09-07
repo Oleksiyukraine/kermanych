@@ -18,6 +18,7 @@ const SECTION_PAGES: Record<string, RouteRecordRaw['component']> = {
   'management-integrations': () => import('pages/ManagementIntegrationsPage.vue'),
   'management-releases': () => import('pages/ManagementReleasesPage.vue'),
   'management-risks': () => import('pages/ManagementRisksPage.vue'),
+  'management-storage': () => import('pages/ManagementStoragePage.vue'),
 };
 
 const routes: RouteRecordRaw[] = [
