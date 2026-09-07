@@ -3,7 +3,7 @@
     <svg
       class="capchart__svg"
       :viewBox="`0 0 ${width} ${HEIGHT}`"
-      :style="{ minWidth: `${width}px` }"
+      :style="{ width: `${width}px` }"
       role="img"
       :aria-label="t('management.capacity.chartAria')"
     >
@@ -252,9 +252,9 @@ const todayX = computed<number | undefined>(() => {
 
 .capchart__svg {
   display: block;
-  // Never upscale past 1:1 (a few-period chart stretched across a wide pane makes 9px
-  // text huge) — but still shrink and let the figure scroll when narrower than natural width.
-  width: auto;
+  // Width is pinned to the chart's natural pixel size inline, so it never upscales past
+  // 1:1 (a few-period chart stretched across a wide pane makes 9px text huge). max-width
+  // shrinks it — scaling the whole SVG down proportionally — when the pane is narrower.
   max-width: 100%;
   height: auto;
 }
