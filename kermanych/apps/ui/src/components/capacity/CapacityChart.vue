@@ -252,10 +252,10 @@ const todayX = computed<number | undefined>(() => {
 
 .capchart__svg {
   display: block;
-  // Width is pinned to the chart's natural pixel size inline, so it never upscales past
-  // 1:1 (a few-period chart stretched across a wide pane makes 9px text huge). max-width
-  // shrinks it — scaling the whole SVG down proportionally — when the pane is narrower.
-  max-width: 100%;
+  // Width is pinned to the chart's natural pixel size inline, so the chart is drawn 1:1:
+  // never upscaled to fill a wide pane (which blew a few-period chart up and made the 9px
+  // axis text huge), never downscaled to fit a narrow one (which would shrink a month
+  // view's text to nothing). When the pane is narrower than natural, the figure scrolls.
   height: auto;
 }
 
