@@ -92,7 +92,7 @@ vi.mock('../src/stores/risks', () => ({
   useRisks: () => ({ byWorkspace: { w1: [] }, load: vi.fn(), create: vi.fn(), save: vi.fn() }),
 }));
 vi.mock('../src/stores/release-notes', () => ({
-  useReleaseNotes: () => ({ generate: vi.fn() }),
+  useReleaseNotes: () => ({ generate: vi.fn(), byWorkspace: { w1: [] }, load: vi.fn() }),
 }));
 
 // The ticket as the assistant is required to write it: English text, and the interface labels

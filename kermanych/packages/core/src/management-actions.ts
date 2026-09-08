@@ -257,7 +257,18 @@ export type ManagementAction =
   // then waits for a card that was never filed. This way the transcript carries one
   // unmistakable line — «тікет не створено, очікую відповіді» — beside the numbered
   // questions, and the next turn either answers them or the ticket stays unfiled.
-  | { kind: "ticket.questions"; forTicket: string; questions: string[] };
+  | { kind: "ticket.questions"; forTicket: string; questions: string[] }
+  // Append items to the operator's personal To-do list on the Home overview — the ONE verb
+  // management-home is writable through, the Release Notes shape of writability: a single
+  // action, with every other operation on the section stated by the prompt to stay on the
+  // screen. Append-only on purpose: marking done, editing and removing name a row, and the
+  // list has no codes the model could honestly name one by (its ids are browser-minted
+  // uuids the prompt never prints) — so those stay on the tile, where the row is visible.
+  //
+  // `text` is PLAIN text: the tile's inline formatting (bold/italic) is the operator's own
+  // presentation, and the executor escapes what it stores, so the model can never inject
+  // markup into the list. `kind` picks the tile's marker — a checkbox or a numbered run.
+  | { kind: "todo.create"; items: { text: string; kind: "check" | "number" }[] };
 
 export type ManagementActionKind = ManagementAction["kind"];
 export type ManagementUnsupported = Extract<ManagementAction, { kind: "unsupported" }>;
@@ -268,6 +279,7 @@ export type ManagementReleaseNotes = Extract<ManagementAction, { kind: "release.
 export type ManagementTicketCreate = Extract<ManagementAction, { kind: "ticket.create" }>;
 export type ManagementJiraTicketCreate = Extract<ManagementAction, { kind: "jira.ticket.create" }>;
 export type ManagementTicketQuestions = Extract<ManagementAction, { kind: "ticket.questions" }>;
+export type ManagementTodoCreate = Extract<ManagementAction, { kind: "todo.create" }>;
 
 // ── Ask / reply ───────────────────────────────────────────────────────────────
 
@@ -410,6 +422,37 @@ export type ManagementCapacity = {
   overdue: number;
 };
 
+// ── The Home overview digest ──────────────────────────────────────────────────
+// What the management-home dashboard shows that the rest of the context does not already
+// carry. The capacity and risks tiles mirror `capacity` and `risks` above, so they are NOT
+// duplicated here; these four fields are the tiles whose data lives nowhere else in the ask.
+// Computed in the browser from the same stores the tiles render
+// (apps/ui/src/lib/home-digest.ts), so the assistant's overview is the screen's.
+
+// One tile, in the operator's own reading order, with the spans it occupies on the
+// four-column grid — the honest answer to «як виглядає моя головна».
+export type ManagementHomeTile = { id: string; w: number; h: number };
+
+// One row of the To-do tile, as plain text: the tile's inline formatting is presentation,
+// and a model handed HTML quotes the tags back.
+export type ManagementHomeTodoItem = { text: string; kind: "check" | "number"; done: boolean };
+
+export type ManagementHomeTask = { key: string; summary: string; overdue: boolean };
+
+// One person's tickets landing today — the tasks tile's grouping. A blank `name` is the
+// unassigned bucket, the same convention ManagementCapacityPerson uses.
+export type ManagementHomeTaskGroup = { name: string; tasks: ManagementHomeTask[] };
+
+// A stored release note as the releases tile lists it, newest first.
+export type ManagementHomeRelease = { title: string; projectName: string; createdAt: string };
+
+export type ManagementHome = {
+  tiles: ManagementHomeTile[];
+  todo: ManagementHomeTodoItem[];
+  tasksToday: ManagementHomeTaskGroup[];
+  releases: ManagementHomeRelease[];
+};
+
 export type ManagementContext = {
   workspaceName: string;
   // Deliberately NO project name. Nothing on this surface states a «current project» any
@@ -438,6 +481,11 @@ export type ManagementContext = {
   // Team Capacity, present only when the workspace has a Jira board. Re-sent every turn:
   // estimates move between turns.
   capacity?: ManagementCapacity;
+  // The Home overview digest — the tile layout, the To-do list, today's tasks and the
+  // recent release notes. Re-sent every turn like the register: the operator edits the
+  // to-do between turns, and tiles move. Optional: an old client that omits it keeps the
+  // previous behaviour, and the prompt says the overview is unavailable.
+  home?: ManagementHome;
 };
 
 export type ManagementChatAsk = {
@@ -1108,6 +1156,37 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
         },
       };
     return { kind: "ticket.questions", forTicket, questions };
+  }
+  if (kind === "todo.create") {
+    if (!Array.isArray(o.items) || o.items.length === 0)
+      return {
+        error: {
+          text: "todo.create без пунктів — постав масив items, кожен із полем text",
+          code: "todo_create_empty",
+        },
+      };
+    const items: ManagementTodoCreate["items"] = [];
+    for (const r of o.items) {
+      if (!isObj(r))
+        return { error: { text: "todo.create: кожен пункт — об'єкт із полем text", code: "todo_item_not_object" } };
+      const text = str(r.text);
+      if (text === undefined)
+        return { error: { text: "todo.create: пункт без text — порожній пункт нема чого додавати", code: "todo_item_no_text" } };
+      // Absent means checkbox — the tile's own default for a fresh row. A value outside the
+      // vocabulary is refused with it quoted, never coerced: a model that wrote «bullet»
+      // meant SOMETHING, and a silent checkbox would hide that it was not understood.
+      const itemKind = has(r, "kind") ? r.kind : "check";
+      if (itemKind !== "check" && itemKind !== "number")
+        return {
+          error: {
+            text: `todo.create: невідомий kind пункту ${JSON.stringify(r.kind)} (check | number)`,
+            code: "todo_item_kind_unknown",
+            params: { value: JSON.stringify(r.kind) },
+          },
+        };
+      items.push({ text, kind: itemKind });
+    }
+    return { kind: "todo.create", items };
   }
   return { error: { text: `невідома дія ${JSON.stringify(o.kind)}`, code: "action_kind_unknown", params: { value: JSON.stringify(o.kind) } } };
 }

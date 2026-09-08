@@ -158,3 +158,50 @@ describe("ManagementController — capacity context", () => {
     expect("capacity" in seen!.context).toBe(false);
   });
 });
+
+describe("ManagementController — home context", () => {
+  it("rebuilds the home digest field by field and drops junk rows", async () => {
+    let seen: ManagementChatAsk | undefined;
+    const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
+    await ctl.ask(
+      chatAsk({
+        context: {
+          workspaceName: "A",
+          section: "s",
+          risks: [],
+          members: [],
+          home: {
+            tiles: [{ id: " todo ", w: 2.9, h: -1 }, { id: "" }, "junk"],
+            todo: [
+              { text: "перший", kind: "number", done: true },
+              { kind: "check" }, // no text → dropped
+              { text: "другий", kind: "ghost", done: true }, // unknown kind → check
+            ],
+            tasksToday: [
+              { name: " Оля ", tasks: [{ key: " K-1 ", summary: "s", overdue: "yes" }, { key: "" }] },
+              { name: "порожня", tasks: [] }, // a person with no valid tasks is dropped
+            ],
+            releases: [{ title: " R1 ", projectName: "P", createdAt: "2026-01-01" }, { title: "" }],
+          },
+        } as unknown as ManagementChatAsk["context"],
+      }),
+    );
+    const h = seen!.context.home!;
+    expect(h.tiles).toEqual([{ id: "todo", w: 2, h: 1 }]);
+    expect(h.todo).toEqual([
+      { text: "перший", kind: "number", done: true },
+      { text: "другий", kind: "check", done: true },
+    ]);
+    expect(h.tasksToday).toEqual([{ name: "Оля", tasks: [{ key: "K-1", summary: "s", overdue: false }] }]);
+    expect(h.releases).toEqual([{ title: "R1", projectName: "P", createdAt: "2026-01-01" }]);
+  });
+
+  it("omits home entirely when the client sent none or junk", async () => {
+    let seen: ManagementChatAsk | undefined;
+    const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
+    await ctl.ask(chatAsk());
+    expect("home" in seen!.context).toBe(false);
+    await ctl.ask(chatAsk({ context: { workspaceName: "A", section: "s", risks: [], members: [], home: "junk" } as unknown as ManagementChatAsk["context"] }));
+    expect("home" in seen!.context).toBe(false);
+  });
+});

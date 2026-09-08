@@ -53,19 +53,24 @@ export interface ManagementSection {
 const NOT_BUILT = "розділ ще не реалізований — за ним немає ні екрана, ні сховища даних";
 
 export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
-  // The workspace overview. It has a screen now (apps/ui/src/pages/ManagementHomePage.vue) — a
-  // dashboard of draggable, resizable tiles that snapshot the other sections (Team Capacity,
-  // Release Notes, Risk Registry and today's board tasks). It reads only: every tile mirrors a
-  // section whose own screen owns the writing, so the assistant may describe it but is refused
-  // any change, with the limitation below.
+  // The workspace overview. It has a screen (apps/ui/src/pages/ManagementHomePage.vue) — a
+  // dashboard of draggable, resizable tiles: snapshots of the other sections (Team Capacity,
+  // Release Notes, Risk Registry, today's board tasks) plus the operator's personal To-do
+  // list. The assistant SEES the whole overview — the browser sends a digest of it on every
+  // turn (`ManagementContext.home`) — and WRITES it through exactly one verb, the Release
+  // Notes shape of writability: `todo.create` appends items to the To-do list (the executor
+  // in apps/ui/src/stores/management-chat.ts lands them in the same store the tile renders).
+  // Everything else on the overview stays screen work — the mirror tiles are owned by the
+  // sections they snapshot, and done-marks, edits, removals and the layout are done on the
+  // tile itself — which the home protocol in the prompt states, where it belongs. No
+  // `limitation`: the row is writable, and a limitation here would be shown as a refusal
+  // for a section that does in fact accept an action.
   {
     name: "management-home",
     path: "home",
     label: "Home",
     hint: "огляд воркспейсу",
-    capability: "read",
-    limitation:
-      "розділ лише показує зведення інших розділів — місткість команди, реліз-ноти, ризики та задачі на сьогодні; зміни робляться у відповідних розділах",
+    capability: "read_write",
   },
   // The password vault (20260907120000_workspace_passwords.sql). It has a screen and three
   // tables, so it is no longer a placeholder — but it stays OUT of the assistant's write

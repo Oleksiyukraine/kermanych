@@ -82,7 +82,7 @@ vi.mock('../src/stores/risks', () => ({
     remove: (ws: string, id: string) => riskRemove(ws, id),
   }),
 }));
-vi.mock('../src/stores/release-notes', () => ({ useReleaseNotes: () => ({ generate: vi.fn() }) }));
+vi.mock('../src/stores/release-notes', () => ({ useReleaseNotes: () => ({ generate: vi.fn(), byWorkspace: { w1: [] }, load: vi.fn() }) }));
 
 function reply(actions: ManagementChatReply['actions']): ManagementChatReply {
   return { text: 'Готово.', actions, rejected: [], notices: [], ms: 10 };

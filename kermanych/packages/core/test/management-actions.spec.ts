@@ -302,11 +302,48 @@ test("a section resolves by route name, url segment or label", () => {
 // and a section that CAN must not carry a reason it would never show.
 test("exactly the sections with a store are writable, and the rest state why not", () => {
   const writable = MANAGEMENT_SECTIONS.filter((s) => s.capability === "read_write");
-  expect(writable.map((s) => s.name)).toEqual(["management-risks", "management-releases"]);
+  expect(writable.map((s) => s.name)).toEqual(["management-home", "management-risks", "management-releases"]);
   for (const s of MANAGEMENT_SECTIONS) {
     if (s.capability === "read_write") expect(s.limitation, `${s.name} needs no excuse`).toBeUndefined();
     else expect(s.limitation, `${s.name} must explain itself`).toBeTruthy();
   }
+});
+
+// ── todo.create ───────────────────────────────────────────────────────────────
+// The Home overview's one verb. Plain text in, marker kind out — and every malformed item
+// refuses the WHOLE block: a list where item three silently vanished is a list the operator
+// believes is complete.
+
+test("a todo.create carries trimmed plain-text items and defaults the marker to check", () => {
+  const r = parseManagementReply(
+    block('{"kind":"todo.create","items":[{"text":"  подзвонити Олі  "},{"text":"крок один","kind":"number"}]}'),
+  );
+  expect(r.rejected).toEqual([]);
+  expect(r.actions).toEqual([
+    {
+      kind: "todo.create",
+      items: [
+        { text: "подзвонити Олі", kind: "check" },
+        { text: "крок один", kind: "number" },
+      ],
+    },
+  ]);
+});
+
+test("a todo.create without items, with an empty item or an unknown marker is refused", () => {
+  const empty = parseManagementReply(block('{"kind":"todo.create"}'));
+  expect(empty.actions).toEqual([]);
+  expect(empty.rejected[0]).toMatchObject({ code: "todo_create_empty" });
+
+  const bare = parseManagementReply(block('{"kind":"todo.create","items":[{"text":"  "}]}'));
+  expect(bare.rejected[0]).toMatchObject({ code: "todo_item_no_text" });
+
+  const junkRow = parseManagementReply(block('{"kind":"todo.create","items":["рядок"]}'));
+  expect(junkRow.rejected[0]).toMatchObject({ code: "todo_item_not_object" });
+
+  const marker = parseManagementReply(block('{"kind":"todo.create","items":[{"text":"а","kind":"bullet"}]}'));
+  expect(marker.actions).toEqual([]);
+  expect(marker.rejected[0]).toMatchObject({ code: "todo_item_kind_unknown", params: { value: '"bullet"' } });
 });
 
 // ── Tickets ───────────────────────────────────────────────────────────────────

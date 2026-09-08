@@ -31,7 +31,7 @@ describe('dashboard clamps', () => {
 });
 
 describe('reorder', () => {
-  const base = mergeLayout(null); // capacity, tasks, risks, releases
+  const base = mergeLayout(null); // capacity, tasks, risks, releases, todo
 
   it('moves a tile to the target position and shifts the rest', () => {
     expect(ids(reorder(base, 'releases', 'capacity'))).toEqual([
@@ -39,6 +39,7 @@ describe('reorder', () => {
       'capacity',
       'tasks',
       'risks',
+      'todo',
     ]);
   });
 
@@ -48,6 +49,7 @@ describe('reorder', () => {
       'risks',
       'capacity',
       'releases',
+      'todo',
     ]);
   });
 
@@ -87,7 +89,7 @@ describe('mergeLayout', () => {
     ];
     const out = mergeLayout(saved);
     // Saved ids come first, in their saved order and size; the rest follow in default order.
-    expect(ids(out)).toEqual(['releases', 'risks', 'capacity', 'tasks']);
+    expect(ids(out)).toEqual(['releases', 'risks', 'capacity', 'tasks', 'todo']);
     expect(out[0]).toEqual({ id: 'releases', w: 4, h: 3 });
     expect(out[1]).toEqual({ id: 'risks', w: DASHBOARD_COLUMNS, h: TILE_MIN_H });
   });
@@ -100,7 +102,7 @@ describe('mergeLayout', () => {
       { id: 'capacity', w: 'wide', h: null },
     ];
     const out = mergeLayout(saved);
-    expect(ids(out)).toEqual(['tasks', 'capacity', 'risks', 'releases']);
+    expect(ids(out)).toEqual(['tasks', 'capacity', 'risks', 'releases', 'todo']);
     // First `tasks` had no size → default; the duplicate is ignored.
     expect(out[0]).toEqual({ id: 'tasks', w: 2, h: 2 });
     // Non-numeric sizes fall back to the default for that widget.

@@ -12,7 +12,21 @@
     :data-tile="id"
   >
     <header class="tile__head" @pointerdown="onHeadDown">
-      <span class="tile__grip" aria-hidden="true">⠿</span>
+      <!-- The grip is the keyboard alternative to the header drag: focus it and the arrow
+           keys move the tile one place through the reading order. Drawn, not typed — the
+           braille glyph this replaces rendered as a smudge (the KIcon rationale). -->
+      <button
+        class="tile__grip"
+        type="button"
+        v-tip="moveLabel"
+        :aria-label="moveLabel"
+        @keydown="onGripKey"
+      >
+        <svg class="tile__grip-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <circle cx="9" cy="5" r="1" /><circle cx="9" cy="12" r="1" /><circle cx="9" cy="19" r="1" />
+          <circle cx="15" cy="5" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="15" cy="19" r="1" />
+        </svg>
+      </button>
       <h3 class="tile__title">{{ title }}</h3>
       <div class="tile__actions" @pointerdown.stop>
         <slot name="actions" />
@@ -27,7 +41,9 @@
       :aria-label="resizeLabel"
       @pointerdown="onResizeDown"
     >
-      <span aria-hidden="true">⌟</span>
+      <svg class="tile__resize-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <path d="M10 20 20 10" /><path d="M15 20 20 15" />
+      </svg>
     </button>
   </article>
 </template>
@@ -45,6 +61,7 @@ const props = defineProps<{
   // so a four-wide tile must not span past the edge and spill into an implicit column.
   columns: number;
   resizeLabel: string;
+  moveLabel: string;
   dragging?: boolean;
   resizing?: boolean;
 }>();
@@ -52,6 +69,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   dragStart: [ev: PointerEvent];
   resizeStart: [ev: PointerEvent];
+  // Keyboard reorder from the grip: -1 moves the tile one place earlier in the reading
+  // order, +1 one place later. The page owns the layout, so it owns the arithmetic.
+  move: [dir: -1 | 1];
 }>();
 
 const style = computed(() => ({
@@ -73,6 +93,16 @@ function onResizeDown(ev: PointerEvent): void {
   ev.preventDefault();
   ev.stopPropagation();
   emit('resizeStart', ev);
+}
+
+function onGripKey(ev: KeyboardEvent): void {
+  if (ev.key === 'ArrowLeft' || ev.key === 'ArrowUp') {
+    ev.preventDefault();
+    emit('move', -1);
+  } else if (ev.key === 'ArrowRight' || ev.key === 'ArrowDown') {
+    ev.preventDefault();
+    emit('move', 1);
+  }
 }
 </script>
 
@@ -124,10 +154,39 @@ function onResizeDown(ev: PointerEvent): void {
 }
 
 .tile__grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: calc(-1 * var(--k-sp-1));
+  padding: 0;
+  border: none;
+  background: transparent;
   color: var(--k-faint);
-  font-size: 13px;
-  line-height: 1;
-  letter-spacing: -1px;
+  cursor: grab;
+  border-radius: var(--k-r-sm);
+  transition: color 0.12s;
+}
+
+.tile:hover .tile__grip,
+.tile__grip:focus-visible {
+  color: var(--k-muted);
+}
+
+.tile__grip:focus-visible {
+  outline: 1px solid var(--k-accent);
+  outline-offset: 1px;
+}
+
+.tile--dragging .tile__grip {
+  cursor: grabbing;
+}
+
+.tile__grip-mark {
+  display: block;
+  width: var(--k-icon-sm);
+  height: var(--k-icon-sm);
 }
 
 .tile__title {
@@ -157,23 +216,30 @@ function onResizeDown(ev: PointerEvent): void {
   padding: var(--k-sp-3);
 }
 
+// A generous corner: the visual mark is small, the hit target is not — 24px plus the corner
+// itself, so the gesture does not demand a pixel-perfect press.
 .tile__resize {
   position: absolute;
   right: 0;
   bottom: 0;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: flex-end;
   justify-content: flex-end;
-  padding: 2px;
+  padding: 3px;
   border: none;
   background: transparent;
   color: var(--k-faint);
   cursor: nwse-resize;
-  font-size: 12px;
-  line-height: 1;
   touch-action: none;
+  transition: color 0.12s;
+}
+
+.tile__resize-mark {
+  display: block;
+  width: var(--k-icon-xs);
+  height: var(--k-icon-xs);
 }
 
 .tile__resize:hover,
@@ -184,5 +250,17 @@ function onResizeDown(ev: PointerEvent): void {
 .tile__resize:focus-visible {
   outline: 1px solid var(--k-accent);
   outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile,
+  .tile__grip,
+  .tile__resize {
+    transition: none;
+  }
+
+  .tile--dragging {
+    transform: none;
+  }
 }
 </style>

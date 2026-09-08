@@ -494,12 +494,14 @@ field docked to the foot of the page.
 
 That field is a real assistant, and it is deliberately narrow:
 
-- **It only reads code, and it writes in exactly three places.** Its tools are the read-only
+- **It only reads code, and it writes in exactly four places.** Its tools are the read-only
   subset (`read`, `grep`, `glob`) — it can look at your repositories but it cannot edit a
   file, create a branch or start a session. The Менеджмент sections it can WRITE are the ones
-  the section table marks `read_write`: the Risk Registry and Release Notes. Everywhere else
-  in Менеджмент it reads, explains and refuses, and says which it is doing. The third write
-  target is not a section at all — it is «Дошка», where it files tickets (below).
+  the section table marks `read_write`: the Risk Registry, Release Notes, and the Home
+  overview — the last through exactly one verb, appending to the To-do tile (below).
+  Everywhere else in Менеджмент it reads, explains and refuses, and says which it is doing.
+  The fourth write target is not a section at all — it is «Дошка», where it files tickets
+  (below).
 - **It keeps the risk register.** Ask it to file a risk and it emits a `risk.create`
   action carrying that schema's own vocabulary — threat or opportunity, one of the
   fourteen categories, cause·event·consequence, 1–5 probability × impact, a PMI
@@ -540,6 +542,19 @@ That field is a real assistant, and it is deliberately narrow:
   writable: load changes by editing tickets in Jira, and the assistant says so. A
   workspace without a Jira board has no capacity to show — the native board carries no
   estimates — and both the screen and the context block state that.
+- **It sees your Home overview, and it can add to your To-do list.** The dashboard the
+  Менеджмент tab lands on — the tile layout exactly as you arranged it, your To-do list,
+  today's tasks per person and the recent release notes — travels to the assistant as
+  `context.home` on every turn, computed by the same functions the tiles render
+  (`apps/ui/src/lib/home-digest.ts`), so «проаналізуй мою головну» is answered from the
+  dashboard you are looking at: what is overdue, whose day is overloaded, which to-do items
+  are still open. Say «додай у to-do: …» and it emits a `todo.create` action — plain-text
+  items, checkbox or numbered — which the executor appends to the same store the tile
+  renders, so the rows are on the dashboard before the confirmation line prints. That is the
+  overview's ONE verb: marking done, editing, removing and the layout stay on the tile
+  (every mirror tile is owned by the section it snapshots), and the list itself is your own
+  scratch pad, stored only in your browser — the assistant says so instead of promising the
+  team will see it.
 - **It files tickets on «Дошка».** Say «створи тікет: …» and the ticket appears on the board
   — the board is not a Менеджмент section, so this works from any section, and «створи тікет»
   is never answered with a refusal. Six rules make the ticket worth having:

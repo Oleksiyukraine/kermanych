@@ -25,6 +25,8 @@ import {
   type ManagementCapacityPerson,
   type ManagementCapacityWeek,
   type ManagementContext,
+  type ManagementHome,
+  type ManagementHomeTodoItem,
   type ManagementJiraBoard,
   type ManagementRepo,
   type ManagementRiskRow,
@@ -144,6 +146,10 @@ function contract(locale: Locale | undefined): string {
     // had been uploading named files all along.
     '  { "kind": "jira.ticket.create", "ticket": { … }, "issueType": "…", "priority": "…", "labels": ["…"], "assignee": "…", "parentKey": "…", "attachments": ["імʼя файлу"] }',
     '  { "kind": "ticket.questions", "forTicket": "…", "questions": ["…", "…"] }',
+    // Listed HERE and not only in homeProtocol() below — the risk.delete lesson: the menu
+    // declares itself exhaustive, and a verb it does not carry is one the model will refuse
+    // or invent a screen for.
+    '  { "kind": "todo.create", "items": [ { "text": "…", "kind": "check" | "number" } ] }',
     "Не вигадуй інші `kind` — вони відкидаються без виконання.",
     "",
     riskProtocol(),
@@ -153,6 +159,8 @@ function contract(locale: Locale | undefined): string {
     ticketProtocol(),
     "",
     capacityProtocol(),
+    "",
+    homeProtocol(),
     "",
     "ПРАВИЛА:",
     `(а) якщо просять ЗМІНИТИ розділ з capability=read_write (${writable}) — віддай відповідний блок дії. Дію виконує застосунок, не ти: у прозі опиши, ЩО саме робиш, і не пиши, що це вже зроблено — результат («Ризик R-004 занесено…», «Реліз-ноти готові…») чат покаже сам;`,
@@ -375,6 +383,34 @@ function capacityProtocol(): string {
   ].join("\n");
 }
 
+// The Home overview: readable as a whole, writable through exactly ONE verb — appending
+// to the To-do tile. The read half spends its words on what an «insight» is allowed to be
+// built from: the digest block plus the register and capacity blocks the tiles mirror —
+// never numbers the context does not hold. The write half names what stays on the tile
+// (done-marks, edits, removals, the layout): an operation absent from the menu is one the
+// model will invent a home for, so the boundary is stated, not implied.
+function homeProtocol(): string {
+  return [
+    "ОГЛЯД HOME (management-home). Розділ пишеться ОДНИМ дієсловом — додати пункти в список to-do:",
+    '  { "kind": "todo.create", "items": [ { "text": "…", "kind": "check" | "number" } ] }',
+    "  text — один пункт ПРОСТИМ ТЕКСТОМ, як його читатиме оператор; без розмітки й тегів.",
+    "  kind — check (пункт із чекбоксом; за замовчуванням) або number (пункт нумерованого списку).",
+    "  Кілька пунктів — кілька елементів items ОДНОГО блоку, не кілька блоків.",
+    "  Список особистий і живе лише в браузері оператора — він не синхронізується між машинами; додав — скажи це,",
+    "  коли доречно, і не обіцяй, що список побачить хтось інший.",
+    "Все ІНШЕ на головній лишається екраном: позначити пункт виконаним, змінити чи прибрати його, пересунути або",
+    "розтягнути плитки — це робиться на самій плитці мишею; такі прохання — unsupported із поясненням прозою.",
+    "Питання «що на головній / огляд воркспейсу / проаналізуй дашборд» — відповідай ПРОЗОЮ з блоку «Огляд Home»",
+    "у контексті разом з рештою контексту:",
+    "  • плитки дзеркалять розділи: capacity — блок «Навантаження команди Jira», risks — реєстр ризиків,",
+    "    tasks — «Задачі на сьогодні», releases — «Реліз-ноти», todo — особистий список справ оператора;",
+    "  • давай ВИСНОВКИ, а не переказ: перевантаження й прострочене, ризики з найбільшою експозицією,",
+    "    невиконані пункти to-do, робота без виконавця — і що з цього варто зробити першим;",
+    "  • не вигадуй плиток і чисел, яких у блоці немає; блоку «Огляд Home» немає взагалі — скажи, що знімок",
+    "    дашборда цього ходу недоступний, і відповідай з решти контексту.",
+  ].join("\n");
+}
+
 // One attached file of the conversation, as the message states it. Documents carry the
 // absolute path the api wrote them to (the read tool's subject); images carry no path —
 // they ride their own message through omp's image slots and the line only names them.
@@ -482,6 +518,52 @@ function capacityLines(c: ManagementCapacity | undefined): string {
   ].join("\n");
 }
 
+// One To-do row. Checklist rows print as checkboxes; a numbered run counts itself and, like
+// the tile, restarts after a checklist row — the two must read the same.
+function homeTodoLines(items: ManagementHomeTodoItem[]): string {
+  const out: string[] = [];
+  let n = 0;
+  for (const it of items) {
+    if (it.kind === "number") {
+      n += 1;
+      out.push(`- ${n}. ${it.text}`);
+    } else {
+      n = 0;
+      out.push(`- [${it.done ? "x" : " "}] ${it.text}`);
+    }
+  }
+  return out.join("\n");
+}
+
+// The Home overview digest, tile by tile. Absent means the client predates it, and the line
+// says so — the assistant must never invent what the operator's dashboard shows. The
+// capacity and risks tiles are not repeated here: their data is the capacity block and the
+// register above, and the homeProtocol states that mapping.
+function homeLines(h: ManagementHome | undefined): string {
+  if (h === undefined)
+    return "Огляд Home (management-home): знімок дашборда цього ходу недоступний — описуй головну з решти контексту і скажи це прямо";
+  const tiles = h.tiles.length
+    ? h.tiles.map((t) => `${t.id} ${t.w}×${t.h}`).join(", ")
+    : "розкладка порожня";
+  const groups = h.tasksToday.map((g) => {
+    const tasks = g.tasks
+      .map((t) => `${t.key} «${t.summary}»${t.overdue ? " (прострочено)" : ""}`)
+      .join("; ");
+    return `- ${g.name || "(не призначено)"}: ${tasks}`;
+  });
+  return [
+    `Огляд Home (дашборд management-home) — плитки в порядку читання оператора, id · ширина×висота на сітці з 4 колонок: ${tiles}.`,
+    `Плитка «To-do» — особистий список оператора (${h.todo.length}), [x] — виконано:`,
+    h.todo.length ? homeTodoLines(h.todo) : "- список порожній",
+    `Плитка «Задачі на сьогодні» (${h.tasksToday.length} ос.):`,
+    groups.length ? groups.join("\n") : "- сьогодні ні на кому не «лежить» запланована робота (або дошки Jira немає)",
+    `Плитка «Реліз-ноти» — останні збережені (${h.releases.length}):`,
+    h.releases.length
+      ? h.releases.map((r) => `- ${r.title} · ${r.projectName} · ${r.createdAt.slice(0, 10)}`).join("\n")
+      : "- реліз-нот ще немає",
+  ].join("\n");
+}
+
 function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: string): string {
   const s = managementSection(c.section);
   // An unresolved section name is still printed: the model must be able to say WHICH
@@ -510,6 +592,7 @@ function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: stri
     c.members.length ? c.members.map((m) => `- ${m.name} · ${m.role}`).join("\n") : "- список недоступний",
     jiraLines(c.jira),
     capacityLines(c.capacity),
+    homeLines(c.home),
   ].join("\n");
 }
 
