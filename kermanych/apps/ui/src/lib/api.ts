@@ -122,6 +122,12 @@ async function get<T>(path: string): Promise<T> {
   return (await r.json()) as T;
 }
 
+async function getBlob(path: string): Promise<Blob> {
+  const r = await fetch(BASE + path, { headers: authHeaders(false) });
+  if (!r.ok) throw await toError(r);
+  return await r.blob();
+}
+
 async function put<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(BASE + path, {
     method: 'PUT',
@@ -463,6 +469,15 @@ export const api = {
 
   sessionFile: (id: string, path: string): Promise<FileContent> =>
     get<FileContent>(`/sessions/${id}/file?path=${encodeURIComponent(path)}`),
+
+  projectDocsTree: (id: string, folder: string, path: string): Promise<TreeEntry[]> =>
+    get<TreeEntry[]>(`/projects/${id}/docs/tree?folder=${encodeURIComponent(folder)}${path ? `&path=${encodeURIComponent(path)}` : ''}`),
+
+  projectDocsFile: (id: string, folder: string, path: string): Promise<FileContent> =>
+    get<FileContent>(`/projects/${id}/docs/file?folder=${encodeURIComponent(folder)}&path=${encodeURIComponent(path)}`),
+
+  projectDocsRaw: (id: string, folder: string, path: string): Promise<Blob> =>
+    getBlob(`/projects/${id}/docs/raw?folder=${encodeURIComponent(folder)}&path=${encodeURIComponent(path)}`),
 
   finish: (id: string): Promise<{ finished: boolean; branch: string }> =>
     post(`/sessions/${id}/finish`, {}),
