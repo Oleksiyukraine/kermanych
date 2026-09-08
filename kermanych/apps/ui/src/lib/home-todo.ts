@@ -1,5 +1,5 @@
 // apps/ui/src/lib/home-todo.ts
-// The home dashboard's To-do tile model, pure — the tasks-view.ts rule dashboard.ts already
+// The home dashboard's Action List tile model, pure — the tasks-view.ts rule dashboard.ts already
 // follows: the widget (components/home/HomeTodoWidget.vue) renders and mutates a list through
 // these functions, and every decision worth a test (what survives a saved blob, what HTML is
 // allowed back into the DOM, how a numbered run counts) lives here.

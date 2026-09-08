@@ -96,8 +96,8 @@
 // A personal scratch list on the workspace overview: rows of inline rich text
 // (bold / italic / underline), each marked either with a checkbox or with its position in a
 // numbered run. The list itself lives in stores/home-todo.ts — the management chat's
-// `todo.create` executor appends to the same reactive copy, so a row the assistant filed is
-// on this tile the moment its notice prints. This component owns only the contenteditable
+// `todo.create` / `todo.update` / `todo.delete` executor writes the same reactive copy, so a
+// row the assistant filed or changed is on this tile the moment its notice prints. This component owns only the contenteditable
 // DOM, which Vue must NOT re-render — every row's innerHTML is set once when its element
 // appears (bindEditor) and then belongs to the browser, because a reactive re-write would
 // reset the caret on every keystroke. `item.html` mirrors the DOM (raw on input, sanitized
