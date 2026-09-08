@@ -80,6 +80,26 @@ test("project carryFiles defaults to [.env] and round-trips", () => {
   expect(r.listProjects().find((x) => x.id === g.id)!.carryFiles).toEqual([".env", "config/svc.json"]);
 });
 
+test("project docFolders defaults to [] and round-trips a set value", () => {
+  const r = new RegistryService(":memory:");
+  const created = r.upsertProject({ id: "p1", name: "P" });
+  expect(created.docFolders).toEqual([]);
+
+  const patched = r.patchProject("p1", { docFolders: ["docs", "guide"] });
+  expect(patched.docFolders).toEqual(["docs", "guide"]);
+  expect(r.listProjects().find((p) => p.id === "p1")!.docFolders).toEqual(["docs", "guide"]);
+});
+
+// A bare upsert overwrites docFolders from the incoming row, exactly as it does for
+// carry_files (`doc_folders = excluded.doc_folders`, default []). It does NOT preserve the
+// prior value — the cloud is the source of truth for this field, like carryFiles.
+test("project docFolders is reset from the incoming row on a bare upsert, mirroring carryFiles", () => {
+  const r = new RegistryService(":memory:");
+  r.upsertProject({ id: "p1", name: "P", docFolders: ["docs"] });
+  r.upsertProject({ id: "p1", name: "P renamed" });
+  expect(r.listProjects().find((p) => p.id === "p1")!.docFolders).toEqual([]);
+});
+
 test("patchProject renames the project and round-trips", () => {
   const r = new RegistryService(":memory:");
   const g = r.upsertProject({ id: "p-app", name: "old", localRepoPath: "/tmp/app" });
