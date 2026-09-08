@@ -40,6 +40,16 @@ function make(skills: SkillsService = stubSkills()) {
   const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth(), skills);
   return { sup, registry };
 }
+
+// Replay a turn that reports a PR URL — the signal Kermanych settles `in_review` on. A
+// `text_delta` then an assistant `message_end` is the minimum that makes reduceRpcEvents
+// emit an `assistant_text` entry carrying the URL.
+function emitPrUrl(url = "https://github.com/o/r/pull/7"): void {
+  for (const cb of eventCbs) {
+    cb({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: `ПР відкрито: ${url}` } });
+    cb({ type: "message_end", message: { role: "assistant" } });
+  }
+}
 beforeEach(() => { started.length = 0; prompts.length = 0; eventCbs.length = 0; });
 
 describe("createPullRequest", () => {
@@ -104,7 +114,7 @@ describe("createPullRequest", () => {
     expect(p.endsWith("SKILL BLOCK")).toBe(true);
   });
 
-  it("settles the session on in_review when the PR turn ends", async () => {
+  it("settles the session on in_review only once the PR turn reports a PR URL", async () => {
     const { sup, registry } = make();
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
@@ -114,6 +124,13 @@ describe("createPullRequest", () => {
     // Mid-push the card must still read as active work, not as a review request.
     expect(sup.snapshot().sessions.find((x) => x.id === s.id)!.status).not.toBe("in_review");
 
+    // A turn that ends WITHOUT a PR URL is not the PR landing — the agent stopped to ask for
+    // a token. The card rests on done, but the request stays armed for the next turn.
+    for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
+    expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("done");
+
+    // The operator answers, the agent opens the PR and reports its URL: now the card moves.
+    emitPrUrl();
     for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
 
     expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("in_review");
@@ -121,24 +138,37 @@ describe("createPullRequest", () => {
     expect(sup.snapshot().sessions.find((x) => x.id === s.id)!.status).toBe("in_review");
   });
 
-  it("leaves an ordinary turn on done, and does not re-review the next one", async () => {
+  it("leaves an ordinary turn on done, and consumes the request once the PR is open", async () => {
     const { sup, registry } = make();
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
     registry.updateSession(s.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "done" });
 
+    // An un-requested session that happens to print a PR URL must not drift onto review.
     await sup.sendMessage(s.id, "ще одну правку", "prompt");
+    emitPrUrl();
     for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
     expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("done");
 
-    // The flag is consumed by the turn it was set for: a PR turn followed by an ordinary
-    // one must not leave the session parked on review forever.
     await sup.createPullRequest(s.id);
+    emitPrUrl();
     for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
     expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("in_review");
 
+    // The request is consumed by the turn that opened the PR: a later edit falls back to done.
     await sup.sendMessage(s.id, "і ще одну", "prompt");
     for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
     expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("done");
+  });
+
+  it("keeps a resumed in_review session on review instead of demoting it to done", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
+    registry.updateSession(s.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "in_review" });
+
+    await sup.resume(s.id);
+
+    expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("in_review");
   });
 });
