@@ -190,7 +190,17 @@ function onKeydown(e: KeyboardEvent): void {
 // DENSE — the same strip in a narrow column. Geometry only: nothing about the
 // thumb, the accent or the keyboard changes, so a dense strip is the same control
 // the header carries, not a lookalike.
+//
+// The dense strip is stretched to its column's full width (the settings rail head
+// is a stretch flex column), so its segments share that width EQUALLY rather than
+// each taking its label's natural size — otherwise short labels (English «Project /
+// Workspace / App») pack to the left and leave the track empty on the right, while
+// longer ones (Ukrainian) happen to fill it. `flex: 1 1 0` makes every segment one
+// share of the track in any language; `min-width: 0` lets a share shrink below its
+// label so the thumb, which measures the real button box, still lands true.
 .k-topnav--dense .k-topnav__seg {
+  flex: 1 1 0;
+  min-width: 0;
   padding: var(--k-sp-2) 10px;
   font-size: var(--k-fs-sm);
 }
