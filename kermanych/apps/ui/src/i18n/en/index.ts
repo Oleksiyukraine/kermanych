@@ -1020,7 +1020,7 @@ export const en: MessageSchema = {
     section: {
       'management-home': { hint: 'workspace overview' },
       'management-storage': { hint: 'credentials and keys', limitation: 'the section stores secrets — the assistant can only note that they exist; it never reads or changes passwords or files' },
-      'management-docs': { hint: 'specs and decisions', limitation: 'the section isn’t built yet — it has neither a screen nor a data store behind it' },
+      'management-docs': { hint: 'specs and decisions', limitation: 'shows each project’s repository documentation as-is — the assistant can mention it but does not edit the files' },
       'management-risks': { hint: 'risks and mitigations' },
       'management-releases': { hint: 'changes by release' },
       'management-capacity': { hint: 'team workload', limitation: 'the section only reads Jira estimates and worklogs — workload changes by editing tickets in Jira, not from the chat' },
