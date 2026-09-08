@@ -346,6 +346,40 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return this.worktree.pull(this.boundProject(projectId).localRepoPath);
   }
 
+  // The docs preview reads files from a folder the project PUBLISHED (project.docFolders)
+  // inside its bound local checkout. Two guards before any disk access: the project must be
+  // bound (boundProject throws otherwise), and `folder` must be one the project actually
+  // published — a client may not read an arbitrary directory by naming it here. `folder` is
+  // also checked for a `..`/absolute escape; `path` is guarded by the WorktreeService readers.
+  private docsDir(projectId: string, folder: string): string {
+    const project = this.boundProject(projectId);
+    const f = folder.trim();
+    if (f.startsWith("/") || /^[a-zA-Z]:/.test(f) || f.split(/[\\/]/).includes("..")) {
+      throw new Error("invalid doc folder");
+    }
+    if (!(project.docFolders ?? []).includes(f)) throw new Error("unknown doc folder");
+    return join(project.localRepoPath, f);
+  }
+
+  async docsTree(projectId: string, folder: string, path: string): Promise<TreeEntry[]> {
+    try {
+      return await this.worktree.listTree(this.docsDir(projectId, folder), path);
+    } catch (err) {
+      // A configured folder absent from THIS checkout is an empty listing, not an error;
+      // the validation errors above still propagate.
+      if (err instanceof Error && /unknown doc folder|invalid doc folder|project not bound|invalid path/.test(err.message)) throw err;
+      return [];
+    }
+  }
+
+  async docsFile(projectId: string, folder: string, path: string): Promise<FileContent> {
+    return this.worktree.readFileContent(this.docsDir(projectId, folder), path);
+  }
+
+  async docsRaw(projectId: string, folder: string, path: string): Promise<{ bytes: Buffer; contentType: string } | null> {
+    return this.worktree.readFileBytes(this.docsDir(projectId, folder), path);
+  }
+
   // Launch a CLOUD task on this machine. The cloud decides who may run a task (assignee +
   // atomic claim) and owns the project config; SQLite owns where the repo lives locally.
   // From `registry.createSession` onward this is byte-for-byte the ordinary launch path, so
