@@ -669,6 +669,13 @@ export const en: MessageSchema = {
       tokenReveal: 'Show',
       tokenHide: 'Hide',
     },
+    docs: {
+      folders: 'Documentation folders',
+      addPlaceholder: 'add a folder (e.g. docs)…',
+      remove: 'Remove {folder}',
+      bindHint: 'Bind a local repository to preview its documentation.',
+      note: 'Paths relative to the repository root. The preview shows files as-is.',
+    },
     commands: {
       preview: 'Preview command (web)',
       api: 'Preview command (API, optional)',
