@@ -3,10 +3,10 @@
 // Kermanych, in sendMessage, before the text ever reaches the child — because Kermanych is
 // the only party that sees the operator's message, and a child has no callback into it.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ProjectTrigger } from "@kermanych/cloud";
+import type { AiTrigger } from "@kermanych/cloud";
 import type { TranscriptEntry } from "@kermanych/core";
 import type { WorktreeService } from "../src/worktree/worktree.service";
-import type { SkillsService } from "../src/skills/skills.service";
+import type { AiScopeSet, SkillsService } from "../src/skills/skills.service";
 
 type SpawnOpts = { cwd: string; configPath?: string; extensionPath?: string };
 const started: SpawnOpts[] = [];
@@ -50,22 +50,22 @@ import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
 import { offlineAuth } from "./offline-auth";
 
-const t = (over: Partial<ProjectTrigger>): ProjectTrigger => ({
-  projectId: "p1", id: "wants-pr", label: "Хоче ПР", enabled: true,
+const t = (over: Partial<AiTrigger>): AiTrigger => ({
+  owner: { scope: "project", id: "p1" }, id: "wants-pr", slug: "wants-pr", label: "Хоче ПР", enabled: true,
   source: "operator", pattern: "хочу зробити ПР", pathGlobs: [],
   action: "agent", instruction: "", agentId: "resolve-conflict", skills: [],
   mode: "remind", repeat: "once", ...over,
 });
 
 // A `prompt` trigger, the shape that carries an instruction and/or an ordered skill list.
-const prompt = (over: Partial<ProjectTrigger>): ProjectTrigger =>
+const prompt = (over: Partial<AiTrigger>): AiTrigger =>
   t({ action: "prompt", agentId: "", ...over });
 
 // Only the members the message path touches. `materializeTriggers` answers for the launch,
 // `operatorTriggers` for the match, `assignedForNames` for a `prompt` action's skill bodies —
 // and `assignedFor`/`instructionFor` because the agent a fired trigger runs renders its own
 // instruction.
-function make(triggers: ProjectTrigger[], blocks: Record<string, string> = {}) {
+function make(triggers: AiTrigger[], blocks: Record<string, string> = {}) {
   const registry = new RegistryService(":memory:");
   const worktree = {
     isGitRepo: vi.fn().mockResolvedValue(true),
@@ -79,7 +79,7 @@ function make(triggers: ProjectTrigger[], blocks: Record<string, string> = {}) {
     instructionFor: async () => undefined,
     materializeTriggers: async () => ({ packagePath: "/tmp/kmq-triggers/s1" }),
     operatorTriggers: async () => triggers,
-    assignedForNames: async (_p: string, names: readonly string[]) => {
+    assignedForNames: async (_scope: AiScopeSet, names: readonly string[]) => {
       const hits = names.filter((n) => blocks[n]);
       return {
         block: hits.map((n) => blocks[n]!).join("\n"),

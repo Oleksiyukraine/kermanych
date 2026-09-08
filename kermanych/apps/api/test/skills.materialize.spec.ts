@@ -13,15 +13,15 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_SKILLS } from "@kermanych/core";
-import type { ProjectSkill } from "@kermanych/cloud";
+import type { AiSkill } from "@kermanych/cloud";
 import { REPO_SKILL_DIRS, repoSkillNames, resolveSkills, SkillsService } from "../src/skills/skills.service";
 
-const row = (p: Partial<ProjectSkill> & { name: string }): ProjectSkill => ({
-  projectId: "p1", description: "d", body: "b", enabled: true, updatedAt: "t", ...p,
+const row = (p: Partial<AiSkill> & { name: string }): AiSkill => ({
+  owner: { scope: "project", id: "p1" }, id: p.name, description: "d", body: "b", enabled: true, updatedAt: "t", ...p,
 });
 
 // The auth stub stands in for the cloud read: no network in unit tests. Every test then
-// replaces `readRows`, which is the seam that read goes through. `readCustomDirs` is the
+// replaces `readSkills`, which is the seam that read goes through. `readCustomDirs` is the
 // second seam — it spawns a real `omp` to read the effective `skills.customDirectories` — and
 // defaults to "the operator declared none" so these tests stay hermetic; the merge itself is
 // pinned below and end-to-end in skills.e2e.spec.ts.
@@ -71,8 +71,8 @@ test("a row name that is not a valid skill name is dropped before any mkdir", as
   expect(resolveSkills(bad.map((name) => row({ name }))).map((s) => s.def.name).sort()).toEqual(defaults);
 
   const svc = service();
-  svc.readRows = async () => bad.map((name) => row({ name }));
-  await svc.materialize("p1", repo);
+  svc.readSkills = async () => bad.map((name) => row({ name }));
+  await svc.materialize({ projectId: "p1" }, repo);
   expect(readdirSync(join(home, "skills", "p1")).sort()).toEqual(defaults);
   expect(existsSync(join(home, "skills", "evil"))).toBe(false);
   expect(existsSync(join(home, "skills", "p1", "Uppercase"))).toBe(false);
@@ -100,8 +100,8 @@ test("a symlinked repo skill directory shadows the library too", async () => {
   expect((await repoSkillNames(repo)).get("kermanych-session")).toBe(link);
 
   const svc = service();
-  svc.readRows = async () => [];
-  const { view } = await svc.materialize("p1", repo);
+  svc.readSkills = async () => [];
+  const { view } = await svc.materialize({ projectId: "p1" }, repo);
   expect(readdirSync(join(home, "skills", "p1"))).toEqual(["kermanych-pull-request"]);
   expect(view.find((v) => v.name === "kermanych-session")?.shadowedByRepo).toBe(link);
   rmSync(shared, { recursive: true, force: true });
@@ -112,8 +112,8 @@ test("a repo directory without SKILL.md shadows nothing", async () => {
   expect((await repoSkillNames(repo)).has("kermanych-session")).toBe(false);
 
   const svc = service();
-  svc.readRows = async () => [];
-  const { view } = await svc.materialize("p1", repo);
+  svc.readSkills = async () => [];
+  const { view } = await svc.materialize({ projectId: "p1" }, repo);
   expect(readdirSync(join(home, "skills", "p1")).sort()).toEqual(DEFAULT_SKILLS.map((d) => d.name).sort());
   expect(view.every((v) => v.shadowedByRepo === undefined)).toBe(true);
 });
@@ -122,9 +122,9 @@ test("materialize writes the library, the overlay, and skips a repo-shadowed ski
   mkdirSync(join(repo, ".claude/skills/kermanych-session"), { recursive: true });
   writeFileSync(join(repo, ".claude/skills/kermanych-session/SKILL.md"), "---\nname: kermanych-session\n---\n");
   const svc = service();
-  svc.readRows = async () => [row({ name: "extra", description: "e", body: "eb" })];
+  svc.readSkills = async () => [row({ name: "extra", description: "e", body: "eb" })];
 
-  const { configPath, view, stale } = await svc.materialize("p1", repo);
+  const { configPath, view, stale } = await svc.materialize({ projectId: "p1" }, repo);
 
   const dir = join(home, "skills", "p1");
   expect(stale).toBeUndefined();
@@ -143,34 +143,34 @@ test("materialize writes the library, the overlay, and skips a repo-shadowed ski
 
 test("a removed skill is pruned on the next materialize", async () => {
   const svc = service();
-  svc.readRows = async () => [row({ name: "temporary" })];
-  await svc.materialize("p1", repo);
+  svc.readSkills = async () => [row({ name: "temporary" })];
+  await svc.materialize({ projectId: "p1" }, repo);
   expect(existsSync(join(home, "skills", "p1", "temporary"))).toBe(true);
-  svc.readRows = async () => [];
-  await svc.materialize("p1", repo);
+  svc.readSkills = async () => [];
+  await svc.materialize({ projectId: "p1" }, repo);
   expect(existsSync(join(home, "skills", "p1", "temporary"))).toBe(false);
 });
 
 test("a skill that becomes repo-shadowed is pruned on the next materialize", async () => {
   const svc = service();
-  svc.readRows = async () => [];
-  await svc.materialize("p1", repo);
+  svc.readSkills = async () => [];
+  await svc.materialize({ projectId: "p1" }, repo);
   expect(existsSync(join(home, "skills", "p1", "kermanych-session"))).toBe(true);
 
   mkdirSync(join(repo, ".omp/skills/kermanych-session"), { recursive: true });
   writeFileSync(join(repo, ".omp/skills/kermanych-session/SKILL.md"), "---\nname: kermanych-session\n---\n");
-  await svc.materialize("p1", repo);
+  await svc.materialize({ projectId: "p1" }, repo);
   expect(readdirSync(join(home, "skills", "p1"))).toEqual(["kermanych-pull-request"]);
 });
 
 test("an unreachable cloud keeps the last materialised library and reports it as stale", async () => {
   const svc = service();
-  svc.readRows = async () => [row({ name: "cached" })];
-  await svc.materialize("p1", repo);
-  svc.readRows = async () => {
+  svc.readSkills = async () => [row({ name: "cached" })];
+  await svc.materialize({ projectId: "p1" }, repo);
+  svc.readSkills = async () => {
     throw new Error("offline");
   };
-  const { configPath, stale } = await svc.materialize("p1", repo);
+  const { configPath, stale } = await svc.materialize({ projectId: "p1" }, repo);
   expect(existsSync(join(home, "skills", "p1", "cached"))).toBe(true);
   expect(existsSync(configPath!)).toBe(true);
   expect(stale).toBe(true);
@@ -178,13 +178,13 @@ test("an unreachable cloud keeps the last materialised library and reports it as
 
 test("a first-ever materialise with no cloud still lands Kermanych's own defaults", async () => {
   const svc = service();
-  svc.readRows = async () => {
+  svc.readSkills = async () => {
     throw new Error("offline");
   };
   // DEFAULT_SKILLS are compile-time constants: no cloud, no network, no sign-in. Suppressing
   // them because the cloud was unreachable would hand omp an EMPTY directory — the state of
   // every signed-out or offline launch on a fresh install.
-  const { configPath, stale } = await svc.materialize("p1", repo);
+  const { configPath, stale } = await svc.materialize({ projectId: "p1" }, repo);
   expect(stale).toBe(true);
   expect(readdirSync(join(home, "skills", "p1")).sort()).toEqual(DEFAULT_SKILLS.map((d) => d.name).sort());
   expect(existsSync(configPath!)).toBe(true);
@@ -193,16 +193,16 @@ test("a first-ever materialise with no cloud still lands Kermanych's own default
 test("a cloud failure writes nothing over a richer cached library", async () => {
   const overridden = DEFAULT_SKILLS[0]!.name;
   const svc = service();
-  svc.readRows = async () => [
+  svc.readSkills = async () => [
     row({ name: "cached", description: "cached desc" }),
     row({ name: overridden, description: "the project's own take", body: "mine" }),
   ];
-  await svc.materialize("p1", repo);
+  await svc.materialize({ projectId: "p1" }, repo);
 
-  svc.readRows = async () => {
+  svc.readSkills = async () => {
     throw new Error("offline");
   };
-  await svc.materialize("p1", repo);
+  await svc.materialize({ projectId: "p1" }, repo);
   const dir = join(home, "skills", "p1");
   // The project's skills survive (no prune) AND the default of the same name does not
   // overwrite the project's version.
@@ -213,12 +213,12 @@ test("a cloud failure writes nothing over a richer cached library", async () => 
 test("the overlay EXTENDS the directories omp already resolves, Kermanych's last", async () => {
   const dir = join(home, "skills", "p1");
   const svc = service();
-  svc.readRows = async () => [];
+  svc.readSkills = async () => [];
   // Duplicates collapse, and Kermanych's own directory goes last: among custom directories the
   // first same-named skill wins, so appending preserves every other layer's precedence.
   svc.readCustomDirs = async () => ["/tmp/op # one", dir, "/tmp/two: b"];
 
-  const { configPath } = await svc.materialize("p1", repo);
+  const { configPath } = await svc.materialize({ projectId: "p1" }, repo);
   expect(readFileSync(configPath!, "utf8")).toBe(
     `skills:\n  customDirectories:\n    - "/tmp/op # one"\n    - "/tmp/two: b"\n    - ${JSON.stringify(dir)}\n` +
       `ttsr:\n  enabled: true\n`,
@@ -227,10 +227,10 @@ test("the overlay EXTENDS the directories omp already resolves, Kermanych's last
 
 test("an unreadable customDirectories writes no overlay rather than replacing it", async () => {
   const svc = service();
-  svc.readRows = async () => [row({ name: "extra" })];
+  svc.readSkills = async () => [row({ name: "extra" })];
   svc.readCustomDirs = async () => undefined;
 
-  const { configPath, stale } = await svc.materialize("p1", repo);
+  const { configPath, stale } = await svc.materialize({ projectId: "p1" }, repo);
   // Losing the library for one launch beats erasing the operator's own skill directories.
   expect(configPath).toBeUndefined();
   expect(stale).toBe(true);
@@ -241,16 +241,16 @@ test("an unreadable customDirectories writes no overlay rather than replacing it
 
 test("view surfaces a cloud failure instead of presenting the defaults as the library", async () => {
   const svc = service();
-  svc.readRows = async () => {
+  svc.readSkills = async () => {
     throw new Error("offline");
   };
-  await expect(svc.view("p1", repo)).rejects.toThrow("offline");
+  await expect(svc.view({ projectId: "p1" }, repo)).rejects.toThrow("offline");
 });
 
 test("view writes nothing", async () => {
   const svc = service();
-  svc.readRows = async () => [row({ name: "extra" })];
-  const { view } = await svc.view("p1", repo);
+  svc.readSkills = async () => [row({ name: "extra" })];
+  const { view } = await svc.view({ projectId: "p1" }, repo);
   expect(view.some((v) => v.name === "extra")).toBe(true);
   expect(readdirSync(home)).toEqual([]);
 });
@@ -265,8 +265,8 @@ test("view reports the repository's own skill names, including one the library n
   mkdirSync(join(repo, ".omp/skills/extra"), { recursive: true });
   writeFileSync(join(repo, ".omp/skills/extra/SKILL.md"), "---\nname: extra\ndescription: d\n---\nBody.\n");
   const svc = service();
-  svc.readRows = async () => [row({ name: "extra" })];
-  const { view, repo: names } = await svc.view("p1", repo);
+  svc.readSkills = async () => [row({ name: "extra" })];
+  const { view, repo: names } = await svc.view({ projectId: "p1" }, repo);
   expect(Object.keys(names).sort()).toEqual(["extra", "repo-only"]);
   expect(names["repo-only"]).toBe(join(repo, ".omp/skills/repo-only/SKILL.md"));
   // `extra` is in both, so the library entry carries the shadow; `repo-only` is in neither
@@ -277,15 +277,15 @@ test("view reports the repository's own skill names, including one the library n
 
 test("a projectId that is not a valid skill name is refused before any path is joined", async () => {
   const svc = service();
-  svc.readRows = async () => [];
+  svc.readSkills = async () => [];
   for (const bad of ["../evil", "p1\nskills:\n  customDirectories: []", "P1", ""]) {
-    await expect(svc.materialize(bad, repo)).rejects.toThrow(/invalid project id/);
-    await expect(svc.view(bad, repo)).rejects.toThrow(/invalid project id/);
+    await expect(svc.materialize({ projectId: bad }, repo)).rejects.toThrow(/invalid project id/);
+    await expect(svc.view({ projectId: bad }, repo)).rejects.toThrow(/invalid project id/);
   }
   expect(readdirSync(home)).toEqual([]);
 
   // A lowercase UUID — what the cloud actually hands out — passes.
-  const { configPath } = await svc.materialize("0f9c4a1e-2b3d-4c5f-8a7b-6d5e4f3a2b1c", repo);
+  const { configPath } = await svc.materialize({ projectId: "0f9c4a1e-2b3d-4c5f-8a7b-6d5e4f3a2b1c" }, repo);
   expect(existsSync(configPath!)).toBe(true);
 });
 
@@ -293,9 +293,9 @@ test("a filesystem failure degrades to a stale result instead of blocking the la
   mkdirSync(join(home, "skills"), { recursive: true });
   writeFileSync(join(home, "skills", "p1"), "a plain file where the library should be");
   const svc = service();
-  svc.readRows = async () => [row({ name: "extra" })];
+  svc.readSkills = async () => [row({ name: "extra" })];
 
-  const { configPath, view, stale } = await svc.materialize("p1", repo);
+  const { configPath, view, stale } = await svc.materialize({ projectId: "p1" }, repo);
   expect(stale).toBe(true);
   expect(configPath).toBeUndefined();
   expect(view.some((v) => v.name === "extra")).toBe(true);
@@ -309,8 +309,8 @@ test.skipIf(process.getuid?.() === 0)("an unreadable repo skill directory fails 
     await expect(repoSkillNames(repo)).rejects.toThrow();
     // materialize must still not block the launch: it degrades and prunes nothing.
     const svc = service();
-    svc.readRows = async () => [];
-    const { stale } = await svc.materialize("p1", repo);
+    svc.readSkills = async () => [];
+    const { stale } = await svc.materialize({ projectId: "p1" }, repo);
     expect(stale).toBe(true);
     expect(existsSync(join(home, "skills", "p1"))).toBe(true);
     expect(readdirSync(join(home, "skills", "p1"))).toEqual([]);

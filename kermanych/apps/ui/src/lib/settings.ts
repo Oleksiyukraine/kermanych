@@ -14,16 +14,16 @@
 //
 // Everything registered below is backed by real data. Most rows carry a read and a
 // write; «Гарячі клавіші» and «Хелпери» are reference panes over something the
-// application hard-codes, and say so in the pane itself. «ШІ-команда» is NOT one of
-// them: its three rows — Агенти, Тригери, Навички — are project-scoped editors over
-// cloud tables, because an agent's instruction and the ordered skills behind an agent
-// or a trigger are decisions this project makes, not constants of the harness. Nothing
-// here is a placeholder: harness paths, provider API keys, spend caps, a parallel agent
-// limit, a context-warning threshold and remappable keys have no storage, no endpoint
-// and no column anywhere in the repo, so they get no panel.
+// application hard-codes, and say so in the pane itself. «ШІ-команда» used to be three
+// rows here; it is its own top-nav screen now (lib/ai-team.ts, pages/AiTeamPage.vue), so
+// nothing about agents, triggers or the skill library is registered below any more — the
+// pure merge those panels still share lives on in this file. Nothing here is a
+// placeholder: harness paths, provider API keys, spend caps, a parallel agent limit, a
+// context-warning threshold and remappable keys have no storage, no endpoint and no
+// column anywhere in the repo, so they get no panel.
 
 import type { AgentDef, EnvEntry, SkillView } from '@kermanych/core';
-import type { AgentSkill, TriggerSource } from '@kermanych/cloud';
+import type { AiAgentSkill, TriggerSource } from '@kermanych/cloud';
 
 export type SettingsScope = 'project' | 'workspace' | 'app';
 
@@ -31,13 +31,6 @@ export interface SettingsCategory {
   /** URL segment under /settings AND the rail's nav value. */
   key: string;
   scope: SettingsScope;
-  /**
-   * Rows the rail prints under one caption. «ШІ-команда» is three panes the operator
-   * reads together — an agent's instruction, the triggers that fire without it, and the
-   * library both of them draw skills from — so the rail names the group once instead of
-   * repeating it in three sub-lines.
-   */
-  group?: 'ai-team';
   /** Irreversible actions. Renders in the danger colour, sorts last. */
   danger?: boolean;
 }
@@ -53,11 +46,6 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { key: 'project-git', scope: 'project' },
   { key: 'project-commands', scope: 'project' },
   { key: 'project-defaults', scope: 'project' },
-  // Агенти first of the group: an agent's instruction is what a trigger interrupts and
-  // what an assigned skill is pasted into, so it is the thing the other two modify.
-  { key: 'project-agents', scope: 'project', group: 'ai-team' },
-  { key: 'project-triggers', scope: 'project', group: 'ai-team' },
-  { key: 'project-skills', scope: 'project', group: 'ai-team' },
   { key: 'project-env', scope: 'project' },
   { key: 'project-danger', scope: 'project', danger: true },
   { key: 'workspace-basics', scope: 'workspace' },
@@ -137,7 +125,7 @@ export interface AssignedSkill {
  */
 export function assignmentRows(
   agents: readonly AgentDef[],
-  assignments: readonly AgentSkill[],
+  assignments: readonly AiAgentSkill[],
   view: readonly SkillView[],
   bodyBytes: Readonly<Record<string, number>>,
   repo: Readonly<Record<string, string>>,

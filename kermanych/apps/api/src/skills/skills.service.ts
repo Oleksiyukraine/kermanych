@@ -20,14 +20,17 @@ import {
   type SkillView,
 } from "@kermanych/core";
 import {
-  listAgentSkills,
-  listProjectAgents,
-  listProjectSkills,
-  listTriggers,
-  type AgentSkill,
-  type ProjectAgent,
-  type ProjectSkill,
-  type ProjectTrigger,
+  listAiAgentSkills,
+  listAiAgents,
+  listAiSkills,
+  listAiTriggers,
+  type AiAgent,
+  type AiAgentSkill,
+  type AiOwner,
+  type AiScope,
+  type AiSkill,
+  type AiTrigger,
+  type SupabaseClient,
 } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 
@@ -50,11 +53,41 @@ export function skillsRoot(): string {
 
 export type Resolved = { def: SkillDef; source: "default" | "project" };
 
-export function resolveSkills(rows: readonly ProjectSkill[]): Resolved[] {
+// The owners one session reads, most-specific first. A session always has a project; the
+// workspace and the launching user are added when known (a local-only project has no
+// workspace; an offline or older launch may lack the signed-in user). Precedence everywhere
+// on this path is exactly this order: user > project > workspace, then the code defaults.
+export type AiScopeSet = { projectId: string; workspaceId?: string; userId?: string };
+
+const SCOPE_RANK: Record<AiScope, number> = { user: 0, project: 1, workspace: 2 };
+
+export function scopeOwners(scope: AiScopeSet): AiOwner[] {
+  const owners: AiOwner[] = [];
+  if (scope.userId) owners.push({ scope: "user", id: scope.userId });
+  owners.push({ scope: "project", id: scope.projectId });
+  if (scope.workspaceId) owners.push({ scope: "workspace", id: scope.workspaceId });
+  return owners;
+}
+
+// One row per name across scopes: the most specific owner wins (user > project > workspace),
+// so a project skill overrides a workspace one of the same name and a user skill overrides
+// both — the same precedence the instruction override and the trigger union use.
+function collapseByScope<T extends { owner: AiOwner }>(rows: readonly T[], key: (row: T) => string): T[] {
+  const best = new Map<string, T>();
+  for (const r of rows) {
+    const cur = best.get(key(r));
+    if (!cur || SCOPE_RANK[r.owner.scope] < SCOPE_RANK[cur.owner.scope]) best.set(key(r), r);
+  }
+  return [...best.values()];
+}
+
+export function resolveSkills(rows: readonly AiSkill[]): Resolved[] {
   const out = new Map<string, Resolved>();
   for (const d of DEFAULT_SKILLS) out.set(d.name, { def: d, source: "default" });
-  for (const r of rows) {
-    // A disabled row is how a project turns a default off; on a name with no default it is
+  // Collapsed to one row per name first, so a workspace default-disable that a project
+  // re-enables, or vice versa, is decided by the more specific scope alone.
+  for (const r of collapseByScope(rows, (s) => s.name)) {
+    // A disabled row is how an owner turns a default off; on a name with no default it is
     // simply nothing to add.
     if (!r.enabled) {
       out.delete(r.name);
@@ -242,7 +275,7 @@ async function readRepoSkill(path: string, name: string): Promise<SkillDef | und
 // tool arguments by default and thinking only when the scope says so — which is why a
 // "the model is reasoning about X" trigger MUST name it. `operator` has no entry here at all:
 // Kermanych matches that source itself, before the message ever reaches the child.
-const TRIGGER_SCOPE: Record<Exclude<ProjectTrigger["source"], "operator">, string> = {
+const TRIGGER_SCOPE: Record<Exclude<AiTrigger["source"], "operator">, string> = {
   assistant: "[text]",
   thinking: "[thinking]",
   tool: "[tool]",
@@ -256,8 +289,8 @@ export function triggersRoot(): string {
  * A TTSR rule file. Every value is JSON-encoded, which is valid YAML and survives a pattern
  * containing `:` or `#` — a malformed rule is a hard omp startup error, not a degradation.
  */
-export function renderRuleFile(t: ProjectTrigger, body: string): string {
-  if (t.source === "operator") throw new Error(`trigger "${t.id}" is operator-sourced: it has no rule file`);
+export function renderRuleFile(t: AiTrigger, body: string): string {
+  if (t.source === "operator") throw new Error(`trigger "${t.slug}" is operator-sourced: it has no rule file`);
   // `scope` is the one value that is not JSON-encoded, so it is the one that can be malformed:
   // a source outside the union (a row predating the DB constraint) would write
   // `scope: undefined`, which omp rejects at LOAD — after any write-time try/catch has already
@@ -269,7 +302,7 @@ export function renderRuleFile(t: ProjectTrigger, body: string): string {
   // stringified function into the YAML. The guard exists precisely for values outside the
   // union, so it must not be defeatable by one of them.
   const scope = Object.hasOwn(TRIGGER_SCOPE, t.source) ? TRIGGER_SCOPE[t.source] : undefined;
-  if (!scope) throw new Error(`trigger "${t.id}" has an unknown source: ${String(t.source)}`);
+  if (!scope) throw new Error(`trigger "${t.slug}" has an unknown source: ${String(t.source)}`);
   const fm = [
     "---",
     `description: ${JSON.stringify(t.label)}`,
@@ -292,71 +325,92 @@ export type Materialized = { configPath?: string; view: SkillView[]; stale?: boo
 export class SkillsService {
   constructor(private auth: AuthService) {}
 
-  // Seams for tests: the cloud read and the `omp` child are the two parts a unit test
-  // cannot perform.
-  readRows = async (projectId: string): Promise<ProjectSkill[]> =>
-    listProjectSkills(this.auth.cloudClient(), [projectId]);
+  // Seams for tests: the cloud reads and the `omp` child are the parts a unit test cannot
+  // perform. Each reads EVERY owner the session sees (user, project, workspace) and returns
+  // the rows tagged with their owner; the resolver methods below apply precedence.
+  readSkills = (scope: AiScopeSet): Promise<AiSkill[]> => this.readAll(scope, listAiSkills);
+  readAssignments = (scope: AiScopeSet): Promise<AiAgentSkill[]> => this.readAll(scope, listAiAgentSkills);
+  readTriggers = (scope: AiScopeSet): Promise<AiTrigger[]> => this.readAll(scope, listAiTriggers);
+  readAgents = (scope: AiScopeSet): Promise<AiAgent[]> => this.readAll(scope, listAiAgents);
   readCustomDirs = (cwd: string): Promise<string[] | undefined> => readOmpCustomDirectories(cwd);
-  readAssignments = async (projectId: string): Promise<AgentSkill[]> =>
-    listAgentSkills(this.auth.cloudClient(), [projectId]);
-  readTriggers = async (projectId: string): Promise<ProjectTrigger[]> =>
-    listTriggers(this.auth.cloudClient(), [projectId]);
-  readAgentInstructions = async (projectId: string): Promise<ProjectAgent[]> =>
-    listProjectAgents(this.auth.cloudClient(), [projectId]);
 
-  // The project's own text for one of Kermanych's agents, or `undefined` when the
-  // compile-time default is what must run. The template is checked HERE as well as in the
-  // editor because the row can OUTLIVE the template it was written against: an agent whose
-  // holes change leaves every saved override behind, and neither way of being stale is
-  // visible to the operator. One that lost a hole runs the agent starved of the very context
-  // it was written around — no diff, no branch — and one that names a hole that no longer
-  // exists makes renderInstruction throw mid-session. The default is always renderable, so a
-  // stale override is dropped rather than delivered.
-  async instructionFor(projectId: string, agentId: string): Promise<string | undefined> {
+  // One cloud call per owner, under the signed-in user's JWT. A member of a project is a
+  // member of its workspace and owns their own user rows, so all present owners read; an
+  // offline or signed-out client fails them all, which every caller already degrades on.
+  private async readAll<T>(
+    scope: AiScopeSet,
+    read: (client: SupabaseClient, owner: AiOwner) => Promise<T[]>,
+  ): Promise<T[]> {
+    const client = this.auth.cloudClient();
+    const parts = await Promise.all(scopeOwners(scope).map((owner) => read(client, owner)));
+    return parts.flat();
+  }
+
+  // The effective text for one of Kermanych's agents, or `undefined` when the compile-time
+  // default is what must run. The override is taken from the MOST SPECIFIC scope that carries
+  // one (user > project > workspace). The template is checked HERE as well as in the editor
+  // because the row can OUTLIVE the template it was written against: an agent whose holes
+  // change leaves every saved override behind, and neither way of being stale is visible to
+  // the operator. One that lost a hole runs the agent starved of the very context it was
+  // written around — no diff, no branch — and one that names a hole that no longer exists
+  // makes renderInstruction throw mid-session. The default is always renderable, so a stale
+  // override is dropped rather than delivered.
+  async instructionFor(scope: AiScopeSet, agentId: string): Promise<string | undefined> {
     const def = agentById(agentId);
     if (!def) return undefined;
-    let rows: ProjectAgent[];
+    let rows: AiAgent[];
     try {
-      assertProjectId(projectId);
-      rows = await this.readAgentInstructions(projectId);
+      assertProjectId(scope.projectId);
+      rows = await this.readAgents(scope);
     } catch {
       return undefined; // offline, signed out, or an id that is not a project
     }
-    const template = rows.find((r) => r.agentId === agentId)?.instruction.trim();
+    const mine = rows
+      .filter((r) => r.agentId === agentId)
+      .sort((a, b) => SCOPE_RANK[a.owner.scope] - SCOPE_RANK[b.owner.scope]);
+    const template = mine[0]?.instruction.trim();
     if (!template) return undefined;
     const { missing, unknown } = instructionErrors(def, template);
     if (missing.length === 0 && unknown.length === 0) return template;
-    // Unlike a failed cloud read, this is a project that HAS an instruction and is silently
-    // not getting it — the one degradation on this path worth a line in the log.
+    // Unlike a failed cloud read, this is a scope that HAS an instruction and is silently not
+    // getting it — the one degradation on this path worth a line in the log.
     console.warn(
-      `[skills] instruction for ${agentId} ignored in project ${projectId}:` +
+      `[skills] instruction for ${agentId} ignored (${mine[0]!.owner.scope} ${mine[0]!.owner.id}):` +
         ` missing ${missing.join(", ") || "none"}, unknown ${unknown.join(", ") || "none"}`,
     );
     return undefined;
   }
 
   // What one agent's instruction carries for the skills assigned to it: the block to append,
-  // the view the UI labels the rows with, and the names that resolved to nothing. Never
-  // throws for a library reason — an agent that cannot read its assignments still runs with
-  // its own instruction.
+  // the view the UI labels the rows with, and the names that resolved to nothing. The
+  // sequence is taken WHOLE from the most specific scope that defines one (user, else project,
+  // else workspace) — not concatenated across scopes, so a skill is never glued in twice.
+  // Never throws for a library reason — an agent that cannot read its assignments still runs
+  // with its own instruction.
   async assignedFor(
-    projectId: string,
+    scope: AiScopeSet,
     agentId: string,
     cwd: string,
   ): Promise<{ block: string; view: SkillView[]; missing: string[] }> {
-    assertProjectId(projectId);
-    let rows: AgentSkill[];
+    assertProjectId(scope.projectId);
+    let rows: AiAgentSkill[];
     try {
-      rows = (await this.readAssignments(projectId)).filter((r) => r.agentId === agentId);
+      rows = (await this.readAssignments(scope)).filter((r) => r.agentId === agentId);
     } catch {
       return { block: "", view: [], missing: [] }; // offline or signed out
     }
-    // The operator's own order, with the name as the tiebreak so two rows that were never
-    // reordered still read the same way on every launch.
-    rows.sort((a, b) => a.position - b.position || a.skillName.localeCompare(b.skillName));
+    // The winning scope is the most specific one with any row for this agent. Its rows, in
+    // the operator's own order with the name as the tiebreak, are the sequence.
+    const winner = rows.reduce<AiAgentSkill["owner"]["scope"] | undefined>((best, r) => {
+      if (best === undefined || SCOPE_RANK[r.owner.scope] < SCOPE_RANK[best]) return r.owner.scope;
+      return best;
+    }, undefined);
+    const chosen = rows
+      .filter((r) => r.owner.scope === winner)
+      .sort((a, b) => a.position - b.position || a.skillName.localeCompare(b.skillName));
     return this.assignedForNames(
-      projectId,
-      rows.map((r) => r.skillName),
+      scope,
+      chosen.map((r) => r.skillName),
       cwd,
     );
   }
@@ -365,18 +419,18 @@ export class SkillsService {
   // path, which materialises the same bodies from a different source: precedence has exactly
   // one answer, and it lives here. Degrades rather than throws for the same reason as above.
   async assignedForNames(
-    projectId: string,
+    scope: AiScopeSet,
     names: readonly string[],
     cwd: string,
   ): Promise<{ block: string; view: SkillView[]; missing: string[] }> {
-    assertProjectId(projectId);
+    assertProjectId(scope.projectId);
     // A failed CLOUD read only narrows the library to DEFAULT_SKILLS, which need neither
     // network nor sign-in, so an assigned default is still delivered. A failed REPO SCAN is
     // different: with no trustworthy shadow map, delivering the library's text could hand the
     // agent a body the repository has overridden, and "the repository always wins" outranks
     // delivering anything at all. Same degradation as an unreachable cloud, one layer up.
     const [library, repo] = await Promise.all([
-      this.readRows(projectId).catch(() => [] as ProjectSkill[]),
+      this.readSkills(scope).catch(() => [] as AiSkill[]),
       repoSkillNames(cwd).catch(() => undefined),
     ]);
     if (!repo) return { block: "", view: [], missing: [] };
@@ -411,21 +465,19 @@ export class SkillsService {
     return { block: assignedBlock(defs), view, missing };
   }
 
-  // Read-only: what the UI lists. Never writes, so a settings screen cannot mutate a
-  // session's library as a side effect of being opened. Errors propagate on purpose: a
-  // settings screen that showed the defaults after a failed read would tell the user their
-  // project skills are gone, when what failed was the read.
+  // Read-only: the session's EFFECTIVE library — every scope merged by precedence, with the
+  // repository shadow marked. Never writes, so a settings screen cannot mutate a session's
+  // library by being opened. Errors propagate on purpose: showing the defaults after a failed
+  // read would tell the user their skills are gone when what failed was the read.
   //
-  // The repository scan is returned ALONGSIDE the library rather than folded into it. The
-  // repository is not the library: a name it alone defines has no row and no default, so it
-  // has no place in a list of the project's skills — but it IS deliverable, because
-  // `assignedForNames` reads the repository's file for it. A caller that has to tell
-  // "assigned to something that no longer exists" from "assigned to something the
-  // repository provides" cannot do it from `view` alone, and every caller that only wants
-  // the library simply ignores `repo`.
-  async view(projectId: string, cwd: string): Promise<ProjectSkillsPayload> {
-    assertProjectId(projectId);
-    const rows = await this.readRows(projectId);
+  // The repository scan is returned ALONGSIDE the library, not folded in: a name it alone
+  // defines has no row and no default, so it has no place in a list of the owned skills — but
+  // it IS deliverable, because `assignedForNames` reads the repository's file for it. A caller
+  // telling "assigned to something gone" from "assigned to something the repository provides"
+  // cannot do it from `view` alone, and a caller wanting only the library ignores `repo`.
+  async view(scope: AiScopeSet, cwd: string): Promise<ProjectSkillsPayload> {
+    assertProjectId(scope.projectId);
+    const rows = await this.readSkills(scope);
     const repo = await repoSkillNames(cwd);
     const view = resolveSkills(rows).map(({ def, source }) => ({
       name: def.name,
@@ -438,11 +490,13 @@ export class SkillsService {
 
   // Never blocks a launch: every filesystem, cloud or config failure degrades to
   // `stale: true` with whatever is already on disk. `configPath` is absent when the overlay
-  // was not written — passing omp a --config that does not exist would break the session.
-  async materialize(projectId: string, cwd: string): Promise<Materialized> {
-    assertProjectId(projectId);
-    const dir = join(skillsRoot(), projectId);
-    const overlay = join(skillsRoot(), `${projectId}.config.yml`);
+  // was not written — passing omp a --config that does not exist would break the session. The
+  // on-disk directory stays keyed on the PROJECT (the session's checkout is a project's), even
+  // though the resolved content now merges the workspace and the user in too.
+  async materialize(scope: AiScopeSet, cwd: string): Promise<Materialized> {
+    assertProjectId(scope.projectId);
+    const dir = join(skillsRoot(), scope.projectId);
+    const overlay = join(skillsRoot(), `${scope.projectId}.config.yml`);
 
     // Both reads happen before any write, and the two degradations are tracked apart because
     // they forbid different things. A failed REPO SCAN leaves no trustworthy shadow map, so
@@ -459,9 +513,9 @@ export class SkillsService {
     } catch {
       repoFailed = true;
     }
-    let rows: ProjectSkill[] = [];
+    let rows: AiSkill[] = [];
     try {
-      rows = await this.readRows(projectId);
+      rows = await this.readSkills(scope);
     } catch {
       cloudFailed = true; // offline or signed out
     }
@@ -498,7 +552,7 @@ export class SkillsService {
           if (repo.has(def.name)) continue; // the repository's own skill wins the name
           keep.add(def.name);
           // With no cloud, `resolved` is just the defaults: rewriting a name already on disk
-          // would demote a project's own skill to the default that shares its name.
+          // would demote an owner's own skill to the default that shares its name.
           if (cloudFailed && (await hasSkillFile(dir, def.name))) continue;
           await mkdir(join(dir, def.name), { recursive: true });
           await writeFile(join(dir, def.name, "SKILL.md"), renderSkillFile(def), "utf8");
@@ -506,7 +560,7 @@ export class SkillsService {
         // Runs only after every write succeeded, so a half-written library is never pruned
         // against. Removed AND newly repo-shadowed names both disappear here. Skipped when the
         // cloud failed: `resolved` is then not the real library, and pruning against it would
-        // delete every cached project skill.
+        // delete every cached skill.
         if (!cloudFailed) {
           for (const e of await readEntries(dir)) {
             if (e.isDirectory() && !keep.has(e.name)) await rm(join(dir, e.name), { recursive: true, force: true });
@@ -520,17 +574,16 @@ export class SkillsService {
     return { ...(configPath !== undefined ? { configPath } : {}), view, ...(stale ? { stale: true } : {}) };
   }
 
-  // The triggers Kermanych itself matches, in the order it tries them. Sorted by id so two
-  // patterns that both match one message always pick the same winner — a message whose
-  // outcome depended on the cloud's row order would be untestable and unexplainable.
-  // Degrades to none rather than throwing: a trigger is an addition to a session, and an
-  // offline or signed-out operator still gets to send messages.
-  async operatorTriggers(projectId: string): Promise<ProjectTrigger[]> {
-    assertProjectId(projectId);
+  // The triggers Kermanych itself matches, in the order it tries them. The UNION of every
+  // scope, deduped by slug with the most specific scope winning, then sorted by slug so two
+  // patterns that both match one message always pick the same winner — a message whose outcome
+  // depended on the cloud's row order would be untestable and unexplainable. Degrades to none
+  // rather than throwing: an offline or signed-out operator still gets to send messages.
+  async operatorTriggers(scope: AiScopeSet): Promise<AiTrigger[]> {
+    assertProjectId(scope.projectId);
     try {
-      return (await this.readTriggers(projectId))
-        .filter((t) => t.enabled && t.source === "operator")
-        .sort((a, b) => a.id.localeCompare(b.id));
+      const operator = (await this.readTriggers(scope)).filter((t) => t.enabled && t.source === "operator");
+      return collapseByScope(operator, (t) => t.slug).sort((a, b) => a.slug.localeCompare(b.slug));
     } catch {
       return []; // offline or signed out
     }
@@ -539,23 +592,25 @@ export class SkillsService {
   /**
    * Lay this session's TTSR rules out as a loadable extension package. Per SESSION, not per
    * project: a rule body may carry session-specific interpolation, and the per-project config
-   * overlay already taught us that a shared filename with cwd-dependent content races.
+   * overlay already taught us that a shared filename with cwd-dependent content races. The
+   * rules are the UNION of every scope, deduped by slug with the most specific winning.
    *
    * Never throws for a trigger reason: a session that cannot have triggers still launches
    * without them.
    */
-  async materializeTriggers(projectId: string, sessionId: string, cwd: string): Promise<{ packagePath?: string }> {
-    assertProjectId(projectId);
+  async materializeTriggers(scope: AiScopeSet, sessionId: string, cwd: string): Promise<{ packagePath?: string }> {
+    assertProjectId(scope.projectId);
     // The session id becomes a directory name that is then pruned with a recursive rm, so it
     // gets the same boundary check the project id gets.
     if (!isSkillName(sessionId)) throw new Error(`invalid session id: ${sessionId}`);
     const dir = join(triggersRoot(), sessionId);
-    let triggers: ProjectTrigger[];
+    let triggers: AiTrigger[];
     try {
       // Only a source TTSR has a scope for gets a rule file: `operator` is matched by
       // Kermanych itself, and anything outside the union is a row predating the DB
       // constraint — dropped here so it costs its own rule rather than the whole package.
-      triggers = (await this.readTriggers(projectId)).filter((t) => t.enabled && Object.hasOwn(TRIGGER_SCOPE, t.source));
+      const ttsr = (await this.readTriggers(scope)).filter((t) => t.enabled && Object.hasOwn(TRIGGER_SCOPE, t.source));
+      triggers = collapseByScope(ttsr, (t) => t.slug);
     } catch {
       return {}; // offline or signed out
     }
@@ -568,9 +623,9 @@ export class SkillsService {
     const bodies = new Map<string, string>();
     for (const t of triggers) {
       if (t.action === "agent") continue;
-      const { block } = await this.assignedForNames(projectId, t.skills, cwd);
+      const { block } = await this.assignedForNames(scope, t.skills, cwd);
       const body = [t.instruction.trim(), block.trim()].filter(Boolean).join("\n\n");
-      if (body) bodies.set(t.id, body);
+      if (body) bodies.set(t.slug, body);
     }
     if (bodies.size === 0) {
       // A package left behind would keep firing rules whose triggers are gone, and an empty
@@ -593,8 +648,8 @@ export class SkillsService {
       // directory is only discovered for a loaded package. Hence a no-op extension.
       await writeFile(join(dir, "index.js"), "export default function () {}\n", "utf8");
       for (const t of triggers) {
-        const body = bodies.get(t.id);
-        if (body) await writeFile(join(dir, "rules", `${t.id}.md`), renderRuleFile(t, body), "utf8");
+        const body = bodies.get(t.slug);
+        if (body) await writeFile(join(dir, "rules", `${t.slug}.md`), renderRuleFile(t, body), "utf8");
       }
       // Only after every write succeeded, so a half-written package is never pruned against.
       // A rule whose trigger was deleted, disabled or left dangling disappears here.

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { DEFAULT_HELPERS, type TranscriptEntry } from "@kermanych/core";
-import type { ProjectTrigger } from "@kermanych/cloud";
+import type { AiTrigger } from "@kermanych/cloud";
 import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { SkillsService } from "../src/skills/skills.service";
 
@@ -47,9 +47,10 @@ const body = (name: string): string => {
   return hit.body.trim();
 };
 
-const trigger = (pattern: string): ProjectTrigger => ({
-  projectId: "p1",
+const trigger = (pattern: string): AiTrigger => ({
+  owner: { scope: "project", id: "p1" },
   id: "t1",
+  slug: "t1",
   label: "мій тригер",
   enabled: true,
   source: "operator",
@@ -63,7 +64,7 @@ const trigger = (pattern: string): ProjectTrigger => ({
   repeat: "once",
 });
 
-async function chat(triggers: ProjectTrigger[] = []) {
+async function chat(triggers: AiTrigger[] = []) {
   sent.length = 0;
   const registry = new RegistryService(":memory:");
   const worktree = {

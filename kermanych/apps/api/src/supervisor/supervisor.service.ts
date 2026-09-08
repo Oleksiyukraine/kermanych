@@ -12,7 +12,7 @@ import { resolveRuntime } from "../runtime/resolve-runtime";
 import { messagesToTranscript } from "./messages-to-transcript";
 import { reduceRpcEvents, toolRowMatches, type SkillLabel, type SkillSource } from "./transcript-reducer";
 import { ToolDetailCache } from "./tool-detail-cache";
-import { SkillsService, skillsRoot } from "../skills/skills.service";
+import { SkillsService, skillsRoot, type AiScopeSet } from "../skills/skills.service";
 import { copyCarryFiles } from "../env/carry-files";
 import {
   PR_CONVENTIONS_FALLBACK,
@@ -47,7 +47,7 @@ import {
   type AgentRuntimeKind,
   type Notice,
 } from "@kermanych/core";
-import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type ProjectTrigger } from "@kermanych/cloud";
+import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type AiTrigger } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
 
@@ -132,7 +132,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // Never throws: a library failure must degrade to "no library", never to a failed launch.
   private async ompSkills(projectId: string, cwd: string, sessionId: string): Promise<string | undefined> {
     try {
-      const { configPath, view, stale } = await this.skills.materialize(projectId, cwd);
+      const { configPath, view, stale } = await this.skills.materialize(this.aiScope(projectId), cwd);
       const labels = new Map<string, SkillLabel>();
       for (const v of view) {
         // A shadowed name means the agent will read the REPOSITORY's file, so the badge
@@ -163,7 +163,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // launch. `undefined` means "this child gets no rules".
   private async ompTriggers(projectId: string, cwd: string, sessionId: string): Promise<string | undefined> {
     try {
-      return (await this.skills.materializeTriggers(projectId, sessionId, cwd)).packagePath;
+      return (await this.skills.materializeTriggers(this.aiScope(projectId), sessionId, cwd)).packagePath;
     } catch (err) {
       console.warn(`[supervisor] no triggers for session ${sessionId}: ${(err as Error).message}`);
       return undefined;
@@ -184,15 +184,28 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     cwd: string,
   ): Promise<{ template?: string; block: string }> {
     try {
+      const scope = this.aiScope(projectId);
       const [assigned, template] = await Promise.all([
-        this.skills.assignedFor(projectId, agentId, cwd),
-        this.skills.instructionFor(projectId, agentId),
+        this.skills.assignedFor(scope, agentId, cwd),
+        this.skills.instructionFor(scope, agentId),
       ]);
       return { ...(template !== undefined ? { template } : {}), block: assigned.block };
     } catch (err) {
       console.warn(`[supervisor] no project instruction or skills for ${agentId}: ${(err as Error).message}`);
       return { block: "" };
     }
+  }
+
+  // The owners one session reads for the «ШІ-команда»: its project always, its workspace when
+  // the cloud sync recorded one, and the signed-in operator (this api runs as one user). The
+  // resolver applies precedence user > project > workspace.
+  private aiScope(projectId: string): AiScopeSet {
+    const scope: AiScopeSet = { projectId };
+    const workspaceId = this.registry.listProjects().find((p) => p.id === projectId)?.workspaceId;
+    if (workspaceId) scope.workspaceId = workspaceId;
+    const userId = this.auth.current()?.userId;
+    if (userId) scope.userId = userId;
+    return scope;
   }
 
   private skillSource = (sessionId: string): SkillSource => (name) => this.skillLabels.get(sessionId)?.get(name);
@@ -304,6 +317,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     for (const c of cloud) {
       const project = this.registry.upsertProject({
         id: c.id,
+        workspaceId: c.workspaceId,
         name: c.name,
         color: c.color,
         previewCommand: c.previewCommand,
@@ -1172,12 +1186,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     s: Session,
     id: string,
     text: string,
-  ): Promise<{ trigger: ProjectTrigger; body: string } | undefined> {
+  ): Promise<{ trigger: AiTrigger; body: string } | undefined> {
     // Past the cap no trigger fires. That is the degradation everything else on this path
     // uses: never an exception, never a blocked message.
     if (!text.trim() || text.length > MATCH_MAX_CHARS) return undefined;
     try {
-      const triggers = await this.skills.operatorTriggers(s.projectId);
+      const triggers = await this.skills.operatorTriggers(this.aiScope(s.projectId));
       if (!triggers.length) return undefined;
       const cwd = s.worktreePath || this.registry.listProjects().find((p) => p.id === s.projectId)?.localRepoPath || "";
       for (const trigger of triggers) {
@@ -1207,7 +1221,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         // One resolver for every skill body in Kermanych, assignments and triggers alike, and
         // the same composition the rule-file path uses: the instruction, then the skills it
         // names, in the operator's order.
-        const { block, view, missing } = await this.skills.assignedForNames(s.projectId, trigger.skills, cwd);
+        const { block, view, missing } = await this.skills.assignedForNames(this.aiScope(s.projectId), trigger.skills, cwd);
         const body = [trigger.instruction.trim(), block.trim()].filter(Boolean).join("\n\n");
         if (missing.length) {
           // Reported, not dropped: a trigger the operator believes is armed and which resolves
@@ -1252,7 +1266,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // instruction says what the operator asked for, so forwarding both would say it twice.
   // `false` means the agent never ran, and then the replacement is not earned — the caller
   // forwards the operator's text rather than swallowing it.
-  private async runTriggerAgent(id: string, trigger: ProjectTrigger): Promise<boolean> {
+  private async runTriggerAgent(id: string, trigger: AiTrigger): Promise<boolean> {
     try {
       // The four agents a trigger can run. `finish` and `summary` are automations with no
       // model and no session of their own, so they are not reachable from here.

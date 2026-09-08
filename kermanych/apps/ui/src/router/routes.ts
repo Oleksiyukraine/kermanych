@@ -66,6 +66,17 @@ const routes: RouteRecordRaw[] = [
         component: () => import('pages/SettingsPage.vue'),
         meta: { public: false },
       },
+      // «ШІ-команда» is ONE record with the section in a param, the same shape as
+      // settings above: three panes (Агенти, Тригери, Навички) share a single
+      // component and the rail switches between them. `:section?` keeps a bare
+      // /ai-team resolvable, and `aiTeamSection()` (lib/ai-team.ts) maps an unknown
+      // or missing segment onto the default rather than rendering an empty pane.
+      {
+        path: 'ai-team/:section?',
+        name: 'ai-team',
+        component: () => import('pages/AiTeamPage.vue'),
+        meta: { public: false },
+      },
       // Менеджмент is a nested shell: ManagementPage owns the section strip and
       // the «pick a project» gate, one child route per section. The named parent
       // is what the top nav matches on (route.matched in MainLayout), and the

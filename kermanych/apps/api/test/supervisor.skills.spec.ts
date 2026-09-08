@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { RpcEvent, TranscriptEntry } from "@kermanych/core";
 import type { WorktreeService } from "../src/worktree/worktree.service";
-import type { Materialized } from "../src/skills/skills.service";
+import type { AiScopeSet, Materialized } from "../src/skills/skills.service";
 import type { SkillsService } from "../src/skills/skills.service";
 
 // The subset of RpcSession options this file asserts on, plus the supervisor's own event
@@ -46,7 +46,7 @@ import { offlineAuth } from "./offline-auth";
 // Only `materialize` is on the path under test; the DI seam is cast once, as the other
 // supervisor specs do for WorktreeService. The two trigger members answer "this project has
 // none" so the launch's trigger wrapper does not take its catch and warn over these assertions.
-function skillsStub(materialize: (projectId: string, cwd: string) => Promise<Materialized>): SkillsService {
+function skillsStub(materialize: (scope: AiScopeSet, cwd: string) => Promise<Materialized>): SkillsService {
   return { materialize, materializeTriggers: async () => ({}), operatorTriggers: async () => [] } as unknown as SkillsService;
 }
 
@@ -76,8 +76,8 @@ describe("the overlay reaches the omp child", () => {
   it("is passed as configPath, scanned in the session's own directory", async () => {
     const seen: { projectId: string; cwd: string }[] = [];
     const { sup, project } = make(
-      skillsStub(async (projectId, cwd) => {
-        seen.push({ projectId, cwd });
+      skillsStub(async (scope, cwd) => {
+        seen.push({ projectId: scope.projectId, cwd });
         return { configPath: "/tmp/p1.config.yml", view: [] };
       }),
     );

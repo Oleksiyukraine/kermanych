@@ -15,13 +15,7 @@
         <p class="set__hint">{{ scopeHint }}</p>
       </div>
       <nav class="set__cats" :aria-label="t('settings.rail.categoriesAria', { scope: scopeLabel })">
-        <template v-for="(c, i) in scopeCategories" :key="c.key">
-          <!-- The group caption prints once, above the first row of the run: «ШІ-команда» is
-               three panes read together, and repeating the words in three sub-lines would cost
-               the sub-line's actual job — saying what is inside each pane. -->
-          <p v-if="c.group === 'ai-team' && scopeCategories[i - 1]?.group !== 'ai-team'" class="set__cat-cap">
-            {{ t('settings.rail.aiTeam') }}
-          </p>
+        <template v-for="c in scopeCategories" :key="c.key">
           <button
             type="button"
             class="set__cat"
@@ -250,33 +244,6 @@
           <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
         </div>
 
-        <!-- ── PROJECT · АГЕНТИ ─────────────────────────────────────────────── -->
-        <!-- First pane of «ШІ-команда» and the one the other two modify: it holds each
-             agent's launch instruction and the ordered skills pasted into it, both editable
-             per project. Mounted, not inlined — six agents with a text editor apiece is a
-             screen's worth of panel and its own cloud writes. The `v-if` is the type guard the
-             outer chain cannot give: reaching this branch already means a project is selected,
-             but only the narrowing here turns the id into a string. -->
-        <div v-else-if="section.key === 'project-agents'" class="set__form set__form--wide">
-          <AiAgentsPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
-        </div>
-
-        <!-- ── PROJECT · ТРИГЕРИ ────────────────────────────────────────────── -->
-        <!-- The other side of the same coin: what fires without the model deciding to. A
-             trigger carries an instruction and an ordered skill list of its own, so it reads
-             beside Агенти rather than after the library. Same `v-if` type guard, same reason. -->
-        <div v-else-if="section.key === 'project-triggers'" class="set__form set__form--wide">
-          <TriggersPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
-        </div>
-
-        <!-- ── PROJECT · НАВИЧКИ ────────────────────────────────────────────── -->
-        <!-- Last of the group, because it is the library both panes above draw from: it says
-             what exists, and they decide who gets it and when. Mounted for the same reason —
-             a list, a modal and cloud writes of its own, moved here whole from Менеджмент.
-             Same `v-if` type guard as both. -->
-        <div v-else-if="section.key === 'project-skills'" class="set__form set__form--wide">
-          <SkillsLibraryPanel v-if="projectId" :project-id="projectId" :project-name="projectName" />
-        </div>
 
         <!-- ── PROJECT · ЗМІННІ СЕРЕДОВИЩА ──────────────────────────────────── -->
         <div v-else-if="section.key === 'project-env'" class="set__form set__form--wide">
@@ -660,9 +627,6 @@ import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KTag from 'components/kit/KTag.vue';
-import AiAgentsPanel from 'components/settings/AiAgentsPanel.vue';
-import TriggersPanel from 'components/settings/TriggersPanel.vue';
-import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
 import HelpersCatalogPanel from 'components/settings/HelpersCatalogPanel.vue';
 import KLangToggle from 'components/kit/KLangToggle.vue';
 
