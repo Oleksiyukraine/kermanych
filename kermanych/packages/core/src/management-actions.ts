@@ -158,6 +158,12 @@ export function renderTicketDescription(t: ManagementTicketFields): string {
   return out.join("\n");
 }
 
+// The fields a `todo.update` may state, each optional — an update names only what changes.
+// `kind` is the ITEM's marker (checkbox or numbered run), not the action's discriminator;
+// nesting it here is why `todo.update` carries a `patch` rather than flat fields, the same
+// collision `risk.create` avoids by nesting under `risk`.
+export type ManagementTodoPatch = { text?: string; kind?: "check" | "number"; done?: boolean };
+
 export type ManagementAction =
   // The model was asked to change a section that cannot be changed. It reports WHICH
   // section and WHAT was asked; the reason shown to the user is read from the section
@@ -258,17 +264,24 @@ export type ManagementAction =
   // unmistakable line — «тікет не створено, очікую відповіді» — beside the numbered
   // questions, and the next turn either answers them or the ticket stays unfiled.
   | { kind: "ticket.questions"; forTicket: string; questions: string[] }
-  // Append items to the operator's personal To-do list on the Home overview — the ONE verb
-  // management-home is writable through, the Release Notes shape of writability: a single
-  // action, with every other operation on the section stated by the prompt to stay on the
-  // screen. Append-only on purpose: marking done, editing and removing name a row, and the
-  // list has no codes the model could honestly name one by (its ids are browser-minted
-  // uuids the prompt never prints) — so those stay on the tile, where the row is visible.
+  // The operator's personal Action List on the Home overview — the section management-home
+  // is writable through. Full CRUD: `todo.create` appends, `todo.update` changes one and
+  // `todo.delete` removes one, each addressed by the 1-based position the digest prints as
+  // `#N` — the list's ids are browser-minted uuids the prompt never shows and the model has
+  // no honest way to name, so position is the only handle it can hold. Reading is the digest
+  // itself: the list travels on every ask as `context.home.todo`, so the model already sees
+  // what it edits.
   //
   // `text` is PLAIN text: the tile's inline formatting (bold/italic) is the operator's own
   // presentation, and the executor escapes what it stores, so the model can never inject
   // markup into the list. `kind` picks the tile's marker — a checkbox or a numbered run.
-  | { kind: "todo.create"; items: { text: string; kind: "check" | "number" }[] };
+  | { kind: "todo.create"; items: { text: string; kind: "check" | "number" }[] }
+  // Change one item, named by its `#N` position. The patch states only what moves — new
+  // text, a different marker, or the done-mark — the `risk.update` shape.
+  | { kind: "todo.update"; index: number; patch: ManagementTodoPatch }
+  // Remove one item, named by the same `#N` position. A hard delete of a scratch row; it
+  // carries nothing else, because a delete has nothing to shape.
+  | { kind: "todo.delete"; index: number };
 
 export type ManagementActionKind = ManagementAction["kind"];
 export type ManagementUnsupported = Extract<ManagementAction, { kind: "unsupported" }>;
@@ -280,6 +293,8 @@ export type ManagementTicketCreate = Extract<ManagementAction, { kind: "ticket.c
 export type ManagementJiraTicketCreate = Extract<ManagementAction, { kind: "jira.ticket.create" }>;
 export type ManagementTicketQuestions = Extract<ManagementAction, { kind: "ticket.questions" }>;
 export type ManagementTodoCreate = Extract<ManagementAction, { kind: "todo.create" }>;
+export type ManagementTodoUpdate = Extract<ManagementAction, { kind: "todo.update" }>;
+export type ManagementTodoDelete = Extract<ManagementAction, { kind: "todo.delete" }>;
 
 // ── Ask / reply ───────────────────────────────────────────────────────────────
 
@@ -433,7 +448,7 @@ export type ManagementCapacity = {
 // four-column grid — the honest answer to «як виглядає моя головна».
 export type ManagementHomeTile = { id: string; w: number; h: number };
 
-// One row of the To-do tile, as plain text: the tile's inline formatting is presentation,
+// One row of the Action List tile, as plain text: the tile's inline formatting is presentation,
 // and a model handed HTML quotes the tags back.
 export type ManagementHomeTodoItem = { text: string; kind: "check" | "number"; done: boolean };
 
@@ -481,9 +496,9 @@ export type ManagementContext = {
   // Team Capacity, present only when the workspace has a Jira board. Re-sent every turn:
   // estimates move between turns.
   capacity?: ManagementCapacity;
-  // The Home overview digest — the tile layout, the To-do list, today's tasks and the
-  // recent release notes. Re-sent every turn like the register: the operator edits the
-  // to-do between turns, and tiles move. Optional: an old client that omits it keeps the
+  // The Home overview digest — the tile layout, the Action List, today's tasks and the
+  // recent release notes. Re-sent every turn like the register: the operator edits the Action
+  // List between turns, and tiles move. Optional: an old client that omits it keeps the
   // previous behaviour, and the prompt says the overview is unavailable.
   home?: ManagementHome;
 };
@@ -583,6 +598,31 @@ function isObj(v: unknown): v is Record<string, unknown> {
 // and clearing a column is a screen operation.
 function has(o: Record<string, unknown>, key: string): boolean {
   return o[key] !== undefined && o[key] !== null;
+}
+
+// A 1-based row position, the way the digest prints it as `#N`. Refused unless it is a whole
+// number ≥ 1: a fractional or zero index names no row, and a model that wrote one meant a row
+// it could not see. Coerces a quoted "2" for num()'s reason.
+function todoIndex(v: unknown): number | Fail {
+  const n = num(v);
+  if (n === undefined || !Number.isInteger(n) || n < 1)
+    return {
+      error: {
+        text: `todo: index має бути цілим числом від 1 (позиція пункта #N), а не ${JSON.stringify(v)}`,
+        code: "todo_index_range",
+        params: { value: JSON.stringify(v) },
+      },
+    };
+  return n;
+}
+
+// A JSON boolean, and the quoted forms a model writes about as often (num()'s reason for
+// strings). Anything else is «not a boolean», refused with the value quoted.
+function todoBool(v: unknown): boolean | undefined {
+  if (typeof v === "boolean") return v;
+  if (v === "true") return true;
+  if (v === "false") return false;
+  return undefined;
 }
 
 // Every field the model may state about a risk, validated one by one against ./risks and
@@ -1187,6 +1227,50 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
       items.push({ text, kind: itemKind });
     }
     return { kind: "todo.create", items };
+  }
+  if (kind === "todo.update") {
+    const index = todoIndex(o.index);
+    if (isFail(index)) return index;
+    if (!isObj(o.patch))
+      return { error: { text: "todo.update без patch — постав об'єкт patch із тим, що змінюється", code: "todo_update_empty" } };
+    const patch: ManagementTodoPatch = {};
+    if (has(o.patch, "text")) {
+      const text = str(o.patch.text);
+      if (text === undefined)
+        return { error: { text: "todo: порожній text — пункт нема на що замінювати", code: "todo_item_no_text" } };
+      patch.text = text;
+    }
+    if (has(o.patch, "kind")) {
+      if (o.patch.kind !== "check" && o.patch.kind !== "number")
+        return {
+          error: {
+            text: `todo: невідомий kind пункту ${JSON.stringify(o.patch.kind)} (check | number)`,
+            code: "todo_item_kind_unknown",
+            params: { value: JSON.stringify(o.patch.kind) },
+          },
+        };
+      patch.kind = o.patch.kind;
+    }
+    if (has(o.patch, "done")) {
+      const done = todoBool(o.patch.done);
+      if (done === undefined)
+        return {
+          error: {
+            text: `todo.update: done має бути true або false, а не ${JSON.stringify(o.patch.done)}`,
+            code: "todo_done_type",
+            params: { value: JSON.stringify(o.patch.done) },
+          },
+        };
+      patch.done = done;
+    }
+    if (patch.text === undefined && patch.kind === undefined && patch.done === undefined)
+      return { error: { text: "todo.update без змін — постав хоча б text, kind або done", code: "todo_update_empty" } };
+    return { kind: "todo.update", index, patch };
+  }
+  if (kind === "todo.delete") {
+    const index = todoIndex(o.index);
+    if (isFail(index)) return index;
+    return { kind: "todo.delete", index };
   }
   return { error: { text: `невідома дія ${JSON.stringify(o.kind)}`, code: "action_kind_unknown", params: { value: JSON.stringify(o.kind) } } };
 }

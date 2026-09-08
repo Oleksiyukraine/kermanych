@@ -176,11 +176,14 @@ export type ManagementRejectionCode =
   // ticket.questions — the unfiled-ticket questions block:
   | "ticket_questions_no_target" // a ticket.questions without a forTicket (params: none)
   | "ticket_questions_empty" // a ticket.questions with no questions (params: { forTicket })
-  // todo.create — the Home overview's To-do append:
+  // todo.* — the Home overview's Action List (create / update / delete):
   | "todo_create_empty" // a todo.create without items (params: none)
   | "todo_item_not_object" // an items row that is not an object (params: none)
-  | "todo_item_no_text" // an items row without text (params: none)
-  | "todo_item_kind_unknown" // an items row whose kind is neither check nor number (params: { value })
+  | "todo_item_no_text" // a todo item without text (params: none)
+  | "todo_item_kind_unknown" // a todo item whose kind is neither check nor number (params: { value })
+  | "todo_index_range" // a todo.update/delete index that is not a whole number ≥ 1 (params: { value })
+  | "todo_update_empty" // a todo.update with no patch or an empty one (params: none)
+  | "todo_done_type" // a todo.update done that is not a boolean (params: { value })
   // parseManagementReply — the block never parsed as JSON:
   | "block_unreadable"; // the fenced block was not readable JSON (params: { message })
 
@@ -235,6 +238,9 @@ export const MANAGEMENT_REJECTION_CODES = [
   "todo_item_not_object",
   "todo_item_no_text",
   "todo_item_kind_unknown",
+  "todo_index_range",
+  "todo_update_empty",
+  "todo_done_type",
   "block_unreadable",
 ] as const satisfies readonly ManagementRejectionCode[];
 

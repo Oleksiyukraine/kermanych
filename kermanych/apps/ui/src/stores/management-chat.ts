@@ -63,6 +63,7 @@ import { readCapacityPrefs } from '../lib/capacity-prefs';
 import { readLayout } from '../lib/dashboard';
 import { useHomeTodo } from './home-todo';
 import { homeDigest, todayTaskGroups } from '../lib/home-digest';
+import { todoPlainText } from '../lib/home-todo';
 import { useBoard } from './board';
 import { useJira } from './jira';
 import { useOrchestrator } from './orchestrator';
@@ -121,8 +122,8 @@ export const useManagementChat = defineStore('management-chat', () => {
   // The Jira mirror: read for whether the second board exists and may be written, and
   // upserted with the issue the api creates so the Jira view shows it before the next sync.
   const jira = useJira();
-  // The To-do tile's list — the same reactive copy HomeTodoWidget renders, so an item the
-  // assistant appends is on the dashboard before its notice prints.
+  // The Action List tile's list — the same reactive copy HomeTodoWidget renders, so a change
+  // the assistant makes is on the dashboard before its notice prints.
   const homeTodo = useHomeTodo();
 
   // Keyed by workspace id, because the conversation id is `management:<workspaceId>`: picking
@@ -274,10 +275,10 @@ export const useManagementChat = defineStore('management-chat', () => {
   }
 
   // The Home overview as the assistant is shown it: the SAME data the dashboard tiles render
-  // (lib/home-digest.ts) — the operator's tile layout, their To-do list, today's tasks and
+  // (lib/home-digest.ts) — the operator's tile layout, their Action List, today's tasks and
   // the recent release notes. The capacity and risks tiles are not repeated here; their data
   // already travels in `capacity` and `risks`. Always present: a workspace with no Jira and
-  // no notes still has a layout and a to-do list to describe. The notes read is spent only
+  // no notes still has a layout and an Action List to describe. The notes read is spent only
   // when the store is cold and degrades to an empty list — an unreachable cloud costs the
   // assistant one tile, not the answer.
   async function homeDigestFor(workspaceId: string): Promise<ManagementHome> {
@@ -646,7 +647,7 @@ export const useManagementChat = defineStore('management-chat', () => {
       await createJiraTicket(workspaceId, action);
       return;
     }
-    // The Home overview's one write. Rows land in the same store the To-do tile renders —
+    // The Home overview's create write. Rows land in the same store the Action List tile renders —
     // on the dashboard before this notice prints — and in this browser's localStorage only,
     // which is exactly what the prompt told the model about the list's scope. Nothing here
     // can fail short of a private-mode write, which lib/home-todo swallows by design.
@@ -660,6 +661,33 @@ export const useManagementChat = defineStore('management-chat', () => {
           { n: made.length, items: action.items.map((i) => `«${i.text}»`).join(', ') },
           made.length,
         ),
+      );
+      return;
+    }
+    // Change one Action List row, addressed by the #N position the digest printed. A position
+    // that names no row changed nothing, and the notice says exactly that rather than claiming
+    // an edit — `warn`, because the operator's ask did not land.
+    if (action.kind === 'todo.update') {
+      const item = homeTodo.updateAt(workspaceId, action.index, action.patch);
+      result(
+        workspaceId,
+        item ? 'info' : 'warn',
+        item
+          ? globalTr.t('management.chat.todoUpdated', { index: action.index, text: todoPlainText(item.html) })
+          : globalTr.t('management.chat.todoIndexMissing', { index: action.index }),
+      );
+      return;
+    }
+    // Remove one row, addressed the same way. The notice quotes what went — the tile may be
+    // scrolled out of view when it prints — or says the position named none.
+    if (action.kind === 'todo.delete') {
+      const removed = homeTodo.removeAt(workspaceId, action.index);
+      result(
+        workspaceId,
+        removed ? 'info' : 'warn',
+        removed
+          ? globalTr.t('management.chat.todoDeleted', { index: action.index, text: todoPlainText(removed.html) })
+          : globalTr.t('management.chat.todoIndexMissing', { index: action.index }),
       );
       return;
     }

@@ -110,3 +110,65 @@ describe('todo.create', () => {
     expect(useHomeTodo().listFor('w1').map((it) => it.html)).toEqual(['існуючий пункт', 'новий від асистента']);
   });
 });
+
+describe('todo.update', () => {
+  it('changes the addressed row in the shared store, persists it and quotes the new text', async () => {
+    const todos = useHomeTodo();
+    todos.append('w1', [
+      { text: 'перший', kind: 'check' },
+      { text: 'другий', kind: 'check' },
+    ]);
+    managementChat.mockResolvedValue(
+      reply([{ kind: 'todo.update', index: 2, patch: { text: 'другий оновлений', kind: 'number' } }]),
+    );
+    const chat = useManagementChat();
+    await chat.send('зміни другий', 'management-home');
+
+    expect(useHomeTodo().listFor('w1').map((it) => ({ html: it.html, kind: it.kind }))).toEqual([
+      { html: 'перший', kind: 'check' },
+      { html: 'другий оновлений', kind: 'number' },
+    ]);
+    expect(readTodo('w1').map((it) => it.html)).toEqual(['перший', 'другий оновлений']);
+    expect(results(chat.entries).join(' ')).toContain('другий оновлений');
+  });
+
+  it('toggles the done-mark on a checklist row without touching its text', async () => {
+    useHomeTodo().append('w1', [{ text: 'зробити', kind: 'check' }]);
+    managementChat.mockResolvedValue(reply([{ kind: 'todo.update', index: 1, patch: { done: true } }]));
+    await useManagementChat().send('познач', 'management-home');
+    expect(useHomeTodo().listFor('w1')[0]).toMatchObject({ html: 'зробити', kind: 'check', done: true });
+  });
+
+  it('warns and changes nothing when the position names no row', async () => {
+    useHomeTodo().append('w1', [{ text: 'єдиний', kind: 'check' }]);
+    managementChat.mockResolvedValue(reply([{ kind: 'todo.update', index: 5, patch: { text: 'привид' } }]));
+    const chat = useManagementChat();
+    await chat.send('зміни пʼятий', 'management-home');
+    expect(useHomeTodo().listFor('w1').map((it) => it.html)).toEqual(['єдиний']);
+    expect(chat.entries.find((e) => e.kind === 'result')).toMatchObject({ level: 'warn' });
+  });
+});
+
+describe('todo.delete', () => {
+  it('removes the addressed row, persists the shorter list and quotes what went', async () => {
+    useHomeTodo().append('w1', [
+      { text: 'лишити', kind: 'check' },
+      { text: 'прибрати', kind: 'check' },
+    ]);
+    managementChat.mockResolvedValue(reply([{ kind: 'todo.delete', index: 2 }]));
+    const chat = useManagementChat();
+    await chat.send('прибери другий', 'management-home');
+    expect(useHomeTodo().listFor('w1').map((it) => it.html)).toEqual(['лишити']);
+    expect(readTodo('w1').map((it) => it.html)).toEqual(['лишити']);
+    expect(results(chat.entries).join(' ')).toContain('прибрати');
+  });
+
+  it('warns and changes nothing when the position names no row', async () => {
+    useHomeTodo().append('w1', [{ text: 'єдиний', kind: 'check' }]);
+    managementChat.mockResolvedValue(reply([{ kind: 'todo.delete', index: 9 }]));
+    const chat = useManagementChat();
+    await chat.send('прибери девʼятий', 'management-home');
+    expect(useHomeTodo().listFor('w1').map((it) => it.html)).toEqual(['єдиний']);
+    expect(chat.entries.find((e) => e.kind === 'result')).toMatchObject({ level: 'warn' });
+  });
+});

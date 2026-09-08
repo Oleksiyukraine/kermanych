@@ -55,16 +55,16 @@ const NOT_BUILT = "розділ ще не реалізований — за ни
 export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
   // The workspace overview. It has a screen (apps/ui/src/pages/ManagementHomePage.vue) — a
   // dashboard of draggable, resizable tiles: snapshots of the other sections (Team Capacity,
-  // Release Notes, Risk Registry, today's board tasks) plus the operator's personal To-do
-  // list. The assistant SEES the whole overview — the browser sends a digest of it on every
-  // turn (`ManagementContext.home`) — and WRITES it through exactly one verb, the Release
-  // Notes shape of writability: `todo.create` appends items to the To-do list (the executor
-  // in apps/ui/src/stores/management-chat.ts lands them in the same store the tile renders).
-  // Everything else on the overview stays screen work — the mirror tiles are owned by the
-  // sections they snapshot, and done-marks, edits, removals and the layout are done on the
-  // tile itself — which the home protocol in the prompt states, where it belongs. No
-  // `limitation`: the row is writable, and a limitation here would be shown as a refusal
-  // for a section that does in fact accept an action.
+  // Release Notes, Risk Registry, today's board tasks) plus the operator's personal Action
+  // List. The assistant SEES the whole overview — the browser sends a digest of it on every
+  // turn (`ManagementContext.home`) — and WRITES the Action List with full CRUD: `todo.create`
+  // appends items, `todo.update` changes one and `todo.delete` removes one, each addressed by
+  // the `#N` position the digest prints (the executor in apps/ui/src/stores/management-chat.ts
+  // lands the change in the same store the tile renders). The mirror tiles stay read-only —
+  // they are owned by the sections they snapshot — and moving or resizing the tiles is screen
+  // work, which the home protocol in the prompt states, where it belongs. No `limitation`: the
+  // row is writable, and a limitation here would be shown as a refusal for a section that does
+  // in fact accept an action.
   {
     name: "management-home",
     path: "home",

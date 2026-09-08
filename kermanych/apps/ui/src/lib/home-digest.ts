@@ -5,7 +5,7 @@
 //      person);
 //   2. the management chat (stores/management-chat.ts) sends `homeDigest` on every ask, so
 //      the assistant is shown the SAME overview the operator is looking at — the tile
-//      layout, the To-do list, today's tasks and the recent release notes. The capacity and
+//      layout, the Action List, today's tasks and the recent release notes. The capacity and
 //      risks tiles are deliberately absent from the digest: the context already carries
 //      their data in full (`capacity`, `risks`), and a second copy could disagree with it.
 //

@@ -498,12 +498,12 @@ describe("home overview lines", () => {
     const out = buildManagementTurn({ first: false, repos: [], context: { ...context, home }, today: TODAY, text: "?" });
     expect(out).toContain("Огляд Home (дашборд management-home)");
     expect(out).toContain("todo 2×2, risks 4×1");
-    expect(out).toContain("- [x] поговорити з Олею");
-    expect(out).toContain("- [ ] звичайний пункт");
-    expect(out).toContain("- 1. крок один");
-    expect(out).toContain("- 2. крок два");
+    expect(out).toContain("- #1 [x] поговорити з Олею");
+    expect(out).toContain("- #4 [ ] звичайний пункт");
+    expect(out).toContain("- #2 1. крок один");
+    expect(out).toContain("- #3 2. крок два");
     // A checklist row resets the numbered run — the same count the tile renders.
-    expect(out).toContain("- 1. нова нумерація");
+    expect(out).toContain("- #5 1. нова нумерація");
     expect(out).toContain("- Оля: KRM-1 «полагодити логін» (прострочено)");
     expect(out).toContain("- (не призначено): KRM-2 «без виконавця»");
     expect(out).toContain("- Серпневий реліз · Альфа · 2026-08-31");
@@ -514,14 +514,18 @@ describe("home overview lines", () => {
     expect(out).toContain("знімок дашборда цього ходу недоступний");
   });
 
-  it("teaches todo.create as the overview's one verb, in the menu and in the protocol", () => {
+  it("teaches todo create/update/delete for the Action List, in the menu and the protocol", () => {
     const out = buildManagementTurn({ first: true, repos: [], context, today: TODAY, text: "?" });
     expect(out).toContain("ОГЛЯД HOME (management-home)");
     // In the exhaustive menu — the risk.delete lesson: a verb absent from it is one the
-    // model refuses or invents a screen for.
+    // model refuses or invents a screen for. All three write verbs are present.
     expect(out).toContain('{ "kind": "todo.create", "items": [ { "text": "…", "kind": "check" | "number" } ] }');
-    // The boundary: everything except appending stays on the tile.
-    expect(out).toContain("Все ІНШЕ на головній лишається екраном");
+    expect(out).toContain('{ "kind": "todo.update", "index": 1, "patch": { "text": "…", "kind": "check" | "number", "done": true | false } }');
+    expect(out).toContain('{ "kind": "todo.delete", "index": 1 }');
+    // Update and delete address a row by the #N position the digest prints.
+    expect(out).toContain("номер пункта #N");
+    // The boundary: only moving and resizing the tiles stays screen work now.
+    expect(out).toContain("Пересунути або розтягнути плитки");
     // And the list's scope: this browser only, so the model never promises the team saw it.
     expect(out).toContain("живе лише в браузері оператора");
     // Rule (а) reads the writable set off the table, so home must be in it now.

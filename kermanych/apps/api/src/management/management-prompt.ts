@@ -150,6 +150,8 @@ function contract(locale: Locale | undefined): string {
     // declares itself exhaustive, and a verb it does not carry is one the model will refuse
     // or invent a screen for.
     '  { "kind": "todo.create", "items": [ { "text": "…", "kind": "check" | "number" } ] }',
+    '  { "kind": "todo.update", "index": 1, "patch": { "text": "…", "kind": "check" | "number", "done": true | false } }',
+    '  { "kind": "todo.delete", "index": 1 }',
     "Не вигадуй інші `kind` — вони відкидаються без виконання.",
     "",
     riskProtocol(),
@@ -383,29 +385,31 @@ function capacityProtocol(): string {
   ].join("\n");
 }
 
-// The Home overview: readable as a whole, writable through exactly ONE verb — appending
-// to the To-do tile. The read half spends its words on what an «insight» is allowed to be
-// built from: the digest block plus the register and capacity blocks the tiles mirror —
-// never numbers the context does not hold. The write half names what stays on the tile
-// (done-marks, edits, removals, the layout): an operation absent from the menu is one the
-// model will invent a home for, so the boundary is stated, not implied.
+// The Home overview: readable as a whole, writable through THREE verbs — the Action List's
+// create / update / delete. The read half spends its words on what an «insight» is allowed to
+// be built from: the digest block plus the register and capacity blocks the tiles mirror —
+// never numbers the context does not hold. The write half addresses a row by the `#N` the
+// digest prints beside it, and names what stays screen work (moving and resizing the tiles,
+// the layout): an operation absent from the menu is one the model will invent a home for, so
+// the boundary is stated, not implied.
 function homeProtocol(): string {
   return [
-    "ОГЛЯД HOME (management-home). Розділ пишеться ОДНИМ дієсловом — додати пункти в список to-do:",
-    '  { "kind": "todo.create", "items": [ { "text": "…", "kind": "check" | "number" } ] }',
+    "ОГЛЯД HOME (management-home). Плитка «Список дій» (Action List) — особистий список справ оператора; ти читаєш його зі знімка «Огляд Home» і пишеш ТРЬОМА дієсловами:",
+    '  { "kind": "todo.create", "items": [ { "text": "…", "kind": "check" | "number" } ] } — додати пункти в кінець списку.',
+    '  { "kind": "todo.update", "index": N, "patch": { … } } — змінити пункт №N.',
+    '  { "kind": "todo.delete", "index": N } — прибрати пункт №N.',
     "  text — один пункт ПРОСТИМ ТЕКСТОМ, як його читатиме оператор; без розмітки й тегів.",
     "  kind — check (пункт із чекбоксом; за замовчуванням) або number (пункт нумерованого списку).",
-    "  Кілька пунктів — кілька елементів items ОДНОГО блоку, не кілька блоків.",
-    "  Список особистий і живе лише в браузері оператора — він не синхронізується між машинами; додав — скажи це,",
-    "  коли доречно, і не обіцяй, що список побачить хтось інший.",
-    "Все ІНШЕ на головній лишається екраном: позначити пункт виконаним, змінити чи прибрати його, пересунути або",
-    "розтягнути плитки — це робиться на самій плитці мишею; такі прохання — unsupported із поясненням прозою.",
+    "  index — номер пункта #N зі знімка «Огляд Home»: цей номер плитка друкує біля кожного рядка. patch у todo.update ставить ЛИШЕ те, що змінюється — text, kind і/або done (виконано; лише для check).",
+    "  Кілька пунктів у create — кілька елементів items ОДНОГО блоку. Кілька змін чи видалень — окремий блок на кожен пункт; видаляй від БІЛЬШОГО index до меншого, бо видалення зсуває номери пунктів під ним.",
+    "  Список особистий і живе лише в браузері оператора — він не синхронізується між машинами; змінив — скажи це, коли доречно, і не обіцяй, що список побачить хтось інший.",
+    "Пересунути або розтягнути плитки, змінити розкладку — це робиться на самій плитці мишею; такі прохання — unsupported із поясненням прозою.",
     "Питання «що на головній / огляд воркспейсу / проаналізуй дашборд» — відповідай ПРОЗОЮ з блоку «Огляд Home»",
     "у контексті разом з рештою контексту:",
     "  • плитки дзеркалять розділи: capacity — блок «Навантаження команди Jira», risks — реєстр ризиків,",
-    "    tasks — «Задачі на сьогодні», releases — «Реліз-ноти», todo — особистий список справ оператора;",
+    "    tasks — «Задачі на сьогодні», releases — «Реліз-ноти», todo — особистий список справ оператора (Action List);",
     "  • давай ВИСНОВКИ, а не переказ: перевантаження й прострочене, ризики з найбільшою експозицією,",
-    "    невиконані пункти to-do, робота без виконавця — і що з цього варто зробити першим;",
+    "    невиконані пункти списку дій, робота без виконавця — і що з цього варто зробити першим;",
     "  • не вигадуй плиток і чисел, яких у блоці немає; блоку «Огляд Home» немає взагалі — скажи, що знімок",
     "    дашборда цього ходу недоступний, і відповідай з решти контексту.",
   ].join("\n");
@@ -518,20 +522,22 @@ function capacityLines(c: ManagementCapacity | undefined): string {
   ].join("\n");
 }
 
-// One To-do row. Checklist rows print as checkboxes; a numbered run counts itself and, like
-// the tile, restarts after a checklist row — the two must read the same.
+// One Action List row, prefixed with its 1-based position (`#N`) — the handle todo.update and
+// todo.delete address it by. Checklist rows print as checkboxes; a numbered run counts itself
+// and, like the tile, restarts after a checklist row — the two must read the same.
 function homeTodoLines(items: ManagementHomeTodoItem[]): string {
   const out: string[] = [];
   let n = 0;
-  for (const it of items) {
+  items.forEach((it, i) => {
+    const pos = i + 1;
     if (it.kind === "number") {
       n += 1;
-      out.push(`- ${n}. ${it.text}`);
+      out.push(`- #${pos} ${n}. ${it.text}`);
     } else {
       n = 0;
-      out.push(`- [${it.done ? "x" : " "}] ${it.text}`);
+      out.push(`- #${pos} [${it.done ? "x" : " "}] ${it.text}`);
     }
-  }
+  });
   return out.join("\n");
 }
 
@@ -553,7 +559,7 @@ function homeLines(h: ManagementHome | undefined): string {
   });
   return [
     `Огляд Home (дашборд management-home) — плитки в порядку читання оператора, id · ширина×висота на сітці з 4 колонок: ${tiles}.`,
-    `Плитка «To-do» — особистий список оператора (${h.todo.length}), [x] — виконано:`,
+    `Плитка «Список дій» (Action List) — особистий список оператора (${h.todo.length}); #N — номер пункта для todo.update/todo.delete, [x] — виконано:`,
     h.todo.length ? homeTodoLines(h.todo) : "- список порожній",
     `Плитка «Задачі на сьогодні» (${h.tasksToday.length} ос.):`,
     groups.length ? groups.join("\n") : "- сьогодні ні на кому не «лежить» запланована робота (або дошки Jira немає)",

@@ -346,6 +346,58 @@ test("a todo.create without items, with an empty item or an unknown marker is re
   expect(marker.rejected[0]).toMatchObject({ code: "todo_item_kind_unknown", params: { value: '"bullet"' } });
 });
 
+// ── todo.update / todo.delete ─────────────────────────────────────────────────
+// The rest of the Action List's CRUD. A row is addressed by the 1-based `#N` the digest
+// prints; the patch states only what moves, and a bad index, an empty patch, an unknown
+// marker or a non-boolean done refuses the whole block.
+
+test("a todo.update carries the coerced index and only the patched fields", () => {
+  const r = parseManagementReply(
+    block('{"kind":"todo.update","index":"2","patch":{"text":"  новий текст  ","kind":"number","done":true}}'),
+  );
+  expect(r.rejected).toEqual([]);
+  expect(r.actions).toEqual([
+    { kind: "todo.update", index: 2, patch: { text: "новий текст", kind: "number", done: true } },
+  ]);
+});
+
+test("a todo.update may patch a single field and coerces a quoted boolean", () => {
+  const r = parseManagementReply(block('{"kind":"todo.update","index":3,"patch":{"done":"false"}}'));
+  expect(r.rejected).toEqual([]);
+  expect(r.actions).toEqual([{ kind: "todo.update", index: 3, patch: { done: false } }]);
+});
+
+test("a todo.update with a bad index, an empty patch, an unknown marker or a non-boolean done is refused", () => {
+  expect(parseManagementReply(block('{"kind":"todo.update","index":0,"patch":{"text":"x"}}')).rejected[0]).toMatchObject({
+    code: "todo_index_range",
+  });
+  expect(parseManagementReply(block('{"kind":"todo.update","index":1.5,"patch":{"text":"x"}}')).rejected[0]).toMatchObject({
+    code: "todo_index_range",
+  });
+  expect(parseManagementReply(block('{"kind":"todo.update","index":1,"patch":{}}')).rejected[0]).toMatchObject({
+    code: "todo_update_empty",
+  });
+  expect(parseManagementReply(block('{"kind":"todo.update","index":1}')).rejected[0]).toMatchObject({
+    code: "todo_update_empty",
+  });
+  expect(parseManagementReply(block('{"kind":"todo.update","index":1,"patch":{"kind":"bullet"}}')).rejected[0]).toMatchObject({
+    code: "todo_item_kind_unknown",
+    params: { value: '"bullet"' },
+  });
+  expect(parseManagementReply(block('{"kind":"todo.update","index":1,"patch":{"done":"maybe"}}')).rejected[0]).toMatchObject({
+    code: "todo_done_type",
+  });
+});
+
+test("a todo.delete carries just the index and refuses a non-positive or non-numeric one", () => {
+  expect(parseManagementReply(block('{"kind":"todo.delete","index":4}')).actions).toEqual([
+    { kind: "todo.delete", index: 4 },
+  ]);
+  expect(parseManagementReply(block('{"kind":"todo.delete","index":"nope"}')).rejected[0]).toMatchObject({
+    code: "todo_index_range",
+  });
+});
+
 // ── Tickets ───────────────────────────────────────────────────────────────────
 
 // The five slots a ticket from this surface has. English, because that is the language the
