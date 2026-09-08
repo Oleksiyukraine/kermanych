@@ -61,31 +61,50 @@ const docMd: MarkdownIt = new MarkdownIt({
   },
 });
 
-export function renderDoc(src: string, base: { folder: string; dir: string }): string {
-  const attr = (path: string) =>
-    ` data-doc-folder="${docMd.utils.escapeHtml(base.folder)}" data-doc-path="${docMd.utils.escapeHtml(path)}"`;
+type DocBase = { folder: string; dir: string };
 
-  docMd.renderer.rules.image = (tokens, idx) => {
-    const token = tokens[idx]!;
-    const src0 = token.attrGet('src') ?? '';
-    const alt = docMd.utils.escapeHtml(token.content);
-    const rel = resolveRel(base.dir, src0);
-    if (rel) return `<img${attr(rel)} alt="${alt}">`;
-    // External/absolute image: keep its src (still html:false-escaped by markdown-it).
-    return `<img src="${docMd.utils.escapeHtml(src0)}" alt="${alt}">`;
-  };
+function attr(folder: string, path: string): string {
+  return ` data-doc-folder="${docMd.utils.escapeHtml(folder)}" data-doc-path="${docMd.utils.escapeHtml(path)}"`;
+}
 
-  docMd.renderer.rules.link_open = (tokens, idx, options, _env, self) => {
-    const token = tokens[idx]!;
-    const href = token.attrGet('href') ?? '';
-    const rel = resolveRel(base.dir, href);
-    if (rel && DOC_LINK_RE.test(rel.split(/[?#]/, 1)[0]!)) {
-      return `<a href="#"${attr(rel)}>`;
+// markdown-it types `env` as `any`; narrow it to the doc base rather than trust a shape.
+function docBase(env: unknown): DocBase {
+  if (env && typeof env === 'object' && 'base' in env) {
+    const b = env.base;
+    if (b && typeof b === 'object' && 'folder' in b && 'dir' in b
+      && typeof b.folder === 'string' && typeof b.dir === 'string') {
+      return { folder: b.folder, dir: b.dir };
     }
-    // External links open in a new tab; anchors/other relative links pass through.
-    if (/^[a-z][a-z0-9+.-]*:/i.test(href)) { token.attrSet('target', '_blank'); token.attrSet('rel', 'noopener noreferrer'); }
-    return self.renderToken(tokens, idx, options);
-  };
+  }
+  return { folder: '', dir: '' };
+}
 
-  return docMd.render(src ?? '');
+// Rules are installed once at module load; the per-render base (folder + current dir) is
+// threaded through markdown-it's `env` so renderDoc holds no per-call closure state.
+docMd.renderer.rules.image = (tokens, idx, _options, env) => {
+  const base = docBase(env);
+  const token = tokens[idx]!;
+  const src0 = token.attrGet('src') ?? '';
+  const alt = docMd.utils.escapeHtml(token.content);
+  const rel = resolveRel(base.dir, src0);
+  if (rel) return `<img${attr(base.folder, rel)} alt="${alt}">`;
+  // External/absolute image: keep its src (still html:false-escaped by markdown-it).
+  return `<img src="${docMd.utils.escapeHtml(src0)}" alt="${alt}">`;
+};
+
+docMd.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+  const base = docBase(env);
+  const token = tokens[idx]!;
+  const href = token.attrGet('href') ?? '';
+  const rel = resolveRel(base.dir, href);
+  if (rel && DOC_LINK_RE.test(rel.split(/[?#]/, 1)[0]!)) {
+    return `<a href="#"${attr(base.folder, rel)}>`;
+  }
+  // External links open in a new tab; anchors/other relative links pass through.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href)) { token.attrSet('target', '_blank'); token.attrSet('rel', 'noopener noreferrer'); }
+  return self.renderToken(tokens, idx, options);
+};
+
+export function renderDoc(src: string, base: { folder: string; dir: string }): string {
+  return docMd.render(src ?? '', { base });
 }

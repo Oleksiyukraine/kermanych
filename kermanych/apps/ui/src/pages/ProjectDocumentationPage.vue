@@ -11,6 +11,7 @@ import { useOrchestrator } from 'stores/orchestrator';
 import { useProjectDocs } from 'stores/project-docs';
 import { renderDoc } from '../lib/markdown';
 import KFileView from 'components/kit/KFileView.vue';
+import DocTreeNode, { type DocNode } from './DocTreeNode.vue';
 
 const props = defineProps<{ workspaceId: string; workspaceName: string }>();
 const { t } = useI18n();
@@ -42,31 +43,35 @@ function select(id: string): void {
   docs.setActive(id);
 }
 
-// Lazy one-level tree per folder node (folder root path is "").
-type Node = { folder: string; path: string; name: string; type: 'dir' | 'file'; children?: Node[]; open?: boolean };
-const roots = ref<Node[]>([]);
+// Root folder nodes; each folder lazily loads its one level of children when expanded
+// (DocTreeNode handles the recursion and click semantics).
+const roots = ref<DocNode[]>([]);
 
-watch([selectedId, docFolders, isBound], async () => {
+watch([selectedId, docFolders, isBound], () => {
   roots.value = docFolders.value.map((f) => ({ folder: f, path: '', name: f, type: 'dir' as const }));
 });
 
-async function expand(node: Node): Promise<void> {
-  if (node.type !== 'dir') return;
-  node.open = !node.open;
-  if (node.children || !node.open) return;
+// A pull can add or remove files under an already-expanded folder (spec §3.6). When the store
+// signals a refresh, walk every open dir and re-fetch its level, preserving expansion state.
+async function refreshNode(node: DocNode): Promise<void> {
+  if (node.type !== 'dir' || !node.open) return;
   const entries: TreeEntry[] = await docs.treeOf(selectedId.value, node.folder, node.path);
-  node.children = entries.map((e) => ({ folder: node.folder, path: node.path ? `${node.path}/${e.name}` : e.name, name: e.name, type: e.type }));
+  const prev = new Map((node.children ?? []).map((c) => [c.path, c]));
+  node.children = entries.map((e) => {
+    const path = node.path ? `${node.path}/${e.name}` : e.name;
+    const old = prev.get(path);
+    if (old && old.type === e.type) return old;
+    return { folder: node.folder, path, name: e.name, type: e.type };
+  });
+  for (const child of node.children) await refreshNode(child);
 }
 
-function openFile(node: Node): void {
-  if (node.type !== 'file') return;
-  void docs.openFile(selectedId.value, node.folder, node.path);
-}
+watch(() => docs.refreshNonce, () => { for (const r of roots.value) void refreshNode(r); });
 
 const isMarkdown = computed(() => /\.(?:md|mdx|mdc|markdown|rst|adoc|asciidoc)$/i.test(docs.openPath));
 const previewHtml = computed(() => {
   const f = docs.file;
-  if (!f || f.binary || !isMarkdown.value) return '';
+  if (!f || f.binary || f.truncated || !isMarkdown.value) return '';
   const slash = docs.openPath.lastIndexOf('/');
   const dir = slash === -1 ? '' : docs.openPath.slice(0, slash);
   return renderDoc(f.content, { folder: docs.openFolder, dir });
@@ -115,26 +120,19 @@ onBeforeUnmount(() => docs.releaseUrls());
       <template v-else-if="!isBound"><p class="docs__empty">{{ t('docsPage.bindPrompt') }}</p></template>
       <template v-else-if="!docFolders.length"><p class="docs__empty">{{ t('docsPage.noFolders') }}</p></template>
       <ul v-else class="docs__nodes">
-        <li v-for="node in roots" :key="node.folder">
-          <button class="docs__node docs__node--dir" type="button" @click="expand(node)">{{ node.open ? '▾' : '▸' }} {{ node.name }}</button>
-          <ul v-if="node.open && node.children">
-            <li v-for="child in node.children" :key="child.path">
-              <button
-                class="docs__node"
-                type="button"
-                @click="child.type === 'dir' ? expand(child) : openFile(child)"
-              >{{ child.type === 'dir' ? (child.open ? '▾ ' : '▸ ') : '' }}{{ child.name }}</button>
-              <!-- one level shown per expand; deeper dirs expand on click via the same handler -->
-            </li>
-          </ul>
-        </li>
+        <DocTreeNode
+          v-for="n in roots"
+          :key="n.folder"
+          :project-id="selectedId"
+          :node="n"
+        />
       </ul>
     </nav>
 
     <section class="docs__preview">
       <p v-if="docs.loadingFile" class="docs__empty">{{ t('docsPage.loading') }}</p>
       <p v-else-if="docs.fileError" class="docs__empty docs__empty--error">{{ docs.fileError }}</p>
-      <template v-else-if="docs.file && !docs.file.binary && isMarkdown">
+      <template v-else-if="docs.file && !docs.file.binary && !docs.file.truncated && isMarkdown">
         <!-- renderDoc keeps html:false, so v-html output is a controlled tag set. -->
         <div ref="previewEl" class="k-log__markdown" v-html="previewHtml"></div>
       </template>

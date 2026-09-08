@@ -15,11 +15,16 @@ export const useProjectDocs = defineStore('project-docs', () => {
   const file = ref<FileContent | null>(null);
   const loadingFile = ref(false);
   const fileError = ref<string | null>(null);
+  // Bumped by refreshIfActive so the docs screen re-fetches the currently-expanded tree
+  // level after a pull (files added/removed under an open folder must appear).
+  const refreshNonce = ref(0);
 
   const urlCache = new Map<string, string>();
 
   function setActive(projectId: string): void {
     if (projectId === activeProjectId.value) return;
+    // Free the object URLs of the project we are leaving before its state is dropped.
+    releaseUrls();
     activeProjectId.value = projectId;
     openFolder.value = '';
     openPath.value = '';
@@ -57,9 +62,12 @@ export const useProjectDocs = defineStore('project-docs', () => {
   }
 
   function refreshIfActive(projectId: string): void {
-    if (projectId !== activeProjectId.value || !openFolder.value || !openPath.value) return;
-    // A pull may have changed images too; drop the object-URL cache so they refetch.
+    if (projectId !== activeProjectId.value) return;
+    // A pull may have changed the tree and images too: bump the nonce so the screen re-fetches
+    // its open tree level, and drop the object-URL cache so images refetch.
+    refreshNonce.value += 1;
     releaseUrls();
+    if (!openFolder.value || !openPath.value) return;
     void openFile(projectId, openFolder.value, openPath.value);
   }
 
@@ -68,5 +76,5 @@ export const useProjectDocs = defineStore('project-docs', () => {
     urlCache.clear();
   }
 
-  return { activeProjectId, openFolder, openPath, file, loadingFile, fileError, setActive, treeOf, openFile, rawUrl, refreshIfActive, releaseUrls };
+  return { activeProjectId, openFolder, openPath, file, loadingFile, fileError, refreshNonce, setActive, treeOf, openFile, rawUrl, refreshIfActive, releaseUrls };
 });
