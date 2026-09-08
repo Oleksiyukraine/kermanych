@@ -1014,7 +1014,7 @@ export const en: MessageSchema = {
       readOnlyFallback: 'the section is read-only',
     },
     section: {
-      'management-home': { hint: 'workspace overview', limitation: 'the section isn’t built yet — it has neither a screen nor a data store behind it' },
+      'management-home': { hint: 'workspace overview', limitation: 'the section only shows a read-only overview of the other sections — team capacity, release notes, risks and today’s tasks; changes are made in those sections' },
       'management-storage': { hint: 'credentials and keys', limitation: 'the section stores secrets — the assistant can only note that they exist; it never reads or changes passwords or files' },
       'management-docs': { hint: 'specs and decisions', limitation: 'the section isn’t built yet — it has neither a screen nor a data store behind it' },
       'management-risks': { hint: 'risks and mitigations' },
@@ -1025,6 +1025,41 @@ export const en: MessageSchema = {
     placeholder: {
       text: 'Section under construction.',
       scope: 'Workspace: {name}',
+    },
+    home: {
+      intro: 'Drag a tile by its header to reorder it, and drag its corner to resize. Every tile reports on this workspace.',
+      reset: 'Reset layout',
+      tileResize: 'Resize tile',
+      capacity: {
+        title: 'Team capacity',
+        period: 'Period',
+        gateJira: 'Capacity reads from Jira — connect a board to see it.',
+        gateOpen: 'Integrations',
+        loading: 'Reading the Jira mirror…',
+        empty: 'No estimated work lands in this period.',
+      },
+      releases: {
+        title: 'Recent release notes',
+        empty: 'No release notes yet.',
+        open: 'All release notes',
+        error: 'Could not read the notes: {error}',
+      },
+      risks: {
+        title: 'Risk registry',
+        empty: 'No risks need attention right now.',
+        open: 'Open register',
+        error: 'Could not read the register: {error}',
+        escalate: 'to sponsor',
+      },
+      tasks: {
+        title: 'Today’s tasks',
+        gateJira: 'Today’s tasks read from Jira — connect a board to see them.',
+        empty: 'Nobody has work landing on today’s date.',
+        unassigned: 'Unassigned',
+        open: 'Open board',
+        overdue: 'overdue',
+        count: '{n} task | {n} tasks',
+      },
     },
     risks: {
       leadBefore: 'Risk register of workspace',

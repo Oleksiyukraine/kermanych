@@ -53,7 +53,20 @@ export interface ManagementSection {
 const NOT_BUILT = "розділ ще не реалізований — за ним немає ні екрана, ні сховища даних";
 
 export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
-  { name: "management-home", path: "home", label: "Home", hint: "огляд воркспейсу", capability: "none", limitation: NOT_BUILT },
+  // The workspace overview. It has a screen now (apps/ui/src/pages/ManagementHomePage.vue) — a
+  // dashboard of draggable, resizable tiles that snapshot the other sections (Team Capacity,
+  // Release Notes, Risk Registry and today's board tasks). It reads only: every tile mirrors a
+  // section whose own screen owns the writing, so the assistant may describe it but is refused
+  // any change, with the limitation below.
+  {
+    name: "management-home",
+    path: "home",
+    label: "Home",
+    hint: "огляд воркспейсу",
+    capability: "read",
+    limitation:
+      "розділ лише показує зведення інших розділів — місткість команди, реліз-ноти, ризики та задачі на сьогодні; зміни робляться у відповідних розділах",
+  },
   // The password vault (20260907120000_workspace_passwords.sql). It has a screen and three
   // tables, so it is no longer a placeholder — but it stays OUT of the assistant's write
   // reach on purpose: a section that stores secrets must not be openable or editable by a
