@@ -50,8 +50,6 @@ export interface ManagementSection {
   limitation?: string;
 }
 
-const NOT_BUILT = "розділ ще не реалізований — за ним немає ні екрана, ні сховища даних";
-
 export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
   // The workspace overview. It has a screen (apps/ui/src/pages/ManagementHomePage.vue) — a
   // dashboard of draggable, resizable tiles: snapshots of the other sections (Team Capacity,

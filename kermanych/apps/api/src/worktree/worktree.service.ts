@@ -309,8 +309,8 @@ export class WorktreeService {
 
   // Raw bytes of a file under `dir`, for the docs image/binary route. Same rel guard as
   // readFileContent; `null` when the path is not a readable file so the caller answers 404
-  // instead of throwing. Oversized blobs are still returned — an image is meant to be sent
-  // whole — but the same MAX_COUNT_BYTES ceiling caps it so one file cannot stream forever.
+  // instead of throwing. A blob larger than MAX_COUNT_BYTES also returns null (capped at that
+  // ceiling) so one oversized file cannot stream forever.
   async readFileBytes(dir: string, rel: string): Promise<{ bytes: Buffer; contentType: string } | null> {
     const p = rel.trim();
     if (!p || p.startsWith("/") || /^[a-zA-Z]:/.test(p) || p.split(/[\\/]/).includes("..")) {
