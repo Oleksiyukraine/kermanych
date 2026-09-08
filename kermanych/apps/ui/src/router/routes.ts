@@ -16,6 +16,7 @@ declare module 'vue-router' {
 const SECTION_PAGES: Record<string, RouteRecordRaw['component']> = {
   'management-home': () => import('pages/ManagementHomePage.vue'),
   'management-capacity': () => import('pages/ManagementCapacityPage.vue'),
+  'management-docs': () => import('pages/ProjectDocumentationPage.vue'),
   'management-integrations': () => import('pages/ManagementIntegrationsPage.vue'),
   'management-releases': () => import('pages/ManagementReleasesPage.vue'),
   'management-risks': () => import('pages/ManagementRisksPage.vue'),

@@ -2204,4 +2204,13 @@ export const en: MessageSchema = {
       ticketCreateFailed: 'Could not create the ticket in Jira: {error}',
     },
   },
+  docsPage: {
+    noProjects: 'This workspace has no projects.',
+    pickProject: 'Pick a project to see its documentation.',
+    bindPrompt: 'Bind this project’s local repository to see its documentation.',
+    noFolders: 'No documentation folders configured. Add them in the project settings.',
+    pickFile: 'Pick a file on the left.',
+    loading: 'Loading…',
+    binary: 'Binary file — no preview available.',
+  },
 };
