@@ -319,8 +319,8 @@ export function triggerMatches(pattern: string, sample: string, source: TriggerS
  * pill and the save bar's count, and it is what the save path consults to decide
  * whether a write is worth making at all.
  *
- * Arrays are compared by their JOINED contents, not by identity: `carryFiles` is
- * rebuilt on every chip edit, so an identity check would report a change the
+ * Arrays are compared by their JOINED contents, not by identity: `carryFiles` and
+ * `docFolders` are rebuilt on every chip edit, so an identity check would report a change the
  * moment the operator opened the field. Everything else in a settings draft is a
  * string or a boolean, so `!==` is exact for it.
  */

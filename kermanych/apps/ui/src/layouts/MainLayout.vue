@@ -332,6 +332,7 @@ import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
 import { useBoard } from 'stores/board';
+import { useProjectDocs } from 'stores/project-docs';
 import { IS_PREVIEW } from '../lib/preview';
 import { MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
@@ -364,6 +365,7 @@ const store = useOrchestrator();
 const projects = useProjects();
 const auth = useAuth();
 const board = useBoard();
+const projectDocs = useProjectDocs();
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
@@ -1087,8 +1089,10 @@ async function gitPull(): Promise<void> {
   syncing.value = true;
   try {
     const r = await store.pullProject(id);
-    if (r.ok) store.notify(`Pull: ${r.out.trim() || t('common.nav.pullDone')}`);
-    else store.notify(`Pull: ${r.out.trim() || t('common.nav.pullFailed')}`, 'error', 7000);
+    if (r.ok) {
+      store.notify(`Pull: ${r.out.trim() || t('common.nav.pullDone')}`);
+      projectDocs.refreshIfActive(id);
+    } else store.notify(`Pull: ${r.out.trim() || t('common.nav.pullFailed')}`, 'error', 7000);
   } catch (e) {
     store.notify(`Pull: ${e instanceof Error ? e.message : String(e)}`, 'error', 7000);
   } finally {

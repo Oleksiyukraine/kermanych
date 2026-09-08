@@ -127,6 +127,7 @@ function bind(registry: RegistryService, localRepoPath = "/tmp/proj"): void {
     name: "kermanych",
     carryFiles: [".env", ".env.local"],
     envKeys: ["GITHUB_TOKEN"],
+    docFolders: [],
     defaultBranch: "main",
     workspaceId: "00000000-0000-4000-8000-000000000ws1",
     createdAt: NOW,

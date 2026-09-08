@@ -24,6 +24,14 @@ const RAW_PATHS = ["-c", "core.quotePath=false"];
 // read `*`, `[` or a leading `:` in a name as a glob or as pathspec magic.
 const LITERAL_PATHS = ["--literal-pathspecs"];
 
+// A small extension→MIME table for the docs raw route. Anything not listed streams as
+// application/octet-stream, which a browser downloads rather than mis-renders.
+const DOC_MIME: Record<string, string> = {
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+  ".webp": "image/webp", ".svg": "image/svg+xml", ".avif": "image/avif", ".ico": "image/x-icon",
+  ".bmp": "image/bmp", ".pdf": "application/pdf",
+};
+
 function git(cwd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
   const { promise, resolve } = Promise.withResolvers<{ ok: boolean; out: string }>();
   const p = spawn("git", ["-C", cwd, ...args]);
@@ -297,6 +305,27 @@ export class WorktreeService {
       return { path: p, content: "", binary: true, truncated: false };
     }
     return { path: p, content: buf.toString("utf8"), binary: false, truncated: false };
+  }
+
+  // Raw bytes of a file under `dir`, for the docs image/binary route. Same rel guard as
+  // readFileContent; `null` when the path is not a readable file so the caller answers 404
+  // instead of throwing. A blob larger than MAX_COUNT_BYTES also returns null (capped at that
+  // ceiling) so one oversized file cannot stream forever.
+  async readFileBytes(dir: string, rel: string): Promise<{ bytes: Buffer; contentType: string } | null> {
+    const p = rel.trim();
+    if (!p || p.startsWith("/") || /^[a-zA-Z]:/.test(p) || p.split(/[\\/]/).includes("..")) {
+      throw new Error("invalid path");
+    }
+    const abs = join(dir, p);
+    try {
+      const st = await stat(abs);
+      if (!st.isFile() || st.size > MAX_COUNT_BYTES) return null;
+      const dot = p.lastIndexOf(".");
+      const ext = dot === -1 ? "" : p.slice(dot).toLowerCase();
+      return { bytes: await readFile(abs), contentType: DOC_MIME[ext] ?? "application/octet-stream" };
+    } catch {
+      return null;
+    }
   }
 
   // Unified diff of a worktree against where its branch forked from `base`. The

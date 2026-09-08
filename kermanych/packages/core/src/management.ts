@@ -50,8 +50,6 @@ export interface ManagementSection {
   limitation?: string;
 }
 
-const NOT_BUILT = "розділ ще не реалізований — за ним немає ні екрана, ні сховища даних";
-
 export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
   // The workspace overview. It has a screen (apps/ui/src/pages/ManagementHomePage.vue) — a
   // dashboard of draggable, resizable tiles: snapshots of the other sections (Team Capacity,
@@ -94,8 +92,9 @@ export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
     path: "project-documentation",
     label: "Project Documentation",
     hint: "специфікації й рішення",
-    capability: "none",
-    limitation: NOT_BUILT,
+    capability: "read",
+    limitation:
+      "розділ показує документацію з репозиторіїв проєктів як є — асистент може лише згадати її, але не редагує файли",
   },
   // A section the assistant can WRITE, because it has a real store behind it:
   // `workspace_risks` (threat vs opportunity, cause·event·consequence, 1-5 probability ×

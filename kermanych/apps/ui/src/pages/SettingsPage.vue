@@ -136,6 +136,32 @@
             :disabled="cloudLocked"
           />
 
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.docs.folders') }}</span>
+            <p v-if="!isBound" class="set__note">{{ t('settings.docs.bindHint') }}</p>
+            <div class="set__chips">
+              <span v-for="(f, i) in draft.docFolders" :key="`${f}-${i}`" class="set__chip mono">
+                {{ f }}
+                <button
+                  type="button"
+                  class="set__chip-x"
+                  :aria-label="t('settings.docs.remove', { folder: f })"
+                  :disabled="cloudLocked"
+                  @click="draft.docFolders.splice(i, 1)"
+                >✕</button>
+              </span>
+              <input
+                v-model="docInput"
+                class="set__chip-input mono"
+                :placeholder="t('settings.docs.addPlaceholder')"
+                :disabled="cloudLocked"
+                @keydown.enter.prevent="addDocFolder"
+                @blur="addDocFolder"
+              />
+            </div>
+            <p class="set__note">{{ t('settings.docs.note') }}</p>
+          </div>
+
           <div class="set__rule"></div>
 
           <!-- SECRETS. A token is a VALUE, so it lives where every value in this
@@ -756,11 +782,13 @@ interface ProjectDraft {
   previewCommand: string;
   apiCommand: string;
   carryFiles: string[];
+  docFolders: string[];
 }
 
 const draft = ref<ProjectDraft | null>(null);
 const base = ref<ProjectDraft | null>(null);
 const carryInput = ref('');
+const docInput = ref('');
 const branches = ref<string[]>([]);
 
 function seedProject(): void {
@@ -783,8 +811,9 @@ function seedProject(): void {
     previewCommand: c?.previewCommand ?? row?.previewCommand ?? '',
     apiCommand: c?.apiCommand ?? row?.apiCommand ?? '',
     carryFiles: [...(c?.carryFiles ?? row?.carryFiles ?? ['.env'])],
+    docFolders: [...(c?.docFolders ?? row?.docFolders ?? [])],
   };
-  draft.value = { ...next, carryFiles: [...next.carryFiles] };
+  draft.value = { ...next, carryFiles: [...next.carryFiles], docFolders: [...next.docFolders] };
   base.value = next;
 }
 
@@ -824,6 +853,13 @@ function addCarryFile(): void {
   carryInput.value = '';
   if (!path || !draft.value || draft.value.carryFiles.includes(path)) return;
   draft.value.carryFiles.push(path);
+}
+
+function addDocFolder(): void {
+  const path = docInput.value.trim().replace(/^\/+|\/+$/g, '');
+  docInput.value = '';
+  if (!path || !draft.value || draft.value.docFolders.includes(path)) return;
+  draft.value.docFolders.push(path);
 }
 
 // The «Запуск задач» pane's model and effort pickers, from the same omp catalog the launcher
@@ -1079,6 +1115,7 @@ async function saveProject(): Promise<void> {
       // Never store an empty carry list: the launch path would copy nothing into
       // the worktree.
       carryFiles: d.carryFiles.length ? d.carryFiles : ['.env'],
+      docFolders: d.docFolders,
       ...(envKeys ? { envKeys } : {}),
       ...(moved ? { workspaceId: d.workspaceId } : {}),
     });

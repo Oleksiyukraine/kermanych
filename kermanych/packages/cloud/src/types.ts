@@ -38,6 +38,10 @@ export type CloudProject = {
   defaultEffort?: ThinkingLevel;
   carryFiles: string[];
   envKeys: string[]; // key NAMES only — values never leave the bound repo's .env
+  // Repo-relative POSIX directory paths whose files the Project Documentation screen
+  // renders. Team-shared selection; the content is read from each machine's local
+  // checkout, never stored in the cloud.
+  docFolders: string[];
   color?: string;
   // The group that owns this project AND supplies its member list. `not null` in
   // Postgres: there are no workspace-less projects in the cloud.

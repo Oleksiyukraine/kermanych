@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createProject, deleteProject, listProjects, patchProject, toCloudProject } from "../src/projects";
+import { createProject, deleteProject, listProjects, patchProject, toCloudProject, toProjectRow } from "../src/projects";
 
 type Op = [string, ...unknown[]];
 type Query = { table: string; ops: Op[] };
@@ -56,6 +56,7 @@ const projectRow = {
   carry_files: [".env", ".env.local"],
   env_keys: ["GITHUB_TOKEN"],
   color: "#ff563c",
+  doc_folders: ["docs"],
   workspace_id: "w1",
   created_at: "2026-08-21T00:00:00.000Z",
 };
@@ -85,6 +86,7 @@ describe("listProjects", () => {
       carryFiles: [".env", ".env.local"],
       envKeys: ["GITHUB_TOKEN"],
       color: "#ff563c",
+      docFolders: ["docs"],
       workspaceId: "w1",
       createdAt: "2026-08-21T00:00:00.000Z",
     });
@@ -99,7 +101,7 @@ describe("listProjects", () => {
     await listProjects(client);
     expect(queries[0]!.ops[0]).toEqual([
       "select",
-      "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, default_effort, carry_files, env_keys, color, created_at",
+      "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, default_effort, carry_files, env_keys, color, doc_folders, created_at",
     ]);
   });
 
@@ -224,5 +226,35 @@ describe("deleteProject", () => {
   it("throws the postgrest message so the UI can toast a refusal", async () => {
     const { client } = fakeClient({ data: null, error: { message: "permission denied for table projects" } });
     await expect(deleteProject(client, "p1")).rejects.toThrow(/permission denied/);
+  });
+});
+
+describe("doc_folders mapping", () => {
+  it("maps a doc_folders row to docFolders", () => {
+    const p = toCloudProject({
+      id: "p1", name: "P", workspace_id: "w1", git_remote_url: null,
+      conventions: null, preview_command: null, api_command: null,
+      default_branch: null, default_model: null, default_effort: null,
+      carry_files: [".env"], env_keys: [], color: null,
+      doc_folders: ["docs", "packages/core/docs"], created_at: "t",
+    });
+    expect(p.docFolders).toEqual(["docs", "packages/core/docs"]);
+  });
+
+  it("defaults a null doc_folders to []", () => {
+    const p = toCloudProject({
+      id: "p1", name: "P", workspace_id: "w1", git_remote_url: null,
+      conventions: null, preview_command: null, api_command: null,
+      default_branch: null, default_model: null, default_effort: null,
+      carry_files: null, env_keys: null, color: null,
+      doc_folders: null, created_at: "t",
+    });
+    expect(p.docFolders).toEqual([]);
+  });
+
+  it("sends doc_folders only when present in the patch", () => {
+    expect(toProjectRow({}).doc_folders).toBeUndefined();
+    expect(toProjectRow({ docFolders: ["docs"] }).doc_folders).toEqual(["docs"]);
+    expect(toProjectRow({ docFolders: [] }).doc_folders).toEqual([]);
   });
 });
