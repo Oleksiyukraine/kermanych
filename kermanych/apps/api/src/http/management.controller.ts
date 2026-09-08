@@ -14,6 +14,12 @@ import {
   type ManagementChatReply,
   type ManagementContext,
   type ManagementJiraBoard,
+  type ManagementHome,
+  type ManagementHomeRelease,
+  type ManagementHomeTask,
+  type ManagementHomeTaskGroup,
+  type ManagementHomeTile,
+  type ManagementHomeTodoItem,
   type ManagementMember,
   type ManagementRiskRow,
   type ReleaseNotesAsk,
@@ -175,6 +181,82 @@ function capacityDigest(v: unknown): ManagementCapacity | undefined {
   };
 }
 
+// The Home overview digest as the browser sent it, rebuilt field by field for `riskRows`'
+// reason: it is printed into the prompt as the operator's own dashboard. Caps keep a
+// pathological blob from turning every turn into pages of text; junk rows are dropped,
+// never repaired into something the screen does not show.
+const MAX_HOME_TILES = 10;
+const MAX_HOME_TODO = 200;
+const MAX_HOME_TODO_TEXT = 500;
+const MAX_HOME_TASK_GROUPS = 30;
+const MAX_HOME_TASKS = 30;
+const MAX_HOME_RELEASES = 5;
+
+function homeOverview(v: unknown): ManagementHome | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const x = v as Record<string, unknown>;
+  const tiles: ManagementHomeTile[] = [];
+  if (Array.isArray(x.tiles)) {
+    for (const t of x.tiles.slice(0, MAX_HOME_TILES)) {
+      if (!t || typeof t !== "object") continue;
+      const y = t as Record<string, unknown>;
+      if (typeof y.id !== "string" || y.id.trim() === "") continue;
+      tiles.push({ id: y.id.trim(), w: countNum(y.w) || 1, h: countNum(y.h) || 1 });
+    }
+  }
+  const todo: ManagementHomeTodoItem[] = [];
+  if (Array.isArray(x.todo)) {
+    for (const t of x.todo.slice(0, MAX_HOME_TODO)) {
+      if (!t || typeof t !== "object") continue;
+      const y = t as Record<string, unknown>;
+      if (typeof y.text !== "string") continue;
+      todo.push({
+        text: y.text.slice(0, MAX_HOME_TODO_TEXT),
+        kind: y.kind === "number" ? "number" : "check",
+        done: y.done === true,
+      });
+    }
+  }
+  const tasksToday: ManagementHomeTaskGroup[] = [];
+  if (Array.isArray(x.tasksToday)) {
+    for (const g of x.tasksToday.slice(0, MAX_HOME_TASK_GROUPS)) {
+      if (!g || typeof g !== "object") continue;
+      const y = g as Record<string, unknown>;
+      const tasks: ManagementHomeTask[] = [];
+      if (Array.isArray(y.tasks)) {
+        for (const w of y.tasks.slice(0, MAX_HOME_TASKS)) {
+          if (!w || typeof w !== "object") continue;
+          const z = w as Record<string, unknown>;
+          if (typeof z.key !== "string" || z.key.trim() === "") continue;
+          tasks.push({
+            key: z.key.trim(),
+            summary: typeof z.summary === "string" ? z.summary : "",
+            overdue: z.overdue === true,
+          });
+        }
+      }
+      // A group with no valid tasks is a person with nothing to say about — dropped, so the
+      // prompt never prints a name followed by an empty list.
+      if (!tasks.length) continue;
+      tasksToday.push({ name: typeof y.name === "string" ? y.name.trim() : "", tasks });
+    }
+  }
+  const releases: ManagementHomeRelease[] = [];
+  if (Array.isArray(x.releases)) {
+    for (const r of x.releases.slice(0, MAX_HOME_RELEASES)) {
+      if (!r || typeof r !== "object") continue;
+      const y = r as Record<string, unknown>;
+      if (typeof y.title !== "string" || y.title.trim() === "") continue;
+      releases.push({
+        title: y.title.trim(),
+        projectName: typeof y.projectName === "string" ? y.projectName : "",
+        createdAt: typeof y.createdAt === "string" ? y.createdAt : "",
+      });
+    }
+  }
+  return { tiles, todo, tasksToday, releases };
+}
+
 // The Менеджмент assistant, over REST rather than the sessions WebSocket: one question,
 // one answer, no board row and no live transcript to stream. Auto-guarded by the global
 // SupabaseAuthGuard (app.module.ts), so there is no @Public() here — the chat spends the
@@ -217,6 +299,7 @@ export class ManagementController {
     // write actions operate on, and the rest of the block is prose the model reads as fact.
     const jira = jiraBoard(b.context.jira);
     const capacity = capacityDigest(b.context.capacity);
+    const home = homeOverview(b.context.home);
     const context: ManagementContext = {
       workspaceName: typeof b.context.workspaceName === "string" ? b.context.workspaceName : "",
       section: typeof b.context.section === "string" ? b.context.section : "",
@@ -224,6 +307,7 @@ export class ManagementController {
       members: memberRows(b.context.members),
       ...(jira ? { jira } : {}),
       ...(capacity ? { capacity } : {}),
+      ...(home ? { home } : {}),
     };
     try {
       return await this.chat.ask({ ...b, conversationId, text, workspaceId, workspaceProjects, context, attachments });

@@ -40,6 +40,7 @@ import type {
   ManagementAction,
   ManagementCapacity,
   ManagementChatAsk,
+  ManagementHome,
   ManagementJiraBoard,
   ManagementJiraTicketCreate,
   ManagementMember,
@@ -59,6 +60,9 @@ import type { JiraIssueDraftWire } from '../lib/api';
 import { handleOf } from '../lib/members';
 import { capacityDigest, capacityReport, digestRange, todayIso } from '../lib/capacity';
 import { readCapacityPrefs } from '../lib/capacity-prefs';
+import { readLayout } from '../lib/dashboard';
+import { useHomeTodo } from './home-todo';
+import { homeDigest, todayTaskGroups } from '../lib/home-digest';
 import { useBoard } from './board';
 import { useJira } from './jira';
 import { useOrchestrator } from './orchestrator';
@@ -117,6 +121,9 @@ export const useManagementChat = defineStore('management-chat', () => {
   // The Jira mirror: read for whether the second board exists and may be written, and
   // upserted with the issue the api creates so the Jira view shows it before the next sync.
   const jira = useJira();
+  // The To-do tile's list — the same reactive copy HomeTodoWidget renders, so an item the
+  // assistant appends is on the dashboard before its notice prints.
+  const homeTodo = useHomeTodo();
 
   // Keyed by workspace id, because the conversation id is `management:<workspaceId>`: picking
   // another workspace in the sidebar switches the conversation the api talks to, so it has to
@@ -264,6 +271,28 @@ export const useManagementChat = defineStore('management-chat', () => {
       canWrite: jira.tokenPresent,
       assignees: (await jira.loadAssignable(workspaceId)).map((u) => u.displayName),
     };
+  }
+
+  // The Home overview as the assistant is shown it: the SAME data the dashboard tiles render
+  // (lib/home-digest.ts) — the operator's tile layout, their To-do list, today's tasks and
+  // the recent release notes. The capacity and risks tiles are not repeated here; their data
+  // already travels in `capacity` and `risks`. Always present: a workspace with no Jira and
+  // no notes still has a layout and a to-do list to describe. The notes read is spent only
+  // when the store is cold and degrades to an empty list — an unreachable cloud costs the
+  // assistant one tile, not the answer.
+  async function homeDigestFor(workspaceId: string): Promise<ManagementHome> {
+    if (!releaseNotes.byWorkspace[workspaceId])
+      try {
+        await releaseNotes.load(workspaceId);
+      } catch {
+        /* no notes this turn */
+      }
+    return homeDigest({
+      layout: readLayout(workspaceId),
+      todo: homeTodo.listFor(workspaceId),
+      groups: jira.integration ? todayTaskGroups(jira.issues, todayIso(Date.now())) : [],
+      notes: releaseNotes.byWorkspace[workspaceId] ?? [],
+    });
   }
 
   // Team Capacity as the assistant is shown it: the same `capacityReport` the screen renders,
@@ -617,6 +646,23 @@ export const useManagementChat = defineStore('management-chat', () => {
       await createJiraTicket(workspaceId, action);
       return;
     }
+    // The Home overview's one write. Rows land in the same store the To-do tile renders —
+    // on the dashboard before this notice prints — and in this browser's localStorage only,
+    // which is exactly what the prompt told the model about the list's scope. Nothing here
+    // can fail short of a private-mode write, which lib/home-todo swallows by design.
+    if (action.kind === 'todo.create') {
+      const made = homeTodo.append(workspaceId, action.items);
+      result(
+        workspaceId,
+        'info',
+        globalTr.t(
+          'management.chat.todoAdded',
+          { n: made.length, items: action.items.map((i) => `«${i.text}»`).join(', ') },
+          made.length,
+        ),
+      );
+      return;
+    }
     // Nothing was written, and that IS the outcome: the assistant needs a decision only the
     // operator can make, so the ticket stays unfiled until the next turn answers. Stated in
     // the app's own voice and numbered, because a question the operator reads past is a
@@ -714,6 +760,7 @@ export const useManagementChat = defineStore('management-chat', () => {
           members: memberDigest(workspaceId),
           ...(jiraBoard ? { jira: jiraBoard } : {}),
           ...(capacity ? { capacity } : {}),
+          home: await homeDigestFor(workspaceId),
         },
         // The model is told to answer in the operator's active locale (api rule ґ); the
         // prompt body stays Ukrainian.

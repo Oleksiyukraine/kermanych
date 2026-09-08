@@ -9,6 +9,7 @@ import {
   RISK_STATUS_VALUES,
   type ManagementCapacity,
   type ManagementContext,
+  type ManagementHome,
   type ManagementMember,
   type ManagementRepo,
   type ManagementRiskRow,
@@ -466,5 +467,64 @@ describe("capacity lines", () => {
     const text = buildManagementTurn({ first: true, repos: [], context, today: TODAY, text: "?" });
     expect(text).toContain("НАВАНТАЖЕННЯ КОМАНДИ (management-capacity)");
     expect(text).toContain("management-capacity · Team Capacity · capability=read");
+  });
+});
+
+// The Home overview lines — what «проаналізуй мою головну» is answered from. The digest is
+// the operator's own dashboard, so the block must print exactly what was sent (order, done
+// marks, the numbered-run reset the tile renders) and must SAY when there is no snapshot,
+// never leave the model to invent one.
+describe("home overview lines", () => {
+  const home: ManagementHome = {
+    tiles: [
+      { id: "todo", w: 2, h: 2 },
+      { id: "risks", w: 4, h: 1 },
+    ],
+    todo: [
+      { text: "поговорити з Олею", kind: "check", done: true },
+      { text: "крок один", kind: "number", done: false },
+      { text: "крок два", kind: "number", done: false },
+      { text: "звичайний пункт", kind: "check", done: false },
+      { text: "нова нумерація", kind: "number", done: false },
+    ],
+    tasksToday: [
+      { name: "Оля", tasks: [{ key: "KRM-1", summary: "полагодити логін", overdue: true }] },
+      { name: "", tasks: [{ key: "KRM-2", summary: "без виконавця", overdue: false }] },
+    ],
+    releases: [{ title: "Серпневий реліз", projectName: "Альфа", createdAt: "2026-08-31T10:00:00.000Z" }],
+  };
+
+  it("prints the tiles, the to-do list, today's tasks and the recent notes", () => {
+    const out = buildManagementTurn({ first: false, repos: [], context: { ...context, home }, today: TODAY, text: "?" });
+    expect(out).toContain("Огляд Home (дашборд management-home)");
+    expect(out).toContain("todo 2×2, risks 4×1");
+    expect(out).toContain("- [x] поговорити з Олею");
+    expect(out).toContain("- [ ] звичайний пункт");
+    expect(out).toContain("- 1. крок один");
+    expect(out).toContain("- 2. крок два");
+    // A checklist row resets the numbered run — the same count the tile renders.
+    expect(out).toContain("- 1. нова нумерація");
+    expect(out).toContain("- Оля: KRM-1 «полагодити логін» (прострочено)");
+    expect(out).toContain("- (не призначено): KRM-2 «без виконавця»");
+    expect(out).toContain("- Серпневий реліз · Альфа · 2026-08-31");
+  });
+
+  it("says the snapshot is unavailable when the context carries no home digest", () => {
+    const out = buildManagementTurn({ first: false, repos: [], context, today: TODAY, text: "?" });
+    expect(out).toContain("знімок дашборда цього ходу недоступний");
+  });
+
+  it("teaches todo.create as the overview's one verb, in the menu and in the protocol", () => {
+    const out = buildManagementTurn({ first: true, repos: [], context, today: TODAY, text: "?" });
+    expect(out).toContain("ОГЛЯД HOME (management-home)");
+    // In the exhaustive menu — the risk.delete lesson: a verb absent from it is one the
+    // model refuses or invents a screen for.
+    expect(out).toContain('{ "kind": "todo.create", "items": [ { "text": "…", "kind": "check" | "number" } ] }');
+    // The boundary: everything except appending stays on the tile.
+    expect(out).toContain("Все ІНШЕ на головній лишається екраном");
+    // And the list's scope: this browser only, so the model never promises the team saw it.
+    expect(out).toContain("живе лише в браузері оператора");
+    // Rule (а) reads the writable set off the table, so home must be in it now.
+    expect(out).toMatch(/\(а\) .*management-home/);
   });
 });

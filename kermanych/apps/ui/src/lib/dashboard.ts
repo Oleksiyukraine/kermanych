@@ -11,7 +11,7 @@
 
 // Every widget the dashboard can show. Adding one here plus a row in DEFAULT_LAYOUT is enough
 // for mergeLayout to heal every saved layout into carrying it.
-export type WidgetId = 'capacity' | 'tasks' | 'risks' | 'releases';
+export type WidgetId = 'capacity' | 'tasks' | 'risks' | 'releases' | 'todo';
 
 export type TileLayout = {
   id: WidgetId;
@@ -36,6 +36,7 @@ export const DEFAULT_LAYOUT: readonly TileLayout[] = [
   { id: 'tasks', w: 2, h: 2 },
   { id: 'risks', w: 2, h: 2 },
   { id: 'releases', w: 2, h: 2 },
+  { id: 'todo', w: 2, h: 2 },
 ];
 
 const WIDGET_IDS: readonly WidgetId[] = DEFAULT_LAYOUT.map((t) => t.id);

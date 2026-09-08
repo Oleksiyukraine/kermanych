@@ -19,7 +19,7 @@
     <div v-else class="taskw__groups">
       <section v-for="g in groups" :key="g.id" class="taskw__group">
         <header class="taskw__dev">
-          <span class="taskw__dev-name">{{ g.name }}</span>
+          <span class="taskw__dev-name">{{ g.name || t('management.home.tasks.unassigned') }}</span>
           <span class="taskw__dev-count mono">{{ t('management.home.tasks.count', { n: g.tasks.length }, g.tasks.length) }}</span>
         </header>
         <ul class="taskw__tasks">
@@ -45,14 +45,17 @@
 // grouped under the person it is assigned to. It reads the Jira session the home page opened
 // (stores/jira.ts) — the same mirror the board and Team Capacity read — so the tickets are the
 // ones on the board right now. Read-only: the row opens the ticket in Jira.
+//
+// The grouping itself lives in lib/home-digest.ts, because the management chat sends the
+// SAME computation to the assistant on every ask — the two must never disagree about whose
+// day holds what.
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterLink } from 'vue-router';
-import type { JiraIssue } from '@kermanych/cloud';
 import { useJira } from 'stores/jira';
 import { useNow } from '../../composables/useNow';
 import { todayIso } from '../../lib/capacity';
-import { UNASSIGNED } from '../../lib/jira-view';
+import { todayTaskGroups, type TodayGroup } from '../../lib/home-digest';
 
 defineProps<{ workspaceId: string }>();
 
@@ -61,41 +64,10 @@ const jira = useJira();
 const nowMs = useNow(60_000);
 const today = computed(() => todayIso(nowMs.value));
 
-// A ticket is «for today» when it is still open and today falls in its planning window: due
-// today, inside its start→due span, or overdue (past due but not done — still owed today). A
-// ticket with no due date has no specific date to be assigned to, so it is not counted here.
-function isForToday(issue: JiraIssue, day: string): boolean {
-  if (issue.statusCategory === 'done') return false;
-  if (!issue.dueDate) return false;
-  if (issue.dueDate <= day) return true; // due today or overdue
-  return !!issue.startDate && issue.startDate <= day; // mid-window (started, not yet due)
-}
-
-type Task = { key: string; summary: string; overdue: boolean };
-type Group = { id: string; name: string; tasks: Task[] };
-
-const groups = computed<Group[]>(() => {
-  if (!jira.integration) return [];
-  const day = today.value;
-  const byPerson: Record<string, Group> = {};
-  for (const issue of jira.issues) {
-    if (!isForToday(issue, day)) continue;
-    const id = issue.assigneeAccountId ?? issue.assigneeName ?? UNASSIGNED;
-    const name = issue.assigneeName ?? (id === UNASSIGNED ? t('management.home.tasks.unassigned') : id);
-    (byPerson[id] ??= { id, name, tasks: [] }).tasks.push({
-      key: issue.key,
-      summary: issue.summary,
-      overdue: issue.dueDate < day,
-    });
-  }
-  // People first (by workload, busiest first), the Unassigned bucket last — its tickets are a
-  // scheduling gap, not one person's day.
-  return Object.values(byPerson).sort((a, b) => {
-    if (a.id === UNASSIGNED) return 1;
-    if (b.id === UNASSIGNED) return -1;
-    return b.tasks.length - a.tasks.length || a.name.localeCompare(b.name);
-  });
-});
+// The digest keeps a blank name for the unassigned bucket; the label is render-side.
+const groups = computed<TodayGroup[]>(() =>
+  jira.integration ? todayTaskGroups(jira.issues, today.value) : [],
+);
 
 function issueUrl(key: string): string {
   const site = jira.integration?.siteUrl ?? '';

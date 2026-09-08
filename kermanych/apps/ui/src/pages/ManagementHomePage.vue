@@ -19,10 +19,12 @@
         :h="tile.h"
         :columns="columns"
         :resize-label="t('management.home.tileResize')"
+        :move-label="t('management.home.tileMove')"
         :dragging="dragId === tile.id"
         :resizing="resizeId === tile.id"
-        @drag-start="() => onDragStart(tile.id)"
+        @drag-start="(ev) => onDragStart(tile.id, ev)"
         @resize-start="(ev) => onResizeStart(ev, tile.id)"
+        @move="(dir) => onMove(tile.id, dir)"
       >
         <component :is="WIDGETS[tile.id]" :workspace-id="workspaceId" />
       </HomeTile>
@@ -52,6 +54,7 @@ import HomeCapacityWidget from 'components/home/HomeCapacityWidget.vue';
 import HomeTasksWidget from 'components/home/HomeTasksWidget.vue';
 import HomeRisksWidget from 'components/home/HomeRisksWidget.vue';
 import HomeReleasesWidget from 'components/home/HomeReleasesWidget.vue';
+import HomeTodoWidget from 'components/home/HomeTodoWidget.vue';
 import {
   DASHBOARD_COLUMNS,
   mergeLayout,
@@ -73,6 +76,7 @@ const WIDGETS: Record<WidgetId, Component> = {
   tasks: markRaw(HomeTasksWidget),
   risks: markRaw(HomeRisksWidget),
   releases: markRaw(HomeReleasesWidget),
+  todo: markRaw(HomeTodoWidget),
 };
 
 // ── layout ────────────────────────────────────────────────────────────────────
@@ -116,14 +120,30 @@ const gridStyle = computed(() => ({
 
 // ── gestures ──────────────────────────────────────────────────────────────────
 // One mode at a time: a header drag reorders, a corner drag resizes. Both listen on the window
-// so the gesture keeps working when the pointer leaves the tile it started on.
+// so the gesture keeps working when the pointer leaves the tile it started on. A header press
+// is only a CANDIDATE drag until the pointer travels DRAG_THRESHOLD_PX — below that it is a
+// click, and the tile must not flash its lifted state (ux `drag-threshold`).
+const DRAG_THRESHOLD_PX = 6;
 const dragId = ref<WidgetId | null>(null);
 const resizeId = ref<WidgetId | null>(null);
 const resizeStart = { x: 0, y: 0, w: 0, h: 0 };
+const pendingDrag = { id: null as WidgetId | null, x: 0, y: 0 };
 
-function onDragStart(id: WidgetId): void {
-  dragId.value = id;
+function onDragStart(id: WidgetId, ev: PointerEvent): void {
+  pendingDrag.id = id;
+  pendingDrag.x = ev.clientX;
+  pendingDrag.y = ev.clientY;
   beginGesture();
+}
+
+// The grip's arrow keys: one place earlier or later in the reading order, persisted at once —
+// there is no pointerup to ride.
+function onMove(id: WidgetId, dir: -1 | 1): void {
+  const i = layout.value.findIndex((tl) => tl.id === id);
+  const target = layout.value[i + dir];
+  if (!target) return;
+  layout.value = reorder(layout.value, id, target.id);
+  persist();
 }
 
 function onResizeStart(ev: PointerEvent, id: WidgetId): void {
@@ -144,6 +164,14 @@ function beginGesture(): void {
 }
 
 function onPointerMove(ev: PointerEvent): void {
+  if (pendingDrag.id) {
+    if (
+      Math.hypot(ev.clientX - pendingDrag.x, ev.clientY - pendingDrag.y) < DRAG_THRESHOLD_PX
+    )
+      return;
+    dragId.value = pendingDrag.id;
+    pendingDrag.id = null;
+  }
   if (dragId.value) {
     const el = document.elementFromPoint(ev.clientX, ev.clientY);
     const targetId = el?.closest('[data-tile]')?.getAttribute('data-tile');
@@ -164,12 +192,15 @@ function onPointerMove(ev: PointerEvent): void {
 }
 
 function onPointerUp(): void {
+  // A press that never crossed the threshold moved nothing — skip the localStorage write.
+  const moved = dragId.value !== null || resizeId.value !== null;
+  pendingDrag.id = null;
   dragId.value = null;
   resizeId.value = null;
   document.body.style.userSelect = '';
   window.removeEventListener('pointermove', onPointerMove);
   window.removeEventListener('pointerup', onPointerUp);
-  persist();
+  if (moved) persist();
 }
 
 // ── Jira session (capacity + tasks widgets) ────────────────────────────────────

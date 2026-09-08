@@ -176,6 +176,11 @@ export type ManagementRejectionCode =
   // ticket.questions — the unfiled-ticket questions block:
   | "ticket_questions_no_target" // a ticket.questions without a forTicket (params: none)
   | "ticket_questions_empty" // a ticket.questions with no questions (params: { forTicket })
+  // todo.create — the Home overview's To-do append:
+  | "todo_create_empty" // a todo.create without items (params: none)
+  | "todo_item_not_object" // an items row that is not an object (params: none)
+  | "todo_item_no_text" // an items row without text (params: none)
+  | "todo_item_kind_unknown" // an items row whose kind is neither check nor number (params: { value })
   // parseManagementReply — the block never parsed as JSON:
   | "block_unreadable"; // the fenced block was not readable JSON (params: { message })
 
@@ -226,6 +231,10 @@ export const MANAGEMENT_REJECTION_CODES = [
   "jira_label_has_space",
   "ticket_questions_no_target",
   "ticket_questions_empty",
+  "todo_create_empty",
+  "todo_item_not_object",
+  "todo_item_no_text",
+  "todo_item_kind_unknown",
   "block_unreadable",
 ] as const satisfies readonly ManagementRejectionCode[];
 
