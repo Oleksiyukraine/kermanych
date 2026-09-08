@@ -14,6 +14,7 @@ declare module 'vue-router' {
 // component belongs here, where the rest of the route records keep theirs, so promoting a
 // section is one entry in this map.
 const SECTION_PAGES: Record<string, RouteRecordRaw['component']> = {
+  'management-home': () => import('pages/ManagementHomePage.vue'),
   'management-capacity': () => import('pages/ManagementCapacityPage.vue'),
   'management-integrations': () => import('pages/ManagementIntegrationsPage.vue'),
   'management-releases': () => import('pages/ManagementReleasesPage.vue'),
