@@ -8,7 +8,7 @@ import type { CloudProject } from "./types";
 import type { ThinkingLevel } from "@kermanych/core";
 
 const PROJECT_COLUMNS =
-  "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, default_effort, carry_files, env_keys, color, created_at";
+  "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, default_effort, carry_files, env_keys, color, doc_folders, created_at";
 
 type ProjectRow = {
   id: string;
@@ -24,6 +24,7 @@ type ProjectRow = {
   carry_files: string[] | null;
   env_keys: string[] | null;
   color: string | null;
+  doc_folders: string[] | null;
   created_at: string;
 };
 
@@ -33,7 +34,7 @@ type ProjectRow = {
 export type CloudProjectPatch = Partial<
   Pick<
     CloudProject,
-    "name" | "workspaceId" | "gitRemoteUrl" | "conventions" | "previewCommand" | "apiCommand" | "defaultBranch" | "defaultModel" | "carryFiles" | "envKeys" | "color"
+    "name" | "workspaceId" | "gitRemoteUrl" | "conventions" | "previewCommand" | "apiCommand" | "defaultBranch" | "defaultModel" | "carryFiles" | "envKeys" | "docFolders" | "color"
   >
 > & { defaultEffort?: ThinkingLevel | "" };
 
@@ -45,6 +46,7 @@ export function toCloudProject(row: ProjectRow): CloudProject {
     // row can never hand the launch path an empty carry list.
     carryFiles: row.carry_files ?? [".env"],
     envKeys: row.env_keys ?? [],
+    docFolders: row.doc_folders ?? [],
     workspaceId: row.workspace_id,
     createdAt: row.created_at,
   };
@@ -78,6 +80,7 @@ export function toProjectRow(patch: CloudProjectPatch): Record<string, unknown> 
   if (patch.defaultModel !== undefined) row.default_model = patch.defaultModel.trim() || null;
   if (patch.defaultEffort !== undefined) row.default_effort = patch.defaultEffort.trim() || null;
   if (patch.carryFiles !== undefined) row.carry_files = patch.carryFiles;
+  if (patch.docFolders !== undefined) row.doc_folders = patch.docFolders;
   if (patch.envKeys !== undefined) row.env_keys = patch.envKeys;
   if (patch.color !== undefined) row.color = patch.color.trim() || null;
   return row;
