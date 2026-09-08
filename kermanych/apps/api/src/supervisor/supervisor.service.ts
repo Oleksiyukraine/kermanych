@@ -62,11 +62,15 @@ type Live = {
   // header of a call are only reducible once its end frame arrives, several calls later.
   toolStarted: Map<string, number>;
   toolArgs: Map<string, Record<string, unknown>>;
-  // The operator pressed «Створити ПР» and the turn now running is the PR turn. Set when the
-  // request is delivered, consumed by the turn's `agent_end`, which then settles the session
-  // at `in_review` instead of the generic `done`. Live-only on purpose: it describes the turn
-  // in flight, and an api restart mid-turn loses the turn's end event too.
+  // The operator asked for a pull request (via «Створити ПР» or the pull-request agent) and
+  // this session now owes one. `prOpened` flips once a PR URL surfaces in the session's
+  // output; the turn that ends with BOTH set settles at `in_review` instead of the generic
+  // `done`. Sticky across turns on purpose — a PR flow interrupted to ask the operator for a
+  // token spans several turns, and only the one that actually opens the PR should move the
+  // card. Live-only: an api restart mid-flow loses it, the same tradeoff a lost `agent_end`
+  // already carries.
   prRequested?: boolean;
+  prOpened?: boolean;
   // Whether the "which model is this child actually running" question has been settled for
   // this child (refreshState). One lookup per omp process, not one per two-second poll.
   modelResolved?: boolean;
@@ -85,6 +89,11 @@ const CHAT_TOOLS = ["read", "grep", "glob"];
 // matches, and short of the pasted logs and files that make a message big. Same idiom and the
 // same reasoning as CONFIG_MAX_BYTES in skills.service.ts.
 const MATCH_MAX_CHARS = 1 << 14;
+
+// A pull-request URL — the signal that a «Створити ПР» flow actually opened one: GitHub
+// `/pull/N`, GitLab `/-/merge_requests/N`, Bitbucket `/pull-requests/N`. Non-global so
+// `.test` stays stateless across the many messages one turn streams.
+const PR_URL_RE = /https?:\/\/\S+\/(?:pull|pull-requests|merge_requests)\/\d+/i;
 
 @Injectable()
 export class SupervisorService implements OnModuleInit, OnModuleDestroy {
@@ -966,6 +975,22 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         }
       }
     }
+    // A PR-requested session records the moment its branch actually gets a pull request: a
+    // GitHub/GitLab/Bitbucket PR URL surfacing in the agent's reply or in a `gh pr create`
+    // tool result. `agent_end` reads this to choose `in_review` over `done`; scanning here
+    // (not there) catches the URL even when the PR turn is followed by more turns.
+    if (l.prRequested === true && l.prOpened !== true) {
+      for (const entry of reduced.entries) {
+        if (entry.kind === "assistant_text" && PR_URL_RE.test(entry.text)) {
+          l.prOpened = true;
+          break;
+        }
+        if (entry.kind === "tool" && (reduced.full.get(entry.id) ?? []).some((ln) => "text" in ln && PR_URL_RE.test(ln.text))) {
+          l.prOpened = true;
+          break;
+        }
+      }
+    }
     // RpcEvent carries an index-signature fallback member; Extract recovers the concrete typed member.
     if (e.type === "extension_ui_request" && l.state.status === "waiting_input")
       l.live.pendingUiRequest = e as Extract<RpcEvent, { type: "extension_ui_request" }>;
@@ -973,13 +998,21 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     l.live.currentTool = l.state.currentTool;
     if (l.state.status !== "waiting_input") l.live.pendingUiRequest = undefined;
     if (e.type === "agent_end" && (e as Extract<RpcEvent, { type: "agent_end" }>).isTerminal !== false) {
-      // A turn the operator opened with «Створити ПР» settles at `in_review`, not `done`: the
-      // branch has just been pushed and a human owes it a review. Written over the reducer's
-      // verdict rather than taught to `reduceStatus` on purpose — the reducer sees only the
-      // event stream, and «why this turn was started» is Kermanych's own knowledge. Both the
-      // live entry and the row are set, or `merge()` would keep shadowing the row with `done`.
-      const settled: Session["status"] = l.prRequested ? "in_review" : "done";
-      l.prRequested = false;
+      // A turn the operator opened with «Створити ПР» settles at `in_review` once the branch
+      // actually has a pull request — a PR URL has surfaced in this session's output. The
+      // request stays armed across turns until then, so an interrupted PR flow (the agent
+      // stops to ask for a token, the operator answers, the agent resumes and opens the PR)
+      // still lands the session on review rather than on the intermediate turn's `done`.
+      // Written over the reducer's verdict rather than taught to `reduceStatus` on purpose —
+      // the reducer sees only the event stream, and «why this turn was started» is Kermanych's
+      // own knowledge. Both the live entry and the row are set, or `merge()` would keep
+      // shadowing the row with `done`.
+      const opened = l.prRequested === true && l.prOpened === true;
+      const settled: Session["status"] = opened ? "in_review" : "done";
+      if (opened) {
+        l.prRequested = false;
+        l.prOpened = false;
+      }
       l.state = { status: settled };
       l.live.status = settled;
       this.registry.updateSession(id, { status: settled });
@@ -1333,8 +1366,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // mirroring resolveConflict; the branch/worktree are left intact (the PR lives on the remote).
   //
   // The card's status is NOT moved here. Committing and pushing is real work and has to read
-  // as active on the board; what the request buys is the turn's OUTCOME — `prRequested` makes
-  // that turn's `agent_end` settle the session at `in_review` (onRpcEvent) instead of `done`.
+  // as active on the board; what the request buys is the OUTCOME — `prRequested` arms the
+  // session so that, once a PR URL surfaces in its output, its next `agent_end` settles it at
+  // `in_review` instead of `done` (onRpcEvent). The flag survives across turns, so a PR flow
+  // that stops to ask the operator for a token still lands on review when it finally opens.
   async createPullRequest(id: string): Promise<{ ok: true }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
@@ -1685,8 +1720,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.pushUpdate(id);
       throw err;
     }
-    live.live.status = "done";
-    this.registry.updateSession(id, { status: "done" });
+    // A wake settles transient in-flight states (a run that crashed mid-turn must not stay
+    // «thinking» forever), but a session that came to rest on review keeps that: resuming to
+    // read its transcript or hand it a follow-up must not demote a pushed PR back to `done`.
+    const rested: Session["status"] = s.status === "in_review" ? "in_review" : "done";
+    live.live.status = rested;
+    this.registry.updateSession(id, { status: rested });
     this.events.next({ type: "transcript_reset", sessionId: id, entries: live.transcript });
     this.pushUpdate(id);
     return live;
