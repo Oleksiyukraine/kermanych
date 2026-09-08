@@ -186,7 +186,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // Actions delegating to the REST api. There is deliberately no createProject/
   // deleteProject: projects are born and die in the cloud (stores/projects.ts), and the
   // local rows follow through syncProjects.
-  function patchProject(id: string, body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string }) {
+  function patchProject(id: string, body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; defaultBranch?: string; conventions?: string }) {
     return api.patchProject(id, body);
   }
 

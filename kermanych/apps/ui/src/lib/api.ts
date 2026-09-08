@@ -231,7 +231,7 @@ export const api = {
 
   patchProject: (
     id: string,
-    body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; defaultBranch?: string; conventions?: string },
+    body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; defaultBranch?: string; conventions?: string },
   ): Promise<Project> => patchJson<Project>(`/projects/${id}`, body),
 
   // The resolved library (defaults + project rows, with the repo-shadowed ones marked), AND
