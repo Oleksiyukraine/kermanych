@@ -1,5 +1,8 @@
 // apps/api/src/http/projects.controller.ts
-import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Put, Query } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Patch, Post, Put, Query, Res } from "@nestjs/common";
+// @types/express is intentionally not a dependency (cf. jira.controller.ts); the docs raw
+// route only needs setHeader, so type the @Res() passthrough object by that one member.
+type RawResponse = { setHeader(name: string, value: string): void };
 import type { CloudProject } from "@kermanych/cloud";
 import type { ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
@@ -70,6 +73,42 @@ export class ProjectsController {
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
+  }
+
+  @Get(":id/docs/tree")
+  async docsTree(@Param("id") id: string, @Query("folder") folder: string, @Query("path") path?: string) {
+    try {
+      return await this.sup.docsTree(id, folder ?? "", path ?? "");
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  @Get(":id/docs/file")
+  async docsFile(@Param("id") id: string, @Query("folder") folder: string, @Query("path") path?: string) {
+    try {
+      return await this.sup.docsFile(id, folder ?? "", path ?? "");
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  @Get(":id/docs/raw")
+  async docsRaw(
+    @Param("id") id: string,
+    @Query("folder") folder: string,
+    @Query("path") path: string,
+    @Res({ passthrough: true }) res: RawResponse,
+  ) {
+    let file: { bytes: Buffer; contentType: string } | null;
+    try {
+      file = await this.sup.docsRaw(id, folder ?? "", path ?? "");
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+    if (!file) throw new NotFoundException("file not found");
+    res.setHeader("Content-Type", file.contentType);
+    return file.bytes;
   }
 
   @Get(":id/env")
