@@ -8,7 +8,7 @@ import { OWNER_COLUMNS, ownerColumn, ownerColumns, ownerConflict, rowOwner } fro
 
 // The audit columns ARE part of the surface: the Агенти pane says «перекрито» next to an
 // overridden instruction, and that is the row's own provenance.
-const AGENT_COLUMNS = `id, ${OWNER_COLUMNS}, agent_id, instruction, updated_at, updated_by`;
+const AGENT_COLUMNS = `id, ${OWNER_COLUMNS}, agent_id, instruction, created_at, created_by, updated_at, updated_by`;
 
 type AgentRow = {
   id: string;
@@ -17,8 +17,10 @@ type AgentRow = {
   user_id: string | null;
   agent_id: string;
   instruction: string;
+  created_at: string;
+  // `on delete set null`: an override outlives the account that authored or last edited it.
+  created_by: string | null;
   updated_at: string;
-  // `on delete set null`: an override outlives the account that last edited it.
   updated_by: string | null;
 };
 
@@ -28,8 +30,10 @@ export function toAiAgent(row: AgentRow): AiAgent {
     owner: rowOwner(row),
     agentId: row.agent_id,
     instruction: row.instruction,
+    createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+  if (row.created_by !== null) a.createdBy = row.created_by;
   if (row.updated_by !== null) a.updatedBy = row.updated_by;
   return a;
 }

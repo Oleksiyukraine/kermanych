@@ -80,6 +80,13 @@
               {{ translate('settings.triggers.delete') }}
             </button>
           </div>
+          <AiProvenance
+            :owner="owner"
+            :created-at="t.createdAt"
+            :created-by="t.createdBy"
+            :updated-at="t.updatedAt"
+            :updated-by="t.updatedBy"
+          />
         </li>
       </ul>
       <p v-else class="tg__empty mono">{{ translate('settings.triggers.empty') }}</p>
@@ -255,6 +262,7 @@ import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import SkillSequence, { measureSkillBytes } from './SkillSequence.vue';
+import AiProvenance from './AiProvenance.vue';
 import {
   triggerActionOptions,
   triggerAgentOptions,
@@ -330,7 +338,7 @@ async function libraryView(owner: AiOwner): Promise<{ view: SkillView[]; repo: R
 // `mode` → remind and `repeat` → once are the defaults in three places at once — here, the
 // column defaults in the migration, and renderRuleFile's mapping to interruptMode/repeatMode.
 // A new trigger is a soft reminder until someone says otherwise.
-function blankDraft(): Omit<AiTrigger, 'id' | 'owner' | 'pathGlobs'> {
+function blankDraft(): Omit<AiTrigger, 'id' | 'owner' | 'pathGlobs' | 'createdAt' | 'createdBy' | 'updatedAt' | 'updatedBy'> {
   return {
     slug: '',
     label: '',

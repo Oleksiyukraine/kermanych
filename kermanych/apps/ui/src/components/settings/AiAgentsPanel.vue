@@ -90,6 +90,14 @@
               @click="resetToDefault(a.id)"
             >{{ t('settings.aiAgents.resetDefault') }}</button>
           </div>
+          <AiProvenance
+            v-if="overrideOf(a.id)"
+            :owner="owner"
+            :created-at="overrideOf(a.id)!.createdAt"
+            :created-by="overrideOf(a.id)!.createdBy"
+            :updated-at="overrideOf(a.id)!.updatedAt"
+            :updated-by="overrideOf(a.id)!.updatedBy"
+          />
 
           <p class="ai__caption">{{ t('settings.aiAgents.skillsCaption') }}</p>
           <SkillSequence
@@ -146,6 +154,7 @@ import { useProjects } from 'stores/projects';
 import { ownerLibraryView } from '../../lib/ai-team';
 import KField from 'components/kit/KField.vue';
 import SkillSequence, { measureSkillBytes } from './SkillSequence.vue';
+import AiProvenance from './AiProvenance.vue';
 
 const props = defineProps<{ owner: AiOwner; ownerName: string }>();
 
@@ -189,6 +198,12 @@ const canWrite = computed(() =>
 
 function hasOverride(agentId: string): boolean {
   return overrides.value.some((o) => o.agentId === agentId);
+}
+
+// The stored override row for an agent, or undefined when it runs the compile-time default —
+// which is also when there is no author to show.
+function overrideOf(agentId: string): AiAgent | undefined {
+  return overrides.value.find((o) => o.agentId === agentId);
 }
 
 function dirty(agentId: string): boolean {

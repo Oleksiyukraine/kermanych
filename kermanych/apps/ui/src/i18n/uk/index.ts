@@ -977,6 +977,12 @@ export const uk = {
       project: 'Проєкт',
       workspace: 'Воркспейс',
     },
+    provenance: {
+      author: 'Автор:',
+      editor: 'редагував:',
+      you: 'ви',
+      unknown: '—',
+    },
     blank: {
       eyebrow: 'КЕРМАНИЧ',
       user: 'Увійдіть, щоб налаштувати власну ШІ-команду.',

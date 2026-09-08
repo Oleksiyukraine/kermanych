@@ -6,11 +6,6 @@ import { BadRequestException, ServiceUnavailableException } from "@nestjs/common
 import { SkillsController } from "../src/http/skills.controller";
 import type { SkillsService } from "../src/skills/skills.service";
 import type { RegistryService } from "../src/registry/registry.service";
-import type { AuthService } from "../src/auth/auth.service";
-
-// The controller reads the signed-in user off AuthService to build the AiScopeSet; these
-// unit tests do not sign in, so the stub reports no current user (a project-only scope).
-const auth = { current: () => undefined } as unknown as AuthService;
 
 test("returns the resolved view and the repository's own names for a bound project", async () => {
   const repo = mkdtempSync(join(tmpdir(), "kmq-skill-ep-"));
@@ -27,7 +22,7 @@ test("returns the resolved view and the repository's own names for a bound proje
       repo: { mine: path, "repo-only": join(repo, ".omp/skills/repo-only/SKILL.md") },
     }),
   } as unknown as SkillsService;
-  const out = await new SkillsController(skills, registry, auth).list("p1");
+  const out = await new SkillsController(skills, registry).list("p1");
   expect(out.view[0]).toMatchObject({ name: "mine", shadowedByRepo: path });
   expect(Object.keys(out.repo).sort()).toEqual(["mine", "repo-only"]);
   rmSync(repo, { recursive: true, force: true });
@@ -36,7 +31,7 @@ test("returns the resolved view and the repository's own names for a bound proje
 test("an unknown project is a 400, not a crash", async () => {
   const registry = { listProjects: () => [] } as unknown as RegistryService;
   const skills = { view: async () => ({ view: [], repo: {} }) } as unknown as SkillsService;
-  await expect(new SkillsController(skills, registry, auth).list("nope")).rejects.toBeInstanceOf(BadRequestException);
+  await expect(new SkillsController(skills, registry).list("nope")).rejects.toBeInstanceOf(BadRequestException);
 });
 
 // `view` REJECTS when the cloud read fails, and THROWS when the project id is not a legal
@@ -50,7 +45,7 @@ test("a failed library read is a 503 carrying its own message, not an unhandled 
       throw new Error("Failed to fetch");
     },
   } as unknown as SkillsService;
-  const call = new SkillsController(skills, registry, auth).list("p1");
+  const call = new SkillsController(skills, registry).list("p1");
   await expect(call).rejects.toBeInstanceOf(ServiceUnavailableException);
   await expect(call).rejects.toThrow(/Failed to fetch/);
 });
@@ -66,7 +61,7 @@ test("an unbound project still resolves, with nothing to scan", async () => {
       return { view: [{ name: "opening-a-pr", description: "d", source: "default" as const }], repo: {} };
     },
   } as unknown as SkillsService;
-  const out = await new SkillsController(skills, registry, auth).list("p1");
+  const out = await new SkillsController(skills, registry).list("p1");
   expect(seen).toEqual([""]);
   expect(out.view).toEqual([{ name: "opening-a-pr", description: "d", source: "default" }]);
   // Nothing to scan means nothing shadowed and nothing repository-only: an assignment that

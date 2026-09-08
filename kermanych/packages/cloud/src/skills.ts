@@ -6,7 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AiOwner, AiSkill, AiSkillInsert } from "./types";
 import { OWNER_COLUMNS, ownerColumn, ownerColumns, ownerConflict, rowOwner } from "./ai-scope";
 
-const SKILL_COLUMNS = `id, ${OWNER_COLUMNS}, name, description, body, enabled, updated_at, updated_by`;
+const SKILL_COLUMNS = `id, ${OWNER_COLUMNS}, name, description, body, enabled, created_at, created_by, updated_at, updated_by`;
 
 type SkillRow = {
   id: string;
@@ -17,8 +17,10 @@ type SkillRow = {
   description: string;
   body: string;
   enabled: boolean;
+  created_at: string;
+  // `on delete set null`: a skill outlives the account that authored or last edited it.
+  created_by: string | null;
   updated_at: string;
-  // `on delete set null`: a skill outlives the account that last edited it.
   updated_by: string | null;
 };
 
@@ -30,8 +32,10 @@ export function toAiSkill(row: SkillRow): AiSkill {
     description: row.description,
     body: row.body,
     enabled: row.enabled,
+    createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+  if (row.created_by !== null) s.createdBy = row.created_by;
   if (row.updated_by !== null) s.updatedBy = row.updated_by;
   return s;
 }

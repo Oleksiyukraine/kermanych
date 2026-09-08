@@ -152,6 +152,8 @@ export type AiSkill = {
   description: string;
   body: string;
   enabled: boolean;
+  createdAt: string;
+  createdBy?: string;
   updatedAt: string;
   updatedBy?: string;
 };
@@ -181,6 +183,8 @@ export type AiAgent = {
   owner: AiOwner;
   agentId: string;
   instruction: string;
+  createdAt: string;
+  createdBy?: string;
   updatedAt: string;
   updatedBy?: string;
 };
@@ -214,11 +218,24 @@ export type AiTrigger = {
   skills: string[];
   mode: "remind" | "interrupt";
   repeat: "once" | "after-gap";
+  createdAt: string;
+  createdBy?: string;
+  updatedAt: string;
+  updatedBy?: string;
 };
 
 export type AiTriggerInsert = Omit<
   AiTrigger,
-  "id" | "pathGlobs" | "enabled" | "instruction" | "agentId" | "skills"
+  | "id"
+  | "pathGlobs"
+  | "enabled"
+  | "instruction"
+  | "agentId"
+  | "skills"
+  | "createdAt"
+  | "createdBy"
+  | "updatedAt"
+  | "updatedBy"
 > & {
   pathGlobs?: string[];
   enabled?: boolean;

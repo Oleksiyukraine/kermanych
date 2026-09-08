@@ -972,6 +972,12 @@ export const en: MessageSchema = {
       project: 'Project',
       workspace: 'Workspace',
     },
+    provenance: {
+      author: 'Author:',
+      editor: 'edited by:',
+      you: 'you',
+      unknown: '—',
+    },
     blank: {
       eyebrow: 'KERMANYCH',
       user: 'Sign in to configure your own AI team.',

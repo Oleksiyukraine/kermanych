@@ -293,7 +293,7 @@ describe("deleteAiAgent", () => {
       ["delete"],
       ["eq", "project_id", P1],
       ["eq", "agent_id", "review"],
-      ["select", "id, workspace_id, project_id, user_id, agent_id, instruction, updated_at, updated_by"],
+      ["select", "id, workspace_id, project_id, user_id, agent_id, instruction, created_at, created_by, updated_at, updated_by"],
     ]);
   });
 
