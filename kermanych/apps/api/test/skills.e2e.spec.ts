@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ProjectSkill, ProjectTrigger } from "@kermanych/cloud";
+import type { AiSkill, AiTrigger } from "@kermanych/cloud";
 import type { RpcEvent } from "@kermanych/core";
 import { RpcSession } from "../src/rpc/rpc-session";
 import { SkillsService, triggersRoot } from "../src/skills/skills.service";
@@ -26,8 +26,8 @@ describe.skipIf(!gated)("skill library reaches a real omp child", () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  const row = (name: string, description: string): ProjectSkill => ({
-    projectId: "p1", name, description, body: "body", enabled: true, updatedAt: "t",
+  const row = (name: string, description: string): AiSkill => ({
+    owner: { scope: "project", id: "p1" }, id: name, name, description, body: "body", enabled: true, updatedAt: "t",
   });
 
   async function systemPrompt(configPath: string, cwd: string): Promise<string> {
@@ -44,8 +44,8 @@ describe.skipIf(!gated)("skill library reaches a real omp child", () => {
 
   test("library skills appear in the system prompt", async () => {
     const svc = new SkillsService({ cloudClient: () => ({}) } as never);
-    svc.readRows = async () => [row("probe-alpha", "PROBE ALPHA from the library")];
-    const { configPath } = await svc.materialize("p1", repo);
+    svc.readSkills = async () => [row("probe-alpha", "PROBE ALPHA from the library")];
+    const { configPath } = await svc.materialize({ projectId: "p1" }, repo);
     // `configPath` is optional: absent means the overlay was never written, which is a
     // failure of this test's premise rather than something to hand omp as undefined.
     if (!configPath) throw new Error("materialize wrote no overlay");
@@ -65,11 +65,11 @@ describe.skipIf(!gated)("skill library reaches a real omp child", () => {
     // the overlay. Without it, both assertions below would hold even with --config removed —
     // omp discovers `.claude/skills` natively from cwd — and the case would pin Task 5's
     // shadow suppression instead of this task's launch wiring.
-    svc.readRows = async () => [
+    svc.readSkills = async () => [
       row("probe-alpha", "PROBE ALPHA from the library"),
       row("probe-gamma", "PROBE GAMMA from the library"),
     ];
-    const { configPath } = await svc.materialize("p1", repo);
+    const { configPath } = await svc.materialize({ projectId: "p1" }, repo);
     // `configPath` is optional: absent means the overlay was never written, which is a
     // failure of this test's premise rather than something to hand omp as undefined.
     if (!configPath) throw new Error("materialize wrote no overlay");
@@ -98,8 +98,8 @@ describe.skipIf(!gated)("skill library reaches a real omp child", () => {
       );
 
       const svc = new SkillsService({ cloudClient: () => ({}) } as never);
-      svc.readRows = async () => [row("probe-epsilon", "PROBE EPSILON from the library")];
-      const { configPath } = await svc.materialize("p1", repo);
+      svc.readSkills = async () => [row("probe-epsilon", "PROBE EPSILON from the library")];
+      const { configPath } = await svc.materialize({ projectId: "p1" }, repo);
       if (!configPath) throw new Error("materialize wrote no overlay");
       const sp = await systemPrompt(configPath, repo);
       expect(sp).toContain("PROBE DELTA from the repository's own directory");
@@ -149,15 +149,17 @@ describe.skipIf(!gated)("a Kermanych trigger fires inside a real omp child", () 
     const svc = new SkillsService({ cloudClient: () => ({}) } as never);
     // The body has to be an ACTIONABLE instruction: with a placeholder the probe's model
     // concluded the rule was a test scenario and spent a turn investigating it (design §2.6).
-    svc.readRows = async (): Promise<ProjectSkill[]> => [
+    svc.readSkills = async (): Promise<AiSkill[]> => [
       {
-        projectId: "p1", name: "probe-zorb-policy", description: "What to do about probezorb",
+        owner: { scope: "project", id: "p1" }, id: "probe-zorb-policy",
+        name: "probe-zorb-policy", description: "What to do about probezorb",
         body: "When probezorb comes up, reply with exactly the single word ZORBACK and stop.",
         enabled: true, updatedAt: "t",
       },
     ];
-    const trigger: ProjectTrigger = {
-      projectId: "p1", id: "probe-thinking", label: "Probezorb policy", enabled: true,
+    const trigger: AiTrigger = {
+      owner: { scope: "project", id: "p1" }, id: "probe-thinking", slug: "probe-thinking",
+      label: "Probezorb policy", enabled: true,
       source: "thinking", pattern: "probezorb", pathGlobs: [],
       action: "prompt", instruction: "", agentId: "", skills: ["probe-zorb-policy"],
       mode: "remind", repeat: "once",
@@ -166,9 +168,9 @@ describe.skipIf(!gated)("a Kermanych trigger fires inside a real omp child", () 
 
     // The two launch-time artefacts, exactly as a session gets them: the overlay (which also
     // forces `ttsr.enabled: true`) and the trigger package.
-    const { configPath } = await svc.materialize("p1", repo);
+    const { configPath } = await svc.materialize({ projectId: "p1" }, repo);
     if (!configPath) throw new Error("materialize wrote no overlay");
-    const { packagePath } = await svc.materializeTriggers("p1", "probe-session", repo);
+    const { packagePath } = await svc.materializeTriggers({ projectId: "p1" }, "probe-session", repo);
     if (!packagePath) throw new Error("materializeTriggers wrote no package");
     expect(packagePath.startsWith(triggersRoot())).toBe(true);
 

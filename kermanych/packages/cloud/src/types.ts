@@ -135,10 +135,19 @@ export type TaskPatch = {
   jiraKey?: string;
 };
 
-// A per-project skill (the Kermanych UI's library). `enabled: false` on a row whose name
-// matches one of Kermanych's DEFAULT_SKILLS is how a project turns that default off.
-export type ProjectSkill = {
-  projectId: string;
+// ── «ШІ-команда» ────────────────────────────────────────────────────────────
+// Every ШІ-команда row belongs to exactly ONE owner: a workspace (shared group defaults), a
+// project (this project's specifics) or a user (the signed-in operator's private overlay).
+// The owner is carried as a discriminated { scope, id } instead of three nullable columns —
+// the DB triad is the storage shape, this is the domain shape.
+export type AiScope = "workspace" | "project" | "user";
+export type AiOwner = { scope: AiScope; id: string };
+
+// A skill in the library. `enabled: false` on a row whose name matches one of Kermanych's
+// DEFAULT_SKILLS turns that default off — at this owner's scope.
+export type AiSkill = {
+  id: string;
+  owner: AiOwner;
   name: string;
   description: string;
   body: string;
@@ -147,35 +156,36 @@ export type ProjectSkill = {
   updatedBy?: string;
 };
 
-export type ProjectSkillInsert = {
-  projectId: string;
+export type AiSkillInsert = {
+  owner: AiOwner;
   name: string;
   description: string;
   body: string;
   enabled?: boolean;
 };
 
-/** One skill assigned to one Kermanych agent, for one project. */
-export type AgentSkill = {
-  projectId: string;
+/** One skill assigned to one Kermanych agent, at one owner's scope, in delivery order. */
+export type AiAgentSkill = {
+  owner: AiOwner;
   agentId: string;
   skillName: string;
   position: number;
 };
 
 /**
- * A per-project override of an agent's compile-time instruction. A MISSING row means «use
- * the default from core's AGENTS registry», so deleting the row is how a project resets.
+ * An override of an agent's compile-time instruction. A MISSING row at every scope means «use
+ * the default from core's AGENTS registry»; deleting the row is how an owner resets.
  */
-export type ProjectAgent = {
-  projectId: string;
+export type AiAgent = {
+  id: string;
+  owner: AiOwner;
   agentId: string;
   instruction: string;
   updatedAt: string;
   updatedBy?: string;
 };
 
-export type ProjectAgentInsert = { projectId: string; agentId: string; instruction: string };
+export type AiAgentInsert = { owner: AiOwner; agentId: string; instruction: string };
 
 export type TriggerSource = "operator" | "assistant" | "thinking" | "tool";
 
@@ -184,9 +194,12 @@ export type TriggerSource = "operator" | "assistant" | "thinking" | "tool";
 export type TriggerAction = "prompt" | "agent";
 
 /** A rule that injects an instruction with its skills, or runs an agent, unprompted. */
-export type ProjectTrigger = {
-  projectId: string;
+export type AiTrigger = {
+  // Surrogate key: the slug is unique only within an owner, and the skill sequence hangs off
+  // this id rather than a composite (owner, slug).
   id: string;
+  owner: AiOwner;
+  slug: string;
   label: string;
   enabled: boolean;
   source: TriggerSource;
@@ -203,16 +216,16 @@ export type ProjectTrigger = {
   repeat: "once" | "after-gap";
 };
 
-export type ProjectTriggerInsert = Omit<
-  ProjectTrigger,
-  "pathGlobs" | "enabled" | "instruction" | "agentId" | "skills"
+export type AiTriggerInsert = Omit<
+  AiTrigger,
+  "id" | "pathGlobs" | "enabled" | "instruction" | "agentId" | "skills"
 > & {
   pathGlobs?: string[];
   enabled?: boolean;
   instruction?: string;
   agentId?: string;
   // Carried on the insert type so a caller can state «no skills» without a second call;
-  // the sequence itself lives in its own table and is written by setTriggerSkills.
+  // the sequence itself lives in its own table and is written by setAiTriggerSkills.
   skills?: string[];
 };
 

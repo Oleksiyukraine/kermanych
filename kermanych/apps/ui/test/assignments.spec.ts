@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { AGENTS, DEFAULT_SKILLS, type SkillView } from '@kermanych/core';
-import type { AgentSkill } from '@kermanych/cloud';
+import type { AiAgentSkill } from '@kermanych/cloud';
 import { ASSIGNED_BYTES_WARN, assignmentBadge, assignmentRows } from '../src/lib/settings';
 
 // The pure half of the assignment board. Four reads meet here — the agent registry, the
@@ -9,8 +9,8 @@ import { ASSIGNED_BYTES_WARN, assignmentBadge, assignmentRows } from '../src/lib
 // merge that is pinned rather than markup. `{}` for the last argument means «this checkout
 // defines no skills of its own», which is the ordinary case.
 
-const A = (skillName: string, position = 0): AgentSkill => ({
-  projectId: 'p1',
+const A = (skillName: string, position = 0): AiAgentSkill => ({
+  owner: { scope: 'project', id: 'p1' },
   agentId: 'review',
   skillName,
   position,
@@ -134,7 +134,7 @@ test('a repo-shadowed skill carries its path, and the byte total sums the bodies
 test('each agent sees only its own assignments, and its own byte total', () => {
   const rows = assignmentRows(
     AGENTS,
-    [A('x'), { projectId: 'p1', agentId: 'promote', skillName: 'y', position: 0 }],
+    [A('x'), { owner: { scope: 'project', id: 'p1' }, agentId: 'promote', skillName: 'y', position: 0 }],
     [V('x'), V('y')],
     { x: 100, y: 900 },
     {},
@@ -152,7 +152,7 @@ test('each agent sees only its own assignments, and its own byte total', () => {
 test('an assignment to an instruction-less agent appears on no row', () => {
   const rows = assignmentRows(
     AGENTS,
-    [{ projectId: 'p1', agentId: 'finish', skillName: 'x', position: 0 }],
+    [{ owner: { scope: 'project', id: 'p1' }, agentId: 'finish', skillName: 'x', position: 0 }],
     [V('x')],
     { x: 500 },
     {},

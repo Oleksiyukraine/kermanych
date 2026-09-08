@@ -1,7 +1,7 @@
 <template>
   <section class="sk">
     <i18n-t keypath="settings.skillsLibrary.lead" tag="p" class="sk__lead">
-      <template #project><span class="sk__lead-project mono">{{ projectName }}</span></template>
+      <template #project><span class="sk__lead-project mono">{{ ownerName }}</span></template>
     </i18n-t>
     <!-- The library is opt-in by the agent. Handing a skill to a role or a trigger
          unconditionally is what «Агенти» and «Тригери» are for, and the distinction is easy to
@@ -94,16 +94,17 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { DEFAULT_SKILLS, SKILL_NAME_RE, type SkillView } from '@kermanych/core';
-import { deleteProjectSkill, listProjectSkills, upsertProjectSkill, type ProjectSkill } from '@kermanych/cloud';
+import { deleteAiSkill, listAiSkills, upsertAiSkill, type AiOwner, type AiSkill } from '@kermanych/cloud';
 import { api } from '../../lib/api';
 import { useAuth } from 'stores/auth';
 import { useProjects } from 'stores/projects';
+import { ownerLibraryView } from '../../lib/ai-team';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 
 const { t } = useI18n();
 
-const props = defineProps<{ projectId: string; projectName: string }>();
+const props = defineProps<{ owner: AiOwner; ownerName: string }>();
 
 // What the list renders. The endpoint answers "what the session gets", which by design does
 // NOT include a Kermanych default this project switched off — so those rows are added here,
@@ -137,7 +138,21 @@ const bodyPending = ref(false);
 // next, making it savable with another skill's body under a different name.
 let draftToken = 0;
 
-const canWrite = computed(() => projects.isOwner(props.projectId));
+const canWrite = computed(() =>
+  props.owner.scope === 'user'
+    ? true
+    : props.owner.scope === 'workspace'
+      ? projects.isWorkspaceOwner(props.owner.id)
+      : projects.isOwner(props.owner.id),
+);
+
+// The resolved library view for this owner. Only a project has a checkout, so only it can be
+// shadowed by repo files and only it has the api endpoint that sees them; every other scope
+// resolves the view from its own cloud rows, with no repo shadow.
+async function libraryView(owner: AiOwner): Promise<{ view: SkillView[]; repo: Record<string, string> }> {
+  if (owner.scope === 'project') return await api.projectSkills(owner.id);
+  return { view: ownerLibraryView(await listAiSkills(auth.client, owner)), repo: {} };
+}
 
 function badgeKind(row: Row): string {
   if (row.off) return 'off';
@@ -155,7 +170,7 @@ function badgeLabel(row: Row): string {
 // it exists only to keep that default out of the library. The description comes from the
 // default itself, so the screen still says what the switched-off skill does. A disabled row
 // under any other name is not shown — it suppresses nothing, so there is nothing to switch.
-function tombstones(stored: readonly ProjectSkill[]): Row[] {
+function tombstones(stored: readonly AiSkill[]): Row[] {
   const off: Row[] = [];
   for (const row of stored) {
     if (row.enabled) continue;
@@ -169,7 +184,7 @@ async function load(): Promise<void> {
   // Pinned for the whole read: the prop can change mid-flight (see the watcher below), which
   // also means two loads can overlap. A load that finishes after the project moved on drops
   // its result — the list must never show a library the header does not name.
-  const projectId = props.projectId;
+  const ownerKey = props.owner.scope + ':' + props.owner.id;
   error.value = '';
   loading.value = true;
   try {
@@ -178,19 +193,19 @@ async function load(): Promise<void> {
     // deliberately ignored here — a name only the repository defines is not in this
     // project's library, and listing it would invite an edit that cannot take effect.
     const [library, stored] = await Promise.all([
-      api.projectSkills(projectId),
-      listProjectSkills(auth.client, [projectId]),
+      libraryView(props.owner),
+      listAiSkills(auth.client, props.owner),
     ]);
-    if (projectId !== props.projectId) return;
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     rows.value = [...library.view, ...tombstones(stored)];
   } catch (e) {
-    if (projectId !== props.projectId) return;
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     // The endpoint refuses rather than degrade to the defaults, so a failed read must not
     // leave a list on screen either: what is shown would not be this project's library.
     rows.value = [];
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    if (projectId === props.projectId) loading.value = false;
+    if (ownerKey === props.owner.scope + ':' + props.owner.id) loading.value = false;
   }
 }
 
@@ -203,7 +218,7 @@ async function load(): Promise<void> {
 // modal left open across the switch would save its draft into a project it was never opened
 // for.
 watch(
-  () => props.projectId,
+  () => props.owner.scope + ':' + props.owner.id,
   () => {
     // Synchronously, not by way of the `editorOpen` watcher below (which is pre-flush): the
     // instant the project changes, the modal is shut AND the draft is emptied, so there is no
@@ -255,9 +270,8 @@ async function edit(row: Row): Promise<void> {
   // A default has no row yet: its body comes from the library constant, so the editor opens
   // on the cloud row when one exists and on an empty body when it does not. A default that
   // is being edited into a project row is enabled by definition — it is in the view.
-  const projectId = props.projectId;
   try {
-    const stored = (await listProjectSkills(auth.client, [projectId])).find((s) => s.name === row.name);
+    const stored = (await listAiSkills(auth.client, props.owner)).find((s) => s.name === row.name);
     // The operator cancelled, opened another skill, or switched project while this was in
     // flight: the refs now belong to a different draft, and both the body and the error
     // below would be someone else's.
@@ -275,7 +289,7 @@ async function save(): Promise<void> {
   // Pinned with the draft token: the write must target the project whose library the operator
   // was looking at when the button was pressed, and a message from this attempt must not be
   // painted onto a draft that has since been replaced.
-  const projectId = props.projectId;
+  const owner = props.owner;
   const token = draftToken;
   formError.value = '';
   if (!SKILL_NAME_RE.test(draftName.value)) {
@@ -288,8 +302,8 @@ async function save(): Promise<void> {
   }
   saving.value = true;
   try {
-    await upsertProjectSkill(auth.client, {
-      projectId,
+    await upsertAiSkill(auth.client, {
+      owner,
       name: draftName.value,
       description: draftDescription.value,
       body: draftBody.value,
@@ -321,12 +335,12 @@ async function dropRow(name: string): Promise<void> {
   // Pinned like every other write on this page: the row belonged to the project on screen
   // when the button was pressed, and a failure of this attempt is not news about a project
   // the operator has since switched to.
-  const projectId = props.projectId;
+  const ownerKey = props.owner.scope + ':' + props.owner.id;
   error.value = '';
   try {
-    await deleteProjectSkill(auth.client, projectId, name);
+    await deleteAiSkill(auth.client, props.owner, name);
   } catch (e) {
-    if (projectId !== props.projectId) return;
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     error.value = e instanceof Error ? e.message : String(e);
     return;
   }
@@ -337,18 +351,18 @@ async function dropRow(name: string): Promise<void> {
 async function disable(name: string): Promise<void> {
   const def = rows.value.find((r) => r.name === name);
   if (!def) return;
-  const projectId = props.projectId;
+  const ownerKey = props.owner.scope + ':' + props.owner.id;
   error.value = '';
   try {
-    await upsertProjectSkill(auth.client, {
-      projectId,
+    await upsertAiSkill(auth.client, {
+      owner: props.owner,
       name,
       description: def.description,
       body: '',
       enabled: false,
     });
   } catch (e) {
-    if (projectId !== props.projectId) return;
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     error.value = e instanceof Error ? e.message : String(e);
     return;
   }

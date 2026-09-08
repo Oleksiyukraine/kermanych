@@ -1,7 +1,7 @@
 <template>
   <section class="ai">
     <i18n-t keypath="settings.aiAgents.lead" tag="p" class="ai__lead">
-      <template #project><span class="ai__lead-project mono">{{ projectName }}</span></template>
+      <template #project><span class="ai__lead-project mono">{{ ownerName }}</span></template>
     </i18n-t>
 
     <!-- The literal header the agent receives above its assigned bodies, so «ordered sequence»
@@ -130,22 +130,24 @@ import {
   type SkillView,
 } from '@kermanych/core';
 import {
-  deleteProjectAgent,
-  listAgentSkills,
-  listProjectAgents,
-  listProjectSkills,
-  setAgentSkills,
-  upsertProjectAgent,
-  type AgentSkill,
-  type ProjectAgent,
+  deleteAiAgent,
+  listAiAgents,
+  listAiAgentSkills,
+  listAiSkills,
+  setAiAgentSkills,
+  upsertAiAgent,
+  type AiAgent,
+  type AiAgentSkill,
+  type AiOwner,
 } from '@kermanych/cloud';
 import { api } from '../../lib/api';
 import { useAuth } from 'stores/auth';
 import { useProjects } from 'stores/projects';
+import { ownerLibraryView } from '../../lib/ai-team';
 import KField from 'components/kit/KField.vue';
 import SkillSequence, { measureSkillBytes } from './SkillSequence.vue';
 
-const props = defineProps<{ projectId: string; projectName: string }>();
+const props = defineProps<{ owner: AiOwner; ownerName: string }>();
 
 const auth = useAuth();
 const projects = useProjects();
@@ -156,7 +158,7 @@ const bodyBytes = ref<Record<string, number>>({});
 // The names the bound checkout's own skill directories define, keyed to the file that owns each.
 // Handed to the sequence editor so it can tell a dangling name from a repository one.
 const repo = ref<Record<string, string>>({});
-const overrides = ref<ProjectAgent[]>([]);
+const overrides = ref<AiAgent[]>([]);
 // Each agent's sequence, by agent id, in delivery order. Kept as plain name lists because that
 // is what `setAgentSkills` takes and what the editor emits — positions are the array's indices
 // and never a stored field on this side.
@@ -177,7 +179,13 @@ const loaded = ref(false);
 // the read that follows it.
 const busy = ref(false);
 
-const canWrite = computed(() => projects.isOwner(props.projectId));
+const canWrite = computed(() =>
+  props.owner.scope === 'user'
+    ? true
+    : props.owner.scope === 'workspace'
+      ? projects.isWorkspaceOwner(props.owner.id)
+      : projects.isOwner(props.owner.id),
+);
 
 function hasOverride(agentId: string): boolean {
   return overrides.value.some((o) => o.agentId === agentId);
@@ -204,7 +212,7 @@ function cancelEdit(agentId: string): void {
 
 // The operator's own order, with the name as the tiebreak — the exact comparator
 // SkillsService.assignedFor sorts by, so what this pane shows is what the launch pastes.
-function toSequences(rows: readonly AgentSkill[]): Record<string, string[]> {
+function toSequences(rows: readonly AiAgentSkill[]): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   for (const agent of AGENTS) {
     if (!agent.instruction) continue;
@@ -242,19 +250,27 @@ function seed(): void {
   baseline.value = nextBaseline;
 }
 
+// The resolved library view for this owner. Only a project has a checkout, so only it can be
+// shadowed by repo files and only it has the api endpoint that sees them; every other scope
+// resolves the view from its own cloud rows, with no repo shadow.
+async function libraryView(owner: AiOwner): Promise<{ view: SkillView[]; repo: Record<string, string> }> {
+  if (owner.scope === 'project') return await api.projectSkills(owner.id);
+  return { view: ownerLibraryView(await listAiSkills(auth.client, owner)), repo: {} };
+}
+
 async function load(): Promise<void> {
   // Pinned for the whole read: the prop is live (see the watcher), so two loads can overlap and a
   // late one must not paint another project's team.
-  const projectId = props.projectId;
+  const ownerKey = props.owner.scope + ':' + props.owner.id;
   error.value = '';
   try {
     const [library, stored, assignments, rows] = await Promise.all([
-      api.projectSkills(projectId),
-      listProjectSkills(auth.client, [projectId]),
-      listAgentSkills(auth.client, [projectId]),
-      listProjectAgents(auth.client, [projectId]),
+      libraryView(props.owner),
+      listAiSkills(auth.client, props.owner),
+      listAiAgentSkills(auth.client, props.owner),
+      listAiAgents(auth.client, props.owner),
     ]);
-    if (projectId !== props.projectId) return;
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     view.value = library.view;
     repo.value = library.repo;
     bodyBytes.value = measureSkillBytes(library.view, stored);
@@ -263,7 +279,7 @@ async function load(): Promise<void> {
     seed();
     loaded.value = true;
   } catch (e) {
-    if (projectId !== props.projectId) return;
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     // Everything, not just the failed half: a pane built from three of four reads would show the
     // harness defaults as this project's texts, or mark every assigned name broken. `loaded` goes
     // back to false with it — that, and not the emptiness of the data, is what takes the list off
@@ -285,7 +301,7 @@ async function load(): Promise<void> {
 // mounted. Every draft is dropped with it — an instruction typed for one project must not be
 // savable into the next one, which is exactly what preserving dirty drafts here would allow.
 watch(
-  () => props.projectId,
+  () => props.owner.scope + ':' + props.owner.id,
   () => {
     view.value = [];
     repo.value = {};
@@ -317,7 +333,7 @@ function validate(def: AgentDef, text: string): string {
 async function saveInstruction(def: AgentDef): Promise<void> {
   // Pinned like every write on this pane: the row belongs to the project the operator was looking
   // at when the button went down.
-  const projectId = props.projectId;
+  const ownerKey = props.owner.scope + ':' + props.owner.id;
   const text = drafts.value[def.id] ?? '';
   savedRow.value = { ...savedRow.value, [def.id]: false };
   const bad = validate(def, text);
@@ -329,11 +345,11 @@ async function saveInstruction(def: AgentDef): Promise<void> {
     // one would freeze this project on today's wording of a text that is maintained in the
     // harness, and the «своя інструкція» badge would claim an edit nobody made.
     if (text === def.instruction) {
-      if (hasOverride(def.id)) await deleteProjectAgent(auth.client, projectId, def.id);
+      if (hasOverride(def.id)) await deleteAiAgent(auth.client, props.owner, def.id);
     } else {
-      await upsertProjectAgent(auth.client, { projectId, agentId: def.id, instruction: text });
+      await upsertAiAgent(auth.client, { owner: props.owner, agentId: def.id, instruction: text });
     }
-    if (projectId !== props.projectId) return;
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     // Dropped so the re-read owns this editor again: `seed` preserves a dirty draft, and after a
     // successful write the stored text — not the string this function happened to send — is what
     // the box must show.
@@ -341,7 +357,7 @@ async function saveInstruction(def: AgentDef): Promise<void> {
     savedRow.value = { ...savedRow.value, [def.id]: true };
     await load();
   } catch (e) {
-    if (projectId !== props.projectId) return;
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     rowError.value = { ...rowError.value, [def.id]: e instanceof Error ? e.message : String(e) };
   } finally {
     busy.value = false;
@@ -353,19 +369,19 @@ async function saveInstruction(def: AgentDef): Promise<void> {
 // RLS refusal reads identically to success on a DELETE otherwise — and nothing is changed
 // locally: the reload is what the screen reflects.
 async function resetToDefault(agentId: string): Promise<void> {
-  const projectId = props.projectId;
+  const ownerKey = props.owner.scope + ':' + props.owner.id;
   rowError.value = { ...rowError.value, [agentId]: '' };
   savedRow.value = { ...savedRow.value, [agentId]: false };
   busy.value = true;
   try {
-    await deleteProjectAgent(auth.client, projectId, agentId);
-    if (projectId !== props.projectId) return;
+    await deleteAiAgent(auth.client, props.owner, agentId);
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     // Unconditionally, unlike a save: the operator's text is what they just asked to throw away,
     // so it must not survive the reload as a preserved dirty draft.
     forget(agentId);
     await load();
   } catch (e) {
-    if (projectId !== props.projectId) return;
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     rowError.value = { ...rowError.value, [agentId]: e instanceof Error ? e.message : String(e) };
   } finally {
     busy.value = false;
@@ -387,15 +403,15 @@ function forget(agentId: string): void {
 // disturb them for no new information. A failure changes nothing locally — the sequence on screen
 // is still the one in the cloud — and says so on the pane's error line.
 async function setSequence(agentId: string, names: string[]): Promise<void> {
-  const projectId = props.projectId;
+  const ownerKey = props.owner.scope + ':' + props.owner.id;
   error.value = '';
   busy.value = true;
   try {
-    await setAgentSkills(auth.client, projectId, agentId, names);
-    if (projectId !== props.projectId) return;
+    await setAiAgentSkills(auth.client, props.owner, agentId, names);
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     sequences.value = { ...sequences.value, [agentId]: names };
   } catch (e) {
-    if (projectId !== props.projectId) return;
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
     busy.value = false;

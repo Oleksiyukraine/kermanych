@@ -83,7 +83,7 @@
 
 <script lang="ts">
 import { DEFAULT_SKILLS, type SkillView as SkillViewRow } from '@kermanych/core';
-import type { ProjectSkill } from '@kermanych/cloud';
+import type { AiSkill } from '@kermanych/cloud';
 
 const ENCODER = new TextEncoder();
 
@@ -102,7 +102,7 @@ const ENCODER = new TextEncoder();
  */
 export function measureSkillBytes(
   rows: readonly SkillViewRow[],
-  stored: readonly ProjectSkill[],
+  stored: readonly AiSkill[],
 ): Record<string, number> {
   const bodies = new Map(stored.map((s) => [s.name, s.body]));
   const out: Record<string, number> = {};

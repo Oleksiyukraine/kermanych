@@ -57,17 +57,16 @@ describe('SETTINGS_CATEGORIES', () => {
     expect(scopes).toEqual(firstSeen.flatMap((s) => scopes.filter((x) => x === s)));
   });
 
-  // The three AI-team panes are ONE group at the project scope, and the rail prints its
-  // caption from `group` rather than from a hard-coded key list. Order is load-bearing:
-  // Агенти holds the instruction the other two modify, Тригери fires without the model
-  // deciding, and Навички is the library both draw from.
-  it('carries the AI-team group as three consecutive project-scoped rows', () => {
-    const group = SETTINGS_CATEGORIES.filter((c) => c.group === 'ai-team');
-    expect(group.map((c) => c.key)).toEqual(['project-agents', 'project-triggers', 'project-skills']);
-    expect(group.every((c) => c.scope === 'project')).toBe(true);
+  // «ШІ-команда» used to be three rows here (project-agents / project-triggers /
+  // project-skills). It is its own top-nav screen now (lib/ai-team.ts, pages/AiTeamPage.vue),
+  // so the settings registry must not carry them any more — a stale bookmark for one lands on
+  // the default like any other typo.
+  it('no longer carries the AI-team rows, which moved to their own screen', () => {
     const keys = SETTINGS_CATEGORIES.map((c) => c.key);
-    expect(keys.indexOf('project-triggers')).toBe(keys.indexOf('project-agents') + 1);
-    expect(keys.indexOf('project-skills')).toBe(keys.indexOf('project-triggers') + 1);
+    for (const gone of ['project-agents', 'project-triggers', 'project-skills']) {
+      expect(keys).not.toContain(gone);
+      expect(settingsSection(gone).key).toBe(SETTINGS_DEFAULT_SECTION);
+    }
   });
 
   // The agent catalogue used to be an APP pane over `AGENTS`, on the grounds that the

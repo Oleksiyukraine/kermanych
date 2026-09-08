@@ -1,14 +1,18 @@
-// Data access for the per-project skill library. Owns the snake_case <-> camelCase boundary
-// for `project_skills`. Every call runs under the caller's JWT: the RLS policies (read =
-// member, write = owner) are the authorization surface, and refusals surface as thrown
-// postgrest messages.
+// Data access for the «ШІ-команда» skill library (`ai_skills`). Owns the snake_case <->
+// camelCase boundary and the owner triad <-> { scope, id } boundary. Every call runs under the
+// caller's JWT: the RLS policies (read = scope member, write = scope owner) are the
+// authorization surface, and refusals surface as thrown postgrest messages.
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ProjectSkill, ProjectSkillInsert } from "./types";
+import type { AiOwner, AiSkill, AiSkillInsert } from "./types";
+import { OWNER_COLUMNS, ownerColumn, ownerColumns, ownerConflict, rowOwner } from "./ai-scope";
 
-const SKILL_COLUMNS = "project_id, name, description, body, enabled, updated_at, updated_by";
+const SKILL_COLUMNS = `id, ${OWNER_COLUMNS}, name, description, body, enabled, updated_at, updated_by`;
 
 type SkillRow = {
-  project_id: string;
+  id: string;
+  workspace_id: string | null;
+  project_id: string | null;
+  user_id: string | null;
   name: string;
   description: string;
   body: string;
@@ -18,9 +22,10 @@ type SkillRow = {
   updated_by: string | null;
 };
 
-export function toProjectSkill(row: SkillRow): ProjectSkill {
-  const s: ProjectSkill = {
-    projectId: row.project_id,
+export function toAiSkill(row: SkillRow): AiSkill {
+  const s: AiSkill = {
+    id: row.id,
+    owner: rowOwner(row),
     name: row.name,
     description: row.description,
     body: row.body,
@@ -31,58 +36,47 @@ export function toProjectSkill(row: SkillRow): ProjectSkill {
   return s;
 }
 
-export async function listProjectSkills(
-  client: SupabaseClient,
-  projectIds: string[],
-): Promise<ProjectSkill[]> {
-  // `in.()` with an empty list is not valid postgrest syntax, and a member of no project
-  // has no library to read.
-  if (projectIds.length === 0) return [];
+// Every skill of one owner, by name. The launch resolver reads each scope an owner sees and
+// merges them; the editor reads exactly one.
+export async function listAiSkills(client: SupabaseClient, owner: AiOwner): Promise<AiSkill[]> {
   const { data, error } = await client
-    .from("project_skills")
+    .from("ai_skills")
     .select(SKILL_COLUMNS)
-    .in("project_id", projectIds)
+    .eq(ownerColumn(owner.scope), owner.id)
     .order("name", { ascending: true });
   if (error) throw new Error(error.message);
-  return (data as SkillRow[]).map(toProjectSkill);
+  return (data as SkillRow[]).map(toAiSkill);
 }
 
-// Upsert on the composite key: the editor saves a new skill and an edited one the same way.
-export async function upsertProjectSkill(
-  client: SupabaseClient,
-  input: ProjectSkillInsert,
-): Promise<ProjectSkill> {
+// Upsert on the owner-triad key: the editor saves a new skill and an edited one the same way.
+export async function upsertAiSkill(client: SupabaseClient, input: AiSkillInsert): Promise<AiSkill> {
   const { data, error } = await client
-    .from("project_skills")
+    .from("ai_skills")
     .upsert(
       {
-        project_id: input.projectId,
+        ...ownerColumns(input.owner),
         name: input.name,
         description: input.description.trim(),
         body: input.body,
         enabled: input.enabled ?? true,
       },
-      { onConflict: "project_id,name" },
+      { onConflict: ownerConflict("name") },
     )
     .select(SKILL_COLUMNS)
     .single();
   if (error) throw new Error(error.message);
-  return toProjectSkill(data as SkillRow);
+  return toAiSkill(data as SkillRow);
 }
 
-// A DELETE the owner-only USING clause filters out matches zero rows and reports NO error,
-// so a member's refusal and an already-gone skill would both look like success — while an
+// A DELETE the owner-only USING clause filters out matches zero rows and reports NO error, so
+// a member's refusal and an already-gone skill would both look like success — while an
 // unauthorized upsert raises 42501. `.select()` closes that asymmetry: the deleted rows come
 // back, and an empty set is the refusal the editor must not treat as a dropped row.
-export async function deleteProjectSkill(
-  client: SupabaseClient,
-  projectId: string,
-  name: string,
-): Promise<void> {
+export async function deleteAiSkill(client: SupabaseClient, owner: AiOwner, name: string): Promise<void> {
   const { data, error } = await client
-    .from("project_skills")
+    .from("ai_skills")
     .delete()
-    .eq("project_id", projectId)
+    .eq(ownerColumn(owner.scope), owner.id)
     .eq("name", name)
     .select(SKILL_COLUMNS);
   if (error) throw new Error(error.message);

@@ -6,11 +6,11 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ProjectSkill, ProjectTrigger } from "@kermanych/cloud";
+import type { AiSkill, AiTrigger } from "@kermanych/cloud";
 import { renderRuleFile, SkillsService, triggersRoot } from "../src/skills/skills.service";
 
-const t = (over: Partial<ProjectTrigger>): ProjectTrigger => ({
-  projectId: "p1", id: "env-guard", label: "Нова env-змінна", enabled: true,
+const t = (over: Partial<AiTrigger>): AiTrigger => ({
+  owner: { scope: "project", id: "p1" }, id: "env-guard", slug: "env-guard", label: "Нова env-змінна", enabled: true,
   source: "thinking", pattern: "new env var", pathGlobs: [],
   action: "prompt", instruction: "", agentId: "", skills: ["how-we-add-env"],
   mode: "remind", repeat: "once", ...over,
@@ -52,7 +52,7 @@ test("a source outside the union is refused rather than written as `scope: undef
   // `scope` is the one frontmatter value not JSON-encoded, so it is the one that can be
   // malformed. omp rejects a bad rule at LOAD — after the write already succeeded — which is
   // the one path where a trigger could still block a launch.
-  const stale = { ...t({}), source: "reasoning" } as unknown as ProjectTrigger;
+  const stale = { ...t({}), source: "reasoning" } as unknown as AiTrigger;
   expect(() => renderRuleFile(stale, "B")).toThrow(/unknown source: reasoning/);
 });
 
@@ -62,7 +62,7 @@ test("a source outside the union is refused rather than written as `scope: undef
 // stringified function into the YAML. A guard that exists for values outside the union must not
 // be defeatable by one of them.
 test("a source that names an Object.prototype member is refused like any other unknown", () => {
-  const stale = { ...t({}), source: "constructor" } as unknown as ProjectTrigger;
+  const stale = { ...t({}), source: "constructor" } as unknown as AiTrigger;
   expect(() => renderRuleFile(stale, "B")).toThrow(/unknown source: constructor/);
   // And the three real sources still resolve — the guard did not become a blanket refusal.
   expect(renderRuleFile(t({ source: "thinking" }), "B")).toContain("scope: [thinking]");
@@ -72,16 +72,16 @@ test("a source that names an Object.prototype member is refused like any other u
 
 // ---- materializeTriggers -------------------------------------------------------------
 
-const row = (p: Partial<ProjectSkill> & { name: string }): ProjectSkill => ({
-  projectId: "p1", description: "d", body: "b", enabled: true, updatedAt: "t", ...p,
+const row = (p: Partial<AiSkill> & { name: string }): AiSkill => ({
+  owner: { scope: "project", id: "p1" }, id: p.name, description: "d", body: "b", enabled: true, updatedAt: "t", ...p,
 });
 
 // Same shape as skills.materialize.spec.ts: the auth stub stands in for the cloud, and each
 // test replaces the two seams the read goes through.
-const service = (triggers: ProjectTrigger[], skills: ProjectSkill[] = [row({ name: "how-we-add-env", body: "ADD ENV" })]) => {
+const service = (triggers: AiTrigger[], skills: AiSkill[] = [row({ name: "how-we-add-env", body: "ADD ENV" })]) => {
   const svc = new SkillsService({ cloudClient: () => ({}) } as never);
   svc.readCustomDirs = async () => [];
-  svc.readRows = async () => skills;
+  svc.readSkills = async () => skills;
   svc.readTriggers = async () => triggers;
   return svc;
 };
@@ -102,7 +102,7 @@ afterEach(() => {
 
 test("the package is a loadable extension: package.json, an entry point, and one rule per trigger", async () => {
   const svc = service([t({})]);
-  const { packagePath } = await svc.materializeTriggers("p1", SID, repo);
+  const { packagePath } = await svc.materializeTriggers({ projectId: "p1" }, SID, repo);
   expect(packagePath).toBe(join(triggersRoot(), SID));
   // `-e` only discovers a sibling `rules/` for a package whose entry point actually resolves,
   // which is why the no-op index.js is not optional (design §2.6).
@@ -118,15 +118,15 @@ test("the package is a loadable extension: package.json, an entry point, and one
 });
 
 test("an operator-sourced trigger writes no rule file", async () => {
-  const svc = service([t({ id: "wants-pr", source: "operator", action: "agent", skills: [], agentId: "pull-request" })]);
-  const { packagePath } = await svc.materializeTriggers("p1", SID, repo);
+  const svc = service([t({ slug: "wants-pr", source: "operator", action: "agent", skills: [], agentId: "pull-request" })]);
+  const { packagePath } = await svc.materializeTriggers({ projectId: "p1" }, SID, repo);
   expect(packagePath).toBeUndefined();
   expect(existsSync(join(triggersRoot(), SID, "rules", "wants-pr.md"))).toBe(false);
 });
 
 test("a stale row whose source TTSR has no scope for costs its own rule, not the package", async () => {
-  const stale = { ...t({ id: "stale" }), source: "reasoning" } as unknown as ProjectTrigger;
-  const { packagePath } = await service([stale, t({})]).materializeTriggers("p1", SID, repo);
+  const stale = { ...t({ slug: "stale" }), source: "reasoning" } as unknown as AiTrigger;
+  const { packagePath } = await service([stale, t({})]).materializeTriggers({ projectId: "p1" }, SID, repo);
   expect(readdirSync(join(packagePath!, "rules"))).toEqual(["env-guard.md"]);
   // Never `scope: undefined`, which omp rejects at load — the one malformed-rule path a
   // write-time try/catch cannot see.
@@ -135,14 +135,14 @@ test("a stale row whose source TTSR has no scope for costs its own rule, not the
 
 test("a disabled trigger writes no rule file", async () => {
   const svc = service([t({ enabled: false })]);
-  expect(await svc.materializeTriggers("p1", SID, repo)).toEqual({});
+  expect(await svc.materializeTriggers({ projectId: "p1" }, SID, repo)).toEqual({});
 });
 
 test("a trigger whose skills all resolve to nothing writes no rule file", async () => {
   // A dangling name is reported by the UI, not silently turned into an empty rule: a rule with
   // no body would fire and tell the model nothing.
   const svc = service([t({ skills: ["no-such-skill"] })], []);
-  expect(await svc.materializeTriggers("p1", SID, repo)).toEqual({});
+  expect(await svc.materializeTriggers({ projectId: "p1" }, SID, repo)).toEqual({});
 });
 
 // The whole point of the sequence: a trigger delivers its own words and then every skill it
@@ -152,7 +152,7 @@ test("the rule body is the instruction followed by every named skill, in order",
     [t({ instruction: "Спитай, куди її класти.", skills: ["how-we-add-env", "house-style"] })],
     [row({ name: "how-we-add-env", body: "ADD ENV" }), row({ name: "house-style", body: "HOUSE STYLE" })],
   );
-  const { packagePath } = await svc.materializeTriggers("p1", SID, repo);
+  const { packagePath } = await svc.materializeTriggers({ projectId: "p1" }, SID, repo);
   const rule = readFileSync(join(packagePath!, "rules", "env-guard.md"), "utf8");
   expect(rule.indexOf("Спитай, куди її класти.")).toBeLessThan(rule.indexOf("ADD ENV"));
   expect(rule.indexOf("ADD ENV")).toBeLessThan(rule.indexOf("HOUSE STYLE"));
@@ -162,7 +162,7 @@ test("the rule body is the instruction followed by every named skill, in order",
 // nothing left to resolve and the rule still has something to say.
 test("a trigger with an instruction and no skills still writes its rule", async () => {
   const svc = service([t({ instruction: "Спершу спитай.", skills: [] })]);
-  const { packagePath } = await svc.materializeTriggers("p1", SID, repo);
+  const { packagePath } = await svc.materializeTriggers({ projectId: "p1" }, SID, repo);
   expect(readFileSync(join(packagePath!, "rules", "env-guard.md"), "utf8")).toContain("Спершу спитай.");
 });
 
@@ -170,24 +170,24 @@ test("a repository skill of the same name supplies the rule body", async () => {
   mkdirSync(join(repo, ".claude/skills/how-we-add-env"), { recursive: true });
   writeFileSync(join(repo, ".claude/skills/how-we-add-env/SKILL.md"), "---\nname: how-we-add-env\n---\nREPO ENV\n");
   const svc = service([t({})]);
-  const { packagePath } = await svc.materializeTriggers("p1", SID, repo);
+  const { packagePath } = await svc.materializeTriggers({ projectId: "p1" }, SID, repo);
   const rule = readFileSync(join(packagePath!, "rules", "env-guard.md"), "utf8");
   expect(rule).toContain("REPO ENV");
   expect(rule).not.toContain("ADD ENV");
 });
 
 test("a rule whose trigger is gone is pruned on the next launch", async () => {
-  const both = service([t({}), t({ id: "second", label: "Друге" })]);
-  await both.materializeTriggers("p1", SID, repo);
+  const both = service([t({}), t({ slug: "second", label: "Друге" })]);
+  await both.materializeTriggers({ projectId: "p1" }, SID, repo);
   expect(readdirSync(join(triggersRoot(), SID, "rules")).sort()).toEqual(["env-guard.md", "second.md"]);
-  await service([t({})]).materializeTriggers("p1", SID, repo);
+  await service([t({})]).materializeTriggers({ projectId: "p1" }, SID, repo);
   expect(readdirSync(join(triggersRoot(), SID, "rules"))).toEqual(["env-guard.md"]);
 });
 
 test("the whole package is removed once the last trigger goes", async () => {
-  await service([t({})]).materializeTriggers("p1", SID, repo);
+  await service([t({})]).materializeTriggers({ projectId: "p1" }, SID, repo);
   expect(existsSync(join(triggersRoot(), SID))).toBe(true);
-  expect(await service([]).materializeTriggers("p1", SID, repo)).toEqual({});
+  expect(await service([]).materializeTriggers({ projectId: "p1" }, SID, repo)).toEqual({});
   // A left-behind package would keep firing rules the operator has already deleted.
   expect(existsSync(join(triggersRoot(), SID))).toBe(false);
 });
@@ -197,25 +197,25 @@ test("a failed cloud read costs the session its triggers, never its launch", asy
   svc.readTriggers = async () => {
     throw new Error("offline");
   };
-  await expect(svc.materializeTriggers("p1", SID, repo)).resolves.toEqual({});
+  await expect(svc.materializeTriggers({ projectId: "p1" }, SID, repo)).resolves.toEqual({});
 });
 
 test("ids that would escape the triggers root are refused", async () => {
   const svc = service([t({})]);
   for (const bad of ["../evil", "S1", "", "a b"]) {
-    await expect(svc.materializeTriggers("p1", bad, repo)).rejects.toThrow(/invalid session id/);
-    await expect(svc.materializeTriggers(bad, SID, repo)).rejects.toThrow(/invalid project id/);
+    await expect(svc.materializeTriggers({ projectId: "p1" }, bad, repo)).rejects.toThrow(/invalid session id/);
+    await expect(svc.materializeTriggers({ projectId: bad }, SID, repo)).rejects.toThrow(/invalid project id/);
   }
 });
 
 test("operatorTriggers returns only the enabled operator rows, in a stable order", async () => {
   const svc = service([
-    t({ id: "zeta", source: "operator", action: "agent", skills: [], agentId: "review" }),
-    t({ id: "alpha", source: "operator" }),
-    t({ id: "off", source: "operator", enabled: false }),
-    t({ id: "thinker" }),
+    t({ slug: "zeta", source: "operator", action: "agent", skills: [], agentId: "review" }),
+    t({ slug: "alpha", source: "operator" }),
+    t({ slug: "off", source: "operator", enabled: false }),
+    t({ slug: "thinker" }),
   ]);
-  expect((await svc.operatorTriggers("p1")).map((x) => x.id)).toEqual(["alpha", "zeta"]);
+  expect((await svc.operatorTriggers({ projectId: "p1" })).map((x) => x.slug)).toEqual(["alpha", "zeta"]);
 });
 
 test("operatorTriggers degrades to none when the cloud read fails", async () => {
@@ -223,5 +223,5 @@ test("operatorTriggers degrades to none when the cloud read fails", async () => 
   svc.readTriggers = async () => {
     throw new Error("offline");
   };
-  await expect(svc.operatorTriggers("p1")).resolves.toEqual([]);
+  await expect(svc.operatorTriggers({ projectId: "p1" })).resolves.toEqual([]);
 });
