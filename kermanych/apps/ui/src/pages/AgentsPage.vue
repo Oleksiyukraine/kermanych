@@ -654,7 +654,7 @@
           :options="workspaceOptions"
           :placeholder="t('agents.launcher.workspacePlaceholder')"
         />
-        <KBtn :disabled="!publishInto || publishing" @click="publishAndFile">
+        <KBtn :loading="publishing" :disabled="!publishInto" @click="publishAndFile">
           {{ t('agents.launcher.publishBtn') }}
         </KBtn>
         <p v-if="!workspaceOptions.length" class="agents__hint mono">
@@ -715,7 +715,7 @@
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="mergeOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
-        <KBtn variant="primary" :disabled="mergeBusy" @click="submitMerge">{{ mergeIsReview ? t('agents.merge.give') : t('agents.merge.pour') }}</KBtn>
+        <KBtn variant="primary" :loading="mergeBusy" @click="submitMerge">{{ mergeIsReview ? t('agents.merge.give') : t('agents.merge.pour') }}</KBtn>
       </template>
     </KModal>
 
@@ -770,16 +770,18 @@
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="finishOpen = false">{{ t('agents.finish.close') }}</KBtn>
-        <KBtn v-show="finishFiles.length" variant="secondary" @click="resolveAuto">{{ t('agents.finish.resolveAuto') }}</KBtn>
+        <KBtn v-show="finishFiles.length" variant="secondary" :loading="resolveBusy" @click="resolveAuto">{{ t('agents.finish.resolveAuto') }}</KBtn>
         <KBtn
           v-show="!finishFiles.length"
           variant="secondary"
-          :disabled="prBusy || finishBusy || !finishData"
+          :loading="prBusy"
+          :disabled="finishBusy || !finishData"
           @click="submitPr"
         >{{ t('agents.finish.createPr') }}</KBtn>
         <KBtn
           variant="primary"
-          :disabled="finishBusy || !!finishFiles.length || !finishData"
+          :loading="finishBusy"
+          :disabled="prBusy || !!finishFiles.length || !finishData"
           @click="submitFinish"
         >{{ t('agents.finish.action') }}</KBtn>
       </template>
@@ -2202,6 +2204,7 @@ const finishData = ref<{ branch: string; target: string; ahead: number; dirty: b
 const finishError = ref<string | null>(null);
 const finishBusy = ref(false);
 const prBusy = ref(false);
+const resolveBusy = ref(false);
 
 // Files still to resolve in the worktree: a tree left mid-merge (the agent folded the base
 // in) cannot be retired, so the modal shows them instead of the finish summary.
@@ -2271,12 +2274,16 @@ function onDiscardRow(s: Session): void {
 async function resolveAuto(): Promise<void> {
   const s = finishFor.value;
   if (!s) return;
+  resolveBusy.value = true;
+  finishError.value = null;
   try {
     await store.resolveConflict(s.id);
     finishOpen.value = false; // agent resolves in the background — watch it on the card
     store.selectSession(s.id);
   } catch (e) {
     finishError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    resolveBusy.value = false;
   }
 }
 

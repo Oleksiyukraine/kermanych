@@ -49,10 +49,11 @@
         <KBtn variant="secondary">{{ t('kit.gallery.btn.changePath') }}</KBtn>
         <KBtn variant="ghost">{{ t('kit.gallery.btn.restore') }}</KBtn>
         <KBtn variant="secondary" disabled>{{ t('kit.gallery.btn.apply') }}</KBtn>
+        <KBtn variant="primary" loading>{{ t('kit.gallery.btn.apply') }}</KBtn>
         <KBtn variant="icon">⊞</KBtn>
       </div>
       <div class="kit__caption mono">
-        primary · secondary · ghost · disabled · icon
+        primary · secondary · ghost · disabled · loading · icon
       </div>
     </section>
 
