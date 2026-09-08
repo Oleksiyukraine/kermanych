@@ -64,8 +64,9 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS auth_session (id INTEGER PRIMARY KEY CHECK (id = 1), user_id TEXT NOT NULL, access_token TEXT NOT NULL, expires_at TEXT, github_username TEXT)`,
     );
-    // Additive migration: preview commands arrived after the initial schema.
-    for (const col of ["preview_command", "api_command"]) {
+    // Additive migration: preview commands, then the cloud workspace id (for the «ШІ-команда»
+    // workspace scope), all arrived after the initial schema.
+    for (const col of ["preview_command", "api_command", "workspace_id"]) {
       try {
         this.db.exec(`ALTER TABLE projects ADD COLUMN ${col} TEXT`);
       } catch {
@@ -248,12 +249,12 @@ export class RegistryService {
   listProjects(): Project[] {
     const rows = this.db
       .prepare(
-        `SELECT id, name, local_repo_path as localRepoPath, color, preview_command as previewCommand, api_command as apiCommand, carry_files as carryFiles, doc_folders as docFolders, default_branch as defaultBranch, default_model as defaultModel, default_effort as defaultEffort, conventions, created_at as createdAt FROM projects ORDER BY created_at`,
+        `SELECT id, name, local_repo_path as localRepoPath, workspace_id as workspaceId, color, preview_command as previewCommand, api_command as apiCommand, carry_files as carryFiles, doc_folders as docFolders, default_branch as defaultBranch, default_model as defaultModel, default_effort as defaultEffort, conventions, created_at as createdAt FROM projects ORDER BY created_at`,
       )
       .all() as (Omit<Project, "carryFiles" | "docFolders"> & { carryFiles: string; docFolders: string })[];
     // An unbound project stores NULL/"" for its path; hand callers a plain "" so a
     // `!project.localRepoPath` check is all the launch path ever needs.
-    return rows.map((r) => ({ ...r, localRepoPath: r.localRepoPath ?? "", carryFiles: JSON.parse(r.carryFiles) as string[], docFolders: JSON.parse(r.docFolders) as string[], color: r.color ?? undefined, defaultBranch: r.defaultBranch ?? undefined, defaultModel: r.defaultModel ?? undefined, defaultEffort: r.defaultEffort ?? undefined, conventions: r.conventions ?? undefined }));
+    return rows.map((r) => ({ ...r, localRepoPath: r.localRepoPath ?? "", workspaceId: r.workspaceId ?? undefined, carryFiles: JSON.parse(r.carryFiles) as string[], docFolders: JSON.parse(r.docFolders) as string[], color: r.color ?? undefined, defaultBranch: r.defaultBranch ?? undefined, defaultModel: r.defaultModel ?? undefined, defaultEffort: r.defaultEffort ?? undefined, conventions: r.conventions ?? undefined }));
   }
 
   // Local project rows MIRROR cloud projects, so the id always comes from the caller —
@@ -269,11 +270,12 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO projects (id, name, local_repo_path, color, preview_command, api_command, carry_files, doc_folders, default_branch, default_model, default_effort, conventions, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `INSERT INTO projects (id, name, local_repo_path, workspace_id, color, preview_command, api_command, carry_files, doc_folders, default_branch, default_model, default_effort, conventions, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name,
            local_repo_path = CASE WHEN excluded.local_repo_path = '' THEN projects.local_repo_path ELSE excluded.local_repo_path END,
+           workspace_id = CASE WHEN excluded.workspace_id IS NULL THEN projects.workspace_id ELSE excluded.workspace_id END,
            color = excluded.color,
            preview_command = excluded.preview_command,
            api_command = excluded.api_command,
@@ -284,7 +286,7 @@ export class RegistryService {
            default_effort = excluded.default_effort,
            conventions = excluded.conventions`,
       )
-      .run(row.id, row.name, row.localRepoPath, row.color || null, row.previewCommand ?? null, row.apiCommand ?? null, JSON.stringify(row.carryFiles), JSON.stringify(row.docFolders), row.defaultBranch || null, row.defaultModel || null, row.defaultEffort || null, row.conventions || null, row.createdAt);
+      .run(row.id, row.name, row.localRepoPath, row.workspaceId || null, row.color || null, row.previewCommand ?? null, row.apiCommand ?? null, JSON.stringify(row.carryFiles), JSON.stringify(row.docFolders), row.defaultBranch || null, row.defaultModel || null, row.defaultEffort || null, row.conventions || null, row.createdAt);
     // Re-read: the CASE may have kept a binding (and the original created_at) the caller
     // never sent, so the in-memory `row` is not the truth.
     return this.listProjects().find((x) => x.id === row.id)!;

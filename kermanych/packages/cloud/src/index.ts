@@ -15,15 +15,17 @@ export type {
   Task,
   TaskInsert,
   TaskPatch,
-  ProjectSkill,
-  ProjectSkillInsert,
-  AgentSkill,
-  ProjectAgent,
-  ProjectAgentInsert,
+  AiScope,
+  AiOwner,
+  AiSkill,
+  AiSkillInsert,
+  AiAgentSkill,
+  AiAgent,
+  AiAgentInsert,
   TriggerSource,
   TriggerAction,
-  ProjectTrigger,
-  ProjectTriggerInsert,
+  AiTrigger,
+  AiTriggerInsert,
   RiskKind,
   RiskCategory,
   RiskResponse,
@@ -105,27 +107,27 @@ export {
 } from "./tasks";
 
 export {
-  toProjectSkill,
-  listProjectSkills,
-  upsertProjectSkill,
-  deleteProjectSkill,
+  toAiSkill,
+  listAiSkills,
+  upsertAiSkill,
+  deleteAiSkill,
 } from "./skills";
 
-export { toAgentSkill, listAgentSkills, setAgentSkills } from "./agent-skills";
+export { toAiAgentSkill, listAiAgentSkills, setAiAgentSkills } from "./agent-skills";
 
 export {
-  toProjectAgent,
-  listProjectAgents,
-  upsertProjectAgent,
-  deleteProjectAgent,
-} from "./project-agents";
+  toAiAgent,
+  listAiAgents,
+  upsertAiAgent,
+  deleteAiAgent,
+} from "./ai-agents";
 
 export {
-  toTrigger,
-  listTriggers,
-  upsertTrigger,
-  setTriggerSkills,
-  deleteTrigger,
+  toAiTrigger,
+  listAiTriggers,
+  upsertAiTrigger,
+  setAiTriggerSkills,
+  deleteAiTrigger,
 } from "./triggers";
 
 export {

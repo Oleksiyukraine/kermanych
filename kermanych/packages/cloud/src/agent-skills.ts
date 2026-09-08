@@ -1,82 +1,74 @@
-// Data access for «ШІ-команда» assignments: the ordered skill sequence a project hands to
-// each of Kermanych's agents. Owns the snake_case <-> camelCase boundary for
-// `project_agent_skills`. Every call runs under the caller's JWT: the RLS policies (read =
-// project member, write = workspace owner) are the authorization surface, and refusals
-// surface as thrown postgrest messages.
+// Data access for «ШІ-команда» agent skill sequences (`ai_agent_skills`): the ordered skills
+// an owner hands to each of Kermanych's agents. Independent of ai_agents — a scope can give an
+// agent a sequence without overriding its instruction. Every call runs under the caller's JWT;
+// RLS (read = scope member, write = scope owner) is the authorization surface.
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { AgentSkill } from "./types";
+import type { AiAgentSkill, AiOwner } from "./types";
+import { OWNER_COLUMNS, ownerColumn, ownerColumns, rowOwner } from "./ai-scope";
 
 // The audit columns are deliberately absent: they exist so a write cannot be forged, and
-// nothing in the UI renders them for an assignment.
-const AGENT_SKILL_COLUMNS = "project_id, agent_id, skill_name, position";
+// nothing renders them for an assignment.
+const AGENT_SKILL_COLUMNS = `${OWNER_COLUMNS}, agent_id, skill_name, position`;
 
 type AgentSkillRow = {
-  project_id: string;
+  workspace_id: string | null;
+  project_id: string | null;
+  user_id: string | null;
   agent_id: string;
   skill_name: string;
   position: number;
 };
 
-export function toAgentSkill(row: AgentSkillRow): AgentSkill {
+export function toAiAgentSkill(row: AgentSkillRow): AiAgentSkill {
   return {
-    projectId: row.project_id,
+    owner: rowOwner(row),
     agentId: row.agent_id,
     skillName: row.skill_name,
     position: row.position,
   };
 }
 
-export async function listAgentSkills(
-  client: SupabaseClient,
-  projectIds: string[],
-): Promise<AgentSkill[]> {
-  // `in.()` with an empty list is not valid postgrest syntax, and a member of no project
-  // has nothing assigned to read.
-  if (projectIds.length === 0) return [];
+export async function listAiAgentSkills(client: SupabaseClient, owner: AiOwner): Promise<AiAgentSkill[]> {
   const { data, error } = await client
-    .from("project_agent_skills")
+    .from("ai_agent_skills")
     .select(AGENT_SKILL_COLUMNS)
-    .in("project_id", projectIds)
-    // `position` first within an agent: it is the order the launcher writes the skills in,
-    // and `skill_name` only breaks a tie so the list never reorders between reads.
+    .eq(ownerColumn(owner.scope), owner.id)
+    // `position` first within an agent: the order the launcher writes the skills in;
+    // `skill_name` only breaks a tie so the list never reorders between reads.
     .order("agent_id", { ascending: true })
     .order("position", { ascending: true })
     .order("skill_name", { ascending: true });
   if (error) throw new Error(error.message);
-  return (data as AgentSkillRow[]).map(toAgentSkill);
+  return (data as AgentSkillRow[]).map(toAiAgentSkill);
 }
 
 /**
- * Replace an agent's whole skill sequence. `names` in order; empty clears it. The trigger
- * side of «ШІ-команда» is written the same way — see setTriggerSkills for why the two
- * statements are not a transaction and why the delete goes first.
+ * Replace an agent's whole skill sequence at one owner's scope. `names` in order; empty clears
+ * it. Delete-then-insert rather than upsert: the sequence is a replace, and clearing the old
+ * rows first means a shrunk list leaves no stragglers behind.
  */
-export async function setAgentSkills(
+export async function setAiAgentSkills(
   client: SupabaseClient,
-  projectId: string,
+  owner: AiOwner,
   agentId: string,
   names: readonly string[],
 ): Promise<void> {
-  let del = client
-    .from("project_agent_skills")
+  const { error: deleteError } = await client
+    .from("ai_agent_skills")
     .delete()
-    .eq("project_id", projectId)
+    .eq(ownerColumn(owner.scope), owner.id)
     .eq("agent_id", agentId);
-  // The names survive the check regex, so none can contain a comma or a quote that would
-  // break out of this filter list.
-  if (names.length > 0) del = del.not("skill_name", "in", `(${names.join(",")})`);
-  const { error: deleteError } = await del;
   if (deleteError) throw new Error(deleteError.message);
 
   if (names.length === 0) return;
-  const { error } = await client.from("project_agent_skills").upsert(
+  const cols = ownerColumns(owner);
+  const { error } = await client.from("ai_agent_skills").insert(
     names.map((skillName, index) => ({
-      project_id: projectId,
+      ...cols,
       agent_id: agentId,
       skill_name: skillName,
       position: index,
     })),
-    { onConflict: "project_id,agent_id,skill_name" },
   );
   if (error) throw new Error(error.message);
 }

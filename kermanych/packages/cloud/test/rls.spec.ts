@@ -15,11 +15,11 @@
 // through the admin API — the same provisioning path GitHub OAuth drives.
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
-import { listAgentSkills, setAgentSkills } from "../src/agent-skills";
-import { deleteProjectAgent, listProjectAgents, upsertProjectAgent } from "../src/project-agents";
+import { listAiAgentSkills, setAiAgentSkills } from "../src/agent-skills";
+import { deleteAiAgent, listAiAgents, upsertAiAgent } from "../src/ai-agents";
 import { createProject, listProjects, patchProject } from "../src/projects";
-import { deleteProjectSkill, listProjectSkills, upsertProjectSkill } from "../src/skills";
-import { deleteTrigger, listTriggers, setTriggerSkills, upsertTrigger } from "../src/triggers";
+import { deleteAiSkill, listAiSkills, upsertAiSkill } from "../src/skills";
+import { deleteAiTrigger, listAiTriggers, setAiTriggerSkills, upsertAiTrigger } from "../src/triggers";
 import { listMembers } from "../src/workspaces";
 import {
   deleteJiraIntegration,
@@ -54,6 +54,9 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
   let projectId: string;
   let workspaceId: string;
   let taskId: string;
+  // The surrogate id of the env-guard trigger, captured on its upsert: the child sequence and
+  // the delete are addressed by id, not by the owner+slug the editor knows it as.
+  let envGuardTriggerId: string;
 
   async function makeUser(tag: string): Promise<TestUser> {
     const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -553,34 +556,35 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect((await getTask(member.client, secret.id))?.hidden).toBe(true);
   });
 
-  // ── project_skills ──────────────────────────────────────────────────────────
-  // Project-level cloud config, so the policy matrix is the projects one: members read,
-  // the owner writes. `member` was invited above, `outsider` never was.
+  // ── ai_skills (project scope) ─────────────────────────────────────────────────
+  // Project-scoped «ШІ-команда» config, so the policy matrix is the projects one: members
+  // read, the workspace owner writes — now via ai_can_read / ai_can_write over the owner
+  // triad. `member` was invited above, `outsider` never was.
   it("the project owner can insert a skill, and the trigger stamps updated_by", async () => {
-    const skill = await upsertProjectSkill(owner.client, {
-      projectId,
+    const skill = await upsertAiSkill(owner.client, {
+      owner: { scope: "project", id: projectId },
       name: "opening-a-pr",
       description: "  how this team opens a pull request  ",
       body: "Squash, then request a review.",
     });
 
     expect(skill).toMatchObject({
-      projectId,
+      owner: { scope: "project", id: projectId },
       name: "opening-a-pr",
-      // upsertProjectSkill trims: the editor's trailing whitespace must not become part of
+      // upsertAiSkill trims: the editor's trailing whitespace must not become part of
       // the description omp reads.
       description: "how this team opens a pull request",
       body: "Squash, then request a review.",
       enabled: true,
     });
-    // project_skills_touch() owns both audit columns, so the writer cannot be forged and an
+    // ai_team_touch() owns both audit columns, so the writer cannot be forged and an
     // edit cannot be backdated.
     expect(skill.updatedBy).toBe(owner.id);
     expect(Date.parse(skill.updatedAt)).not.toBeNaN();
   });
 
   it("a member reads the project's skills", async () => {
-    const skills = await listProjectSkills(member.client, [projectId]);
+    const skills = await listAiSkills(member.client, { scope: "project", id: projectId });
     expect(skills.map((s) => s.name)).toEqual(["opening-a-pr"]);
     expect(skills[0]?.body).toBe("Squash, then request a review.");
   });
@@ -589,62 +593,65 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
   // only the owner edits it.
   it("a member cannot write a skill", async () => {
     await expect(
-      upsertProjectSkill(member.client, {
-        projectId,
+      upsertAiSkill(member.client, {
+        owner: { scope: "project", id: projectId },
         name: "member-written",
         description: "should never land",
         body: "nope",
       }),
     ).rejects.toThrow(/row-level security/);
 
-    const stillOne = await listProjectSkills(owner.client, [projectId]);
+    const stillOne = await listAiSkills(owner.client, { scope: "project", id: projectId });
     expect(stillOne.map((s) => s.name)).toEqual(["opening-a-pr"]);
   });
 
   it("a non-member sees zero skills", async () => {
-    expect(await listProjectSkills(outsider.client, [projectId])).toEqual([]);
+    expect(await listAiSkills(outsider.client, { scope: "project", id: projectId })).toEqual([]);
   });
 
   // Postgres does not raise on a DELETE the USING clause filters out — it matches zero rows
-  // and reports success. deleteProjectSkill turns that empty result into a throw, so the
+  // and reports success. deleteAiSkill turns that empty result into a throw, so the
   // refusal reaches the editor instead of looking like a dropped row.
   it("a member's delete is refused and surfaces as a throw", async () => {
-    await expect(deleteProjectSkill(member.client, projectId, "opening-a-pr")).rejects.toThrow(
-      /was not deleted/,
-    );
+    await expect(
+      deleteAiSkill(member.client, { scope: "project", id: projectId }, "opening-a-pr"),
+    ).rejects.toThrow(/was not deleted/);
 
-    const survived = await listProjectSkills(owner.client, [projectId]);
+    const survived = await listAiSkills(owner.client, { scope: "project", id: projectId });
     expect(survived.map((s) => s.name)).toEqual(["opening-a-pr"]);
   });
 
   it("the owner's delete removes the skill", async () => {
-    await expect(deleteProjectSkill(owner.client, projectId, "opening-a-pr")).resolves.toBeUndefined();
-    expect(await listProjectSkills(owner.client, [projectId])).toEqual([]);
+    await expect(
+      deleteAiSkill(owner.client, { scope: "project", id: projectId }, "opening-a-pr"),
+    ).resolves.toBeUndefined();
+    expect(await listAiSkills(owner.client, { scope: "project", id: projectId })).toEqual([]);
   });
 
   // ── the «ШІ-команда» tables ──────────────────────────────────────────────────
-  // project_agent_skills / project_agents / project_triggers / project_trigger_skills all
-  // carry the same policy matrix as project_skills — members read, the workspace owner
-  // writes — so these cases exist to prove the tables carry it, not to re-prove the shape.
-  // Placed before the workspace-membership tests below because the last of those ends with
-  // `member` removed from the workspace, which would make every read here vacuous.
+  // ai_agent_skills / ai_agents / ai_triggers / ai_trigger_skills all carry the same policy
+  // matrix as ai_skills — members read, the workspace owner writes — now expressed through
+  // ai_can_read / ai_can_write over the owner triad. These cases exist to prove the tables
+  // carry it, not to re-prove the shape. Placed before the workspace-membership tests below
+  // because the last of those ends with `member` removed from the workspace, which would make
+  // every read here vacuous.
   it("the workspace owner can write an agent's sequence, its instruction and a trigger", async () => {
-    await setAgentSkills(owner.client, projectId, "review", ["how-we-review"]);
-    const assignments = await listAgentSkills(owner.client, [projectId]);
+    await setAiAgentSkills(owner.client, { scope: "project", id: projectId }, "review", ["how-we-review"]);
+    const assignments = await listAiAgentSkills(owner.client, { scope: "project", id: projectId });
     expect(assignments).toEqual([
-      { projectId, agentId: "review", skillName: "how-we-review", position: 0 },
+      { owner: { scope: "project", id: projectId }, agentId: "review", skillName: "how-we-review", position: 0 },
     ]);
 
-    const override = await upsertProjectAgent(owner.client, {
-      projectId,
+    const override = await upsertAiAgent(owner.client, {
+      owner: { scope: "project", id: projectId },
       agentId: "review",
       instruction: "Дивись лише на те, що змінилось.",
     });
     expect(override.instruction).toBe("Дивись лише на те, що змінилось.");
 
-    const trigger = await upsertTrigger(owner.client, {
-      projectId,
-      id: "env-guard",
+    const trigger = await upsertAiTrigger(owner.client, {
+      owner: { scope: "project", id: projectId },
+      slug: "env-guard",
       label: "  Нова env-змінна  ",
       source: "thinking",
       pattern: "нову env|new env var",
@@ -654,33 +661,37 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
       mode: "remind",
       repeat: "once",
     });
-    // upsertTrigger trims the label and defaults `enabled`; an omitted glob list is stored
+    // upsertAiTrigger trims the label and defaults `enabled`; an omitted glob list is stored
     // as NULL and read back as [], which is the normalisation the whole UI relies on. An
-    // empty agentId is stored as the NULL the 'prompt' check constraint demands.
+    // empty agentId is stored as the NULL the 'prompt' check constraint demands. The surrogate
+    // id is what the child sequence and the delete are addressed by; the slug is the operator's.
     expect(trigger.label).toBe("Нова env-змінна");
     expect(trigger.enabled).toBe(true);
     expect(trigger.pathGlobs).toEqual([]);
     expect(trigger.agentId).toBe("");
+    expect(trigger.slug).toBe("env-guard");
+    envGuardTriggerId = trigger.id;
   });
 
   // The point of the rework: a trigger delivers a SEQUENCE, and the order is the operator's
-  // — so it must survive a round trip, and rewriting it must not leave the dropped name.
+  // — so it must survive a round trip, and rewriting it must not leave the dropped name. The
+  // sequence is addressed by the trigger's surrogate id.
   it("a trigger's skill sequence round-trips in order and is replaced wholesale", async () => {
-    await setTriggerSkills(owner.client, projectId, "env-guard", ["how-we-add-env", "opening-a-pr"]);
-    let triggers = await listTriggers(owner.client, [projectId]);
+    await setAiTriggerSkills(owner.client, envGuardTriggerId, ["how-we-add-env", "opening-a-pr"]);
+    let triggers = await listAiTriggers(owner.client, { scope: "project", id: projectId });
     expect(triggers[0]?.skills).toEqual(["how-we-add-env", "opening-a-pr"]);
 
-    await setTriggerSkills(owner.client, projectId, "env-guard", ["opening-a-pr"]);
-    triggers = await listTriggers(owner.client, [projectId]);
+    await setAiTriggerSkills(owner.client, envGuardTriggerId, ["opening-a-pr"]);
+    triggers = await listAiTriggers(owner.client, { scope: "project", id: projectId });
     expect(triggers[0]?.skills).toEqual(["opening-a-pr"]);
   });
 
-  // ai_team_touch() owns both audit columns on every one of the four tables, so a writer
+  // ai_team_touch() owns both audit columns on every one of the five tables, so a writer
   // cannot be forged and an edit cannot be backdated. The assignment tables do not expose
   // the columns in their typed surface, so those checks read them straight off the table.
   it("ai_team_touch stamps updated_by and updated_at on the ШІ-команда tables", async () => {
     const assignment = await owner.client
-      .from("project_agent_skills")
+      .from("ai_agent_skills")
       .select("updated_at, updated_by")
       .eq("project_id", projectId)
       .eq("agent_id", "review")
@@ -690,39 +701,40 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(assignment.data?.updated_by).toBe(owner.id);
     expect(Date.parse(assignment.data?.updated_at as string)).not.toBeNaN();
 
+    // The child hangs off the trigger's surrogate id, not the project.
     const triggerSkill = await owner.client
-      .from("project_trigger_skills")
+      .from("ai_trigger_skills")
       .select("updated_at, updated_by")
-      .eq("project_id", projectId)
-      .eq("trigger_id", "env-guard")
+      .eq("trigger_id", envGuardTriggerId)
       .eq("skill_name", "opening-a-pr")
       .single();
     expect(triggerSkill.error).toBeNull();
     expect(triggerSkill.data?.updated_by).toBe(owner.id);
 
     const trigger = await owner.client
-      .from("project_triggers")
+      .from("ai_triggers")
       .select("updated_at, updated_by")
-      .eq("project_id", projectId)
-      .eq("id", "env-guard")
+      .eq("id", envGuardTriggerId)
       .single();
     expect(trigger.error).toBeNull();
     expect(trigger.data?.updated_by).toBe(owner.id);
     expect(Date.parse(trigger.data?.updated_at as string)).not.toBeNaN();
 
-    const [override] = await listProjectAgents(owner.client, [projectId]);
+    const [override] = await listAiAgents(owner.client, { scope: "project", id: projectId });
     expect(override?.updatedBy).toBe(owner.id);
     expect(Date.parse(override?.updatedAt as string)).not.toBeNaN();
   });
 
   it("a member reads the project's agent sequences, instructions and triggers", async () => {
-    const assignments = await listAgentSkills(member.client, [projectId]);
+    const assignments = await listAiAgentSkills(member.client, { scope: "project", id: projectId });
     expect(assignments.map((a) => `${a.agentId}/${a.skillName}`)).toEqual(["review/how-we-review"]);
 
-    expect((await listProjectAgents(member.client, [projectId])).map((a) => a.agentId)).toEqual(["review"]);
+    expect((await listAiAgents(member.client, { scope: "project", id: projectId })).map((a) => a.agentId)).toEqual([
+      "review",
+    ]);
 
-    const triggers = await listTriggers(member.client, [projectId]);
-    expect(triggers.map((t) => t.id)).toEqual(["env-guard"]);
+    const triggers = await listAiTriggers(member.client, { scope: "project", id: projectId });
+    expect(triggers.map((t) => t.slug)).toEqual(["env-guard"]);
     expect(triggers[0]?.source).toBe("thinking");
     expect(triggers[0]?.instruction).toBe("Спитай, куди прописати змінну.");
     expect(triggers[0]?.skills).toEqual(["opening-a-pr"]);
@@ -731,18 +743,18 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
   // The configuration a session launches with is the workspace owner's call: a member reads
   // it and runs under it, but cannot change who does what, with what instruction.
   it("a member cannot write or delete an assignment, an instruction or a trigger", async () => {
-    await expect(setAgentSkills(member.client, projectId, "plan", ["member-written"])).rejects.toThrow(
-      /row-level security|violates/,
-    );
-
     await expect(
-      upsertProjectAgent(member.client, { projectId, agentId: "plan", instruction: "не моє" }),
+      setAiAgentSkills(member.client, { scope: "project", id: projectId }, "plan", ["member-written"]),
     ).rejects.toThrow(/row-level security|violates/);
 
     await expect(
-      upsertTrigger(member.client, {
-        projectId,
-        id: "member-written",
+      upsertAiAgent(member.client, { owner: { scope: "project", id: projectId }, agentId: "plan", instruction: "не моє" }),
+    ).rejects.toThrow(/row-level security|violates/);
+
+    await expect(
+      upsertAiTrigger(member.client, {
+        owner: { scope: "project", id: projectId },
+        slug: "member-written",
         label: "should never land",
         source: "operator",
         pattern: "anything",
@@ -756,22 +768,24 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
 
     // A refused DELETE matches zero rows and reports success; both modules turn that empty
     // result into a throw, which is the only thing that makes the refusal visible.
-    await expect(deleteProjectAgent(member.client, projectId, "review")).rejects.toThrow(/was not reset/);
-    await expect(deleteTrigger(member.client, projectId, "env-guard")).rejects.toThrow(/was not deleted/);
+    await expect(deleteAiAgent(member.client, { scope: "project", id: projectId }, "review")).rejects.toThrow(
+      /was not reset/,
+    );
+    await expect(deleteAiTrigger(member.client, envGuardTriggerId)).rejects.toThrow(/was not deleted/);
 
     // A refused replace-all has no `.select()` to fall back on — the delete half matches
     // nothing and reports success — so what proves nothing moved is the owner's own read.
-    const assignments = await listAgentSkills(owner.client, [projectId]);
+    const assignments = await listAiAgentSkills(owner.client, { scope: "project", id: projectId });
     expect(assignments.map((a) => a.skillName)).toEqual(["how-we-review"]);
-    const triggers = await listTriggers(owner.client, [projectId]);
-    expect(triggers.map((t) => t.id)).toEqual(["env-guard"]);
+    const triggers = await listAiTriggers(owner.client, { scope: "project", id: projectId });
+    expect(triggers.map((t) => t.slug)).toEqual(["env-guard"]);
     expect(triggers[0]?.skills).toEqual(["opening-a-pr"]);
   });
 
   it("a non-member sees zero assignments, zero instructions and zero triggers", async () => {
-    expect(await listAgentSkills(outsider.client, [projectId])).toEqual([]);
-    expect(await listProjectAgents(outsider.client, [projectId])).toEqual([]);
-    expect(await listTriggers(outsider.client, [projectId])).toEqual([]);
+    expect(await listAiAgentSkills(outsider.client, { scope: "project", id: projectId })).toEqual([]);
+    expect(await listAiAgents(outsider.client, { scope: "project", id: projectId })).toEqual([]);
+    expect(await listAiTriggers(outsider.client, { scope: "project", id: projectId })).toEqual([]);
   });
 
   // A child omp process cannot call back into Kermanych, so a trigger that RUNS AN AGENT is
@@ -780,9 +794,9 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
   // what make it true for psql and for a direct PostgREST call.
   it("an agent-action trigger needs an operator source and an agent id", async () => {
     await expect(
-      upsertTrigger(owner.client, {
-        projectId,
-        id: "bad-agent",
+      upsertAiTrigger(owner.client, {
+        owner: { scope: "project", id: projectId },
+        slug: "bad-agent",
         label: "агент із думок",
         source: "thinking",
         pattern: "щось",
@@ -791,12 +805,12 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
         mode: "remind",
         repeat: "once",
       }),
-    ).rejects.toThrow(/project_triggers_agent_action_is_operator/);
+    ).rejects.toThrow(/ai_triggers_agent_action/);
 
     await expect(
-      upsertTrigger(owner.client, {
-        projectId,
-        id: "agent-nobody",
+      upsertAiTrigger(owner.client, {
+        owner: { scope: "project", id: projectId },
+        slug: "agent-nobody",
         label: "агент без агента",
         source: "operator",
         pattern: "щось",
@@ -805,11 +819,11 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
         mode: "remind",
         repeat: "once",
       }),
-    ).rejects.toThrow(/project_triggers_agent_action_is_operator/);
+    ).rejects.toThrow(/ai_triggers_agent_action/);
 
-    const operatorSourced = await upsertTrigger(owner.client, {
-      projectId,
-      id: "good-agent",
+    const operatorSourced = await upsertAiTrigger(owner.client, {
+      owner: { scope: "project", id: projectId },
+      slug: "good-agent",
       label: "агент від оператора",
       source: "operator",
       pattern: "перевір",
@@ -823,18 +837,17 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     expect(operatorSourced.agentId).toBe("review");
     expect(operatorSourced.pathGlobs).toEqual(["apps/api/**"]);
 
-    await expect(deleteTrigger(owner.client, projectId, "good-agent")).resolves.toBeUndefined();
+    await expect(deleteAiTrigger(owner.client, operatorSourced.id)).resolves.toBeUndefined();
   });
 
-  // The sequence hangs off the trigger by a composite FK, not off the project: dropping the
-  // trigger must not leave its skills behind as rows nothing can reach or delete.
+  // The sequence hangs off the trigger by its surrogate id: dropping the trigger must not
+  // leave its skills behind as rows nothing can reach or delete.
   it("deleting a trigger cascades its skill sequence away", async () => {
-    await expect(deleteTrigger(owner.client, projectId, "env-guard")).resolves.toBeUndefined();
+    await expect(deleteAiTrigger(owner.client, envGuardTriggerId)).resolves.toBeUndefined();
     const orphans = await owner.client
-      .from("project_trigger_skills")
+      .from("ai_trigger_skills")
       .select("skill_name")
-      .eq("project_id", projectId)
-      .eq("trigger_id", "env-guard");
+      .eq("trigger_id", envGuardTriggerId);
     expect(orphans.error).toBeNull();
     expect(orphans.data).toEqual([]);
   });

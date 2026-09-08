@@ -38,6 +38,7 @@ export const en: MessageSchema = {
       viewBoard: 'Board',
       viewChat: 'Chat',
       viewManagement: 'Management',
+      viewAiTeam: 'AI team',
       bucketActive: 'Active',
       bucketTasks: 'Tasks',
       bucketWaiting: 'Waiting',
@@ -544,24 +545,6 @@ export const en: MessageSchema = {
         sub: 'default model',
         blurb: 'Which model to preset in a new task by default.',
       },
-      'project-agents': {
-        label: 'Agents',
-        sub: 'instructions and skills',
-        blurb:
-          'What each role reads at launch: the instruction is shown in full and can be rewritten for this project, and its skills can be ordered exactly as they will be glued onto it. Only the workspace owner can change this.',
-      },
-      'project-triggers': {
-        label: 'Triggers',
-        sub: 'when it fires on its own',
-        blurb:
-          'What fires without the model deciding — on the operator’s words, on its own reasoning, or on a tool call. A trigger injects an instruction of its own together with an ordered list of skills, or launches an agent.',
-      },
-      'project-skills': {
-        label: 'Skills',
-        sub: 'this project’s library',
-        blurb:
-          'Texts the agent pulls in on its own when it sees fit — and the ones Agents and Triggers build their lists from. A skill with the same name in the repository always wins.',
-      },
       'project-env': {
         label: 'Environment variables',
         sub: 'values and required keys',
@@ -622,7 +605,6 @@ export const en: MessageSchema = {
     },
     rail: {
       categoriesAria: 'Settings sections: {scope}',
-      aiTeam: 'AI team',
       projectScope: 'Applies only to “{name}”',
       noProject: 'No project selected',
       workspaceScope: 'Applies to every project in workspace “{name}”',
@@ -951,6 +933,57 @@ export const en: MessageSchema = {
       kindDirectiveWhat: 'appends the text shown below to the message.',
       kindKeyword: 'keyword',
       kindKeywordWhat: 'inserts a word that omp itself recognises — these are the only helpers with a mechanical effect.',
+    },
+  },
+  aiTeam: {
+    rail: {
+      sectionsAria: 'AI team sections',
+      you: 'You',
+      note: {
+        user: 'Your personal set — applies only to your own sessions.',
+        project: 'Applies to the selected project.',
+        workspace: 'Applies to every project in the workspace.',
+      },
+      none: {
+        user: 'Not signed in',
+        project: 'No project selected',
+        workspace: 'No workspace selected',
+      },
+    },
+    groups: {
+      automation: 'Automation',
+      skills: 'Skills',
+    },
+    sections: {
+      agents: {
+        label: 'Agents',
+        sub: 'instructions and skills',
+        blurb:
+          'What each role reads at launch: the instruction is shown in full and can be rewritten for this project, and its skills can be ordered exactly as they will be glued onto it. Only the workspace owner can change this.',
+      },
+      triggers: {
+        label: 'Triggers',
+        sub: 'when it fires on its own',
+        blurb:
+          'What fires without the model deciding — on the operator’s words, on its own reasoning, or on a tool call. A trigger injects an instruction of its own together with an ordered list of skills, or launches an agent.',
+      },
+      skills: {
+        label: 'Library',
+        sub: 'this project’s library',
+        blurb:
+          'Texts the agent pulls in on its own when it sees fit — and the ones Agents and Triggers build their lists from. A skill with the same name in the repository always wins.',
+      },
+    },
+    scope: {
+      user: 'User',
+      project: 'Project',
+      workspace: 'Workspace',
+    },
+    blank: {
+      eyebrow: 'KERMANYCH',
+      user: 'Sign in to configure your own AI team.',
+      project: 'Pick a project in the left panel to configure its AI team.',
+      workspace: 'Pick a workspace in the left panel to configure the shared AI team.',
     },
   },
   management: {

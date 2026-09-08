@@ -4,7 +4,7 @@
          already says «без рішення моделі», so this one earns its place by drawing the
          distinction the operator actually has to hold — library versus trigger. -->
     <i18n-t keypath="settings.triggers.lead" tag="p" class="tg__lead">
-      <template #project><span class="tg__lead-project mono">{{ projectName }}</span></template>
+      <template #project><span class="tg__lead-project mono">{{ ownerName }}</span></template>
     </i18n-t>
 
     <!-- The two halves are not interchangeable and the operator picks between them in the
@@ -33,7 +33,7 @@
         >
           <div class="tg__head">
             <span class="tg__name">{{ t.label }}</span>
-            <span class="tg__id mono">{{ t.id }}</span>
+            <span class="tg__id mono">{{ t.slug }}</span>
             <span class="tg__badge">{{ sourceLabel(t.source) }}</span>
             <!-- Only the deliberate choices are badged, and only where they are consumed. The
                  defaults — soft, once — are the ordinary case and a badge on every row would say
@@ -94,14 +94,14 @@
 
     <KModal
       v-model="editorOpen"
-      :title="editing ? translate('settings.triggers.editTitle', { id: draft.id }) : translate('settings.triggers.newTitle')"
+      :title="editing ? translate('settings.triggers.editTitle', { id: draft.slug }) : translate('settings.triggers.newTitle')"
       width="560px"
     >
       <div class="tg__form">
         <!-- The id names the rule file the session loads (`rules/<id>.md`), so it is fixed
              once the row exists: renaming would leave the old rule behind and write a second. -->
         <KField
-          v-model="draft.id"
+          v-model="draft.slug"
           :label="translate('settings.triggers.idLabel')"
           :disabled="editing"
           placeholder="env-guard"
@@ -238,16 +238,18 @@ import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AGENTS, SKILL_NAME_RE, type SkillView } from '@kermanych/core';
 import {
-  deleteTrigger,
-  listProjectSkills,
-  listTriggers,
-  setTriggerSkills,
-  upsertTrigger,
-  type ProjectTrigger,
+  deleteAiTrigger,
+  listAiSkills,
+  listAiTriggers,
+  setAiTriggerSkills,
+  upsertAiTrigger,
+  type AiOwner,
+  type AiTrigger,
 } from '@kermanych/cloud';
 import { api } from '../../lib/api';
 import { useAuth } from 'stores/auth';
 import { useProjects } from 'stores/projects';
+import { ownerLibraryView } from '../../lib/ai-team';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
@@ -262,7 +264,7 @@ import {
   TRIGGER_SOURCE_OPTIONS,
 } from '../../lib/settings';
 
-const props = defineProps<{ projectId: string; projectName: string }>();
+const props = defineProps<{ owner: AiOwner; ownerName: string }>();
 
 const auth = useAuth();
 const projects = useProjects();
@@ -280,7 +282,7 @@ const REPEAT_OPTIONS = computed(() => [
   { value: 'after-gap', label: translate('settings.triggers.repeatGap') },
 ]);
 
-const triggers = ref<ProjectTrigger[]>([]);
+const triggers = ref<AiTrigger[]>([]);
 const view = ref<SkillView[]>([]);
 // The names the bound checkout's own skill directories define, keyed to the file that owns
 // each. Never offered in the sequence editor — they are not this project's library — but a name
@@ -309,14 +311,28 @@ const sample = ref('');
 // while editing so a half-typed «apps/, » is not repeatedly re-split under the cursor.
 const globs = ref('');
 
-const canWrite = computed(() => projects.isOwner(props.projectId));
+const canWrite = computed(() =>
+  props.owner.scope === 'user'
+    ? true
+    : props.owner.scope === 'workspace'
+      ? projects.isWorkspaceOwner(props.owner.id)
+      : projects.isOwner(props.owner.id),
+);
+
+// The resolved library view for this owner. Only a project has a checkout, so only it can be
+// shadowed by repo files and only it has the api endpoint that sees them; every other scope
+// resolves the view from its own cloud rows, with no repo shadow.
+async function libraryView(owner: AiOwner): Promise<{ view: SkillView[]; repo: Record<string, string> }> {
+  if (owner.scope === 'project') return await api.projectSkills(owner.id);
+  return { view: ownerLibraryView(await listAiSkills(auth.client, owner)), repo: {} };
+}
 
 // `mode` → remind and `repeat` → once are the defaults in three places at once — here, the
 // column defaults in the migration, and renderRuleFile's mapping to interruptMode/repeatMode.
 // A new trigger is a soft reminder until someone says otherwise.
-function blankDraft(): Omit<ProjectTrigger, 'projectId' | 'pathGlobs'> {
+function blankDraft(): Omit<AiTrigger, 'id' | 'owner' | 'pathGlobs'> {
   return {
-    id: '',
+    slug: '',
     label: '',
     enabled: true,
     source: 'operator',
@@ -372,7 +388,7 @@ function agentLabel(id: string): string {
 // A prompt trigger's skill names are NOT checked here: they live in the editor's sequence, which
 // badges an unresolvable name and offers the control that removes it. A warning on the row would
 // name a problem the row cannot act on.
-function danglingAgent(t: ProjectTrigger): string {
+function danglingAgent(t: AiTrigger): string {
   if (t.action !== 'agent') return '';
   if (triggerAgentOptions(AGENTS).some((o) => o.value === t.agentId)) return '';
   return translate('settings.triggers.danglingAgent', { target: t.agentId });
@@ -381,17 +397,17 @@ function danglingAgent(t: ProjectTrigger): string {
 async function load(): Promise<void> {
   // Pinned for the whole read: the prop is live (see the watcher), so two loads can overlap and
   // a late one must not paint another project's triggers.
-  const projectId = props.projectId;
+  const ownerKey = props.owner.scope + ':' + props.owner.id;
   error.value = '';
   libraryError.value = '';
   const [rows, library] = await Promise.allSettled([
-    listTriggers(auth.client, [projectId]),
+    listAiTriggers(auth.client, props.owner),
     // One outcome for both, because neither half is any use alone: the resolved view is what the
     // sequence editor offers and badges, the stored rows are the only place its byte figures can
     // come from. Splitting them would leave the editor listing names it could not price.
-    Promise.all([api.projectSkills(projectId), listProjectSkills(auth.client, [projectId])]),
+    Promise.all([libraryView(props.owner), listAiSkills(auth.client, props.owner)]),
   ]);
-  if (projectId !== props.projectId) return;
+  if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
   if (rows.status === 'fulfilled') {
     triggers.value = rows.value;
     loaded.value = true;
@@ -419,7 +435,7 @@ async function load(): Promise<void> {
 // stays mounted. The editor is shut synchronously with it — a draft left open across the
 // switch would save into a project it was never opened for.
 watch(
-  () => props.projectId,
+  () => props.owner.scope + ':' + props.owner.id,
   () => {
     editorOpen.value = false;
     resetDraft();
@@ -495,11 +511,11 @@ function create(): void {
 
 // Everything the editor needs is already in the row this pane read, so opening one is
 // synchronous — there is no second fetch that could land in someone else's draft.
-function edit(t: ProjectTrigger): void {
+function edit(t: AiTrigger): void {
   resetDraft();
   editing.value = true;
   Object.assign(draft, {
-    id: t.id,
+    slug: t.slug,
     label: t.label,
     enabled: t.enabled,
     source: t.source,
@@ -520,9 +536,9 @@ function edit(t: ProjectTrigger): void {
 async function save(): Promise<void> {
   // Pinned like every write on this pane: the row belongs to the project the operator was
   // looking at when the button went down.
-  const projectId = props.projectId;
+  const ownerKey = props.owner.scope + ':' + props.owner.id;
   formError.value = '';
-  if (!SKILL_NAME_RE.test(draft.id)) {
+  if (!SKILL_NAME_RE.test(draft.slug)) {
     formError.value = translate('settings.triggers.errId');
     return;
   }
@@ -557,11 +573,11 @@ async function save(): Promise<void> {
   }
   saving.value = true;
   try {
-    await upsertTrigger(auth.client, {
-      projectId,
-      id: draft.id,
+    const saved = await upsertAiTrigger(auth.client, {
+      owner: props.owner,
+      slug: draft.slug,
       label: draft.label,
-      // Carried through the editor rather than defaulted: `upsertTrigger` applies
+      // Carried through the editor rather than defaulted: `upsertAiTrigger` applies
       // `enabled ?? true`, so omitting it would silently switch a disabled trigger back on
       // the first time someone fixed a typo in its pattern.
       enabled: draft.enabled,
@@ -584,17 +600,18 @@ async function save(): Promise<void> {
     // so the operator has to know that the trigger will fire with the wrong body. Pressing
     // «Зберегти» again is safe — the row write is an upsert and the sequence write is a
     // replace-all, so a retry converges rather than duplicating anything.
-    await setTriggerSkills(
+    // Addressed by the surrogate id the upsert just minted — the slug is unique only within an
+    // owner, the surrogate is unique across scopes and is what the skills table foreign-keys.
+    await setAiTriggerSkills(
       auth.client,
-      projectId,
-      draft.id,
+      saved.id,
       draft.action === 'prompt' ? [...draft.skills] : [],
     );
-    if (projectId !== props.projectId) return;
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     editorOpen.value = false;
     await load();
   } catch (e) {
-    if (projectId !== props.projectId) return;
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     formError.value = e instanceof Error ? e.message : String(e);
   } finally {
     saving.value = false;
@@ -611,34 +628,48 @@ function parseGlobs(text: string): string[] {
 // The switch on the row. A disabled trigger keeps its row — it is still the operator's rule,
 // and materializeTriggers simply stops writing a file for it — so this is an upsert of the
 // same row with one bit flipped, never a delete.
-async function toggle(t: ProjectTrigger): Promise<void> {
-  const projectId = props.projectId;
+async function toggle(t: AiTrigger): Promise<void> {
+  const ownerKey = props.owner.scope + ':' + props.owner.id;
   error.value = '';
   busy.value = true;
   try {
-    await upsertTrigger(auth.client, { ...t, enabled: !t.enabled });
-    if (projectId !== props.projectId) return;
+    await upsertAiTrigger(auth.client, {
+      owner: props.owner,
+      slug: t.slug,
+      label: t.label,
+      source: t.source,
+      pattern: t.pattern,
+      pathGlobs: t.pathGlobs,
+      action: t.action,
+      instruction: t.instruction,
+      agentId: t.agentId,
+      mode: t.mode,
+      repeat: t.repeat,
+      skills: t.skills,
+      enabled: !t.enabled,
+    });
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     await load();
   } catch (e) {
-    if (projectId !== props.projectId) return;
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
     busy.value = false;
   }
 }
 
-// `deleteTrigger` throws when it removed nothing — an RLS refusal on a DELETE reports no error
+// `deleteAiTrigger` throws when it removed nothing — an RLS refusal on a DELETE reports no error
 // otherwise. Nothing is dropped locally: the reload is what the screen reflects.
 async function drop(id: string): Promise<void> {
-  const projectId = props.projectId;
+  const ownerKey = props.owner.scope + ':' + props.owner.id;
   error.value = '';
   busy.value = true;
   try {
-    await deleteTrigger(auth.client, projectId, id);
-    if (projectId !== props.projectId) return;
+    await deleteAiTrigger(auth.client, id);
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     await load();
   } catch (e) {
-    if (projectId !== props.projectId) return;
+    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
     busy.value = false;

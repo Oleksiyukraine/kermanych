@@ -49,9 +49,9 @@ vi.mock("@kermanych/cloud", () => ({
 
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
-import type { SkillsService } from "../src/skills/skills.service";
+import type { AiScopeSet, SkillsService } from "../src/skills/skills.service";
 import type { AuthService } from "../src/auth/auth.service";
-import type { ProjectTrigger } from "@kermanych/cloud";
+import type { AiTrigger } from "@kermanych/cloud";
 import { offlineAuth } from "./offline-auth";
 import { stubSkills } from "./skills-stub";
 
@@ -233,8 +233,8 @@ describe("promoteChatToAgent", () => {
 // taskId, and the promotion now refuses to run without one.
 describe("trigger-driven promotion", () => {
   const USER = "11111111-1111-1111-1111-111111111111";
-  const trigger: ProjectTrigger = {
-    projectId: "p1", id: "start", label: "Берись", enabled: true, source: "operator",
+  const trigger: AiTrigger = {
+    owner: { scope: "project", id: "p1" }, id: "start", slug: "start", label: "Берись", enabled: true, source: "operator",
     pattern: "берись за роботу", pathGlobs: [], action: "agent",
     instruction: "", agentId: "promote", skills: [],
     mode: "remind", repeat: "once",
@@ -261,7 +261,7 @@ describe("trigger-driven promotion", () => {
     const skills = {
       ...stubSkills(),
       operatorTriggers: async () => [trigger],
-      assignedForNames: async (_p: string, names: readonly string[]) => ({ block: "", view: [], missing: [...names] }),
+      assignedForNames: async (_scope: AiScopeSet, names: readonly string[]) => ({ block: "", view: [], missing: [...names] }),
     } as unknown as SkillsService;
     const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, skills);
     return { sup, registry };

@@ -591,6 +591,15 @@ const VIEWS = [
     route: MANAGEMENT_DEFAULT_SECTION,
     section: 'management',
   },
+  // Right after Менеджмент, per the same rule: `route` is the name a click pushes and
+  // `section` is what route.matched lights. «ШІ-команда» is one record, so both are its
+  // own name — a bare push lands on the default section (aiTeamSection()).
+  {
+    value: 'ai-team',
+    label: 'common.nav.viewAiTeam',
+    route: 'ai-team',
+    section: 'ai-team',
+  },
 ] as const;
 const topOptions = computed(() => VIEWS.map((v) => ({ value: v.value, label: t(v.label) })));
 // Anything outside the table — /kit, /settings — selects NO segment. It used to
