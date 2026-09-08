@@ -363,11 +363,6 @@ onUnmounted(() => {
   border-radius: var(--k-r-sm);
 }
 
-.todow__text:focus-visible {
-  outline: 1px solid var(--k-line-strong);
-  outline-offset: 2px;
-}
-
 .todow__text:empty::before {
   content: attr(data-placeholder);
   color: var(--k-faint);
