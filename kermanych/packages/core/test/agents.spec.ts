@@ -7,6 +7,8 @@ import {
   instructionHoles,
   renderInstruction,
   PR_CONVENTIONS_FALLBACK,
+  KERMANYCH_COAUTHOR,
+  COAUTHOR_DIRECTIVE,
 } from "../src/agents";
 import { SKILL_NAME_RE } from "../src/skills";
 
@@ -102,4 +104,17 @@ test("holes are listed once each, in the order the template introduces them", ()
 test("the PR conventions fallback is the four-line list the supervisor used", () => {
   expect(PR_CONVENTIONS_FALLBACK.split("\n")).toHaveLength(4);
   expect(PR_CONVENTIONS_FALLBACK).toContain("Conventional Commits");
+});
+
+test("Kermanych credits itself as a commit co-author on every path that commits", () => {
+  // The identity is one string, embedded in every commit instruction so a rename never leaves
+  // one path crediting a stale name.
+  expect(KERMANYCH_COAUTHOR).toMatch(/^Kermanych <.+@.+>$/);
+  // The directive launch() appends to a work session, and the two templates that themselves
+  // commit, all carry the SAME trailer.
+  const trailer = `Co-Authored-By: ${KERMANYCH_COAUTHOR}`;
+  expect(COAUTHOR_DIRECTIVE).toContain(trailer);
+  expect(agentById("pull-request")!.instruction).toContain(trailer);
+  // The merge commit is made with --no-edit, so it takes the trailer through git's own flag.
+  expect(agentById("resolve-conflict")!.instruction).toContain(`--trailer "${trailer}"`);
 });

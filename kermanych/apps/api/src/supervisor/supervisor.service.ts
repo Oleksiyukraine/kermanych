@@ -16,6 +16,7 @@ import { SkillsService, skillsRoot, type AiScopeSet } from "../skills/skills.ser
 import { copyCarryFiles } from "../env/carry-files";
 import {
   PR_CONVENTIONS_FALLBACK,
+  COAUTHOR_DIRECTIVE,
   agentById,
   renderInstruction,
   expandHelpers,
@@ -698,8 +699,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         this.events.next({ type: "transcript_reset", sessionId: id, entries: live.transcript });
       }
       if (firstPrompt.trim()) {
+        // The transcript shows the operator's own ask; the co-author directive rides only on what
+        // the model receives (like a matched trigger's body), so every commit this work session
+        // makes credits Kermanych — the board-launched executor has no template to carry it.
         this.appendEntry(id, this.userEntry(firstPrompt, images));
-        rpc.prompt(firstPrompt, images);
+        rpc.prompt(`${firstPrompt}\n\n${COAUTHOR_DIRECTIVE}`, images);
       } else {
         // No opening message (a forked agent continuing the chat) — sit idle, ready for input.
         live.live.status = "done";

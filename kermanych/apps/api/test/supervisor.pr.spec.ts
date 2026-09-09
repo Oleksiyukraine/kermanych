@@ -77,6 +77,10 @@ describe("createPullRequest", () => {
     expect(p).toMatch(/gh pr create/); // opens the PR via gh
     expect(p).toMatch(/push/i); // pushes the branch first
     expect(p).toMatch(/Conventional Commits/); // Kermanych's built-in fallback conventions
+    expect(p).toContain("GIT_TOKEN"); // reads the project's configured token from .env first
+    expect(p).toMatch(/prefer it over any/i); // GIT_TOKEN preferred over ambient creds
+    expect(p).toMatch(/fall back/i); // ambient gh/git credentials only as the fallback
+    expect(p).toMatch(/Co-Authored-By: Kermanych </); // credits Kermanych as a commit co-author
   });
 
   it("prefers the project's own convention fallback over the built-in default", async () => {

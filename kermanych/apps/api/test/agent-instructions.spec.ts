@@ -3,7 +3,7 @@
 // still gets, byte for byte. The per-project override is the last case: it replaces the
 // template and nothing else, so the assigned-skills block still trails the prompt.
 import { expect, test } from "vitest";
-import { agentById, assignedBlock, renderInstruction, PR_CONVENTIONS_FALLBACK } from "@kermanych/core";
+import { agentById, assignedBlock, renderInstruction, PR_CONVENTIONS_FALLBACK, KERMANYCH_COAUTHOR } from "@kermanych/core";
 
 test("the default review instruction is byte-identical to the text the supervisor used", () => {
   const out = renderInstruction(agentById("review")!, {
@@ -31,7 +31,7 @@ test("the default conflict instruction is byte-identical", () => {
       `\n\nResolve every conflict: edit each file, remove the conflict markers ` +
       `(<<<<<<<, =======, >>>>>>>), and combine BOTH sides so nothing is lost — keep this ` +
       `branch's changes AND the changes merged in from the base branch. When all conflicts ` +
-      `are resolved, run \`git add -A && git commit --no-edit\` to complete the merge. Do only this.`,
+      `are resolved, run \`git add -A && git commit --no-edit --trailer "Co-Authored-By: ${KERMANYCH_COAUTHOR}"\` to complete the merge. Do only this.`,
   );
 });
 
