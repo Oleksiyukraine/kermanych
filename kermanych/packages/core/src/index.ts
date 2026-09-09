@@ -90,6 +90,8 @@ export {
 export {
   AGENTS,
   PR_CONVENTIONS_FALLBACK,
+  KERMANYCH_COAUTHOR,
+  COAUTHOR_DIRECTIVE,
   agentById,
   effectiveInstruction,
   instructionErrors,

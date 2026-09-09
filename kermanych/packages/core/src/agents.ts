@@ -32,6 +32,21 @@ export const PR_CONVENTIONS_FALLBACK = [
   "- Keep the PR scoped to this branch's work; do not fold in unrelated changes.",
 ].join("\n");
 
+// The identity Kermanych credits itself with when it drives work: a commit co-author, mirroring
+// the runtime's own `Co-Authored-By: Claude …` line so a PR carries BOTH. A constant, not a
+// runtime hole — who Kermanych is does not vary by project. This is the GitHub-provided no-reply
+// address of the @kermanychsupport-ai account (`<id>+<login>@users.noreply.github.com`), which
+// GitHub resolves to that account for the avatar without exposing a real inbox in every commit.
+export const KERMANYCH_COAUTHOR = "Kermanych <327010303+kermanychsupport-ai@users.noreply.github.com>";
+
+// Appended to every WORK session's opening prompt (SupervisorService.launch), so every commit
+// the agent makes carries the co-author trailer — not only the ones a Kermanych template
+// dictates. Deliberately one line: unlike a skill block, a single attribution trailer does not
+// compete with the repository's own conventions, which is why a work session may carry it.
+export const COAUTHOR_DIRECTIVE =
+  "When you commit, end each commit message with a blank line followed by the trailer " +
+  `\`Co-Authored-By: ${KERMANYCH_COAUTHOR}\`, crediting Kermanych as a co-author of the work.`;
+
 const REVIEW = [
   "You are an INDEPENDENT code reviewer. You did NOT do this work and have no prior ",
   "context — audit ONLY the task and the diff below, with fresh eyes.\n\n",
@@ -63,16 +78,34 @@ const RESOLVE_CONFLICT = [
   "\n\nResolve every conflict: edit each file, remove the conflict markers ",
   "(<<<<<<<, =======, >>>>>>>), and combine BOTH sides so nothing is lost — keep this ",
   "branch's changes AND the changes merged in from the base branch. When all conflicts ",
-  "are resolved, run `git add -A && git commit --no-edit` to complete the merge. Do only this.",
+  `are resolved, run \`git add -A && git commit --no-edit --trailer "Co-Authored-By: ${KERMANYCH_COAUTHOR}"\` to complete the merge. Do only this.`,
 ].join("");
 
+// The auth block is the load-bearing part: `gh pr create` and `git push` otherwise pick up
+// whatever ambient credential the machine has (a stored `gh` login, an ssh key, a credential
+// helper), which is often the wrong account. Kermanych copies the project's configured Git
+// token into every worktree's `.env` as GIT_TOKEN for exactly this, so the agent is told to
+// PREFER it and only fall back to ambient credentials when it is absent. Read without echoing:
+// the token must never reach the transcript.
 const PULL_REQUEST = [
   "Open a pull request for this session's branch `{{branch}}`.\n\n",
   "Follow the repository's own `### PR Conventions` and `### Commit Conventions` from its ",
   "CLAUDE.md / AGENTS.md if they exist. If the repo defines none, follow these defaults instead:\n",
   "{{conventions}}\n\n",
+  "Authentication — settle this BEFORE pushing or opening the PR, and prefer it over any ",
+  "ambient `gh`/git credentials, which may belong to the wrong account:\n",
+  "1. Read `GIT_TOKEN` from the `.env` at the root of this worktree — Kermanych copies the ",
+  "project's configured Git token there for exactly this. Load it WITHOUT printing it, e.g. ",
+  "`export GH_TOKEN=\"$(grep -E '^GIT_TOKEN=' .env | head -n1 | cut -d= -f2-)\"`; never echo the ",
+  "token or paste it into a command whose output is shown.\n",
+  "2. If GH_TOKEN is now non-empty, make git use it too (`gh auth setup-git`) and do the push ",
+  "and the PR with it. If `.env` has no `GIT_TOKEN`, or it is empty, fall back to the ",
+  "environment's existing `gh`/git credentials.\n\n",
   "Steps:\n",
-  "1. Commit any uncommitted work, following the commit conventions.\n",
+  "1. Commit any uncommitted work, following the commit conventions. End every commit message ",
+  `you write with a blank line and the trailer \`Co-Authored-By: ${KERMANYCH_COAUTHOR}\`, so `,
+  "GitHub credits Kermanych as a co-author of the PR — in addition to any co-author your ",
+  "runtime already adds.\n",
   "2. Push `{{branch}}` to `origin` (set the upstream).\n",
   "3. Open the PR with `gh pr create`. {{baseLine}}\n",
   "Reply with the PR URL when done. Do only this.",

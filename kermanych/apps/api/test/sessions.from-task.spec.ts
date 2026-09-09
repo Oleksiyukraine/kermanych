@@ -352,9 +352,11 @@ describe("createSessionFromTask", () => {
 
     await sup.createSessionFromTask("task-1", USER, [{ data: "aGk=", mimeType: "image/png" }]);
 
-    expect(prompts.at(-1)).toEqual([
-      "wire GitHub OAuth",
-      [{ data: "aGk=", mimeType: "image/png" }],
-    ]);
+    const [text, images] = prompts.at(-1) as [string, unknown];
+    // The task is the head of the sent prompt; the co-author directive rides behind it so every
+    // commit this executor makes credits Kermanych. Images are forwarded untouched.
+    expect(text).toMatch(/^wire GitHub OAuth\n\n/);
+    expect(text).toMatch(/Co-Authored-By: Kermanych </);
+    expect(images).toEqual([{ data: "aGk=", mimeType: "image/png" }]);
   });
 });
