@@ -985,7 +985,9 @@ export const uk = {
     },
     agentsUnavailable: 'Агентів налаштовують на рівні воркспейсу. Тут цей функціонал поки недоступний.',
     inherited: {
-      title: 'Успадковано з воркспейсу',
+      title: 'Успадковано',
+      system: 'системний',
+      fromWorkspace: 'з воркспейсу',
     },
     blank: {
       eyebrow: 'КЕРМАНИЧ',
