@@ -6,7 +6,7 @@ import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import type { Task, TaskInsert, TaskPatch, TaskStatus } from "./types";
 
 const TASK_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, image_paths, jira_key, created_at, updated_at";
+  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, image_paths, jira_key, linear_key, created_at, updated_at";
 
 type TaskRow = {
   id: string;
@@ -27,6 +27,7 @@ type TaskRow = {
   branch: string | null;
   image_paths: string[] | null;
   jira_key: string | null;
+  linear_key: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -56,6 +57,8 @@ export function toTask(row: TaskRow): Task {
   // Present only on a shadow task minted by a Jira-ticket launch; the native board
   // filters these rows out and the Jira view joins them for its agent chip.
   if (row.jira_key !== null) t.jiraKey = row.jira_key;
+  // The Linear twin of jira_key: a shadow task minted by launching a Linear ticket.
+  if (row.linear_key !== null) t.linearKey = row.linear_key;
   // `not null default '{}'`, so this is an array in practice; the Array check keeps an
   // image-less task an ABSENT key (like every other optional field) and tolerates a row
   // that omitted the column entirely.
@@ -81,6 +84,7 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   if (patch.kind !== undefined) row.kind = patch.kind.trim() || null;
   if (patch.branch !== undefined) row.branch = patch.branch.trim() || null;
   if (patch.jiraKey !== undefined) row.jira_key = patch.jiraKey.trim() || null;
+  if (patch.linearKey !== undefined) row.linear_key = patch.linearKey.trim() || null;
   // Arrays are sent verbatim: an empty array is the "no images" value, not a clear-to-null,
   // because the column is `not null`.
   if (patch.imagePaths !== undefined) row.image_paths = patch.imagePaths;
@@ -136,6 +140,7 @@ export async function createTask(
       hidden: input.hidden,
       imagePaths: input.imagePaths,
       jiraKey: input.jiraKey,
+      linearKey: input.linearKey,
     }),
   };
   const { data, error } = await client.from("tasks").insert(row).select(TASK_COLUMNS).single();

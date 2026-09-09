@@ -20,7 +20,7 @@
         <h3 class="int__name">{{ brand.name }}</h3>
         <p class="int__blurb">{{ t(brand.blurb) }}</p>
 
-        <!-- Jira is live; the other tiles keep the original presentation-only foot. -->
+        <!-- Jira and Linear are live; Slack keeps the original presentation-only foot. -->
         <div v-if="brand.id === 'jira'" class="int__foot">
           <span class="int__state mono">
             <i class="int__state-dot" :class="{ 'int__state-dot--on': !!jira.integration }" aria-hidden="true"></i>
@@ -40,6 +40,27 @@
             type="button"
             :disabled="!canConnect"
             @click="openConnect"
+          >{{ t('management.integrations.connect') }}</button>
+        </div>
+        <div v-else-if="brand.id === 'linear'" class="int__foot">
+          <span class="int__state mono">
+            <i class="int__state-dot" :class="{ 'int__state-dot--on': !!linear.integration }" aria-hidden="true"></i>
+            <template v-if="linear.integration">{{ t('linear.connect.stateConnected', { board: linear.integration.teamName }) }}</template>
+            <template v-else>{{ t('management.integrations.notConnected') }}</template>
+          </span>
+          <button
+            v-if="linear.integration"
+            class="int__cta"
+            type="button"
+            @click="openLinearSettings"
+          >{{ t('linear.connect.configure') }}</button>
+          <button
+            v-else
+            v-tip="canConnect ? '' : t('linear.connect.ownerOnly')"
+            class="int__cta"
+            type="button"
+            :disabled="!canConnect"
+            @click="openLinearConnect"
           >{{ t('management.integrations.connect') }}</button>
         </div>
         <div v-else v-tip="t('management.integrations.devTip')" class="int__foot">
@@ -147,13 +168,97 @@
         <KBtn variant="primary" @click="settingsOpen = false">{{ t('jira.connect.done') }}</KBtn>
       </template>
     </KModal>
+
+    <!-- LINEAR CONNECT — the owner's two steps: personal API key → team. -->
+    <KModal v-model="linearConnectOpen" :title="t('linear.connect.title')" width="520px">
+      <div class="int__flow">
+        <template v-if="linearConnectStep === 'token'">
+          <KField v-model="linearApiKeyInput" :label="t('linear.connect.tokenLabel')" type="password" placeholder="lin_api_…" @keydown.enter="linearTokenNext" />
+          <p class="int__hint">
+            {{ t('linear.connect.tokenHintBefore') }}
+            <a class="int__link" href="https://linear.app/settings/api" target="_blank" rel="noopener noreferrer">linear.app → Settings → API</a>.
+            {{ t('linear.connect.tokenHintAfter') }}
+          </p>
+        </template>
+
+        <template v-else>
+          <KSelect
+            v-model="linearTeamPick"
+            :label="t('linear.connect.teamLabel')"
+            :options="linearTeamOptions"
+            :placeholder="t('linear.connect.teamPlaceholder')"
+            searchable
+          />
+          <p class="int__hint">{{ t('linear.connect.teamHint') }}</p>
+        </template>
+
+        <p v-if="linearFlowError" class="int__error mono">{{ linearFlowError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="linearConnectOpen = false">{{ t('linear.connect.cancel') }}</KBtn>
+        <KBtn v-if="linearConnectStep === 'token'" variant="primary" :disabled="!linearApiKeyInput.trim() || linearBusy" @click="linearTokenNext">
+          {{ linearBusy ? t('linear.connect.checking') : t('linear.connect.next') }}
+        </KBtn>
+        <KBtn v-else variant="primary" :disabled="!linearTeamPick || linearBusy" @click="linearConnectFinish">
+          {{ linearBusy ? t('linear.connect.connecting') : t('management.integrations.connect') }}
+        </KBtn>
+      </template>
+    </KModal>
+
+    <!-- LINEAR SETTINGS — facts, the member's own API key, owner actions. -->
+    <KModal v-model="linearSettingsOpen" title="Linear" width="520px">
+      <div v-if="linear.integration" class="int__flow">
+        <dl class="int__facts">
+          <div><dt>{{ t('linear.connect.orgFact') }}</dt><dd class="mono">{{ linear.integration.orgUrlKey }}</dd></div>
+          <div><dt>{{ t('linear.connect.teamLabel') }}</dt><dd>{{ linear.integration.teamName }}</dd></div>
+          <div><dt>{{ t('linear.connect.teamFact') }}</dt><dd class="mono">{{ linear.integration.teamKey }}</dd></div>
+        </dl>
+
+        <div class="int__token">
+          <p class="int__token-state">
+            <template v-if="linear.tokenPresent">
+              {{ t('linear.connect.tokenOnMachine') }}
+            </template>
+            <template v-else>
+              {{ t('linear.connect.noToken') }}
+            </template>
+          </p>
+          <template v-if="linearTokenEditing || !linear.tokenPresent">
+            <KField v-model="linearApiKeyInput" :label="t('linear.connect.tokenLabel')" type="password" placeholder="lin_api_…" />
+            <p class="int__hint">
+              <a class="int__link" href="https://linear.app/settings/api" target="_blank" rel="noopener noreferrer">linear.app → Settings → API</a>
+            </p>
+            <div class="int__row">
+              <KBtn variant="secondary" :disabled="!linearApiKeyInput.trim() || linearBusy" @click="saveLinearToken">
+                {{ linearBusy ? t('linear.connect.checking') : t('linear.connect.saveToken') }}
+              </KBtn>
+              <KBtn v-if="linearTokenEditing" variant="ghost" @click="linearTokenEditing = false">{{ t('linear.connect.cancel') }}</KBtn>
+            </div>
+          </template>
+          <div v-else class="int__row">
+            <KBtn variant="ghost" @click="startLinearTokenEdit">{{ t('linear.connect.replaceToken') }}</KBtn>
+            <KBtn variant="ghost" @click="removeLinearToken">{{ t('linear.connect.removeToken') }}</KBtn>
+          </div>
+        </div>
+
+        <p v-if="linearFlowError" class="int__error mono">{{ linearFlowError }}</p>
+
+        <div v-if="isOwner" class="int__danger">
+          <KBtn variant="ghost" @click="changeLinearTeam">{{ t('linear.connect.changeTeam') }}</KBtn>
+          <KBtn variant="ghost" @click="disconnectLinear">{{ t('linear.connect.disconnect') }}</KBtn>
+        </div>
+      </div>
+      <template #controls>
+        <KBtn variant="primary" @click="linearSettingsOpen = false">{{ t('linear.connect.done') }}</KBtn>
+      </template>
+    </KModal>
   </section>
 </template>
 
 <script setup lang="ts">
-// Integrations — Jira is the first LIVE tile: the workspace-level connection (owner) and
-// this member's personal token (everyone) both live here. Linear and Slack stay the
-// presentation-only tiles they were.
+// Integrations — Jira and Linear are the LIVE tiles: the workspace-level connection
+// (owner) and this member's personal token (everyone) both live here, one independent set
+// of controls each so a workspace may connect both. Slack stays the presentation-only tile.
 //
 // It takes the same props every section gets from ManagementPage, so the workspace it
 // connects is already named for it.
@@ -163,8 +268,9 @@ import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
-import { api, type JiraBoardOption } from '../lib/api';
+import { api, type JiraBoardOption, type LinearTeamOption } from '../lib/api';
 import { useJira } from 'stores/jira';
+import { useLinear } from 'stores/linear';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 
@@ -173,6 +279,7 @@ const props = defineProps<{ workspaceId: string; workspaceName: string }>();
 const jira = useJira();
 const cloud = useProjects();
 const local = useOrchestrator();
+const linear = useLinear();
 
 const isOwner = computed(() => cloud.isWorkspaceOwner(props.workspaceId));
 const canConnect = computed(() => isOwner.value);
@@ -336,13 +443,152 @@ async function disconnect(): Promise<void> {
   }
 }
 
+// ── Linear connect stepper ─────────────────────────────────────────────────────
+// Two steps, not Jira's three: Linear needs no site (the org travels with the personal API
+// key) and no email. The key is validated by the api, which discovers the org and returns
+// its url-key — the key everything else about this connection is stored under.
+const linearConnectOpen = ref(false);
+const linearConnectStep = ref<'token' | 'team'>('token');
+const linearApiKeyInput = ref('');
+const linearOrgUrlKey = ref('');
+const linearTeams = ref<LinearTeamOption[]>([]);
+const linearTeamPick = ref('');
+const linearBusy = ref(false);
+const linearFlowError = ref('');
+
+const linearSettingsOpen = ref(false);
+const linearTokenEditing = ref(false);
+
+const linearTeamOptions = computed<KSelectOption[]>(() =>
+  linearTeams.value.map((tm) => ({ value: tm.id, label: `${tm.name} · ${tm.key}` })),
+);
+
+function openLinearConnect(): void {
+  linearConnectStep.value = 'token';
+  linearApiKeyInput.value = '';
+  linearOrgUrlKey.value = linear.integration?.orgUrlKey ?? '';
+  linearFlowError.value = '';
+  linearConnectOpen.value = true;
+}
+
+function openLinearSettings(): void {
+  linearFlowError.value = '';
+  linearTokenEditing.value = false;
+  linearApiKeyInput.value = '';
+  linearSettingsOpen.value = true;
+}
+
+// The key is stored keyed by the discovered org url-key + this viewer, and its org is what
+// the team list is fetched against.
+async function linearTokenNext(): Promise<void> {
+  const apiKey = linearApiKeyInput.value.trim();
+  if (!apiKey) return;
+  linearFlowError.value = '';
+  linearBusy.value = true;
+  try {
+    const res = await api.linearSetToken(apiKey);
+    linearApiKeyInput.value = '';
+    linearOrgUrlKey.value = res.orgUrlKey;
+    await loadLinearTeams();
+    linearConnectStep.value = 'team';
+  } catch (e) {
+    linearFlowError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    linearBusy.value = false;
+  }
+}
+
+async function loadLinearTeams(): Promise<void> {
+  linearTeams.value = await api.linearTeams(linearOrgUrlKey.value);
+  linearTeamPick.value = linearTeamOptions.value[0]?.value ?? '';
+}
+
+async function linearConnectFinish(): Promise<void> {
+  if (!linearTeamPick.value) return;
+  linearFlowError.value = '';
+  linearBusy.value = true;
+  try {
+    await api.linearConnect(props.workspaceId, linearOrgUrlKey.value, linearTeamPick.value);
+    await linear.probe(props.workspaceId);
+    linearConnectOpen.value = false;
+    local.notify(t('linear.notify.connected'), 'info');
+  } catch (e) {
+    linearFlowError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    linearBusy.value = false;
+  }
+}
+
+// ── Linear settings actions ─────────────────────────────────────────────────────
+function startLinearTokenEdit(): void {
+  linearTokenEditing.value = true;
+  linearApiKeyInput.value = '';
+}
+
+async function saveLinearToken(): Promise<void> {
+  const apiKey = linearApiKeyInput.value.trim();
+  if (!apiKey) return;
+  linearFlowError.value = '';
+  linearBusy.value = true;
+  try {
+    await api.linearSetToken(apiKey);
+    linearApiKeyInput.value = '';
+    linearTokenEditing.value = false;
+    await refreshLinearTokenState();
+    local.notify(t('linear.notify.tokenSaved'), 'info');
+  } catch (e) {
+    linearFlowError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    linearBusy.value = false;
+  }
+}
+
+async function removeLinearToken(): Promise<void> {
+  const org = linear.integration?.orgUrlKey;
+  if (!org) return;
+  await api.linearDeleteToken(org);
+  await refreshLinearTokenState();
+}
+
+// Re-read the token alone, after THIS page changed it — the same reason as Jira's
+// refreshTokenState: saving or deleting a key must not re-fetch the integration row.
+async function refreshLinearTokenState(): Promise<void> {
+  const org = linear.integration?.orgUrlKey;
+  if (!org) return;
+  try {
+    const status = await api.linearTokenStatus(org);
+    linear.tokenPresent = status.present;
+  } catch {
+    linear.tokenPresent = false;
+  }
+}
+
+function changeLinearTeam(): void {
+  linearSettingsOpen.value = false;
+  openLinearConnect();
+}
+
+async function disconnectLinear(): Promise<void> {
+  linearFlowError.value = '';
+  try {
+    await api.linearDisconnect(props.workspaceId);
+    linearSettingsOpen.value = false;
+    await linear.probe(props.workspaceId);
+    local.notify(t('linear.notify.disconnected'), 'info');
+  } catch (e) {
+    linearFlowError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
 onMounted(() => {
   void jira.probe(props.workspaceId);
+  void linear.probe(props.workspaceId);
 });
 watch(
   () => props.workspaceId,
   (id) => {
     void jira.probe(id);
+    void linear.probe(id);
   },
 );
 

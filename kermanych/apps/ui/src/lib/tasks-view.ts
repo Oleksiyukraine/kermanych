@@ -66,9 +66,9 @@ export function taskPatchFromDraft(draft: LauncherDraft): TaskPatch {
 // properties of the CARD rather than of the current selection — which is why they live
 // here and not in `filterTasks`:
 //
-// - `!t.jiraKey`: a shadow task minted by a Jira-ticket launch belongs to the Jira view,
-//   where the ticket card wears its status chip; the native columns must not show the same
-//   work twice.
+// - `!t.jiraKey` / `!t.linearKey`: a shadow task minted by a Jira- or Linear-ticket launch
+//   belongs to that provider's view, where the ticket card wears its status chip; the native
+//   columns must not show the same work twice.
 // - `!t.hidden`: its author checked «Приховати з дошки». The row is untouched everywhere
 //   else — its assignee still works it from «Задачі», it still launches and still pushes
 //   status — so THIS is the only place the flag is read.
@@ -76,7 +76,7 @@ export function taskPatchFromDraft(draft: LauncherDraft): TaskPatch {
 // Neither is user-toggleable, and neither is authorization: a hidden card is still a
 // project member's card, and the api launches it through the same getTask/claimTask path.
 export function boardTasks(tasks: Task[]): Task[] {
-  return tasks.filter((t) => !t.jiraKey && !t.hidden);
+  return tasks.filter((t) => !t.jiraKey && !t.linearKey && !t.hidden);
 }
 
 // «Задачі» in Агенти is my inbox — the cards I have to work, including ones a colleague
@@ -89,10 +89,15 @@ export function boardTasks(tasks: Task[]): Task[] {
 export function myBacklogTasks(tasks: Task[], userId: string, scopedProjectIds: string[]): Task[] {
   if (!userId) return [];
   const inScope = new Set(scopedProjectIds);
-  // `!t.jiraKey`: a shadow task minted by a Jira-ticket launch lives on the Jira view;
-  // surfacing it here would offer the same work twice under two names.
+  // `!t.jiraKey` / `!t.linearKey`: a shadow task minted by a Jira- or Linear-ticket launch
+  // lives on that provider's view; surfacing it here would offer the same work twice.
   return tasks.filter(
-    (t) => t.status === 'backlog' && !t.jiraKey && t.assigneeId === userId && inScope.has(t.projectId),
+    (t) =>
+      t.status === 'backlog' &&
+      !t.jiraKey &&
+      !t.linearKey &&
+      t.assigneeId === userId &&
+      inScope.has(t.projectId),
   );
 }
 

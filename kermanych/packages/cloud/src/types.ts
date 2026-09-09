@@ -99,6 +99,9 @@ export type Task = {
   // The Jira ticket key («KAN-42») when this row is a shadow task minted by launching a
   // mirrored ticket. The native board filters these out; the Jira view joins on them.
   jiraKey?: string;
+  // The Linear identifier («ENG-42») when this row is a shadow task minted by launching a
+  // mirrored Linear ticket. Its Jira twin above; the two boards each filter their own.
+  linearKey?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -122,6 +125,7 @@ export type TaskInsert = {
   branch?: string;
   imagePaths?: string[];
   jiraKey?: string;
+  linearKey?: string;
 };
 
 export type TaskPatch = {
@@ -138,6 +142,7 @@ export type TaskPatch = {
   branch?: string;
   imagePaths?: string[];
   jiraKey?: string;
+  linearKey?: string;
 };
 
 // ── «ШІ-команда» ────────────────────────────────────────────────────────────
@@ -539,6 +544,115 @@ export type JiraAttachment = {
   size: number;
   authorName: string;
   jiraCreatedAt: string;
+};
+
+// ── Linear mirror ─────────────────────────────────────────────────────────────
+// One Linear team's board mirrored per workspace. Structural twin of the Jira mirror
+// above, kept entirely separate so a workspace may connect both at once. These are the
+// camelCase shapes of the linear_* tables; linear.ts owns the snake_case boundary.
+// Linear is the source of truth — every row here is a cache overwritten from Linear,
+// never merged.
+
+// Linear's workflow-state type mapped onto Jira's three-way categorisation. The launch
+// flow's «already in progress — don't move it» rule reads THIS, never the free-form
+// state name: started -> indeterminate; completed/canceled -> done; everything else -> new.
+export type LinearStatusCategory = "new" | "indeterminate" | "done";
+
+export type LinearIntegration = {
+  id: string;
+  workspaceId: string;
+  orgUrlKey: string;
+  teamKey: string;
+  // Linear ids are UUID strings, not numbers.
+  teamId: string;
+  teamName: string;
+  connectedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LinearIntegrationInsert = {
+  workspaceId: string;
+  orgUrlKey: string;
+  teamKey: string;
+  teamId: string;
+  teamName: string;
+};
+
+export type LinearSyncState = {
+  integrationId: string;
+  workspaceId: string;
+  lastSyncedAt?: string;
+  // High-water Linear `updatedAt` timestamp; absent forces a full sweep.
+  syncCursor?: string;
+};
+
+export type LinearColumn = {
+  integrationId: string;
+  workspaceId: string;
+  position: number;
+  name: string;
+  // One Linear column maps a SINGLE workflow state; the array keeps parity with the
+  // Jira mirror (which maps a set) and holds exactly one id in practice.
+  stateIds: string[];
+};
+
+export type LinearIssue = {
+  integrationId: string;
+  workspaceId: string;
+  issueId: string;
+  key: string;
+  title: string;
+  // Linear's markdown description. Stored as Linear said it; the UI renders on display.
+  descriptionMd: string;
+  // Linear priority: 0 None, 1 Urgent, 2 High, 3 Medium, 4 Low.
+  priority: number;
+  priorityName: string;
+  // Linear's story-point estimate; 0 = none.
+  estimate: number;
+  labels: string[];
+  assigneeId?: string;
+  assigneeName?: string;
+  assigneeAvatar?: string;
+  stateId: string;
+  stateName: string;
+  stateCategory: LinearStatusCategory;
+  parentKey?: string;
+  url: string;
+  // Linear's planning dates in its own spelling (YYYY-MM-DD); blank = not set.
+  // `startDate` mirrors the date part of `startedAt` and is read-only (Linear has no
+  // user-editable start date); `dueDate` is the TimelessDate `dueDate`.
+  startDate: string;
+  dueDate: string;
+  linearUpdatedAt: string;
+  // Launch binding: the Kermanych repo a launch chose (remembered for relaunches)
+  // and the shadow tasks row the session pipeline runs on.
+  kermanychProjectId?: string;
+  taskId?: string;
+  updatedAt: string;
+};
+
+export type LinearComment = {
+  integrationId: string;
+  workspaceId: string;
+  issueId: string;
+  commentId: string;
+  authorName: string;
+  authorAvatar: string;
+  bodyMd: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LinearAttachment = {
+  integrationId: string;
+  workspaceId: string;
+  issueId: string;
+  attachmentId: string;
+  title: string;
+  subtitle: string;
+  url: string;
+  createdAt: string;
 };
 
 // ── Password vault ────────────────────────────────────────────────────────────

@@ -229,6 +229,12 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Per-user Linear API keys, THIS machine only — the Jira-token precedent. Keyed by
+    // (org, user) so one machine shared across orgs or accounts keeps them apart. The
+    // account_id column holds the token's own Linear viewer id, learned on validation.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS linear_tokens (org_url_key TEXT NOT NULL, user_id TEXT NOT NULL, api_key TEXT NOT NULL, account_id TEXT, PRIMARY KEY (org_url_key, user_id))`,
+    );
   }
 
   // v1 (2026-08-21, team cloud): `groups` becomes `projects`, its id becomes the CLOUD
@@ -350,6 +356,41 @@ export class RegistryService {
 
   deleteJiraToken(siteUrl: string, userId: string): void {
     this.db.prepare(`DELETE FROM jira_tokens WHERE site_url = ? AND user_id = ?`).run(siteUrl, userId);
+  }
+
+  // ── Linear tokens ─────────────────────────────────────────────────────────────
+
+  // `accountId` is absent for a token stored before it was recorded; LinearService
+  // backfills it from `viewer` rather than treating the gap as «not me».
+  getLinearToken(orgUrlKey: string, userId: string): { apiKey: string; accountId?: string } | undefined {
+    const row = this.db
+      .prepare(`SELECT api_key as apiKey, account_id as accountId FROM linear_tokens WHERE org_url_key = ? AND user_id = ?`)
+      .get(orgUrlKey, userId) as { apiKey: string; accountId: string | null } | undefined;
+    if (!row) return undefined;
+    const out: { apiKey: string; accountId?: string } = { apiKey: row.apiKey };
+    if (row.accountId) out.accountId = row.accountId;
+    return out;
+  }
+
+  setLinearToken(orgUrlKey: string, userId: string, apiKey: string, accountId?: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO linear_tokens (org_url_key, user_id, api_key, account_id) VALUES (?,?,?,?)
+         ON CONFLICT(org_url_key, user_id) DO UPDATE SET api_key = excluded.api_key, account_id = excluded.account_id`,
+      )
+      .run(orgUrlKey, userId, apiKey, accountId ?? null);
+  }
+
+  // The backfill path: a token stored before account_id existed keeps its row and gains
+  // the identity on the first call that needs it.
+  setLinearAccountId(orgUrlKey: string, userId: string, accountId: string): void {
+    this.db
+      .prepare(`UPDATE linear_tokens SET account_id = ? WHERE org_url_key = ? AND user_id = ?`)
+      .run(accountId, orgUrlKey, userId);
+  }
+
+  deleteLinearToken(orgUrlKey: string, userId: string): void {
+    this.db.prepare(`DELETE FROM linear_tokens WHERE org_url_key = ? AND user_id = ?`).run(orgUrlKey, userId);
   }
 
   removeProject(id: string): void {
