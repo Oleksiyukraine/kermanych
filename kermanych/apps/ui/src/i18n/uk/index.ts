@@ -424,7 +424,6 @@ export const uk = {
     },
     column: {
       backlog: 'Беклог',
-      queued: 'У черзі',
       running: 'В роботі',
       waiting: 'Чекає відповіді',
       review: 'На ревʼю',
