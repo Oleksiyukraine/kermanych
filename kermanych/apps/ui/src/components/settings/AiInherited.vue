@@ -1,39 +1,45 @@
 <template>
   <section v-if="rows.length" class="inh" :aria-label="t('aiTeam.inherited.title')">
     <p class="inh__title">{{ t('aiTeam.inherited.title') }}</p>
-    <!-- Read-only on purpose: these belong to the workspace, and a project member editing them
-         here would be editing someone else's scope. They are shown so the operator can SEE what
-         a session in this project also gets (triggers fire as a union), not to change it. -->
+    <!-- Read-only on purpose: these are not this scope's own rows — they are what a session at
+         this scope ALSO gets (system defaults, and for a project its workspace's rows). Shown so
+         the operator sees the full picture, not to edit another scope's data. -->
     <ul class="inh__list">
       <li v-for="r in rows" :key="r.primary" class="inh__row">
-        <span class="inh__name">{{ r.primary }}</span>
-        <span v-if="r.secondary" class="inh__sub mono">{{ r.secondary }}</span>
+        <span class="inh__name mono">{{ r.primary }}</span>
+        <span class="inh__origin">{{ r.origin }}</span>
       </li>
     </ul>
   </section>
 </template>
 
 <script setup lang="ts">
-// The workspace-scoped skills or triggers a PROJECT inherits, shown read-only below the
-// project's own editable list. Availability is a runtime fact (the launch merge already applies
-// them); this is purely so the operator can see the inherited layer rather than debug blind.
+// The layers a scope INHERITS (read-only), shown below its own editable list. Availability is a
+// runtime fact — the launch merge already applies these; this only makes the inherited layer
+// visible so the operator does not debug blind.
+//
+// What counts as inherited depends on the scope and the kind:
+//   skills  · project → system defaults + the workspace's own skills
+//           · user    → system defaults (there is no single project/workspace behind a user tab)
+//   triggers· project → the workspace's own triggers (there are no default triggers)
+//           · user    → nothing
+// The workspace tab inherits nothing and renders no block.
 import { ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { listAiSkills, listAiTriggers, type AiOwner } from '@kermanych/cloud';
+import { DEFAULT_SKILLS } from '@kermanych/core';
+import { listAiSkills, listAiTriggers, type AiOwner, type AiScope } from '@kermanych/cloud';
 import { useAuth } from 'stores/auth';
 
-const props = defineProps<{ kind: 'skills' | 'triggers'; workspace: AiOwner }>();
+const props = defineProps<{ kind: 'skills' | 'triggers'; scope: AiScope; workspace?: AiOwner | undefined }>();
 
 const { t } = useI18n();
 const auth = useAuth();
 
-type Entry = { primary: string; secondary?: string };
+type Entry = { primary: string; origin: string };
 const rows = ref<Entry[]>([]);
 
-// Re-read whenever the inherited workspace or the kind changes. A failure just leaves the block
-// empty (and so hidden): the inherited layer is informational, never a reason to error the pane.
 watch(
-  () => `${props.kind}:${props.workspace.scope}:${props.workspace.id}`,
+  () => `${props.kind}:${props.scope}:${props.workspace?.id ?? ''}`,
   () => {
     void load();
   },
@@ -41,22 +47,28 @@ watch(
 );
 
 async function load(): Promise<void> {
-  const key = `${props.kind}:${props.workspace.id}`;
+  const key = `${props.kind}:${props.scope}:${props.workspace?.id ?? ''}`;
   try {
-    const next: Entry[] =
-      props.kind === 'skills'
-        ? (await listAiSkills(auth.client, props.workspace))
-            .filter((s) => s.enabled)
-            .map((s) => ({ primary: s.name }))
-        : (await listAiTriggers(auth.client, props.workspace)).map((tr) => ({
-            primary: tr.label,
-            secondary: tr.slug,
-          }));
-    // A late read for a workspace the operator has since navigated away from must not paint.
-    if (key !== `${props.kind}:${props.workspace.id}`) return;
-    rows.value = next;
+    // Keyed by name/slug so a workspace entry that shares a default's name is shown once, as the
+    // workspace's — which is what the launch merge (workspace over default) resolves to.
+    const byName = new Map<string, Entry>();
+    if (props.kind === 'skills') {
+      for (const d of DEFAULT_SKILLS) byName.set(d.name, { primary: d.name, origin: t('aiTeam.inherited.system') });
+      if (props.workspace) {
+        for (const s of (await listAiSkills(auth.client, props.workspace)).filter((s) => s.enabled)) {
+          byName.set(s.name, { primary: s.name, origin: t('aiTeam.inherited.fromWorkspace') });
+        }
+      }
+    } else if (props.workspace) {
+      for (const tr of await listAiTriggers(auth.client, props.workspace)) {
+        byName.set(tr.slug, { primary: tr.label, origin: t('aiTeam.inherited.fromWorkspace') });
+      }
+    }
+    // A late read for a scope/workspace the operator has since left must not paint.
+    if (key !== `${props.kind}:${props.scope}:${props.workspace?.id ?? ''}`) return;
+    rows.value = [...byName.values()];
   } catch {
-    if (key !== `${props.kind}:${props.workspace.id}`) return;
+    if (key !== `${props.kind}:${props.scope}:${props.workspace?.id ?? ''}`) return;
     rows.value = [];
   }
 }
@@ -89,7 +101,7 @@ async function load(): Promise<void> {
   font-size: 12.5px;
   color: var(--k-muted);
 }
-.inh__sub {
+.inh__origin {
   font-size: 11px;
   color: var(--k-faint);
 }

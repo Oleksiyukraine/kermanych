@@ -215,7 +215,14 @@ async function load(): Promise<void> {
       listAiSkills(auth.client, props.owner),
     ]);
     if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
-    rows.value = [...library.view, ...tombstones(stored)];
+    // Workspace is the base: it shows the system defaults (with a «Вимкнути») plus its own
+    // skills. Project and user show ONLY their OWN skills in the editable list — the defaults
+    // and the workspace's skills are inherited, and live read-only in the «Успадковано» block
+    // below (AiInherited). Filtering by source keeps repo-shadowed OWN rows and drops defaults.
+    rows.value =
+      props.owner.scope === 'workspace'
+        ? [...library.view, ...tombstones(stored)]
+        : library.view.filter((v) => v.source !== 'default');
     storedRows.value = stored;
   } catch (e) {
     if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;

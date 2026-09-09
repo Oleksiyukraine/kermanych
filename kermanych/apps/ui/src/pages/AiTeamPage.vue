@@ -78,18 +78,18 @@
             <p>{{ t('aiTeam.agentsUnavailable') }}</p>
           </div>
         </div>
-        <!-- The read-only «успадковано з воркспейсу» block hangs BELOW the editable list and
-             only on the project tab: a project's session also gets its workspace's skills and
-             triggers at launch, and hiding that entirely leaves the operator debugging blind
-             (triggers fire as a union). The workspace tab inherits nothing; the user tab has no
-             single workspace to inherit from. -->
+        <!-- The read-only «Успадковано» block hangs BELOW the editable list on every scope
+             EXCEPT workspace (which is the base and inherits nothing). It shows what a session
+             at this scope also gets — system defaults, and for a project its workspace's rows —
+             so the operator is not left debugging blind (triggers fire as a union). The block
+             hides itself when it has nothing to show (e.g. triggers on the user tab). -->
         <div v-else-if="section.key === 'triggers'" class="ait__form ait__form--wide">
           <TriggersPanel :owner="owner" :owner-name="ownerName" />
-          <AiInherited v-if="inheritedWorkspace" kind="triggers" :workspace="inheritedWorkspace" />
+          <AiInherited v-if="scope !== 'workspace'" kind="triggers" :scope="scope" :workspace="inheritedWorkspace" />
         </div>
         <div v-else-if="section.key === 'skills'" class="ait__form ait__form--wide">
           <SkillsLibraryPanel :owner="owner" :owner-name="ownerName" />
-          <AiInherited v-if="inheritedWorkspace" kind="skills" :workspace="inheritedWorkspace" />
+          <AiInherited v-if="scope !== 'workspace'" kind="skills" :scope="scope" :workspace="inheritedWorkspace" />
         </div>
       </div>
     </section>
