@@ -52,9 +52,13 @@ async function onClick(): Promise<void> {
       type="button"
       @click="onClick"
     >
-      <span class="doc-tree__twist" aria-hidden="true">{{
-        node.type === 'dir' ? (node.open ? '▾' : '▸') : ''
-      }}</span>
+      <span class="doc-tree__twist" aria-hidden="true">
+        <span
+          v-if="node.type === 'dir'"
+          class="doc-tree__caret"
+          :class="{ 'doc-tree__caret--open': node.open }"
+        ></span>
+      </span>
       <span class="doc-tree__icon" aria-hidden="true">{{ node.type === 'dir' ? '📁' : '📄' }}</span>
       <span class="doc-tree__name">{{ node.name }}</span>
     </button>
@@ -102,11 +106,26 @@ async function onClick(): Promise<void> {
     color: var(--k-accent);
   }
 }
+// The fold marker is DRAWN, not typed — the same clip-path triangle KWorkspaceRow's
+// `.k-ws__caret` uses (see its note): a ▾/▸ glyph comes from a fallback face on the system
+// UI font and hangs below the row's centre line, tiny and misaligned. A clipped box has no
+// baseline to drift; 6x10 matches the sidebar's fold marker so both read at one size.
 .doc-tree__twist {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 12px;
   color: var(--k-faint);
-  font-size: 10px;
+}
+.doc-tree__caret {
+  width: 6px;
+  height: 10px;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+.doc-tree__caret--open {
+  transform: rotate(90deg);
 }
 .doc-tree__icon {
   flex: none;
