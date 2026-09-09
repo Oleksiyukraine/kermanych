@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it, test } from "vitest";
 import { deleteAiSkill, toAiSkill } from "../src/skills";
 
-const SKILL_COLUMNS = "id, workspace_id, project_id, user_id, name, description, body, enabled, updated_at, updated_by";
+const SKILL_COLUMNS = "id, workspace_id, project_id, user_id, name, description, body, enabled, created_at, created_by, updated_at, updated_by";
 
 test("maps a row to camelCase, derives the owner, and omits a null author", () => {
   const s = toAiSkill({
@@ -15,6 +15,8 @@ test("maps a row to camelCase, derives the owner, and omits a null author", () =
     description: "d",
     body: "b",
     enabled: true,
+    created_at: "2026-08-27T09:00:00Z",
+    created_by: null,
     updated_at: "2026-08-27T10:00:00Z",
     updated_by: null,
   });
@@ -25,12 +27,14 @@ test("maps a row to camelCase, derives the owner, and omits a null author", () =
     description: "d",
     body: "b",
     enabled: true,
+    createdAt: "2026-08-27T09:00:00Z",
     updatedAt: "2026-08-27T10:00:00Z",
   });
   // toEqual treats `{ updatedBy: undefined }` as equal to an absent key, so the omission
   // itself — what keeps a mapped skill free of null noise in Vue's reactivity — needs its
   // own assertion.
   expect("updatedBy" in s).toBe(false);
+  expect("createdBy" in s).toBe(false);
 });
 
 test("keeps a present author and reads the owner off whichever triad column is set", () => {
@@ -43,10 +47,13 @@ test("keeps a present author and reads the owner off whichever triad column is s
     description: "d",
     body: "b",
     enabled: false,
+    created_at: "2026-08-27T09:00:00Z",
+    created_by: "u0",
     updated_at: "2026-08-27T10:00:00Z",
     updated_by: "u1",
   });
   expect(s.owner).toEqual({ scope: "workspace", id: "w1" });
+  expect(s.createdBy).toBe("u0");
   expect(s.updatedBy).toBe("u1");
   expect(s.enabled).toBe(false);
 });

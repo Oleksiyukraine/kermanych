@@ -475,9 +475,13 @@ export class SkillsService {
   // it IS deliverable, because `assignedForNames` reads the repository's file for it. A caller
   // telling "assigned to something gone" from "assigned to something the repository provides"
   // cannot do it from `view` alone, and a caller wanting only the library ignores `repo`.
-  async view(scope: AiScopeSet, cwd: string): Promise<ProjectSkillsPayload> {
-    assertProjectId(scope.projectId);
-    const rows = await this.readSkills(scope);
+  async view(projectId: string, cwd: string): Promise<ProjectSkillsPayload> {
+    assertProjectId(projectId);
+    // The library EDITOR view is THIS project's own rows only — NOT the launch-time merge with
+    // the workspace and the user. Inheritance is a runtime concept (materialize / assignedFor);
+    // the editor shows and edits exactly what this scope owns, so a workspace or user skill
+    // never leaks into the project's list. The repo shadow is the project's checkout.
+    const rows = await this.readSkills({ projectId });
     const repo = await repoSkillNames(cwd);
     const view = resolveSkills(rows).map(({ def, source }) => ({
       name: def.name,

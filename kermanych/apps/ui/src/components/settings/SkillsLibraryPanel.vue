@@ -42,6 +42,14 @@
             </button>
           </template>
         </div>
+        <AiProvenance
+          v-if="!row.off && provenanceOf(row.name)"
+          :owner="owner"
+          :created-at="provenanceOf(row.name)!.createdAt"
+          :created-by="provenanceOf(row.name)!.createdBy"
+          :updated-at="provenanceOf(row.name)!.updatedAt"
+          :updated-by="provenanceOf(row.name)!.updatedBy"
+        />
       </li>
     </ul>
     <!-- Only when the read actually succeeded: after a failure the error line stands alone,
@@ -101,6 +109,7 @@ import { useProjects } from 'stores/projects';
 import { ownerLibraryView } from '../../lib/ai-team';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
+import AiProvenance from './AiProvenance.vue';
 
 const { t } = useI18n();
 
@@ -115,6 +124,9 @@ type Row = SkillView & { off?: boolean };
 const auth = useAuth();
 const projects = useProjects();
 const rows = ref<Row[]>([]);
+// The owner's own cloud rows, kept beside the resolved view so each own skill can show its
+// author and last editor — the resolved SkillView carries no audit, the AiSkill row does.
+const storedRows = ref<AiSkill[]>([]);
 const error = ref('');
 const loading = ref(true);
 const editorOpen = ref(false);
@@ -145,6 +157,12 @@ const canWrite = computed(() =>
       ? projects.isWorkspaceOwner(props.owner.id)
       : projects.isOwner(props.owner.id),
 );
+
+// The stored row behind a library entry, when this owner has one — a compile-time default
+// has no row and so no author to show.
+function provenanceOf(name: string): AiSkill | undefined {
+  return storedRows.value.find((s) => s.name === name);
+}
 
 // The resolved library view for this owner. Only a project has a checkout, so only it can be
 // shadowed by repo files and only it has the api endpoint that sees them; every other scope
@@ -198,6 +216,7 @@ async function load(): Promise<void> {
     ]);
     if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     rows.value = [...library.view, ...tombstones(stored)];
+    storedRows.value = stored;
   } catch (e) {
     if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     // The endpoint refuses rather than degrade to the defaults, so a failed read must not

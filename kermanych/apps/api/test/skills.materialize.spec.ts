@@ -244,13 +244,13 @@ test("view surfaces a cloud failure instead of presenting the defaults as the li
   svc.readSkills = async () => {
     throw new Error("offline");
   };
-  await expect(svc.view({ projectId: "p1" }, repo)).rejects.toThrow("offline");
+  await expect(svc.view("p1", repo)).rejects.toThrow("offline");
 });
 
 test("view writes nothing", async () => {
   const svc = service();
   svc.readSkills = async () => [row({ name: "extra" })];
-  const { view } = await svc.view({ projectId: "p1" }, repo);
+  const { view } = await svc.view("p1", repo);
   expect(view.some((v) => v.name === "extra")).toBe(true);
   expect(readdirSync(home)).toEqual([]);
 });
@@ -266,7 +266,7 @@ test("view reports the repository's own skill names, including one the library n
   writeFileSync(join(repo, ".omp/skills/extra/SKILL.md"), "---\nname: extra\ndescription: d\n---\nBody.\n");
   const svc = service();
   svc.readSkills = async () => [row({ name: "extra" })];
-  const { view, repo: names } = await svc.view({ projectId: "p1" }, repo);
+  const { view, repo: names } = await svc.view("p1", repo);
   expect(Object.keys(names).sort()).toEqual(["extra", "repo-only"]);
   expect(names["repo-only"]).toBe(join(repo, ".omp/skills/repo-only/SKILL.md"));
   // `extra` is in both, so the library entry carries the shadow; `repo-only` is in neither
@@ -280,7 +280,7 @@ test("a projectId that is not a valid skill name is refused before any path is j
   svc.readSkills = async () => [];
   for (const bad of ["../evil", "p1\nskills:\n  customDirectories: []", "P1", ""]) {
     await expect(svc.materialize({ projectId: bad }, repo)).rejects.toThrow(/invalid project id/);
-    await expect(svc.view({ projectId: bad }, repo)).rejects.toThrow(/invalid project id/);
+    await expect(svc.view(bad, repo)).rejects.toThrow(/invalid project id/);
   }
   expect(readdirSync(home)).toEqual([]);
 

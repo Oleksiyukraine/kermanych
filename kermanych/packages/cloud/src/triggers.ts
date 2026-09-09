@@ -8,7 +8,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AiOwner, AiTrigger, AiTriggerInsert } from "./types";
 import { OWNER_COLUMNS, ownerColumn, ownerColumns, ownerConflict, rowOwner } from "./ai-scope";
 
-const TRIGGER_COLUMNS = `id, ${OWNER_COLUMNS}, slug, label, enabled, source, pattern, path_globs, action, instruction, agent_id, mode, repeat`;
+const TRIGGER_COLUMNS = `id, ${OWNER_COLUMNS}, slug, label, enabled, source, pattern, path_globs, action, instruction, agent_id, mode, repeat, created_at, created_by, updated_at, updated_by`;
 
 // The child hangs off the trigger's surrogate id, so it needs neither the owner nor the slug.
 const TRIGGER_SKILL_COLUMNS = "trigger_id, skill_name, position";
@@ -33,6 +33,11 @@ type TriggerRow = {
   agent_id: string | null;
   mode: AiTrigger["mode"];
   repeat: AiTrigger["repeat"];
+  created_at: string;
+  // `on delete set null`: a trigger outlives the account that authored or last edited it.
+  created_by: string | null;
+  updated_at: string;
+  updated_by: string | null;
 };
 
 type TriggerSkillRow = { trigger_id: string; skill_name: string; position: number };
@@ -57,6 +62,10 @@ export function toAiTrigger(row: TriggerRow, skills: string[] = []): AiTrigger {
     skills,
     mode: row.mode,
     repeat: row.repeat,
+    createdAt: row.created_at,
+    ...(row.created_by !== null ? { createdBy: row.created_by } : {}),
+    updatedAt: row.updated_at,
+    ...(row.updated_by !== null ? { updatedBy: row.updated_by } : {}),
   };
 }
 
