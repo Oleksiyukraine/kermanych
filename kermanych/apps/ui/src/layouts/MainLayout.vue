@@ -320,6 +320,7 @@
          the user happens to be, and the «куди перенести тікет?» question must not depend
          on the board page being open. Renders nothing until such a merge happens. -->
     <JiraMergePrompt />
+    <LinearMergePrompt />
   </q-layout>
 </template>
 
@@ -357,6 +358,7 @@ import KToast from 'components/kit/KToast.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KUserButton from 'components/kit/KUserButton.vue';
 import JiraMergePrompt from 'components/jira/JiraMergePrompt.vue';
+import LinearMergePrompt from 'components/linear/LinearMergePrompt.vue';
 
 // The Kermanych app shell (design-system section 07): project rail, brand header, page
 // container, fleet status bar. Two stores back it — `store` (useOrchestrator) owns the LOCAL

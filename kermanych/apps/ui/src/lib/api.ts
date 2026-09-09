@@ -24,7 +24,7 @@ import type {
   AgentRuntimeKind,
   AgentLanguage,
 } from '@kermanych/core';
-import type { CloudProject, JiraIntegration, JiraIssue } from '@kermanych/cloud';
+import type { CloudProject, JiraIntegration, JiraIssue, LinearIntegration, LinearIssue } from '@kermanych/cloud';
 import { globalTr } from '../boot/i18n';
 import { localizeError } from './i18n-coded';
 
@@ -231,6 +231,38 @@ export type JiraWorklogDraftWire = {
   adjust?: JiraWorklogAdjustWire;
 };
 
+// ── Linear (GraphQL, proxied through the local api for the same reason as Jira: the
+// per-user API key lives in this machine's registry, never in the browser) ───────────────
+export type LinearTokenStatus = { present: boolean };
+export type LinearTeamOption = { id: string; key: string; name: string };
+// The team's workflow states shaped as Jira-style transitions (id === stateId), so the
+// board, the ticket dialog and the merge prompt share one vocabulary with the Jira views.
+export type LinearTransitionWire = {
+  id: string;
+  name: string;
+  to: { id: string; name: string; statusCategory: { key: string } };
+};
+// Create/edit a Linear issue. `dueDate` '' clears the date; `estimate` null clears the
+// points; `labels` are NAMES (the api resolves them to Linear label ids). `stateId` moves
+// the issue to a workflow state — the same field a drag-to-column write uses.
+export type LinearIssueDraftWire = {
+  title?: string;
+  description?: string;
+  priority?: number;
+  assigneeId?: string | null;
+  labels?: string[];
+  estimate?: number | null;
+  dueDate?: string;
+  parentKey?: string;
+  stateId?: string;
+};
+// The editor's live lists. Linear has no issue types and no priorities endpoint (priority
+// is a fixed 0–4 scale rendered from i18n), so only the team's labels travel.
+export type LinearEditorOptions = {
+  labels: { id: string; name: string }[];
+};
+export type LinearAssignableUser = { id: string; name: string; avatar?: string };
+
 export const api = {
   // LOCAL project rows. Creation and deletion live in the cloud (see stores/projects.ts);
   // these routes cache cloud config and own this machine's binding.
@@ -361,6 +393,57 @@ export const api = {
   ): Promise<{ session: Session; transitionError?: string }> =>
     post<{ session: Session; transitionError?: string }>(
       `/jira/issues/${workspaceId}/${encodeURIComponent(key)}/launch`,
+      { projectId, transitionId, images },
+    ),
+
+  // ── Linear. The acting user comes from the guard's token; their Linear API key from the
+  // machine's registry. Every write returns the refreshed mirror issue so the caller can
+  // upsert it without waiting for realtime. The action key is the issue identifier («ENG-42»).
+  linearTokenStatus: (org: string): Promise<LinearTokenStatus> =>
+    get<LinearTokenStatus>(`/linear/token?org=${encodeURIComponent(org)}`),
+  linearSetToken: (apiKey: string): Promise<{ displayName: string; orgUrlKey: string; orgName: string }> =>
+    put<{ displayName: string; orgUrlKey: string; orgName: string }>('/linear/token', { apiKey }),
+  linearDeleteToken: (org: string): Promise<void> => del(`/linear/token?org=${encodeURIComponent(org)}`),
+
+  linearTeams: (org: string): Promise<LinearTeamOption[]> =>
+    get<LinearTeamOption[]>(`/linear/teams?org=${encodeURIComponent(org)}`),
+  linearConnect: (workspaceId: string, orgUrlKey: string, teamId: string): Promise<LinearIntegration> =>
+    post<LinearIntegration>('/linear/integrations', { workspaceId, orgUrlKey, teamId }),
+  linearDisconnect: (workspaceId: string): Promise<void> => del(`/linear/integrations/${workspaceId}`),
+
+  linearSync: (workspaceId: string, full = false): Promise<{ synced: boolean }> =>
+    post<{ synced: boolean }>(`/linear/sync/${workspaceId}`, { full }),
+
+  linearTransitions: (workspaceId: string, key: string): Promise<LinearTransitionWire[]> =>
+    get<LinearTransitionWire[]>(`/linear/issues/${workspaceId}/${encodeURIComponent(key)}/transitions`),
+  linearTransition: (workspaceId: string, key: string, transitionId: string): Promise<LinearIssue> =>
+    post<LinearIssue>(`/linear/issues/${workspaceId}/${encodeURIComponent(key)}/transition`, { transitionId }),
+  linearComment: (workspaceId: string, key: string, body: string): Promise<LinearIssue> =>
+    post<LinearIssue>(`/linear/issues/${workspaceId}/${encodeURIComponent(key)}/comments`, { body }),
+  linearRefreshIssue: (workspaceId: string, key: string): Promise<LinearIssue> =>
+    post<LinearIssue>(`/linear/issues/${workspaceId}/${encodeURIComponent(key)}/refresh`, {}),
+
+  linearCreateIssue: (workspaceId: string, draft: LinearIssueDraftWire): Promise<LinearIssue> =>
+    post<LinearIssue>(`/linear/issues/${workspaceId}`, draft),
+  linearEditIssue: (workspaceId: string, key: string, draft: LinearIssueDraftWire): Promise<LinearIssue> =>
+    put<LinearIssue>(`/linear/issues/${workspaceId}/${encodeURIComponent(key)}`, draft),
+  linearDeleteIssue: (workspaceId: string, key: string): Promise<void> =>
+    del(`/linear/issues/${workspaceId}/${encodeURIComponent(key)}`),
+
+  linearEditorOptions: (workspaceId: string): Promise<LinearEditorOptions> =>
+    get<LinearEditorOptions>(`/linear/editor-options/${workspaceId}`),
+  linearAssignableUsers: (workspaceId: string, q: string): Promise<LinearAssignableUser[]> =>
+    get<LinearAssignableUser[]>(`/linear/assignable/${workspaceId}?q=${encodeURIComponent(q)}`),
+
+  linearLaunch: (
+    workspaceId: string,
+    key: string,
+    projectId: string,
+    transitionId?: string,
+    images?: ImageInput[],
+  ): Promise<{ session: Session; transitionError?: string }> =>
+    post<{ session: Session; transitionError?: string }>(
+      `/linear/issues/${workspaceId}/${encodeURIComponent(key)}/launch`,
       { projectId, transitionId, images },
     ),
 

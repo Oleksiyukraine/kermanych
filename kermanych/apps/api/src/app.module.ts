@@ -26,9 +26,11 @@ import { ReleaseNotesService } from "./management/release-notes.service";
 import { ModelsService } from "./models/models.service";
 import { JiraController } from "./http/jira.controller";
 import { JiraService } from "./jira/jira.service";
+import { LinearController } from "./http/linear.controller";
+import { LinearService } from "./linear/linear.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ModelsController, JiraController, AccountController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ModelsController, JiraController, LinearController, AccountController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -53,6 +55,10 @@ import { JiraService } from "./jira/jira.service";
     // acting user, mirror writes under their JWT (AuthService.cloudClient), and the launch
     // path reusing SupervisorService.createSessionFromTask unchanged.
     JiraService,
+    // The Linear integration engine: the Jira precedent for GraphQL — per-user API keys
+    // (RegistryService), Linear HTTP under the acting user, mirror writes under their JWT,
+    // and the same SupervisorService.createSessionFromTask launch path.
+    LinearService,
     // Global by design: the api binds 127.0.0.1 but was previously drivable by
     // anything on the machine, including GET /fs/list (arbitrary local directory
     // enumeration). Opt out per route with @Public(), never per module.
