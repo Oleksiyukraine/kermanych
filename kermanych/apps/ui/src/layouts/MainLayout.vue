@@ -180,7 +180,7 @@
              code names the language the click moves TO. -->
         <KIconButton
           :title="locale === 'uk' ? t('common.nav.langEn') : t('common.nav.langUk')"
-          @click="locale = locale === 'uk' ? 'en' : 'uk'"
+          @click="onLangToggle"
         >{{ locale === 'uk' ? 'EN' : 'UK' }}</KIconButton>
       </div>
     </q-header>
@@ -339,7 +339,7 @@ import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
 import { myBacklogTasks } from '../lib/tasks-view';
 import { bucketOf, type Bucket } from '../lib/buckets';
 import { theme, toggleTheme } from '../lib/theme';
-import { locale } from '../lib/locale';
+import { locale, toggleLocale } from '../lib/locale';
 import { isMoveRefusal, moveRefusalText } from '../lib/cloud-errors';
 import { percent, planWindow, renderWindow } from '../lib/format';
 import { until, renderTime } from '../lib/time';
@@ -623,6 +623,14 @@ function goView(v: string): void {
 function onThemeToggle(e: MouseEvent): void {
   const el = e.currentTarget;
   toggleTheme(el instanceof HTMLElement ? el.getBoundingClientRect() : null);
+}
+
+// The language wipe grows from the control that was pressed, twin of the theme
+// toggle above. The rect — not `event.clientX` — because keyboard activation
+// reports a pointer at (0, 0), which would start the wipe in the far corner.
+function onLangToggle(e: MouseEvent): void {
+  const el = e.currentTarget;
+  toggleLocale(locale.value === 'uk' ? 'en' : 'uk', el instanceof HTMLElement ? el.getBoundingClientRect() : null);
 }
 
 // The marks are drawn (KIcon), not typed. They only ever show while the rail is minified,

@@ -1,4 +1,5 @@
 import { ref, watch, type Ref } from 'vue';
+import { revealSwap } from './reveal';
 
 // The UI language. Like the theme (see lib/theme.ts) it is a device-local
 // preference, not an account setting: the operator picks the language of the
@@ -24,6 +25,20 @@ export function writeLocale(l: Locale): void {
 
 /** Current locale. Assigning to it persists and applies (see `initLocale`). */
 export const locale: Ref<Locale> = ref(readLocale());
+
+/**
+ * Switch the UI language under the same growing-circle wipe the theme uses
+ * (see lib/reveal.ts): both are one-click, device-local screen preferences that
+ * repaint the whole shell, so the language change earns the reveal for the same
+ * reason the theme does. `origin` is the control that was pressed, so the circle
+ * grows from under it; a `null` origin (keyboard, no rect) centres the wipe.
+ */
+export function toggleLocale(next: Locale, origin?: DOMRect | null): void {
+  if (locale.value === next) return;
+  revealSwap(origin, () => {
+    locale.value = next;
+  });
+}
 
 // initLocale needs exactly one capability from the vue-i18n instance: a global,
 // writable locale it can push the current `locale` ref into. Typing that lone

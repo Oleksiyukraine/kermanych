@@ -5,14 +5,14 @@
       class="k-lang-toggle__opt"
       :class="{ 'k-lang-toggle__opt--active': locale === 'uk' }"
       :aria-pressed="locale === 'uk'"
-      @click="locale = 'uk'"
+      @click="pickLang('uk', $event)"
     >Українська</button>
     <button
       type="button"
       class="k-lang-toggle__opt"
       :class="{ 'k-lang-toggle__opt--active': locale === 'en' }"
       :aria-pressed="locale === 'en'"
-      @click="locale = 'en'"
+      @click="pickLang('en', $event)"
     >English</button>
   </div>
 </template>
@@ -20,7 +20,15 @@
 <script setup lang="ts">
 // The two option labels are the ONE place a language name appears in its own
 // language, so they are literals, not i18n keys.
-import { locale } from '../../lib/locale';
+import { locale, toggleLocale, type Locale } from '../../lib/locale';
+
+// Mirrors SettingsPage's `pickTheme`: hand the pressed control's rect to the
+// switch so the language wipe (lib/reveal.ts) grows from under it. The rect —
+// not `event.clientX` — because keyboard activation reports a pointer at (0, 0).
+function pickLang(next: Locale, e: MouseEvent): void {
+  const el = e.currentTarget;
+  toggleLocale(next, el instanceof HTMLElement ? el.getBoundingClientRect() : null);
+}
 </script>
 
 <style scoped lang="scss">
