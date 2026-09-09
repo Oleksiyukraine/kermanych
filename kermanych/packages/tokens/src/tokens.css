@@ -105,3 +105,35 @@
   --k-shadow-toast:0 12px 32px rgba(0,0,0,.14);
   --k-shadow-modal:0 24px 64px rgba(0,0,0,.18);
 }
+
+/* MATRIX theme.
+ *
+ * The film look: a black substrate under murky ("dirty") green text, with one
+ * neon-green brand accent — the colour of the digital rain that reveals this
+ * theme (apps/ui/src/lib/matrix-rain.ts). Like the light block, this overrides
+ * COLOUR tokens only; type, spacing, radii and rules stay theme-independent.
+ *
+ * Greens are chosen for the same AA parity the other sets keep: `--k-text`
+ * (#8fdf9f) clears >7:1 on the near-black surfaces, `--k-muted` stays legible
+ * as secondary text, and `--k-faint` is decorative, matching the dark set.
+ * `color-scheme` stays dark so native chrome (scrollbars, caret) reads right.
+ */
+:root[data-theme='matrix'] {
+  color-scheme: dark;
+  /* surfaces — pure black page, green-black cards */
+  --k-canvas:#000000; --k-bg:#050a05; --k-surface:#0a140a; --k-surface2:#122812;
+  /* borders — green alpha */
+  --k-line:rgba(64,200,96,.14); --k-line-strong:rgba(64,200,96,.24);
+  /* text — murky green foreground */
+  --k-text:#8fdf9f; --k-muted:#5f9e6f; --k-faint:#3f7a4f; --k-on-accent:#001a06;
+  /* brand — neon rain green; hover brightens against the black */
+  --k-accent:#00d63a; --k-accent-hover:#22ff5c;
+  /* status — warning shifted green-amber so it sits in the palette */
+  --k-success:#28c840; --k-warning:#c8b400; --k-danger:#ff5f57;
+  /* diff */
+  --k-diff:#28c840; --k-diff-add:#28c840; --k-diff-del:#ff5f57;
+  /* elevation — faint green glow instead of neutral black */
+  --k-shadow-pop:0 2px 8px rgba(0,20,0,.5);
+  --k-shadow-toast:0 12px 32px rgba(0,25,0,.55);
+  --k-shadow-modal:0 24px 64px rgba(0,30,0,.6);
+}

@@ -23,6 +23,7 @@ export const uk = {
       logo: 'КЕРМАНИЧ',
       themeDark: 'Темна тема',
       themeLight: 'Світла тема',
+      themeMatrix: 'Тема «Матриця»',
       langUk: 'Українська',
       langEn: 'Англійська',
       pullTip: 'git pull (--ff-only) поточної гілки репозиторію проєкту',
@@ -715,6 +716,7 @@ export const uk = {
       theme: 'Тема',
       themeDark: 'Темна',
       themeLight: 'Світла',
+      themeMatrix: 'Матриця',
       themeNote:
         'Тема належить цьому екрану, а не акаунту: той самий оператор за яскравим ноутбуком і за темним десктопом хоче різних відповідей.',
     },

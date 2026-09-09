@@ -19,6 +19,7 @@ export const en: MessageSchema = {
       logo: 'KERMANYCH',
       themeDark: 'Dark theme',
       themeLight: 'Light theme',
+      themeMatrix: 'Matrix theme',
       langUk: 'Ukrainian',
       langEn: 'English',
       pullTip: 'git pull (--ff-only) for the current branch of the project repository',
@@ -710,6 +711,7 @@ export const en: MessageSchema = {
       theme: 'Theme',
       themeDark: 'Dark',
       themeLight: 'Light',
+      themeMatrix: 'Matrix',
       themeNote:
         'The theme belongs to this screen, not the account: the same operator wants different answers on a bright laptop and a dark desktop.',
     },

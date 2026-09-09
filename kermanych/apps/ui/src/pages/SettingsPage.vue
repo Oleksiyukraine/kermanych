@@ -629,7 +629,7 @@ import { modelOptions, effortOptions } from '../lib/models';
 import { EFFORT_OPTIONS } from '../lib/effort';
 import { useAuth } from 'stores/auth';
 import { api } from '../lib/api';
-import { theme, toggleTheme } from '../lib/theme';
+import { theme, setTheme } from '../lib/theme';
 import { percent, planWindow, renderWindow } from '../lib/format';
 import { until, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
@@ -1295,6 +1295,7 @@ async function confirmDeleteWorkspace(): Promise<void> {
 const THEMES = computed<readonly { value: KTheme; label: string }[]>(() => [
   { value: 'dark', label: t('settings.app.themeDark') },
   { value: 'light', label: t('settings.app.themeLight') },
+  { value: 'matrix', label: t('settings.app.themeMatrix') },
 ]);
 
 function pickTheme(next: KTheme, e: MouseEvent): void {
@@ -1303,7 +1304,7 @@ function pickTheme(next: KTheme, e: MouseEvent): void {
   // at (0, 0), which would start the wipe in the far corner instead of under the
   // control.
   const el = e.currentTarget;
-  toggleTheme(el instanceof HTMLElement ? el.getBoundingClientRect() : null);
+  setTheme(next, el instanceof HTMLElement ? el.getBoundingClientRect() : null);
 }
 
 const RUNTIME_OPTIONS = computed<readonly KSelectOption[]>(() => [

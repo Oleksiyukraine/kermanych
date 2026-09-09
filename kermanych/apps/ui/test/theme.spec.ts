@@ -9,6 +9,7 @@ describe('readTheme', () => {
   it('returns the stored theme', () => {
     expect(readTheme({ getItem: () => 'light' })).toBe('light');
     expect(readTheme({ getItem: () => 'dark' })).toBe('dark');
+    expect(readTheme({ getItem: () => 'matrix' })).toBe('matrix');
   });
 
   it('reads the namespaced key', () => {
@@ -67,10 +68,12 @@ describe('toggleTheme', () => {
     theme.value = initial;
   });
 
-  it('moves between the two themes and back', () => {
+  it('cycles dark → light → matrix → dark', () => {
     theme.value = 'dark';
     toggleTheme();
     expect(theme.value).toBe('light');
+    toggleTheme();
+    expect(theme.value).toBe('matrix');
     toggleTheme();
     expect(theme.value).toBe('dark');
   });

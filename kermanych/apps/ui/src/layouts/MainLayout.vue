@@ -172,9 +172,9 @@
              glare, and «Загальне» carries the same control for whoever looks for it
              where settings live. The glyph names the theme the click moves TO. -->
         <KIconButton
-          :title="theme === 'light' ? t('common.nav.themeDark') : t('common.nav.themeLight')"
+          :title="themeToggleTitle"
           @click="onThemeToggle"
-        >{{ theme === 'light' ? '☾' : '☀' }}</KIconButton>
+        >{{ themeToggleGlyph }}</KIconButton>
         <!-- Language toggle — twin of the theme toggle beside it: a one-click
              screen preference (uk↔en), also carried by «Загальне» settings. The
              code names the language the click moves TO. -->
@@ -339,6 +339,7 @@ import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
 import { myBacklogTasks } from '../lib/tasks-view';
 import { bucketOf, type Bucket } from '../lib/buckets';
 import { theme, toggleTheme } from '../lib/theme';
+import type { KTheme } from '@kermanych/tokens';
 import { locale, toggleLocale } from '../lib/locale';
 import { isMoveRefusal, moveRefusalText } from '../lib/cloud-errors';
 import { percent, planWindow, renderWindow } from '../lib/format';
@@ -624,6 +625,20 @@ function onThemeToggle(e: MouseEvent): void {
   const el = e.currentTarget;
   toggleTheme(el instanceof HTMLElement ? el.getBoundingClientRect() : null);
 }
+
+// The shell toggle steps through every theme (dark → light → matrix); the glyph
+// and title name the DESTINATION — the theme the next click moves TO. Half-width
+// katakana ﾏ stands in for the Matrix rain, keeping the celestial ☾/☀ pair for
+// the two plain themes.
+const NEXT_THEME: Record<KTheme, KTheme> = { dark: 'light', light: 'matrix', matrix: 'dark' };
+const THEME_GLYPH: Record<KTheme, string> = { dark: '☾', light: '☀', matrix: 'ﾏ' };
+const THEME_TITLE_KEY: Record<KTheme, string> = {
+  dark: 'common.nav.themeDark',
+  light: 'common.nav.themeLight',
+  matrix: 'common.nav.themeMatrix',
+};
+const themeToggleGlyph = computed(() => THEME_GLYPH[NEXT_THEME[theme.value]]);
+const themeToggleTitle = computed(() => t(THEME_TITLE_KEY[NEXT_THEME[theme.value]]));
 
 // The language wipe grows from the control that was pressed, twin of the theme
 // toggle above. The rect — not `event.clientX` — because keyboard activation
