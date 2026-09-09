@@ -47,9 +47,12 @@ function select(id: string): void {
 // (DocTreeNode handles the recursion and click semantics).
 const roots = ref<DocNode[]>([]);
 
+// `immediate`: the pre-focus watch above selects a project SYNCHRONOUSLY during setup (before
+// this watch exists), so without it a page entered with a project already selected would build
+// no root nodes and render an empty tree even though docFolders is set.
 watch([selectedId, docFolders, isBound], () => {
   roots.value = docFolders.value.map((f) => ({ folder: f, path: '', name: f, type: 'dir' as const }));
-});
+}, { immediate: true });
 
 // A pull can add or remove files under an already-expanded folder (spec §3.6). When the store
 // signals a refresh, walk every open dir and re-fetch its level, preserving expansion state.
