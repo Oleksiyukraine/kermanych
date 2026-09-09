@@ -179,12 +179,10 @@ onBeforeUnmount(() => docs.releaseUrls());
 .docs__nav { display: flex; flex-direction: column; gap: var(--k-sp-2); overflow: hidden; min-height: 0; border-right: 1px solid var(--k-line); padding-right: var(--k-sp-3); }
 .docs__projects { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: var(--k-sp-2); border-bottom: 1px solid var(--k-line); }
 .docs__tree { overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 2px; }
-.docs__project, .docs__node { text-align: left; background: none; border: 0; color: var(--k-text); cursor: pointer; padding: 4px 6px; border-radius: 6px; font: inherit; }
-.docs__project { border: 1px solid var(--k-line); }
-.docs__project--on { background: var(--k-surface-2); }
-.docs__node:hover, .docs__project:hover { background: var(--k-surface-2); }
+.docs__project { text-align: left; background: none; border: 1px solid var(--k-line); color: var(--k-text); cursor: pointer; padding: 4px 6px; border-radius: 6px; font: inherit; }
+.docs__project--on { background: var(--k-surface2); }
+.docs__project:hover { background: var(--k-surface2); }
 .docs__nodes { list-style: none; margin: 0; padding-left: 0; }
-.docs__nodes ul { list-style: none; margin: 0; padding-left: var(--k-sp-2); }
 .docs__preview { overflow: auto; min-height: 0; }
 .docs__empty { color: var(--k-muted); font-size: 13px; padding: var(--k-sp-3); &--error { color: var(--k-danger); } }
 </style>
