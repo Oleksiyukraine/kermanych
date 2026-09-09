@@ -120,8 +120,15 @@ export const useAuth = defineStore('auth', () => {
     // and stop — the Supabase client is left untouched (no session to read, no token to
     // hand over), and deliberately no 401 handler is installed: a preview must never
     // bounce itself to a login screen. `profile` stays null, which is the truth here.
+    //
+    // Seed a default runtime too: a preview has no cloud to persist a choice against
+    // (chooseRuntime would throw on the missing Supabase project), so the onboarding gate
+    // — which fires while `runtime` is null — would trap the operator behind a modal whose
+    // only exit is a save that cannot succeed. Adopting `omp` (the same default the rest of
+    // the UI falls back to) skips the gate; no real agent work runs in a preview anyway.
     if (IS_PREVIEW) {
       user.value = { id: PREVIEW_USER_ID };
+      runtime.value = 'omp';
       resolveReady();
       return ready;
     }
