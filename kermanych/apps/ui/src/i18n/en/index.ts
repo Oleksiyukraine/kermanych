@@ -978,6 +978,10 @@ export const en: MessageSchema = {
       you: 'you',
       unknown: '—',
     },
+    agentsUnavailable: 'Agents are configured at the workspace level. This is not available here yet.',
+    inherited: {
+      title: 'Inherited from the workspace',
+    },
     blank: {
       eyebrow: 'KERMANYCH',
       user: 'Sign in to configure your own AI team.',

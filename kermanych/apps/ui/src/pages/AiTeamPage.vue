@@ -68,14 +68,28 @@
         <!-- The `v-if` on owner is the type guard: the panels take a concrete owner, and only
              the narrowing here turns the possibly-undefined subject into one. Not keyed — the
              panels watch the owner and reload in place, dropping any unsaved draft with it. -->
+        <!-- Агенти кастомізуються лише на рівні воркспейсу (override інструкції + призначені
+             навички діють на всю команду). Проєкт і користувач поки не мають власного шару
+             агентів — заглушка, а не порожній редактор, який нічого не збереже. -->
         <div v-else-if="section.key === 'agents'" class="ait__form ait__form--wide">
-          <AiAgentsPanel :owner="owner" :owner-name="ownerName" />
+          <AiAgentsPanel v-if="owner.scope === 'workspace'" :owner="owner" :owner-name="ownerName" />
+          <div v-else class="ait__blank">
+            <span class="ait__blank-eyebrow mono">{{ t('aiTeam.blank.eyebrow') }}</span>
+            <p>{{ t('aiTeam.agentsUnavailable') }}</p>
+          </div>
         </div>
+        <!-- The read-only «успадковано з воркспейсу» block hangs BELOW the editable list and
+             only on the project tab: a project's session also gets its workspace's skills and
+             triggers at launch, and hiding that entirely leaves the operator debugging blind
+             (triggers fire as a union). The workspace tab inherits nothing; the user tab has no
+             single workspace to inherit from. -->
         <div v-else-if="section.key === 'triggers'" class="ait__form ait__form--wide">
           <TriggersPanel :owner="owner" :owner-name="ownerName" />
+          <AiInherited v-if="inheritedWorkspace" kind="triggers" :workspace="inheritedWorkspace" />
         </div>
         <div v-else-if="section.key === 'skills'" class="ait__form ait__form--wide">
           <SkillsLibraryPanel :owner="owner" :owner-name="ownerName" />
+          <AiInherited v-if="inheritedWorkspace" kind="skills" :workspace="inheritedWorkspace" />
         </div>
       </div>
     </section>
@@ -109,6 +123,7 @@ import KTopNav from 'components/kit/KTopNav.vue';
 import AiAgentsPanel from 'components/settings/AiAgentsPanel.vue';
 import TriggersPanel from 'components/settings/TriggersPanel.vue';
 import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
+import AiInherited from 'components/settings/AiInherited.vue';
 
 const store = useOrchestrator();
 const projects = useProjects();
@@ -155,6 +170,15 @@ const ownerColor = computed(() => {
   if (scope.value === 'workspace') return workspace.value?.color;
   return undefined;
 });
+
+// The workspace a PROJECT inherits its skills and triggers from, for the read-only block. Only
+// meaningful at the project scope: the workspace tab is the base of the precedence chain, and a
+// user-scoped view has no single workspace behind it.
+const inheritedWorkspace = computed<AiOwner | undefined>(() =>
+  scope.value === 'project' && cloudRow.value?.workspaceId
+    ? { scope: 'workspace', id: cloudRow.value.workspaceId }
+    : undefined,
+);
 
 function goSection(key: string): void {
   if (key !== section.value.key) void router.push({ name: 'ai-team', params: { section: key } });
