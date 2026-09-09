@@ -26,17 +26,17 @@ export const color = {
     success: "#0f7a24", warning: "#8a5d00", danger: "#c0271f",
     diff: "#0f7a24", diffAdd: "#0f7a24", diffDel: "#c0271f",
   },
-  // MATRIX — black substrate, desaturated ("dirty") green foreground, one muted
-  // forest-green accent (also the settled colour of the entry rain). Toned down
-  // from a neon first cut that read as acid green; greens stay above the AA bar
-  // the other themes hold on their darkest surface.
+  // MATRIX — black substrate, near-white green-tinted foreground, one soft
+  // grey-green accent (also the settled colour of the entry rain). Toned down
+  // twice from a neon first cut; body text is lifted close to white (but never
+  // pure white, which glares on this near-black surface).
   matrix: {
-    canvas: "#060a07", bg: "#0b120d", surface: "#111a13", surface2: "#1a271c",
-    line: "rgba(110,170,130,.12)", lineStrong: "rgba(110,170,130,.20)",
-    text: "#a6d0b0", muted: "#6f9a7c", faint: "#4c6d57", onAccent: "#07130c",
-    accent: "#4f9d69", accentHover: "#5cae77",
-    success: "#57a56f", warning: "#b8a24a", danger: "#df6a62",
-    diff: "#57a56f", diffAdd: "#57a56f", diffDel: "#df6a62",
+    canvas: "#070c08", bg: "#0d150f", surface: "#141e17", surface2: "#1f2d22",
+    line: "rgba(150,185,160,.10)", lineStrong: "rgba(150,185,160,.16)",
+    text: "#d7e3db", muted: "#9db3a5", faint: "#6b7e73", onAccent: "#08130c",
+    accent: "#63a079", accentHover: "#72ad87",
+    success: "#63a077", warning: "#b0a565", danger: "#d47a72",
+    diff: "#63a077", diffAdd: "#63a077", diffDel: "#d47a72",
   },
 } as const satisfies Record<KTheme, Record<string, string>>;
 

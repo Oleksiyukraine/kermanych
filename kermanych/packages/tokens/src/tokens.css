@@ -108,32 +108,32 @@
 
 /* MATRIX theme.
  *
- * The film look: a black substrate under desaturated ("dirty") green text, with
- * one muted forest-green brand accent — the settled colour of the digital rain
+ * The film look: a black substrate under near-white, green-tinted text, with
+ * one soft grey-green brand accent — the settled colour of the digital rain
  * that reveals this theme (apps/ui/src/lib/matrix-rain.ts). Like the light
  * block, this overrides COLOUR tokens only; type, spacing, radii and rules stay
  * theme-independent.
  *
- * Toned down from a neon first cut that read as acid green. Greens still clear
- * the AA parity the other sets keep: `--k-text` (#a6d0b0) is >10:1 on the
- * surfaces, `--k-accent` (#4f9d69) holds ~5.4:1 for the places it is used as
+ * Toned down twice from a neon first cut. `--k-text` (#d7e3db) is lifted close
+ * to white for readability but stops short of pure white, which glares on this
+ * near-black surface; `--k-accent` (#63a079) keeps ~5.8:1 where it is used as
  * text, and `--k-faint` is decorative, matching the dark set.
  * `color-scheme` stays dark so native chrome (scrollbars, caret) reads right.
  */
 :root[data-theme='matrix'] {
   color-scheme: dark;
   /* surfaces — near-black page (lifted off pure #000 to curb halation) */
-  --k-canvas:#060a07; --k-bg:#0b120d; --k-surface:#111a13; --k-surface2:#1a271c;
+  --k-canvas:#070c08; --k-bg:#0d150f; --k-surface:#141e17; --k-surface2:#1f2d22;
   /* borders — green alpha */
-  --k-line:rgba(110,170,130,.12); --k-line-strong:rgba(110,170,130,.20);
-  /* text — murky green foreground */
-  --k-text:#a6d0b0; --k-muted:#6f9a7c; --k-faint:#4c6d57; --k-on-accent:#07130c;
-  /* brand — muted forest green; hover lifts a step, no neon */
-  --k-accent:#4f9d69; --k-accent-hover:#5cae77;
+  --k-line:rgba(150,185,160,.10); --k-line-strong:rgba(150,185,160,.16);
+  /* text — near-white with a faint green cast, short of pure white */
+  --k-text:#d7e3db; --k-muted:#9db3a5; --k-faint:#6b7e73; --k-on-accent:#08130c;
+  /* brand — soft grey-green; hover lifts a step, no neon */
+  --k-accent:#63a079; --k-accent-hover:#72ad87;
   /* status — warning shifted green-amber so it sits in the palette */
-  --k-success:#57a56f; --k-warning:#b8a24a; --k-danger:#df6a62;
+  --k-success:#63a077; --k-warning:#b0a565; --k-danger:#d47a72;
   /* diff */
-  --k-diff:#57a56f; --k-diff-add:#57a56f; --k-diff-del:#df6a62;
+  --k-diff:#63a077; --k-diff-add:#63a077; --k-diff-del:#d47a72;
   /* elevation — faint green glow instead of neutral black */
   --k-shadow-pop:0 2px 8px rgba(0,20,0,.5);
   --k-shadow-toast:0 12px 32px rgba(0,25,0,.55);
