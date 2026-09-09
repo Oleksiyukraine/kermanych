@@ -51,8 +51,30 @@ const roots = ref<DocNode[]>([]);
 // this watch exists), so without it a page entered with a project already selected would build
 // no root nodes and render an empty tree even though docFolders is set.
 watch([selectedId, docFolders, isBound], () => {
-  roots.value = docFolders.value.map((f) => ({ folder: f, path: '', name: f, type: 'dir' as const }));
+  const id = selectedId.value;
+  const built: DocNode[] = docFolders.value.map((f) => ({ folder: f, path: '', name: f, type: 'dir' as const }));
+  roots.value = built;
+  // Auto-expand every configured folder so its files are visible on arrival. A root folder
+  // that must be clicked open reads as «no docs» — the reported bug. Each root fetches its own
+  // one level; an absent/empty folder resolves to an empty listing and shows the empty note.
+  for (const r of built) void openNode(id, r);
 }, { immediate: true });
+
+// Expand a dir node and lazily fetch its one level of children. Guarded by the captured
+// project id so a fast project switch cannot graft one project's tree onto another.
+async function openNode(id: string, node: DocNode): Promise<void> {
+  if (node.type !== 'dir') return;
+  node.open = true;
+  if (node.children) return;
+  const entries: TreeEntry[] = await docs.treeOf(id, node.folder, node.path);
+  if (id !== selectedId.value) return;
+  node.children = entries.map((e) => ({
+    folder: node.folder,
+    path: node.path ? `${node.path}/${e.name}` : e.name,
+    name: e.name,
+    type: e.type,
+  }));
+}
 
 // A pull can add or remove files under an already-expanded folder (spec §3.6). When the store
 // signals a refresh, walk every open dir and re-fetch its level, preserving expansion state.
@@ -106,31 +128,33 @@ onBeforeUnmount(() => docs.releaseUrls());
 
 <template>
   <div class="docs">
-    <aside class="docs__projects">
-      <button
-        v-for="p in wsProjects"
-        :key="p.id"
-        type="button"
-        class="docs__project"
-        :class="{ 'docs__project--on': p.id === selectedId }"
-        @click="select(p.id)"
-      >{{ p.name }}</button>
-      <p v-if="!wsProjects.length" class="docs__empty">{{ t('docsPage.noProjects') }}</p>
-    </aside>
+    <aside class="docs__nav">
+      <div v-if="wsProjects.length > 1" class="docs__projects">
+        <button
+          v-for="p in wsProjects"
+          :key="p.id"
+          type="button"
+          class="docs__project"
+          :class="{ 'docs__project--on': p.id === selectedId }"
+          @click="select(p.id)"
+        >{{ p.name }}</button>
+      </div>
 
-    <nav class="docs__tree">
-      <template v-if="!selectedId"><p class="docs__empty">{{ t('docsPage.pickProject') }}</p></template>
-      <template v-else-if="!isBound"><p class="docs__empty">{{ t('docsPage.bindPrompt') }}</p></template>
-      <template v-else-if="!docFolders.length"><p class="docs__empty">{{ t('docsPage.noFolders') }}</p></template>
-      <ul v-else class="docs__nodes">
-        <DocTreeNode
-          v-for="n in roots"
-          :key="n.folder"
-          :project-id="selectedId"
-          :node="n"
-        />
-      </ul>
-    </nav>
+      <nav class="docs__tree">
+        <template v-if="!wsProjects.length"><p class="docs__empty">{{ t('docsPage.noProjects') }}</p></template>
+        <template v-else-if="!selectedId"><p class="docs__empty">{{ t('docsPage.pickProject') }}</p></template>
+        <template v-else-if="!isBound"><p class="docs__empty">{{ t('docsPage.bindPrompt') }}</p></template>
+        <template v-else-if="!docFolders.length"><p class="docs__empty">{{ t('docsPage.noFolders') }}</p></template>
+        <ul v-else class="docs__nodes">
+          <DocTreeNode
+            v-for="n in roots"
+            :key="n.folder"
+            :project-id="selectedId"
+            :node="n"
+          />
+        </ul>
+      </nav>
+    </aside>
 
     <section class="docs__preview">
       <p v-if="docs.loadingFile" class="docs__empty">{{ t('docsPage.loading') }}</p>
@@ -151,12 +175,16 @@ onBeforeUnmount(() => docs.releaseUrls());
 </template>
 
 <style scoped lang="scss">
-.docs { display: grid; grid-template-columns: 200px 240px 1fr; gap: var(--k-sp-3); height: 100%; min-height: 0; }
-.docs__projects, .docs__tree { overflow: auto; border-right: 1px solid var(--k-line); padding-right: var(--k-sp-2); display: flex; flex-direction: column; gap: 2px; }
+.docs { display: grid; grid-template-columns: minmax(200px, 280px) 1fr; gap: var(--k-sp-4); height: 100%; min-height: 0; }
+.docs__nav { display: flex; flex-direction: column; gap: var(--k-sp-2); overflow: hidden; min-height: 0; border-right: 1px solid var(--k-line); padding-right: var(--k-sp-3); }
+.docs__projects { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: var(--k-sp-2); border-bottom: 1px solid var(--k-line); }
+.docs__tree { overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 2px; }
 .docs__project, .docs__node { text-align: left; background: none; border: 0; color: var(--k-text); cursor: pointer; padding: 4px 6px; border-radius: 6px; font: inherit; }
+.docs__project { border: 1px solid var(--k-line); }
 .docs__project--on { background: var(--k-surface-2); }
 .docs__node:hover, .docs__project:hover { background: var(--k-surface-2); }
-.docs__nodes, .docs__nodes ul { list-style: none; margin: 0; padding-left: var(--k-sp-2); }
+.docs__nodes { list-style: none; margin: 0; padding-left: 0; }
+.docs__nodes ul { list-style: none; margin: 0; padding-left: var(--k-sp-2); }
 .docs__preview { overflow: auto; min-height: 0; }
 .docs__empty { color: var(--k-muted); font-size: 13px; padding: var(--k-sp-3); &--error { color: var(--k-danger); } }
 </style>

@@ -2253,6 +2253,7 @@ export const en: MessageSchema = {
     bindPrompt: 'Bind this project’s local repository to see its documentation.',
     noFolders: 'No documentation folders configured. Add them in the project settings.',
     pickFile: 'Pick a file on the left.',
+    emptyFolder: 'Empty folder',
     loading: 'Loading…',
     binary: 'Binary file — no preview available.',
   },

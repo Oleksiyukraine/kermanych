@@ -4,6 +4,7 @@
 // a file opens in the preview. The parent seeds root folder nodes and hands each down here.
 import type { TreeEntry } from '@kermanych/core';
 import { useProjectDocs } from 'stores/project-docs';
+import { useI18n } from 'vue-i18n';
 
 export type DocNode = {
   folder: string;
@@ -16,6 +17,7 @@ export type DocNode = {
 
 const props = defineProps<{ projectId: string; node: DocNode }>();
 const docs = useProjectDocs();
+const { t } = useI18n();
 
 async function onClick(): Promise<void> {
   const node = props.node;
@@ -50,6 +52,11 @@ async function onClick(): Promise<void> {
         :project-id="projectId"
         :node="child"
       />
+      <li v-if="!node.children.length" class="docs__node-empty">{{ t('docsPage.emptyFolder') }}</li>
     </ul>
   </li>
 </template>
+
+<style scoped lang="scss">
+.docs__node-empty { list-style: none; color: var(--k-muted); font-size: 12px; padding: 4px 6px; }
+</style>
