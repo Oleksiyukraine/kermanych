@@ -3,8 +3,10 @@
 // outside a stylesheet (canvas painting, generated SVG, docs). Keep both files
 // in step — a value edited in one and not the other is a silent divergence.
 
-/** Themes the token sheet ships. `dark` is the default `:root` set. */
-export type KTheme = 'dark' | 'light';
+/** Themes the token sheet ships. `dark` is the default `:root` set; `matrix`
+ *  is the black + murky-green film palette entered through the digital-rain
+ *  reveal (apps/ui/src/lib/matrix-rain.ts). */
+export type KTheme = 'dark' | 'light' | 'matrix';
 
 export const color = {
   dark: {
@@ -24,6 +26,17 @@ export const color = {
     success: "#0f7a24", warning: "#8a5d00", danger: "#c0271f",
     diff: "#0f7a24", diffAdd: "#0f7a24", diffDel: "#c0271f",
   },
+  // MATRIX — black substrate, murky ("dirty") green foreground, one neon-green
+  // accent that is also the colour of the entry rain. Greens are picked to clear
+  // the same AA bar the other sets hold on their darkest surface.
+  matrix: {
+    canvas: "#000000", bg: "#050a05", surface: "#0a140a", surface2: "#122812",
+    line: "rgba(64,200,96,.14)", lineStrong: "rgba(64,200,96,.24)",
+    text: "#8fdf9f", muted: "#5f9e6f", faint: "#3f7a4f", onAccent: "#001a06",
+    accent: "#00d63a", accentHover: "#22ff5c",
+    success: "#28c840", warning: "#c8b400", danger: "#ff5f57",
+    diff: "#28c840", diffAdd: "#28c840", diffDel: "#ff5f57",
+  },
 } as const satisfies Record<KTheme, Record<string, string>>;
 
 export const shadow = {
@@ -36,6 +49,11 @@ export const shadow = {
     pop: "0 2px 8px rgba(0,0,0,.10)",
     toast: "0 12px 32px rgba(0,0,0,.14)",
     modal: "0 24px 64px rgba(0,0,0,.18)",
+  },
+  matrix: {
+    pop: "0 2px 8px rgba(0,20,0,.5)",
+    toast: "0 12px 32px rgba(0,25,0,.55)",
+    modal: "0 24px 64px rgba(0,30,0,.6)",
   },
 } as const satisfies Record<KTheme, Record<string, string>>;
 

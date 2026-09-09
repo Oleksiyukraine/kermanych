@@ -1,5 +1,6 @@
 import { ref, watch, type Ref } from 'vue';
 import { revealSwap } from './reveal';
+import { matrixReveal } from './matrix-rain';
 import type { KTheme } from '@kermanych/tokens';
 
 // The app's colour theme. `@kermanych/tokens` ships both sets in one sheet; the
@@ -22,6 +23,11 @@ export const STORAGE_KEY = 'kermanych.theme';
 /** Dark is the product's identity, so it wins over the OS preference. */
 export const DEFAULT_THEME: KTheme = 'dark';
 
+/** Every theme the token sheet ships, in the order the shell's one-click toggle
+ *  cycles through — and the allow-list `readTheme` validates a stored value
+ *  against, so a key the app no longer ships resolves to the default. */
+export const THEMES: readonly KTheme[] = ['dark', 'light', 'matrix'];
+
 // Storage access is fallible on purpose: private-browsing windows and embedded
 // webviews throw on `localStorage` rather than returning null, and a theme that
 // cannot be remembered must still be switchable for the current session. Both
@@ -36,7 +42,7 @@ export function readTheme(store: Pick<Storage, 'getItem'> | null | undefined): K
   } catch {
     return DEFAULT_THEME;
   }
-  return raw === 'light' || raw === 'dark' ? raw : DEFAULT_THEME;
+  return (THEMES as readonly string[]).includes(raw ?? '') ? (raw as KTheme) : DEFAULT_THEME;
 }
 
 export function writeTheme(store: Pick<Storage, 'setItem'> | null | undefined, value: KTheme): void {
@@ -60,18 +66,33 @@ export function applyTheme(value: KTheme): void {
 }
 
 /**
- * Flip the theme, revealing the new palette under a circle that grows from
- * `origin` — the control that was activated — to the furthest viewport corner
- * (see lib/reveal.ts). The View Transitions API holds the page as two stacked
- * snapshots for the duration, so nothing is interactive while the reveal runs.
- * That is the whole cost of the effect, and the reason it is worth it only for
- * a full repaint.
+ * Apply `next`, persisting through the `theme` watcher (see `initTheme`), under
+ * the reveal that fits the destination:
+ *
+ *  - stepping INTO `matrix` plays the digital rain (lib/matrix-rain.ts), which
+ *    masks the palette swap behind a screen of falling glyphs;
+ *  - every other switch grows the circle wipe from `origin` — the control that
+ *    was activated (lib/reveal.ts).
+ *
+ * A no-op when `next` is already current, so a re-selection fires no reveal.
+ */
+export function setTheme(next: KTheme, origin?: DOMRect | null): void {
+  if (theme.value === next) return;
+  const swap = (): void => {
+    theme.value = next;
+  };
+  if (next === 'matrix') matrixReveal(swap);
+  else revealSwap(origin, swap);
+}
+
+/**
+ * Advance one step through `THEMES` (dark → light → matrix → dark): the shell
+ * toggle, where there is no room for a full picker. `origin` is the pressed
+ * control, so a circle-wipe destination grows from under it.
  */
 export function toggleTheme(origin?: DOMRect | null): void {
-  const next: KTheme = theme.value === 'light' ? 'dark' : 'light';
-  revealSwap(origin, () => {
-    theme.value = next;
-  });
+  const i = THEMES.indexOf(theme.value);
+  setTheme(THEMES[(i + 1) % THEMES.length] ?? DEFAULT_THEME, origin);
 }
 
 // Boot may re-run under HMR; a second watcher would double every write.
