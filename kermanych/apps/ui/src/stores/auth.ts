@@ -2,8 +2,8 @@
 import { defineStore } from 'pinia';
 import { markRaw, ref } from 'vue';
 import type { Session as SupabaseSession, SupabaseClient } from '@supabase/supabase-js';
-import { cloudEnv, createCloudClient, type Profile, getMyAgentRuntime, setMyAgentRuntime } from '@kermanych/cloud';
-import type { AgentRuntimeKind } from '@kermanych/core';
+import { cloudEnv, createCloudClient, type Profile, getMyAgentRuntime, setMyAgentRuntime, getMyAgentLanguage, setMyAgentLanguage } from '@kermanych/cloud';
+import type { AgentRuntimeKind, AgentLanguage } from '@kermanych/core';
 import { api, setAuthToken, setUnauthorizedHandler } from '../lib/api';
 import { IS_PREVIEW, PREVIEW_USER_ID } from '../lib/preview';
 import { useOrchestrator } from './orchestrator';
@@ -32,6 +32,7 @@ export const useAuth = defineStore('auth', () => {
   const profile = ref<Profile | null>(null);
   const accessToken = ref<string | null>(null);
   const runtime = ref<AgentRuntimeKind | null>(null);
+  const language = ref<AgentLanguage | null>(null);
 
   let resolveReady: () => void = () => undefined;
   // Resolves once the initial session (if any) has been read and handed to the
@@ -83,6 +84,12 @@ export const useAuth = defineStore('auth', () => {
         runtime.value = await getMyAgentRuntime(client);
       } catch {
         runtime.value = null;
+      }
+      // Same best-effort load for the communication language.
+      try {
+        language.value = await getMyAgentLanguage(client);
+      } catch {
+        language.value = null;
       }
       return;
     }
@@ -201,5 +208,13 @@ export const useAuth = defineStore('auth', () => {
     await useOrchestrator().loadModels(true);
   }
 
-  return { client, user, profile, accessToken, runtime, ready, init, signInWithGithub, signOut, chooseRuntime };
+  async function chooseLanguage(lang: AgentLanguage): Promise<void> {
+    await setMyAgentLanguage(client, lang);   // cloud = source of truth
+    await api.setAccountLanguage(lang);        // refresh local API cache
+    language.value = lang;
+    // No model refetch: the language directive is a launch-time system-prompt append, not a
+    // catalog dimension.
+  }
+
+  return { client, user, profile, accessToken, runtime, language, ready, init, signInWithGithub, signOut, chooseRuntime, chooseLanguage };
 });

@@ -9,6 +9,7 @@ import { WorktreeService, type ChangedFile } from "../worktree/worktree.service"
 import type { SplitDiff } from "../worktree/split-diff";
 import { createRuntime, type AgentRuntime } from "../runtime/agent-runtime";
 import { resolveRuntime } from "../runtime/resolve-runtime";
+import { languageAppendFor } from "../runtime/resolve-language";
 import { messagesToTranscript } from "./messages-to-transcript";
 import { reduceRpcEvents, toolRowMatches, type SkillLabel, type SkillSource } from "./transcript-reducer";
 import { ToolDetailCache } from "./tool-detail-cache";
@@ -522,7 +523,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     });
     const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
     const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
-    const rpc = createRuntime(session.runtime ?? "omp", { cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    const rpc = createRuntime(session.runtime ?? "omp", { cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.languageOpts() });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await rpc.start();
@@ -651,6 +652,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return resolveRuntime(process.env.KERMANYCH_RUNTIME, this.registry.getAuthSession()?.agentRuntime);
   }
 
+  // The system-prompt append carrying the user's agent communication language, shaped for a
+  // spread into any createRuntime() opts. Empty object when no language is chosen, so the
+  // agent keeps its own default. Read fresh per launch: a preference change takes on the next
+  // spawn without a restart.
+  private languageOpts(): { appendSystemPrompt?: string } {
+    const append = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
+    return append ? { appendSystemPrompt: append } : {};
+  }
+
   // Create the git isolation (worktree or in-place branch), spawn the omp child, and kick off
   // the first turn. `fork` seeds the child from a prior omp conversation (chat → agent) and
   // rehydrates its history; `firstPrompt` overrides the opening message sent (defaults to the
@@ -688,7 +698,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const cwd = worktree ? wtDir : project.localRepoPath;
     const configPath = await this.ompSkills(project.id, cwd, id);
     const extensionPath = await this.ompTriggers(project.id, cwd, id);
-    const rpc = createRuntime(session.runtime ?? "omp", { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    const rpc = createRuntime(session.runtime ?? "omp", { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.languageOpts() });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await rpc.start();
@@ -762,7 +772,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, noTools: true, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, noTools: true, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.languageOpts() });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
@@ -824,7 +834,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = createRuntime(child.runtime ?? "omp", { cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    const rpc = createRuntime(child.runtime ?? "omp", { cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.languageOpts() });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
@@ -1742,7 +1752,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // read per backend, so both re-render their prior transcript on wake.
     const runtimeKind = s.runtime ?? "omp";
     const resumeHandle = runtimeKind === "claude-code" ? s.ompSessionId : s.ompSessionFile;
-    const rpc = createRuntime(runtimeKind, { cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}) });
+    const rpc = createRuntime(runtimeKind, { cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.languageOpts() });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await rpc.start();

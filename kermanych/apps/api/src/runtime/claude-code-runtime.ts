@@ -82,6 +82,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       // A fork copies the parent session (new id); a plain resume continues the same id in
       // place. `fork` wins if both are set — a branch is a fork.
       ...(this.opts.fork ? { resume: this.opts.fork, forkSession: true } : this.opts.resume ? { resume: this.opts.resume } : {}),
+      // The agent communication language directive (and any other system-prompt append),
+      // added onto Claude Code's default preset so its own harness prompt is preserved.
+      ...(this.opts.appendSystemPrompt
+        ? { systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: this.opts.appendSystemPrompt } }
+        : {}),
     };
     const q = this.queryFn({ prompt: this.input, options });
     this.q = q;

@@ -41,3 +41,15 @@ test("clearAuthSession removes the cached token", () => {
   r.clearAuthSession();
   expect(r.getAuthSession()).toBeUndefined();
 });
+
+test("auth_session round-trips agentRuntime and agentLanguage", () => {
+  const r = new RegistryService(":memory:");
+  r.setAuthSession({ userId: "u-1", accessToken: "jwt-1", agentRuntime: "claude-code", agentLanguage: "uk" });
+  const cur = r.getAuthSession();
+  expect(cur?.agentRuntime).toBe("claude-code");
+  expect(cur?.agentLanguage).toBe("uk");
+
+  // A garbage stored value degrades to undefined rather than surfacing to the launch path.
+  r.setAuthSession({ userId: "u-1", accessToken: "jwt-1" });
+  expect(r.getAuthSession()?.agentLanguage).toBeUndefined();
+});

@@ -38,7 +38,7 @@ export class RpcSession implements AgentRuntime {
   // otherwise liveOrResume's fast path hands a caller the dying child and the write to its
   // already-ended stdin vanishes, the exact silent loss the resume-on-dead contract prevents.
   private stopping = false;
-  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; commandTimeoutMs?: number; configPath?: string; extensionPath?: string }) {}
+  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; appendSystemPrompt?: string; commandTimeoutMs?: number; configPath?: string; extensionPath?: string }) {}
 
   onEvent(cb: (e: RpcEvent) => void) { this.eventCbs.push(cb); }
   onExit(cb: (code: number | null, reason: string) => void) { this.exitCbs.push(cb); }
@@ -53,6 +53,9 @@ export class RpcSession implements AgentRuntime {
     // The session's trigger package (TTSR rules). Launch-time only, like --config: no RPC
     // command can register a rule with a running child.
     if (this.opts.extensionPath) argv.push("-e", this.opts.extensionPath);
+    // The agent communication language directive (and any other system-prompt append). Launch-
+    // time only, like --config: no RPC command rewrites a running child's system prompt.
+    if (this.opts.appendSystemPrompt) argv.push("--append-system-prompt", this.opts.appendSystemPrompt);
     if (this.opts.model) argv.push("--model", this.opts.model);
     // Reasoning effort at spawn. omp keeps it as session state, so this is the opening value
     // only — `setThinkingLevel` retunes the same child later without a respawn.

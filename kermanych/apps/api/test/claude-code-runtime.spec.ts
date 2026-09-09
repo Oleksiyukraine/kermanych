@@ -126,6 +126,16 @@ describe("ClaudeCodeRuntime tool options", () => {
     expect("allowedTools" in (captured.options ?? {})).toBe(false);
     expect("tools" in (captured.options ?? {})).toBe(false);
   });
+
+  it("appendSystemPrompt maps to a claude_code preset append; absent leaves systemPrompt unset", async () => {
+    const withAppend = captureQuery();
+    await new ClaudeCodeRuntime({ cwd: "/tmp/x", appendSystemPrompt: "Always reply in Ukrainian." }, withAppend.queryFn as never).start();
+    expect(withAppend.captured.options?.systemPrompt).toEqual({ type: "preset", preset: "claude_code", append: "Always reply in Ukrainian." });
+
+    const without = captureQuery();
+    await new ClaudeCodeRuntime({ cwd: "/tmp/x" }, without.queryFn as never).start();
+    expect("systemPrompt" in (without.captured.options ?? {})).toBe(false);
+  });
 });
 
 describe("ClaudeCodeRuntime.supportedModels", () => {

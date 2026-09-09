@@ -70,4 +70,33 @@ describe("AccountController", () => {
 
     expect(captured?.agentRuntime).toBe("claude-code");
   });
+
+  it("GET /account/language returns null when unset", () => {
+    expect(make(undefined).getLanguage()).toEqual({ language: null });
+    expect(make({ userId: "u1", accessToken: "tok" }).getLanguage()).toEqual({ language: null });
+  });
+
+  it("GET /account/language returns cached agentLanguage", () => {
+    const controller = make({ userId: "u1", accessToken: "tok", agentLanguage: "uk" });
+    expect(controller.getLanguage()).toEqual({ language: "uk" });
+  });
+
+  it("POST /account/language rejects an unknown language", () => {
+    expect(() => make({ userId: "u1", accessToken: "tok" }).setLanguage({ language: "klingon" })).toThrow(BadRequestException);
+  });
+
+  it("POST /account/language throws when not signed in", () => {
+    expect(() => make(undefined).setLanguage({ language: "uk" })).toThrow(BadRequestException);
+  });
+
+  it("POST /account/language sets agentLanguage and preserves the rest of the session", () => {
+    let captured: AuthSessionRow | undefined;
+    const existing: AuthSessionRow = { userId: "u1", accessToken: "tok", agentRuntime: "omp" };
+    const controller = make(existing, (row) => (captured = row));
+
+    const result = controller.setLanguage({ language: "en" });
+
+    expect(result).toEqual({ language: "en" });
+    expect(captured).toEqual({ userId: "u1", accessToken: "tok", agentRuntime: "omp", agentLanguage: "en" });
+  });
 });

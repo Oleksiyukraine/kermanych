@@ -5,8 +5,8 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
-import { isThinkingLevel, isAgentRuntime } from "@kermanych/core";
-import type { Project, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind } from "@kermanych/core";
+import { isThinkingLevel, isAgentRuntime, isAgentLanguage } from "@kermanych/core";
+import type { Project, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -16,6 +16,7 @@ export type AuthSessionRow = {
   expiresAt?: string;
   githubUsername?: string;
   agentRuntime?: AgentRuntimeKind;
+  agentLanguage?: AgentLanguage;
 };
 
 // A queued cloud status push. One row per task — the outbox is a latest-wins mailbox, not a
@@ -187,6 +188,14 @@ export class RegistryService {
     // cloud round trip.
     try {
       this.db.exec(`ALTER TABLE auth_session ADD COLUMN agent_runtime TEXT`);
+    } catch {
+      /* column already exists */
+    }
+    // Additive migration: per-user agent communication language, cached alongside the
+    // Supabase session so the launch path can inject the language directive without a cloud
+    // round trip.
+    try {
+      this.db.exec(`ALTER TABLE auth_session ADD COLUMN agent_language TEXT`);
     } catch {
       /* column already exists */
     }
@@ -521,24 +530,25 @@ export class RegistryService {
   getAuthSession(): AuthSessionRow | undefined {
     const row = this.db
       .prepare(
-        `SELECT user_id as userId, access_token as accessToken, expires_at as expiresAt, github_username as githubUsername, agent_runtime as agentRuntime FROM auth_session WHERE id = 1`,
+        `SELECT user_id as userId, access_token as accessToken, expires_at as expiresAt, github_username as githubUsername, agent_runtime as agentRuntime, agent_language as agentLanguage FROM auth_session WHERE id = 1`,
       )
-      .get() as (AuthSessionRow & { agentRuntime: string | null }) | undefined;
+      .get() as (AuthSessionRow & { agentRuntime: string | null; agentLanguage: string | null }) | undefined;
     if (!row) return undefined;
     return {
       ...row,
       expiresAt: row.expiresAt ?? undefined,
       githubUsername: row.githubUsername ?? undefined,
       agentRuntime: isAgentRuntime(row.agentRuntime) ? row.agentRuntime : undefined,
+      agentLanguage: isAgentLanguage(row.agentLanguage) ? row.agentLanguage : undefined,
     };
   }
 
   setAuthSession(row: AuthSessionRow): void {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO auth_session (id, user_id, access_token, expires_at, github_username, agent_runtime) VALUES (1,?,?,?,?,?)`,
+        `INSERT OR REPLACE INTO auth_session (id, user_id, access_token, expires_at, github_username, agent_runtime, agent_language) VALUES (1,?,?,?,?,?,?)`,
       )
-      .run(row.userId, row.accessToken, row.expiresAt ?? null, row.githubUsername ?? null, row.agentRuntime ?? null);
+      .run(row.userId, row.accessToken, row.expiresAt ?? null, row.githubUsername ?? null, row.agentRuntime ?? null, row.agentLanguage ?? null);
   }
 
   clearAuthSession(): void {

@@ -743,6 +743,10 @@ export const en: MessageSchema = {
       claude: 'claude-code',
       note: 'Existing sessions keep their current backend.',
     },
+    language: {
+      label: 'Agent communication language',
+      note: 'New sessions reply in this language. Existing sessions are unchanged.',
+    },
     account: {
       loggedInAs: 'You are signed in as',
       providerPlan: 'Provider plan',
