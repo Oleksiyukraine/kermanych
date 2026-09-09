@@ -457,6 +457,20 @@
             />
             <p class="set__note">{{ t('settings.runtime.note') }}</p>
           </div>
+
+          <div class="set__rule"></div>
+
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.language.label') }}</span>
+            <!-- Applies on selection: the language is written to the cloud immediately and
+                 injected into the system prompt of sessions launched afterwards. -->
+            <KSelect
+              :model-value="auth.language ?? ''"
+              :options="LANGUAGE_OPTIONS"
+              @update:model-value="pickLanguage"
+            />
+            <p class="set__note">{{ t('settings.language.note') }}</p>
+          </div>
         </div>
 
         <!-- ── APP · АКАУНТ ─────────────────────────────────────────────────── -->
@@ -605,7 +619,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import type { EnvFileView, ThinkingLevel } from '@kermanych/core';
+import type { EnvFileView, ThinkingLevel, AgentLanguage } from '@kermanych/core';
+import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS } from '@kermanych/core';
 import type { AssignableRole, WorkspaceMember, WorkspaceRole } from '@kermanych/cloud';
 import type { KTheme } from '@kermanych/tokens';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -1303,6 +1318,24 @@ async function pickRuntime(next: string): Promise<void> {
   } catch (e) {
     store.notify(
       `Failed to change runtime: ${e instanceof Error ? e.message : String(e)}`,
+      'error'
+    );
+  }
+}
+
+// Endonym labels come from core so the picker reads the same in every app locale. The list is
+// the frozen AGENT_LANGUAGES tuple; there is no '' row, so a pick always sets a real language.
+const LANGUAGE_OPTIONS = computed<readonly KSelectOption[]>(() =>
+  AGENT_LANGUAGES.map((code) => ({ value: code, label: AGENT_LANGUAGE_LABELS[code] })),
+);
+
+async function pickLanguage(next: string): Promise<void> {
+  if (!next || auth.language === next) return;
+  try {
+    await auth.chooseLanguage(next as AgentLanguage);
+  } catch (e) {
+    store.notify(
+      `Failed to change language: ${e instanceof Error ? e.message : String(e)}`,
       'error'
     );
   }

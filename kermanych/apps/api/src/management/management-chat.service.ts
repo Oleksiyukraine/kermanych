@@ -29,6 +29,7 @@ import {
 } from "@kermanych/core";
 import { createRuntime, type AgentRuntime } from "../runtime/agent-runtime";
 import { resolveRuntime } from "../runtime/resolve-runtime";
+import { languageAppendFor } from "../runtime/resolve-language";
 import { CodedError } from "./coded-error";
 import { RegistryService } from "../registry/registry.service";
 import { reduceRpcEvents, sumTurnUsage } from "../supervisor/transcript-reducer";
@@ -261,7 +262,8 @@ export class ManagementChatService implements OnModuleDestroy {
       await cur.rpc.stop().catch(() => {});
     }
     const cwd = managementCwd(repos);
-    const rpc = createRuntime(this.runtimeFor(), { cwd, tools: [...MANAGEMENT_TOOLS] });
+    const append = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
+    const rpc = createRuntime(this.runtimeFor(), { cwd, tools: [...MANAGEMENT_TOOLS], ...(append ? { appendSystemPrompt: append } : {}) });
     const live: Live = { rpc, greeted: false, lastAt: Date.now() };
     rpc.onEvent((e) => live.turn?.on(e));
     rpc.onExit((_code, reason) => live.turn?.fail(reason));

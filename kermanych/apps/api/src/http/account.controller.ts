@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Get, Post } from "@nestjs/common";
-import { isAgentRuntime, type AgentRuntimeKind } from "@kermanych/core";
+import { isAgentRuntime, isAgentLanguage, type AgentRuntimeKind, type AgentLanguage } from "@kermanych/core";
 import { RegistryService } from "../registry/registry.service";
 
 // The signed-in user's per-account runtime preference, cached locally. Source of truth is
@@ -21,5 +21,19 @@ export class AccountController {
     if (!cur) throw new BadRequestException("not signed in");
     this.registry.setAuthSession({ ...cur, agentRuntime: b.runtime });
     return { runtime: b.runtime };
+  }
+
+  @Get("language")
+  getLanguage(): { language: AgentLanguage | null } {
+    return { language: this.registry.getAuthSession()?.agentLanguage ?? null };
+  }
+
+  @Post("language")
+  setLanguage(@Body() b: { language?: string }): { language: AgentLanguage } {
+    if (!isAgentLanguage(b?.language)) throw new BadRequestException(`unknown language ${JSON.stringify(b?.language)}`);
+    const cur = this.registry.getAuthSession();
+    if (!cur) throw new BadRequestException("not signed in");
+    this.registry.setAuthSession({ ...cur, agentLanguage: b.language });
+    return { language: b.language };
   }
 }

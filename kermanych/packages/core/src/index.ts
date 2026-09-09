@@ -60,6 +60,13 @@ export {
 export { THINKING_LEVELS, isThinkingLevel, type ThinkingLevel } from "./thinking";
 export { AGENT_RUNTIMES, isAgentRuntime, type AgentRuntimeKind } from "./runtime";
 export {
+  AGENT_LANGUAGES,
+  AGENT_LANGUAGE_LABELS,
+  isAgentLanguage,
+  agentLanguageDirective,
+  type AgentLanguage,
+} from "./language";
+export {
   ASSIGNED_BLOCK_HEADER,
   DEFAULT_SKILLS,
   SKILL_NAME_RE,

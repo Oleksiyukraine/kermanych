@@ -22,6 +22,7 @@ import type {
   ApiErrorCode,
   ApiErrorParams,
   AgentRuntimeKind,
+  AgentLanguage,
 } from '@kermanych/core';
 import type { CloudProject, JiraIntegration, JiraIssue } from '@kermanych/cloud';
 import { globalTr } from '../boot/i18n';
@@ -529,4 +530,11 @@ export const api = {
 
   setAccountRuntime: (runtime: AgentRuntimeKind): Promise<void> =>
     post<void>('/account/runtime', { runtime }),
+
+  // Account-level communication language. Same cache-refresh pattern as the runtime above.
+  getAccountLanguage: (): Promise<{ language: AgentLanguage | null }> =>
+    get<{ language: AgentLanguage | null }>('/account/language'),
+
+  setAccountLanguage: (language: AgentLanguage): Promise<void> =>
+    post<void>('/account/language', { language }),
 };

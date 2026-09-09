@@ -28,6 +28,10 @@ export interface RuntimeLaunchOpts {
   resume?: string;
   noTools?: boolean;
   tools?: string[];
+  // Extra text appended to the system prompt (backend-neutral). omp maps it to
+  // `--append-system-prompt`, claude to `systemPrompt.append`. Used to inject the user's
+  // agent communication language directive.
+  appendSystemPrompt?: string;
   commandTimeoutMs?: number;
   configPath?: string;   // omp-only
   extensionPath?: string; // omp-only

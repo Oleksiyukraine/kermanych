@@ -1,5 +1,5 @@
 import { Injectable, Optional } from "@nestjs/common";
-import { cloudEnv, createCloudClient, getMyAgentRuntime } from "@kermanych/cloud";
+import { cloudEnv, createCloudClient, getMyAgentRuntime, getMyAgentLanguage } from "@kermanych/cloud";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { RegistryService, type AuthSessionRow } from "../registry/registry.service";
 
@@ -100,6 +100,16 @@ export class AuthService {
         if (cur) this.registry.setAuthSession({ ...cur, agentRuntime: runtime });
       }
     } catch { /* offline or profile unreadable — cache stays, omp default applies */ }
+
+    // Same best-effort hydration for the communication language, so the first launch on a new
+    // machine speaks the chosen language without a network read on the hot path.
+    try {
+      const language = await getMyAgentLanguage(this.cloudClient());
+      if (language) {
+        const cur = this.registry.getAuthSession();
+        if (cur) this.registry.setAuthSession({ ...cur, agentLanguage: language });
+      }
+    } catch { /* offline or profile unreadable — cache stays, no directive is injected */ }
 
     return { userId: row.userId, githubUsername: row.githubUsername };
   }

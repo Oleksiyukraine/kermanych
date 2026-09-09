@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { AgentRuntime, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus, ThinkingLevel } from "@kermanych/core";
+import type { AgentLanguage, AgentRuntime, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same eleven labels.
@@ -13,6 +13,7 @@ export type Profile = {
   displayName?: string;
   avatarUrl?: string;
   agentRuntime?: AgentRuntime;
+  agentLanguage?: AgentLanguage;
 };
 
 export type Workspace = {

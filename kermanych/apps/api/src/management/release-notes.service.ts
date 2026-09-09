@@ -17,6 +17,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import type { ReleaseNotesAsk, ReleaseNotesReply, RpcEvent, AgentRuntimeKind } from "@kermanych/core";
 import { createRuntime } from "../runtime/agent-runtime";
 import { resolveRuntime } from "../runtime/resolve-runtime";
+import { languageAppendFor } from "../runtime/resolve-language";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { reduceRpcEvents, sumTurnUsage, type TurnSpend } from "../supervisor/transcript-reducer";
@@ -112,7 +113,8 @@ export class ReleaseNotesService {
   // read-only tools ask no questions the prompt has not already forbidden — but a child
   // that tries anyway is simply dropped by the timeout, never left hanging a request.
   private async oneShot(cwd: string, prompt: string, startedAt: number): Promise<{ text: string; spend: TurnSpend }> {
-    const rpc = createRuntime(this.runtimeFor(), { cwd, tools: [...MANAGEMENT_TOOLS] });
+    const append = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
+    const rpc = createRuntime(this.runtimeFor(), { cwd, tools: [...MANAGEMENT_TOOLS], ...(append ? { appendSystemPrompt: append } : {}) });
     const events: RpcEvent[] = [];
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     rpc.onEvent((e) => {
