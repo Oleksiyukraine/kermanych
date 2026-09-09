@@ -389,9 +389,13 @@ function goToAgents(): void {
   void router.push({ name: 'agents' });
 }
 
-// Eleven task statuses, six columns: `thinking` and `tool` are one human state («агент
+// Eleven task statuses, five columns: `thinking` and `tool` are one human state («агент
 // працює»), and the five end states are all «не рухається». Eleven lanes would be eleven
 // mostly-empty columns.
+//
+// `queued` has no lane: it is the local session's transient start status (INITIAL_STATUS)
+// that is never mirrored to the cloud before it flips to `thinking` — the first status
+// CloudSyncService pushes for any task is `thinking` — so a card never actually rests here.
 //
 // `in_review` gets a lane of its own instead of joining «Завершені»: a pushed PR is the one
 // end state that is waiting on a PERSON, so a card there is a request, not a result — and a
@@ -399,7 +403,6 @@ function goToAgents(): void {
 type Column = { key: string; labelKey: string; statuses: TaskStatus[] };
 const COLUMNS: Column[] = [
   { key: 'backlog', labelKey: 'board.column.backlog', statuses: ['backlog'] },
-  { key: 'queued', labelKey: 'board.column.queued', statuses: ['queued'] },
   { key: 'running', labelKey: 'board.column.running', statuses: ['thinking', 'tool'] },
   { key: 'waiting', labelKey: 'board.column.waiting', statuses: ['waiting_input'] },
   { key: 'review', labelKey: 'board.column.review', statuses: ['in_review'] },

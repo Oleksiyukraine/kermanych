@@ -420,7 +420,6 @@ export const en: MessageSchema = {
     },
     column: {
       backlog: 'Backlog',
-      queued: 'Queued',
       running: 'In progress',
       waiting: 'Awaiting reply',
       review: 'In review',
