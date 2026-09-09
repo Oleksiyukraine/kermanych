@@ -79,12 +79,11 @@ describe('SETTINGS_CATEGORIES', () => {
     expect(settingsSection('app-agents').key).toBe(SETTINGS_DEFAULT_SECTION);
   });
 
-  // Хелпери are baked into the app — `DEFAULT_HELPERS` is a compile-time constant and the
-  // pane is read-only — so they stay at the app scope now that the agents left it.
-  it('carries the helper catalogue at the app scope', () => {
-    const helpers = settingsSection('app-helpers');
-    expect(helpers.key).toBe('app-helpers');
-    expect(helpers.scope).toBe('app');
+  // Хелпери left the app scope for the «ШІ-команда» screen (its own read-only Довідка row).
+  // A stale /settings/app-helpers bookmark is a typo like any other: it lands on the default.
+  it('no longer carries the helper catalogue — it moved to the AI-team screen', () => {
+    expect(SETTINGS_CATEGORIES.some((c) => c.key === 'app-helpers')).toBe(false);
+    expect(settingsSection('app-helpers').key).toBe(SETTINGS_DEFAULT_SECTION);
   });
 
   // The default launch model is per-project cloud config, written through the same projects

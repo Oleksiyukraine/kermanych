@@ -581,12 +581,6 @@ export const en: MessageSchema = {
         sub: 'current bindings',
         blurb: 'The keys are wired into the app — there is nowhere to remap them yet.',
       },
-      'app-helpers': {
-        label: 'Helpers',
-        sub: 'chat instruction commands',
-        blurb:
-          'Short commands you can drop into any chat — they add an instruction for the AI to your message. Wired into the app: here you can only view them.',
-      },
       'app-runtime': {
         label: 'AI provider',
         sub: 'Agent backend',
@@ -925,15 +919,6 @@ export const en: MessageSchema = {
       unmeasured: 'Size not counted for {names} — this text lives in the repository, and Kermanych does not read it from this screen.',
       brokenNote: 'No skill of this name exists in the library or the repository — nothing will be delivered.',
     },
-    helpersCatalog: {
-      lead1: 'A helper is a directive command: type it at the start of a message (or open the panel with the {slash} button in the chat field), and Kermanych appends a ready-made instruction for the model to your text. Your chat message stays exactly as you wrote it — a line appears beneath it noting which helper fired.',
-      lead2: 'The list is baked into the app: here you only see it. A helper fires only at the {start} of a message — after that it is ordinary text, so the path {path} does nothing. Kermanych does not touch an unknown command at all.',
-      leadStart: 'start',
-      kindDirective: 'directive',
-      kindDirectiveWhat: 'appends the text shown below to the message.',
-      kindKeyword: 'keyword',
-      kindKeywordWhat: 'inserts a word that omp itself recognises — these are the only helpers with a mechanical effect.',
-    },
   },
   aiTeam: {
     rail: {
@@ -953,6 +938,7 @@ export const en: MessageSchema = {
     groups: {
       automation: 'Automation',
       skills: 'Skills',
+      reference: 'Reference',
     },
     sections: {
       agents: {
@@ -972,6 +958,12 @@ export const en: MessageSchema = {
         sub: 'this project’s library',
         blurb:
           'Texts the agent pulls in on its own when it sees fit — and the ones Agents and Triggers build their lists from. A skill with the same name in the repository always wins.',
+      },
+      helpers: {
+        label: 'Helpers',
+        sub: 'chat instruction commands',
+        blurb:
+          'Short commands you can drop into any chat — they add an instruction for the AI to your message. Baked into the app: here you can only view them, there is nothing to edit or delete.',
       },
     },
     scope: {
@@ -996,6 +988,16 @@ export const en: MessageSchema = {
       user: 'Sign in to configure your own AI team.',
       project: 'Pick a project in the left panel to configure its AI team.',
       workspace: 'Pick a workspace in the left panel to configure the shared AI team.',
+    },
+    helpersUserScope: 'Helpers are a shared reference shown at the workspace and project level.',
+    helpersCatalog: {
+      lead1: 'A helper is a directive command: type it at the start of a message (or open the panel with the {slash} button in the chat field), and Kermanych appends a ready-made instruction for the model to your text. Your chat message stays exactly as you wrote it — a line appears beneath it noting which helper fired.',
+      lead2: 'The list is baked into the app: here you only see it. A helper fires only at the {start} of a message — after that it is ordinary text, so the path {path} does nothing. Kermanych does not touch an unknown command at all.',
+      leadStart: 'start',
+      kindDirective: 'directive',
+      kindDirectiveWhat: 'appends the text shown below to the message.',
+      kindKeyword: 'keyword',
+      kindKeywordWhat: 'inserts a word that omp itself recognises — these are the only helpers with a mechanical effect.',
     },
   },
   management: {

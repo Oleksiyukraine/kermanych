@@ -10,16 +10,18 @@
 // ONE table (`AI_TEAM_SECTIONS`) drives the rail, the pane heading and the URL segment.
 // Adding a section is one row here plus the page's `v-if` for it. This mirrors lib/settings.ts.
 //
-// The rail groups the sections under two captions, and the caption — not the row — carries the
+// The rail groups the sections under captions, and the caption — not the row — carries the
 // noun the operator thinks in:
 //   Автоматизація — what runs WITHOUT the model choosing to: an agent's launch instruction
 //                   (Агенти) and the rules that fire on a pattern (Тригери).
 //   Навички       — the library both of the above draw skills from (Навички).
+//   Довідка       — read-only reference over what the app hard-codes: the chat command
+//                   catalogue (Хелпери), which has nothing to own, edit or delete.
 
 import { DEFAULT_SKILLS, type SkillView } from '@kermanych/core';
 import type { AiScope, AiSkill } from '@kermanych/cloud';
 
-export type AiTeamGroup = 'automation' | 'skills';
+export type AiTeamGroup = 'automation' | 'skills' | 'reference';
 
 export interface AiTeamSection {
   /** URL segment under /ai-team AND the rail's nav value. */
@@ -32,7 +34,7 @@ export interface AiTeamSection {
 // pure structure, and every visible string is a key derived from `key`
 // (`aiTeam.sections.<key>.{label,sub,blurb}`) resolved at the callsite via t(). The group
 // caption is `aiTeam.groups.<group>`.
-export const AI_TEAM_GROUPS: readonly AiTeamGroup[] = ['automation', 'skills'];
+export const AI_TEAM_GROUPS: readonly AiTeamGroup[] = ['automation', 'skills', 'reference'];
 
 export const AI_TEAM_SECTIONS: readonly AiTeamSection[] = [
   // Агенти first: an agent's instruction is what a trigger interrupts and what an assigned
@@ -40,6 +42,10 @@ export const AI_TEAM_SECTIONS: readonly AiTeamSection[] = [
   { key: 'agents', group: 'automation' },
   { key: 'triggers', group: 'automation' },
   { key: 'skills', group: 'skills' },
+  // Хелпери are the odd row out: a compile-time catalogue, not a per-owner row, so the panel
+  // takes no owner and the section can only be read. It sits under its own caption for that
+  // reason — grouping it with the editable automation would blur read-only into editable.
+  { key: 'helpers', group: 'reference' },
 ];
 
 /** Where a bare /ai-team lands. */

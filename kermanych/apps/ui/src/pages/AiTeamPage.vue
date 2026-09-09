@@ -58,9 +58,22 @@
       </header>
 
       <div class="ait__body">
+        <!-- Хелпери: a read-only reference of the app's chat commands. `DEFAULT_HELPERS` is a
+             compile-time constant, so there is no owner to configure and nothing to edit or
+             delete — the pane renders the same catalogue for every subject. It is a
+             workspace-and-project-level reference; the private user overlay has no place for
+             it, so that scope says so rather than repeating a global list. This branch sits
+             ABOVE the `!owner` guard on purpose: the catalogue needs no subject selected. -->
+        <div v-if="section.key === 'helpers'" class="ait__form ait__form--wide">
+          <HelpersCatalogPanel v-if="scope !== 'user'" />
+          <div v-else class="ait__blank">
+            <span class="ait__blank-eyebrow mono">{{ t('aiTeam.blank.eyebrow') }}</span>
+            <p>{{ t('aiTeam.helpersUserScope') }}</p>
+          </div>
+        </div>
         <!-- The subject IS the access rule: every editor configures ONE owner, so with none
              chosen there is nothing to configure. The message names the scope's own subject. -->
-        <div v-if="!owner" class="ait__blank">
+        <div v-else-if="!owner" class="ait__blank">
           <span class="ait__blank-eyebrow mono">{{ t('aiTeam.blank.eyebrow') }}</span>
           <p>{{ t('aiTeam.blank.' + scope) }}</p>
         </div>
@@ -123,6 +136,7 @@ import KTopNav from 'components/kit/KTopNav.vue';
 import AiAgentsPanel from 'components/settings/AiAgentsPanel.vue';
 import TriggersPanel from 'components/settings/TriggersPanel.vue';
 import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
+import HelpersCatalogPanel from 'components/settings/HelpersCatalogPanel.vue';
 import AiInherited from 'components/settings/AiInherited.vue';
 
 const store = useOrchestrator();

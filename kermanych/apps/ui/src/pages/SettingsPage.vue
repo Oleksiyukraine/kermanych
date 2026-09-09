@@ -443,14 +443,6 @@
           <p class="set__note">{{ t('settings.keymap.note') }}</p>
         </div>
 
-        <!-- ── APP · ХЕЛПЕРИ ────────────────────────────────────────────────── -->
-        <!-- Mounted, not inlined, for the same reason the library is: it is a list of its
-             own, and `DEFAULT_HELPERS` is a compile-time constant, so the pane has nothing to
-             be told and nothing to load. -->
-        <div v-else-if="section.key === 'app-helpers'" class="set__form set__form--wide">
-          <HelpersCatalogPanel />
-        </div>
-
         <!-- ── APP · ШІ-ПРОВАЙДЕР ───────────────────────────────────────────── -->
         <div v-else-if="section.key === 'app-runtime'" class="set__form">
           <div class="set__group">
@@ -653,7 +645,6 @@ import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KTag from 'components/kit/KTag.vue';
-import HelpersCatalogPanel from 'components/settings/HelpersCatalogPanel.vue';
 import KLangToggle from 'components/kit/KLangToggle.vue';
 
 const store = useOrchestrator();
