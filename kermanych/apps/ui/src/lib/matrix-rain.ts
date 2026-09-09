@@ -129,7 +129,7 @@ export function matrixReveal(swap: () => void): void {
       // column. Both cells redraw a fresh glyph so the stream keeps churning.
       ctx.fillStyle = '#c8ffd0';
       ctx.fillText(rnd(), x, y);
-      ctx.fillStyle = '#00d63a';
+      ctx.fillStyle = '#3fb46a';
       ctx.fillText(rnd(), x, y - CELL);
       // Recycle a column to the top once it clears the fold, at random, so the
       // heads never line up into a visible seam.
