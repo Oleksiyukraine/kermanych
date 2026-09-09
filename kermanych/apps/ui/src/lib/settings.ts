@@ -13,8 +13,8 @@
 // listing «Учасники» under a project would name the wrong owner of that data.
 //
 // Everything registered below is backed by real data. Most rows carry a read and a
-// write; «Гарячі клавіші» and «Хелпери» are reference panes over something the
-// application hard-codes, and say so in the pane itself. «ШІ-команда» used to be three
+// write; «Гарячі клавіші» is a reference pane over something the application hard-codes,
+// and says so in the pane itself. «ШІ-команда» used to be three
 // rows here; it is its own top-nav screen now (lib/ai-team.ts, pages/AiTeamPage.vue), so
 // nothing about agents, triggers or the skill library is registered below any more — the
 // pure merge those panels still share lives on in this file. Nothing here is a
@@ -53,7 +53,6 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { key: 'workspace-danger', scope: 'workspace', danger: true },
   { key: 'app-general', scope: 'app' },
   { key: 'app-keymap', scope: 'app' },
-  { key: 'app-helpers', scope: 'app' },
   { key: 'app-runtime', scope: 'app' },
   { key: 'app-account', scope: 'app' },
 ];

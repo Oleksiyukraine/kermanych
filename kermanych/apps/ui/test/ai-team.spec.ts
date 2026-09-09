@@ -32,14 +32,16 @@ describe('AI_TEAM_SECTIONS', () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  // The user's two rail items: Автоматизація over Агенти + Тригери, Навички over the library.
-  // Agents first, because its instruction is what a trigger interrupts and what an assigned
-  // skill is pasted into.
-  it('groups the sections under the two captions, in order', () => {
+  // The rail's three captions: Автоматизація over Агенти + Тригери, Навички over the library,
+  // Довідка over the read-only Хелпери catalogue. Agents first, because its instruction is what
+  // a trigger interrupts and what an assigned skill is pasted into; Хелпери last, because it is
+  // a compile-time reference with no owner to configure.
+  it('groups the sections under their captions, in order', () => {
     expect(AI_TEAM_SECTIONS.map((s) => [s.group, s.key])).toEqual([
       ['automation', 'agents'],
       ['automation', 'triggers'],
       ['skills', 'skills'],
+      ['reference', 'helpers'],
     ]);
   });
 

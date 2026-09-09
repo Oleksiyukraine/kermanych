@@ -1,10 +1,10 @@
 <template>
   <section class="hp">
-    <i18n-t keypath="settings.helpersCatalog.lead1" tag="p" class="hp__lead">
+    <i18n-t keypath="aiTeam.helpersCatalog.lead1" tag="p" class="hp__lead">
       <template #slash><span class="mono">/</span></template>
     </i18n-t>
-    <i18n-t keypath="settings.helpersCatalog.lead2" tag="p" class="hp__lead">
-      <template #start><strong>{{ t('settings.helpersCatalog.leadStart') }}</strong></template>
+    <i18n-t keypath="aiTeam.helpersCatalog.lead2" tag="p" class="hp__lead">
+      <template #start><strong>{{ t('aiTeam.helpersCatalog.leadStart') }}</strong></template>
       <template #path><span class="mono">/usr/bin/env</span></template>
     </i18n-t>
 
@@ -12,13 +12,13 @@
          exists: one adds text, the other flips a switch inside omp. -->
     <ul class="hp__kinds">
       <li class="hp__kind">
-        <span class="hp__badge">{{ t('settings.helpersCatalog.kindDirective') }}</span>
-        <span class="hp__kind-what">{{ t('settings.helpersCatalog.kindDirectiveWhat') }}</span>
+        <span class="hp__badge">{{ t('aiTeam.helpersCatalog.kindDirective') }}</span>
+        <span class="hp__kind-what">{{ t('aiTeam.helpersCatalog.kindDirectiveWhat') }}</span>
       </li>
       <li class="hp__kind">
-        <span class="hp__badge hp__badge--keyword">{{ t('settings.helpersCatalog.kindKeyword') }}</span>
+        <span class="hp__badge hp__badge--keyword">{{ t('aiTeam.helpersCatalog.kindKeyword') }}</span>
         <span class="hp__kind-what">
-          {{ t('settings.helpersCatalog.kindKeywordWhat') }}
+          {{ t('aiTeam.helpersCatalog.kindKeywordWhat') }}
         </span>
       </li>
     </ul>
@@ -29,7 +29,7 @@
           <span class="hp__name mono">/{{ h.name }}</span>
           <span class="hp__label">{{ h.label }}</span>
           <span class="hp__badge" :class="{ 'hp__badge--keyword': h.kind === 'keyword' }">
-            {{ h.kind === 'keyword' ? t('settings.helpersCatalog.kindKeyword') : t('settings.helpersCatalog.kindDirective') }}
+            {{ h.kind === 'keyword' ? t('aiTeam.helpersCatalog.kindKeyword') : t('aiTeam.helpersCatalog.kindDirective') }}
           </span>
         </div>
         <p class="hp__hint">{{ h.hint }}</p>
