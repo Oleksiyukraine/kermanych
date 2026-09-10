@@ -1228,7 +1228,7 @@ function onDelete(task: Task): void {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  height: calc(100vh - 82px);
+  height: calc(100vh - 90px);
   min-height: 0;
   padding: var(--k-sp-3);
   background: var(--k-canvas);

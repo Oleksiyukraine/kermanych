@@ -1649,7 +1649,7 @@ async function gitPull(): Promise<void> {
   display: flex;
   align-items: center;
   gap: var(--k-sp-1);
-  height: 26px;
+  height: 34px;
   padding: 0 var(--k-sp-2);
   background: var(--k-bg);
   border-top: 1px solid var(--k-line-strong);
@@ -1679,21 +1679,28 @@ async function gitPull(): Promise<void> {
   cursor: not-allowed;
 }
 
-// The footer toggle for a dock that is currently open: reads as pressed.
-.shell__foot-btn--on {
-  background: var(--k-surface2);
-  color: var(--k-accent);
-}
-
-// The two dock toggles carry no label, so they are glyph-only controls: the design system
-// sizes those off the icon scale set ON the control (app.scss's `.k-glyph` note), not the
-// label-relative 1.25em that made ◧/◨ read as heavy blocks. `xs` is the compact step that fits
-// the 26px footer and matches the optical weight of the ШІ-session header's KIconButton glyphs.
+// Dock toggles are glyph-only controls, so they take the icon-button look of the ШІ-session
+// header's KIconButton: a 28px square with a 1px rule and an icon-scale glyph, not a bare
+// label-relative mark. `--on` (the docked side) lights the accent frame like the active state.
 .shell__foot-btn--icon {
   justify-content: center;
-  width: 20px;
+  width: 28px;
+  height: 28px;
   padding: 0;
-  font-size: var(--k-icon-xs);
+  border: 1px solid var(--k-line);
+  font-size: var(--k-icon-md);
+}
+.shell__foot-btn--icon:hover:not(:disabled) {
+  background: transparent;
+  border-color: var(--k-text);
+  color: var(--k-text);
+}
+.shell__foot-btn--on {
+  color: var(--k-accent);
+}
+.shell__foot-btn--icon.shell__foot-btn--on {
+  border-color: var(--k-accent);
+  color: var(--k-accent);
 }
 
 .shell__foot-spacer {
@@ -1723,7 +1730,7 @@ async function gitPull(): Promise<void> {
 .shell__workarea {
   display: flex;
   align-items: stretch;
-  height: calc(100vh - 82px);
+  height: calc(100vh - 90px);
   min-height: 0;
   overflow: hidden;
 }
@@ -1733,11 +1740,15 @@ async function gitPull(): Promise<void> {
   min-height: 0;
   overflow: auto;
 }
-.shell__fm {
+// The dock is the bordered card itself (KFileManager's root <aside> carries both classes), so
+// its inset must be a MARGIN outside the border — a padding would sit inside the frame and let
+// the box fill the whole work area, taller than the sidebar/board cards and flush to the drawer.
+// The margin matches the sidebar card's 12px gutter; the height drops the two gutters it adds.
+.shell__workarea > .shell__fm {
   flex: none;
   box-sizing: border-box;
   width: 340px;
-  height: 100%;
-  padding: var(--k-sp-3);
+  height: calc(100% - 2 * var(--k-sp-3));
+  margin: var(--k-sp-3);
 }
 </style>

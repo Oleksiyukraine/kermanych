@@ -2395,7 +2395,7 @@ async function submitPreviewConfig(): Promise<void> {
 // Fixed header (48px) + footer (30px) are overlaid by the Quasar layout; the
 // Агенти screen fills exactly the space between them.
 .agents {
-  height: calc(100vh - 82px);
+  height: calc(100vh - 90px);
   overflow: hidden;
   padding: var(--k-sp-3);
 }
