@@ -255,7 +255,7 @@
           :title="launchHint(editingTask)"
           @click="editorOpen = false; launch(editingTask)"
         >{{ t('board.editor.launch') }}</KBtn>
-        <KBtn variant="primary" :disabled="!canSubmit" @click="submitEditor">{{ editingId ? t('board.editor.save') : t('board.editor.create') }}</KBtn>
+        <KBtn variant="primary" :loading="submitting" :disabled="!canSubmit || submitting" @click="submitEditor">{{ editingId ? t('board.editor.save') : t('board.editor.create') }}</KBtn>
       </template>
     </KModal>
 
@@ -271,7 +271,7 @@
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="bindingOpen = false">{{ t('board.action.cancel') }}</KBtn>
-        <KBtn variant="primary" :disabled="!bindingPath.trim()" @click="confirmBinding">
+        <KBtn variant="primary" :loading="binding" :disabled="!bindingPath.trim() || binding" @click="confirmBinding">
           {{ t('board.binding.confirm') }}
         </KBtn>
       </template>
@@ -953,6 +953,7 @@ const bindingOpen = ref(false);
 const bindingProjectId = ref<string | null>(null);
 const bindingPath = ref('');
 const bindingError = ref<string | null>(null);
+const binding = ref(false);
 const pickerOpen = ref(false);
 const pendingLaunch = ref<Task | null>(null);
 
@@ -1018,8 +1019,10 @@ function openBinding(task: Task): void {
 async function confirmBinding(): Promise<void> {
   const projectId = bindingProjectId.value;
   const task = pendingLaunch.value;
+  if (binding.value) return;
   if (!projectId || !task) return;
   bindingError.value = null;
+  binding.value = true;
   try {
     await api.setProjectBinding(projectId, bindingPath.value.trim());
     bindingOpen.value = false;
@@ -1033,6 +1036,8 @@ async function confirmBinding(): Promise<void> {
       return;
     }
     bindingError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    binding.value = false;
   }
 }
 
@@ -1052,6 +1057,7 @@ const PLATFORM_OPTIONS = ['backend', 'web', 'mobile'];
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 const editorError = ref<string | null>(null);
+const submitting = ref(false);
 const editingTask = computed(() =>
   editingId.value ? board.tasks.find((t) => t.id === editingId.value) : undefined,
 );
@@ -1152,6 +1158,7 @@ function openEdit(task: Task): void {
 }
 
 async function submitEditor(): Promise<void> {
+  if (submitting.value) return;
   editorError.value = null;
   // Blank strings are meaningful: toTaskRow() turns them into NULL, which is how a user
   // clears a launch param they set earlier. The project is immutable after creation —
@@ -1176,34 +1183,39 @@ async function submitEditor(): Promise<void> {
     return;
   }
 
-  if (editingId.value) {
-    if (!(await board.updateTaskFields(editingId.value, fields))) {
-      editorError.value = t('board.editor.updateFailed');
-      return;
+  submitting.value = true;
+  try {
+    if (editingId.value) {
+      if (!(await board.updateTaskFields(editingId.value, fields))) {
+        editorError.value = t('board.editor.updateFailed');
+        return;
+      }
+    } else {
+      const projectId = draftProject.value;
+      if (!cloud.byId.has(projectId)) {
+        editorError.value = t('board.editor.selectProject');
+        return;
+      }
+      if (
+        !(await board.createTask(
+          {
+            projectId,
+            ...fields,
+            // «не призначено» is still the default: the board is the shared backlog. An assignee
+            // picked here is the «this one is yours» case, and tasks_guard refuses a non-member.
+            ...(draftAssignee.value ? { assigneeId: draftAssignee.value } : {}),
+          },
+          draftImages.value.map(imageToFile),
+        ))
+      ) {
+        editorError.value = t('board.editor.createFailed');
+        return;
+      }
     }
-  } else {
-    const projectId = draftProject.value;
-    if (!cloud.byId.has(projectId)) {
-      editorError.value = t('board.editor.selectProject');
-      return;
-    }
-    if (
-      !(await board.createTask(
-        {
-          projectId,
-          ...fields,
-          // «не призначено» is still the default: the board is the shared backlog. An assignee
-          // picked here is the «this one is yours» case, and tasks_guard refuses a non-member.
-          ...(draftAssignee.value ? { assigneeId: draftAssignee.value } : {}),
-        },
-        draftImages.value.map(imageToFile),
-      ))
-    ) {
-      editorError.value = t('board.editor.createFailed');
-      return;
-    }
+    editorOpen.value = false;
+  } finally {
+    submitting.value = false;
   }
-  editorOpen.value = false;
 }
 
 function onDelete(task: Task): void {
