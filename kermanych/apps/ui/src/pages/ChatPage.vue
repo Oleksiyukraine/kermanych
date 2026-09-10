@@ -391,7 +391,7 @@ watch(chatId, () => {
 
 <style scoped lang="scss">
 .chat {
-  height: calc(100vh - 82px);
+  height: calc(100vh - 90px);
   overflow: hidden;
   padding: var(--k-sp-3);
   display: flex;
