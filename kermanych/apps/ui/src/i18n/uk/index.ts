@@ -1703,6 +1703,8 @@ export const uk = {
       loading: 'Читаю…',
       binary: 'Бінарний файл — вмісту не показано.',
       tooLarge: 'Файл завеликий для перегляду.',
+      maximize: 'На весь екран',
+      minimize: 'Згорнути в панель',
     },
     helperPicker: {
       title: 'Хелпери',
