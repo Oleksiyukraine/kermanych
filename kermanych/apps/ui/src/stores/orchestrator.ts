@@ -58,6 +58,27 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   const selectedBucket = ref<Bucket>('active');
   function setBucket(b: Bucket): void { selectedBucket.value = b; }
 
+  // File-manager dock: a global panel (KFileManager) that shows the selected session's
+  // worktree tree, docked to the left of or right of the page — VS Code / Zed style. It used
+  // to be the «Файли» tab of the detail panel; lifting it to the shell lets it stand beside
+  // any view. Visibility and side persist so a reload keeps the operator's layout.
+  const fileManagerVisible = ref(localStorage.getItem('kermanych.fileManager.visible') === '1');
+  const fileManagerSide = ref<'left' | 'right'>(
+    localStorage.getItem('kermanych.fileManager.side') === 'right' ? 'right' : 'left',
+  );
+  // One control per side. Clicking the side the panel is already docked to collapses it;
+  // clicking the other side moves it there (and opens it if it was closed).
+  function toggleFileManager(side: 'left' | 'right'): void {
+    if (fileManagerVisible.value && fileManagerSide.value === side) {
+      fileManagerVisible.value = false;
+    } else {
+      fileManagerSide.value = side;
+      fileManagerVisible.value = true;
+    }
+    localStorage.setItem('kermanych.fileManager.visible', fileManagerVisible.value ? '1' : '0');
+    localStorage.setItem('kermanych.fileManager.side', fileManagerSide.value);
+  }
+
   let socket: Socket | undefined;
 
   // Reduce a ServerEvent into state — mirrors the legacy MVP store exactly.
@@ -384,6 +405,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     selectWorkspace,
     selectedBucket,
     setBucket,
+    fileManagerVisible,
+    fileManagerSide,
+    toggleFileManager,
     connect,
     selectProject,
     selectSession,

@@ -187,13 +187,39 @@
 
     <!-- PAGE -->
     <q-page-container>
-      <router-view />
+      <!-- The router view, flanked by the file-manager dock — a shell-level panel (VS Code /
+           Zed style) showing the selected session's worktree. It docks left of or right of
+           the page, toggled from the footer, and persists across views. -->
+      <div class="shell__workarea">
+        <KFileManager
+          v-if="store.fileManagerVisible && store.fileManagerSide === 'left'"
+          class="shell__fm"
+        />
+        <div class="shell__page">
+          <router-view />
+        </div>
+        <KFileManager
+          v-if="store.fileManagerVisible && store.fileManagerSide === 'right'"
+          class="shell__fm"
+        />
+      </div>
     </q-page-container>
 
     <!-- STATUS BAR — a VS Code-style footer; for now just git pull for the selected repo.
          There is deliberately no Push: work leaves the machine through the PR flow only,
          never as a blind push of whatever branch the project repo sits on. -->
     <q-footer class="shell__footer">
+      <!-- File-manager dock, left: shows the selected session's files between the sidebar and
+           the page. Clicking it again collapses the dock. -->
+      <button
+        type="button"
+        class="shell__foot-btn"
+        :class="{ 'shell__foot-btn--on': store.fileManagerVisible && store.fileManagerSide === 'left' }"
+        v-tip="t('common.nav.fileManagerLeft')"
+        :aria-label="t('common.nav.fileManagerLeft')"
+        :aria-pressed="store.fileManagerVisible && store.fileManagerSide === 'left'"
+        @click="store.toggleFileManager('left')"
+      ><span class="k-glyph" aria-hidden="true">◧</span></button>
       <button
         type="button"
         class="shell__foot-btn"
@@ -218,6 +244,16 @@
       >
         <span class="shell__foot-folder-path mono">{{ contextLabel }}</span>
       </button>
+      <!-- File-manager dock, right: shows the selected session's files past the page. -->
+      <button
+        type="button"
+        class="shell__foot-btn"
+        :class="{ 'shell__foot-btn--on': store.fileManagerVisible && store.fileManagerSide === 'right' }"
+        v-tip="t('common.nav.fileManagerRight')"
+        :aria-label="t('common.nav.fileManagerRight')"
+        :aria-pressed="store.fileManagerVisible && store.fileManagerSide === 'right'"
+        @click="store.toggleFileManager('right')"
+      ><span class="k-glyph" aria-hidden="true">◨</span></button>
     </q-footer>
 
 
@@ -357,6 +393,7 @@ import KBtn from 'components/kit/KBtn.vue';
 import KToast from 'components/kit/KToast.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KUserButton from 'components/kit/KUserButton.vue';
+import KFileManager from 'components/kit/KFileManager.vue';
 import JiraMergePrompt from 'components/jira/JiraMergePrompt.vue';
 import LinearMergePrompt from 'components/linear/LinearMergePrompt.vue';
 
@@ -1642,6 +1679,12 @@ async function gitPull(): Promise<void> {
   cursor: not-allowed;
 }
 
+// The footer toggle for a dock that is currently open: reads as pressed.
+.shell__foot-btn--on {
+  background: var(--k-surface2);
+  color: var(--k-accent);
+}
+
 .shell__foot-spacer {
   flex: 1;
 }
@@ -1660,5 +1703,26 @@ async function gitPull(): Promise<void> {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--k-faint);
+}
+
+// ── File-manager dock (VS Code / Zed style) ─────────────────────────────────
+// The page and the dock share the work area between header and footer. The page keeps its
+// own padding, so it fills whatever the dock leaves; the dock is a fixed column that owns
+// its scroll. Its `flex: none` is what keeps the page from eating the dock's width.
+.shell__workarea {
+  display: flex;
+  align-items: stretch;
+  min-height: 0;
+}
+.shell__page {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.shell__fm {
+  flex: none;
+  box-sizing: border-box;
+  width: 340px;
+  height: calc(100vh - 82px);
+  padding: var(--k-sp-3);
 }
 </style>

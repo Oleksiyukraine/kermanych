@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// One file opened read-only from the Файли tab. The api hands over the whole body, or a flag
+// One file opened read-only from the file-manager dock. The api hands over the whole body, or a flag
 // for a binary/oversized blob; this paints it with highlight.js. Fetch state lives in the
 // props — the same split KDiffView uses: the caller owns the request, while the path header
 // and the close control stay put through loading, an error and a binary file alike.
