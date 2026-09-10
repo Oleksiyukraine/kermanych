@@ -213,13 +213,13 @@
            the page. Clicking it again collapses the dock. -->
       <button
         type="button"
-        class="shell__foot-btn"
+        class="shell__foot-btn shell__foot-btn--icon"
         :class="{ 'shell__foot-btn--on': store.fileManagerVisible && store.fileManagerSide === 'left' }"
         v-tip="t('common.nav.fileManagerLeft')"
         :aria-label="t('common.nav.fileManagerLeft')"
         :aria-pressed="store.fileManagerVisible && store.fileManagerSide === 'left'"
         @click="store.toggleFileManager('left')"
-      ><span class="k-glyph" aria-hidden="true">◧</span></button>
+      ><span aria-hidden="true">◧</span></button>
       <button
         type="button"
         class="shell__foot-btn"
@@ -247,13 +247,13 @@
       <!-- File-manager dock, right: shows the selected session's files past the page. -->
       <button
         type="button"
-        class="shell__foot-btn"
+        class="shell__foot-btn shell__foot-btn--icon"
         :class="{ 'shell__foot-btn--on': store.fileManagerVisible && store.fileManagerSide === 'right' }"
         v-tip="t('common.nav.fileManagerRight')"
         :aria-label="t('common.nav.fileManagerRight')"
         :aria-pressed="store.fileManagerVisible && store.fileManagerSide === 'right'"
         @click="store.toggleFileManager('right')"
-      ><span class="k-glyph" aria-hidden="true">◨</span></button>
+      ><span aria-hidden="true">◨</span></button>
     </q-footer>
 
 
@@ -1685,6 +1685,17 @@ async function gitPull(): Promise<void> {
   color: var(--k-accent);
 }
 
+// The two dock toggles carry no label, so they are glyph-only controls: the design system
+// sizes those off the icon scale set ON the control (app.scss's `.k-glyph` note), not the
+// label-relative 1.25em that made ◧/◨ read as heavy blocks. `xs` is the compact step that fits
+// the 26px footer and matches the optical weight of the ШІ-session header's KIconButton glyphs.
+.shell__foot-btn--icon {
+  justify-content: center;
+  width: 20px;
+  padding: 0;
+  font-size: var(--k-icon-xs);
+}
+
 .shell__foot-spacer {
   flex: 1;
 }
@@ -1712,17 +1723,21 @@ async function gitPull(): Promise<void> {
 .shell__workarea {
   display: flex;
   align-items: stretch;
+  height: calc(100vh - 82px);
   min-height: 0;
+  overflow: hidden;
 }
 .shell__page {
   flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
+  overflow: auto;
 }
 .shell__fm {
   flex: none;
   box-sizing: border-box;
   width: 340px;
-  height: calc(100vh - 82px);
+  height: 100%;
   padding: var(--k-sp-3);
 }
 </style>

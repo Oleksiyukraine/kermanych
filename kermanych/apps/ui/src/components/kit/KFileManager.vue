@@ -4,7 +4,7 @@
 // any view (VS Code / Zed style). It reads the selection straight from the store: whichever
 // session is open in Агенти is the one whose files this shows. Shell-level placement (which
 // side, whether it is open) lives in the store; this component owns only the tree.
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useOrchestrator } from 'stores/orchestrator';
 import type { TreeEntry, FileContent } from '@kermanych/core';
@@ -35,6 +35,10 @@ const openTreeFile = ref<string | null>(null);
 const treeFile = ref<FileContent | null>(null);
 const treeFileLoading = ref(false);
 const treeFileError = ref<string | null>(null);
+// A clicked file opens full-screen by default — the 340px dock was too cramped to read in.
+// «Minimize» drops it back into the dock inline; «close» clears it. State, not a route, so the
+// tree selection and the viewer stay in lockstep.
+const treeFileMaximized = ref(false);
 let treeFileRun = 0;
 
 function loadTreeLevel(path: string): Promise<TreeEntry[]> {
@@ -59,6 +63,7 @@ async function openTreeFileAt(path: string): Promise<void> {
   if (!id) return;
   const run = ++treeFileRun;
   openTreeFile.value = path;
+  treeFileMaximized.value = true;
   treeFile.value = null;
   treeFileError.value = null;
   treeFileLoading.value = true;
@@ -79,8 +84,24 @@ function closeTreeFile(): void {
   treeFile.value = null;
   treeFileError.value = null;
   treeFileLoading.value = false;
+  treeFileMaximized.value = false;
   treeFileRun++;
 }
+
+function toggleTreeFileMaximized(): void {
+  treeFileMaximized.value = !treeFileMaximized.value;
+}
+
+// Escape leaves the full-screen viewer without reaching for the mouse; it only fires while the
+// overlay is actually up, so it never steals the key from anything else.
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && openTreeFile.value && treeFileMaximized.value) {
+    e.preventDefault();
+    closeTreeFile();
+  }
+}
+onMounted(() => window.addEventListener('keydown', onKeydown));
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
 
 watch(
   () => store.selectedSessionId,
@@ -125,13 +146,15 @@ watch(
       <p v-else-if="treeError" class="k-fm__error" role="alert">{{ treeError }}</p>
       <template v-else>
         <KFileView
-          v-if="openTreeFile"
+          v-if="openTreeFile && !treeFileMaximized"
           class="k-fm__view"
           :path="openTreeFile"
           :file="treeFile"
           :loading="treeFileLoading"
           :error="treeFileError"
+          :maximized="false"
           @close="closeTreeFile"
+          @toggle-maximize="toggleTreeFileMaximized"
         />
         <KFileTree
           v-show="!openTreeFile"
@@ -144,6 +167,28 @@ watch(
         />
       </template>
     </div>
+
+    <!-- Full-screen viewer — the default when a file is clicked. It sits above everything via a
+         backdrop; clicking the backdrop drops it back into the dock (minimize), the ✕ clears it.
+         Teleported to <body> so no ancestor clip or stacking context can cage it. -->
+    <Teleport to="body">
+      <div
+        v-if="openTreeFile && treeFileMaximized"
+        class="k-fm-overlay"
+        @click.self="toggleTreeFileMaximized"
+      >
+        <KFileView
+          class="k-fm-overlay__view"
+          :path="openTreeFile"
+          :file="treeFile"
+          :loading="treeFileLoading"
+          :error="treeFileError"
+          :maximized="true"
+          @close="closeTreeFile"
+          @toggle-maximize="toggleTreeFileMaximized"
+        />
+      </div>
+    </Teleport>
   </aside>
 </template>
 
@@ -260,5 +305,29 @@ watch(
   padding: 12px;
   color: var(--k-accent);
   font-size: var(--k-fs-xs);
+}
+
+// Full-screen viewer layer — the one shadowed surface this component owns. A dimmed backdrop
+// over the whole viewport with the file panel centred; the panel caps at 1400px so the reading
+// column stays sane on ultrawide displays while still dwarfing the 340px dock it replaces.
+.k-fm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: flex;
+  padding: 32px;
+  background: rgba(0, 0, 0, 0.62);
+}
+.k-fm-overlay__view {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  max-width: 1400px;
+  margin: 0 auto;
+  background: var(--k-bg);
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r-lg);
+  box-shadow: var(--k-shadow-modal);
+  overflow: hidden;
 }
 </style>

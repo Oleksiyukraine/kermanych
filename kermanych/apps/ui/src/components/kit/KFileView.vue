@@ -15,8 +15,9 @@ const props = defineProps<{
   file: FileContent | null;
   loading?: boolean;
   error?: string | null;
+  maximized?: boolean;
 }>();
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: []; toggleMaximize: [] }>();
 
 const { t } = useI18n();
 
@@ -40,6 +41,10 @@ const highlighted = computed(() => {
     <header class="k-file-view__head">
       <span class="k-file-view__path mono">{{ path }}</span>
       <span class="k-file-view__spacer"></span>
+      <KIconButton
+        :title="maximized ? t('kit.fileView.minimize') : t('kit.fileView.maximize')"
+        @click="emit('toggleMaximize')"
+      >{{ maximized ? '⤡' : '⤢' }}</KIconButton>
       <KIconButton :title="t('kit.fileView.close')" @click="emit('close')">✕</KIconButton>
     </header>
 

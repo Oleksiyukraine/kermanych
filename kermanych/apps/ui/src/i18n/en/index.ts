@@ -1698,6 +1698,8 @@ export const en: MessageSchema = {
       loading: 'Reading…',
       binary: 'Binary file — content not shown.',
       tooLarge: 'File too large to view.',
+      maximize: 'Full screen',
+      minimize: 'Collapse to panel',
     },
     helperPicker: {
       title: 'Helpers',
