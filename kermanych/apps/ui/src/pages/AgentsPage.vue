@@ -473,7 +473,7 @@
       </template>
 
       <div class="agents-launcher" @keydown="onLauncherKeydown">
-        <!-- LEFT — the task itself -->
+        <!-- LEFT — what to do and which agent runs it -->
         <div class="agents-launcher__main">
           <div>
             <div class="agents-launcher__label-row">
@@ -520,6 +520,29 @@
             />
             <div class="agents-launcher__hint mono">
               {{ draftName.trim() ? branchPreview : t('agents.launcher.nameHintPending') }}
+            </div>
+          </div>
+
+          <!-- «Модель» and «Рівень роздумів» — how the agent runs, not where it lands, so
+               they sit under the ask rather than in the right column. Paired on one row: two
+               narrow selects read as a couple and keep the modal from growing a scrollbar. -->
+          <div class="agents-launcher__run">
+            <div class="agents-launcher__duo">
+              <div>
+                <div class="agents-launcher__label">{{ t('agents.session.model') }}</div>
+                <!-- `searchable`: the catalog is ~26 rows all named «Claude …», so the way to
+                     «Haiku» is to type it, not to scroll past twenty siblings. -->
+                <KSelect
+                  v-model="draftModel"
+                  :options="modelPickOptions"
+                  :placeholder="t('agents.launcher.defaultOption')"
+                  searchable
+                />
+              </div>
+              <div>
+                <div class="agents-launcher__label">{{ t('agents.launcher.effortLabel') }}</div>
+                <KSelect v-model="draftEffort" :options="effortPickOptions" :placeholder="t('agents.launcher.defaultOption')" />
+              </div>
             </div>
           </div>
         </div>
@@ -593,23 +616,6 @@
                 {{ t('agents.launcher.hiddenDesc') }}
               </p>
             </div>
-          </div>
-
-          <div class="agents-launcher__block">
-            <div class="agents-launcher__label">{{ t('agents.session.model') }}</div>
-            <!-- `searchable`: the catalog is ~26 rows all named «Claude …», so the way to
-                 «Haiku» is to type it, not to scroll past twenty siblings. -->
-            <KSelect
-              v-model="draftModel"
-              :options="modelPickOptions"
-              :placeholder="t('agents.launcher.defaultOption')"
-              searchable
-            />
-          </div>
-
-          <div class="agents-launcher__block">
-            <div class="agents-launcher__label">{{ t('agents.launcher.effortLabel') }}</div>
-            <KSelect v-model="draftEffort" :options="effortPickOptions" :placeholder="t('agents.launcher.defaultOption')" />
           </div>
         </div>
       </div>
@@ -3289,6 +3295,18 @@ async function submitPreviewConfig(): Promise<void> {
 .agents-launcher__name {
   border-top: 1px solid var(--k-line);
   padding-top: 16px;
+}
+// The launch pair («Модель» / «Рівень роздумів»). A rule off the name field above, then two
+// selects side by side: the growing option set stays one row tall instead of two stacked
+// blocks that pushed the modal past the viewport.
+.agents-launcher__run {
+  border-top: 1px solid var(--k-line);
+  padding-top: 16px;
+}
+.agents-launcher__duo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
 }
 .agents-launcher__name-input {
   width: 100%;
