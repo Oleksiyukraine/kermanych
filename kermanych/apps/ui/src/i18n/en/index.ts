@@ -130,6 +130,7 @@ export const en: MessageSchema = {
       review: 'Reviewer',
       promote: 'Promoter',
       'pull-request': 'Pull Request',
+      commit: 'Committer',
       'resolve-conflict': 'Conflict Resolver',
       finish: 'Finish',
       summary: 'Summary',
@@ -337,6 +338,7 @@ export const en: MessageSchema = {
       close: 'Close',
       resolveAuto: 'Resolve automatically',
       createPr: 'Create PR',
+      commit: 'Commit',
       action: 'Finish',
     },
     notify: {
@@ -347,6 +349,7 @@ export const en: MessageSchema = {
       kindReview: 'the review',
       kindBranch: 'the branch',
       prCreating: 'Creating a PR for “{name}” — tracking the branch in chat',
+      committing: 'Updating the PR for “{name}” — committing and pushing, tracking the branch in chat',
       deleteCard: 'Delete task “{title}”?',
       deleteStranded: 'Delete local task “{name}”?',
     },

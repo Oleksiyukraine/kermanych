@@ -440,7 +440,10 @@ developer's machine. The direction is always task → session.
    Realtime. `in_review` is the pull-request outcome: «Завершити» → «Створити ПР» has the
    agent commit, push and open the PR, and when that turn ends the card lands in the
    board's «На ревʼю» column — settled, but waiting on a human reviewer rather than
-   closed. «Завершити» → «Влити» is the other exit and still lands on `merged`.
+   closed. «Завершити» → «Влити» is the other exit and still lands on `merged`. Once a card
+   is «На ревʼю», the finish sheet's secondary action becomes «Закоміти» instead of «Створити
+   ПР»: it has the agent commit and push any follow-up work onto the same branch — updating
+   the open PR — and the turn settles back on `in_review` rather than falling to `done`.
 
 Nothing else leaves your machine. Transcripts, the current tool, context usage, todo
 phases, interactive prompts and the provider-plan spend under the account name (read from

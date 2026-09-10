@@ -220,6 +220,15 @@ export class SessionsController {
     }
   }
 
+  @Post(":id/commit")
+  async commit(@Param("id") id: string) {
+    try {
+      return await this.sup.commitChanges(id);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Post(":id/archive")
   archive(@Param("id") id: string) {
     try {

@@ -176,3 +176,52 @@ describe("createPullRequest", () => {
     expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("in_review");
   });
 });
+
+describe("commitChanges", () => {
+  it("refuses to commit and push for a non-agent session", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const parent = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    registry.updateSession(parent.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "in_review" });
+    const disc = await sup.branchSession(parent.id);
+
+    await expect(sup.commitChanges(disc.id)).rejects.toThrow(/agent/i);
+  });
+
+  it("tells the agent to commit and push the branch WITHOUT opening a second PR", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
+    registry.updateSession(s.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "in_review" });
+
+    await sup.commitChanges(s.id);
+
+    const p = prompts.at(-1)!;
+    expect(p).toContain("feature/aaa"); // the branch to push
+    expect(p).toMatch(/push/i); // pushes the branch
+    expect(p).not.toMatch(/gh pr create/); // never opens a second PR
+    expect(p).toMatch(/do NOT open a new one/i); // explicit about the existing PR
+    expect(p).toMatch(/Conventional Commits/); // built-in commit conventions fallback
+    expect(p).toContain("GIT_TOKEN"); // reads the project's configured token from .env
+    expect(p).toMatch(/Co-Authored-By: Kermanych </); // credits Kermanych as a commit co-author
+  });
+
+  it("settles the turn back on in_review with no PR URL to wait for", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
+    registry.updateSession(s.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "in_review" });
+
+    await sup.commitChanges(s.id);
+    // No PR URL is emitted — the PR already exists — yet the turn must land back on review,
+    // not fall to done the way an ordinary follow-up would.
+    for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
+    expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("in_review");
+    expect(sup.snapshot().sessions.find((x) => x.id === s.id)!.status).toBe("in_review");
+
+    // The request is consumed: a later ordinary follow-up falls back to done.
+    await sup.sendMessage(s.id, "ще одна правка", "prompt");
+    for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
+    expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("done");
+  });
+});

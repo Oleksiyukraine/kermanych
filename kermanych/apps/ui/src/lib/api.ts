@@ -569,6 +569,9 @@ export const api = {
   createPr: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/pr`, {}),
 
+  commitChanges: (id: string): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>(`/sessions/${id}/commit`, {}),
+
   archiveSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/archive`, {}),
 

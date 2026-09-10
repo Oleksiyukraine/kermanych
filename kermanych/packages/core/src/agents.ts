@@ -111,10 +111,42 @@ const PULL_REQUEST = [
   "Reply with the PR URL when done. Do only this.",
 ].join("");
 
+// The commit-and-push counterpart to PULL_REQUEST, for a branch whose pull request ALREADY
+// exists (a session already «На ревʼю»). It must never open a second PR — it only lands the
+// follow-up work the operator asked for after the PR was opened onto the same branch, which
+// updates the open PR. The auth block mirrors PULL_REQUEST's for the same reason (a push
+// otherwise picks up the wrong ambient credential); the divergence is deliberate — this one
+// pushes and does not mention `gh pr create`.
+const COMMIT = [
+  "Commit and push any pending work on this session's branch `{{branch}}` so its open pull ",
+  "request is up to date. A pull request already exists for this branch — do NOT open a new one.\n\n",
+  "Follow the repository's own `### Commit Conventions` from its CLAUDE.md / AGENTS.md if they ",
+  "exist. If the repo defines none, follow these defaults instead:\n",
+  "{{conventions}}\n\n",
+  "Authentication — settle this BEFORE pushing, and prefer it over any ambient `gh`/git ",
+  "credentials, which may belong to the wrong account:\n",
+  "1. Read `GIT_TOKEN` from the `.env` at the root of this worktree — Kermanych copies the ",
+  "project's configured Git token there for exactly this. Load it WITHOUT printing it, e.g. ",
+  "`export GH_TOKEN=\"$(grep -E '^GIT_TOKEN=' .env | head -n1 | cut -d= -f2-)\"`; never echo the ",
+  "token or paste it into a command whose output is shown.\n",
+  "2. If GH_TOKEN is now non-empty, make git use it too (`gh auth setup-git`) and push with it. ",
+  "If `.env` has no `GIT_TOKEN`, or it is empty, fall back to the environment's existing ",
+  "`gh`/git credentials.\n\n",
+  "Steps:\n",
+  "1. Commit any uncommitted work, following the commit conventions. End every commit message ",
+  `you write with a blank line and the trailer \`Co-Authored-By: ${KERMANYCH_COAUTHOR}\`, so `,
+  "GitHub credits Kermanych as a co-author — in addition to any co-author your runtime already ",
+  "adds.\n",
+  "2. Push `{{branch}}` to `origin`. If nothing is uncommitted and the branch is already pushed, ",
+  "say so instead.\n",
+  "Reply when done. Do only this.",
+].join("");
+
 export const AGENTS: readonly AgentDef[] = [
   { id: "review", labelKey: "agents.role.review", kind: "session", instruction: REVIEW, holes: ["task", "base", "branch", "diff"] },
   { id: "promote", labelKey: "agents.role.promote", kind: "session", instruction: PROMOTE, holes: ["branch"] },
   { id: "pull-request", labelKey: "agents.role.pull-request", kind: "procedure", instruction: PULL_REQUEST, holes: ["branch", "conventions", "baseLine"] },
+  { id: "commit", labelKey: "agents.role.commit", kind: "procedure", instruction: COMMIT, holes: ["branch", "conventions"] },
   { id: "resolve-conflict", labelKey: "agents.role.resolve-conflict", kind: "procedure", instruction: RESOLVE_CONFLICT, holes: ["files"] },
   { id: "finish", labelKey: "agents.role.finish", kind: "automation" },
   { id: "summary", labelKey: "agents.role.summary", kind: "automation" },
