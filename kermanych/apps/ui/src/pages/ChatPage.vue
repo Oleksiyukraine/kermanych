@@ -16,6 +16,8 @@
       :session="chatSession"
       :promoting="promoting"
       :refreshing="refreshing"
+      :filing="filing"
+      :clearing="clearing"
       :models="store.models"
       :placeholder="t('chat.page.placeholder')"
       @stop="onStop"
@@ -81,6 +83,10 @@ const chatId = ref<string | undefined>(undefined);
 const promoting = ref(false);
 // The composer's ↻ (rehydrate) stays down until the server answers.
 const refreshing = ref(false);
+// «В беклог» files a cloud card; the ⊕ stays down until the write returns.
+const filing = ref(false);
+// A chat discard deletes the session then re-creates one; the ✕ stays down until it returns.
+const clearing = ref(false);
 // «розгорнути / стиснути все» is per-session detail state — reset on a chat switch so a
 // stale command is not adopted by the newly opened session's rows.
 const expandAll = ref<ExpandAllCommand>(EXPAND_ALL_NONE);
@@ -312,6 +318,7 @@ async function promote(): Promise<void> {
 // the team exactly like anything else on the board. The card's name comes from the opening
 // ask's first line and can be refined later from the Агенти backlog.
 async function toBacklog(): Promise<void> {
+  if (filing.value) return;
   const id = chatId.value;
   const pid = store.selectedProjectId;
   const userId = auth.user?.id;
@@ -330,6 +337,7 @@ async function toBacklog(): Promise<void> {
     store.notify(t('chat.page.notifyNotCloudTask'), 'error');
     return;
   }
+  filing.value = true;
   try {
     const card = await board.createTask(
       taskInsertFromDraft(
@@ -350,20 +358,26 @@ async function toBacklog(): Promise<void> {
     void router.push({ name: 'agents' });
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    filing.value = false;
   }
 }
 
 // Discard the current chat and start a fresh one (single chat per project).
 async function clearChat(): Promise<void> {
+  if (clearing.value) return;
   const id = chatId.value;
   if (!id) return;
   if (!window.confirm(t('chat.page.confirmClear'))) return;
+  clearing.value = true;
   try {
     await store.deleteSession(id);
     chatId.value = undefined;
     await ensureChat();
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    clearing.value = false;
   }
 }
 

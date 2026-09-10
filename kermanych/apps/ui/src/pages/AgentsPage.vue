@@ -170,7 +170,7 @@
                      act is the visible line under this bar. -->
                 <KIconButton
                   :active="!!store.previews[selectedSession.id]"
-                  :disabled="!isBoundFor(selectedSession.projectId)"
+                  :disabled="!isBoundFor(selectedSession.projectId) || actionBusy"
                   :title="store.previews[selectedSession.id] ? t('agents.actions.previewStop') : t('agents.actions.previewStart')"
                   @click="togglePreview(selectedSession)"
                 >{{ store.previews[selectedSession.id] ? '◼' : '▶' }}</KIconButton>
@@ -181,13 +181,14 @@
                 >✓</KIconButton>
                 <KIconButton
                   v-if="selectedSession.status === 'merged'"
+                  :disabled="actionBusy"
                   :title="t('agents.actions.reopen')"
                   @click="onReopen(selectedSession)"
                 >↻</KIconButton>
-                <KIconButton :title="t('agents.actions.archive')" @click="onArchive(selectedSession)">⤓</KIconButton>
+                <KIconButton :disabled="actionBusy" :title="t('agents.actions.archive')" @click="onArchive(selectedSession)">⤓</KIconButton>
               </template>
               <template v-else>
-                <KIconButton :title="t('agents.actions.unarchive')" @click="onUnarchive(selectedSession)">⤒</KIconButton>
+                <KIconButton :disabled="actionBusy" :title="t('agents.actions.unarchive')" @click="onUnarchive(selectedSession)">⤒</KIconButton>
               </template>
             </div>
 
@@ -674,10 +675,11 @@
           <span v-if="launcherError" class="agents__error" role="alert">{{ launcherError }}</span>
           <span v-else class="agents-launcher__foot-hint mono">{{ footHint }}</span>
           <span class="agents-launcher__spacer"></span>
-          <KBtn variant="ghost" @click="launcherOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
+          <KBtn variant="ghost" :disabled="launchBusy !== null" @click="launcherOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
           <KBtn
             variant="secondary"
-            :disabled="!canLaunch"
+            :loading="launchBusy === 'task'"
+            :disabled="!canLaunch || launchBusy !== null"
             @click="submitLauncher(true)"
           >{{ editingTaskId ? t('agents.launcher.save') : t('agents.launcher.backlog') }}</KBtn>
           <!-- No `title` here either, and for the same reason: it only ever had content while
@@ -686,7 +688,8 @@
                attribute only told the next reader that the reason was covered. -->
           <KBtn
             variant="primary"
-            :disabled="!canLaunch || !isBound"
+            :loading="launchBusy === 'launch'"
+            :disabled="!canLaunch || !isBound || launchBusy !== null"
             @click="submitLauncher(false)"
           >
             {{ t('agents.launcher.launch') }}<KKbd class="agents-launcher__kbd">⌘⏎</KKbd>
@@ -1363,6 +1366,11 @@ const runningSelected = computed(
 );
 
 const menuOpen = ref(false);
+// In-flight guard for the detail action bar's icon buttons (preview-stop, reopen, archive,
+// unarchive). KIconButton has no spinner — its designed busy affordance is `:disabled`, which
+// dims the glyph until the server answers — so one flag both greys the pressed control and
+// blocks a second click while the store call (reopen re-forks a worktree; seconds) is out.
+const actionBusy = ref(false);
 const menuEl = ref<HTMLElement | null>(null);
 // Any pointerdown outside the ⋯ cluster dismisses the menu; captured so a click on another
 // control closes the menu before that control's own handler runs.
@@ -1704,6 +1712,11 @@ const branchHint = computed(() =>
 const taskInput = ref<HTMLTextAreaElement | null>(null);
 const nameField = ref<HTMLInputElement | null>(null);
 const launcherError = ref<string | null>(null);
+// Busy affordance for the launcher's submit buttons. `api.createSessionFromTask` takes a
+// couple of seconds (git worktree + omp spawn), and «В беклог»/«Зберегти» hit the cloud too;
+// without this the operator presses «Запустити» and sees nothing move. The value names WHICH
+// button is in flight so only that one spins, and it doubles as the re-entrancy guard.
+const launchBusy = ref<'task' | 'launch' | null>(null);
 const {
   images: launchImages,
   error: launchError,
@@ -1832,6 +1845,7 @@ function openTaskFromText(text: string): void {
 // from here or from the board. (It also means from-task's claim rollback never fires on this
 // path — the card is already mine, so `claimed` stays false there.)
 async function submitLauncher(asTask: boolean): Promise<void> {
+  if (launchBusy.value) return;
   const projectId = launchProjectId.value;
   const userId = auth.user?.id;
   if (!projectId || !canLaunch.value) return;
@@ -1864,6 +1878,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
   };
   const images = launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));
   launcherError.value = null;
+  launchBusy.value = asTask ? 'task' : 'launch';
   try {
     let cardId: string;
     if (editingTaskId.value) {
@@ -1897,6 +1912,8 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     // Keep the launcher open so the name and body are not lost. The card, if it was created,
     // is already safe on the board.
     launcherError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    launchBusy.value = null;
   }
 }
 
@@ -2140,6 +2157,8 @@ async function onSetModel(patch: { model: string; provider?: string }): Promise<
 // Reopen a merged session: the server re-forks its worktree/branch from the base; jump to
 // Активні and select it so the operator can continue and finish again.
 async function onReopen(s: Session): Promise<void> {
+  if (actionBusy.value) return;
+  actionBusy.value = true;
   try {
     const session = await store.reopenSession(s.id);
     store.setBucket('active');
@@ -2147,6 +2166,8 @@ async function onReopen(s: Session): Promise<void> {
     store.notify(t('agents.notify.reopened', { name: s.name }));
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    actionBusy.value = false;
   }
 }
 
@@ -2181,19 +2202,27 @@ async function onArchive(s: Session): Promise<void> {
     store.notify(t('agents.notify.cannotArchive'), 'error');
     return;
   }
+  if (actionBusy.value) return;
+  actionBusy.value = true;
   try {
     await store.archiveSession(s.id);
     if (store.selectedSessionId === s.id) store.selectSession(undefined);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    actionBusy.value = false;
   }
 }
 
 async function onUnarchive(s: Session): Promise<void> {
+  if (actionBusy.value) return;
+  actionBusy.value = true;
   try {
     await store.unarchiveSession(s.id);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    actionBusy.value = false;
   }
 }
 
@@ -2379,7 +2408,15 @@ async function launchInto(win: Window | null, s: Session): Promise<void> {
 
 async function togglePreview(s: Session): Promise<void> {
   if (store.previews[s.id]) {
-    await store.stopPreview(s.id);
+    // The stop call keeps this same bar on screen, so grey the ◼ while it runs. The start
+    // path below is exempt: it opens its preview window synchronously, which is its feedback.
+    if (actionBusy.value) return;
+    actionBusy.value = true;
+    try {
+      await store.stopPreview(s.id);
+    } finally {
+      actionBusy.value = false;
+    }
     return;
   }
   const p = store.projects.find((x) => x.id === s.projectId);

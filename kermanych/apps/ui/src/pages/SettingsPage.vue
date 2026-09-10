@@ -362,13 +362,14 @@
                 class="set__role"
                 :model-value="m.role"
                 :options="ROLE_OPTIONS"
-                :disabled="roleBusy === m.userId"
+                :disabled="roleBusy === m.userId || removingMember === m.userId"
                 @update:model-value="(role: string) => changeRole(m, role as AssignableRole)"
               />
               <KTag v-else>{{ ROLE_LABELS[m.role] }}</KTag>
               <KIconButton
                 v-if="isOwnerOfWorkspace && !isOwnerSeat(m.userId)"
                 :title="t('settings.members.remove')"
+                :disabled="removingMember === m.userId"
                 @click="removeMember(m)"
               >✕</KIconButton>
             </div>
@@ -737,6 +738,9 @@ const ROLE_OPTIONS = computed<KSelectOption[]>(() => [
 // The user id whose role change is in flight, so its select disables without freezing
 // the whole roster.
 const roleBusy = ref<string | null>(null);
+// The user id whose removal is in flight, so its row controls disable without
+// freezing the whole roster.
+const removingMember = ref<string | null>(null);
 
 // The FK from projects.workspace_id is `on delete restrict`, so a group still
 // holding projects cannot go. Read off the same array useProjects.removeWorkspace
@@ -1025,8 +1029,9 @@ async function invite(): Promise<void> {
 
 async function removeMember(m: WorkspaceMember): Promise<void> {
   const ws = workspace.value;
-  if (!ws) return;
+  if (!ws || removingMember.value === m.userId) return;
   const who = m.profile?.githubUsername ?? m.userId;
+  removingMember.value = m.userId;
   try {
     await projects.removeMember(ws.id, m.userId);
     // A DELETE the owner-only policy refuses does NOT error — it matches zero rows,
@@ -1040,6 +1045,8 @@ async function removeMember(m: WorkspaceMember): Promise<void> {
     store.notify(t('settings.members.removed', { handle: who }));
   } catch (e) {
     store.notify(memberErrorText(e), 'error', 6000);
+  } finally {
+    removingMember.value = null;
   }
 }
 
