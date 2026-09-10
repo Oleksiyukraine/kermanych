@@ -776,8 +776,8 @@
           variant="secondary"
           :loading="prBusy"
           :disabled="finishBusy || !finishData"
-          @click="submitPr"
-        >{{ t('agents.finish.createPr') }}</KBtn>
+          @click="finishIsReview ? submitCommit() : submitPr()"
+        >{{ finishIsReview ? t('agents.finish.commit') : t('agents.finish.createPr') }}</KBtn>
         <KBtn
           variant="primary"
           :loading="finishBusy"
@@ -2210,6 +2210,11 @@ const resolveBusy = ref(false);
 // in) cannot be retired, so the modal shows them instead of the finish summary.
 const finishFiles = computed(() => finishData.value?.conflicts ?? []);
 
+// A session that already opened its PR is «На ревʼю». For it the secondary finish action is
+// no longer «Створити ПР» (that would try to open a second one) but «Закоміти» — land the
+// follow-up work the operator kept asking for onto the existing PR's branch.
+const finishIsReview = computed(() => finishFor.value?.status === 'in_review');
+
 async function openFinish(s: Session): Promise<void> {
   finishFor.value = s;
   finishData.value = null;
@@ -2312,6 +2317,23 @@ async function submitPr(): Promise<void> {
     finishOpen.value = false; // agent pushes + opens the PR in the background — watch it in chat
     store.selectSession(s.id);
     store.notify(t('agents.notify.prCreating', { name: s.name }), 'info');
+  } catch (e) {
+    finishError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    prBusy.value = false;
+  }
+}
+
+async function submitCommit(): Promise<void> {
+  const s = finishFor.value;
+  if (!s) return;
+  prBusy.value = true;
+  finishError.value = null;
+  try {
+    await store.commitChanges(s.id);
+    finishOpen.value = false; // agent commits + pushes to the open PR in the background — watch it in chat
+    store.selectSession(s.id);
+    store.notify(t('agents.notify.committing', { name: s.name }), 'info');
   } catch (e) {
     finishError.value = e instanceof Error ? e.message : String(e);
   } finally {

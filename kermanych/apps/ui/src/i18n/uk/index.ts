@@ -134,6 +134,7 @@ export const uk = {
       review: 'Ревізор',
       promote: 'Промоутер',
       'pull-request': 'Провізор',
+      commit: 'Комітер',
       'resolve-conflict': 'Вирішувач конфліктів',
       finish: 'Завершити',
       summary: 'Саммарі',
@@ -341,6 +342,7 @@ export const uk = {
       close: 'Закрити',
       resolveAuto: 'Вирішити автоматично',
       createPr: 'Створити ПР',
+      commit: 'Закоміти',
       action: 'Завершити',
     },
     notify: {
@@ -351,6 +353,7 @@ export const uk = {
       kindReview: 'ревізію',
       kindBranch: 'гілку',
       prCreating: 'Створюю ПР для «{name}» — стежу за гілкою в чаті',
+      committing: 'Оновлюю ПР для «{name}» — комічу й пушу зміни, стежу за гілкою в чаті',
       deleteCard: 'Видалити задачу «{title}»?',
       deleteStranded: 'Видалити локальну задачу «{name}»?',
     },

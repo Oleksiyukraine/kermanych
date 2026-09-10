@@ -73,6 +73,12 @@ type Live = {
   // already carries.
   prRequested?: boolean;
   prOpened?: boolean;
+  // The operator asked, from a session already «На ревʼю», to land more work onto the open PR
+  // (via «Закоміти»). Unlike `prRequested`, there is no URL to wait for — the PR exists — so
+  // this flag alone makes the turn that ends while it is armed settle back at `in_review`
+  // rather than fall to `done`. Sticky and cleared on that settle, same as the PR flags, so a
+  // commit flow interrupted to ask the operator for a token still lands back on review.
+  reviewPending?: boolean;
   // Whether the "which model is this child actually running" question has been settled for
   // this child (refreshState). One lookup per omp process, not one per two-second poll.
   modelResolved?: boolean;
@@ -1070,11 +1076,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // the reducer sees only the event stream, and «why this turn was started» is Kermanych's
       // own knowledge. Both the live entry and the row are set, or `merge()` would keep
       // shadowing the row with `done`.
-      const opened = l.prRequested === true && l.prOpened === true;
-      const settled: Session["status"] = opened ? "in_review" : "done";
-      if (opened) {
+      // Two ways a turn settles on review instead of `done`: a «Створити ПР» flow whose PR URL
+      // has now surfaced (opened), or a «Закоміти» flow landing more work onto an already-open
+      // PR (reviewPending), which has no URL to confirm. Either arms the same verdict.
+      const review = (l.prRequested === true && l.prOpened === true) || l.reviewPending === true;
+      const settled: Session["status"] = review ? "in_review" : "done";
+      if (review) {
         l.prRequested = false;
         l.prOpened = false;
+        l.reviewPending = false;
       }
       l.state = { status: settled };
       l.live.status = settled;
@@ -1463,6 +1473,40 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // so no event can be processed between it and this line.
     const l = this.map.get(id);
     if (l) l.prRequested = true;
+    return { ok: true };
+  }
+
+  // Land follow-up work onto an already-open PR: commit anything uncommitted and push the
+  // branch, WITHOUT opening a second PR. The «Закоміти» button on an `in_review` session's
+  // finish sheet drives this — the operator kept talking to the agent after «Створити ПР»,
+  // and this is how that extra work reaches the pull request reliably instead of relying on
+  // the agent remembering to push. Mirrors createPullRequest: async, progress streams on the
+  // session's feed, the branch/worktree stay intact. Unlike it, this arms `reviewPending` so
+  // the turn settles back at `in_review` (the PR is still the outcome), and there is no PR URL
+  // to wait for.
+  async commitChanges(id: string): Promise<{ ok: true }> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    if (s.kind !== "agent") throw new Error(`only agent sessions can commit and push (this is a ${s.kind})`);
+    const g = this.project(s.projectId);
+
+    const { template, block } = await this.agentPrompt(s.projectId, "commit", s.worktreePath || g.localRepoPath);
+    const prompt =
+      renderInstruction(
+        agentById("commit")!,
+        {
+          branch: s.branch,
+          conventions: (g.conventions || "").trim() || PR_CONVENTIONS_FALLBACK,
+        },
+        template,
+      ) + block;
+
+    await this.sendAsKermanych(id, prompt, "prompt");
+    // After the send, for the same reason createPullRequest arms its flag there: the flag must
+    // belong to the turn this call just started, and a stale `agent_end` arriving during a
+    // dormant-session respawn must not consume it.
+    const l = this.map.get(id);
+    if (l) l.reviewPending = true;
     return { ok: true };
   }
   answerUi(id: string, res: RpcExtensionUIResponse) {
