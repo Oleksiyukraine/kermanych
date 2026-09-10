@@ -30,6 +30,8 @@ export const uk = {
       changeInSettings: '{label} — змінити в налаштуваннях',
       changeFolder: 'Змінити теку',
       bindFolder: 'Прив’язати теку',
+      fileManagerLeft: 'Файли зліва (між сайдбаром і сесією)',
+      fileManagerRight: 'Файли справа (за основною секцією)',
       nameLabel: 'Назва',
       workspaceFormHint: 'Воркспейс групує проєкти й тримає склад команди: одне запрошення відкриває доступ до всіх його проєктів.',
       cancel: 'Скасувати',
@@ -129,6 +131,11 @@ export const uk = {
       sessionExpired: 'Сесія завершилася. Увійдіть знову.',
     },
   },
+  fileManager: {
+    title: 'Файли',
+    close: 'Згорнути файли',
+    noSession: 'Оберіть сесію, щоб побачити її робоче дерево.',
+  },
   agents: {
     role: {
       review: 'Ревізор',
@@ -197,7 +204,6 @@ export const uk = {
     tabs: {
       log: 'Лог',
       changes: 'Зміни',
-      files: 'Файли',
       session: 'Сесія',
       docs: 'Документація',
     },

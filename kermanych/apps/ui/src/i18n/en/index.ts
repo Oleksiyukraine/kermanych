@@ -26,6 +26,8 @@ export const en: MessageSchema = {
       changeInSettings: '{label} — change in settings',
       changeFolder: 'Change folder',
       bindFolder: 'Bind folder',
+      fileManagerLeft: 'Files on the left (between the sidebar and the session)',
+      fileManagerRight: 'Files on the right (past the main section)',
       nameLabel: 'Name',
       workspaceFormHint: 'A workspace groups projects and holds the team roster: one invite opens access to all of its projects.',
       cancel: 'Cancel',
@@ -125,6 +127,11 @@ export const en: MessageSchema = {
       sessionExpired: 'Your session has ended. Sign in again.',
     },
   },
+  fileManager: {
+    title: 'Files',
+    close: 'Collapse files',
+    noSession: 'Pick a session to see its worktree.',
+  },
   agents: {
     role: {
       review: 'Reviewer',
@@ -193,7 +200,6 @@ export const en: MessageSchema = {
     tabs: {
       log: 'Log',
       changes: 'Changes',
-      files: 'Files',
       session: 'Session',
       docs: 'Documentation',
     },

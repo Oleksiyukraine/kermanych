@@ -156,7 +156,7 @@
           <div class="agents__detail-controls">
             <span class="agents__detail-status mono">{{ harnessLabel }} · {{ statusWord(selectedSession) }}</span>
             <!-- Primary session actions — one column that outlives the tab choice, so preview,
-                 finish and defer are on screen in Лог, Зміни, Файли and Сесія alike. -->
+                 finish and defer are on screen in Лог, Зміни and Сесія alike. -->
             <div class="agents__actions">
               <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
                 <KIconButton
@@ -354,36 +354,6 @@
               </li>
             </ul>
             <p v-else class="agents__log-empty mono">{{ t('agents.changes.noFiles') }}</p>
-          </template>
-        </div>
-        <div v-if="detailTab === 'files'" class="agents__tabpane agents__files">
-          <div v-if="worktreeGone" class="agents__pane-blank">
-            <span class="agents__pane-blank-eyebrow mono">{{ t('agents.changes.historyEyebrow') }}</span>
-            <p class="agents__pane-blank-text">
-              {{ t('agents.files.gone') }}
-            </p>
-          </div>
-          <p v-else-if="treeLoading" class="agents__log-empty mono">{{ t('agents.changes.preparing') }}</p>
-          <p v-else-if="treeError" class="agents__error" role="alert">{{ treeError }}</p>
-          <template v-else>
-            <KFileView
-              v-if="openTreeFile"
-              class="agents__file-view"
-              :path="openTreeFile"
-              :file="treeFile"
-              :loading="treeFileLoading"
-              :error="treeFileError"
-              @close="closeTreeFile"
-            />
-            <KFileTree
-              v-show="!openTreeFile"
-              class="agents__tree"
-              :entries="treeRoot"
-              base=""
-              :selected="openTreeFile"
-              :load="loadTreeLevel"
-              @open="openTreeFileAt"
-            />
           </template>
         </div>
         <div v-if="detailTab === 'session'" class="agents__tabpane agents__session">
@@ -806,8 +776,6 @@ import {
   type TranscriptEntry,
   type ThinkingLevel,
   type RpcExtensionUIResponse,
-  type TreeEntry,
-  type FileContent,
 } from '@kermanych/core';
 import { createTask as cloudCreateTask } from '@kermanych/cloud';
 import type { Task } from '@kermanych/cloud';
@@ -830,8 +798,6 @@ import KTag from 'components/kit/KTag.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KDiffView from 'components/kit/KDiffView.vue';
-import KFileTree from 'components/kit/KFileTree.vue';
-import KFileView from 'components/kit/KFileView.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KKbd from 'components/kit/KKbd.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
@@ -1184,10 +1150,10 @@ const selectedSession = computed(() =>
 );
 
 // A session whose worktree has been retired keeps `worktree: true` but loses its
-// `worktreePath` — this is every finished/merged agent now in «Завершені» or «Очікують». The two
-// git-backed panes (Зміни, Файли) have no directory to read then, so instead of firing a
-// request that comes back «session has no worktree» / ENOENT and painting the pane with a
-// red error, they show a calm empty-state. Derived, so both panes agree on when it applies.
+// `worktreePath` — this is every finished/merged agent now in «Завершені» or «Очікують». The
+// git-backed Зміни pane has no directory to read then, so instead of firing a request that
+// comes back «session has no worktree» / ENOENT and painting the pane with a red error, it
+// shows a calm empty-state. Derived so the pane and the file-manager dock agree on it.
 const worktreeGone = computed(
   () => !!selectedSession.value?.worktree && !selectedSession.value.worktreePath,
 );
@@ -1323,15 +1289,14 @@ const readDocs = computed(() => docsRead(entries.value));
 const changedDocs = computed(() => changesInfo.value?.files.filter((f) => isDocPath(f.path)) ?? []);
 const docsUsedHint = computed(() => t('agents.docs.usedHint'));
 
-// ── Detail tabs (Лог / Зміни / Файли / Сесія / Документація) ────────────────
-// The right panel splits the session into five views. The choice is persisted
+// ── Detail tabs (Лог / Зміни / Сесія / Документація) ────────────────────────
+// The right panel splits the session into four views. The choice is persisted
 // per session (localStorage `kermanych.agents.tab.<id>`) so reopening an agent lands where the
 // operator left it; a fresh session defaults to the log.
 const detailTabs = computed(() => {
   const tabs: { value: string; label: string; count?: number }[] = [
     { value: 'log', label: t('agents.tabs.log') },
     { value: 'changes', label: t('agents.tabs.changes'), count: changesInfo.value?.files.length ?? 0 },
-    { value: 'files', label: t('agents.tabs.files'), count: treeRoot.value.length },
     { value: 'session', label: t('agents.tabs.session') },
     { value: 'docs', label: t('agents.tabs.docs'), count: readDocs.value.length + changedDocs.value.length },
   ];
@@ -1343,7 +1308,7 @@ watch(
   (id) => {
     const saved = id ? localStorage.getItem(`kermanych.agents.tab.${id}`) : null;
     detailTab.value =
-      saved === 'changes' || saved === 'session' || saved === 'files' || saved === 'docs'
+      saved === 'changes' || saved === 'session' || saved === 'docs'
         ? saved
         : 'log';
   },
@@ -1506,78 +1471,17 @@ async function loadChanges(id: string, reset: boolean): Promise<void> {
   }
 }
 
-// ── Файли tab: the worktree file tree + a read-only viewer ──────────────────
-// The root level loads when the tab opens; deeper levels lazy-load per folder through
-// loadTreeLevel, which KFileTree calls on expand. Opening a file fetches its body into the
-// viewer, ordered by treeFileRun so a slow read cannot overwrite a newer one.
-const treeRoot = ref<TreeEntry[]>([]);
-const treeLoading = ref(false);
-const treeError = ref<string | null>(null);
-const openTreeFile = ref<string | null>(null);
-const treeFile = ref<FileContent | null>(null);
-const treeFileLoading = ref(false);
-const treeFileError = ref<string | null>(null);
-let treeFileRun = 0;
-
-function loadTreeLevel(path: string): Promise<TreeEntry[]> {
-  const id = store.selectedSessionId;
-  return id ? store.sessionTree(id, path) : Promise.resolve([]);
-}
-
-async function loadTreeRoot(id: string): Promise<void> {
-  treeError.value = null;
-  treeLoading.value = true;
-  try {
-    treeRoot.value = await store.sessionTree(id, '');
-  } catch (e) {
-    treeError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    treeLoading.value = false;
-  }
-}
-
-async function openTreeFileAt(path: string): Promise<void> {
-  const id = store.selectedSessionId;
-  if (!id) return;
-  const run = ++treeFileRun;
-  openTreeFile.value = path;
-  treeFile.value = null;
-  treeFileError.value = null;
-  treeFileLoading.value = true;
-  try {
-    const f = await store.sessionFile(id, path);
-    if (run !== treeFileRun) return;
-    treeFile.value = f;
-  } catch (e) {
-    if (run !== treeFileRun) return;
-    treeFileError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    if (run === treeFileRun) treeFileLoading.value = false;
-  }
-}
-
-function closeTreeFile(): void {
-  openTreeFile.value = null;
-  treeFile.value = null;
-  treeFileError.value = null;
-  treeFileLoading.value = false;
-  treeFileRun++;
-}
-
 watch(
   () => store.selectedSessionId,
   (id) => {
-    // A new session invalidates whatever file was open in either git-backed pane.
+    // A new session invalidates whatever file was open in the changes pane.
     closeFile();
-    closeTreeFile();
     changesInfo.value = null;
-    treeRoot.value = [];
-    // Load both up front — not on tab-open — so the «Зміни»/«Файли» tab counts are truthful
-    // the moment the session opens, and switching to either pane is then instant. A retired
-    // worktree has nothing to read; the panes render `worktreeGone` instead.
+    // Load up front — not on tab-open — so the «Зміни» tab count is truthful the moment the
+    // session opens, and switching to the pane is then instant. A retired worktree has
+    // nothing to read; the pane renders `worktreeGone` instead.
     if (!id || worktreeGone.value) return;
     void loadChanges(id, true);
-    void loadTreeRoot(id);
   },
   { immediate: true },
 );
@@ -2687,7 +2591,7 @@ async function submitPreviewConfig(): Promise<void> {
   font-size: var(--k-fs-sm);
 }
 
-// Worktree-gone empty-state for the git-backed panes (Зміни, Файли): a retired session
+// Worktree-gone empty-state for the git-backed Зміни pane: a retired session
 // has no directory to read, so the pane invites reopening rather than surfacing the api's
 // error. Centred in the pane, mirroring the page-level blank states (mgmt__blank et al.).
 .agents__pane-blank {
@@ -3002,24 +2906,6 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-accent);
 }
 .agents__conflict-head { list-style: none; margin-left: -18px; }
-
-// The Файли pane fills the panel: the tree scrolls on its own, and an open file's viewer
-// takes the whole height with its own internal scroll.
-.agents__files {
-  flex-direction: column;
-  overflow: hidden;
-  padding: 0;
-}
-.agents__tree {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 8px 6px;
-}
-.agents__file-view {
-  flex: 1;
-  min-height: 0;
-}
 
 .agents__file-list {
   margin: 0;
