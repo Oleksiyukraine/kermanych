@@ -81,7 +81,6 @@
         />
         <span v-if="worktree" class="k-composer__chip" v-tip="t('kit.composer.worktree')">
           <KIcon class="k-composer__chip-icon" name="worktree" />
-          <span class="mono">worktree</span>
         </span>
         <span class="k-composer__spacer"></span>
         <span v-if="stats" class="k-composer__stats mono">{{ stats }}</span>

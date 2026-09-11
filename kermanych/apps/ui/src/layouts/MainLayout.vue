@@ -193,14 +193,14 @@
       <div class="shell__workarea">
         <KFileManager
           v-if="store.fileManagerVisible && store.fileManagerSide === 'left'"
-          class="shell__fm"
+          class="shell__fm shell__fm--left"
         />
         <div class="shell__page">
           <router-view />
         </div>
         <KFileManager
           v-if="store.fileManagerVisible && store.fileManagerSide === 'right'"
-          class="shell__fm"
+          class="shell__fm shell__fm--right"
         />
       </div>
     </q-page-container>
@@ -1740,15 +1740,22 @@ async function gitPull(): Promise<void> {
   min-height: 0;
   overflow: auto;
 }
-// The dock is the bordered card itself (KFileManager's root <aside> carries both classes), so
-// its inset must be a MARGIN outside the border — a padding would sit inside the frame and let
-// the box fill the whole work area, taller than the sidebar/board cards and flush to the drawer.
-// The margin matches the sidebar card's 12px gutter; the height drops the two gutters it adds.
+// The inset is a margin outside the card border (a padding would sit inside the frame and let
+// the box fill the work area). Only top/bottom and the OUTER edge get it: the side that faces
+// the page relies on the page's own 12px padding for the gutter, so the dock-to-page gap stays
+// a single 12px instead of doubling to 24 (dock margin + page padding).
 .shell__workarea > .shell__fm {
   flex: none;
   box-sizing: border-box;
   width: 340px;
   height: calc(100% - 2 * var(--k-sp-3));
-  margin: var(--k-sp-3);
+  margin-top: var(--k-sp-3);
+  margin-bottom: var(--k-sp-3);
+}
+.shell__workarea > .shell__fm--left {
+  margin-left: var(--k-sp-3);
+}
+.shell__workarea > .shell__fm--right {
+  margin-right: var(--k-sp-3);
 }
 </style>
