@@ -79,6 +79,7 @@ export {
   type SkillView,
 } from "./skills";
 export { isDocPath, docsRead } from "./docs";
+export { chunkMarkdown, type DocChunk } from "./doc-chunk";
 export {
   DEFAULT_HELPERS,
   expandHelpers,
@@ -156,6 +157,8 @@ export {
   type ManagementRiskRow,
   type ManagementTicketFields,
   type ManagementMember,
+  type ManagementDocFragment,
+  type ManagementDocs,
   type ManagementJiraBoard,
   type ManagementCapacity,
   type ManagementCapacityPerson,

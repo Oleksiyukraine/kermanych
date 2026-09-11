@@ -12,6 +12,9 @@ import { useProjectDocs } from 'stores/project-docs';
 import { renderDoc } from '../lib/markdown';
 import KFileView from 'components/kit/KFileView.vue';
 import DocTreeNode, { type DocNode } from './DocTreeNode.vue';
+import { useAuth } from 'stores/auth';
+import { getDocIndexState, type DocIndexState } from '@kermanych/cloud';
+import { api } from '../lib/api';
 
 const props = defineProps<{ workspaceId: string; workspaceName: string }>();
 const { t } = useI18n();
@@ -41,6 +44,47 @@ watch(
 function select(id: string): void {
   selectedId.value = id;
   docs.setActive(id);
+}
+
+// The cloud documentation index for the selected project: when it was built and how many
+// files it covers, or null when it has never been indexed. Read directly from the cloud under
+// the operator's own JWT (RLS scopes it), the same way every other cloud read in the ui works.
+const auth = useAuth();
+const indexState = ref<DocIndexState | null>(null);
+const reindexing = ref(false);
+const reindexMsg = ref<{ level: 'ok' | 'error'; text: string } | null>(null);
+
+async function loadIndexState(id: string): Promise<void> {
+  indexState.value = null;
+  reindexMsg.value = null;
+  if (!id) return;
+  try {
+    indexState.value = await getDocIndexState(auth.client, id);
+  } catch {
+    // An unreachable cloud reads as "unknown"; the tab shows nothing rather than a false state.
+    indexState.value = null;
+  }
+}
+
+watch(selectedId, (id) => void loadIndexState(id), { immediate: true });
+
+// Manual "reindex everything": the api walks the bound checkout and re-embeds every published
+// doc file. Blocks (with a spinner) so the freshly-built state and any error are visible.
+async function reindex(): Promise<void> {
+  const id = selectedId.value;
+  if (!id || reindexing.value) return;
+  reindexing.value = true;
+  reindexMsg.value = null;
+  try {
+    const res = await api.reindexDocs(id);
+    reindexMsg.value = { level: 'ok', text: t('docsPage.reindexOk', { files: res.indexedFiles, chunks: res.chunkCount }) };
+    await loadIndexState(id);
+    docs.refreshIfActive(id);
+  } catch (e) {
+    reindexMsg.value = { level: 'error', text: t('docsPage.reindexFail', { error: e instanceof Error ? e.message : String(e) }) };
+  } finally {
+    reindexing.value = false;
+  }
 }
 
 // Root folder nodes; each folder lazily loads its one level of children when expanded
@@ -140,6 +184,24 @@ onBeforeUnmount(() => docs.releaseUrls());
         >{{ p.name }}</button>
       </div>
 
+      <div v-if="selectedId && isBound" class="docs__index">
+        <div class="docs__index-head">{{ t('docsPage.indexHeading') }}</div>
+        <p class="docs__index-state">
+          <template v-if="indexState && indexState.fileCount > 0">
+            {{ t('docsPage.indexSummary', { files: indexState.fileCount, when: (indexState.lastIndexedAt || '').slice(0, 10) }) }}
+          </template>
+          <template v-else>{{ t('docsPage.indexNever') }}</template>
+        </p>
+        <button type="button" class="docs__reindex" :disabled="reindexing" @click="reindex">
+          {{ reindexing ? t('docsPage.reindexing') : t('docsPage.reindex') }}
+        </button>
+        <p
+          v-if="reindexMsg"
+          class="docs__index-msg"
+          :class="{ 'docs__index-msg--error': reindexMsg.level === 'error' }"
+        >{{ reindexMsg.text }}</p>
+      </div>
+
       <nav class="docs__tree">
         <template v-if="!wsProjects.length"><p class="docs__empty">{{ t('docsPage.noProjects') }}</p></template>
         <template v-else-if="!selectedId"><p class="docs__empty">{{ t('docsPage.pickProject') }}</p></template>
@@ -185,4 +247,11 @@ onBeforeUnmount(() => docs.releaseUrls());
 .docs__nodes { list-style: none; margin: 0; padding-left: 0; }
 .docs__preview { overflow: auto; min-height: 0; }
 .docs__empty { color: var(--k-muted); font-size: 13px; padding: var(--k-sp-3); &--error { color: var(--k-danger); } }
+.docs__index { display: flex; flex-direction: column; gap: 4px; padding-bottom: var(--k-sp-2); border-bottom: 1px solid var(--k-line); }
+.docs__index-head { font-size: 12px; font-weight: 600; color: var(--k-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.docs__index-state { margin: 0; font-size: 13px; color: var(--k-text); }
+.docs__reindex { align-self: flex-start; background: none; border: 1px solid var(--k-line); color: var(--k-text); cursor: pointer; padding: 4px 8px; border-radius: 6px; font: inherit; }
+.docs__reindex:hover:not(:disabled) { background: var(--k-surface2); }
+.docs__reindex:disabled { opacity: 0.6; cursor: default; }
+.docs__index-msg { margin: 0; font-size: 12px; color: var(--k-muted); &--error { color: var(--k-danger); } }
 </style>

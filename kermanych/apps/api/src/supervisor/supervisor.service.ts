@@ -402,6 +402,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return this.worktree.readFileBytes(this.docsDir(projectId, folder), path);
   }
 
+  // The doc indexer resolves its folder paths through here so it inherits the SAME guards
+  // as the preview (bound project, published folder, no `..`/absolute escape) and never
+  // opens a second path into the checkout. Public because DocIndexService lives outside the
+  // supervisor; the guard logic stays private in docsDir().
+  resolveDocsDir(projectId: string, folder: string): string {
+    return this.docsDir(projectId, folder);
+  }
+
   // Launch a CLOUD task on this machine. The cloud decides who may run a task (assignee +
   // atomic claim) and owns the project config; SQLite owns where the repo lives locally.
   // From `registry.createSession` onward this is byte-for-byte the ordinary launch path, so

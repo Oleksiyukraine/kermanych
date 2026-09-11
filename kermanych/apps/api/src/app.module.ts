@@ -28,6 +28,7 @@ import { JiraController } from "./http/jira.controller";
 import { JiraService } from "./jira/jira.service";
 import { LinearController } from "./http/linear.controller";
 import { LinearService } from "./linear/linear.service";
+import { DocIndexService } from "./docs/doc-index.service";
 
 @Module({
   controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ModelsController, JiraController, LinearController, AccountController],
@@ -59,6 +60,11 @@ import { LinearService } from "./linear/linear.service";
     // (RegistryService), Linear HTTP under the acting user, mirror writes under their JWT,
     // and the same SupervisorService.createSessionFromTask launch path.
     LinearService,
+    // Documentation RAG indexing: walks the bound checkout's published doc folders
+    // (SupervisorService.resolveDocsDir guards), hashes and chunks changed files
+    // (@kermanych/core), and hands them to the docs-rag Edge Function under the operator's
+    // JWT (AuthService.cloudClient). Triggered after pull and by the manual reindex route.
+    DocIndexService,
     // Global by design: the api binds 127.0.0.1 but was previously drivable by
     // anything on the machine, including GET /fs/list (arbitrary local directory
     // enumeration). Opt out per route with @Public(), never per module.
