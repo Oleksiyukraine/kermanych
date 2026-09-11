@@ -2434,5 +2434,12 @@ export const uk = {
     emptyFolder: 'Порожня тека',
     loading: 'Завантаження…',
     binary: 'Бінарний файл — прев\u2019ю недоступне.',
+    indexHeading: 'Індекс документації',
+    indexNever: 'Ще не проіндексовано',
+    indexSummary: 'Проіндексовано файлів: {files} · {when}',
+    reindex: 'Переіндексувати',
+    reindexing: 'Індексація…',
+    reindexOk: 'Переіндексовано файлів: {files} ({chunks} фрагментів)',
+    reindexFail: 'Помилка індексації: {error}',
   },
 };

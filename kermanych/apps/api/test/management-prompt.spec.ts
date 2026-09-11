@@ -532,3 +532,51 @@ describe("home overview lines", () => {
     expect(out).toMatch(/\(а\) .*management-home/);
   });
 });
+
+describe("documentation retrieval block", () => {
+  const docsSection: ManagementContext = { ...context, section: "management-docs" };
+
+  it("prints retrieved fragments with a kdoc citation token and teaches the citation format", () => {
+    const out = buildManagementTurn({
+      first: true,
+      repos: [],
+      today: TODAY,
+      text: "how do I deploy?",
+      context: {
+        ...docsSection,
+        docs: {
+          status: "ok",
+          projectName: "Alpha",
+          fragments: [
+            { folder: "docs", path: "deploy.md", headingPath: "# Deploy > ## Staging", startLine: 12, endLine: 20, content: "Run the deploy script." },
+          ],
+        },
+      },
+    });
+    // The fragment and the exact citation token the model must echo back.
+    expect(out).toContain("Документація проєкту «Alpha»");
+    expect(out).toContain("docs/deploy.md › # Deploy > ## Staging");
+    expect(out).toContain("kdoc:docs|deploy.md|12");
+    expect(out).toContain("Run the deploy script.");
+    // The protocol teaches the citation format and forbids grepping for docs.
+    expect(out).toContain("[шлях › заголовок](kdoc:folder|path|рядок)");
+    expect(out).toContain("НЕ використовуй read/grep/glob для документації");
+  });
+
+  it("tells the model to say a project is not indexed rather than grep", () => {
+    const out = buildManagementTurn({
+      first: false,
+      repos: [],
+      today: TODAY,
+      text: "anything?",
+      context: { ...docsSection, docs: { status: "not-indexed", projectName: "Beta", fragments: [] } },
+    });
+    expect(out).toContain("проєкт НЕ проіндексовано");
+    expect(out).toContain("не грепай репозиторій");
+  });
+
+  it("omits the documentation block entirely when there is no docs field", () => {
+    const out = buildManagementTurn({ first: false, repos: [], today: TODAY, text: "hi", context: docsSection });
+    expect(out).not.toContain("Документація проєкту «");
+  });
+});

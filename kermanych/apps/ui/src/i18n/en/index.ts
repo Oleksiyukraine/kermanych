@@ -2429,5 +2429,12 @@ export const en: MessageSchema = {
     emptyFolder: 'Empty folder',
     loading: 'Loading…',
     binary: 'Binary file — no preview available.',
+    indexHeading: 'Documentation index',
+    indexNever: 'Not indexed yet',
+    indexSummary: 'Indexed {files} files · {when}',
+    reindex: 'Reindex',
+    reindexing: 'Reindexing…',
+    reindexOk: 'Reindexed {files} files ({chunks} chunks)',
+    reindexFail: 'Reindex failed: {error}',
   },
 };

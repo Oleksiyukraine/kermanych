@@ -25,6 +25,8 @@ import {
   type ManagementCapacityPerson,
   type ManagementCapacityWeek,
   type ManagementContext,
+  type ManagementDocs,
+  type ManagementDocFragment,
   type ManagementHome,
   type ManagementHomeTodoItem,
   type ManagementJiraBoard,
@@ -163,6 +165,8 @@ function contract(locale: Locale | undefined): string {
     capacityProtocol(),
     "",
     homeProtocol(),
+    "",
+    docsProtocol(),
     "",
     "ПРАВИЛА:",
     `(а) якщо просять ЗМІНИТИ розділ з capability=read_write (${writable}) — віддай відповідний блок дії. Дію виконує застосунок, не ти: у прозі опиши, ЩО саме робиш, і не пиши, що це вже зроблено — результат («Ризик R-004 занесено…», «Реліз-ноти готові…») чат покаже сам;`,
@@ -570,6 +574,45 @@ function homeLines(h: ManagementHome | undefined): string {
   ].join("\n");
 }
 
+// The contract half of documentation RAG. Retrieval already happened BEFORE this turn (a
+// browser-side Edge Function call embedded the question and searched), so the fragments are
+// in the context block and the model's whole job is to answer from them — the agent loop
+// that used to grep the repo is exactly what this feature removes. So this protocol OVERRIDES
+// rule (в): for a documentation question, read/grep/glob are forbidden.
+function docsProtocol(): string {
+  return [
+    "ДОКУМЕНТАЦІЯ ПРОЄКТУ (management-docs). Коли в контексті є блок «Документація проєкту», відповідай на питання про документацію ВИКЛЮЧНО з наведених фрагментів:",
+    "  • НЕ використовуй read/grep/glob для документації — фрагменти вже дібрані заздалегідь; шукати файли самому означає повернути повільну непередбачувану відповідь, яку ця функція саме усуває (це виняток із правила (в));",
+    "  • цитуй КОЖЕН використаний фрагмент markdown-посиланням рівно у форматі [шлях › заголовок](kdoc:folder|path|рядок) — беручи folder, path і початковий рядок із рядка «→ kdoc:…» під фрагментом; застосунок перетворює його на посилання, що відкриває файл у превʼю на потрібному рядку;",
+    "  • якщо у фрагментах немає відповіді — так і скажи прямо, не додумуй з памʼяті і не вигадуй шляхів;",
+    "  • status=\"not-indexed\": проєкт ще не проіндексовано — скажи це прямо і попроси натиснути «Переіндексувати» на вкладці; НЕ грепай репозиторій;",
+    "  • status=\"fulltext\": повнотекстовий резерв (сервіс ембедингів недоступний) — відповідай із фрагментів, але попередь, що пошук цього разу був неповний.",
+  ].join("\n");
+}
+
+// One retrieved fragment: its location line (which carries the kdoc citation token) followed
+// by its indented content, so the model can both cite it and quote from it.
+function fragmentLines(f: ManagementDocFragment): string {
+  const head = `- ${f.folder}/${f.path} › ${f.headingPath || "(без заголовка)"} (рядки ${f.startLine}–${f.endLine}) → kdoc:${f.folder}|${f.path}|${f.startLine}`;
+  const body = f.content.split("\n").map((l) => `    ${l}`);
+  return [head, ...body].join("\n");
+}
+
+// The documentation retrieval block for the turn. Three shapes by status: an indexed project
+// with fragments to answer from, the full-text fallback (Voyage down), and a project with no
+// index at all — the last of which the model must report plainly rather than grep around.
+function docsLines(d: ManagementDocs): string {
+  if (d.status === "not-indexed") {
+    return `Документація проєкту «${d.projectName}» (management-docs): проєкт НЕ проіндексовано — скажи, що індексу ще немає, і не грепай репозиторій.`;
+  }
+  const head =
+    d.status === "fulltext"
+      ? `Документація проєкту «${d.projectName}» — знайдені фрагменти (повнотекстовий резерв, сервіс ембедингів недоступний):`
+      : `Документація проєкту «${d.projectName}» — знайдені фрагменти:`;
+  if (d.fragments.length === 0) return `${head}\n- (за запитом нічого не знайдено)`;
+  return [head, ...d.fragments.map(fragmentLines)].join("\n");
+}
+
 function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: string): string {
   const s = managementSection(c.section);
   // An unresolved section name is still printed: the model must be able to say WHICH
@@ -599,6 +642,9 @@ function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: stri
     jiraLines(c.jira),
     capacityLines(c.capacity),
     homeLines(c.home),
+    // Documentation fragments, present only in the Проєктна документація section once a
+    // project is selected. Omitted entirely elsewhere so no other section pays for the block.
+    ...(c.docs ? [docsLines(c.docs)] : []),
   ].join("\n");
 }
 
