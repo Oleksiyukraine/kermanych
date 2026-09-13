@@ -15,6 +15,17 @@
             @click="onBucket(b.key)"
           />
         </nav>
+        <!-- FIRST-RUN CHECKLIST — stays until the account dismisses it (stores/onboarding.ts).
+             Its hint doubles as a progress read (done/total); the row opens the modal. -->
+        <KNavItem
+          v-if="onb.sidebarVisible"
+          :label="t('onboarding.checklist.navLabel')"
+          icon="tasks"
+          :hint="t('onboarding.checklist.stepCount', { done: onb.doneCount, total: onb.totalCount })"
+          :tip="minified ? t('onboarding.checklist.navLabel') : undefined"
+          :active="onb.open"
+          @click="onb.show()"
+        />
         <div class="shell__divider"></div>
         <div class="shell__side-label shell__side-label--row">
           <span>{{ t('common.nav.workspaces') }}</span>
@@ -349,6 +360,16 @@
       </template>
     </KModal>
 
+    <!-- FIRST-RUN CHECKLIST — the workspace → project → folder walk-through (design/onboarding.html).
+         The three setup acts reuse this layout's own create/bind modals, wired through the emits
+         below; every other card routes to its surface on its own. -->
+    <OnboardingChecklist
+      @create-workspace="onOnboardingCreateWorkspace"
+      @create-project="onOnboardingCreateProject"
+      @bind-folder="onOnboardingBindFolder"
+    />
+    <KDirPicker v-model="onbPickerOpen" :start="onbPickerStart" @select="onOnboardingFolderChosen" />
+
     <!-- TOAST STACK — transient notifications (errors etc.) -->
     <KToast :toasts="store.toasts" @dismiss="store.dismissToast" />
 
@@ -396,6 +417,9 @@ import KUserButton from 'components/kit/KUserButton.vue';
 import KFileManager from 'components/kit/KFileManager.vue';
 import JiraMergePrompt from 'components/jira/JiraMergePrompt.vue';
 import LinearMergePrompt from 'components/linear/LinearMergePrompt.vue';
+import KDirPicker from 'components/kit/KDirPicker.vue';
+import OnboardingChecklist from 'components/onboarding/OnboardingChecklist.vue';
+import { useOnboarding } from 'stores/onboarding';
 
 // The Kermanych app shell (design-system section 07): project rail, brand header, page
 // container, fleet status bar. Two stores back it — `store` (useOrchestrator) owns the LOCAL
@@ -406,6 +430,7 @@ const projects = useProjects();
 const auth = useAuth();
 const board = useBoard();
 const projectDocs = useProjectDocs();
+const onb = useOnboarding();
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
@@ -573,6 +598,10 @@ onMounted(async () => {
       6000,
     );
   }
+  // Now the cloud list is in, decide whether a fresh account needs the checklist. Skipped
+  // while the runtime gate is still up (auth.runtime === null): the gate is answered first,
+  // and its watcher above opens the checklist the moment it is.
+  if (auth.runtime !== null) onb.maybeAutoOpen();
 });
 
 // The board store is app-wide now: Агенти renders my backlog cards from it and the sidebar
@@ -999,6 +1028,60 @@ async function submitOnboarding(): Promise<void> {
     onboardingBusy.value = false;
   }
 }
+
+// FIRST-RUN CHECKLIST — the open/dismiss/ack state lives in stores/onboarding.ts; this layout
+// only supplies the three setup acts (create workspace, create project, bind a folder) that
+// reuse the create/bind modals already defined above.
+const onbPickerOpen = ref(false);
+const onbPickerStart = ref('');
+const onbBindProjectId = ref<string | undefined>(undefined);
+
+function onOnboardingCreateWorkspace(): void {
+  openCreateWorkspace();
+}
+
+function onOnboardingCreateProject(): void {
+  // The project modal is scoped to a workspace: land on the one in scope, then the first the
+  // account has. With none, the workspace step is the real next act — open that instead.
+  const workspaceId = store.selectedWorkspaceId ?? projects.workspaces[0]?.id;
+  if (!workspaceId) {
+    openCreateWorkspace();
+    return;
+  }
+  openCreateProject(workspaceId);
+}
+
+function onOnboardingBindFolder(): void {
+  const projectId = store.selectedProjectId ?? store.projects[0]?.id;
+  if (!projectId) return; // no project yet — the project step comes first
+  onbBindProjectId.value = projectId;
+  onbPickerStart.value = store.projects.find((p) => p.id === projectId)?.localRepoPath ?? '';
+  onbPickerOpen.value = true;
+}
+
+async function onOnboardingFolderChosen(path: string): Promise<void> {
+  const projectId = onbBindProjectId.value;
+  const trimmed = path.trim();
+  if (!projectId || !trimmed) return;
+  try {
+    // The api emits a project_update over the socket, so the local row — and the checklist's
+    // «folder» tick, which reads it — refresh on their own.
+    await store.setProjectBinding(projectId, trimmed);
+    store.notify(t('settings.binding.bound', { path: trimmed }));
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+// Auto-open once the runtime gate is answered (null → chosen). A returning account whose
+// runtime is already set sees no change here and is handled by the onMounted call below,
+// which fires only after the cloud read so a fully-set-up account is not re-onboarded.
+watch(
+  () => auth.runtime,
+  (kind) => {
+    if (kind !== null) onb.maybeAutoOpen();
+  },
+);
 async function submitCreateWorkspace(): Promise<void> {
   if (!canCreateWorkspace.value) return;
   createError.value = null;
