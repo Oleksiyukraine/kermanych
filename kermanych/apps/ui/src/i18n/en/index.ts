@@ -459,6 +459,11 @@ export const en: MessageSchema = {
       updateFailed: 'The cloud refused — details in the message',
       selectProject: 'Choose a project',
       createFailed: 'Couldn’t create the task — details in the message',
+      qaTitle: 'QA checklist',
+      qaHint: 'Generated when the PR was created. Tick what you have verified.',
+      docTitle: 'Documentation',
+      docCreated: 'Created / updated',
+      docUsed: 'Used',
     },
     binding: {
       title: 'Link the project to a local folder',

@@ -234,6 +234,50 @@
             :placeholder="t('board.editor.unassigned')"
           />
         </div>
+        <!-- QA checklist: the pull-request agent generated it, a human ticks it off here. The
+             checkbox is the ONLY edit and it persists immediately (not on Save) — a tester's
+             tick is a fact about the card, not a draft. Shown only once a «Створити ПР» run
+             produced one. -->
+        <div v-if="editingTask?.qaChecklist?.items.length" class="board__qa">
+          <div class="board__qa-head">
+            <span class="board__qa-title">{{ t('board.editor.qaTitle') }}</span>
+            <span class="board__qa-count mono">{{ qaDone }}/{{ editingTask.qaChecklist.items.length }}</span>
+          </div>
+          <p class="board__qa-hint">{{ t('board.editor.qaHint') }}</p>
+          <ul class="board__qa-list">
+            <li v-for="item in editingTask.qaChecklist.items" :key="item.id" class="board__qa-item">
+              <KCheckbox
+                :model-value="item.checked"
+                :label="item.text"
+                @update:model-value="(v: boolean) => board.setQaItemChecked(editingTask!.id, item.id, v)"
+              />
+            </li>
+          </ul>
+        </div>
+        <!-- Documentation report: what the librarian skill recorded the agent used and created.
+             Read-only — a curated list of paths, not an editable field. Shown only once a run
+             produced one. -->
+        <div v-if="editingTask?.docReport && (editingTask.docReport.used.length || editingTask.docReport.created.length)" class="board__doc">
+          <span class="board__doc-title">{{ t('board.editor.docTitle') }}</span>
+          <template v-if="editingTask.docReport.created.length">
+            <span class="board__doc-cap">{{ t('board.editor.docCreated') }}</span>
+            <ul class="board__doc-list">
+              <li v-for="r in editingTask.docReport.created" :key="'c-' + r.path" class="board__doc-item">
+                <span class="board__doc-path mono">{{ r.path }}</span>
+                <span v-if="r.note" class="board__doc-note">— {{ r.note }}</span>
+              </li>
+            </ul>
+          </template>
+          <template v-if="editingTask.docReport.used.length">
+            <span class="board__doc-cap">{{ t('board.editor.docUsed') }}</span>
+            <ul class="board__doc-list">
+              <li v-for="r in editingTask.docReport.used" :key="'u-' + r.path" class="board__doc-item">
+                <span class="board__doc-path mono">{{ r.path }}</span>
+                <span v-if="r.note" class="board__doc-note">— {{ r.note }}</span>
+              </li>
+            </ul>
+          </template>
+        </div>
         <p v-if="editingTask && isStale(editingTask)" class="board__stale-note mono" role="alert">
           {{ t('board.editor.staleNote') }}
         </p>
@@ -318,6 +362,7 @@ import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
+import KCheckbox from 'components/kit/KCheckbox.vue';
 import KKanbanCard from 'components/kit/KKanbanCard.vue';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import KAvatar from 'components/kit/KAvatar.vue';
@@ -1055,6 +1100,8 @@ const editorError = ref<string | null>(null);
 const editingTask = computed(() =>
   editingId.value ? board.tasks.find((t) => t.id === editingId.value) : undefined,
 );
+// How many QA items are ticked, for the «n/total» counter beside the checklist heading.
+const qaDone = computed(() => editingTask.value?.qaChecklist?.items.filter((i) => i.checked).length ?? 0);
 
 // The same face the card shows, beside the picker that changes it: a re-assign is confirmed
 // by the picture changing, without closing the modal.
@@ -1367,6 +1414,75 @@ function onDelete(task: Task): void {
 .board__stale-note {
   font-size: 11.5px;
   color: var(--k-warning);
+}
+
+/* QA checklist: a bordered block inside the form so it reads as the card's own artifact, not
+   another editable field. `surface2`, the verbatim/read treatment other panes give text the
+   operator did not type. */
+.board__qa {
+  padding: 10px 12px;
+  background: var(--k-surface2);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-r);
+}
+.board__qa-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.board__qa-title {
+  font-size: 13px;
+  color: var(--k-text);
+}
+.board__qa-count {
+  font-size: 11.5px;
+  color: var(--k-muted);
+}
+.board__qa-hint {
+  margin: 4px 0 8px;
+  font-size: 11.5px;
+  color: var(--k-muted);
+}
+.board__qa-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+/* Documentation report: same bordered read block as the QA checklist. */
+.board__doc {
+  padding: 10px 12px;
+  background: var(--k-surface2);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-r);
+}
+.board__doc-title {
+  display: block;
+  font-size: 13px;
+  color: var(--k-text);
+}
+.board__doc-cap {
+  display: block;
+  margin: 8px 0 4px;
+  font-size: 11.5px;
+  color: var(--k-muted);
+}
+.board__doc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.board__doc-item {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.board__doc-note {
+  color: var(--k-muted);
 }
 
 .board__blank {

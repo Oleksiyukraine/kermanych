@@ -4,9 +4,10 @@
 // are the authorization surface; refusals surface as thrown postgrest messages.
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import type { Task, TaskInsert, TaskPatch, TaskStatus } from "./types";
+import type { DocReport, QaChecklist } from "@kermanych/core";
 
 const TASK_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, image_paths, jira_key, linear_key, created_at, updated_at";
+  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, image_paths, jira_key, linear_key, qa_checklist, doc_report, created_at, updated_at";
 
 type TaskRow = {
   id: string;
@@ -28,6 +29,8 @@ type TaskRow = {
   image_paths: string[] | null;
   jira_key: string | null;
   linear_key: string | null;
+  qa_checklist: unknown;
+  doc_report: unknown;
   created_at: string;
   updated_at: string;
 };
@@ -63,6 +66,17 @@ export function toTask(row: TaskRow): Task {
   // image-less task an ABSENT key (like every other optional field) and tolerates a row
   // that omitted the column entirely.
   if (Array.isArray(row.image_paths) && row.image_paths.length) t.imagePaths = row.image_paths;
+  // `not null default '{}'`, so an object in practice. A checklist WITH items is carried; the
+  // empty-object default (no «Створити ПР» run yet) and any malformed value both map to an
+  // ABSENT key, like every other optional field.
+  const qa = row.qa_checklist;
+  if (qa && typeof qa === "object" && !Array.isArray(qa) && Array.isArray((qa as QaChecklist).items) && (qa as QaChecklist).items.length)
+    t.qaChecklist = qa as QaChecklist;
+  // Same shape rule as qa_checklist: a report with any used/created entry is carried, the
+  // empty-object default and anything malformed map to an absent key.
+  const dr = row.doc_report;
+  if (dr && typeof dr === "object" && !Array.isArray(dr) && (((dr as DocReport).used?.length ?? 0) > 0 || ((dr as DocReport).created?.length ?? 0) > 0))
+    t.docReport = dr as DocReport;
   return t;
 }
 
@@ -88,6 +102,10 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   // Arrays are sent verbatim: an empty array is the "no images" value, not a clear-to-null,
   // because the column is `not null`.
   if (patch.imagePaths !== undefined) row.image_paths = patch.imagePaths;
+  // jsonb, sent verbatim: generation replaces the whole object, a human tick replaces it with
+  // one item flipped. `not null`, so there is no clear-to-null path — an absent key is «leave it».
+  if (patch.qaChecklist !== undefined) row.qa_checklist = patch.qaChecklist;
+  if (patch.docReport !== undefined) row.doc_report = patch.docReport;
   return row;
 }
 

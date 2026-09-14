@@ -102,7 +102,9 @@ test("a symlinked repo skill directory shadows the library too", async () => {
   const svc = service();
   svc.readSkills = async () => [];
   const { view } = await svc.materialize({ projectId: "p1" }, repo);
-  expect(readdirSync(join(home, "skills", "p1"))).toEqual(["kermanych-pull-request"]);
+  expect(readdirSync(join(home, "skills", "p1")).sort()).toEqual(
+    DEFAULT_SKILLS.map((d) => d.name).filter((n) => n !== "kermanych-session").sort(),
+  );
   expect(view.find((v) => v.name === "kermanych-session")?.shadowedByRepo).toBe(link);
   rmSync(shared, { recursive: true, force: true });
 });
@@ -128,7 +130,9 @@ test("materialize writes the library, the overlay, and skips a repo-shadowed ski
 
   const dir = join(home, "skills", "p1");
   expect(stale).toBeUndefined();
-  expect(readdirSync(dir).sort()).toEqual(["extra", "kermanych-pull-request"]);
+  expect(readdirSync(dir).sort()).toEqual(
+    [...DEFAULT_SKILLS.map((d) => d.name).filter((n) => n !== "kermanych-session"), "extra"].sort(),
+  );
   expect(readFileSync(join(dir, "extra", "SKILL.md"), "utf8")).toContain('description: "e"');
   // `ttsr.enabled: true` rides along with every overlay: the same launch carries the session's
   // trigger package via `-e`, and an operator with TTSR off would get rules that never fire.
@@ -160,7 +164,9 @@ test("a skill that becomes repo-shadowed is pruned on the next materialize", asy
   mkdirSync(join(repo, ".omp/skills/kermanych-session"), { recursive: true });
   writeFileSync(join(repo, ".omp/skills/kermanych-session/SKILL.md"), "---\nname: kermanych-session\n---\n");
   await svc.materialize({ projectId: "p1" }, repo);
-  expect(readdirSync(join(home, "skills", "p1"))).toEqual(["kermanych-pull-request"]);
+  expect(readdirSync(join(home, "skills", "p1")).sort()).toEqual(
+    DEFAULT_SKILLS.map((d) => d.name).filter((n) => n !== "kermanych-session").sort(),
+  );
 });
 
 test("an unreachable cloud keeps the last materialised library and reports it as stale", async () => {

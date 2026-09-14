@@ -92,6 +92,7 @@ export {
   PR_CONVENTIONS_FALLBACK,
   KERMANYCH_COAUTHOR,
   COAUTHOR_DIRECTIVE,
+  DOC_MAINTAIN_DIRECTIVE,
   agentById,
   effectiveInstruction,
   instructionErrors,
@@ -174,3 +175,17 @@ export {
   type ManagementChatReply,
   type ParsedManagementReply,
 } from "./management-actions";
+export {
+  QA_CHECKLIST_KIND,
+  DOC_REPORT_KIND,
+  QA_CHECKLIST_DIRECTIVE,
+  DOC_REPORT_DIRECTIVE,
+  parseTaskActions,
+  buildQaChecklist,
+  buildDocReport,
+  type QaChecklist,
+  type QaChecklistItem,
+  type DocReport,
+  type DocRef,
+  type TaskAction,
+} from "./task-actions";

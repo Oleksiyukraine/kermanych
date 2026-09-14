@@ -198,6 +198,7 @@ export const useBoard = defineStore('board', () => {
       if (patch.effort) next.effort = patch.effort;
       else delete next.effort;
     }
+    if (patch.qaChecklist !== undefined) next.qaChecklist = patch.qaChecklist;
     return next;
   }
 
@@ -336,6 +337,25 @@ export const useBoard = defineStore('board', () => {
     },
   );
 
+  // A human ticking one QA checklist item on the board. Rebuilds the whole checklist with that
+  // one item flipped — the stored shape is replace-whole (toTaskRow sends it verbatim) — and
+  // rides the same optimistic-patch-plus-rollback path every other field edit uses. `checkedBy`
+  // and `checkedAt` are stamped on a tick and dropped on an untick, so the row never names a
+  // tester behind an unchecked box.
+  function setQaItemChecked(id: string, itemId: string, checked: boolean): Promise<boolean> {
+    const before = tasks.value.find((t) => t.id === id);
+    if (!before?.qaChecklist) return Promise.resolve(false);
+    const userId = auth.user?.id;
+    const items = before.qaChecklist.items.map((it) =>
+      it.id !== itemId
+        ? it
+        : checked
+          ? { ...it, checked, ...(userId ? { checkedBy: userId } : {}), checkedAt: new Date().toISOString() }
+          : { id: it.id, text: it.text, checked },
+    );
+    return updateTaskFields(id, { qaChecklist: { ...before.qaChecklist, items } });
+  }
+
   return {
     tasks,
     loading,
@@ -350,5 +370,6 @@ export const useBoard = defineStore('board', () => {
     assignTask,
     deleteTask,
     forceStop,
+    setQaItemChecked,
   };
 });
