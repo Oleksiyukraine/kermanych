@@ -578,6 +578,11 @@ export const api = {
   unarchiveSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/unarchive`, {}),
 
+  // A chat's operator-set display name. The api answers with the updated session; the socket
+  // also broadcasts session_update, so the list follows either way.
+  renameSession: (id: string, name: string): Promise<Session> =>
+    post<Session>(`/sessions/${id}/rename`, { name }),
+
   openEditor: (id: string): Promise<{ ok: boolean }> =>
     post(`/sessions/${id}/editor`, {}),
 

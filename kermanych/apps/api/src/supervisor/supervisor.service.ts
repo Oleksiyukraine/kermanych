@@ -1640,6 +1640,19 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.pushUpdate(id);
   }
 
+  // A chat's display name is operator-editable. Renaming is a pure label change on the
+  // registry row — it never touches the omp session, worktree or transcript — so it is
+  // allowed in any state. An empty name is refused: a row must keep a handle in the list.
+  renameSession(id: string, name: string): Session {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error("name is empty");
+    const saved = this.registry.updateSession(id, { name: trimmed });
+    this.pushUpdate(id);
+    return this.merge(saved);
+  }
+
   // Preview of what "finish" will do: the base the branch will be PR'd against, how many
   // commits the branch carries, and whether the worktree has uncommitted work that would be
   // auto-committed before it is retired.
