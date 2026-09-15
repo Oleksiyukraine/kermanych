@@ -2,6 +2,9 @@
 // https://legacy-app.quasar.dev/quasar-cli-vite-v2/quasar-config-file
 
 import { defineConfig } from '#q-app/wrappers';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 export default defineConfig((ctx) => {
   return {
@@ -65,10 +68,78 @@ export default defineConfig((ctx) => {
 
     electron: {
       bundler: 'builder',
+
+      // Quasar always runs `<packager> install` inside dist/electron/UnPackaged before
+      // packaging. In a pnpm workspace the default `pnpm install --prod` resolves UP to
+      // the monorepo ROOT (UnPackaged lives inside it), wipes the root node_modules and
+      // reinstalls it with --prod — deleting every devDependency (tsc, vite, quasar,
+      // electron-builder) and then crashing #packageFiles (quasar #18139). `--ignore-workspace`
+      // alone is not enough here because @kermanych/ui has real `workspace:*` runtime deps
+      // that can only be resolved via the workspace, so we make Quasar's forced step inert
+      // (`pnpm -v`) and provision the production node_modules ourselves in beforePackaging().
+      unPackagedInstallParams: ['-v'],
+
       builder: {
         appId: 'com.kermanych.app',
         productName: 'Kermanych',
         mac: { target: 'dmg', identity: null }, // identity:null → unsigned
+        // better-sqlite3's native .node must live OUTSIDE the asar — Electron cannot dlopen
+        // from an archive. Its v13 prebuilds are N-API (ABI-stable across Node/Electron), so
+        // unpacking them suffices; electron-builder's own native rebuild is unnecessary here.
+        asarUnpack: ['**/node_modules/better-sqlite3/**'],
+        npmRebuild: false,
+      },
+
+      // The Electron main process externalizes @kermanych/api (see the esbuild bundle),
+      // which pulls in NestJS, native better-sqlite3 and @kermanych/{core,cloud} through
+      // `workspace:*` deps. `pnpm deploy` is the only thing that flattens that graph into a
+      // self-contained node_modules; we then hand it to electron-builder to pack.
+      async beforePackaging({ appPaths, unpackagedDir }) {
+        const repoRoot = resolve(appPaths.appDir, '..', '..');
+        const deployTmp = join(unpackagedDir, '..', 'deploy-tmp');
+        rmSync(deployTmp, { recursive: true, force: true });
+        mkdirSync(deployTmp, { recursive: true });
+
+        // --legacy: pnpm 10 refuses to deploy non-injected workspaces otherwise.
+        // node-linker=hoisted: real files (no symlinks asar cannot follow into the store).
+        // --ignore-scripts: the deployed tree needs no lifecycle scripts — better-sqlite3's
+        //   N-API prebuilds load as-is under Electron's ABI (see builder.asarUnpack above).
+        execFileSync(
+          'pnpm',
+          [
+            '--filter=@kermanych/ui',
+            '--prod',
+            '--legacy',
+            '--config.node-linker=hoisted',
+            '--ignore-scripts',
+            'deploy',
+            deployTmp,
+          ],
+          { cwd: repoRoot, stdio: 'inherit' },
+        );
+
+        const dest = join(unpackagedDir, 'node_modules');
+        rmSync(dest, { recursive: true, force: true });
+        renameSync(join(deployTmp, 'node_modules'), dest);
+        rmSync(deployTmp, { recursive: true, force: true });
+
+        // Quasar keeps `workspace:*` specifiers in the generated manifest; rewrite them to
+        // '*' so electron-builder's production-dependency scan accepts them (the packages are
+        // already present in node_modules from the deploy above).
+        const pkgPath = join(unpackagedDir, 'package.json');
+        if (existsSync(pkgPath)) {
+          const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as {
+            dependencies?: Record<string, string>;
+          };
+          if (pkg.dependencies) {
+            for (const [name, spec] of Object.entries(pkg.dependencies)) {
+              if (typeof spec === 'string' && spec.startsWith('workspace:')) {
+                pkg.dependencies[name] = '*';
+              }
+            }
+            writeFileSync(pkgPath, JSON.stringify(pkg));
+          }
+        }
       },
     },
   };
