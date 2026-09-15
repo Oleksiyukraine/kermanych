@@ -661,6 +661,10 @@ watch(chatId, () => {
   min-height: 0;
   display: flex;
   gap: 0;
+  background: var(--k-bg);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-r-lg);
+  overflow: hidden;
 }
 
 // While dragging, force the col-resize cursor everywhere and kill text selection so a fast
@@ -675,7 +679,7 @@ watch(chatId, () => {
   flex: none;
   min-width: 0;
   overflow-y: auto;
-  padding-right: var(--k-sp-3);
+  padding: var(--k-sp-4);
 }
 
 .chat__history-head {
