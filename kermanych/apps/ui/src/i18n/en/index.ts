@@ -248,7 +248,7 @@ export const en: MessageSchema = {
     },
     docs: {
       usedTitle: 'Documentation used',
-      usedHint: 'Documentation files the agent read while working — taken from the session transcript. The path is shown as it appears in the log, so it cannot be opened from here.',
+      usedHint: 'Documentation files the agent read while working. When the «Librarian» produced a report, this list comes from it. The path is shown for reference only and cannot be opened from here.',
       changedTitle: 'Created or updated',
       empty: 'This session neither read nor changed any documentation.',
     },
