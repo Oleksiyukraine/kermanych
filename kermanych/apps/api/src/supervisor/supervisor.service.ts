@@ -20,9 +20,7 @@ import {
   COAUTHOR_DIRECTIVE,
   DOC_MAINTAIN_DIRECTIVE,
   QA_CHECKLIST_DIRECTIVE,
-  DOC_REPORT_DIRECTIVE,
   buildQaChecklist,
-  buildDocReport,
   parseTaskActions,
   type TaskAction,
   agentById,
@@ -1487,12 +1485,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       : `Target the PR at the repository's default branch, unless the repo's PR conventions dictate otherwise.`;
 
     const { template, block } = await this.agentPrompt(s.projectId, "pull-request", s.worktreePath || g.localRepoPath);
-    // The QA checklist and the documentation report both ride the PR prompt, but only for a
-    // task-born session: both are stored on the cloud card, so a locally-created session with
-    // no `taskId` has nowhere to put them and is not asked to produce them. The pull-request
-    // agent is the same running child that did the work, so it knows what to test and what it
-    // touched. onRpcEvent captures whichever blocks it emits.
-    const artifacts = s.taskId ? `\n\n${QA_CHECKLIST_DIRECTIVE}\n\n${DOC_REPORT_DIRECTIVE}` : "";
+    // The QA checklist rides the PR prompt, but only for a task-born session: it is stored on
+    // the cloud card, so a locally-created session with no `taskId` has nowhere to put it and is
+    // not asked to produce one. The pull-request agent is the same running child that did the
+    // work, so it knows what to test. onRpcEvent captures whichever block it emits.
+    const artifacts = s.taskId ? `\n\n${QA_CHECKLIST_DIRECTIVE}` : "";
     const prompt =
       renderInstruction(
         agentById("pull-request")!,
@@ -1521,10 +1518,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // here so the emitting skill never has to.
   private async applyTaskArtifact(taskId: string, sessionId: string, action: TaskAction): Promise<void> {
     const meta = { generatedAt: new Date().toISOString(), sessionId };
-    const patch: TaskPatch =
-      action.kind === "qa-checklist"
-        ? { qaChecklist: buildQaChecklist(action.items, meta) }
-        : { docReport: buildDocReport(action, meta) };
+    const patch: TaskPatch = { qaChecklist: buildQaChecklist(action.items, meta) };
     try {
       await patchTask(this.auth.cloudClient(), taskId, patch);
     } catch (err) {

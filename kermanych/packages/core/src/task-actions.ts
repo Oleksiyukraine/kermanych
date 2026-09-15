@@ -1,20 +1,16 @@
-// The shared «task-update» mechanism: the structured artifacts an agent attaches to its cloud
-// card, and the one parser that reads them off its output. Both of Kermanych's documenting
-// skills speak through it —
+// The «task-update» mechanism: the structured artifact an agent attaches to its cloud card, and
+// the one parser that reads it off its output. The «Тестувальник» skill speaks through it:
 //
 //   * «Тестувальник» → a `qa-checklist`: the concrete, human-checkable things to test on the
 //     change. A person ticks the items on the board afterwards.
-//   * «Бібліотекар»  → a `doc-report`: what documentation the agent USED and what it CREATED
-//     or UPDATED, as a curated list of paths — not a raw diff, so it stays small.
 //
-// The split is deliberate and identical for both kinds:
-//   * the OUTPUT CONTRACT (this fence, these shapes, this parser) lives HERE, in code, so a
-//     team editing a library skill can enrich WHAT is produced without ever breaking the
-//     parser;
+// The split is deliberate:
+//   * the OUTPUT CONTRACT (this fence, this shape, this parser) lives HERE, in code, so a team
+//     editing a library skill can enrich WHAT is produced without ever breaking the parser;
 //   * the skill body / a launch directive only says WHEN and WHAT to emit.
 //
 // SupervisorService scans every task-born session's output with `parseTaskActions` and writes
-// each artifact to the card with `patchTask` (applyTaskArtifact) — one code path for both.
+// the artifact to the card with `patchTask` (applyTaskArtifact).
 //
 // The fence is the app's single action fence (MANAGEMENT_ACTION_FENCE), reused rather than
 // reinvented: it already means «structured instruction to Kermanych, not prose». The surfaces
@@ -24,7 +20,6 @@
 import { MANAGEMENT_ACTION_FENCE } from "./management-actions";
 
 export const QA_CHECKLIST_KIND = "qa-checklist";
-export const DOC_REPORT_KIND = "doc-report";
 
 // ── stored shapes ──────────────────────────────────────────────────────────────
 
@@ -47,24 +42,11 @@ export type QaChecklist = {
   items: QaChecklistItem[];
 };
 
-/** One documentation file the agent used or produced, with an optional one-line note. */
-export type DocRef = { path: string; note?: string };
-
-export type DocReport = {
-  generatedAt: string;
-  sessionId?: string;
-  /** Documentation the agent READ to do the work. */
-  used: DocRef[];
-  /** Documentation the agent CREATED or UPDATED. */
-  created: DocRef[];
-};
-
 // ── parsed actions ─────────────────────────────────────────────────────────────
 
 /** A validated artifact an agent emitted, ready for applyTaskArtifact to store. */
 export type TaskAction =
-  | { kind: typeof QA_CHECKLIST_KIND; items: string[] }
-  | { kind: typeof DOC_REPORT_KIND; used: DocRef[]; created: DocRef[] };
+  | { kind: typeof QA_CHECKLIST_KIND; items: string[] };
 
 // Fenced blocks whose info string is exactly our fence. Byte-identical to management-actions'
 // BLOCK_RE: `[^\S\n]*` rather than `\s*` so a blank line is never eaten as part of the info
@@ -93,23 +75,6 @@ function cleanStrings(v: unknown): string[] {
   return out;
 }
 
-// Doc references with a non-empty path, de-duplicated by path, note trimmed and optional. A
-// bare string is accepted as a path-only ref, since a model writes `["docs/x.md"]` as readily
-// as `[{"path":"docs/x.md"}]`.
-function cleanRefs(v: unknown): DocRef[] {
-  if (!Array.isArray(v)) return [];
-  const seen = new Set<string>();
-  const out: DocRef[] = [];
-  for (const item of v) {
-    const path = (typeof item === "string" ? item : isObj(item) && typeof item.path === "string" ? item.path : "").trim();
-    if (!path || seen.has(path)) continue;
-    seen.add(path);
-    const note = isObj(item) && typeof item.note === "string" ? item.note.trim() : "";
-    out.push(note ? { path, note } : { path });
-  }
-  return out;
-}
-
 // One parsed object → a validated action, or `undefined` when it is not one of ours or carries
 // nothing usable. Tolerant on purpose: this runs on a model's free-form output, where an
 // off-topic or malformed block is an ordinary event, not an error to surface.
@@ -118,11 +83,6 @@ function validateTaskAction(v: unknown): TaskAction | undefined {
   if (v.kind === QA_CHECKLIST_KIND) {
     const items = cleanStrings(v.items);
     return items.length ? { kind: QA_CHECKLIST_KIND, items } : undefined;
-  }
-  if (v.kind === DOC_REPORT_KIND) {
-    const used = cleanRefs(v.used);
-    const created = cleanRefs(v.created);
-    return used.length || created.length ? { kind: DOC_REPORT_KIND, used, created } : undefined;
   }
   return undefined;
 }
@@ -163,19 +123,6 @@ export function buildQaChecklist(
   };
 }
 
-/** Stamp a parsed doc-report with its provenance for storage. */
-export function buildDocReport(
-  report: { used: readonly DocRef[]; created: readonly DocRef[] },
-  meta: { generatedAt: string; sessionId?: string },
-): DocReport {
-  return {
-    generatedAt: meta.generatedAt,
-    ...(meta.sessionId ? { sessionId: meta.sessionId } : {}),
-    used: [...report.used],
-    created: [...report.created],
-  };
-}
-
 // ── emit directives (the WHEN/WHAT, referencing the code-owned contract) ──────────
 
 /**
@@ -193,21 +140,5 @@ export const QA_CHECKLIST_DIRECTIVE = [
   "",
   "```" + MANAGEMENT_ACTION_FENCE,
   '{ "kind": "' + QA_CHECKLIST_KIND + '", "items": ["…", "…"] }',
-  "```",
-].join("\n");
-
-/**
- * Appended to the pull-request prompt (SupervisorService.createPullRequest) alongside the QA
- * directive, for a task-born session — the same wrap-up moment, produced by the same running
- * child that did the work, so it knows what it used and created. The «Бібліотекар» library
- * skill only ENRICHES this (how to document, what to track); the contract lives here.
- */
-export const DOC_REPORT_DIRECTIVE = [
-  "When your work is done, attach a documentation report to the task: which documentation you",
-  "USED to understand the change and which docs you CREATED or UPDATED. List repo-relative",
-  "paths, each with a short note. Output it as ONE fenced block, exactly this shape:",
-  "",
-  "```" + MANAGEMENT_ACTION_FENCE,
-  '{ "kind": "' + DOC_REPORT_KIND + '", "used": [{ "path": "…", "note": "…" }], "created": [{ "path": "…", "note": "…" }] }',
   "```",
 ].join("\n");

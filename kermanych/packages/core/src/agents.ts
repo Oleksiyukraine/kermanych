@@ -50,9 +50,8 @@ export const COAUTHOR_DIRECTIVE =
 // Appended to a TASK-born work session's opening prompt (SupervisorService.launch), beside the
 // co-author trailer, so keeping documentation current is a deterministic property of doing the
 // work — not something that depends on the model choosing to read the «Бібліотекар» skill. That
-// skill ENRICHES this (how and what to document); the report the librarian produces is asked
-// for separately at pull-request time (DOC_REPORT_DIRECTIVE). One line, like the trailer: it
-// states the default without competing with the repository's own conventions.
+// skill ENRICHES this (how and what to document). One line, like the trailer: it states the
+// default without competing with the repository's own conventions.
 export const DOC_MAINTAIN_DIRECTIVE =
   "If this change alters behaviour a human needs to know — a command, endpoint, config key, " +
   "migration, or user-facing flow — keep the project's own documentation current in the same " +

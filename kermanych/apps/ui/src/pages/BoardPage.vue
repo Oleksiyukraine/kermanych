@@ -254,30 +254,6 @@
             </li>
           </ul>
         </div>
-        <!-- Documentation report: what the librarian skill recorded the agent used and created.
-             Read-only — a curated list of paths, not an editable field. Shown only once a run
-             produced one. -->
-        <div v-if="editingTask?.docReport && (editingTask.docReport.used.length || editingTask.docReport.created.length)" class="board__doc">
-          <span class="board__doc-title">{{ t('board.editor.docTitle') }}</span>
-          <template v-if="editingTask.docReport.created.length">
-            <span class="board__doc-cap">{{ t('board.editor.docCreated') }}</span>
-            <ul class="board__doc-list">
-              <li v-for="r in editingTask.docReport.created" :key="'c-' + r.path" class="board__doc-item">
-                <span class="board__doc-path mono">{{ r.path }}</span>
-                <span v-if="r.note" class="board__doc-note">— {{ r.note }}</span>
-              </li>
-            </ul>
-          </template>
-          <template v-if="editingTask.docReport.used.length">
-            <span class="board__doc-cap">{{ t('board.editor.docUsed') }}</span>
-            <ul class="board__doc-list">
-              <li v-for="r in editingTask.docReport.used" :key="'u-' + r.path" class="board__doc-item">
-                <span class="board__doc-path mono">{{ r.path }}</span>
-                <span v-if="r.note" class="board__doc-note">— {{ r.note }}</span>
-              </li>
-            </ul>
-          </template>
-        </div>
         <p v-if="editingTask && isStale(editingTask)" class="board__stale-note mono" role="alert">
           {{ t('board.editor.staleNote') }}
         </p>
@@ -1462,39 +1438,6 @@ function onDelete(task: Task): void {
   padding: 0;
   display: grid;
   gap: 8px;
-}
-
-/* Documentation report: same bordered read block as the QA checklist. */
-.board__doc {
-  padding: 10px 12px;
-  background: var(--k-surface2);
-  border: 1px solid var(--k-line);
-  border-radius: var(--k-r);
-}
-.board__doc-title {
-  display: block;
-  font-size: 13px;
-  color: var(--k-text);
-}
-.board__doc-cap {
-  display: block;
-  margin: 8px 0 4px;
-  font-size: 11.5px;
-  color: var(--k-muted);
-}
-.board__doc-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 4px;
-}
-.board__doc-item {
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-.board__doc-note {
-  color: var(--k-muted);
 }
 
 .board__blank {

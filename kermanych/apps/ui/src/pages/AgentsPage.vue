@@ -418,53 +418,41 @@
           </dl>
         </div>
         <div v-if="detailTab === 'docs'" class="agents__tabpane agents__docs">
-          <template v-if="usedDocs.length || changedDocRows.length">
+          <template v-if="usedDocs.length || changedDocs.length">
             <section v-if="usedDocs.length" class="agents__docs-group">
               <h3 v-tip="docsUsedHint" class="agents__docs-title">{{ t('agents.docs.usedTitle') }}</h3>
               <ul class="agents__docs-read">
-                <li v-for="d in usedDocs" :key="d.path" class="agents__docs-read-item">
-                  <span class="agents__docs-read-path mono">{{ d.path }}</span>
-                  <span v-if="d.note" class="agents__docs-note">{{ d.note }}</span>
+                <li v-for="p in usedDocs" :key="p" class="agents__docs-read-item">
+                  <span class="agents__docs-read-path mono">{{ p }}</span>
                 </li>
               </ul>
             </section>
-            <section v-if="changedDocRows.length" class="agents__docs-group">
+            <section v-if="changedDocs.length" class="agents__docs-group">
               <h3 class="agents__docs-title">{{ t('agents.docs.changedTitle') }}</h3>
               <ul class="agents__file-list">
-                <li
-                  v-for="d in changedDocRows"
-                  :key="d.path"
-                  :class="d.openable ? 'agents__file-item' : 'agents__docs-read-item'"
-                >
-                  <template v-if="d.openable">
-                    <button
-                      type="button"
-                      class="agents__file-row"
-                      :class="{ 'agents__file-row--open': openFile === d.path }"
-                      :aria-expanded="openFile === d.path"
-                      @click="toggleFile(d.path)"
-                    >
-                      <span class="agents__file-path mono">{{ d.path }}</span>
-                      <span class="agents__file-stat mono">
-                        <span class="agents__diff-add">+{{ d.added }}</span>
-                        <span class="agents__diff-del">−{{ d.removed }}</span>
-                      </span>
-                    </button>
-                    <span v-if="d.note" class="agents__docs-note agents__docs-note--indent">{{ d.note }}</span>
-                    <KDiffView
-                      v-if="openFile === d.path"
-                      class="agents__file-diff"
-                      :path="d.path"
-                      :diff="fileDiff"
-                      :loading="fileDiffLoading"
-                      :error="fileDiffError"
-                      @close="closeFile"
-                    />
-                  </template>
-                  <template v-else>
-                    <span class="agents__docs-read-path mono">{{ d.path }}</span>
-                    <span v-if="d.note" class="agents__docs-note">{{ d.note }}</span>
-                  </template>
+                <li v-for="d in changedDocs" :key="d.path" class="agents__file-item">
+                  <button
+                    type="button"
+                    class="agents__file-row"
+                    :class="{ 'agents__file-row--open': openFile === d.path }"
+                    :aria-expanded="openFile === d.path"
+                    @click="toggleFile(d.path)"
+                  >
+                    <span class="agents__file-path mono">{{ d.path }}</span>
+                    <span class="agents__file-stat mono">
+                      <span class="agents__diff-add">+{{ d.added }}</span>
+                      <span class="agents__diff-del">−{{ d.removed }}</span>
+                    </span>
+                  </button>
+                  <KDiffView
+                    v-if="openFile === d.path"
+                    class="agents__file-diff"
+                    :path="d.path"
+                    :diff="fileDiff"
+                    :loading="fileDiffLoading"
+                    :error="fileDiffError"
+                    @close="closeFile"
+                  />
                 </li>
               </ul>
             </section>
@@ -1323,13 +1311,14 @@ watch(
   { immediate: true },
 );
 
-// ── Документація tab: docs the agent used vs docs it wrote ──────────────────
-// Both halves are derived from data the page already holds, so the tab needs no request of
-// its own. `readDocs` is the documentation the agent READ — off the transcript, the same way
-// usedSkills is — as the shortened display paths, hence list-only. `changedDocs` is the
-// documentation among the Зміни listing, so it carries full paths and opens the same diff
-// view. A doc read and then edited legitimately appears in both.
-const readDocs = computed(() => docsRead(entries.value));
+// ── Документація tab: docs the agent used vs docs it changed ────────────────
+// ONE mechanism feeds this tab: the session's own data, so the list is identical before and
+// after «Створити ПР». `usedDocs` is the documentation the agent READ — off the transcript, the
+// same way usedSkills is — as shortened display paths, hence list-only. `changedDocs` is the
+// documentation among the Зміни listing, so it carries full paths and opens the same diff view.
+// A doc read and then edited legitimately appears in both. Only real documentation paths qualify
+// (isDocPath), so source files never leak in.
+const usedDocs = computed(() => docsRead(entries.value));
 const changedDocs = computed(() => changesInfo.value?.files.filter((f) => isDocPath(f.path)) ?? []);
 const docsUsedHint = computed(() => t('agents.docs.usedHint'));
 
@@ -1343,35 +1332,6 @@ const linkedTask = computed(() =>
 const qaChecklist = computed(() => linkedTask.value?.qaChecklist);
 const qaDone = computed(() => qaChecklist.value?.items.filter((i) => i.checked).length ?? 0);
 
-// The «Бібліотекар» skill's curated report lives on the linked cloud CARD and outlives the
-// session, exactly like the QA checklist — so this tab reads it the same way. When present it
-// is authoritative: `used`/`created` are the librarian's own list (repo-relative paths, with
-// notes). Absent (a session with no «Створити ПР» run yet), the tab falls back to what the
-// transcript READ and the Зміни diff CHANGED.
-const docReport = computed(() => linkedTask.value?.docReport);
-const usedDocs = computed<{ path: string; note?: string }[]>(() =>
-  docReport.value?.used.length ? docReport.value.used : readDocs.value.map((path) => ({ path })),
-);
-// Created docs prefer the report (path + note); when a listed path is also in the diff it stays
-// openable, so the librarian's note and the real diff coexist on one row. No report → the diff's
-// doc files, as before.
-const changedDocRows = computed<
-  { path: string; note?: string; added?: number; removed?: number; openable: boolean }[]
->(() => {
-  const created = docReport.value?.created;
-  const files = changedDocs.value;
-  if (created?.length) {
-    return created.map((ref) => {
-      const f = files.find((x) => x.path === ref.path);
-      return {
-        path: ref.path,
-        ...(ref.note ? { note: ref.note } : {}),
-        ...(f ? { added: f.added, removed: f.removed, openable: true } : { openable: false }),
-      };
-    });
-  }
-  return files.map((f) => ({ path: f.path, added: f.added, removed: f.removed, openable: true }));
-});
 function onQaToggle(itemId: string, checked: boolean): void {
   const task = linkedTask.value;
   if (task) void board.setQaItemChecked(task.id, itemId, checked);
@@ -1386,7 +1346,7 @@ const detailTabs = computed(() => {
     { value: 'log', label: t('agents.tabs.log') },
     { value: 'changes', label: t('agents.tabs.changes'), count: changesInfo.value?.files.length ?? 0 },
     { value: 'session', label: t('agents.tabs.session') },
-    { value: 'docs', label: t('agents.tabs.docs'), count: usedDocs.value.length + changedDocRows.value.length },
+    { value: 'docs', label: t('agents.tabs.docs'), count: usedDocs.value.length + changedDocs.value.length },
   ];
   // Always present, like the other tabs — a missing tab reads as breakage. The pane shows the
   // checklist for a task-linked session and an empty state otherwise (it fills after «Створити
@@ -3107,8 +3067,6 @@ async function submitPreviewConfig(): Promise<void> {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.agents__docs-note { color: var(--k-muted); font-size: 12px; line-height: 1.35; }
-.agents__docs-note--indent { padding: 0 0 6px; }
 
 // ── QA tab: checklist off the linked card ──────────────────────────────────
 .agents__qa-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
