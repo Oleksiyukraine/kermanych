@@ -18,6 +18,13 @@ import { copyCarryFiles } from "../env/carry-files";
 import {
   PR_CONVENTIONS_FALLBACK,
   COAUTHOR_DIRECTIVE,
+  DOC_MAINTAIN_DIRECTIVE,
+  QA_CHECKLIST_DIRECTIVE,
+  DOC_REPORT_DIRECTIVE,
+  buildQaChecklist,
+  buildDocReport,
+  parseTaskActions,
+  type TaskAction,
   agentById,
   renderInstruction,
   expandHelpers,
@@ -49,7 +56,7 @@ import {
   type AgentRuntimeKind,
   type Notice,
 } from "@kermanych/core";
-import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type AiTrigger } from "@kermanych/cloud";
+import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type AiTrigger, type TaskPatch } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
 
@@ -73,6 +80,11 @@ type Live = {
   // already carries.
   prRequested?: boolean;
   prOpened?: boolean;
+  // The task artifacts this session has already attached to its card, by kind. An agent emits
+  // each via the shared kermanych-action mechanism (a QA checklist at «Створити ПР», a doc
+  // report from the librarian skill); onRpcEvent captures the FIRST valid block of each kind
+  // and applyTaskArtifact writes it. Live-only, so an api restart mid-flow simply re-captures.
+  captured?: Set<string>;
   // The operator asked, from a session already «На ревʼю», to land more work onto the open PR
   // (via «Закоміти»). Unlike `prRequested`, there is no URL to wait for — the PR exists — so
   // this flag alone makes the turn that ends while it is armed settle back at `in_review`
@@ -715,11 +727,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         this.events.next({ type: "transcript_reset", sessionId: id, entries: live.transcript });
       }
       if (firstPrompt.trim()) {
-        // The transcript shows the operator's own ask; the co-author directive rides only on what
-        // the model receives (like a matched trigger's body), so every commit this work session
-        // makes credits Kermanych — the board-launched executor has no template to carry it.
+        // The transcript shows the operator's own ask; the directives ride only on what the
+        // model receives (like a matched trigger's body). The co-author trailer credits every
+        // commit to Kermanych; the doc-maintain line is added for a TASK-born session so keeping
+        // documentation current is deterministic, not left to the model reading the librarian
+        // skill. A locally-created session with no card carries the trailer alone.
         this.appendEntry(id, this.userEntry(firstPrompt, images));
-        rpc.prompt(`${firstPrompt}\n\n${COAUTHOR_DIRECTIVE}`, images);
+        const directives = session.taskId ? `${COAUTHOR_DIRECTIVE}\n\n${DOC_MAINTAIN_DIRECTIVE}` : COAUTHOR_DIRECTIVE;
+        rpc.prompt(`${firstPrompt}\n\n${directives}`, images);
       } else {
         // No opening message (a forked agent continuing the chat) — sit idle, ready for input.
         live.live.status = "done";
@@ -1057,6 +1072,23 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         if (entry.kind === "tool" && (reduced.full.get(entry.id) ?? []).some((ln) => "text" in ln && PR_URL_RE.test(ln.text))) {
           l.prOpened = true;
           break;
+        }
+      }
+    }
+    // Task artifacts an agent attaches to its card via the shared kermanych-action mechanism —
+    // a QA checklist from a «Створити ПР» run, a documentation report from the librarian skill.
+    // Captured off the assistant text of any task-born session (not just a PR flow), the FIRST
+    // valid block of each kind winning, and written by applyTaskArtifact. Same tolerance as the
+    // PR-URL scan above: the block may land in a later turn than the one that asked for it.
+    const taskId = this.registry.listSessions().find((x) => x.id === id)?.taskId;
+    if (taskId) {
+      for (const entry of reduced.entries) {
+        if (entry.kind !== "assistant_text") continue;
+        for (const action of parseTaskActions(entry.text)) {
+          if (!l.captured) l.captured = new Set();
+          if (l.captured.has(action.kind)) continue;
+          l.captured.add(action.kind);
+          void this.applyTaskArtifact(taskId, id, action);
         }
       }
     }
@@ -1455,6 +1487,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       : `Target the PR at the repository's default branch, unless the repo's PR conventions dictate otherwise.`;
 
     const { template, block } = await this.agentPrompt(s.projectId, "pull-request", s.worktreePath || g.localRepoPath);
+    // The QA checklist and the documentation report both ride the PR prompt, but only for a
+    // task-born session: both are stored on the cloud card, so a locally-created session with
+    // no `taskId` has nowhere to put them and is not asked to produce them. The pull-request
+    // agent is the same running child that did the work, so it knows what to test and what it
+    // touched. onRpcEvent captures whichever blocks it emits.
+    const artifacts = s.taskId ? `\n\n${QA_CHECKLIST_DIRECTIVE}\n\n${DOC_REPORT_DIRECTIVE}` : "";
     const prompt =
       renderInstruction(
         agentById("pull-request")!,
@@ -1464,7 +1502,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           baseLine,
         },
         template,
-      ) + block;
+      ) + block + artifacts;
 
     await this.sendAsKermanych(id, prompt, "prompt");
     // After the send, never before: the flag must belong to the turn this call just started,
@@ -1474,6 +1512,24 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const l = this.map.get(id);
     if (l) l.prRequested = true;
     return { ok: true };
+  }
+
+  // The shared «task-update» method: write one parsed artifact onto the session's cloud card,
+  // mapping its kind to the task field it owns. Fire-and-forget from onRpcEvent, like every
+  // bookkeeping write on that path — a cloud hiccup must never break the event stream, and an
+  // artifact is best-effort, not a lifecycle signal. Provenance (session, timestamp) is stamped
+  // here so the emitting skill never has to.
+  private async applyTaskArtifact(taskId: string, sessionId: string, action: TaskAction): Promise<void> {
+    const meta = { generatedAt: new Date().toISOString(), sessionId };
+    const patch: TaskPatch =
+      action.kind === "qa-checklist"
+        ? { qaChecklist: buildQaChecklist(action.items, meta) }
+        : { docReport: buildDocReport(action, meta) };
+    try {
+      await patchTask(this.auth.cloudClient(), taskId, patch);
+    } catch (err) {
+      console.warn(`[supervisor] could not attach ${action.kind} to task ${taskId}: ${(err as Error).message}`);
+    }
   }
 
   // Land follow-up work onto an already-open PR: commit anything uncommitted and push the

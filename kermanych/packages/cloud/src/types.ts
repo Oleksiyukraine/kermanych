@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { AgentLanguage, AgentRuntime, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus, ThinkingLevel } from "@kermanych/core";
+import type { AgentLanguage, AgentRuntime, DocReport, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same eleven labels.
@@ -102,6 +102,13 @@ export type Task = {
   // The Linear identifier («ENG-42») when this row is a shadow task minted by launching a
   // mirrored Linear ticket. Its Jira twin above; the two boards each filter their own.
   linearKey?: string;
+  // The QA checklist the pull-request agent generated for this card and a human ticks off on
+  // the board. Absent until a «Створити ПР» run produced one; survives the session's archive
+  // because it lives on the card, not the session. See @kermanych/core's QaChecklist.
+  qaChecklist?: QaChecklist;
+  // The documentation report the «Бібліотекар» skill produced: what docs the agent used and
+  // created. Attached through the same shared mechanism as qaChecklist. See core's DocReport.
+  docReport?: DocReport;
   createdAt: string;
   updatedAt: string;
 };
@@ -143,6 +150,8 @@ export type TaskPatch = {
   imagePaths?: string[];
   jiraKey?: string;
   linearKey?: string;
+  qaChecklist?: QaChecklist;
+  docReport?: DocReport;
 };
 
 // ── «ШІ-команда» ────────────────────────────────────────────────────────────

@@ -50,12 +50,14 @@ test('the agent picker offers exactly the instruction-carrying agents, from the 
     'review',
     'promote',
     'pull-request',
+    'commit',
     'resolve-conflict',
   ]);
   expect(triggerAgentOptions(AGENTS).map((o) => o.labelKey)).toEqual([
     'agents.role.review',
     'agents.role.promote',
     'agents.role.pull-request',
+    'agents.role.commit',
     'agents.role.resolve-conflict',
   ]);
 });

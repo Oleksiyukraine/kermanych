@@ -1,0 +1,21 @@
+-- A documentation report attached to a task: what documentation the agent USED and what it
+-- CREATED or UPDATED while doing the work. Authored by the «Бібліотекар» library skill and
+-- attached to the card through the same shared task-update mechanism the QA checklist uses
+-- (SupervisorService.applyTaskArtifact → patchTask), so both artifacts land the same way.
+--
+-- Like tasks.qa_checklist (20260910090000), it lives on the CARD, not the session, so it
+-- survives the session's local archive and is readable by exactly the members who can read the
+-- task. It is a CURATED list of repo-relative paths with short notes — not a raw diff — so it
+-- stays small enough to sit on the realtime tasks row, the same way the checklist does.
+--
+-- Shape (mirrors @kermanych/core's DocReport):
+--   { "generatedAt": iso, "sessionId": "...",
+--     "used":    [ { "path": "...", "note"?: "..." } ],
+--     "created": [ { "path": "...", "note"?: "..." } ] }
+-- `{}` (the default) is «no report yet» — toTask() maps an entry-less object to an absent key.
+--
+-- jsonb, `not null default '{}'`, exactly like every additive task column before it: the
+-- table-level grants in 20260821090200 and the row-predicated tasks policies / tasks_guard()
+-- cover the new column the moment it exists.
+alter table public.tasks
+  add column if not exists doc_report jsonb not null default '{}'::jsonb;
