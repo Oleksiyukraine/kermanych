@@ -906,6 +906,7 @@ export const en: MessageSchema = {
         resizePane: 'Resize the panel (⇧ — triple)',
         switchNav: 'Switch the navigation segment',
         openRow: 'Open a table row',
+        toggleFiles: 'Open / collapse the file manager',
         saveSettings: 'Save settings',
         closeWindow: 'Close window / tooltip',
       },

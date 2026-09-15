@@ -1360,6 +1360,7 @@ const KEYMAP: readonly { act: string; keys: string; where: string }[] = [
   { act: 'settings.keymap.acts.resizePane', keys: '← →', where: 'settings.keymap.where.divider' },
   { act: 'settings.keymap.acts.switchNav', keys: '← → ⇱ ⇲', where: 'settings.keymap.where.navBars' },
   { act: 'settings.keymap.acts.openRow', keys: '⏎', where: 'settings.keymap.where.tables' },
+  { act: 'settings.keymap.acts.toggleFiles', keys: '⌘B', where: 'settings.keymap.where.everywhere' },
   { act: 'settings.keymap.acts.saveSettings', keys: '⌘S', where: 'settings.keymap.where.thisScreen' },
   { act: 'settings.keymap.acts.closeWindow', keys: '⎋', where: 'settings.keymap.where.everywhere' },
 ];
