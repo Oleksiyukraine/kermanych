@@ -153,7 +153,7 @@
           </template>
           <div v-else class="int__row">
             <KBtn variant="ghost" @click="startTokenEdit">{{ t('jira.connect.replaceToken') }}</KBtn>
-            <KBtn variant="ghost" @click="removeToken">{{ t('jira.connect.removeToken') }}</KBtn>
+            <KBtn variant="ghost" :loading="removingToken" @click="removeToken">{{ t('jira.connect.removeToken') }}</KBtn>
           </div>
         </div>
 
@@ -161,7 +161,7 @@
 
         <div v-if="isOwner" class="int__danger">
           <KBtn variant="ghost" @click="changeBoard">{{ t('jira.connect.changeBoard') }}</KBtn>
-          <KBtn variant="ghost" @click="disconnect">{{ t('jira.connect.disconnect') }}</KBtn>
+          <KBtn variant="ghost" :loading="disconnecting" @click="disconnect">{{ t('jira.connect.disconnect') }}</KBtn>
         </div>
       </div>
       <template #controls>
@@ -237,7 +237,7 @@
           </template>
           <div v-else class="int__row">
             <KBtn variant="ghost" @click="startLinearTokenEdit">{{ t('linear.connect.replaceToken') }}</KBtn>
-            <KBtn variant="ghost" @click="removeLinearToken">{{ t('linear.connect.removeToken') }}</KBtn>
+            <KBtn variant="ghost" :loading="removingLinearToken" @click="removeLinearToken">{{ t('linear.connect.removeToken') }}</KBtn>
           </div>
         </div>
 
@@ -245,7 +245,7 @@
 
         <div v-if="isOwner" class="int__danger">
           <KBtn variant="ghost" @click="changeLinearTeam">{{ t('linear.connect.changeTeam') }}</KBtn>
-          <KBtn variant="ghost" @click="disconnectLinear">{{ t('linear.connect.disconnect') }}</KBtn>
+          <KBtn variant="ghost" :loading="disconnectingLinear" @click="disconnectLinear">{{ t('linear.connect.disconnect') }}</KBtn>
         </div>
       </div>
       <template #controls>
@@ -297,6 +297,8 @@ const flowError = ref('');
 
 const settingsOpen = ref(false);
 const tokenEditing = ref(false);
+const removingToken = ref(false);
+const disconnecting = ref(false);
 
 // Boards without a project cannot be mirrored (the JQL needs a project key), so they are
 // not offered rather than failing at the last step.
@@ -405,9 +407,14 @@ async function saveToken(): Promise<void> {
 
 async function removeToken(): Promise<void> {
   const site = jira.integration?.siteUrl;
-  if (!site) return;
-  await api.jiraDeleteToken(site);
-  await refreshTokenState();
+  if (!site || removingToken.value) return;
+  removingToken.value = true;
+  try {
+    await api.jiraDeleteToken(site);
+    await refreshTokenState();
+  } finally {
+    removingToken.value = false;
+  }
 }
 
 // Re-read the token alone, after THIS page changed it. `jira.probe` already reports the token
@@ -432,7 +439,9 @@ function changeBoard(): void {
 }
 
 async function disconnect(): Promise<void> {
+  if (disconnecting.value) return;
   flowError.value = '';
+  disconnecting.value = true;
   try {
     await api.jiraDisconnect(props.workspaceId);
     settingsOpen.value = false;
@@ -440,6 +449,8 @@ async function disconnect(): Promise<void> {
     local.notify(t('jira.notify.disconnected'), 'info');
   } catch (e) {
     flowError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    disconnecting.value = false;
   }
 }
 
@@ -458,6 +469,8 @@ const linearFlowError = ref('');
 
 const linearSettingsOpen = ref(false);
 const linearTokenEditing = ref(false);
+const removingLinearToken = ref(false);
+const disconnectingLinear = ref(false);
 
 const linearTeamOptions = computed<KSelectOption[]>(() =>
   linearTeams.value.map((tm) => ({ value: tm.id, label: `${tm.name} · ${tm.key}` })),
@@ -545,9 +558,14 @@ async function saveLinearToken(): Promise<void> {
 
 async function removeLinearToken(): Promise<void> {
   const org = linear.integration?.orgUrlKey;
-  if (!org) return;
-  await api.linearDeleteToken(org);
-  await refreshLinearTokenState();
+  if (!org || removingLinearToken.value) return;
+  removingLinearToken.value = true;
+  try {
+    await api.linearDeleteToken(org);
+    await refreshLinearTokenState();
+  } finally {
+    removingLinearToken.value = false;
+  }
 }
 
 // Re-read the token alone, after THIS page changed it — the same reason as Jira's
@@ -569,7 +587,9 @@ function changeLinearTeam(): void {
 }
 
 async function disconnectLinear(): Promise<void> {
+  if (disconnectingLinear.value) return;
   linearFlowError.value = '';
+  disconnectingLinear.value = true;
   try {
     await api.linearDisconnect(props.workspaceId);
     linearSettingsOpen.value = false;
@@ -577,6 +597,8 @@ async function disconnectLinear(): Promise<void> {
     local.notify(t('linear.notify.disconnected'), 'info');
   } catch (e) {
     linearFlowError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    disconnectingLinear.value = false;
   }
 }
 

@@ -12,16 +12,16 @@ import {
 } from "../src/agents";
 import { SKILL_NAME_RE } from "../src/skills";
 
-test("the registry describes six agents, four of them instruction-bearing", () => {
+test("the registry describes seven agents, five of them instruction-bearing", () => {
   expect(AGENTS.map((a) => a.id)).toEqual([
-    "review", "promote", "pull-request", "resolve-conflict", "finish", "summary",
+    "review", "promote", "pull-request", "commit", "resolve-conflict", "finish", "summary",
   ]);
   for (const a of AGENTS) {
     expect(SKILL_NAME_RE.test(a.id)).toBe(true);
     expect(a.labelKey).toBe(`agents.role.${a.id}`);
   }
   expect(AGENTS.filter((a) => a.instruction).map((a) => a.id)).toEqual([
-    "review", "promote", "pull-request", "resolve-conflict",
+    "review", "promote", "pull-request", "commit", "resolve-conflict",
   ]);
   // `automation` means no model is involved, so there is nothing to display.
   for (const a of AGENTS.filter((a) => a.kind === "automation")) {

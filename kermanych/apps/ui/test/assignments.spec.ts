@@ -24,7 +24,7 @@ const V = (name: string, over: Partial<SkillView> = {}): SkillView => ({
 
 test('only instruction-bearing agents can be assigned to', () => {
   const rows = assignmentRows(AGENTS, [], [], {}, {});
-  expect(rows.map((r) => r.agent.id)).toEqual(['review', 'promote', 'pull-request', 'resolve-conflict']);
+  expect(rows.map((r) => r.agent.id)).toEqual(['review', 'promote', 'pull-request', 'commit', 'resolve-conflict']);
 });
 
 test('assigned skills come back in position then name order', () => {

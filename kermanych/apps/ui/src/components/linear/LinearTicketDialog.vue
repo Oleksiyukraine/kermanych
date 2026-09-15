@@ -85,7 +85,7 @@
               <button
                 class="ltd__status"
                 type="button"
-                :disabled="!canAct"
+                :disabled="!canAct || transitionsLoading"
                 v-tip="canAct ? t('linear.ticketDialog.transitionTip') : readOnlyHint"
                 @click="openTransition"
               >{{ issue.stateName }}</button>
@@ -250,6 +250,7 @@ const confirmingDelete = ref(false);
 const transitionOpen = ref(false);
 const transitionOptions = ref<LinearTransitionView[]>([]);
 const transitioning = ref(false);
+const transitionsLoading = ref(false);
 
 // ── inline facts editing: priority / assignee / estimate / due date ───────────
 // One-field drafts through PUT /linear/issues — the same endpoint the full editor uses.
@@ -371,11 +372,15 @@ function blurTarget(e: Event): void {
 }
 
 async function openTransition(): Promise<void> {
+  if (transitionsLoading.value) return;
+  transitionsLoading.value = true;
   try {
     transitionOptions.value = await api.linearTransitions(props.workspaceId, props.issue.key);
     transitionOpen.value = true;
   } catch (e) {
     local.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    transitionsLoading.value = false;
   }
 }
 

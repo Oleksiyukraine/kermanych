@@ -19,11 +19,13 @@
         >▶</KIconButton>
         <KIconButton
           v-if="session.kind === 'chat'"
+          :disabled="filing"
           :title="t('kit.panel.promoteTask')"
           @click="emit('promoteTask')"
         >⊕</KIconButton>
         <KIconButton
           v-if="session.kind === 'chat'"
+          :disabled="clearing"
           :title="t('kit.panel.clear')"
           @click="emit('clear')"
         >✕</KIconButton>
@@ -223,6 +225,12 @@ const props = withDefaults(
     // The session is being rehydrated right now (omp respawn + history reload): the composer's
     // ↻ stays down until the server answers, so a second click cannot race the first.
     refreshing?: boolean;
+    // «В беклог» files a cloud card right now: the ⊕ stays down until the write returns, so
+    // a second click cannot mint a second card.
+    filing?: boolean;
+    // The chat is being discarded and re-created right now: the ✕ stays down until the delete
+    // returns, so a second click cannot race it.
+    clearing?: boolean;
     // The omp model catalog, forwarded to the composer's model chip so it can offer a picker.
     models?: readonly ModelOption[] | undefined;
     // Suppresses this panel's own header + density toolbar. The agent detail column
@@ -230,7 +238,7 @@ const props = withDefaults(
     // above its tabs, so the embedded panel would only stack a second, redundant one.
     bare?: boolean;
   }>(),
-  { promoting: false, refreshing: false, models: () => [], bare: false },
+  { promoting: false, refreshing: false, filing: false, clearing: false, models: () => [], bare: false },
 );
 
 // `finish`, `reopen` and `delete` are NOT declared here: завершити / відновити / видалити are

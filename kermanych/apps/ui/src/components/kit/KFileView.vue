@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// One file opened read-only from the Файли tab. The api hands over the whole body, or a flag
+// One file opened read-only from the file-manager dock. The api hands over the whole body, or a flag
 // for a binary/oversized blob; this paints it with highlight.js. Fetch state lives in the
 // props — the same split KDiffView uses: the caller owns the request, while the path header
 // and the close control stay put through loading, an error and a binary file alike.
@@ -15,8 +15,9 @@ const props = defineProps<{
   file: FileContent | null;
   loading?: boolean;
   error?: string | null;
+  maximized?: boolean;
 }>();
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: []; toggleMaximize: [] }>();
 
 const { t } = useI18n();
 
@@ -40,6 +41,10 @@ const highlighted = computed(() => {
     <header class="k-file-view__head">
       <span class="k-file-view__path mono">{{ path }}</span>
       <span class="k-file-view__spacer"></span>
+      <KIconButton
+        :title="maximized ? t('kit.fileView.minimize') : t('kit.fileView.maximize')"
+        @click="emit('toggleMaximize')"
+      >{{ maximized ? '⤡' : '⤢' }}</KIconButton>
       <KIconButton :title="t('kit.fileView.close')" @click="emit('close')">✕</KIconButton>
     </header>
 

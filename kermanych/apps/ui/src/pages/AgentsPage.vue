@@ -156,7 +156,7 @@
           <div class="agents__detail-controls">
             <span class="agents__detail-status mono">{{ harnessLabel }} · {{ statusWord(selectedSession) }}</span>
             <!-- Primary session actions — one column that outlives the tab choice, so preview,
-                 finish and defer are on screen in Лог, Зміни, Файли and Сесія alike. -->
+                 finish and defer are on screen in Лог, Зміни and Сесія alike. -->
             <div class="agents__actions">
               <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
                 <KIconButton
@@ -170,7 +170,7 @@
                      act is the visible line under this bar. -->
                 <KIconButton
                   :active="!!store.previews[selectedSession.id]"
-                  :disabled="!isBoundFor(selectedSession.projectId)"
+                  :disabled="!isBoundFor(selectedSession.projectId) || actionBusy"
                   :title="store.previews[selectedSession.id] ? t('agents.actions.previewStop') : t('agents.actions.previewStart')"
                   @click="togglePreview(selectedSession)"
                 >{{ store.previews[selectedSession.id] ? '◼' : '▶' }}</KIconButton>
@@ -181,13 +181,14 @@
                 >✓</KIconButton>
                 <KIconButton
                   v-if="selectedSession.status === 'merged'"
+                  :disabled="actionBusy"
                   :title="t('agents.actions.reopen')"
                   @click="onReopen(selectedSession)"
                 >↻</KIconButton>
-                <KIconButton :title="t('agents.actions.archive')" @click="onArchive(selectedSession)">⤓</KIconButton>
+                <KIconButton :disabled="actionBusy" :title="t('agents.actions.archive')" @click="onArchive(selectedSession)">⤓</KIconButton>
               </template>
               <template v-else>
-                <KIconButton :title="t('agents.actions.unarchive')" @click="onUnarchive(selectedSession)">⤒</KIconButton>
+                <KIconButton :disabled="actionBusy" :title="t('agents.actions.unarchive')" @click="onUnarchive(selectedSession)">⤒</KIconButton>
               </template>
             </div>
 
@@ -356,36 +357,6 @@
             <p v-else class="agents__log-empty mono">{{ t('agents.changes.noFiles') }}</p>
           </template>
         </div>
-        <div v-if="detailTab === 'files'" class="agents__tabpane agents__files">
-          <div v-if="worktreeGone" class="agents__pane-blank">
-            <span class="agents__pane-blank-eyebrow mono">{{ t('agents.changes.historyEyebrow') }}</span>
-            <p class="agents__pane-blank-text">
-              {{ t('agents.files.gone') }}
-            </p>
-          </div>
-          <p v-else-if="treeLoading" class="agents__log-empty mono">{{ t('agents.changes.preparing') }}</p>
-          <p v-else-if="treeError" class="agents__error" role="alert">{{ treeError }}</p>
-          <template v-else>
-            <KFileView
-              v-if="openTreeFile"
-              class="agents__file-view"
-              :path="openTreeFile"
-              :file="treeFile"
-              :loading="treeFileLoading"
-              :error="treeFileError"
-              @close="closeTreeFile"
-            />
-            <KFileTree
-              v-show="!openTreeFile"
-              class="agents__tree"
-              :entries="treeRoot"
-              base=""
-              :selected="openTreeFile"
-              :load="loadTreeLevel"
-              @open="openTreeFileAt"
-            />
-          </template>
-        </div>
         <div v-if="detailTab === 'session'" class="agents__tabpane agents__session">
           <section class="agents__task">
             <h3 class="agents__task-title">{{ t('agents.session.description') }}</h3>
@@ -502,7 +473,7 @@
       </template>
 
       <div class="agents-launcher" @keydown="onLauncherKeydown">
-        <!-- LEFT — the task itself -->
+        <!-- LEFT — what to do and which agent runs it -->
         <div class="agents-launcher__main">
           <div>
             <div class="agents-launcher__label-row">
@@ -549,6 +520,29 @@
             />
             <div class="agents-launcher__hint mono">
               {{ draftName.trim() ? branchPreview : t('agents.launcher.nameHintPending') }}
+            </div>
+          </div>
+
+          <!-- «Модель» and «Рівень роздумів» — how the agent runs, not where it lands, so
+               they sit under the ask rather than in the right column. Paired on one row: two
+               narrow selects read as a couple and keep the modal from growing a scrollbar. -->
+          <div class="agents-launcher__run">
+            <div class="agents-launcher__duo">
+              <div>
+                <div class="agents-launcher__label">{{ t('agents.session.model') }}</div>
+                <!-- `searchable`: the catalog is ~26 rows all named «Claude …», so the way to
+                     «Haiku» is to type it, not to scroll past twenty siblings. -->
+                <KSelect
+                  v-model="draftModel"
+                  :options="modelPickOptions"
+                  :placeholder="t('agents.launcher.defaultOption')"
+                  searchable
+                />
+              </div>
+              <div>
+                <div class="agents-launcher__label">{{ t('agents.launcher.effortLabel') }}</div>
+                <KSelect v-model="draftEffort" :options="effortPickOptions" :placeholder="t('agents.launcher.defaultOption')" />
+              </div>
             </div>
           </div>
         </div>
@@ -623,23 +617,6 @@
               </p>
             </div>
           </div>
-
-          <div class="agents-launcher__block">
-            <div class="agents-launcher__label">{{ t('agents.session.model') }}</div>
-            <!-- `searchable`: the catalog is ~26 rows all named «Claude …», so the way to
-                 «Haiku» is to type it, not to scroll past twenty siblings. -->
-            <KSelect
-              v-model="draftModel"
-              :options="modelPickOptions"
-              :placeholder="t('agents.launcher.defaultOption')"
-              searchable
-            />
-          </div>
-
-          <div class="agents-launcher__block">
-            <div class="agents-launcher__label">{{ t('agents.launcher.effortLabel') }}</div>
-            <KSelect v-model="draftEffort" :options="effortPickOptions" :placeholder="t('agents.launcher.defaultOption')" />
-          </div>
         </div>
       </div>
 
@@ -674,10 +651,11 @@
           <span v-if="launcherError" class="agents__error" role="alert">{{ launcherError }}</span>
           <span v-else class="agents-launcher__foot-hint mono">{{ footHint }}</span>
           <span class="agents-launcher__spacer"></span>
-          <KBtn variant="ghost" @click="launcherOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
+          <KBtn variant="ghost" :disabled="launchBusy !== null" @click="launcherOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
           <KBtn
             variant="secondary"
-            :disabled="!canLaunch"
+            :loading="launchBusy === 'task'"
+            :disabled="!canLaunch || launchBusy !== null"
             @click="submitLauncher(true)"
           >{{ editingTaskId ? t('agents.launcher.save') : t('agents.launcher.backlog') }}</KBtn>
           <!-- No `title` here either, and for the same reason: it only ever had content while
@@ -686,7 +664,8 @@
                attribute only told the next reader that the reason was covered. -->
           <KBtn
             variant="primary"
-            :disabled="!canLaunch || !isBound"
+            :loading="launchBusy === 'launch'"
+            :disabled="!canLaunch || !isBound || launchBusy !== null"
             @click="submitLauncher(false)"
           >
             {{ t('agents.launcher.launch') }}<KKbd class="agents-launcher__kbd">⌘⏎</KKbd>
@@ -776,8 +755,8 @@
           variant="secondary"
           :loading="prBusy"
           :disabled="finishBusy || !finishData"
-          @click="submitPr"
-        >{{ t('agents.finish.createPr') }}</KBtn>
+          @click="finishIsReview ? submitCommit() : submitPr()"
+        >{{ finishIsReview ? t('agents.finish.commit') : t('agents.finish.createPr') }}</KBtn>
         <KBtn
           variant="primary"
           :loading="finishBusy"
@@ -806,8 +785,6 @@ import {
   type TranscriptEntry,
   type ThinkingLevel,
   type RpcExtensionUIResponse,
-  type TreeEntry,
-  type FileContent,
 } from '@kermanych/core';
 import { createTask as cloudCreateTask } from '@kermanych/cloud';
 import type { Task } from '@kermanych/cloud';
@@ -830,8 +807,6 @@ import KTag from 'components/kit/KTag.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KDiffView from 'components/kit/KDiffView.vue';
-import KFileTree from 'components/kit/KFileTree.vue';
-import KFileView from 'components/kit/KFileView.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KKbd from 'components/kit/KKbd.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
@@ -1184,10 +1159,10 @@ const selectedSession = computed(() =>
 );
 
 // A session whose worktree has been retired keeps `worktree: true` but loses its
-// `worktreePath` — this is every finished/merged agent now in «Завершені» or «Очікують». The two
-// git-backed panes (Зміни, Файли) have no directory to read then, so instead of firing a
-// request that comes back «session has no worktree» / ENOENT and painting the pane with a
-// red error, they show a calm empty-state. Derived, so both panes agree on when it applies.
+// `worktreePath` — this is every finished/merged agent now in «Завершені» or «Очікують». The
+// git-backed Зміни pane has no directory to read then, so instead of firing a request that
+// comes back «session has no worktree» / ENOENT and painting the pane with a red error, it
+// shows a calm empty-state. Derived so the pane and the file-manager dock agree on it.
 const worktreeGone = computed(
   () => !!selectedSession.value?.worktree && !selectedSession.value.worktreePath,
 );
@@ -1323,15 +1298,14 @@ const readDocs = computed(() => docsRead(entries.value));
 const changedDocs = computed(() => changesInfo.value?.files.filter((f) => isDocPath(f.path)) ?? []);
 const docsUsedHint = computed(() => t('agents.docs.usedHint'));
 
-// ── Detail tabs (Лог / Зміни / Файли / Сесія / Документація) ────────────────
-// The right panel splits the session into five views. The choice is persisted
+// ── Detail tabs (Лог / Зміни / Сесія / Документація) ────────────────────────
+// The right panel splits the session into four views. The choice is persisted
 // per session (localStorage `kermanych.agents.tab.<id>`) so reopening an agent lands where the
 // operator left it; a fresh session defaults to the log.
 const detailTabs = computed(() => {
   const tabs: { value: string; label: string; count?: number }[] = [
     { value: 'log', label: t('agents.tabs.log') },
     { value: 'changes', label: t('agents.tabs.changes'), count: changesInfo.value?.files.length ?? 0 },
-    { value: 'files', label: t('agents.tabs.files'), count: treeRoot.value.length },
     { value: 'session', label: t('agents.tabs.session') },
     { value: 'docs', label: t('agents.tabs.docs'), count: readDocs.value.length + changedDocs.value.length },
   ];
@@ -1343,7 +1317,7 @@ watch(
   (id) => {
     const saved = id ? localStorage.getItem(`kermanych.agents.tab.${id}`) : null;
     detailTab.value =
-      saved === 'changes' || saved === 'session' || saved === 'files' || saved === 'docs'
+      saved === 'changes' || saved === 'session' || saved === 'docs'
         ? saved
         : 'log';
   },
@@ -1363,6 +1337,11 @@ const runningSelected = computed(
 );
 
 const menuOpen = ref(false);
+// In-flight guard for the detail action bar's icon buttons (preview-stop, reopen, archive,
+// unarchive). KIconButton has no spinner — its designed busy affordance is `:disabled`, which
+// dims the glyph until the server answers — so one flag both greys the pressed control and
+// blocks a second click while the store call (reopen re-forks a worktree; seconds) is out.
+const actionBusy = ref(false);
 const menuEl = ref<HTMLElement | null>(null);
 // Any pointerdown outside the ⋯ cluster dismisses the menu; captured so a click on another
 // control closes the menu before that control's own handler runs.
@@ -1506,78 +1485,17 @@ async function loadChanges(id: string, reset: boolean): Promise<void> {
   }
 }
 
-// ── Файли tab: the worktree file tree + a read-only viewer ──────────────────
-// The root level loads when the tab opens; deeper levels lazy-load per folder through
-// loadTreeLevel, which KFileTree calls on expand. Opening a file fetches its body into the
-// viewer, ordered by treeFileRun so a slow read cannot overwrite a newer one.
-const treeRoot = ref<TreeEntry[]>([]);
-const treeLoading = ref(false);
-const treeError = ref<string | null>(null);
-const openTreeFile = ref<string | null>(null);
-const treeFile = ref<FileContent | null>(null);
-const treeFileLoading = ref(false);
-const treeFileError = ref<string | null>(null);
-let treeFileRun = 0;
-
-function loadTreeLevel(path: string): Promise<TreeEntry[]> {
-  const id = store.selectedSessionId;
-  return id ? store.sessionTree(id, path) : Promise.resolve([]);
-}
-
-async function loadTreeRoot(id: string): Promise<void> {
-  treeError.value = null;
-  treeLoading.value = true;
-  try {
-    treeRoot.value = await store.sessionTree(id, '');
-  } catch (e) {
-    treeError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    treeLoading.value = false;
-  }
-}
-
-async function openTreeFileAt(path: string): Promise<void> {
-  const id = store.selectedSessionId;
-  if (!id) return;
-  const run = ++treeFileRun;
-  openTreeFile.value = path;
-  treeFile.value = null;
-  treeFileError.value = null;
-  treeFileLoading.value = true;
-  try {
-    const f = await store.sessionFile(id, path);
-    if (run !== treeFileRun) return;
-    treeFile.value = f;
-  } catch (e) {
-    if (run !== treeFileRun) return;
-    treeFileError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    if (run === treeFileRun) treeFileLoading.value = false;
-  }
-}
-
-function closeTreeFile(): void {
-  openTreeFile.value = null;
-  treeFile.value = null;
-  treeFileError.value = null;
-  treeFileLoading.value = false;
-  treeFileRun++;
-}
-
 watch(
   () => store.selectedSessionId,
   (id) => {
-    // A new session invalidates whatever file was open in either git-backed pane.
+    // A new session invalidates whatever file was open in the changes pane.
     closeFile();
-    closeTreeFile();
     changesInfo.value = null;
-    treeRoot.value = [];
-    // Load both up front — not on tab-open — so the «Зміни»/«Файли» tab counts are truthful
-    // the moment the session opens, and switching to either pane is then instant. A retired
-    // worktree has nothing to read; the panes render `worktreeGone` instead.
+    // Load up front — not on tab-open — so the «Зміни» tab count is truthful the moment the
+    // session opens, and switching to the pane is then instant. A retired worktree has
+    // nothing to read; the pane renders `worktreeGone` instead.
     if (!id || worktreeGone.value) return;
     void loadChanges(id, true);
-    void loadTreeRoot(id);
   },
   { immediate: true },
 );
@@ -1704,6 +1622,11 @@ const branchHint = computed(() =>
 const taskInput = ref<HTMLTextAreaElement | null>(null);
 const nameField = ref<HTMLInputElement | null>(null);
 const launcherError = ref<string | null>(null);
+// Busy affordance for the launcher's submit buttons. `api.createSessionFromTask` takes a
+// couple of seconds (git worktree + omp spawn), and «В беклог»/«Зберегти» hit the cloud too;
+// without this the operator presses «Запустити» and sees nothing move. The value names WHICH
+// button is in flight so only that one spins, and it doubles as the re-entrancy guard.
+const launchBusy = ref<'task' | 'launch' | null>(null);
 const {
   images: launchImages,
   error: launchError,
@@ -1832,6 +1755,7 @@ function openTaskFromText(text: string): void {
 // from here or from the board. (It also means from-task's claim rollback never fires on this
 // path — the card is already mine, so `claimed` stays false there.)
 async function submitLauncher(asTask: boolean): Promise<void> {
+  if (launchBusy.value) return;
   const projectId = launchProjectId.value;
   const userId = auth.user?.id;
   if (!projectId || !canLaunch.value) return;
@@ -1864,6 +1788,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
   };
   const images = launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));
   launcherError.value = null;
+  launchBusy.value = asTask ? 'task' : 'launch';
   try {
     let cardId: string;
     if (editingTaskId.value) {
@@ -1897,6 +1822,8 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     // Keep the launcher open so the name and body are not lost. The card, if it was created,
     // is already safe on the board.
     launcherError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    launchBusy.value = null;
   }
 }
 
@@ -2140,6 +2067,8 @@ async function onSetModel(patch: { model: string; provider?: string }): Promise<
 // Reopen a merged session: the server re-forks its worktree/branch from the base; jump to
 // Активні and select it so the operator can continue and finish again.
 async function onReopen(s: Session): Promise<void> {
+  if (actionBusy.value) return;
+  actionBusy.value = true;
   try {
     const session = await store.reopenSession(s.id);
     store.setBucket('active');
@@ -2147,6 +2076,8 @@ async function onReopen(s: Session): Promise<void> {
     store.notify(t('agents.notify.reopened', { name: s.name }));
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    actionBusy.value = false;
   }
 }
 
@@ -2181,19 +2112,27 @@ async function onArchive(s: Session): Promise<void> {
     store.notify(t('agents.notify.cannotArchive'), 'error');
     return;
   }
+  if (actionBusy.value) return;
+  actionBusy.value = true;
   try {
     await store.archiveSession(s.id);
     if (store.selectedSessionId === s.id) store.selectSession(undefined);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    actionBusy.value = false;
   }
 }
 
 async function onUnarchive(s: Session): Promise<void> {
+  if (actionBusy.value) return;
+  actionBusy.value = true;
   try {
     await store.unarchiveSession(s.id);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    actionBusy.value = false;
   }
 }
 
@@ -2209,6 +2148,11 @@ const resolveBusy = ref(false);
 // Files still to resolve in the worktree: a tree left mid-merge (the agent folded the base
 // in) cannot be retired, so the modal shows them instead of the finish summary.
 const finishFiles = computed(() => finishData.value?.conflicts ?? []);
+
+// A session that already opened its PR is «На ревʼю». For it the secondary finish action is
+// no longer «Створити ПР» (that would try to open a second one) but «Закоміти» — land the
+// follow-up work the operator kept asking for onto the existing PR's branch.
+const finishIsReview = computed(() => finishFor.value?.status === 'in_review');
 
 async function openFinish(s: Session): Promise<void> {
   finishFor.value = s;
@@ -2319,6 +2263,23 @@ async function submitPr(): Promise<void> {
   }
 }
 
+async function submitCommit(): Promise<void> {
+  const s = finishFor.value;
+  if (!s) return;
+  prBusy.value = true;
+  finishError.value = null;
+  try {
+    await store.commitChanges(s.id);
+    finishOpen.value = false; // agent commits + pushes to the open PR in the background — watch it in chat
+    store.selectSession(s.id);
+    store.notify(t('agents.notify.committing', { name: s.name }), 'info');
+  } catch (e) {
+    finishError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    prBusy.value = false;
+  }
+}
+
 // ── Live preview (per-session worktree app on a free port) ─────────────────
 const loadingHtml = computed(
   () => `<p style="font:14px system-ui;padding:24px;color:#888">${t('agents.preview.loadingText')}</p>`,
@@ -2357,7 +2318,15 @@ async function launchInto(win: Window | null, s: Session): Promise<void> {
 
 async function togglePreview(s: Session): Promise<void> {
   if (store.previews[s.id]) {
-    await store.stopPreview(s.id);
+    // The stop call keeps this same bar on screen, so grey the ◼ while it runs. The start
+    // path below is exempt: it opens its preview window synchronously, which is its feedback.
+    if (actionBusy.value) return;
+    actionBusy.value = true;
+    try {
+      await store.stopPreview(s.id);
+    } finally {
+      actionBusy.value = false;
+    }
     return;
   }
   const p = store.projects.find((x) => x.id === s.projectId);
@@ -2426,7 +2395,7 @@ async function submitPreviewConfig(): Promise<void> {
 // Fixed header (48px) + footer (30px) are overlaid by the Quasar layout; the
 // Агенти screen fills exactly the space between them.
 .agents {
-  height: calc(100vh - 82px);
+  height: calc(100vh - 90px);
   overflow: hidden;
   padding: var(--k-sp-3);
 }
@@ -2665,7 +2634,7 @@ async function submitPreviewConfig(): Promise<void> {
   font-size: var(--k-fs-sm);
 }
 
-// Worktree-gone empty-state for the git-backed panes (Зміни, Файли): a retired session
+// Worktree-gone empty-state for the git-backed Зміни pane: a retired session
 // has no directory to read, so the pane invites reopening rather than surfacing the api's
 // error. Centred in the pane, mirroring the page-level blank states (mgmt__blank et al.).
 .agents__pane-blank {
@@ -2980,24 +2949,6 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-accent);
 }
 .agents__conflict-head { list-style: none; margin-left: -18px; }
-
-// The Файли pane fills the panel: the tree scrolls on its own, and an open file's viewer
-// takes the whole height with its own internal scroll.
-.agents__files {
-  flex-direction: column;
-  overflow: hidden;
-  padding: 0;
-}
-.agents__tree {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 8px 6px;
-}
-.agents__file-view {
-  flex: 1;
-  min-height: 0;
-}
 
 .agents__file-list {
   margin: 0;
@@ -3344,6 +3295,18 @@ async function submitPreviewConfig(): Promise<void> {
 .agents-launcher__name {
   border-top: 1px solid var(--k-line);
   padding-top: 16px;
+}
+// The launch pair («Модель» / «Рівень роздумів»). A rule off the name field above, then two
+// selects side by side: the growing option set stays one row tall instead of two stacked
+// blocks that pushed the modal past the viewport.
+.agents-launcher__run {
+  border-top: 1px solid var(--k-line);
+  padding-top: 16px;
+}
+.agents-launcher__duo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
 }
 .agents-launcher__name-input {
   width: 100%;

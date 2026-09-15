@@ -226,7 +226,7 @@
               <button
                 class="jtd__status"
                 type="button"
-                :disabled="!canAct"
+                :disabled="!canAct || transitionsLoading"
                 v-tip="canAct ? t('jira.ticketDialog.transitionTip') : readOnlyHint"
                 @click="openTransition"
               >{{ issue.statusName }}</button>
@@ -423,6 +423,7 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const transitionOpen = ref(false);
 const transitionOptions = ref<JiraTransitionView[]>([]);
 const transitioning = ref(false);
+const transitionsLoading = ref(false);
 
 // ── logging work ─────────────────────────────────────────────────────────────
 // Jira's «Log work» dialog reproduced: the duration, the moment it started, and what the
@@ -644,11 +645,15 @@ function blurTarget(e: Event): void {
 }
 
 async function openTransition(): Promise<void> {
+  if (transitionsLoading.value) return;
+  transitionsLoading.value = true;
   try {
     transitionOptions.value = await api.jiraTransitions(props.workspaceId, props.issue.key);
     transitionOpen.value = true;
   } catch (e) {
     local.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    transitionsLoading.value = false;
   }
 }
 
