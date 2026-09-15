@@ -202,6 +202,7 @@ export const en: MessageSchema = {
       changes: 'Changes',
       session: 'Session',
       docs: 'Documentation',
+      qa: 'QA',
     },
     actions: {
       mergeTip: 'Merge the conclusion into the parent agent',
@@ -250,6 +251,10 @@ export const en: MessageSchema = {
       usedHint: 'Documentation files the agent read while working — taken from the session transcript. The path is shown as it appears in the log, so it cannot be opened from here.',
       changedTitle: 'Created or updated',
       empty: 'This session neither read nor changed any documentation.',
+    },
+    qa: {
+      title: 'What to verify',
+      empty: 'The QA list appears after «Create PR» — the agent composes it; a tester ticks the items off.',
     },
     statusWord: {
       thinking: 'thinking',

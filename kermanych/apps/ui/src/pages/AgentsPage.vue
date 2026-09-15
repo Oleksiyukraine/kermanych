@@ -457,6 +457,27 @@
           </template>
           <p v-else class="agents__log-empty mono">{{ t('agents.docs.empty') }}</p>
         </div>
+        <!-- QA tab: the checklist lives on the linked cloud CARD, so it is read from the board
+             store (not the transcript) and persists past this session's archive. A brand-new
+             task has none until a «Створити ПР» run generates it — hence the empty state. -->
+        <div v-if="detailTab === 'qa'" class="agents__tabpane agents__docs">
+          <template v-if="qaChecklist?.items.length">
+            <div class="agents__qa-head">
+              <h3 class="agents__docs-title">{{ t('agents.qa.title') }}</h3>
+              <span class="agents__qa-count mono">{{ qaDone }}/{{ qaChecklist.items.length }}</span>
+            </div>
+            <ul class="agents__qa-list">
+              <li v-for="item in qaChecklist.items" :key="item.id" class="agents__qa-item">
+                <KCheckbox
+                  :model-value="item.checked"
+                  :label="item.text"
+                  @update:model-value="(v: boolean) => onQaToggle(item.id, v)"
+                />
+              </li>
+            </ul>
+          </template>
+          <p v-else class="agents__log-empty mono">{{ t('agents.qa.empty') }}</p>
+        </div>
         </template>
         <div v-else class="agents__detail-blank mono">{{ t('agents.detail.blank') }}</div>
       </aside>
@@ -1298,7 +1319,21 @@ const readDocs = computed(() => docsRead(entries.value));
 const changedDocs = computed(() => changesInfo.value?.files.filter((f) => isDocPath(f.path)) ?? []);
 const docsUsedHint = computed(() => t('agents.docs.usedHint'));
 
-// ── Detail tabs (Лог / Зміни / Сесія / Документація) ────────────────────────
+// ── QA tab: the checklist off the linked cloud CARD ─────────────────────────
+// Unlike «Документація» (derived from this session's transcript), the QA checklist lives on
+// the task and outlives the session, so it is read from the board store by the session's
+// taskId and ticked back through the same store method the board dialog uses.
+const linkedTask = computed(() =>
+  selectedSession.value?.taskId ? board.tasks.find((t) => t.id === selectedSession.value!.taskId) : undefined,
+);
+const qaChecklist = computed(() => linkedTask.value?.qaChecklist);
+const qaDone = computed(() => qaChecklist.value?.items.filter((i) => i.checked).length ?? 0);
+function onQaToggle(itemId: string, checked: boolean): void {
+  const task = linkedTask.value;
+  if (task) void board.setQaItemChecked(task.id, itemId, checked);
+}
+
+// ── Detail tabs (Лог / Зміни / Сесія / Документація / QA) ────────────────────
 // The right panel splits the session into four views. The choice is persisted
 // per session (localStorage `kermanych.agents.tab.<id>`) so reopening an agent lands where the
 // operator left it; a fresh session defaults to the log.
@@ -1309,6 +1344,9 @@ const detailTabs = computed(() => {
     { value: 'session', label: t('agents.tabs.session') },
     { value: 'docs', label: t('agents.tabs.docs'), count: readDocs.value.length + changedDocs.value.length },
   ];
+  // Only when the session is linked to a cloud card — that is where the checklist lives.
+  if (linkedTask.value)
+    tabs.push({ value: 'qa', label: t('agents.tabs.qa'), count: qaChecklist.value?.items.length ?? 0 });
   return tabs;
 });
 const detailTab = ref('log');
@@ -1317,7 +1355,7 @@ watch(
   (id) => {
     const saved = id ? localStorage.getItem(`kermanych.agents.tab.${id}`) : null;
     detailTab.value =
-      saved === 'changes' || saved === 'session' || saved === 'docs'
+      saved === 'changes' || saved === 'session' || saved === 'docs' || saved === 'qa'
         ? saved
         : 'log';
   },
@@ -3019,6 +3057,11 @@ async function submitPreviewConfig(): Promise<void> {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+// ── QA tab: checklist off the linked card ──────────────────────────────────
+.agents__qa-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.agents__qa-count { font-size: 11.5px; color: var(--k-muted); }
+.agents__qa-list { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
 
 // ── Task brief (full description + creation images) ────────────────────────
 .agents__task {
