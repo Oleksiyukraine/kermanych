@@ -610,6 +610,22 @@ onMounted(async () => {
 onMounted(() => void board.subscribe());
 onUnmounted(() => board.unsubscribe());
 
+// Global file-manager toggle. ⌘B / Ctrl+B opens or collapses the worktree dock on whichever
+// side it last lived (store.fileManagerSide) — the VS Code binding operators reach for. On
+// `window` because the focus is wherever the operator was working; skipped while typing so it
+// never steals ⌘B from a contenteditable's bold (HomeTodoWidget), and preventDefault keeps a
+// browser/Electron bookmark-bar toggle out of the same key.
+function onFileManagerHotkey(e: KeyboardEvent): void {
+  if (e.key !== 'b' && e.key !== 'B') return;
+  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+  const el = e.target as HTMLElement | null;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+  e.preventDefault();
+  store.toggleFileManager(store.fileManagerSide);
+}
+onMounted(() => window.addEventListener('keydown', onFileManagerHotkey));
+onBeforeUnmount(() => window.removeEventListener('keydown', onFileManagerHotkey));
+
 // 0 → n only, and it has to live here for the same reason the mount call does: the store
 // rebuilds a channel on every project-set change but SKIPS a set that never had one
 // (stores/board.ts:287, `!unsubscribeChannel`), so a user whose first cloud project
