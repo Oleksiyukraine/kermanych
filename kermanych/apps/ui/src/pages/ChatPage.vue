@@ -5,12 +5,10 @@
       {{ t('chat.page.blank') }}
     </div>
 
-    <!-- Two columns, mirroring the Агенти screen: the left rail is this project's chat
-         HISTORY — one row per `kind: 'chat'` session — and the right column is the exact same
-         KPanel + KRequestBlock stack the Агенти detail renders, so the two chats are one
-         component. Switching a row swaps `chatId`; nothing is destroyed. The chat-only header
-         actions (promote ▶, backlog ⊕, discard ✕) live inside KPanel, gated on
-         `session.kind === 'chat'`. -->
+    <!-- Two columns, the exact pattern the Агенти screen uses: a left list rail and a right
+         detail column whose consolidated bar owns the identity while the embedded KPanel runs
+         `bare`. Here the list holds this project's chat THREADS (one `kind: 'chat'` session
+         each) and the bar carries the chat-only actions (promote ▶, backlog ⊕, archive ✕). -->
     <div
       v-else
       ref="contentEl"
@@ -63,45 +61,89 @@
         @keydown="onResizeKeydown"
       ></div>
 
-      <!-- DETAIL — the selected thread's full panel. -->
+      <!-- DETAIL — the selected thread. Consolidated bar (identity + actions) over a `bare`
+           KPanel, exactly as the Агенти detail column is built. -->
       <aside class="chat__detail">
-        <KPanel
-          v-if="chatSession"
-          class="chat__panel"
-          :session="chatSession"
-          :promoting="promoting"
-          :refreshing="refreshing"
-          :filing="filing"
-          :clearing="clearing"
-          :models="store.models"
-          :placeholder="t('chat.page.placeholder')"
-          @stop="onStop"
-          @send="onSend"
-          @answer="onAnswer"
-          @editor="onEditor"
-          @restart="onRestart"
-          @refresh="onRefresh"
-          @summary="onSummary"
-          @newTask="onNewTask"
-          @promoteAgent="promote"
-          @promoteTask="toBacklog"
-          @clear="clearChat"
-          @expand-all="onExpandAll"
-          @effort="onEffort"
-          @set-model="onSetModel"
-        >
-          <template v-if="blocks.length">
-            <KRequestBlock
-              v-for="(block, i) in blocks"
-              :key="chatSession.id + ':' + block.id"
-              :block="block"
-              :session-id="chatSession.id"
-              :open="i === blocks.length - 1"
-              :expand-all="expandAll"
-            />
-          </template>
-          <div v-else class="chat__log-empty mono">{{ t('chat.page.empty') }}</div>
-        </KPanel>
+        <template v-if="chatSession">
+          <div class="chat__detail-bar">
+            <div class="chat__detail-id">
+              <KStatusDot :status="chatSession.status" />
+              <span class="chat__detail-name">{{ threadTitle(chatSession) }}</span>
+            </div>
+            <div class="chat__detail-controls">
+              <span class="chat__detail-status mono">{{ harnessLabel }} · {{ statusWord(chatSession) }}</span>
+              <div class="chat__actions">
+                <!-- `title` names the action even while disabled; the reason a disabled ▶ can't
+                     act is the visible note strip under this bar. -->
+                <KIconButton
+                  :disabled="promoting"
+                  :title="promoting ? t('kit.panel.promoting') : t('kit.panel.promoteAgent')"
+                  @click="promote"
+                >▶</KIconButton>
+                <KIconButton
+                  :disabled="filing"
+                  :title="t('kit.panel.promoteTask')"
+                  @click="toBacklog"
+                >⊕</KIconButton>
+                <KIconButton
+                  v-if="running"
+                  :title="t('kit.panel.stop')"
+                  @click="onStop"
+                >■</KIconButton>
+                <KIconButton
+                  :title="t('kit.panel.editor')"
+                  @click="onEditor"
+                >⧉</KIconButton>
+                <KIconButton
+                  :disabled="clearing"
+                  :title="t('chat.page.archiveThread', { title: threadTitle(chatSession) })"
+                  @click="clearChat"
+                >✕</KIconButton>
+              </div>
+            </div>
+          </div>
+          <!-- Why the ▶ above is down, on its own strip so the reason a disabled control
+               carries no reachable tooltip is still stated. -->
+          <p v-if="promoteBlocked" class="chat__detail-note">{{ BIND_HINT }}</p>
+
+          <div class="chat__detail-tools mono">
+            <span class="chat__detail-tools-label">{{ t('kit.panel.detailsLabel') }}</span>
+            <button type="button" class="chat__detail-tools-btn" @click="onExpandAll(true)">{{ t('kit.panel.expandAll') }}</button>
+            <button type="button" class="chat__detail-tools-btn" @click="onExpandAll(false)">{{ t('kit.panel.collapseAll') }}</button>
+          </div>
+
+          <KPanel
+            class="chat__panel"
+            :bare="true"
+            :session="chatSession"
+            :refreshing="refreshing"
+            :models="store.models"
+            :placeholder="t('chat.page.placeholder')"
+            @stop="onStop"
+            @send="onSend"
+            @answer="onAnswer"
+            @editor="onEditor"
+            @restart="onRestart"
+            @refresh="onRefresh"
+            @summary="onSummary"
+            @newTask="onNewTask"
+            @expand-all="onExpandAll"
+            @effort="onEffort"
+            @set-model="onSetModel"
+          >
+            <template v-if="blocks.length">
+              <KRequestBlock
+                v-for="(block, i) in blocks"
+                :key="chatSession.id + ':' + block.id"
+                :block="block"
+                :session-id="chatSession.id"
+                :open="i === blocks.length - 1"
+                :expand-all="expandAll"
+              />
+            </template>
+            <div v-else class="chat__log-empty mono">{{ t('chat.page.empty') }}</div>
+          </KPanel>
+        </template>
         <div v-else class="chat__detail-blank mono">{{ t('chat.page.detailBlank') }}</div>
       </aside>
     </div>
@@ -109,11 +151,11 @@
 </template>
 
 <script setup lang="ts">
-// v3 Чат — a two-column screen: the left rail lists this project's chat threads (one
-// `kind: 'chat'` session each), the right column renders the selected thread through the
-// SAME KPanel + KRequestBlock stack as the Агенти page's chat, so the two are one component.
-// Log grouping, decision block, stall banner, live status, todo lane, my-message navigation
-// and the composer's model/effort chips all come for free.
+// v3 Чат — the Агенти screen's two-column pattern applied to plain chats: the left rail lists
+// this project's chat threads (one `kind: 'chat'` session each), the right column is a
+// consolidated identity/action bar over the SAME KPanel + KRequestBlock stack the Агенти
+// detail renders `bare`. Log grouping, decision block, stall banner, live status, todo lane,
+// my-message navigation and the composer's model/effort/rehydrate chips all come for free.
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -132,6 +174,8 @@ import { useResizableWidth } from '../composables/useResizableWidth';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
+import KStatusDot from 'components/kit/KStatusDot.vue';
+import KIconButton from 'components/kit/KIconButton.vue';
 import KBtn from 'components/kit/KBtn.vue';
 
 const store = useOrchestrator();
@@ -145,7 +189,8 @@ const now = useNow();
 const chatId = ref<string | undefined>(undefined);
 // Promotion spins up a worktree and respawns omp; the ▶ stays down until the server answers.
 const promoting = ref(false);
-// The composer's ↻ (rehydrate) stays down until the server answers.
+// A session resume (on select, or the composer's ↻) is in flight; the ↻ stays down until the
+// server answers so a second click cannot spawn a competing respawn.
 const refreshing = ref(false);
 // «В беклог» files a cloud card; the ⊕ stays down until the write returns.
 const filing = ref(false);
@@ -159,6 +204,12 @@ const BIND_HINT = computed(() => t('chat.page.bindHint'));
 const selectedProject = computed(() => store.projects.find((p) => p.id === store.selectedProjectId));
 const isBound = computed(() => !!selectedProject.value?.localRepoPath);
 const chatSession = computed(() => store.sessions.find((s) => s.id === chatId.value));
+// Promotion grows a worktree, so it is refused without a local binding; the strip states why.
+const promoteBlocked = computed(() => !!chatSession.value && !isBound.value);
+const harnessLabel = computed(() => chatSession.value?.runtime || 'omp');
+const running = computed(
+  () => chatSession.value?.status === 'thinking' || chatSession.value?.status === 'tool',
+);
 // Guard against a double-create if the project changes mid-flight while a create is pending.
 let ensuring = false;
 
@@ -179,11 +230,29 @@ function threadTitle(s: Session): string {
 
 // A thread nobody has spoken in yet. Uses the loaded transcript when present, else the
 // server-stamped `task` as a proxy (empty until the first message) — enough to reuse a blank
-// thread instead of stacking more of them.
+// thread instead of stacking more of them, and to skip resuming a chat with no history.
 function isEmptyThread(s: Session): boolean {
   const tr = store.transcripts[s.id];
   if (tr) return !tr.some((e) => e.kind === 'user_text' || e.kind === 'assistant_text');
   return !s.task.trim();
+}
+
+// Localized status word for the bar, mirroring the Агенти detail bar's `harness · status`.
+function statusWord(s: Session): string {
+  switch (s.status) {
+    case 'thinking': return t('agents.statusWord.thinking');
+    case 'tool': return t('agents.statusWord.tool');
+    case 'waiting_input': return t('agents.statusWord.waiting');
+    case 'done': return t('agents.statusWord.done');
+    case 'in_review': return t('agents.statusWord.review');
+    case 'error': return t('agents.statusWord.error');
+    case 'queued': return t('agents.statusWord.queued');
+    case 'stopped': return t('agents.statusWord.stopped');
+    case 'merged': return t('agents.statusWord.merged');
+    case 'conflict': return t('agents.statusWord.conflict');
+    case 'backlog': return t('agents.statusWord.backlog');
+    default: return s.status;
+  }
 }
 
 const blocks = computed(() =>
@@ -255,20 +324,26 @@ async function onRestart(): Promise<void> {
   }
 }
 
-// Composer ↻ — wake a dormant chat so its history comes back. After an app restart the api
-// has no omp child for the session, so the transcript reads empty; this respawns the child
-// and reloads its transcript without sending anything.
-async function onRefresh(): Promise<void> {
-  const s = chatSession.value;
-  if (!s || refreshing.value) return;
+// Wake a dormant chat so its history comes back. After an app restart — or simply a chat the
+// api has idle-reaped — there is no omp child for the session, so the transcript serves only
+// a "dormant" notice and the log reads empty; this respawns the child and reloads its
+// transcript WITHOUT sending anything. Shared by the composer's ↻ and by opening a thread.
+async function resumeThread(id: string): Promise<void> {
+  if (refreshing.value) return;
   refreshing.value = true;
   try {
-    await store.resumeSession(s.id);
+    await store.resumeSession(id);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   } finally {
     refreshing.value = false;
   }
+}
+
+// Composer ↻ — rehydrate the open chat.
+async function onRefresh(): Promise<void> {
+  const s = chatSession.value;
+  if (s) await resumeThread(s.id);
 }
 
 // Composer ≡ — ask the chat itself to recap. The same canned operator message as the Агенти
@@ -345,14 +420,22 @@ async function onNewTask(text: string): Promise<void> {
   }
 }
 
-// Select an existing thread and make sure its transcript is loaded so the log renders.
-function selectThread(id: string): void {
+// Open a thread. Selecting one auto-resumes it — a chat the api has idle-reaped reads as a
+// dead "dormant" banner otherwise, and the operator expects a click to bring the conversation
+// back, not to make them send a message first. A never-used blank thread has nothing to
+// resume, so it only gets its (empty) transcript loaded.
+async function selectThread(id: string): Promise<void> {
   chatId.value = id;
-  if (store.transcripts[id] === undefined) void store.loadTranscript(id);
+  const s = store.sessions.find((x) => x.id === id);
+  if (s && !isEmptyThread(s)) {
+    await resumeThread(id);
+  } else if (store.transcripts[id] === undefined) {
+    void store.loadTranscript(id);
+  }
 }
 
-// Reuse the most recent non-archived chat for the selected project, else create one. Then
-// make sure its transcript is loaded so the log renders on first paint.
+// Reuse the most recent non-archived chat for the selected project, else create one — then
+// open it (which resumes a dormant thread or loads a fresh one).
 async function ensureChat(): Promise<void> {
   const pid = store.selectedProjectId;
   if (!pid) {
@@ -364,13 +447,12 @@ async function ensureChat(): Promise<void> {
   try {
     const existing = threads.value[0];
     if (existing) {
-      chatId.value = existing.id;
+      await selectThread(existing.id);
     } else {
       const chat = await store.createChat(pid);
       chatId.value = chat?.id;
+      if (chat && store.transcripts[chat.id] === undefined) void store.loadTranscript(chat.id);
     }
-    const id = chatId.value;
-    if (id && store.transcripts[id] === undefined) void store.loadTranscript(id);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   } finally {
@@ -379,13 +461,14 @@ async function ensureChat(): Promise<void> {
 }
 
 // «+ Новий» — open a fresh thread. A blank thread is reused rather than duplicated, so the
-// rail does not fill with empty `чат N` rows nobody typed in.
+// rail does not fill with empty `чат N` rows nobody typed in. A brand-new chat is live and
+// has no history, so it is not resumed — its (empty) transcript is loaded instead.
 async function newChat(): Promise<void> {
   const pid = store.selectedProjectId;
   if (!pid || ensuring) return;
   const blank = threads.value.find(isEmptyThread);
   if (blank) {
-    selectThread(blank.id);
+    await selectThread(blank.id);
     return;
   }
   ensuring = true;
@@ -415,7 +498,7 @@ async function archiveThread(id: string): Promise<void> {
   if (chatId.value === id) {
     const next = threads.value.find((s) => s.id !== id);
     if (next) {
-      selectThread(next.id);
+      await selectThread(next.id);
     } else {
       chatId.value = undefined;
       await newChat();
@@ -517,7 +600,7 @@ async function toBacklog(): Promise<void> {
   }
 }
 
-// Panel ✕ — archive the open thread. Non-destructive (see archiveThread); the ✕ stays down
+// Bar ✕ — archive the open thread. Non-destructive (see archiveThread); the ✕ stays down
 // until the write returns so a second click cannot race it.
 async function clearChat(): Promise<void> {
   const id = chatId.value;
@@ -659,14 +742,109 @@ watch(chatId, () => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  padding-left: var(--k-sp-3);
+}
+
+// Consolidated identity + actions bar over the bare panel, identical geometry to the Агенти
+// detail bar so the two screens read as one system.
+.chat__detail-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 6px 0 12px;
+  background: var(--k-bg);
+  border-bottom: 2px solid var(--k-line-strong);
+  flex: none;
+}
+
+.chat__detail-id {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+  min-width: 0;
+}
+
+// The thread's title — the bar's face, at full text colour, not the muted mono the harness
+// label wears.
+.chat__detail-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-md);
+  font-weight: var(--k-fw-semibold);
+  color: var(--k-text);
+}
+
+.chat__detail-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+// Harness · status — «omp · готово». The one place the session's runtime is named now that
+// the embedded panel is `bare`.
+.chat__detail-status {
+  font-size: 11px;
+  color: var(--k-muted);
+  white-space: nowrap;
+}
+
+.chat__actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+// The reason a disabled ▶ can't act, on its own strip since a disabled control has no
+// reachable tooltip.
+.chat__detail-note {
+  flex: none;
+  margin: 0;
+  padding: 5px 12px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--k-muted);
+}
+
+// The log's density switch — a fixed-height strip under the bar, the same look as the panel's
+// own toolbar (hidden here because the panel runs bare).
+.chat__detail-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  padding: 0 12px;
+  box-shadow: inset 0 -1px 0 0 var(--k-line);
+  font-size: 11px;
+  color: var(--k-muted);
+}
+
+.chat__detail-tools-btn {
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--k-muted);
+  font: inherit;
+  cursor: pointer;
+  transition: color 0.12s;
+
+  &:hover { color: var(--k-text); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
 }
 
 // The panel fills the detail column; `min-height: 0` lets its inner log scroll instead of the
-// panel growing past the viewport.
+// panel growing past the viewport. Bare, so it flows flat on the surface with no box border.
 .chat__panel {
   flex: 1;
   min-height: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 
 .chat__detail-blank {
