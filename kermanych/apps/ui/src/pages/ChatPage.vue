@@ -106,43 +106,50 @@
                carries no reachable tooltip is still stated. -->
           <p v-if="promoteBlocked" class="chat__detail-note">{{ BIND_HINT }}</p>
 
-          <div class="chat__detail-tools mono">
-            <span class="chat__detail-tools-label">{{ t('kit.panel.detailsLabel') }}</span>
-            <button type="button" class="chat__detail-tools-btn" @click="onExpandAll(true)">{{ t('kit.panel.expandAll') }}</button>
-            <button type="button" class="chat__detail-tools-btn" @click="onExpandAll(false)">{{ t('kit.panel.collapseAll') }}</button>
-          </div>
-
-          <KPanel
-            class="chat__panel"
-            :bare="true"
-            :session="chatSession"
-            :refreshing="refreshing"
-            :models="store.models"
-            :placeholder="t('chat.page.placeholder')"
-            @stop="onStop"
-            @send="onSend"
-            @answer="onAnswer"
-            @editor="onEditor"
-            @restart="onRestart"
-            @refresh="onRefresh"
-            @summary="onSummary"
-            @newTask="onNewTask"
-            @expand-all="onExpandAll"
-            @effort="onEffort"
-            @set-model="onSetModel"
-          >
-            <template v-if="blocks.length">
-              <KRequestBlock
-                v-for="(block, i) in blocks"
-                :key="chatSession.id + ':' + block.id"
-                :block="block"
-                :session-id="chatSession.id"
-                :open="i === blocks.length - 1"
-                :expand-all="expandAll"
-              />
+          <!-- One-tab bar over the log, the same row the Агенти detail uses: a «Лог» tab
+               with the density switch («Розгорнути всі» / «Згорнути всі») pinned to its right
+               edge, so the two screens read as one system instead of a mono strip here and a
+               tab row there. -->
+          <KTabs v-model="detailTab" :tabs="detailTabs" class="chat__detail-tabs">
+            <template #end>
+              <button type="button" class="chat__log-ctl" @click="onExpandAll(true)">{{ t('agents.detail.expandAll') }}</button>
+              <button type="button" class="chat__log-ctl" @click="onExpandAll(false)">{{ t('agents.detail.collapseAll') }}</button>
             </template>
-            <div v-else class="chat__log-empty mono">{{ t('chat.page.empty') }}</div>
-          </KPanel>
+          </KTabs>
+
+          <div class="chat__tabpane">
+            <KPanel
+              class="chat__panel"
+              :bare="true"
+              :session="chatSession"
+              :refreshing="refreshing"
+              :models="store.models"
+              :placeholder="t('chat.page.placeholder')"
+              @stop="onStop"
+              @send="onSend"
+              @answer="onAnswer"
+              @editor="onEditor"
+              @restart="onRestart"
+              @refresh="onRefresh"
+              @summary="onSummary"
+              @newTask="onNewTask"
+              @expand-all="onExpandAll"
+              @effort="onEffort"
+              @set-model="onSetModel"
+            >
+              <template v-if="blocks.length">
+                <KRequestBlock
+                  v-for="(block, i) in blocks"
+                  :key="chatSession.id + ':' + block.id"
+                  :block="block"
+                  :session-id="chatSession.id"
+                  :open="i === blocks.length - 1"
+                  :expand-all="expandAll"
+                />
+              </template>
+              <div v-else class="chat__log-empty mono">{{ t('chat.page.empty') }}</div>
+            </KPanel>
+          </div>
         </template>
         <div v-else class="chat__detail-blank mono">{{ t('chat.page.detailBlank') }}</div>
       </aside>
@@ -177,6 +184,7 @@ import KSessionCard from 'components/kit/KSessionCard.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KBtn from 'components/kit/KBtn.vue';
+import KTabs from 'components/kit/KTabs.vue';
 
 const store = useOrchestrator();
 const board = useBoard();
@@ -199,6 +207,11 @@ const clearing = ref(false);
 // «розгорнути / стиснути все» is per-session detail state — reset on a chat switch so a
 // stale command is not adopted by the newly opened session's rows.
 const expandAll = ref<ExpandAllCommand>(EXPAND_ALL_NONE);
+
+// The detail column carries one view — the log — but presents it through the same tab row the
+// Агенти detail uses, so the density switch keeps the identical home.
+const detailTab = ref('log');
+const detailTabs = computed(() => [{ value: 'log', label: t('agents.tabs.log') }]);
 
 const BIND_HINT = computed(() => t('chat.page.bindHint'));
 const selectedProject = computed(() => store.projects.find((p) => p.id === store.selectedProjectId));
@@ -327,7 +340,7 @@ async function onRestart(): Promise<void> {
 // Wake a dormant chat so its history comes back. After an app restart — or simply a chat the
 // api has idle-reaped — there is no omp child for the session, so the transcript serves only
 // a "dormant" notice and the log reads empty; this respawns the child and reloads its
-// transcript WITHOUT sending anything. Shared by the composer's ↻ and by opening a thread.
+// transcript WITHOUT sending anything. Backs the composer's ↻.
 async function resumeThread(id: string): Promise<void> {
   if (refreshing.value) return;
   refreshing.value = true;
@@ -420,17 +433,19 @@ async function onNewTask(text: string): Promise<void> {
   }
 }
 
-// Open a thread. Selecting one auto-resumes it — a chat the api has idle-reaped reads as a
-// dead "dormant" banner otherwise, and the operator expects a click to bring the conversation
-// back, not to make them send a message first. A never-used blank thread has nothing to
-// resume, so it only gets its (empty) transcript loaded.
+// Open a thread and auto-resume it: a chat the api has idle-reaped reads as a dead "dormant"
+// banner otherwise, and the operator expects a click — including switching between threads —
+// to bring the conversation back rather than to make them send a message first. `resumeSession`
+// is safe for a live child (the server's liveOrResume never respawns a running turn) and is
+// de-duplicated per id, and it reloads the transcript, so no separate load is needed. Kept off
+// the `refreshing` gate on purpose: that gate is the composer ↻'s, and sharing it made a second
+// switch mid-resume silently skip.
 async function selectThread(id: string): Promise<void> {
   chatId.value = id;
-  const s = store.sessions.find((x) => x.id === id);
-  if (s && !isEmptyThread(s)) {
-    await resumeThread(id);
-  } else if (store.transcripts[id] === undefined) {
-    void store.loadTranscript(id);
+  try {
+    await store.resumeSession(id);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
 }
 
@@ -810,26 +825,20 @@ watch(chatId, () => {
   color: var(--k-muted);
 }
 
-// The log's density switch — a fixed-height strip under the bar, the same look as the panel's
-// own toolbar (hidden here because the panel runs bare).
-.chat__detail-tools {
+// One-tab row over the log, mirroring the Агенти detail tab bar exactly (kit/KTabs plus the
+// log-ctl density switch), so the two screens share the row instead of each inventing one.
+.chat__detail-tabs {
   flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 26px;
   padding: 0 12px;
-  box-shadow: inset 0 -1px 0 0 var(--k-line);
-  font-size: 11px;
-  color: var(--k-muted);
 }
 
-.chat__detail-tools-btn {
+.chat__log-ctl {
   padding: 0;
-  background: transparent;
   border: none;
+  background: transparent;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-xs);
   color: var(--k-muted);
-  font: inherit;
   cursor: pointer;
   transition: color 0.12s;
 
@@ -837,9 +846,18 @@ watch(chatId, () => {
   &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
 }
 
-// The panel fills the detail column; `min-height: 0` lets its inner log scroll instead of the
-// panel growing past the viewport. Bare, so it flows flat on the surface with no box border.
-.chat__panel {
+// The pane that holds the log; flexes into the rest of the column so the panel's own log
+// scrolls instead of the column growing.
+.chat__tabpane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+// The panel fills the pane; `min-height: 0` lets its inner log scroll. Bare, so it flows flat
+// on the surface with no box border, like the Агенти embedded panel.
+.chat__tabpane .chat__panel {
   flex: 1;
   min-height: 0;
   border: none;
