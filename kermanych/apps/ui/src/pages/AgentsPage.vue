@@ -1344,9 +1344,10 @@ const detailTabs = computed(() => {
     { value: 'session', label: t('agents.tabs.session') },
     { value: 'docs', label: t('agents.tabs.docs'), count: readDocs.value.length + changedDocs.value.length },
   ];
-  // Only when the session is linked to a cloud card — that is where the checklist lives.
-  if (linkedTask.value)
-    tabs.push({ value: 'qa', label: t('agents.tabs.qa'), count: qaChecklist.value?.items.length ?? 0 });
+  // Always present, like the other tabs — a missing tab reads as breakage. The pane shows the
+  // checklist for a task-linked session and an empty state otherwise (it fills after «Створити
+  // ПР»); the count is 0 until then.
+  tabs.push({ value: 'qa', label: t('agents.tabs.qa'), count: qaChecklist.value?.items.length ?? 0 });
   return tabs;
 });
 const detailTab = ref('log');
