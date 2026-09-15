@@ -160,6 +160,7 @@
         <span class="shell__logo">{{ t('common.nav.logo') }}</span>
         <span class="shell__ver mono">v0.1</span>
       </div>
+      <span v-if="scopedWorkspace" class="shell__workspace" :title="scopedWorkspace.name">{{ scopedWorkspace.name }}</span>
       <KTopNav
         class="shell__nav"
         :model-value="topView"
@@ -1587,6 +1588,20 @@ async function gitPull(): Promise<void> {
 .shell__ver {
   font-size: var(--k-fs-xs);
   color: var(--k-muted);
+}
+
+// The selected workspace, between the brand and the segmented nav. Accent-coloured so it
+// reads as the current context rather than another piece of chrome; truncated so a long
+// name never shoves the centred nav off-axis.
+.shell__workspace {
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-sm);
+  font-weight: var(--k-fw-semibold);
+  color: var(--k-accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
 }
 
 .shell__nav {
