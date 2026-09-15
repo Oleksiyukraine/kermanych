@@ -287,6 +287,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.unarchiveSession(id);
   }
 
+  function renameSession(id: string, name: string) {
+    return api.renameSession(id, name);
+  }
+
   async function loadTranscript(id: string) {
     const entries = await api.loadTranscript(id);
     transcripts.value = { ...transcripts.value, [id]: entries };
@@ -446,6 +450,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     commitChanges,
     archiveSession,
     unarchiveSession,
+    renameSession,
     toasts,
     notify,
     dismissToast,

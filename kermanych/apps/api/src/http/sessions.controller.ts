@@ -249,6 +249,15 @@ export class SessionsController {
     return { ok: true };
   }
 
+  @Post(":id/rename")
+  rename(@Param("id") id: string, @Body() b: { name?: string }) {
+    try {
+      return this.sup.renameSession(id, b.name ?? "");
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Post(":id/editor")
   openEditor(@Param("id") id: string) {
     try {

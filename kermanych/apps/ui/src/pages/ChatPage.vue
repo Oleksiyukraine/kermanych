@@ -68,7 +68,22 @@
           <div class="chat__detail-bar">
             <div class="chat__detail-id">
               <KStatusDot :status="chatSession.status" />
-              <span class="chat__detail-name">{{ threadTitle(chatSession) }}</span>
+              <input
+                v-if="renaming"
+                ref="renameInput"
+                v-model="renameDraft"
+                class="chat__detail-rename"
+                :aria-label="t('chat.page.renameAria')"
+                @keydown.enter.prevent="commitRename"
+                @keydown.esc.prevent="cancelRename"
+                @blur="commitRename"
+              />
+              <span
+                v-else
+                class="chat__detail-name"
+                v-tip="t('chat.page.renameHint')"
+                @dblclick="startRename"
+              >{{ threadTitle(chatSession) }}</span>
             </div>
             <div class="chat__detail-controls">
               <span class="chat__detail-status mono">{{ harnessLabel }} · {{ statusWord(chatSession) }}</span>
@@ -96,7 +111,7 @@
                 >⧉</KIconButton>
                 <KIconButton
                   :disabled="clearing"
-                  :title="t('chat.page.archiveThread', { title: threadTitle(chatSession) })"
+                  :title="t('chat.page.closeSession')"
                   @click="clearChat"
                 >✕</KIconButton>
               </div>
@@ -237,8 +252,45 @@ const threads = computed(() =>
 
 // A thread's row title: the first line of its opening ask (server stamps `task` on the first
 // message) once there is one, else the server's `чат N` placeholder.
+const DEFAULT_CHAT_NAME = /^чат \d+$/;
 function threadTitle(s: Session): string {
+  // A non-default name is the operator's own label (a rename) and wins; the default `чат N`
+  // is uninformative, so those fall back to the opening message.
+  const name = s.name?.trim() ?? '';
+  if (name && !DEFAULT_CHAT_NAME.test(name)) return name;
   return taskNameFromText(s.task) || s.name;
+}
+
+// Inline rename of the open thread (double-click the bar name). Edits stay local until
+// committed; Enter and blur commit, Esc discards. `renaming` also gates the blur handler so a
+// commit on Enter does not fire a second save on the blur that follows.
+const renaming = ref(false);
+const renameDraft = ref('');
+const renameInput = ref<HTMLInputElement | null>(null);
+
+function startRename(): void {
+  const s = chatSession.value;
+  if (!s) return;
+  renameDraft.value = threadTitle(s);
+  renaming.value = true;
+  void nextTick(() => renameInput.value?.select());
+}
+
+function cancelRename(): void {
+  renaming.value = false;
+}
+
+async function commitRename(): Promise<void> {
+  if (!renaming.value) return;
+  renaming.value = false;
+  const s = chatSession.value;
+  const name = renameDraft.value.trim();
+  if (!s || !name || name === threadTitle(s)) return;
+  try {
+    await store.renameSession(s.id, name);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
 }
 
 // A thread nobody has spoken in yet. Uses the loaded transcript when present, else the
@@ -642,6 +694,7 @@ watch(
 // A chat switch resets the detail toolbar so the new session's rows start neutral.
 watch(chatId, () => {
   expandAll.value = EXPAND_ALL_NONE;
+  renaming.value = false;
 });
 </script>
 
@@ -795,6 +848,22 @@ watch(chatId, () => {
   font-size: var(--k-fs-md);
   font-weight: var(--k-fw-semibold);
   color: var(--k-text);
+}
+
+// Inline rename field — replaces the name span while editing; an accent underline marks it
+// editable, at the same size/weight as the name so the bar does not jump.
+.chat__detail-rename {
+  min-width: 0;
+  flex: 0 1 auto;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-md);
+  font-weight: var(--k-fw-semibold);
+  color: var(--k-text);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--k-accent);
+  padding: 0;
+  outline: none;
 }
 
 .chat__detail-controls {
