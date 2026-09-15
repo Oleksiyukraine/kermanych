@@ -94,7 +94,7 @@ export default defineConfig((ctx) => {
       // which pulls in NestJS, native better-sqlite3 and @kermanych/{core,cloud} through
       // `workspace:*` deps. `pnpm deploy` is the only thing that flattens that graph into a
       // self-contained node_modules; we then hand it to electron-builder to pack.
-      async beforePackaging({ appPaths, unpackagedDir }) {
+      async beforePackaging({ appPaths, unpackagedDir }: { appPaths: { appDir: string }; unpackagedDir: string }) {
         const repoRoot = resolve(appPaths.appDir, '..', '..');
         const deployTmp = join(unpackagedDir, '..', 'deploy-tmp');
         rmSync(deployTmp, { recursive: true, force: true });
