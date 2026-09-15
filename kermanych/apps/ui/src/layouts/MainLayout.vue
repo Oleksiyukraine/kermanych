@@ -1590,18 +1590,22 @@ async function gitPull(): Promise<void> {
   color: var(--k-muted);
 }
 
-// The selected workspace, between the brand and the segmented nav. Accent-coloured so it
-// reads as the current context rather than another piece of chrome; truncated so a long
-// name never shoves the centred nav off-axis.
+// The selected workspace, centred in the gap between the brand and the segmented nav.
+// `flex: 1` claims the whole left span so the name sits midway between «КЕРМАНИЧ v0.1»
+// and the nav; accent-coloured, large and heavy so it reads as the current context.
+// Truncated so a long name never bleeds into the brand or the nav.
 .shell__workspace {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
   font-family: var(--k-font-ui);
-  font-size: var(--k-fs-sm);
-  font-weight: var(--k-fw-semibold);
+  font-size: var(--k-fs-lg);
+  font-weight: 800;
+  letter-spacing: -0.01em;
   color: var(--k-accent);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 220px;
 }
 
 .shell__nav {
