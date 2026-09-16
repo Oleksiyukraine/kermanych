@@ -158,9 +158,8 @@
           <rect x="636" y="726" width="300" height="84" fill="#f3f2f2" />
         </svg>
         <span class="shell__logo">{{ t('common.nav.logo') }}</span>
-        <span class="shell__ver mono">v0.1</span>
+        <span class="shell__ver mono">v1.0</span>
       </div>
-      <span v-if="scopedWorkspace" class="shell__workspace" :title="scopedWorkspace.name">{{ scopedWorkspace.name }}</span>
       <KTopNav
         class="shell__nav"
         :model-value="topView"
