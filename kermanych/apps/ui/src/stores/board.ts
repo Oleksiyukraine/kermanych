@@ -199,7 +199,6 @@ export const useBoard = defineStore('board', () => {
       else delete next.effort;
     }
     if (patch.qaChecklist !== undefined) next.qaChecklist = patch.qaChecklist;
-    if (patch.docReport !== undefined) next.docReport = patch.docReport;
     return next;
   }
 

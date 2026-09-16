@@ -4,10 +4,10 @@
 // are the authorization surface; refusals surface as thrown postgrest messages.
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import type { Task, TaskInsert, TaskPatch, TaskStatus } from "./types";
-import type { DocReport, QaChecklist } from "@kermanych/core";
+import type { QaChecklist } from "@kermanych/core";
 
 const TASK_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, image_paths, jira_key, linear_key, qa_checklist, doc_report, created_at, updated_at";
+  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, image_paths, jira_key, linear_key, qa_checklist, created_at, updated_at";
 
 type TaskRow = {
   id: string;
@@ -30,7 +30,6 @@ type TaskRow = {
   jira_key: string | null;
   linear_key: string | null;
   qa_checklist: unknown;
-  doc_report: unknown;
   created_at: string;
   updated_at: string;
 };
@@ -72,11 +71,6 @@ export function toTask(row: TaskRow): Task {
   const qa = row.qa_checklist;
   if (qa && typeof qa === "object" && !Array.isArray(qa) && Array.isArray((qa as QaChecklist).items) && (qa as QaChecklist).items.length)
     t.qaChecklist = qa as QaChecklist;
-  // Same shape rule as qa_checklist: a report with any used/created entry is carried, the
-  // empty-object default and anything malformed map to an absent key.
-  const dr = row.doc_report;
-  if (dr && typeof dr === "object" && !Array.isArray(dr) && (((dr as DocReport).used?.length ?? 0) > 0 || ((dr as DocReport).created?.length ?? 0) > 0))
-    t.docReport = dr as DocReport;
   return t;
 }
 
@@ -105,7 +99,6 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   // jsonb, sent verbatim: generation replaces the whole object, a human tick replaces it with
   // one item flipped. `not null`, so there is no clear-to-null path — an absent key is «leave it».
   if (patch.qaChecklist !== undefined) row.qa_checklist = patch.qaChecklist;
-  if (patch.docReport !== undefined) row.doc_report = patch.docReport;
   return row;
 }
 

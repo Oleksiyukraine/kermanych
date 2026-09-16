@@ -180,15 +180,10 @@ export {
 } from "./management-actions";
 export {
   QA_CHECKLIST_KIND,
-  DOC_REPORT_KIND,
   QA_CHECKLIST_DIRECTIVE,
-  DOC_REPORT_DIRECTIVE,
   parseTaskActions,
   buildQaChecklist,
-  buildDocReport,
   type QaChecklist,
   type QaChecklistItem,
-  type DocReport,
-  type DocRef,
   type TaskAction,
 } from "./task-actions";
