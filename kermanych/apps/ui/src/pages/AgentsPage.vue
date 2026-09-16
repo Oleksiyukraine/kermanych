@@ -501,9 +501,8 @@
     <KModal v-model="launcherOpen" :title="launcherTitle" width="880px" flush>
       <template #head-meta>
         <div class="agents-launcher__headmeta">
-          <span v-if="launchProject" class="agents-launcher__tag mono">{{ launchProject.name }}</span>
           <span class="agents-launcher__spacer"></span>
-          <span v-if="launchWorkspaceName" class="agents-launcher__ws">{{ launchWorkspaceName }}</span>
+          <span v-if="launchScopeName" class="agents-launcher__ws">{{ launchScopeName }}</span>
           <span class="agents-launcher__spacer"></span>
           <span class="agents-launcher__esc mono">{{ t('agents.launcher.esc') }}</span>
         </div>
@@ -1171,13 +1170,14 @@ const launchProject = computed(() =>
   store.projects.find((p) => p.id === launchProjectId.value),
 );
 
-// The workspace the launch project belongs to. `projectWorkspace` is the orchestrator's
-// downward map (project id → workspace id); the name comes from the cloud workspace list.
-// Shown in the launcher head so the operator sees which shared board a task lands on.
-const launchWorkspaceName = computed(() => {
+// The single accented context name in the launcher head: the workspace the task lands in.
+// `projectWorkspace` is the orchestrator's downward map (project id → workspace id); the
+// name comes from the cloud workspace list. Falls back to the project name for a local
+// project that has no workspace yet, so the head is never blank.
+const launchScopeName = computed(() => {
   const id = launchProjectId.value;
   const wsId = id ? store.projectWorkspace[id] : undefined;
-  return wsId ? projects.workspaceById.get(wsId)?.name : undefined;
+  return (wsId ? projects.workspaceById.get(wsId)?.name : undefined) ?? launchProject.value?.name;
 });
 
 // Requirement 3 in the UI: a task can be created, edited and moved without a binding, but
@@ -3267,18 +3267,12 @@ async function submitPreviewConfig(): Promise<void> {
   align-items: center;
   gap: 12px;
 }
-.agents-launcher__tag {
-  font-size: 11.5px;
-  color: var(--k-muted);
-  border: 1px solid var(--k-line);
-  padding: 1px 6px;
-}
 .agents-launcher__spacer {
   flex: 1;
 }
-// The workspace name, centred by the two flex spacers between the «Нова задача» title and
-// «Esc — закрити». Accented and heavier than the muted tag/esc so the shared board a task
-// lands on is the line the eye catches.
+// The workspace name — the single context label in this head, centred by the two flex
+// spacers between the «Нова задача» title and «Esc — закрити». Accented and heavy so the
+// shared board a task lands on is the line the eye catches.
 .agents-launcher__ws {
   font-family: var(--k-font-ui);
   font-size: 13.5px;
