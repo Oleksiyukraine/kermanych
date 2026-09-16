@@ -13,6 +13,8 @@ import {
   type ManagementChatAsk,
   type ManagementChatReply,
   type ManagementContext,
+  type ManagementDocFragment,
+  type ManagementDocs,
   type ManagementJiraBoard,
   type ManagementHome,
   type ManagementHomeRelease,
@@ -124,6 +126,53 @@ function jiraBoard(v: unknown): ManagementJiraBoard | undefined {
       ? x.assignees.filter((n): n is string => typeof n === "string" && n.trim() !== "").map((n) => n.trim())
       : [],
   };
+}
+
+// The documentation fragments the browser retrieved for this turn, rebuilt field by field
+// for `riskRows`' reason: they are printed into the prompt as the passages the answer must
+// come from, and a half-built fragment would be quoted — citation and all — as fact. The
+// cap is the browser's own match count with headroom: a client asking for eighty passages
+// is not a question, it is a way to fill the turn with text nobody retrieved.
+const MAX_DOC_FRAGMENTS = 24;
+
+const DOC_STATUSES = ["ok", "fulltext", "not-indexed"] as const;
+
+function docFragment(v: unknown): ManagementDocFragment | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const x = v as Record<string, unknown>;
+  const str = (k: string): string | undefined => (typeof x[k] === "string" && x[k].trim() !== "" ? (x[k] as string) : undefined);
+  const folder = str("folder");
+  const path = str("path");
+  const content = str("content");
+  // Without any one of these the fragment cannot be cited back to a file the operator can
+  // open, which is the whole contract of the kdoc citation.
+  if (folder === undefined || path === undefined || content === undefined) return undefined;
+  return {
+    folder,
+    path,
+    headingPath: typeof x.headingPath === "string" ? x.headingPath : "",
+    startLine: countNum(x.startLine),
+    endLine: countNum(x.endLine),
+    content,
+  };
+}
+
+// `undefined` means «no documentation block this turn», which the prompt handles by simply
+// omitting it — the same shape a section that never retrieves produces.
+function docsBlock(v: unknown): ManagementDocs | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const x = v as Record<string, unknown>;
+  const status = DOC_STATUSES.find((s) => s === x.status);
+  if (!status) return undefined;
+  const fragments: ManagementDocFragment[] = [];
+  if (Array.isArray(x.fragments)) {
+    for (const f of x.fragments) {
+      if (fragments.length >= MAX_DOC_FRAGMENTS) break;
+      const row = docFragment(f);
+      if (row) fragments.push(row);
+    }
+  }
+  return { status, projectName: typeof x.projectName === "string" ? x.projectName : "", fragments };
 }
 
 // The Team Capacity digest as the browser sent it, rebuilt field by field for `riskRows`'
@@ -300,6 +349,7 @@ export class ManagementController {
     const jira = jiraBoard(b.context.jira);
     const capacity = capacityDigest(b.context.capacity);
     const home = homeOverview(b.context.home);
+    const docs = docsBlock(b.context.docs);
     const context: ManagementContext = {
       workspaceName: typeof b.context.workspaceName === "string" ? b.context.workspaceName : "",
       section: typeof b.context.section === "string" ? b.context.section : "",
@@ -308,6 +358,7 @@ export class ManagementController {
       ...(jira ? { jira } : {}),
       ...(capacity ? { capacity } : {}),
       ...(home ? { home } : {}),
+      ...(docs ? { docs } : {}),
     };
     try {
       return await this.chat.ask({ ...b, conversationId, text, workspaceId, workspaceProjects, context, attachments });
