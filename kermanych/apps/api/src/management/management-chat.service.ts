@@ -48,6 +48,29 @@ import {
 // and no edit tools.
 export const MANAGEMENT_TOOLS = ["read", "grep", "glob"] as const;
 
+// Documentation turns answer from passages the browser retrieved before the turn, and the
+// docs protocol forbids them to go looking for more — so there is no exploration left to
+// reason about, only prose to write from fragments already chosen. That is decode-bound
+// work, and decode is where the models differ: on this machine's own `omp bench`, Sonnet 5
+// sustains ~82 tok/s against Opus 4.8's ~57, which is a third off the wait for the same
+// answer. Every other section keeps omp's default model, because a question about risk or
+// capacity is exactly the kind that deserves the stronger one.
+//
+// The full id rather than omp's fuzzy `sonnet`: the model behind an answer must not drift
+// with whatever omp decides a short name means this week.
+const DOCS_SECTION = "management-docs";
+const DOCS_MODEL = "claude-sonnet-5";
+
+// Documentation runs on its own child, inside the SAME conversation id the browser sent —
+// the split is the api's business, not the ui's. `attachDir` sanitises every character
+// outside [A-Za-z0-9._-], so this suffix becomes its own directory rather than colliding
+// with the main child's.
+const DOCS_KEY_SUFFIX = "#docs";
+
+function childKey(conversationId: string, section: string | undefined): string {
+  return section === DOCS_SECTION ? `${conversationId}${DOCS_KEY_SUFFIX}` : conversationId;
+}
+
 // `omp --mode rpc` loads its config, its skill library and the provider client before it
 // emits `ready`; cold on a laptop that is a couple of seconds, and the slowest observed
 // start is well under ten. Thirty seconds therefore no longer describes a slow machine —
@@ -139,7 +162,7 @@ export class ManagementChatService implements OnModuleDestroy {
     // know and `managementCwd` then falls back to `homedir()`. The assistant's subject is
     // the management surface, not the source, so there is nothing to refuse here.
     const repos = managementRepos(this.registry.listProjects(), input.workspaceProjects);
-    const key = input.conversationId;
+    const key = childKey(input.conversationId, input.context?.section);
     const run = (): Promise<ManagementChatReply> => this.turn(key, repos, input, startedAt);
     // `then(run, run)` and not `finally`: a rejected predecessor must not cancel the ask
     // behind it, and the queue must not stay poisoned by one failed turn.
@@ -159,26 +182,34 @@ export class ManagementChatService implements OnModuleDestroy {
   // the one the operator just discarded.
   async reset(conversationId: string): Promise<{ ok: true }> {
     this.sweep();
-    const live = this.map.get(conversationId);
-    this.map.delete(conversationId);
-    this.tail.delete(conversationId);
+    // BOTH children, because the conversation the operator is discarding is spread across
+    // them: documentation runs on its own child under the `#docs` key. Sparing it would
+    // answer the next question in the light of what was just thrown away, invisibly.
+    await this.resetOne(conversationId);
+    await this.resetOne(`${conversationId}${DOCS_KEY_SUFFIX}`);
+    return { ok: true };
+  }
+
+  private async resetOne(key: string): Promise<void> {
+    const live = this.map.get(key);
+    this.map.delete(key);
+    this.tail.delete(key);
     // The ledger of names goes with the bytes: «новий чат» that still listed last
     // conversation's files would let the assistant name a file the operator can no longer
     // see, and the browser — whose own ledger reset with the transcript — would refuse it.
-    this.files.delete(conversationId);
+    this.files.delete(key);
     // The conversation's document attachments die with it, live child or not: a file can
     // outlive a crashed child, and «новий чат» must not leave last chat's documents
     // behind. AWAITED, unlike drop()'s: reset is the one path a new ask on the same
     // conversation can legally follow at once, and its first attachment must not race a
     // removal still in flight.
-    await rm(this.attachDir(conversationId), { recursive: true, force: true }).catch(() => {});
-    if (!live) return { ok: true };
+    await rm(this.attachDir(key), { recursive: true, force: true }).catch(() => {});
+    if (!live) return;
     // An in-flight turn is told why it will never finish. Stopping the child first would
     // surface as `onExit` on a callback we are about to clear, i.e. as a hang.
     live.turn?.fail("розмову скинуто");
     live.turn = undefined;
     await live.rpc.stop().catch(() => {});
-    return { ok: true };
   }
 
   onModuleDestroy(): void {
@@ -194,7 +225,7 @@ export class ManagementChatService implements OnModuleDestroy {
     input: ManagementChatAsk,
     startedAt: number,
   ): Promise<ManagementChatReply> {
-    const live = await this.child(key, repos);
+    const live = await this.child(key, repos, input.context?.section === DOCS_SECTION ? DOCS_MODEL : undefined);
     const first = !live.greeted;
     // Хелпери are expanded HERE rather than inside buildManagementTurn: that function wraps
     // the operator's text in the contract and the context markers, so by the time the child
@@ -251,7 +282,7 @@ export class ManagementChatService implements OnModuleDestroy {
   // previous one died between turns. A dead child must never be written to: the write to
   // its closed stdin is swallowed (rpc-session.ts:181-186), so the message would vanish
   // and the turn would hang until TURN_TIMEOUT_MS for no reason at all.
-  private async child(key: string, repos: ManagementRepo[]): Promise<Live> {
+  private async child(key: string, repos: ManagementRepo[], model?: string): Promise<Live> {
     const cur = this.map.get(key);
     if (cur?.rpc.isAlive()) {
       cur.lastAt = Date.now();
@@ -263,7 +294,12 @@ export class ManagementChatService implements OnModuleDestroy {
     }
     const cwd = managementCwd(repos);
     const append = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
-    const rpc = createRuntime(this.runtimeFor(), { cwd, tools: [...MANAGEMENT_TOOLS], ...(append ? { appendSystemPrompt: append } : {}) });
+    const rpc = createRuntime(this.runtimeFor(), {
+      cwd,
+      tools: [...MANAGEMENT_TOOLS],
+      ...(model ? { model } : {}),
+      ...(append ? { appendSystemPrompt: append } : {}),
+    });
     const live: Live = { rpc, greeted: false, lastAt: Date.now() };
     rpc.onEvent((e) => live.turn?.on(e));
     rpc.onExit((_code, reason) => live.turn?.fail(reason));

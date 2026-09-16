@@ -9,7 +9,7 @@ import { join } from "node:path";
 // The same seam supervisor.chat.spec.ts uses: swap the transport, keep the service. Here it
 // also plays a scripted turn back at the service, because what this service IS is the loop
 // that turns an omp event burst into one reply.
-type SpawnOpts = { cwd: string; tools?: string[] };
+type SpawnOpts = { cwd: string; tools?: string[]; model?: string };
 const spawned: SpawnOpts[] = [];
 const sent: { kind: "prompt" | "followUp"; text: string; images?: ImageInput[] }[] = [];
 const answered: RpcExtensionUIResponse[] = [];
@@ -71,6 +71,14 @@ function ask(text: string): ManagementChatAsk {
     text,
     context: { workspaceName: "Acme", section: "management-risks", risks: [], members: [] },
   };
+}
+
+// The documentation section. Its turns answer from passages the browser retrieved before the
+// turn and are forbidden to go looking for more, so they run on their own child — a faster
+// model is worth it where there is nothing to reason out, and worth nothing where there is.
+function docsAsk(text: string): ManagementChatAsk {
+  const base = ask(text);
+  return { ...base, context: { ...base.context, section: "management-docs" } };
 }
 
 // One assistant answer, closed the way omp closes it: streamed text, a message_end carrying
@@ -294,5 +302,47 @@ describe("ManagementChatService", () => {
     expect(last).not.toContain("«shot-0-9.png»");
     expect(last.match(/^- «shot-/gm)).toHaveLength(20);
     await svc.reset("management:w-many");
+  });
+});
+
+// Documentation turns run on a child of their own, spawned on a faster model. The split is
+// by section, inside one conversation id: the browser knows nothing about it, and the
+// operator sees one chat.
+describe("ManagementChatService — the documentation child", () => {
+  it("spawns a second child for documentation, on the faster model", async () => {
+    const svc = make();
+    turns = [reply("про ризики"), reply("з документації")];
+    await svc.ask(ask("які ризики"));
+    await svc.ask(docsAsk("як працює дошка"));
+    expect(spawned).toHaveLength(2);
+    expect(spawned[0]?.model).toBeUndefined();
+    expect(spawned[1]?.model).toBe("claude-sonnet-5");
+  });
+
+  it("keeps a run of documentation turns in the one child", async () => {
+    const svc = make();
+    turns = [reply("раз"), reply("два")];
+    await svc.ask(docsAsk("перше"));
+    await svc.ask(docsAsk("друге"));
+    expect(spawned).toHaveLength(1);
+    expect(sent.map((x) => x.kind)).toEqual(["prompt", "followUp"]);
+  });
+
+  // «Новий чат» that spared the documentation child would answer the next question in the
+  // light of the conversation the operator just threw away — and they would never see why.
+  it("resets both children", async () => {
+    const svc = make();
+    turns = [reply("про ризики"), reply("з документації"), reply("знову ризики"), reply("знову документація")];
+    await svc.ask(ask("які ризики"));
+    await svc.ask(docsAsk("як працює дошка"));
+    expect(spawned).toHaveLength(2);
+    await svc.reset("management:w1");
+    expect(stopped).toBe(2);
+    await svc.ask(ask("які ризики"));
+    await svc.ask(docsAsk("як працює дошка"));
+    expect(spawned).toHaveLength(4);
+    // Both start over: the contract rides the first message of each new child.
+    expect(sent[2]?.text).toContain("ПРОТОКОЛ ДІЙ");
+    expect(sent[3]?.text).toContain("ПРОТОКОЛ ДІЙ");
   });
 });
