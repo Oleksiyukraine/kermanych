@@ -205,3 +205,113 @@ describe("ManagementController — home context", () => {
     expect("home" in seen!.context).toBe(false);
   });
 });
+
+// The retrieved documentation block is the whole point of the RAG feature: the browser
+// embeds the question, searches, and sends the passages so the assistant answers from them
+// instead of grepping. It travels in `context` like capacity and home — and a context field
+// the controller forgets to rebuild is silently dropped, which looks exactly like a feature
+// that "answers slowly" rather than one that never received its fragments.
+describe("ManagementController — documentation context", () => {
+  const fragment = {
+    folder: "docs",
+    path: "board.md",
+    headingPath: "# Дошка › ## Колонки",
+    startLine: 12,
+    endLine: 30,
+    content: "Колонки дошки налаштовуються у воркспейсі.",
+  };
+
+  it("hands the retrieved documentation fragments to the service", async () => {
+    let seen: ManagementChatAsk | undefined;
+    const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
+    await ctl.ask(
+      chatAsk({
+        context: {
+          workspaceName: "A",
+          section: "management-docs",
+          risks: [],
+          members: [],
+          docs: { status: "ok", projectName: "kermanych", fragments: [fragment] },
+        } as unknown as ManagementChatAsk["context"],
+      }),
+    );
+    const d = seen!.context.docs!;
+    expect(d.status).toBe("ok");
+    expect(d.projectName).toBe("kermanych");
+    expect(d.fragments).toEqual([fragment]);
+  });
+
+  it("keeps the not-indexed status, which the prompt turns into «індексу ще немає»", async () => {
+    let seen: ManagementChatAsk | undefined;
+    const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
+    await ctl.ask(
+      chatAsk({
+        context: {
+          workspaceName: "A",
+          section: "management-docs",
+          risks: [],
+          members: [],
+          docs: { status: "not-indexed", projectName: "kermanych", fragments: [] },
+        } as unknown as ManagementChatAsk["context"],
+      }),
+    );
+    expect(seen!.context.docs).toEqual({ status: "not-indexed", projectName: "kermanych", fragments: [] });
+  });
+
+  it("drops a malformed block rather than printing half a fragment as fact", async () => {
+    let seen: ManagementChatAsk | undefined;
+    const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
+    await ctl.ask(
+      chatAsk({
+        context: {
+          workspaceName: "A",
+          section: "management-docs",
+          risks: [],
+          members: [],
+          docs: { status: "нізвідки", projectName: "kermanych", fragments: [fragment] },
+        } as unknown as ManagementChatAsk["context"],
+      }),
+    );
+    expect("docs" in seen!.context).toBe(false);
+  });
+
+  it("caps how many fragments a client can put into the prompt", async () => {
+    let seen: ManagementChatAsk | undefined;
+    const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
+    await ctl.ask(
+      chatAsk({
+        context: {
+          workspaceName: "A",
+          section: "management-docs",
+          risks: [],
+          members: [],
+          docs: { status: "ok", projectName: "kermanych", fragments: Array.from({ length: 80 }, () => fragment) },
+        } as unknown as ManagementChatAsk["context"],
+      }),
+    );
+    expect(seen!.context.docs!.fragments).toHaveLength(24);
+  });
+
+  it("drops fragments that are not whole, keeping the ones that are", async () => {
+    let seen: ManagementChatAsk | undefined;
+    const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
+    await ctl.ask(
+      chatAsk({
+        context: {
+          workspaceName: "A",
+          section: "management-docs",
+          risks: [],
+          members: [],
+          docs: {
+            status: "fulltext",
+            projectName: "kermanych",
+            fragments: [fragment, { folder: "docs", path: "", headingPath: "x", startLine: 1, endLine: 2, content: "y" }, { path: 7 }],
+          },
+        } as unknown as ManagementChatAsk["context"],
+      }),
+    );
+    const d = seen!.context.docs!;
+    expect(d.status).toBe("fulltext");
+    expect(d.fragments).toEqual([fragment]);
+  });
+});

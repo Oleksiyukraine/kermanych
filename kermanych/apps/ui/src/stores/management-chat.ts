@@ -44,6 +44,7 @@ import type {
   ManagementJiraBoard,
   ManagementJiraTicketCreate,
   ManagementMember,
+  ManagementDocs,
   ManagementReleaseNotes,
   ManagementAttachment,
   ManagementRiskRow,
@@ -70,6 +71,9 @@ import { useOrchestrator } from './orchestrator';
 import { useProjects } from './projects';
 import { useReleaseNotes } from './release-notes';
 import { useRisks } from './risks';
+import { useProjectDocs } from './project-docs';
+import { useAuth } from './auth';
+import { getDocIndexState, searchProjectDocs } from '@kermanych/cloud';
 
 // One line of the conversation. `result` is neither the user's words nor the model's: it is
 // what the APP did (or refused to do) about them, which is why it is a third kind with its
@@ -125,6 +129,12 @@ export const useManagementChat = defineStore('management-chat', () => {
   // The Action List tile's list — the same reactive copy HomeTodoWidget renders, so a change
   // the assistant makes is on the dashboard before its notice prints.
   const homeTodo = useHomeTodo();
+  // The Проєктна документація screen's selection: which project a docs question is about,
+  // and the openFile() a citation click routes through.
+  const docsStore = useProjectDocs();
+  // The browser Supabase client for documentation retrieval (index state + the docs-rag
+  // Edge Function). Retrieval runs under the operator's own JWT, so RLS scopes it.
+  const auth = useAuth();
 
   // Keyed by workspace id, because the conversation id is `management:<workspaceId>`: picking
   // another workspace in the sidebar switches the conversation the api talks to, so it has to
@@ -325,6 +335,28 @@ export const useManagementChat = defineStore('management-chat', () => {
         }),
       );
     } catch {
+      return undefined;
+    }
+  }
+
+  // The documentation retrieval block for a turn, or undefined when it does not apply. Only
+  // the Проєктна документація section with a project selected retrieves; every other section
+  // omits the block entirely. When a project has no index the block is "not-indexed" (the
+  // prompt then makes the assistant say so plainly instead of grepping); otherwise one Edge
+  // Function call embeds the question and searches, degrading to full-text if Voyage is down.
+  async function docsDigest(section: string, query: string): Promise<ManagementDocs | undefined> {
+    if (section !== 'management-docs') return undefined;
+    const projectId = docsStore.activeProjectId;
+    if (!projectId) return undefined;
+    const projectName = projects.projects.find((p) => p.id === projectId)?.name ?? '';
+    try {
+      const state = await getDocIndexState(auth.client, projectId);
+      if (state.fileCount === 0) return { status: 'not-indexed', projectName, fragments: [] };
+      const res = await searchProjectDocs(auth.client, { projectId, query });
+      return { status: res.status, projectName, fragments: res.fragments };
+    } catch {
+      // Retrieval unreachable this turn (network). Omit the block rather than block the
+      // question; the model answers from the rest of the context.
       return undefined;
     }
   }
@@ -776,6 +808,13 @@ export const useManagementChat = defineStore('management-chat', () => {
       if (jira.integration === undefined) await jira.probe(workspaceId);
       const jiraBoard = await jiraDigest(workspaceId);
       const capacity = await capacityDigestFor(workspaceId);
+      // Documentation retrieval, ONLY in the Проєктна документація section and only once a
+      // project is selected: embed the question and search, in one Edge Function round trip,
+      // so the model is handed passages instead of the tools to go grep for them. Retrieval
+      // happens BEFORE the turn on purpose — that is what removes the agent loop. A total
+      // failure (network) leaves `docs` undefined and the turn answers without the block; the
+      // Voyage-down case does NOT throw — the function returns status "fulltext".
+      const docs = await docsDigest(section, body);
       const ask: ManagementChatAsk = {
         conversationId: conversationId(workspaceId),
         workspaceId,
@@ -789,6 +828,7 @@ export const useManagementChat = defineStore('management-chat', () => {
           ...(jiraBoard ? { jira: jiraBoard } : {}),
           ...(capacity ? { capacity } : {}),
           home: await homeDigestFor(workspaceId),
+          ...(docs ? { docs } : {}),
         },
         // The model is told to answer in the operator's active locale (api rule ґ); the
         // prompt body stays Ukrainian.

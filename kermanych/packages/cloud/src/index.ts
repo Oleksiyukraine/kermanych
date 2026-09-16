@@ -80,6 +80,18 @@ export {
   deleteProject,
 } from "./projects";
 
+export type {
+  DocIndexFile,
+  DocIndexState,
+  DocSearchStatus,
+  DocSearchResult,
+  DocIndexUpsert,
+  DocIndexDelete,
+  DocIndexRequest,
+  DocIndexResult,
+} from "./doc-rag";
+export { getDocIndexState, searchProjectDocs, indexProjectDocs } from "./doc-rag";
+
 export type { CloudWorkspacePatch, CloudWorkspaceInsert } from "./workspaces";
 export {
   toWorkspace,

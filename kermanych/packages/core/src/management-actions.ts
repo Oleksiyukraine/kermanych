@@ -468,6 +468,35 @@ export type ManagementHome = {
   releases: ManagementHomeRelease[];
 };
 
+// ── Documentation retrieval (RAG) ───────────────────────────────────────────────
+// One retrieved documentation fragment: a chunk of a published doc folder, with the
+// heading chain and line span that let the citation open the file at the right place
+// through useProjectDocs.openFile(). Retrieval happens in the browser BEFORE the turn (a
+// single Edge Function round trip that embeds the question and searches), so the agent is
+// handed the passages instead of tools to go find them — the agent loop is what the RAG
+// feature removes.
+export type ManagementDocFragment = {
+  folder: string;
+  path: string;
+  headingPath: string;
+  startLine: number;
+  endLine: number;
+  content: string;
+};
+
+// The documentation retrieval result for one turn, spread into the context like capacity
+// and home. `status` tells the prompt how to answer:
+//   • "ok"          — hybrid (vector + full-text) search ran; answer from `fragments`.
+//   • "fulltext"    — Voyage was unreachable, so search degraded to full-text only; the
+//                     answer must say retrieval was degraded.
+//   • "not-indexed" — the project has no index; the assistant must say so plainly and must
+//                     NOT fall back to grepping the repository.
+export type ManagementDocs = {
+  status: "ok" | "fulltext" | "not-indexed";
+  projectName: string;
+  fragments: ManagementDocFragment[];
+};
+
 export type ManagementContext = {
   workspaceName: string;
   // Deliberately NO project name. Nothing on this surface states a «current project» any
@@ -501,6 +530,12 @@ export type ManagementContext = {
   // List between turns, and tiles move. Optional: an old client that omits it keeps the
   // previous behaviour, and the prompt says the overview is unavailable.
   home?: ManagementHome;
+  // Retrieved documentation fragments for THIS turn, present only in the Проєктна
+  // документація section once a project is selected. Retrieval is a browser-side Edge
+  // Function round trip that happens before the ask is built, so the fragments (or the
+  // "not-indexed"/"fulltext" status) reach the model as context rather than as tools it
+  // would grep with. Optional: every other section, and an old client, omits it.
+  docs?: ManagementDocs;
 };
 
 export type ManagementChatAsk = {

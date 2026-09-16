@@ -111,7 +111,7 @@
                 @click="chat.reset()"
               >×</button>
             </header>
-            <div v-show="!collapsed" ref="logEl" class="mgmt__log-body">
+            <div v-show="!collapsed" ref="logEl" class="mgmt__log-body" @click="onLogClick">
               <template v-for="e in chat.entries" :key="e.id">
                 <KChatMessage v-if="e.kind === 'user'" role="user">
                   <template v-if="e.text">{{ e.text }}</template>
@@ -250,6 +250,7 @@ import { MANAGEMENT_SECTIONS, prependHelper } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useManagementChat } from 'stores/management-chat';
+import { useProjectDocs } from 'stores/project-docs';
 // The rail's row component, shared with the shell's bucket rail — it is what renders the
 // `hint` second line. KSubNav is gone from this page with the horizontal strip it drove.
 import KNavItem from 'components/kit/KNavItem.vue';
@@ -314,6 +315,25 @@ const chat = useManagementChat();
 const draft = ref('');
 const fieldEl = ref<HTMLTextAreaElement | null>(null);
 const logEl = ref<HTMLElement | null>(null);
+
+// Documentation citations. The assistant cites each used fragment as a markdown link
+// [шлях › heading](kdoc:folder|path|line); a click opens that file in the docs preview,
+// switching to the Проєктна документація section first if the operator wandered off. The
+// project is the one the docs screen has selected, which is also the one retrieval scoped to.
+const docs = useProjectDocs();
+function onLogClick(ev: MouseEvent): void {
+  if (!(ev.target instanceof HTMLElement)) return;
+  const anchor = ev.target.closest('a');
+  if (!anchor) return;
+  const href = anchor.getAttribute('href') ?? '';
+  if (!href.startsWith('kdoc:')) return;
+  ev.preventDefault();
+  const [folder, path] = decodeURIComponent(href.slice('kdoc:'.length)).split('|');
+  const projectId = docs.activeProjectId;
+  if (!folder || !path || !projectId) return;
+  if (route.name !== 'management-docs') void router.push({ name: 'management-docs' });
+  void docs.openFile(projectId, folder, path);
+}
 
 // Folds the transcript to its header bar and back. Purely a VIEW state held on the
 // component — the conversation and any turn in flight live in the store, so folding the

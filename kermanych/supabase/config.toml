@@ -402,6 +402,15 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# docs-rag — documentation RAG (embed + hybrid search + index write). The FIRST Edge
+# Function in this repo. verify_jwt = true so the platform rejects anonymous calls before
+# the function runs; the function then re-uses the caller's JWT for every table access and
+# the search RPC, so RLS — not the service role — enforces workspace isolation. Secrets
+# (VOYAGE_API_KEY) come from supabase/functions/.env locally, never `supabase secrets set`.
+[functions.docs-rag]
+enabled = true
+verify_jwt = true
+
 [analytics]
 enabled = true
 port = 54427

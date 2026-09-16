@@ -563,6 +563,14 @@ export const api = {
   projectDocsRaw: (id: string, folder: string, path: string): Promise<Blob> =>
     getBlob(`/projects/${id}/docs/raw?folder=${encodeURIComponent(folder)}&path=${encodeURIComponent(path)}`),
 
+  // Manual "reindex everything" for the Проєктна документація tab. The api walks the bound
+  // checkout's published doc folders, chunks changed files and hands them to the docs-rag
+  // Edge Function to embed and write; blocks until done so the tab can refresh its state.
+  reindexDocs: (
+    id: string,
+  ): Promise<{ indexedFiles: number; deletedFiles: number; unchangedFiles: number; chunkCount: number; embeddingModel: string }> =>
+    post(`/projects/${id}/docs/reindex`, {}),
+
   finish: (id: string): Promise<{ finished: boolean; branch: string }> =>
     post(`/sessions/${id}/finish`, {}),
 
