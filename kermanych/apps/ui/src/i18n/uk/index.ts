@@ -220,6 +220,23 @@ export const uk = {
       archive: 'Відкласти',
       delete: 'Видалити агента',
       unarchive: 'Повернути в активні',
+      agentMap: 'Карта агентів',
+    },
+    map: {
+      title: 'Карта агентів',
+      close: 'Закрити',
+      back: 'Назад',
+      empty: 'Ця сесія ще не запускала підагентів.',
+      transcriptEmpty: 'Транскрипт підагента порожній або недоступний.',
+      tokens: '{n} ток',
+      status: {
+        running: 'виконується',
+        idle: 'очікує',
+        parked: 'призупинено',
+        aborted: 'перервано',
+        done: 'завершено',
+        error: 'помилка',
+      },
     },
     changes: {
       historyEyebrow: 'ІСТОРІЯ',

@@ -158,6 +158,11 @@
             <!-- Primary session actions — one column that outlives the tab choice, so preview,
                  finish and defer are on screen in Лог, Зміни and Сесія alike. -->
             <div class="agents__actions">
+              <KIconButton
+                v-if="(store.subagents[selectedSession.id]?.length ?? 0) > 0"
+                :title="t('agents.actions.agentMap')"
+                @click="openAgentMap()"
+              >◈</KIconButton>
               <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
                 <KIconButton
                   v-if="selectedSession.status !== 'merged'"
@@ -789,6 +794,39 @@
         >{{ t('agents.finish.action') }}</KBtn>
       </template>
     </KModal>
+
+    <!-- AGENT MAP — the subagents this session spawned; drill into one's transcript -->
+    <KModal v-model="mapOpen" :title="t('agents.map.title')" width="760px">
+      <div v-if="mapDetailId" class="agents__map">
+        <button type="button" class="agents__map-back mono" @click="mapDetailId = undefined">← {{ t('agents.map.back') }}</button>
+        <template v-if="mapDetailEntries.length">
+          <KLogBlock
+            v-for="(entry, i) in mapDetailEntries"
+            :key="i"
+            :entry="entry"
+            :session-id="store.selectedSessionId ?? ''"
+            :expand-all="EXPAND_ALL_NONE"
+          />
+        </template>
+        <div v-else class="agents__map-empty mono">{{ t('agents.map.transcriptEmpty') }}</div>
+      </div>
+      <ul v-else class="agents__map-list">
+        <li v-if="!mapList.length" class="agents__map-empty mono">{{ t('agents.map.empty') }}</li>
+        <li
+          v-for="s in mapList"
+          :key="s.id"
+          class="agents__map-row"
+          :class="{ 'agents__map-row--nested': !!s.parentId }"
+          @click="openSubagent(s)"
+        >
+          <span class="agents__map-name">{{ s.description || s.id }}</span>
+          <span class="agents__map-meta mono">{{ mapMeta(s) }}</span>
+        </li>
+      </ul>
+      <template #controls>
+        <KBtn variant="ghost" @click="mapOpen = false">{{ t('agents.map.close') }}</KBtn>
+      </template>
+    </KModal>
   </main>
 </template>
 
@@ -807,6 +845,7 @@ import {
   type Session,
   type SessionStatus,
   type TranscriptEntry,
+  type SubagentNode,
   type ThinkingLevel,
   type RpcExtensionUIResponse,
 } from '@kermanych/core';
@@ -826,6 +865,7 @@ import { planBacklogPublication } from '../lib/publish-backlog';
 import { byNewestSession, byNewestTask, filterSessions, filterTaskCards, newestActivityAt, newestUpdateAt } from '../lib/agents-board';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
+import KLogBlock from 'components/kit/KLogBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KTag from 'components/kit/KTag.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
@@ -854,6 +894,66 @@ import { useVirtualList } from '../composables/useVirtualList';
 // selected session and the new-agent launcher. All mutations go through the Pinia store.
 const store = useOrchestrator();
 const { t } = useI18n();
+
+// ── Agent map (the subagents this session spawned) ────────────────────────
+const mapOpen = ref(false);
+const mapDetailId = ref<string | undefined>(undefined);
+const mapDetailEntries = ref<TranscriptEntry[]>([]);
+const mapList = computed<SubagentNode[]>(() => store.subagents[store.selectedSessionId ?? ''] ?? []);
+
+const MAP_STATUS_KEY: Record<string, string> = {
+  running: 'agents.map.status.running',
+  idle: 'agents.map.status.idle',
+  parked: 'agents.map.status.parked',
+  aborted: 'agents.map.status.aborted',
+  done: 'agents.map.status.done',
+  error: 'agents.map.status.error',
+};
+
+// ms as a compact wall-clock: `42s`, `21m 35s`, `1h 04m` — the figure the map row shows.
+function fmtDuration(ms: number): string {
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  if (m < 60) return `${m}m ${String(s).padStart(2, '0')}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+}
+
+// The `·`-joined subtitle: status · agent · model · duration · tokens, each dropped when the
+// node has not learned it yet (a running subagent has a status long before a token count).
+function mapMeta(s: SubagentNode): string {
+  const parts: string[] = [];
+  if (s.status) {
+    const key = MAP_STATUS_KEY[s.status];
+    parts.push(key ? t(key) : s.status);
+  }
+  if (s.agent) parts.push(s.agent);
+  if (s.model) parts.push(s.model);
+  if (typeof s.durationMs === 'number') parts.push(fmtDuration(s.durationMs));
+  if (typeof s.tokens === 'number') parts.push(t('agents.map.tokens', { n: tokens(s.tokens) }));
+  return parts.join(' · ');
+}
+
+function openAgentMap(): void {
+  mapDetailId.value = undefined;
+  mapDetailEntries.value = [];
+  mapOpen.value = true;
+  const id = store.selectedSessionId;
+  if (id) void store.loadSubagents(id);
+}
+
+async function openSubagent(s: SubagentNode): Promise<void> {
+  const id = store.selectedSessionId;
+  if (!id) return;
+  mapDetailId.value = s.id;
+  mapDetailEntries.value = [];
+  try {
+    mapDetailEntries.value = await api.getSubagentTranscript(id, s.id);
+  } catch {
+    mapDetailEntries.value = [];
+  }
+}
 // Two things come from here: previewCommand/apiCommand are CLOUD config that any workspace
 // member may edit, so that write goes to Supabase and mirrors itself into the local row —
 // a local-only edit would not survive the next sync — and the cloud project list, which is
@@ -3506,5 +3606,51 @@ async function submitPreviewConfig(): Promise<void> {
 // into a shortcut nobody could read on the accent fill.
 .agents-launcher__kbd {
   margin-left: var(--k-sp-2);
+}
+.agents__map {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.agents__map-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.agents__map-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.agents__map-row:hover {
+  background: rgba(127, 127, 127, 0.1);
+}
+.agents__map-row--nested {
+  margin-left: 18px;
+}
+.agents__map-meta {
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
+}
+.agents__map-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--k-muted);
+}
+.agents__map-back {
+  display: block;
+  background: none;
+  border: none;
+  color: var(--k-muted);
+  cursor: pointer;
+  padding: 4px 0 10px;
+  font-size: var(--k-fs-xs);
 }
 </style>

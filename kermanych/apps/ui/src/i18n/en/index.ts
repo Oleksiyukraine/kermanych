@@ -216,6 +216,23 @@ export const en: MessageSchema = {
       archive: 'Defer',
       delete: 'Delete the agent',
       unarchive: 'Return to active',
+      agentMap: 'Agent map',
+    },
+    map: {
+      title: 'Agent map',
+      close: 'Close',
+      back: 'Back',
+      empty: 'This session has not spawned any subagents yet.',
+      transcriptEmpty: 'The subagent transcript is empty or unavailable.',
+      tokens: '{n} tok',
+      status: {
+        running: 'running',
+        idle: 'idle',
+        parked: 'parked',
+        aborted: 'aborted',
+        done: 'done',
+        error: 'error',
+      },
     },
     changes: {
       historyEyebrow: 'HISTORY',

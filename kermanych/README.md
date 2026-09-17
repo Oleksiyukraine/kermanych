@@ -45,8 +45,9 @@ created with, and resuming or branching a session never switches its backend.
 
 Not every feature is available on both. TTSR triggers, the skill-overlay
 config, subscription-plan spend, and the plan/todo chip are `omp`-only; on the
-`claude-code` backend, skills reach the agent inline through the prompt. Per-
-session token spend is tracked on both.
+`claude-code` backend, skills reach the agent inline through the prompt. The
+agent map (the subagents a session spawned, opened with ◈ on a session) works on
+both backends. Per-session token spend is tracked on both.
 
 ## The shared board (cloud)
 
