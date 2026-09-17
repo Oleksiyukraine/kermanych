@@ -1080,6 +1080,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           break;
         }
       }
+      // Once the URL surfaces, remember it durably on the row. The `in_review` status a later
+      // follow-up turn overwrites is transient; the FACT that a PR exists must outlive it, so
+      // the finish sheet keeps offering «Закоміти» and every later turn settles back on review.
+      if (l.prOpened === true) {
+        l.live.prOpened = true;
+        this.registry.updateSession(id, { prOpened: true });
+      }
     }
     // Task artifacts an agent attaches to its card via the shared kermanych-action mechanism —
     // a QA checklist from a «Створити ПР» run, a documentation report from the librarian skill.
@@ -1114,10 +1121,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // the reducer sees only the event stream, and «why this turn was started» is Kermanych's
       // own knowledge. Both the live entry and the row are set, or `merge()` would keep
       // shadowing the row with `done`.
-      // Two ways a turn settles on review instead of `done`: a «Створити ПР» flow whose PR URL
-      // has now surfaced (opened), or a «Закоміти» flow landing more work onto an already-open
-      // PR (reviewPending), which has no URL to confirm. Either arms the same verdict.
-      const review = (l.prRequested === true && l.prOpened === true) || l.reviewPending === true;
+      // A turn settles on review instead of `done` whenever this branch already has a pull
+      // request — the durable `prOpened` row flag set the moment the URL surfaced, which the
+      // scan above has just persisted for a PR-opening turn — or a «Закоміти» flow is landing
+      // more work onto that PR (reviewPending). Reading the durable flag (not the transient
+      // live one, cleared on the previous settle) is what keeps EVERY follow-up turn on review
+      // rather than dropping the card to `done` after the first PR turn.
+      const hasPr = this.registry.listSessions().find((x) => x.id === id)?.prOpened === true;
+      const review = hasPr || l.reviewPending === true;
       const settled: Session["status"] = review ? "in_review" : "done";
       if (review) {
         l.prRequested = false;

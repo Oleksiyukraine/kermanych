@@ -142,7 +142,7 @@ describe("createPullRequest", () => {
     expect(sup.snapshot().sessions.find((x) => x.id === s.id)!.status).toBe("in_review");
   });
 
-  it("leaves an ordinary turn on done, and consumes the request once the PR is open", async () => {
+  it("leaves an unrequested turn on done, but keeps every turn on review once the PR is open", async () => {
     const { sup, registry } = make();
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
@@ -159,10 +159,13 @@ describe("createPullRequest", () => {
     for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
     expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("in_review");
 
-    // The request is consumed by the turn that opened the PR: a later edit falls back to done.
+    // Once the PR exists the fact is durable: a later edit the operator asks for keeps the card
+    // on review (its finish action stays «Закоміти»), never demoting it back to done.
     await sup.sendMessage(s.id, "і ще одну", "prompt");
     for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
-    expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("done");
+    expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("in_review");
+    // …and the durable flag is what carries it, independent of the transient status.
+    expect(registry.listSessions().find((x) => x.id === s.id)!.prOpened).toBe(true);
   });
 
   it("keeps a resumed in_review session on review instead of demoting it to done", async () => {
