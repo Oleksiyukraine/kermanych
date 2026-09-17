@@ -6,7 +6,7 @@
     <!-- Anchored to the composer's own box, not to the form: the panel has to sit above the
          whole control, attachment strip included. It prevents Enter itself, so mounting it
          inside a form is safe too — ManagementPage does exactly that. -->
-    <KHelperPicker :open="pickerOpen" @select="onHelper" @close="closePicker" />
+    <KHelperPicker :open="pickerOpen" :commands="DEFAULT_COMMANDS" @select="onHelper" @close="closePicker" />
     <KAttachStrip
       v-if="attachImages.length"
       class="k-composer__attach"
@@ -108,7 +108,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { prependHelper, type ImageInput, type ModelOption, type ThinkingLevel, type Usage } from '@kermanych/core';
+import { DEFAULT_COMMANDS, prependCommand, prependHelper, type ImageInput, type ModelOption, type ThinkingLevel, type Usage } from '@kermanych/core';
 import KAttachStrip from './KAttachStrip.vue';
 import KChipSelect from './KChipSelect.vue';
 import KModelMark from './KModelMark.vue';
@@ -212,8 +212,15 @@ function closePicker(): void {
   pickerOpen.value = false;
   fieldEl.value?.focus();
 }
+// A pick from the panel prepends its token. A command (`/compact`) and a helper (`/el10`) both
+// land at the front of the draft, but each has its own no-double-prepend guard, so route by
+// which list the name belongs to.
+const commandNames = new Set(DEFAULT_COMMANDS.map((c) => c.name));
 function onHelper(name: string): void {
-  emit('update:modelValue', prependHelper(props.modelValue, name));
+  const next = commandNames.has(name)
+    ? prependCommand(props.modelValue, name)
+    : prependHelper(props.modelValue, name);
+  emit('update:modelValue', next);
 }
 
 // Enter sends; Shift+Enter inserts a newline. Enter mid-IME-composition is

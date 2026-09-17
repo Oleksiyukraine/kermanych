@@ -146,6 +146,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // No dedicated live effort setter; approximate via thinking-token budget (coarse; see spec).
     await this.q?.setMaxThinkingTokens?.(effort ? null : 0);
   }
+  // claude-code has no RPC compaction control method; its `/compact` is a slash command read
+  // from the prompt stream. Push it as a user message and let the CLI compact its own history.
+  // Fire-and-forget like the other prompt paths — the input queue is one-way — so this resolves
+  // as soon as the message is enqueued.
+  async compact(customInstructions?: string): Promise<void> {
+    const trimmed = customInstructions?.trim();
+    this.input.push(userMessage(trimmed ? `/compact ${trimmed}` : "/compact"));
+  }
   // Rehydrate: read claude's own persisted transcript for this session and convert it to the
   // omp `OmpMessage[]` seam so a resumed/forked session re-renders through the same reducers
   // the live stream uses. No session id yet (never started, or start failed before init) →

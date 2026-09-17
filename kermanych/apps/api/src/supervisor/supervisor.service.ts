@@ -27,6 +27,8 @@ import {
   renderInstruction,
   expandHelpers,
   helperNotice,
+  parseCommand,
+  type ParsedCommand,
   INITIAL_STATUS,
   isAgentRuntime,
   reduceStatus,
@@ -1251,6 +1253,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       /* never let a bookkeeping write break message delivery */
     }
     const s = this.registry.listSessions().find((x) => x.id === id);
+    // A harness command (operator-only) drives an RPC action instead of the model. It is
+    // intercepted BEFORE the task-name capture and the trigger/helper passes: `/compact` is not
+    // the ask, so it must neither name a fresh chat nor match an operator trigger. The typed
+    // command line stays in the transcript, the way a helper's slash does.
+    if (fromOperator) {
+      const cmd = parseCommand(text);
+      if (cmd) {
+        this.appendEntry(id, this.userEntry(text));
+        await this.runCommand(id, l.rpc, cmd);
+        return;
+      }
+    }
     // A chat's opening message IS the ask. Record it once, so promoting the chat can name the
     // agent and its branch after the thing being built, and so review/PR prompts have a task.
     if (text.trim() && s?.kind === "chat" && !s.task.trim()) this.registry.updateSession(id, { task: text.trim() });
@@ -1274,6 +1288,30 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (mode === "steer") l.rpc.steer(body, images);
     else if (mode === "follow_up") l.rpc.followUp(body, images);
     else l.rpc.prompt(body, images);
+  }
+
+  // Dispatch an operator's harness command against the live child and report the outcome as a
+  // transcript notice. `/compact` is the only command today; the switch is where the next one's
+  // action lands. Never throws: a failed compaction is a notice, not a broken message send.
+  private async runCommand(id: string, rpc: AgentRuntime, cmd: ParsedCommand) {
+    if (cmd.name === "compact") {
+      try {
+        await rpc.compact(cmd.args || undefined);
+        this.appendEntry(id, this.noticeEntry({ text: "контекст ущільнено", code: "context_compacted" }));
+      } catch (err) {
+        const reason = (err as Error).message;
+        this.appendEntry(
+          id,
+          this.noticeEntry(
+            { text: `не вдалося ущільнити контекст: ${reason}`, code: "context_compact_failed", params: { reason } },
+            "error",
+          ),
+        );
+      }
+      // The composer's context chip reads from get_state; refresh it (and push to the UI) so the
+      // freed budget shows without waiting for the next poll.
+      await this.refreshState(id);
+    }
   }
 
   // The first enabled `operator` trigger whose pattern matches, with a `prompt` action's body

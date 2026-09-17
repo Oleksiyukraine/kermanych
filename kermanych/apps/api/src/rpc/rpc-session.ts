@@ -125,13 +125,13 @@ export class RpcSession implements AgentRuntime {
     this.eventCbs.forEach((cb) => cb({ type: "notice", level: "warn", message: "втрачено кадр від omp" }));
   }
 
-  private command(type: string, extra: Record<string, unknown> = {}): Promise<RpcResponseFrame> {
+  private command(type: string, extra: Record<string, unknown> = {}, timeoutMs?: number): Promise<RpcResponseFrame> {
     const id = `req_${++this.seq}`;
     const { promise, resolve, reject } = Promise.withResolvers<RpcResponseFrame>();
     // A wedged omp child (e.g. a provider request that hung with no internal timeout) would
     // otherwise leave this pending forever, hanging every caller (the refreshState poll,
     // resume rehydrate). Reject after a bound so callers fail fast and can recover.
-    const ms = this.opts.commandTimeoutMs ?? 20000;
+    const ms = timeoutMs ?? this.opts.commandTimeoutMs ?? 20000;
     const timer = setTimeout(() => {
       if (this.pending.delete(id)) reject(new Error(`omp did not respond to "${type}" within ${ms}ms`));
     }, ms);
@@ -172,6 +172,17 @@ export class RpcSession implements AgentRuntime {
   async setThinkingLevel(level: ThinkingLevel): Promise<void> {
     const r = await this.command("set_thinking_level", { level });
     if (!r.success) throw new Error(r.error ?? "set_thinking_level failed");
+  }
+
+  // Compact the live child's context in place. omp aborts any running turn first, summarizes the
+  // history behind a compaction boundary, and keeps recent turns verbatim; `get_state` then
+  // reports the reduced `contextUsage` back. `customInstructions` steers the summary's focus.
+  async compact(customInstructions?: string): Promise<void> {
+    // Compaction runs a summarization model call, which the 20s default command timeout would
+    // cut short on a large context. Three minutes matches the management chat's turn budget:
+    // past it the child is wedged, not working.
+    const r = await this.command("compact", customInstructions ? { customInstructions } : {}, 180_000);
+    if (!r.success) throw new Error(r.error ?? "compact failed");
   }
 
   // Drain the paged message history (used to rehydrate a resumed session's transcript).

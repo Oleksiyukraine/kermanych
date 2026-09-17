@@ -1182,6 +1182,9 @@ export const en: MessageSchema = {
       kindDirectiveWhat: 'appends the text shown below to the message.',
       kindKeyword: 'keyword',
       kindKeywordWhat: 'inserts a word that omp itself recognises — these are the only helpers with a mechanical effect.',
+      kindCommand: 'command',
+      kindCommandWhat: 'runs an action in omp instead of adding text to the message.',
+      commandsTitle: 'Commands',
     },
   },
   management: {
@@ -1875,6 +1878,7 @@ export const en: MessageSchema = {
       filter: 'filter…',
       filterLabel: 'Filter helpers',
       empty: 'nothing found',
+      command: 'command',
     },
     dirPicker: {
       title: 'Choose directory',
@@ -2204,6 +2208,8 @@ export const en: MessageSchema = {
     trigger_agent_launch_failed: 'trigger “{trigger}” failed to launch its agent: {reason}',
     session_dormant_merged: 'Session finished — the worktree is gone, the branch stayed. Press “↻ Restore” at the top to bring it up and continue.',
     session_dormant_inactive: 'Session inactive. Send a message to restore it and pull in its history.',
+    context_compacted: 'context compacted — the conversation history was condensed and token budget freed',
+    context_compact_failed: 'could not compact context: {reason}',
   },
   rejections: {
     risk_kind_unknown: 'unknown risk kind {value} (threat or opportunity)',

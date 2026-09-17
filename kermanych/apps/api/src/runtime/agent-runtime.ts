@@ -51,6 +51,10 @@ export interface AgentRuntime {
   switchSession(sessionPath: string): Promise<void>;
   setModel(provider: string, modelId: string): Promise<void>;
   setThinkingLevel(level: ThinkingLevel): Promise<void>;
+  // Compact the conversation context in place: omp summarizes the older history behind a
+  // compaction boundary, freeing token budget while keeping recent turns verbatim.
+  // `customInstructions` steers the summary's focus. Resolves once the child confirms.
+  compact(customInstructions?: string): Promise<void>;
   getAllMessages(): Promise<unknown[]>;
   stop(): Promise<void>;
   onEvent(cb: (e: RpcEvent) => void): void;

@@ -1187,6 +1187,9 @@ export const uk = {
       kindDirectiveWhat: 'додає до повідомлення текст, наведений нижче.',
       kindKeyword: 'ключове слово',
       kindKeywordWhat: 'вставляє слово, яке розпізнає сам omp — це єдині хелпери з механічним ефектом.',
+      kindCommand: 'команда',
+      kindCommandWhat: 'запускає дію в omp замість того, щоб додати текст до повідомлення.',
+      commandsTitle: 'Команди',
     },
   },
   management: {
@@ -1880,6 +1883,7 @@ export const uk = {
       filter: 'фільтр…',
       filterLabel: 'Фільтр хелперів',
       empty: 'нічого не знайшлось',
+      command: 'команда',
     },
     dirPicker: {
       title: 'Обрати директорію',
@@ -2209,6 +2213,8 @@ export const uk = {
     trigger_agent_launch_failed: 'тригер «{trigger}» не запустив агента: {reason}',
     session_dormant_merged: 'Сесію завершено — worktree прибрано, гілка лишилась. Натисни «↻ Відновити» вгорі, щоб підняти worktree і продовжити.',
     session_dormant_inactive: 'Сесія неактивна. Надішли повідомлення, щоб відновити її та підтягнути історію.',
+    context_compacted: 'контекст ущільнено — історію діалогу стиснуто, ліміт токенів звільнено',
+    context_compact_failed: 'не вдалося ущільнити контекст: {reason}',
   },
   rejections: {
     risk_kind_unknown: 'невідомий тип ризику {value} (threat або opportunity)',
