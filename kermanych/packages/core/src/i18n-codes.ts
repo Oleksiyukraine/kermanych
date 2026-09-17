@@ -25,7 +25,10 @@ export type NoticeCode =
   | "trigger_skill_missing" // supervisor.service.ts:1070 — a trigger's skills were not found (params: { trigger, skills } — comma-joined names)
   | "trigger_agent_launch_failed" // supervisor.service.ts:1101 — a trigger failed to launch its agent (params: { trigger, reason })
   | "session_dormant_merged" // supervisor.service.ts:1496 — merged session, reopen to continue (params: none)
-  | "session_dormant_inactive"; // supervisor.service.ts:1497 — inactive session, message to resume (params: none)
+  | "session_dormant_inactive" // supervisor.service.ts:1497 — inactive session, message to resume (params: none)
+  // supervisor.service.ts — the transcript notices the /compact command appends:
+  | "context_compacted" // supervisor.service.ts — /compact succeeded, context was compacted (params: none)
+  | "context_compact_failed"; // supervisor.service.ts — /compact failed (params: { reason })
 
 // HTTP errors — Ukrainian prose thrown as an exception and shown to the operator in place
 // of a 500. The controller carries `{ code, message, params }` in the response body (see
@@ -67,6 +70,8 @@ export const NOTICE_CODES = [
   "trigger_agent_launch_failed",
   "session_dormant_merged",
   "session_dormant_inactive",
+  "context_compacted",
+  "context_compact_failed",
 ] as const satisfies readonly NoticeCode[];
 
 export const API_ERROR_CODES = [

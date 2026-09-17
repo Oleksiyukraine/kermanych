@@ -27,6 +27,7 @@
             <span class="k-hp__head">
               <span class="k-hp__label">{{ h.label }}</span>
               <span class="k-hp__name mono">/{{ h.name }}</span>
+              <span v-if="h.command" class="k-hp__badge mono">{{ t('kit.helperPicker.command') }}</span>
             </span>
             <span class="k-hp__hint">{{ h.hint }}</span>
           </button>
@@ -40,16 +41,22 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { DEFAULT_HELPERS } from '@kermanych/core';
+import { DEFAULT_HELPERS, type CommandDef } from '@kermanych/core';
 
 // The Хелпери panel: an emoji-picker-shaped list of the app's command-instructions, anchored
 // above whichever composer opened it. The host owns the draft, so this component only ever
-// says WHICH helper was picked — `prependHelper` in core decides where the token lands.
+// says WHICH helper (or command) was picked — the composer decides where the token lands.
 //
 // The panel keeps its own filter input and owns the keyboard while open. That is what makes it
 // safe to mount inside a composer whose Enter already sends: the keystrokes land here, not on
 // the textarea, and Enter never reaches the form.
-const props = defineProps<{ open: boolean }>();
+//
+// `commands` are harness actions (e.g. `/compact`) the host makes available; they render above
+// the helpers with a badge. Empty by default, so a surface that only offers helpers (the
+// Менеджмент composer) passes nothing and shows the list it always did.
+const props = withDefaults(defineProps<{ open: boolean; commands?: readonly CommandDef[] }>(), {
+  commands: () => [],
+});
 const emit = defineEmits<{ select: [name: string]; close: [] }>();
 
 const { t } = useI18n();
@@ -58,12 +65,21 @@ const query = ref('');
 const active = ref(0);
 const filterEl = ref<HTMLInputElement | null>(null);
 
+// One picklist: the host's commands first (badged actions), then the baked-in helpers. Each row
+// carries a `command` flag so the template can badge the actions and the composer can route the
+// pick to the right prepend. `name/label/hint` are shared by both shapes.
+type Item = { name: string; label: string; hint: string; command: boolean };
+const items = computed<Item[]>(() => [
+  ...props.commands.map((c) => ({ name: c.name, label: c.label, hint: c.hint, command: true })),
+  ...DEFAULT_HELPERS.map((h) => ({ name: h.name, label: h.label, hint: h.hint, command: false })),
+]);
+
 // A leading slash is how the operator thinks of a helper and how the picker opens, so it is
 // stripped rather than matched against — otherwise typing `/el` would find nothing.
 const shown = computed(() => {
   const q = query.value.trim().replace(/^\/+/, '').toLowerCase();
-  if (!q) return DEFAULT_HELPERS;
-  return DEFAULT_HELPERS.filter(
+  if (!q) return items.value;
+  return items.value.filter(
     (h) =>
       h.name.includes(q) || h.label.toLowerCase().includes(q) || h.hint.toLowerCase().includes(q),
   );
@@ -191,6 +207,17 @@ function onKeydown(e: KeyboardEvent): void {
 }
 
 .k-hp__name {
+  color: var(--k-accent);
+  font-size: var(--k-fs-xs);
+}
+
+// A command runs a harness action rather than adding text, so it wears the accent frame that
+// marks it apart from the plain-text helpers below it.
+.k-hp__badge {
+  margin-left: auto;
+  padding: 0 var(--k-sp-1);
+  border: 1px solid var(--k-accent);
+  border-radius: var(--k-r);
   color: var(--k-accent);
   font-size: var(--k-fs-xs);
 }
