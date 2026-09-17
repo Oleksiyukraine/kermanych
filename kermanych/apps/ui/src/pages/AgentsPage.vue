@@ -385,6 +385,19 @@
               <dd class="agents__meta-value mono">{{ selectedSession.model || '—' }}</dd>
             </div>
             <div class="agents__meta-row">
+              <dt v-tip="t('agents.session.sessionIdHint')" class="agents__meta-label">{{ t('agents.session.sessionId') }}</dt>
+              <dd class="agents__meta-value mono">
+                <button
+                  v-if="selectedSession.ompSessionId"
+                  type="button"
+                  class="agents__meta-copy"
+                  v-tip="t('agents.session.sessionIdCopy')"
+                  @click="copySessionId(selectedSession.ompSessionId)"
+                >{{ selectedSession.ompSessionId }}</button>
+                <span v-else>{{ t('agents.session.sessionIdPending') }}</span>
+              </dd>
+            </div>
+            <div class="agents__meta-row">
               <dt class="agents__meta-label">{{ t('agents.session.branch') }}</dt>
               <dd class="agents__meta-value mono">{{ selectedSession.branch || '—' }}</dd>
             </div>
@@ -1243,6 +1256,20 @@ const taskImages = computed<string[]>(() => {
 // Which library skills this session took, read straight off the transcript rows the
 // reducer already produced — the «Сесія» tab needs no state of its own for it.
 const usedSkills = computed(() => skillsUsed(entries.value));
+
+// The session's provider-side identifier — omp's session id, or Claude Code's session UUID —
+// stored on the row as `ompSessionId` once the child answers its first state poll. The «Сесія»
+// tab prints it so the operator can locate this exact run in the corresponding provider later;
+// clicking copies it to the clipboard rather than making the operator select a wrapped UUID.
+async function copySessionId(id: string | undefined): Promise<void> {
+  if (!id) return;
+  try {
+    await navigator.clipboard.writeText(id);
+    store.notify(t('agents.session.sessionIdCopied'), 'info');
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
 
 // The log is grouped into request blocks: one collapsed summary row per finished
 // request. The detail toolbar drives the whole block — muted rows, coalesced groups,
@@ -3152,6 +3179,22 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-text);
   text-align: right;
   overflow-wrap: anywhere;
+}
+// The provider session id is a click-to-copy target: it reads as the plain mono value the row
+// beside it wears (no button chrome), and only the pointer + a hover underline mark it as live.
+.agents__meta-copy {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: right;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.agents__meta-copy:hover {
+  text-decoration: underline;
 }
 // No wrapping: the bar is 34px and a second row of glyphs would grow it. At most five fit
 // beside an ellipsised name at the detail pane's min width.
