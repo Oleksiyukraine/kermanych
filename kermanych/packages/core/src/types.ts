@@ -54,6 +54,13 @@ export type Session = {
   parentSessionId?: string;
   ompSessionId?: string; ompSessionFile?: string;
   status: SessionStatus; currentTool?: string; error?: string;
+  // Durable "this session's branch already has an open pull request". Set once a PR URL
+  // surfaces in a «Створити ПР» run and never cleared while the session lives. Distinct from
+  // `status: in_review`, which is transient — a follow-up turn drives the card through
+  // thinking/tool and settles it again — so the fact a PR EXISTS must be its own field. Drives
+  // two things: the finish sheet's secondary action stays «Закоміти» (never reopens a PR), and
+  // any later turn settles the card back on «На ревʼю» instead of `done`.
+  prOpened?: boolean;
   todoPhases?: TodoPhase[]; contextPercent?: number; lastEventAt?: number;
   // Lifetime accounting: every assistant turn this session ran, summed. Persisted by the
   // api, so a dormant or finished agent still states what it spent. Absent means "never

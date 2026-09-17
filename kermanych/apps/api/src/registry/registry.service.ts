@@ -206,6 +206,15 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: a durable flag that this session's branch already has an open pull
+    // request. Distinct from `status = in_review`, which a follow-up turn clobbers; this
+    // remembers that a PR EXISTS so the finish sheet keeps offering «Закоміти» and later turns
+    // settle the card back on review rather than `done`.
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN pr_opened INTEGER NOT NULL DEFAULT 0`);
+    } catch {
+      /* column already exists */
+    }
     // The first index in this schema: listSessions(projectId) filters on project_id on
     // every board render and every supervisor lookup.
     this.db.exec(`CREATE INDEX IF NOT EXISTS sessions_project_idx ON sessions (project_id)`);
@@ -399,17 +408,17 @@ export class RegistryService {
   }
 
   listSessions(projectId?: string): Session[] {
-    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, runtime, effort, status, archived, usage, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
+    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, runtime, effort, status, pr_opened as prOpened, archived, usage, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
     const rows = (
       projectId
         ? this.db.prepare(sql + ` WHERE project_id = ? ORDER BY created_at`).all(projectId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null })[];
+    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number })[];
     // SQLite stores the flag as 0/1; hand callers a real boolean. `effort` is validated rather
     // than cast: a row written by an older build (or by hand) must degrade to "not known" —
     // typing an unknown word as a ThinkingLevel would send it straight back into omp's argv.
     // Same for `runtime`: guard with isAgentRuntime so invalid values degrade to undefined.
-    return rows.map((r) => ({ ...r, archived: r.archived !== 0, worktree: r.worktree !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isAgentRuntime(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) }));
+    return rows.map((r) => ({ ...r, archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isAgentRuntime(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) }));
   }
 
   createSession(
@@ -468,7 +477,7 @@ export class RegistryService {
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, platform=?, runtime=?, effort=?, status=?, archived=? WHERE id=?`,
+        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, platform=?, runtime=?, effort=?, status=?, pr_opened=?, archived=? WHERE id=?`,
       )
       .run(
         next.projectId,
@@ -488,6 +497,7 @@ export class RegistryService {
         next.runtime ?? null,
         next.effort ?? null,
         next.status,
+        next.prOpened ? 1 : 0,
         next.archived ? 1 : 0,
         id,
       );

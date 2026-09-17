@@ -779,8 +779,8 @@
           variant="secondary"
           :loading="prBusy"
           :disabled="finishBusy || !finishData"
-          @click="finishIsReview ? submitCommit() : submitPr()"
-        >{{ finishIsReview ? t('agents.finish.commit') : t('agents.finish.createPr') }}</KBtn>
+          @click="finishHasPr ? submitCommit() : submitPr()"
+        >{{ finishHasPr ? t('agents.finish.commit') : t('agents.finish.createPr') }}</KBtn>
         <KBtn
           variant="primary"
           :loading="finishBusy"
@@ -2203,10 +2203,12 @@ const resolveBusy = ref(false);
 // in) cannot be retired, so the modal shows them instead of the finish summary.
 const finishFiles = computed(() => finishData.value?.conflicts ?? []);
 
-// A session that already opened its PR is «На ревʼю». For it the secondary finish action is
-// no longer «Створити ПР» (that would try to open a second one) but «Закоміти» — land the
-// follow-up work the operator kept asking for onto the existing PR's branch.
-const finishIsReview = computed(() => finishFor.value?.status === 'in_review');
+// A session whose branch already has an open PR: its secondary finish action is «Закоміти»
+// (land follow-up work onto that PR), never «Створити ПР» (which would try to open a second
+// one and find nothing to push). Keyed off the DURABLE `prOpened`, not the transient
+// `in_review` status — the operator keeps prompting the agent after «Створити ПР», which
+// drives the card back through thinking/tool and would otherwise flip the button back.
+const finishHasPr = computed(() => finishFor.value?.prOpened === true || finishFor.value?.status === 'in_review');
 
 async function openFinish(s: Session): Promise<void> {
   finishFor.value = s;
