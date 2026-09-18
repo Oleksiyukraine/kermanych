@@ -2,7 +2,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { LineSplitter, ChunkReassembler } from "@kermanych/core";
-import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel } from "@kermanych/core";
+import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, SubagentSubscriptionLevel, SubagentInfo, SubagentMessagesPage } from "@kermanych/core";
 import type { AgentRuntime, RpcStateData } from "../runtime/agent-runtime";
 
 interface RpcResponseFrame {
@@ -38,7 +38,7 @@ export class RpcSession implements AgentRuntime {
   // otherwise liveOrResume's fast path hands a caller the dying child and the write to its
   // already-ended stdin vanishes, the exact silent loss the resume-on-dead contract prevents.
   private stopping = false;
-  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; appendSystemPrompt?: string; commandTimeoutMs?: number; configPath?: string; extensionPath?: string }) {}
+  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; appendSystemPrompt?: string; commandTimeoutMs?: number; configPath?: string; extensionPath?: string; subagentSubscription?: SubagentSubscriptionLevel }) {}
 
   onEvent(cb: (e: RpcEvent) => void) { this.eventCbs.push(cb); }
   onExit(cb: (code: number | null, reason: string) => void) { this.exitCbs.push(cb); }
@@ -78,7 +78,15 @@ export class RpcSession implements AgentRuntime {
     this.proc.on("exit", (code) => this.failAll(new Error(this.exitMessage(code)), code, ready_, rejectBeforeReady));
     this.proc.on("error", (err) => this.failAll(err, null, ready_, rejectBeforeReady));
     const onReady = (e: RpcEvent) => {
-      if (e.type === "ready") { this.write({ id: "negotiate", type: "negotiate_protocol", protocolVersion: 2 }); resolve(); }
+      if (e.type !== "ready") return;
+      this.write({ id: "negotiate", type: "negotiate_protocol", protocolVersion: 2 });
+      // Opt into subagent forwarding right after negotiate, on the same fire-and-forget path:
+      // omp defaults the subscription to "off", so without this the agent map has no source.
+      // "progress" (lifecycle + coalesced progress) is enough to draw the map; the per-subagent
+      // transcript is pulled on demand via get_subagent_messages, so "events" stays opt-in.
+      const level = this.opts.subagentSubscription ?? "progress";
+      if (level !== "off") this.write({ id: "subagent_sub", type: "set_subagent_subscription", level });
+      resolve();
     };
     this.eventCbs.push(onReady);
     this.proc.stdout.on("data", (b: Buffer) => {
@@ -197,6 +205,26 @@ export class RpcSession implements AgentRuntime {
       cursor = d.nextCursor;
     } while (cursor);
     return out;
+  }
+
+  // omp's subagent registry snapshot, sorted by index then id: the source for the agent map's
+  // top-level list (one row per spawned subagent, with its status).
+  async getSubagents(): Promise<SubagentInfo[]> {
+    const r = await this.command("get_subagents");
+    if (!r.success) throw new Error(r.error ?? "get_subagents failed");
+    const d = r.data;
+    if (Array.isArray(d)) return d as SubagentInfo[];
+    const rows = (d as { subagents?: unknown } | undefined)?.subagents;
+    return Array.isArray(rows) ? (rows as SubagentInfo[]) : [];
+  }
+
+  // One subagent's transcript, addressed by id or session file and read incrementally from
+  // `fromByte`. Returns omp's converted `messages` (the messagesToTranscript seam) alongside
+  // the byte cursor the next incremental read resumes from.
+  async getSubagentMessages(sel: { subagentId?: string; sessionFile?: string; fromByte?: number }): Promise<SubagentMessagesPage> {
+    const r = await this.command("get_subagent_messages", sel);
+    if (!r.success) throw new Error(r.error ?? "get_subagent_messages failed");
+    return (r.data ?? {}) as SubagentMessagesPage;
   }
 
   async stop(): Promise<void> {

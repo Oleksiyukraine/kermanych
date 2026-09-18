@@ -7,6 +7,7 @@ import type {
   Project,
   Session,
   TranscriptEntry,
+  SubagentNode,
   ThinkingLevel,
   ServerEvent,
   RpcExtensionUIResponse,
@@ -41,6 +42,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   const projects = ref<Project[]>([]);
   const sessions = ref<Session[]>([]);
   const transcripts = ref<Record<string, TranscriptEntry[]>>({});
+  // Per-session subagent tree for the agent map, streamed over `subagents_update` and primed
+  // by loadSubagents(). Keyed by session id, same as `transcripts`.
+  const subagents = ref<Record<string, SubagentNode[]>>({});
   const selectedProjectId = ref<string | undefined>(undefined);
   const selectedWorkspaceId = ref<string | undefined>(undefined);
   // projectId -> workspaceId, pushed in by useProjects.load(). This store must NOT
@@ -142,6 +146,12 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         delete next[e.sessionId];
         transcripts.value = next;
       }
+      // Free the removed session's subagent tree too, exactly as the transcript above.
+      if (subagents.value[e.sessionId]) {
+        const next = { ...subagents.value };
+        delete next[e.sessionId];
+        subagents.value = next;
+      }
     } else if (e.type === 'transcript_append') {
       transcripts.value = {
         ...transcripts.value,
@@ -155,6 +165,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         const next = applyTranscriptUpdate(list, e);
         if (next !== list) transcripts.value = { ...transcripts.value, [e.sessionId]: next };
       }
+    } else if (e.type === 'subagents_update') {
+      subagents.value = { ...subagents.value, [e.sessionId]: e.subagents };
     }
   }
 
@@ -397,6 +409,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.reopenSession(id);
   }
 
+  // A one-shot snapshot of a session's subagent tree for the agent map. The socket keeps it
+  // fresh afterwards (subagents_update); this primes it the moment the modal opens.
+  async function loadSubagents(id: string) {
+    const list = await api.getSubagents(id);
+    subagents.value = { ...subagents.value, [id]: list };
+    return list;
+  }
+
   return {
     projects,
     sessions,
@@ -430,6 +450,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     mergeBranch,
     reopenSession,
     loadTranscript,
+    subagents,
+    loadSubagents,
     resumeSession,
     previews,
     startPreview,

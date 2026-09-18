@@ -55,6 +55,8 @@ import {
   type TranscriptEntry,
   type AgentRuntimeKind,
   type Notice,
+  type SubagentInfo,
+  type SubagentNode,
 } from "@kermanych/core";
 import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type AiTrigger, type TaskPatch } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
@@ -94,6 +96,13 @@ type Live = {
   // Whether the "which model is this child actually running" question has been settled for
   // this child (refreshState). One lookup per omp process, not one per two-second poll.
   modelResolved?: boolean;
+  // The subagent tree this session has spawned, keyed by omp subagent id. Merged from the
+  // `get_subagents` registry (status/index/agent/model) and the parent `task` tool's result
+  // details (tokens/duration/description). Live-only: a resumed child rebuilds it from frames.
+  subagents?: Map<string, SubagentNode>;
+  // Signature of the last `subagents_update` fanned out, so a burst of progress frames that
+  // moves no field does not refan an identical list to every socket.
+  subagentsSig?: string;
   poll?: NodeJS.Timeout;
 };
 
@@ -125,6 +134,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // name -> the badge a skill row shows. Written at launch from the materialised view,
   // read by the transcript reducers; dropped with the session.
   private skillLabels = new Map<string, Map<string, SkillLabel>>();
+  // Coalesce subagent registry refreshes: at most one `getSubagents` round-trip in flight per
+  // session with a single trailing refresh, so a burst of progress frames costs one snapshot.
+  private subagentRefreshing = new Set<string>();
+  private subagentPending = new Set<string>();
   private lastStamp = 0;
   private events = new Subject<ServerEvent>();
   events$: Observable<ServerEvent> = this.events.asObservable();
@@ -1014,6 +1027,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private onRpcEvent(id: string, e: RpcEvent) {
     const l = this.map.get(id);
     if (!l) return;
+    // Subagent map: lifecycle/progress/event frames are change signals (re-snapshot the
+    // registry); a finished `task` tool carries rich per-subagent details in its result.
+    if (e.type === "subagent_lifecycle" || e.type === "subagent_progress" || e.type === "subagent_event") {
+      this.refreshSubagents(id);
+    } else if (e.type === "tool_execution_end" && (e as Extract<RpcEvent, { type: "tool_execution_end" }>).toolName === "task") {
+      this.mergeTaskDetails(l, (e as Extract<RpcEvent, { type: "tool_execution_end" }>).result?.details);
+      this.emitSubagents(id, l);
+    }
     // Progress heartbeat (in-memory) — distinct from last_activity_at, which user sends also
     // bump. The UI uses this to spot a wedged turn. `response` frames are replies to the
     // supervisor's OWN commands (chiefly the 2s get_state poll below), not agent progress:
@@ -1023,8 +1044,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (e.type !== "response") {
       l.live.lastEventAt = Date.now();
       // Any agent event counts as activity, except per-token streaming deltas
-      // (message_update) — bumping per token would mean a DB write per token.
-      if (e.type !== "message_update") {
+      // (message_update) and subagent telemetry (subagent_*) — both arrive in bursts, and a
+      // DB write per frame would amplify one long subagent run into sustained writes. The
+      // in-memory heartbeat above still bumps, so a busy subagent never trips a false stall.
+      if (e.type !== "message_update" && e.type !== "subagent_lifecycle" && e.type !== "subagent_progress" && e.type !== "subagent_event") {
         try {
           this.registry.touchSession(id);
         } catch {
@@ -1871,10 +1894,116 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return { lines, totalLines: lines.length };
   }
 
+  // omp's subagent registry, merged with the task-tool details captured from the stream, as
+  // the agent map lists it. A fresh open re-snapshots the live registry so status is current.
+  async getSubagents(sessionId: string): Promise<SubagentNode[]> {
+    const l = this.map.get(sessionId);
+    if (!l) return [];
+    try {
+      this.mergeRegistry(l, await l.rpc.getSubagents());
+      this.emitSubagents(sessionId, l);
+    } catch {
+      // Dead/dormant child: return whatever the stream already captured rather than fail.
+    }
+    return this.subagentList(l);
+  }
+
+  // One subagent's transcript, rendered through the SAME reducer as the main one. The full
+  // tool output is filed under the PARENT session id — the subagent has no socket of its own,
+  // and its call ids don't collide with the parent's — so KToolRow's on-demand detail fetch
+  // (GET /sessions/:id/tools/:callId) resolves.
+  async getSubagentTranscript(sessionId: string, subagentId: string): Promise<TranscriptEntry[]> {
+    const l = this.map.get(sessionId);
+    if (!l) throw new GoneException("сесія неактивна — підагентів не видно");
+    const page = await l.rpc.getSubagentMessages({ subagentId });
+    const { entries, full } = messagesToTranscript(page.messages ?? []);
+    for (const [callId, lines] of full) this.toolDetails.put(sessionId, callId, lines);
+    return entries;
+  }
+
+  private subagentList(l: Live): SubagentNode[] {
+    const rows = [...(l.subagents?.values() ?? [])];
+    return rows.sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id.localeCompare(b.id));
+  }
+
+  // Re-fan the tree only when it actually changed: a progress-frame burst that moves no field
+  // must not push an identical list to every socket.
+  private emitSubagents(id: string, l: Live): void {
+    const list = this.subagentList(l);
+    const sig = JSON.stringify(list);
+    if (sig === l.subagentsSig) return;
+    l.subagentsSig = sig;
+    this.events.next({ type: "subagents_update", sessionId: id, subagents: list });
+  }
+
+  // Fire-and-forget registry snapshot, coalesced to one in-flight round-trip per session with a
+  // single trailing refresh, so streamed progress frames cost at most one `getSubagents` each.
+  private refreshSubagents(id: string): void {
+    const l = this.map.get(id);
+    if (!l) return;
+    if (this.subagentRefreshing.has(id)) { this.subagentPending.add(id); return; }
+    this.subagentRefreshing.add(id);
+    void l.rpc
+      .getSubagents()
+      .then((rows) => { this.mergeRegistry(l, rows); this.emitSubagents(id, l); })
+      .catch(() => {})
+      .finally(() => {
+        this.subagentRefreshing.delete(id);
+        if (this.subagentPending.delete(id)) this.refreshSubagents(id);
+      });
+  }
+
+  // Merge a runtime's subagent snapshot into the tree. The omp registry carries id/index/
+  // status/agent; the claude runtime's snapshot additionally carries tokens/duration/tool
+  // count (read from the SDK task lifecycle), so those are picked up here when present — omp
+  // fills the same fields later from the `task` tool details instead. `parentId` comes from a
+  // dotted id (`Parent.Child`).
+  private mergeRegistry(l: Live, rows: SubagentInfo[]): void {
+    const map = l.subagents ?? (l.subagents = new Map());
+    for (const r of rows) {
+      if (typeof r?.id !== "string") continue;
+      const node = map.get(r.id) ?? { id: r.id };
+      if (typeof r.index === "number") node.index = r.index;
+      if (typeof r.status === "string") node.status = r.status;
+      const agent = r["agent"]; if (typeof agent === "string") node.agent = agent;
+      const model = r["model"]; if (typeof model === "string") node.model = model;
+      const tokens = r["tokens"]; if (typeof tokens === "number") node.tokens = tokens;
+      const durationMs = r["durationMs"]; if (typeof durationMs === "number") node.durationMs = durationMs;
+      const toolCalls = r["toolCalls"]; if (typeof toolCalls === "number") node.toolCalls = toolCalls;
+      const description = r["description"]; if (typeof description === "string") node.description = description;
+      const task = r["task"]; if (typeof task === "string") node.task = task;
+      if (node.parentId === undefined && r.id.includes(".")) node.parentId = r.id.slice(0, r.id.lastIndexOf("."));
+      map.set(r.id, node);
+    }
+  }
+
+  // Merge a finished `task` tool's per-subagent SingleResult[] (result.details.results): the
+  // documented shape carrying tokens, duration, resolved model and the one-line label.
+  private mergeTaskDetails(l: Live, details: Record<string, unknown> | undefined): void {
+    const results = details?.["results"];
+    if (!Array.isArray(results)) return;
+    const map = l.subagents ?? (l.subagents = new Map());
+    for (const raw of results) {
+      if (typeof raw !== "object" || raw === null) continue;
+      const r = raw as Record<string, unknown>;
+      if (typeof r.id !== "string") continue;
+      const node = map.get(r.id) ?? { id: r.id };
+      if (typeof r.agent === "string") node.agent = r.agent;
+      if (typeof r.resolvedModel === "string") node.model = r.resolvedModel;
+      if (typeof r.description === "string") node.description = r.description;
+      if (typeof r.task === "string") node.task = r.task;
+      if (typeof r.tokens === "number") node.tokens = r.tokens;
+      if (typeof r.durationMs === "number") node.durationMs = r.durationMs;
+      if (node.parentId === undefined && r.id.includes(".")) node.parentId = r.id.slice(0, r.id.lastIndexOf("."));
+      if (typeof r.exitCode === "number") node.status = r.exitCode === 0 ? (r.aborted === true ? "aborted" : "done") : "error";
+      map.set(r.id, node);
+    }
+  }
+
   // Shared live-session wiring (fresh create + resume): build the Live, register it,
   // and route exit + events. onExit marks error unless the session ended cleanly.
   private wireLive(sessionId: string, rpc: AgentRuntime, status: Session["status"]): Live {
-    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status, lastEventAt: Date.now() }, textBuf: "", thinkBuf: "", toolStarted: new Map(), toolArgs: new Map() };
+    const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status, lastEventAt: Date.now() }, textBuf: "", thinkBuf: "", toolStarted: new Map(), toolArgs: new Map(), subagents: new Map() };
     this.map.set(sessionId, live);
     rpc.onExit((_code, reason) => {
       this.stopPoll(live);
