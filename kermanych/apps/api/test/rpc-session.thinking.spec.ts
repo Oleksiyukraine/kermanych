@@ -34,7 +34,7 @@ function fakeOmp(name: string, out: string, frames: string, ok: boolean): string
       `  for (const line of lines) {\n` +
       `    if (!line.trim()) continue;\n` +
       `    const f = JSON.parse(line);\n` +
-      `    if (f.type === "negotiate_protocol") continue;\n` +
+      `    if (f.type === "negotiate_protocol" || f.type === "set_subagent_subscription") continue;\n` +
       `    appendFileSync(${JSON.stringify(frames)}, line + "\\n");\n` +
       `    process.stdout.write(JSON.stringify(${ok}\n` +
       `      ? { type: "response", id: f.id, command: f.type, success: true }\n` +

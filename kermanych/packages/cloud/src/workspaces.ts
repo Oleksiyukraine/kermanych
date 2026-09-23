@@ -6,7 +6,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AssignableRole, Profile, Workspace, WorkspaceMember, WorkspaceRole } from "./types";
 
-const WORKSPACE_COLUMNS = "id, name, color, owner_id, created_at";
+const WORKSPACE_COLUMNS = "id, name, color, icon, owner_id, created_at";
 const PROFILE_COLUMNS = "id, github_username, display_name, avatar_url";
 const MEMBER_COLUMNS = `workspace_id, user_id, role, added_at, profiles(${PROFILE_COLUMNS})`;
 
@@ -14,6 +14,7 @@ type WorkspaceRow = {
   id: string;
   name: string;
   color: string | null;
+  icon: string | null;
   owner_id: string;
   created_at: string;
 };
@@ -35,7 +36,7 @@ type MemberRow = {
 
 // `id`, `ownerId` and `createdAt` are never patched: the first two are immutable and
 // ownership transfer is out of scope.
-export type CloudWorkspacePatch = Partial<Pick<Workspace, "name" | "color">>;
+export type CloudWorkspacePatch = Partial<Pick<Workspace, "name" | "color" | "icon">>;
 
 export type CloudWorkspaceInsert = { name: string; ownerId: string; id?: string } & CloudWorkspacePatch;
 
@@ -49,6 +50,7 @@ export function toWorkspace(row: WorkspaceRow): Workspace {
   // Optional keys are omitted rather than set to undefined, so a mapped workspace
   // deep-equals a hand-written literal in tests and carries no null noise.
   if (row.color !== null) w.color = row.color;
+  if (row.icon !== null) w.icon = row.icon;
   return w;
 }
 
@@ -77,6 +79,7 @@ export function toWorkspaceRow(patch: CloudWorkspacePatch): Record<string, unkno
   const row: Record<string, unknown> = {};
   if (patch.name !== undefined) row.name = patch.name.trim();
   if (patch.color !== undefined) row.color = patch.color.trim() || null;
+  if (patch.icon !== undefined) row.icon = patch.icon.trim() || null;
   return row;
 }
 

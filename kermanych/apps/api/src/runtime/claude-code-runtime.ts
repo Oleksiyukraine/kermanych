@@ -1,6 +1,6 @@
 // apps/api/src/runtime/claude-code-runtime.ts
-import { query as sdkQuery, getSessionMessages as sdkGetSessionMessages, type SDKMessage, type SDKUserMessage, type Query, type Options, type ModelInfo, type SessionMessage, type GetSessionMessagesOptions } from "@anthropic-ai/claude-agent-sdk";
-import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel } from "@kermanych/core";
+import { query as sdkQuery, getSessionMessages as sdkGetSessionMessages, getSubagentMessages as sdkGetSubagentMessages, type SDKMessage, type SDKUserMessage, type Query, type Options, type ModelInfo, type SessionMessage, type GetSessionMessagesOptions, type GetSubagentMessagesOptions } from "@anthropic-ai/claude-agent-sdk";
+import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, SubagentInfo, SubagentMessagesPage, SubagentNode } from "@kermanych/core";
 import type { AgentRuntime, RpcStateData, RuntimeLaunchOpts } from "./agent-runtime";
 import { initClaudeMapState, mapSdkMessage, type ClaudeMapState } from "./claude-event-map";
 import { toClaudeEffort, toClaudeThinking, fromClaudeEffort } from "./effort-map";
@@ -8,6 +8,13 @@ import { claudeHistoryToOmp } from "./claude-history";
 
 type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options?: Options }) => Query;
 type GetSessionMessagesFn = (sessionId: string, options?: GetSessionMessagesOptions) => Promise<SessionMessage[]>;
+type GetSubagentMessagesFn = (sessionId: string, agentId: string, options?: GetSubagentMessagesOptions) => Promise<SessionMessage[]>;
+
+// claude's task status vocabulary → the status words the map/transcript already render.
+const CLAUDE_TASK_STATUS: Record<string, string> = {
+  pending: "running", running: "running", completed: "done",
+  failed: "error", killed: "aborted", paused: "parked",
+};
 
 // A pushable async generator: the runtime feeds user turns into a live query() this way.
 class InputQueue {
@@ -50,11 +57,16 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private sessionId?: string;
   private model?: string;
   private thinking: ThinkingLevel;
+  // Subagent registry built live from the SDK's task lifecycle, keyed by task_id (which is
+  // also the id listSubagents/getSubagentMessages use). The omp backend keeps this in the
+  // supervisor; here it lives on the runtime because only the runtime sees the SDK stream.
+  private subagents = new Map<string, SubagentNode>();
 
   constructor(
     private opts: RuntimeLaunchOpts,
     private queryFn: QueryFn = sdkQuery,
     private getSessionMessagesFn: GetSessionMessagesFn = sdkGetSessionMessages,
+    private getSubagentMessagesFn: GetSubagentMessagesFn = sdkGetSubagentMessages,
   ) {
     this.thinking = opts.thinking ?? "off";
   }
@@ -101,6 +113,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
           if (msg.type === "system") {
             if ("session_id" in msg && typeof msg.session_id === "string") this.sessionId = msg.session_id;
             if ("model" in msg && typeof msg.model === "string") this.model = msg.model;
+            this.ingestSubagentTask(msg);
           }
           for (const e of mapSdkMessage(msg, this.mapState)) this.emit(e);
         }
@@ -146,6 +159,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // No dedicated live effort setter; approximate via thinking-token budget (coarse; see spec).
     await this.q?.setMaxThinkingTokens?.(effort ? null : 0);
   }
+  // claude-code has no RPC compaction control method; its `/compact` is a slash command read
+  // from the prompt stream. Push it as a user message and let the CLI compact its own history.
+  // Fire-and-forget like the other prompt paths — the input queue is one-way — so this resolves
+  // as soon as the message is enqueued.
+  async compact(customInstructions?: string): Promise<void> {
+    const trimmed = customInstructions?.trim();
+    this.input.push(userMessage(trimmed ? `/compact ${trimmed}` : "/compact"));
+  }
   // Rehydrate: read claude's own persisted transcript for this session and convert it to the
   // omp `OmpMessage[]` seam so a resumed/forked session re-renders through the same reducers
   // the live stream uses. No session id yet (never started, or start failed before init) →
@@ -154,6 +175,45 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     if (!this.sessionId) return [];
     const msgs = await this.getSessionMessagesFn(this.sessionId, { dir: this.opts.cwd });
     return claudeHistoryToOmp(msgs);
+  }
+
+  // omp-style subagent surface for the claude backend. The registry is built from the SDK's
+  // task lifecycle (see ingestSubagentTask); the transcript comes from claude's on-disk
+  // per-subagent JSONL, converted through the same `claudeHistoryToOmp` seam the main
+  // rehydrate uses, so a subagent's log renders identically to the session's own.
+  async getSubagents(): Promise<SubagentInfo[]> {
+    return [...this.subagents.values()];
+  }
+
+  async getSubagentMessages(sel: { subagentId?: string; sessionFile?: string; fromByte?: number }): Promise<SubagentMessagesPage> {
+    if (!this.sessionId || !sel.subagentId) return {};
+    const msgs = await this.getSubagentMessagesFn(this.sessionId, sel.subagentId, { dir: this.opts.cwd });
+    return { messages: claudeHistoryToOmp(msgs) };
+  }
+
+  // Fold one SDK `task_*` system message into the registry and signal the change. The
+  // supervisor listens for `subagent_progress` and re-snapshots via getSubagents(), so this
+  // one event kind carries every lifecycle transition (started/updated/notification).
+  private ingestSubagentTask(msg: SDKMessage): void {
+    const m = msg as Record<string, unknown> & { type: string; subtype?: string };
+    if (m.type !== "system" || typeof m.subtype !== "string" || !m.subtype.startsWith("task")) return;
+    if (typeof m.task_id !== "string") return;
+    const id = m.task_id;
+    const node = this.subagents.get(id) ?? { id, index: this.subagents.size, status: "running" };
+    if (typeof m.subagent_type === "string") node.agent = m.subagent_type;
+    if (m.subtype === "task_started") node.status = "running";
+    const patch = m.patch;
+    if (patch && typeof patch === "object" && "status" in patch && typeof patch.status === "string") {
+      node.status = CLAUDE_TASK_STATUS[patch.status] ?? patch.status;
+    }
+    const usage = m.usage;
+    if (usage && typeof usage === "object") {
+      if ("total_tokens" in usage && typeof usage.total_tokens === "number") node.tokens = usage.total_tokens;
+      if ("duration_ms" in usage && typeof usage.duration_ms === "number") node.durationMs = usage.duration_ms;
+      if ("tool_uses" in usage && typeof usage.tool_uses === "number") node.toolCalls = usage.tool_uses;
+    }
+    this.subagents.set(id, node);
+    this.emit({ type: "subagent_progress", subagentId: id });
   }
 
   async stop(): Promise<void> {

@@ -54,6 +54,13 @@ export type Session = {
   parentSessionId?: string;
   ompSessionId?: string; ompSessionFile?: string;
   status: SessionStatus; currentTool?: string; error?: string;
+  // Durable "this session's branch already has an open pull request". Set once a PR URL
+  // surfaces in a «Створити ПР» run and never cleared while the session lives. Distinct from
+  // `status: in_review`, which is transient — a follow-up turn drives the card through
+  // thinking/tool and settles it again — so the fact a PR EXISTS must be its own field. Drives
+  // two things: the finish sheet's secondary action stays «Закоміти» (never reopens a PR), and
+  // any later turn settles the card back on «На ревʼю» instead of `done`.
+  prOpened?: boolean;
   todoPhases?: TodoPhase[]; contextPercent?: number; lastEventAt?: number;
   // Lifetime accounting: every assistant turn this session ran, summed. Persisted by the
   // api, so a dormant or finished agent still states what it spent. Absent means "never
@@ -195,6 +202,13 @@ export type RpcEvent =
   // never `"warn"`. Left as an open string because the vocabulary is omp's, not ours — the
   // transcript reducer normalises it into `TranscriptEntry`'s closed `info | warn | error`.
   | { type: "notice"; message?: string; level?: string }
+  // omp subagent frames, gated by `set_subagent_subscription` (RpcSession sends "progress"
+  // by default). omp documents only the frame `type`; the inner shape is undocumented, so
+  // these stay open — the map reads identity via `subagentId` and pulls concrete rows from
+  // the `get_subagents` / `get_subagent_messages` commands, whose payloads ARE typed below.
+  | { type: "subagent_lifecycle"; subagentId?: string; [k: string]: unknown }
+  | { type: "subagent_progress"; subagentId?: string; [k: string]: unknown }
+  | { type: "subagent_event"; subagentId?: string; [k: string]: unknown }
   | RpcExtensionUIRequest
   | { type: "rpc_chunk"; chunkId: string; index: number; count: number; byteLength: number; data: string }
   | { type: string; [k: string]: unknown };
@@ -211,6 +225,58 @@ export type ServerEvent =
   // the client would keep the call-time value while the server's transcript shows the better
   // one. The full line list stays on the API behind GET /sessions/:id/tools/:callId.
   | { type: "transcript_update"; sessionId: string; id: string; status: "ok" | "error"; target?: string; stat?: ToolStat; count?: number; ms?: number; detail?: ToolDetail }
+  // The session's subagent tree changed — a subagent started, progressed, or finished. Carries
+  // the whole current list so the agent map re-renders from one frame, the same way
+  // `transcript_reset` replaces a transcript wholesale.
+  | { type: "subagents_update"; sessionId: string; subagents: SubagentNode[] }
   | { type: "project_update"; project: Project }
   | { type: "session_removed"; sessionId: string }
   | { type: "project_removed"; projectId: string };
+
+// How much of omp's subagent activity a session subscribes to. "progress" streams lifecycle
+// + coalesced progress (enough for the agent map); "events" adds every subagent tool/message
+// event (the live drill-in transcript); "off" forwards nothing. See omp://rpc.md.
+export type SubagentSubscriptionLevel = "off" | "progress" | "events";
+
+// One row of omp's subagent registry snapshot (`get_subagents`), sorted by index then id.
+// Modeled permissively: omp documents the sort keys and the registry status vocabulary, not
+// the full row shape, so unknown fields pass through for the map to read.
+export type SubagentInfo = {
+  id: string;
+  index?: number;
+  status?: "running" | "idle" | "parked" | "aborted" | string;
+  [k: string]: unknown;
+};
+
+// A byte-addressed slice of one subagent's transcript (`get_subagent_messages`). `messages`
+// is the converted OmpMessage[] seam `messagesToTranscript` consumes; `entries` is omp's raw
+// transcript. `nextByte`/`reset` drive incremental reads: `reset` means omp restarted from
+// byte zero (the file shrank or `fromByte` overran it).
+export type SubagentMessagesPage = {
+  sessionFile?: string;
+  fromByte?: number;
+  nextByte?: number;
+  reset?: boolean;
+  entries?: unknown[];
+  messages?: unknown[];
+};
+
+// One node of a session's subagent tree, as the agent map renders it. Merged from omp's
+// `get_subagents` registry (id/index/status/agent/model) and the parent `task` tool's result
+// details (tokens/duration/description). `parentId` is derived from the dotted id — a nested
+// subagent is `Parent.Child` — and is absent for a top-level subagent. Every enrichment field
+// is optional: a still-running subagent has a status long before it has a token count.
+export type SubagentNode = {
+  id: string;
+  index?: number;
+  parentId?: string;
+  status?: string;
+  agent?: string;
+  model?: string;
+  description?: string;
+  task?: string;
+  tokens?: number;
+  durationMs?: number;
+  startedAt?: number;
+  toolCalls?: number;
+};

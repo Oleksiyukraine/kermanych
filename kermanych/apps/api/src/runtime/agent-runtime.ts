@@ -1,5 +1,5 @@
 // apps/api/src/runtime/agent-runtime.ts
-import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, TodoPhase, AgentRuntimeKind } from "@kermanych/core";
+import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, TodoPhase, AgentRuntimeKind, SubagentSubscriptionLevel, SubagentInfo, SubagentMessagesPage } from "@kermanych/core";
 import { RpcSession } from "../rpc/rpc-session";
 import { ClaudeCodeRuntime } from "./claude-code-runtime";
 
@@ -35,6 +35,9 @@ export interface RuntimeLaunchOpts {
   commandTimeoutMs?: number;
   configPath?: string;   // omp-only
   extensionPath?: string; // omp-only
+  // How much of omp's subagent activity to forward (omp defaults to "off"). Ignored by
+  // non-omp backends. Undefined lets the omp runtime pick its own default ("progress").
+  subagentSubscription?: SubagentSubscriptionLevel; // omp-only
 }
 
 // The backend-neutral session surface the supervisor drives. Method names match the current
@@ -51,7 +54,16 @@ export interface AgentRuntime {
   switchSession(sessionPath: string): Promise<void>;
   setModel(provider: string, modelId: string): Promise<void>;
   setThinkingLevel(level: ThinkingLevel): Promise<void>;
+  // Compact the conversation context in place: omp summarizes the older history behind a
+  // compaction boundary, freeing token budget while keeping recent turns verbatim.
+  // `customInstructions` steers the summary's focus. Resolves once the child confirms.
+  compact(customInstructions?: string): Promise<void>;
   getAllMessages(): Promise<unknown[]>;
+  // omp's subagent surface: the registry snapshot the agent map lists, and one subagent's
+  // transcript read incrementally. Non-omp backends have no subagent registry yet and return
+  // empty (claude linkage is via parent_agent_id, not surfaced this increment).
+  getSubagents(): Promise<SubagentInfo[]>;
+  getSubagentMessages(sel: { subagentId?: string; sessionFile?: string; fromByte?: number }): Promise<SubagentMessagesPage>;
   stop(): Promise<void>;
   onEvent(cb: (e: RpcEvent) => void): void;
   onExit(cb: (code: number | null, reason: string) => void): void;

@@ -216,6 +216,23 @@ export const en: MessageSchema = {
       archive: 'Defer',
       delete: 'Delete the agent',
       unarchive: 'Return to active',
+      agentMap: 'Agent map',
+    },
+    map: {
+      title: 'Agent map',
+      close: 'Close',
+      back: 'Back',
+      empty: 'This session has not spawned any subagents yet.',
+      transcriptEmpty: 'The subagent transcript is empty or unavailable.',
+      tokens: '{n} tok',
+      status: {
+        running: 'running',
+        idle: 'idle',
+        parked: 'parked',
+        aborted: 'aborted',
+        done: 'done',
+        error: 'error',
+      },
     },
     changes: {
       historyEyebrow: 'HISTORY',
@@ -235,6 +252,11 @@ export const en: MessageSchema = {
       imageAlt: 'Task attachment',
       status: 'Status',
       model: 'Model',
+      sessionId: 'Session ID',
+      sessionIdHint: 'This session’s identifier in the provider that runs it (omp — session id, Claude Code — session UUID). Use it to locate this exact run in the corresponding provider’s history. Appears once the agent takes its first turn.',
+      sessionIdCopy: 'Copy ID',
+      sessionIdCopied: 'Session ID copied ✓',
+      sessionIdPending: 'not yet',
       branch: 'Branch',
       worktreeYes: 'yes',
       worktreeNo: 'no',
@@ -865,7 +887,8 @@ export const en: MessageSchema = {
     workspace: {
       name: 'Workspace name',
       color: 'Workspace color',
-      ownerOnly: 'The workspace name and color are changed by its owner.',
+      icon: 'Workspace icon',
+      ownerOnly: 'The workspace name, color and icon are changed by its owner.',
       nameRequired: 'Workspace name cannot be empty',
       saveRefused: 'The cloud refused: only the owner can change the workspace',
     },
@@ -1186,6 +1209,9 @@ export const en: MessageSchema = {
       kindDirectiveWhat: 'appends the text shown below to the message.',
       kindKeyword: 'keyword',
       kindKeywordWhat: 'inserts a word that omp itself recognises — these are the only helpers with a mechanical effect.',
+      kindCommand: 'command',
+      kindCommandWhat: 'runs an action in omp instead of adding text to the message.',
+      commandsTitle: 'Commands',
     },
   },
   management: {
@@ -1879,6 +1905,7 @@ export const en: MessageSchema = {
       filter: 'filter…',
       filterLabel: 'Filter helpers',
       empty: 'nothing found',
+      command: 'command',
     },
     dirPicker: {
       title: 'Choose directory',
@@ -1899,6 +1926,20 @@ export const en: MessageSchema = {
     },
     colorPicker: {
       noColor: 'No color',
+    },
+    emojiPicker: {
+      default: 'Default dot (no emoji)',
+      defaultLabel: 'Dot',
+      category: {
+        smileys: 'Smileys & People',
+        animals: 'Animals & Nature',
+        food: 'Food & Drink',
+        activity: 'Activity',
+        travel: 'Travel & Places',
+        objects: 'Objects',
+        symbols: 'Symbols',
+        flags: 'Flags',
+      },
     },
     attachStrip: {
       remove: 'Remove',
@@ -2208,6 +2249,8 @@ export const en: MessageSchema = {
     trigger_agent_launch_failed: 'trigger “{trigger}” failed to launch its agent: {reason}',
     session_dormant_merged: 'Session finished — the worktree is gone, the branch stayed. Press “↻ Restore” at the top to bring it up and continue.',
     session_dormant_inactive: 'Session inactive. Send a message to restore it and pull in its history.',
+    context_compacted: 'context compacted — the conversation history was condensed and token budget freed',
+    context_compact_failed: 'could not compact context: {reason}',
   },
   rejections: {
     risk_kind_unknown: 'unknown risk kind {value} (threat or opportunity)',

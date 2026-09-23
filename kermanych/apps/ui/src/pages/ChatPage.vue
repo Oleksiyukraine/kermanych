@@ -110,6 +110,7 @@
                   @click="onEditor"
                 >⧉</KIconButton>
                 <KIconButton
+                  class="chat__close"
                   :disabled="clearing"
                   :title="t('chat.page.closeSession')"
                   @click="clearChat"
@@ -885,6 +886,21 @@ watch(chatId, () => {
   display: flex;
   flex-wrap: nowrap;
   gap: 6px;
+}
+
+// The close ✕ is the one destructive control in the bar, so it earns its own hover
+// affordance apart from the neutral ▶ / ⊕ / ⧉ beside it: a quarter-turn spin into
+// danger-red. Higher specificity than KIconButton's own :hover so this wins the
+// colour, and the shared `transition` line must re-list border-color/color or the
+// base transition is dropped and they would snap.
+.chat__actions .chat__close {
+  transition: border-color 0.14s, color 0.14s, transform 0.2s ease;
+
+  &:hover:not(:disabled) {
+    transform: rotate(90deg);
+    border-color: var(--k-danger);
+    color: var(--k-danger);
+  }
 }
 
 // The reason a disabled ▶ can't act, on its own strip since a disabled control has no

@@ -13,6 +13,7 @@ import type {
   SubscriptionUsage,
   ProjectSkillsPayload,
   TranscriptEntry,
+  SubagentNode,
   ThinkingLevel,
   ToolLine,
   RpcExtensionUIResponse,
@@ -511,6 +512,12 @@ export const api = {
 
   getToolDetail: (sessionId: string, callId: string): Promise<{ lines: ToolLine[]; totalLines: number }> =>
     get<{ lines: ToolLine[]; totalLines: number }>(`/sessions/${sessionId}/tools/${encodeURIComponent(callId)}`),
+
+  getSubagents: (id: string): Promise<SubagentNode[]> =>
+    get<SubagentNode[]>(`/sessions/${id}/subagents`),
+
+  getSubagentTranscript: (id: string, subagentId: string): Promise<TranscriptEntry[]> =>
+    get<TranscriptEntry[]>(`/sessions/${id}/subagents/${encodeURIComponent(subagentId)}/transcript`),
 
   listDirs: (path?: string): Promise<DirListing> =>
     get<DirListing>(`/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`),

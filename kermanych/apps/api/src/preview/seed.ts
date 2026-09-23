@@ -58,6 +58,11 @@ export function seedDemo(registry: RegistryService): void {
     });
     if (d.archived) registry.updateSession(s.id, { archived: true });
     if (d.usage) registry.addUsage(s.id, d.usage);
+    // A session that was counted a turn is one omp/claude actually ran, so it would carry a
+    // provider-side session id (persisted from the first turn's get_state). Seed one for those
+    // rows so the Сесія tab's «ID сесії» is demonstrable in the preview; the uncounted row keeps
+    // none, so its «ще немає» empty state shows too.
+    if (d.usage) registry.updateSession(s.id, { ompSessionId: randomUUID() });
     for (const f of d.forks ?? []) {
       const child = registry.createSession({
         projectId,
@@ -71,7 +76,10 @@ export function seedDemo(registry: RegistryService): void {
         parentSessionId: s.id,
         model: f.model,
       });
-      if (f.usage) registry.addUsage(child.id, f.usage);
+      if (f.usage) {
+        registry.addUsage(child.id, f.usage);
+        registry.updateSession(child.id, { ompSessionId: randomUUID() });
+      }
     }
   };
 

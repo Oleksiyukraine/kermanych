@@ -45,8 +45,9 @@ created with, and resuming or branching a session never switches its backend.
 
 Not every feature is available on both. TTSR triggers, the skill-overlay
 config, subscription-plan spend, and the plan/todo chip are `omp`-only; on the
-`claude-code` backend, skills reach the agent inline through the prompt. Per-
-session token spend is tracked on both.
+`claude-code` backend, skills reach the agent inline through the prompt. The
+agent map (the subagents a session spawned, opened with ◈ on a session) works on
+both backends. Per-session token spend is tracked on both.
 
 ## The shared board (cloud)
 
@@ -110,6 +111,8 @@ owner's call too.
 |---|---|
 | create a workspace | anyone signed in — you become its owner |
 | rename or delete a workspace; invite or remove a member | the workspace owner |
+| set a workspace's colour or emoji marker | the workspace owner |
+| reorder workspaces in your sidebar | any member — a per-account, per-machine view |
 | create a project, edit its config, work the board | any workspace member |
 | delete a project | the workspace owner |
 | create a task | any workspace member |
@@ -123,6 +126,13 @@ deleted at all. Move a project by dragging it onto another workspace's row in th
 sidebar, or — without a mouse — by picking the new workspace in the project's
 settings. Both paths require membership of the source *and* the destination, and
 it is the database that enforces that, not the UI.
+
+**Each workspace carries a marker in the sidebar** — a coloured dot by default, or an
+emoji its owner sets in the workspace's settings (a flag, a face, a thumbs-up, from an
+iOS-style picker beside the colour). The emoji is part of the workspace and shared: every
+member sees it. **Order is the opposite — yours alone.** Drag a workspace's row up or down
+to arrange the sidebar; that order is kept per account on each machine, so rearranging your
+own view never moves anyone else's.
 
 **Clicking in the sidebar never navigates; it sets the scope.** A workspace scopes
 the board to the tasks of every project it holds, and «Агенти» to the sessions and
@@ -440,10 +450,13 @@ developer's machine. The direction is always task → session.
    Realtime. `in_review` is the pull-request outcome: «Завершити» → «Створити ПР» has the
    agent commit, push and open the PR, and when that turn ends the card lands in the
    board's «На ревʼю» column — settled, but waiting on a human reviewer rather than
-   closed. «Завершити» → «Влити» is the other exit and still lands on `merged`. Once a card
-   is «На ревʼю», the finish sheet's secondary action becomes «Закоміти» instead of «Створити
-   ПР»: it has the agent commit and push any follow-up work onto the same branch — updating
-   the open PR — and the turn settles back on `in_review` rather than falling to `done`.
+   closed. «Завершити» → «Влити» is the other exit and still lands on `merged`. Once a
+   session's branch has an open PR, that fact is
+   durable: the finish sheet's secondary action stays «Закоміти» (never «Створити ПР», which
+   would try to open a second PR and find nothing to push), and EVERY later turn settles the
+   card back on «На ревʼю» — even the plain follow-up prompts you send to fix review findings,
+   which drive the card through «в роботі» mid-turn. «Закоміти» has the agent commit and push
+   that follow-up work onto the same branch, updating the open PR.
 
 Nothing else leaves your machine. Transcripts, the current tool, context usage, todo
 phases, interactive prompts and the provider-plan spend under the account name (read from

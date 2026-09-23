@@ -220,6 +220,23 @@ export const uk = {
       archive: 'Відкласти',
       delete: 'Видалити агента',
       unarchive: 'Повернути в активні',
+      agentMap: 'Карта агентів',
+    },
+    map: {
+      title: 'Карта агентів',
+      close: 'Закрити',
+      back: 'Назад',
+      empty: 'Ця сесія ще не запускала підагентів.',
+      transcriptEmpty: 'Транскрипт підагента порожній або недоступний.',
+      tokens: '{n} ток',
+      status: {
+        running: 'виконується',
+        idle: 'очікує',
+        parked: 'призупинено',
+        aborted: 'перервано',
+        done: 'завершено',
+        error: 'помилка',
+      },
     },
     changes: {
       historyEyebrow: 'ІСТОРІЯ',
@@ -239,6 +256,11 @@ export const uk = {
       imageAlt: 'Вкладення задачі',
       status: 'Статус',
       model: 'Модель',
+      sessionId: 'ID сесії',
+      sessionIdHint: 'Ідентифікатор цієї сесії у провайдері, який її запускає (omp — id сесії, Claude Code — UUID сесії). За ним можна знайти цей запуск в історії відповідного провайдера. Зʼявляється після першої відповіді агента.',
+      sessionIdCopy: 'Скопіювати ID',
+      sessionIdCopied: 'ID сесії скопійовано ✓',
+      sessionIdPending: 'ще немає',
       branch: 'Гілка',
       worktreeYes: 'так',
       worktreeNo: 'ні',
@@ -870,7 +892,8 @@ export const uk = {
     workspace: {
       name: 'Назва воркспейсу',
       color: 'Колір воркспейсу',
-      ownerOnly: 'Назву й колір воркспейсу змінює його власник.',
+      icon: 'Емодзі воркспейсу',
+      ownerOnly: 'Назву, колір і емодзі воркспейсу змінює його власник.',
       nameRequired: 'Назва воркспейсу не може бути порожньою',
       saveRefused: 'Хмара відмовила: змінювати воркспейс може лише його власник',
     },
@@ -1191,6 +1214,9 @@ export const uk = {
       kindDirectiveWhat: 'додає до повідомлення текст, наведений нижче.',
       kindKeyword: 'ключове слово',
       kindKeywordWhat: 'вставляє слово, яке розпізнає сам omp — це єдині хелпери з механічним ефектом.',
+      kindCommand: 'команда',
+      kindCommandWhat: 'запускає дію в omp замість того, щоб додати текст до повідомлення.',
+      commandsTitle: 'Команди',
     },
   },
   management: {
@@ -1884,6 +1910,7 @@ export const uk = {
       filter: 'фільтр…',
       filterLabel: 'Фільтр хелперів',
       empty: 'нічого не знайшлось',
+      command: 'команда',
     },
     dirPicker: {
       title: 'Обрати директорію',
@@ -1904,6 +1931,20 @@ export const uk = {
     },
     colorPicker: {
       noColor: 'Без кольору',
+    },
+    emojiPicker: {
+      default: 'Стандартна крапка (без емодзі)',
+      defaultLabel: 'Крапка',
+      category: {
+        smileys: 'Смайли та люди',
+        animals: 'Тварини й природа',
+        food: 'Їжа та напої',
+        activity: 'Активність',
+        travel: 'Подорожі та місця',
+        objects: 'Об’єкти',
+        symbols: 'Символи',
+        flags: 'Прапори',
+      },
     },
     attachStrip: {
       remove: 'Прибрати',
@@ -2213,6 +2254,8 @@ export const uk = {
     trigger_agent_launch_failed: 'тригер «{trigger}» не запустив агента: {reason}',
     session_dormant_merged: 'Сесію завершено — worktree прибрано, гілка лишилась. Натисни «↻ Відновити» вгорі, щоб підняти worktree і продовжити.',
     session_dormant_inactive: 'Сесія неактивна. Надішли повідомлення, щоб відновити її та підтягнути історію.',
+    context_compacted: 'контекст ущільнено — історію діалогу стиснуто, ліміт токенів звільнено',
+    context_compact_failed: 'не вдалося ущільнити контекст: {reason}',
   },
   rejections: {
     risk_kind_unknown: 'невідомий тип ризику {value} (threat або opportunity)',

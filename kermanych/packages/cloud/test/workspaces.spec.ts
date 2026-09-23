@@ -52,6 +52,7 @@ const workspaceRow = {
   id: "w1",
   name: "AAA",
   color: "#ff8800",
+  icon: null,
   owner_id: "u1",
   created_at: "2026-08-27T00:00:00.000Z",
 };
@@ -74,6 +75,7 @@ describe("toWorkspace", () => {
       createdAt: "2026-08-27T00:00:00.000Z",
     });
     expect(toWorkspace({ ...workspaceRow, color: null })).not.toHaveProperty("color");
+    expect(toWorkspace({ ...workspaceRow, icon: "🚀" })).toHaveProperty("icon", "🚀");
   });
 });
 
@@ -83,7 +85,7 @@ describe("listWorkspaces", () => {
     const list = await listWorkspaces(client);
     expect(list).toHaveLength(1);
     expect(queries[0]!.table).toBe("workspaces");
-    expect(queries[0]!.ops[0]).toEqual(["select", "id, name, color, owner_id, created_at"]);
+    expect(queries[0]!.ops[0]).toEqual(["select", "id, name, color, icon, owner_id, created_at"]);
     expect(queries[0]!.ops[1]).toEqual(["order", "created_at", { ascending: true }]);
   });
 });
