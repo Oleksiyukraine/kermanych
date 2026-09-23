@@ -21,6 +21,12 @@
           {{ t('aiTeam.helpersCatalog.kindKeywordWhat') }}
         </span>
       </li>
+      <li class="hp__kind">
+        <span class="hp__badge hp__badge--command">{{ t('aiTeam.helpersCatalog.kindCommand') }}</span>
+        <span class="hp__kind-what">
+          {{ t('aiTeam.helpersCatalog.kindCommandWhat') }}
+        </span>
+      </li>
     </ul>
 
     <ul class="hp__list">
@@ -36,6 +42,18 @@
         <pre class="hp__body mono">{{ h.body }}</pre>
       </li>
     </ul>
+
+    <p class="hp__section mono">{{ t('aiTeam.helpersCatalog.commandsTitle') }}</p>
+    <ul class="hp__list">
+      <li v-for="c in DEFAULT_COMMANDS" :key="c.name" class="hp__row">
+        <div class="hp__head">
+          <span class="hp__name mono">/{{ c.name }}</span>
+          <span class="hp__label">{{ c.label }}</span>
+          <span class="hp__badge hp__badge--command">{{ t('aiTeam.helpersCatalog.kindCommand') }}</span>
+        </div>
+        <p class="hp__hint">{{ c.hint }}</p>
+      </li>
+    </ul>
   </section>
 </template>
 
@@ -45,7 +63,7 @@
 // this panel makes no api call and no cloud query. It keeps the stance AiAgentsPanel takes for
 // an agent's instruction: the text shown IS the text the model gets, not a description of it —
 // what it does NOT have is a project override, because a helper is a harness command.
-import { DEFAULT_HELPERS } from '@kermanych/core';
+import { DEFAULT_COMMANDS, DEFAULT_HELPERS } from '@kermanych/core';
 import { useI18n } from 'vue-i18n';
 
 const { t } = useI18n();
@@ -68,6 +86,9 @@ const { t } = useI18n();
 .hp__badge { font-size: 10.5px; padding: 1px 6px; border: 1px solid var(--k-line-strong); border-radius: var(--k-r); color: var(--k-muted); white-space: nowrap; }
 /* A keyword helper is the one with a real mechanical effect, so it gets the accent frame. */
 .hp__badge--keyword { color: var(--k-accent); border-color: var(--k-accent); }
+/* A command runs a harness action rather than adding text, so it shares the accent frame. */
+.hp__badge--command { color: var(--k-accent); border-color: var(--k-accent); }
+.hp__section { margin: 16px 0 8px; font-size: 12.5px; color: var(--k-text); }
 .hp__hint { margin: 6px 0 4px; font-size: 11.5px; color: var(--k-muted); }
 /* `pre-wrap`, not `pre`: the bodies are prose with hard newlines, and a horizontal
    scrollbar would hide the right-hand half of every long line. */

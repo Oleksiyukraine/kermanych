@@ -5,7 +5,9 @@ import {
   canDropProject,
   filterTasks,
   groupProjectsByWorkspace,
+  orderWorkspaces,
   projectWorkspaceMap,
+  reorderWorkspaces,
   scopedProjectIds,
   sessionScopedProjectIds,
 } from '../src/lib/scope';
@@ -256,5 +258,41 @@ describe('canDropProject', () => {
   it('refuses when nothing is being dragged or the project is unknown', () => {
     expect(canDropProject(undefined, 'w2', projects)).toBe(false);
     expect(canDropProject('p-gone', 'w2', projects)).toBe(false);
+  });
+});
+
+describe('orderWorkspaces', () => {
+  const a = ws('a', 'A');
+  const b = ws('b', 'B');
+  const c = ws('c', 'C');
+
+  it('applies the saved id order', () => {
+    expect(orderWorkspaces([a, b, c], ['c', 'a', 'b']).map((w) => w.id)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('trails unplaced workspaces in their given (cloud) order, after the ordered ones', () => {
+    // Only `c` is placed; a and b are new since the last reorder and keep cloud order.
+    expect(orderWorkspaces([a, b, c], ['c']).map((w) => w.id)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('skips a stale id for a workspace the user no longer sees', () => {
+    expect(orderWorkspaces([a, b], ['gone', 'b', 'a']).map((w) => w.id)).toEqual(['b', 'a']);
+  });
+
+  it('ignores a duplicate id rather than repeating the workspace', () => {
+    expect(orderWorkspaces([a, b], ['a', 'a', 'b']).map((w) => w.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('reorderWorkspaces', () => {
+  it('inserts the dragged id immediately before the target', () => {
+    expect(reorderWorkspaces(['a', 'b', 'c'], 'c', 'a')).toEqual(['c', 'a', 'b']);
+    expect(reorderWorkspaces(['a', 'b', 'c'], 'a', 'c')).toEqual(['b', 'a', 'c']);
+  });
+
+  it('returns the same reference for a no-op drag (onto self or an unknown target)', () => {
+    const current = ['a', 'b', 'c'];
+    expect(reorderWorkspaces(current, 'a', 'a')).toBe(current);
+    expect(reorderWorkspaces(current, 'a', 'gone')).toBe(current);
   });
 });

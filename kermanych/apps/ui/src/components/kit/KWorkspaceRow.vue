@@ -19,16 +19,36 @@ import { useI18n } from 'vue-i18n';
 // that names the workspace instead of a bare «Новий проєкт».
 const props = withDefaults(
   defineProps<{
-    workspace: { id: string; name: string; color?: string | undefined };
+    workspace: { id: string; name: string; color?: string | undefined; icon?: string | undefined };
     active?: boolean;
     expanded?: boolean;
     count?: number;
     dropTarget?: boolean;
+    // Draggable so the row can be lifted to reorder the sidebar. Off by default; MainLayout
+    // turns it on once the cloud list is in hand, matching the project rows below it.
+    draggable?: boolean;
   }>(),
-  { count: 0, active: false, expanded: true, dropTarget: false },
+  { count: 0, active: false, expanded: true, dropTarget: false, draggable: false },
 );
 
-const emit = defineEmits<{ select: []; toggle: []; 'add-project': [] }>();
+const emit = defineEmits<{
+  select: [];
+  toggle: [];
+  'add-project': [];
+  dragstart: [id: string];
+  dragend: [];
+}>();
+
+// Mirrors KRailItem: setData makes this a standards-conformant drag (Firefox needs it to
+// start one at all), but the DROP reads the id from component state, not dataTransfer,
+// because getData() returns '' during dragover under protected mode. A distinct MIME type
+// keeps a workspace drag from being read as a project drag.
+function onDragStart(e: DragEvent): void {
+  if (!props.draggable) return;
+  e.dataTransfer?.setData('application/x-kermanych-workspace', props.workspace.id);
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+  emit('dragstart', props.workspace.id);
+}
 
 const { t } = useI18n();
 
@@ -66,7 +86,13 @@ const addLabel = computed(() => t('kit.workspaceRow.addProject', { name: props.w
 </script>
 
 <template>
-  <div class="k-ws" :class="{ 'k-ws--active': active, 'k-ws--drop': dropTarget }">
+  <div
+    class="k-ws"
+    :class="{ 'k-ws--active': active, 'k-ws--drop': dropTarget }"
+    :draggable="draggable"
+    @dragstart="onDragStart"
+    @dragend="emit('dragend')"
+  >
     <button
       class="k-ws__chevron"
       type="button"
@@ -84,6 +110,12 @@ const addLabel = computed(() => t('kit.workspaceRow.addProject', { name: props.w
       @click="emit('select')"
     >
       <span
+        v-if="workspace.icon"
+        class="k-ws__emoji"
+        aria-hidden="true"
+      >{{ workspace.icon }}</span>
+      <span
+        v-else
         class="k-ws__dot"
         :style="workspace.color ? { background: workspace.color } : undefined"
         aria-hidden="true"
@@ -253,6 +285,20 @@ const addLabel = computed(() => t('kit.workspaceRow.addProject', { name: props.w
   flex: none;
   border-radius: var(--k-r-pill);
   background: var(--k-line-strong);
+}
+
+// The emoji marker takes the dot's place. Centred in a box the same WIDTH the dot column
+// occupies inside the body's gap, so a name sits at the same x whether its workspace shows
+// a dot or an emoji — the glyph overflows the 8px box symmetrically rather than pushing the
+// name across. line-height:1 keeps it on the row's centre line like every other glyph here.
+.k-ws__emoji {
+  flex: none;
+  width: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
 }
 
 .k-ws__name {

@@ -240,3 +240,83 @@ describe("ClaudeCodeRuntime.getAllMessages", () => {
     expect(calls).toBe(0);
   });
 });
+
+describe("ClaudeCodeRuntime subagents", () => {
+  it("builds a registry from the SDK task lifecycle and signals each change", async () => {
+    const script: SDKMessage[] = [
+      { type: "system", subtype: "init", session_id: "sess-1", model: "claude-opus-4-8" } as unknown as SDKMessage,
+      { type: "system", subtype: "task_started", task_id: "t-a", subagent_type: "general-purpose", spawn_depth: 1 } as unknown as SDKMessage,
+      { type: "system", subtype: "task_updated", task_id: "t-a", patch: { status: "completed" } } as unknown as SDKMessage,
+      { type: "system", subtype: "task_notification", task_id: "t-a", usage: { total_tokens: 15325, tool_uses: 3, duration_ms: 1208 } } as unknown as SDKMessage,
+      { type: "result", subtype: "success", duration_ms: 5, modelUsage: {} } as unknown as SDKMessage,
+    ];
+    const { queryFn } = fakeQuery(script);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x" }, queryFn as never);
+    const events: RpcEvent[] = [];
+    rt.onEvent((e) => events.push(e));
+    await rt.start();
+    rt.prompt("spawn one");
+    await vi.waitFor(() => expect(events.some((e) => e.type === "agent_end")).toBe(true));
+
+    // completed → done; usage lands tokens/duration/tool count; the map subtitle can be drawn.
+    expect(await rt.getSubagents()).toEqual([
+      { id: "t-a", index: 0, status: "done", agent: "general-purpose", tokens: 15325, durationMs: 1208, toolCalls: 3 },
+    ]);
+    // Each of the three task_* frames signals a change so the supervisor re-snapshots.
+    const progress = events.filter((e) => e.type === "subagent_progress");
+    expect(progress).toHaveLength(3);
+    expect(progress[0]).toMatchObject({ subagentId: "t-a" });
+  });
+
+  it("maps a failed task to the shared error status", async () => {
+    const script: SDKMessage[] = [
+      { type: "system", subtype: "init", session_id: "s" } as unknown as SDKMessage,
+      { type: "system", subtype: "task_started", task_id: "a", subagent_type: "scout" } as unknown as SDKMessage,
+      { type: "system", subtype: "task_updated", task_id: "a", patch: { status: "failed" } } as unknown as SDKMessage,
+      { type: "result", subtype: "success", duration_ms: 1, modelUsage: {} } as unknown as SDKMessage,
+    ];
+    const { queryFn } = fakeQuery(script);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x" }, queryFn as never);
+    const events: RpcEvent[] = [];
+    rt.onEvent((e) => events.push(e));
+    await rt.start();
+    rt.prompt("go");
+    await vi.waitFor(() => expect(events.some((e) => e.type === "agent_end")).toBe(true));
+    expect((await rt.getSubagents())[0]).toMatchObject({ id: "a", status: "error", agent: "scout" });
+  });
+
+  it("getSubagentMessages reads the subagent transcript for the captured id and converts it", async () => {
+    const script: SDKMessage[] = [
+      { type: "system", subtype: "init", session_id: "sess-1" } as unknown as SDKMessage,
+      { type: "result", subtype: "success", duration_ms: 1, modelUsage: {} } as unknown as SDKMessage,
+    ];
+    const { queryFn } = fakeQuery(script);
+    const subHistory: SessionMessage[] = [
+      { type: "user", message: { role: "user", content: "ping please" }, uuid: "s1", session_id: "sess-1", parent_tool_use_id: "toolu_x", parent_agent_id: null },
+      { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "ping" }] }, uuid: "s2", session_id: "sess-1", parent_tool_use_id: "toolu_x", parent_agent_id: null },
+    ];
+    let asked: { id?: string; agentId?: string; dir?: string } = {};
+    const getSub = async (id: string, agentId: string, opts?: { dir?: string }) => { asked = { id, agentId, dir: opts?.dir }; return subHistory; };
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x" }, queryFn as never, (async () => []) as never, getSub as never);
+    rt.onEvent(() => {});
+    await rt.start();
+    rt.prompt("go");
+    await vi.waitFor(async () => expect((await rt.getState()).sessionId).toBe("sess-1"));
+
+    const page = await rt.getSubagentMessages({ subagentId: "t-a" });
+    expect(asked).toEqual({ id: "sess-1", agentId: "t-a", dir: "/tmp/x" });
+    expect(page.messages).toEqual([
+      { role: "user", content: [{ type: "text", text: "ping please" }] },
+      { role: "assistant", content: [{ type: "text", text: "ping" }] },
+    ]);
+  });
+
+  it("getSubagentMessages returns empty without a session id, never touching the SDK", async () => {
+    let calls = 0;
+    const getSub = async () => { calls++; return []; };
+    const { queryFn } = fakeQuery([]);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x" }, queryFn as never, (async () => []) as never, getSub as never);
+    expect(await rt.getSubagentMessages({ subagentId: "t-a" })).toEqual({});
+    expect(calls).toBe(0);
+  });
+});

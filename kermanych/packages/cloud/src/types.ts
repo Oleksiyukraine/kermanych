@@ -20,6 +20,9 @@ export type Workspace = {
   id: string;
   name: string;
   color?: string;
+  // Optional emoji shown in the sidebar in place of the colour dot. Owner-set and
+  // team-visible, exactly like `color`. Absent = the colour dot is drawn.
+  icon?: string;
   ownerId: string;
   createdAt: string;
 };

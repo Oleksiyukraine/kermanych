@@ -26,6 +26,9 @@ export type NoticeCode =
   | "trigger_agent_launch_failed" // supervisor.service.ts:1101 — a trigger failed to launch its agent (params: { trigger, reason })
   | "session_dormant_merged" // supervisor.service.ts:1496 — merged session, reopen to continue (params: none)
   | "session_dormant_inactive" // supervisor.service.ts:1497 — inactive session, message to resume (params: none)
+  // supervisor.service.ts — the transcript notices the /compact command appends:
+  | "context_compacted" // supervisor.service.ts — /compact succeeded, context was compacted (params: none)
+  | "context_compact_failed" // supervisor.service.ts — /compact failed (params: { reason })
   // runtime/*-runtime.ts — a runtime child that DIED MID-SESSION, long after its launch was
   // called a success. The launch-time twins of these live in `ApiErrorCode` below: the same
   // machine fault is a thrown error when it stops a session from starting, and a transcript
@@ -83,6 +86,8 @@ export const NOTICE_CODES = [
   "trigger_agent_launch_failed",
   "session_dormant_merged",
   "session_dormant_inactive",
+  "context_compacted",
+  "context_compact_failed",
   "claude_not_authenticated",
   "claude_binary_missing",
   "omp_not_authenticated",

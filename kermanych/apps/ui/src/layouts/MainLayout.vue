@@ -68,9 +68,12 @@
               :expanded="isExpanded(group.workspace.id)"
               :count="workspaceRunningCount(group.workspace.id)"
               :drop-target="dropTargetId === group.workspace.id"
+              draggable
               @select="selectWorkspace(group.workspace.id)"
               @toggle="toggleWorkspace(group.workspace.id)"
               @add-project="openCreateProject(group.workspace.id)"
+              @dragstart="draggingWorkspaceId = $event"
+              @dragend="onDragEnd"
             />
             <ul
               v-if="isExpanded(group.workspace.id)"
@@ -901,6 +904,10 @@ function workspaceRunningCount(workspaceId: string): number {
 // light up every row. KRailItem still calls setData — that is what makes this a
 // standards-conformant drag — and emits the id for this pair of refs.
 const draggingProjectId = ref<string | undefined>(undefined);
+// The workspace being dragged to REORDER the sidebar (distinct from a project drag, which
+// MOVES a project between groups). Only one of the two is ever set: a drag starts on either
+// a KRailItem or a KWorkspaceRow, never both, and onDragEnd clears both.
+const draggingWorkspaceId = ref<string | undefined>(undefined);
 const dropTargetId = ref<string | undefined>(undefined);
 
 // preventDefault ONLY for a valid destination. That one call is both what permits the drop
@@ -908,6 +915,16 @@ const dropTargetId = ref<string | undefined>(undefined);
 // accept a release onto the project's OWN workspace and then quietly do nothing — a
 // gesture that looks like it worked. An invalid row keeps the browser's refusal cursor.
 function onDragOver(e: DragEvent, workspaceId: string): void {
+  // Reorder path: a workspace dropped onto ANY other workspace's group lands before it.
+  // Its own row is not a target — dropping a thing on itself is the no-op that must keep
+  // the browser's «no» cursor, exactly as an invalid project row does below.
+  if (draggingWorkspaceId.value) {
+    if (draggingWorkspaceId.value === workspaceId) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    dropTargetId.value = workspaceId;
+    return;
+  }
   if (!canDropProject(draggingProjectId.value, workspaceId, projects.projects)) return;
   e.preventDefault();
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
@@ -932,15 +949,23 @@ function onDragLeave(e: DragEvent, workspaceId: string): void {
 
 function onDragEnd(): void {
   draggingProjectId.value = undefined;
+  draggingWorkspaceId.value = undefined;
   dropTargetId.value = undefined;
 }
 
 async function onDrop(workspaceId: string): Promise<void> {
+  const workspaceDrag = draggingWorkspaceId.value;
   const projectId = draggingProjectId.value;
   // Cleared before the validity check and before the await, not after: once a drop has
   // been handled the source's `dragend` is not something to rely on, and the accent
   // border must not outlive the gesture that drew it.
   onDragEnd();
+  // A workspace reorder is purely local (localStorage), so it neither awaits nor can be
+  // refused — apply it and return before the project-move path.
+  if (workspaceDrag) {
+    if (workspaceDrag !== workspaceId) projects.moveWorkspace(workspaceDrag, workspaceId);
+    return;
+  }
   if (!projectId || !canDropProject(projectId, workspaceId, projects.projects)) return;
   const name = projects.byId.get(projectId)?.name ?? projectId;
   const target = projects.workspaceById.get(workspaceId)?.name ?? '';
