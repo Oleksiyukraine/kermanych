@@ -3309,6 +3309,7 @@ async function submitPreviewConfig(): Promise<void> {
 // 36-character drag across a wrapped line can't end up short.
 .agents__meta-value--id {
   user-select: all;
+}
 // The provider session id is a click-to-copy target: it reads as the plain mono value the row
 // beside it wears (no button chrome), and only the pointer + a hover underline mark it as live.
 .agents__meta-copy {
