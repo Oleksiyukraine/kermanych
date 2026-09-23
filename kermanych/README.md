@@ -130,7 +130,8 @@ it is the database that enforces that, not the UI.
 **Each workspace carries a marker in the sidebar** — a coloured dot by default, or an
 emoji its owner sets in the workspace's settings (a flag, a face, a thumbs-up, from an
 iOS-style picker beside the colour). The emoji is part of the workspace and shared: every
-member sees it. **Order is the opposite — yours alone.** Drag a workspace's row up or down
+member sees it, and the same marker stands in for the dot wherever the workspace is named as
+the current scope — the Менеджмент and «Команда ШІ» rails. **Order is the opposite — yours alone.** Drag a workspace's row up or down
 to arrange the sidebar; that order is kept per account on each machine, so rearranging your
 own view never moves anyone else's.
 
