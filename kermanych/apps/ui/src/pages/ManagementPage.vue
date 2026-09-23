@@ -15,7 +15,12 @@
              chosen, so the chip reads as an empty slot rather than a label. -->
         <span class="mgmt__chip" :class="{ 'mgmt__chip--empty': !workspaceId }">
           <span
-            v-if="workspaceId"
+            v-if="workspaceId && workspaceIcon"
+            class="mgmt__chip-emoji"
+            aria-hidden="true"
+          >{{ workspaceIcon }}</span>
+          <span
+            v-else-if="workspaceId"
             class="mgmt__chip-dot"
             :style="{ background: workspaceColor }"
             aria-hidden="true"
@@ -519,6 +524,13 @@ const workspaceColor = computed(() => {
   if (!id) return 'var(--k-accent)';
   return projects.workspaceById.get(id)?.color ?? 'var(--k-accent)';
 });
+
+// The workspace's emoji marker, mirroring the sidebar row: when set it stands in for the
+// colour dot, so the scope chip shows the same glyph the sidebar does.
+const workspaceIcon = computed(() => {
+  const id = workspaceId.value;
+  return id ? projects.workspaceById.get(id)?.icon : undefined;
+});
 </script>
 
 <style scoped lang="scss">
@@ -631,6 +643,18 @@ const workspaceColor = computed(() => {
   height: 7px;
   border-radius: var(--k-r-pill);
   flex: none;
+}
+
+// Stands in the dot's place when the workspace has an emoji: a box the dot's width so the
+// name keeps its x, the glyph overflowing symmetrically. line-height:1 holds the centre line.
+.mgmt__chip-emoji {
+  flex: none;
+  width: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
 }
 
 .mgmt__chip-name {

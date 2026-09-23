@@ -15,7 +15,12 @@
              while nothing is chosen, so the chip reads as an empty slot rather than a label. -->
         <span class="ait__chip" :class="{ 'ait__chip--empty': !owner }">
           <span
-            v-if="owner && ownerColor"
+            v-if="owner && ownerIcon"
+            class="ait__chip-emoji"
+            aria-hidden="true"
+          >{{ ownerIcon }}</span>
+          <span
+            v-else-if="owner && ownerColor"
             class="ait__chip-dot"
             :style="{ background: ownerColor }"
             aria-hidden="true"
@@ -185,6 +190,10 @@ const ownerColor = computed(() => {
   return undefined;
 });
 
+// Only a WORKSPACE carries an emoji marker (projects and users have none); when it has one it
+// stands in for the colour dot, matching the sidebar row so the chip shows the same glyph.
+const ownerIcon = computed(() => (scope.value === 'workspace' ? workspace.value?.icon : undefined));
+
 // The workspace a PROJECT inherits its skills and triggers from, for the read-only block. Only
 // meaningful at the project scope: the workspace tab is the base of the precedence chain, and a
 // user-scoped view has no single workspace behind it.
@@ -261,6 +270,18 @@ function goSection(key: string): void {
   width: 8px;
   height: 8px;
   border-radius: 50%;
+}
+
+// Stands in the dot's place when the workspace has an emoji: a box the dot's width so the
+// name keeps its x, the glyph overflowing symmetrically. line-height:1 holds the centre line.
+.ait__chip-emoji {
+  flex: none;
+  width: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
 }
 
 .ait__chip-name {
