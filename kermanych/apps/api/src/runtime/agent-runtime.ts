@@ -33,6 +33,10 @@ export interface RuntimeLaunchOpts {
   // agent communication language directive.
   appendSystemPrompt?: string;
   commandTimeoutMs?: number;
+  // How long a claude child is watched for an immediate death before start() calls the launch
+  // a success. claude-only (omp's start() awaits its own `ready` frame and needs no window);
+  // overridden in tests so they never sleep the real default.
+  startGraceMs?: number;
   configPath?: string;   // omp-only
   extensionPath?: string; // omp-only
   // How much of omp's subagent activity to forward (omp defaults to "off"). Ignored by

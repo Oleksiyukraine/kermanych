@@ -638,6 +638,17 @@ export const api = {
   setAccountRuntime: (runtime: AgentRuntimeKind): Promise<void> =>
     post<void>('/account/runtime', { runtime }),
 
+  // Is this backend usable on THIS machine (installed and signed in)? Asked when the operator
+  // picks one, so a signed-out CLI is named right there instead of surfacing later as a session
+  // that never answers. `code` is a NoticeCode the caller localizes; `reason` is raw prose for a
+  // failure we could not classify.
+  checkAccountRuntime: (
+    runtime: AgentRuntimeKind,
+  ): Promise<{ ok: boolean; code?: string; reason?: string }> =>
+    get<{ ok: boolean; code?: string; reason?: string }>(
+      `/account/runtime/check?runtime=${encodeURIComponent(runtime)}`,
+    ),
+
   // Account-level communication language. Same cache-refresh pattern as the runtime above.
   getAccountLanguage: (): Promise<{ language: AgentLanguage | null }> =>
     get<{ language: AgentLanguage | null }>('/account/language'),

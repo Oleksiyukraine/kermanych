@@ -73,7 +73,10 @@ export class ModelsService {
     const value =
       runtime === "claude-code"
         ? await this.claudeCatalog().catch((err: unknown) => {
-            this.log.debug(`claude model catalog unavailable: ${(err as Error).message}`);
+            // `warn`, not `debug`: this is the loudest symptom of an unusable claude backend
+            // (the picker simply renders empty), and at debug level the one line explaining a
+            // mysteriously model-less UI was invisible in a normal run.
+            this.log.warn(`claude model catalog unavailable: ${(err as Error).message}`);
             return [] as ModelOption[];
           })
         : mapOmpModels(await this.readOmp());

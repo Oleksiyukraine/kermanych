@@ -28,7 +28,15 @@ export type NoticeCode =
   | "session_dormant_inactive" // supervisor.service.ts:1497 — inactive session, message to resume (params: none)
   // supervisor.service.ts — the transcript notices the /compact command appends:
   | "context_compacted" // supervisor.service.ts — /compact succeeded, context was compacted (params: none)
-  | "context_compact_failed"; // supervisor.service.ts — /compact failed (params: { reason })
+  | "context_compact_failed" // supervisor.service.ts — /compact failed (params: { reason })
+  // runtime/*-runtime.ts — a runtime child that DIED MID-SESSION, long after its launch was
+  // called a success. The launch-time twins of these live in `ApiErrorCode` below: the same
+  // machine fault is a thrown error when it stops a session from starting, and a transcript
+  // notice when it kills one already running.
+  | "claude_not_authenticated" // claude-code-runtime.ts — the claude CLI is signed out (params: none)
+  | "claude_binary_missing" // claude-code-runtime.ts — the SDK's platform binary is absent (params: none)
+  | "omp_not_authenticated" // rpc-session.ts — the omp CLI is signed out (params: none)
+  | "omp_binary_missing"; // rpc-session.ts — omp is not on PATH (params: none)
 
 // HTTP errors — Ukrainian prose thrown as an exception and shown to the operator in place
 // of a 500. The controller carries `{ code, message, params }` in the response body (see
@@ -56,7 +64,15 @@ export type ApiErrorCode =
   | "no_commits_in_range" // release-notes.service.ts:67 — no commits in the requested range (params: { branch, from, to })
   | "omp_exited_during_generation" // release-notes.service.ts:110 — the omp child died mid-generation (params: { reason })
   | "generation_timeout" // release-notes.service.ts:122 — generation did not finish in time (params: { seconds })
-  | "model_no_text"; // release-notes.service.ts:139 — the model returned no text (params: none)
+  | "model_no_text" // release-notes.service.ts:139 — the model returned no text (params: none)
+  // runtime/*-runtime.ts via supervisor.service.ts — a session that could NOT START because
+  // the machine's agent backend is unusable. Distinct from the NoticeCode twins above: these
+  // abort the launch, so the operator gets a thrown error naming the one command that fixes
+  // it rather than a session that exists but can never answer.
+  | "runtime_claude_not_authenticated" // claude-code-runtime.ts start() — claude CLI signed out (params: none)
+  | "runtime_claude_binary_missing" // claude-code-runtime.ts start() — SDK platform binary absent (params: none)
+  | "runtime_omp_not_authenticated" // rpc-session.ts start() — omp CLI signed out (params: none)
+  | "runtime_omp_binary_missing"; // rpc-session.ts start() — omp not on PATH (params: none)
 
 // Runtime mirrors of the unions above. MUST list every member of their type exactly once;
 // the exhaustiveness test in test/i18n-codes.spec.ts fails on a drift or a duplicate.
@@ -72,6 +88,10 @@ export const NOTICE_CODES = [
   "session_dormant_inactive",
   "context_compacted",
   "context_compact_failed",
+  "claude_not_authenticated",
+  "claude_binary_missing",
+  "omp_not_authenticated",
+  "omp_binary_missing",
 ] as const satisfies readonly NoticeCode[];
 
 export const API_ERROR_CODES = [
@@ -95,6 +115,10 @@ export const API_ERROR_CODES = [
   "omp_exited_during_generation",
   "generation_timeout",
   "model_no_text",
+  "runtime_claude_not_authenticated",
+  "runtime_claude_binary_missing",
+  "runtime_omp_not_authenticated",
+  "runtime_omp_binary_missing",
 ] as const satisfies readonly ApiErrorCode[];
 
 // Compile-time exhaustiveness (checked by `tsc` at build; test/ is not compiled). The

@@ -35,7 +35,7 @@ describe("ClaudeCodeRuntime", () => {
       { type: "result", subtype: "success", duration_ms: 5, modelUsage: {} } as unknown as SDKMessage,
     ];
     const { queryFn } = fakeQuery(script);
-    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x" }, queryFn as never);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0 }, queryFn as never);
     const events: RpcEvent[] = [];
     rt.onEvent((e) => events.push(e));
     await rt.start(); // must resolve promptly even though no input was sent (init is gated on it)
@@ -48,7 +48,7 @@ describe("ClaudeCodeRuntime", () => {
 
   it("steer interrupts then enqueues", async () => {
     const { queryFn, calls } = fakeQuery([{ type: "system", subtype: "init" } as unknown as SDKMessage]);
-    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x" }, queryFn as never);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0 }, queryFn as never);
     rt.onEvent(() => {});
     await rt.start();
     rt.steer("stop, do this instead");
@@ -68,7 +68,7 @@ describe("ClaudeCodeRuntime", () => {
       gen.interrupt = async () => undefined;
       return gen;
     };
-    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x" }, queryFn as never);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0 }, queryFn as never);
     const events: RpcEvent[] = [];
     const exits: { code: number | null; reason: string }[] = [];
     rt.onEvent((e) => events.push(e));
@@ -79,6 +79,55 @@ describe("ClaudeCodeRuntime", () => {
     expect(exits[0].code).toBe(0); // clean exit, not the error (null) path
     expect(received).toEqual([]); // close() must NOT push a bogus undefined into the prompt stream
     expect(events.some((e) => e.type === "notice" && e.level === "warn")).toBe(false);
+  });
+});
+
+// A child that cannot launch at all: query() itself never throws (verified against the real
+// SDK — a missing binary and a signed-out CLI both surface only as a rejection of the message
+// stream, ~7ms later), so start() used to resolve "successfully" over a corpse. The session
+// then presented itself as ready and every prompt vanished into a dead queue.
+describe("ClaudeCodeRuntime start() over a child that cannot launch", () => {
+  // `startGraceMs` is the window start() waits to see whether the stream dies immediately.
+  // Kept small in tests; the production default is a fraction of a second, which is all the
+  // real failures need. start() deliberately does NOT wait for `ready`: the streaming query
+  // gates system/init on the first input turn (also verified against the real SDK), so
+  // awaiting it here would deadlock a healthy child forever.
+  function dyingQuery(message: string) {
+    const queryFn = () => {
+      const gen = (async function* (): AsyncGenerator<SDKMessage, void> {
+        await new Promise((r) => setTimeout(r, 1));
+        throw new Error(message);
+      })() as AsyncGenerator<SDKMessage, void> & Record<string, unknown>;
+      gen.interrupt = async () => undefined;
+      return gen;
+    };
+    return queryFn;
+  }
+
+  it("rejects instead of resolving over a dead child, carrying the child's own reason", async () => {
+    const msg = "Claude Code process exited with code 1. stderr: Invalid API key · Please run /login";
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 50 }, dyingQuery(msg) as never);
+    rt.onEvent(() => {});
+    await expect(rt.start()).rejects.toThrow(/Please run \/login/);
+    expect(rt.isAlive()).toBe(false);
+  });
+
+  it("tags the rejection with the localizable cause so the UI can name the fix", async () => {
+    const msg = "Claude Code process exited with code 1. stderr: Invalid API key · Please run /login";
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 50 }, dyingQuery(msg) as never);
+    rt.onEvent(() => {});
+    const err = await rt.start().catch((e: unknown) => e as Error & { code?: string });
+    expect(err.code).toBe("claude_not_authenticated");
+  });
+
+  it("still resolves promptly for a healthy child, which emits nothing before its first turn", async () => {
+    // The regression guard for the deadlock: a healthy streaming query is SILENT until an
+    // input turn is consumed, so start() must not wait for any message to arrive.
+    const { queryFn } = fakeQuery([{ type: "system", subtype: "init" } as unknown as SDKMessage]);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 50 }, queryFn as never);
+    rt.onEvent(() => {});
+    await rt.start();
+    expect(rt.isAlive()).toBe(true);
   });
 });
 
@@ -99,7 +148,7 @@ function captureQuery() {
 describe("ClaudeCodeRuntime tool options", () => {
   it("noTools maps to an empty allowedTools allowlist and sets no `tools` key", async () => {
     const { queryFn, captured } = captureQuery();
-    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", noTools: true }, queryFn as never);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0, noTools: true }, queryFn as never);
     await rt.start();
     expect(captured.options?.allowedTools).toEqual([]);
     expect("tools" in (captured.options ?? {})).toBe(false);
@@ -107,21 +156,21 @@ describe("ClaudeCodeRuntime tool options", () => {
 
   it("tools passes straight through as allowedTools", async () => {
     const { queryFn, captured } = captureQuery();
-    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", tools: ["read", "grep", "glob"] }, queryFn as never);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0, tools: ["read", "grep", "glob"] }, queryFn as never);
     await rt.start();
     expect(captured.options?.allowedTools).toEqual(["read", "grep", "glob"]);
   });
 
   it("noTools wins over a stray tools allowlist", async () => {
     const { queryFn, captured } = captureQuery();
-    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", tools: ["read"], noTools: true }, queryFn as never);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0, tools: ["read"], noTools: true }, queryFn as never);
     await rt.start();
     expect(captured.options?.allowedTools).toEqual([]);
   });
 
   it("neither tools nor noTools leaves allowedTools unset", async () => {
     const { queryFn, captured } = captureQuery();
-    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x" }, queryFn as never);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0 }, queryFn as never);
     await rt.start();
     expect("allowedTools" in (captured.options ?? {})).toBe(false);
     expect("tools" in (captured.options ?? {})).toBe(false);
@@ -129,11 +178,11 @@ describe("ClaudeCodeRuntime tool options", () => {
 
   it("appendSystemPrompt maps to a claude_code preset append; absent leaves systemPrompt unset", async () => {
     const withAppend = captureQuery();
-    await new ClaudeCodeRuntime({ cwd: "/tmp/x", appendSystemPrompt: "Always reply in Ukrainian." }, withAppend.queryFn as never).start();
+    await new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0, appendSystemPrompt: "Always reply in Ukrainian." }, withAppend.queryFn as never).start();
     expect(withAppend.captured.options?.systemPrompt).toEqual({ type: "preset", preset: "claude_code", append: "Always reply in Ukrainian." });
 
     const without = captureQuery();
-    await new ClaudeCodeRuntime({ cwd: "/tmp/x" }, without.queryFn as never).start();
+    await new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0 }, without.queryFn as never).start();
     expect("systemPrompt" in (without.captured.options ?? {})).toBe(false);
   });
 });
@@ -169,7 +218,7 @@ describe("ClaudeCodeRuntime.getAllMessages", () => {
     const { queryFn } = fakeQuery([{ type: "system", subtype: "init", session_id: "sess-1" } as unknown as SDKMessage]);
     let asked: { id?: string; dir?: string } = {};
     const getMsgs = async (id: string, opts?: { dir?: string }) => { asked = { id, dir: opts?.dir }; return history; };
-    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x" }, queryFn as never, getMsgs as never);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0 }, queryFn as never, getMsgs as never);
     rt.onEvent(() => {});
     await rt.start();
     rt.prompt("go"); // consume input so the fake yields system/init and the runtime captures the id
@@ -186,7 +235,7 @@ describe("ClaudeCodeRuntime.getAllMessages", () => {
     let calls = 0;
     const getMsgs = async () => { calls++; return history; };
     const { queryFn } = fakeQuery([]);
-    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x" }, queryFn as never, getMsgs as never);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0 }, queryFn as never, getMsgs as never);
     expect(await rt.getAllMessages()).toEqual([]); // never started → no id
     expect(calls).toBe(0);
   });

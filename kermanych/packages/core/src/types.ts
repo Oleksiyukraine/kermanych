@@ -201,7 +201,10 @@ export type RpcEvent =
   // omp's `emitNotice` forwards its own level verbatim: it spells a warning `"warning"` and
   // never `"warn"`. Left as an open string because the vocabulary is omp's, not ours — the
   // transcript reducer normalises it into `TranscriptEntry`'s closed `info | warn | error`.
-  | { type: "notice"; message?: string; level?: string }
+  // `code` is OURS, not omp's: a runtime that recognises a machine fault in its child's dying
+  // words tags the notice so the UI can print the fix in the operator's locale. omp never
+  // sends it, so it stays optional and `message` remains the only guaranteed prose.
+  | { type: "notice"; message?: string; level?: string; code?: NoticeCode }
   // omp subagent frames, gated by `set_subagent_subscription` (RpcSession sends "progress"
   // by default). omp documents only the frame `type`; the inner shape is undocumented, so
   // these stay open — the map reads identity via `subagentId` and pulls concrete rows from

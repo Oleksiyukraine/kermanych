@@ -339,18 +339,25 @@
           <button
             class="shell__runtime-option"
             :class="{ 'shell__runtime-option--selected': onboardingChoice === 'omp' }"
-            @click="onboardingChoice = 'omp'"
+            @click="pickRuntime('omp')"
           >
             {{ t('onboarding.runtime.omp') }}
           </button>
           <button
             class="shell__runtime-option"
             :class="{ 'shell__runtime-option--selected': onboardingChoice === 'claude-code' }"
-            @click="onboardingChoice = 'claude-code'"
+            @click="pickRuntime('claude-code')"
           >
             {{ t('onboarding.runtime.claude') }}
           </button>
         </div>
+
+        <!-- PREFLIGHT — the picked backend is asked whether it is actually usable on this
+             machine. It never blocks the choice (the operator may be about to sign in); it
+             names the one command that repairs it, right where the choice is made. -->
+        <p v-if="runtimeChecking" class="shell__hint">{{ t('onboarding.runtime.checking') }}</p>
+        <p v-else-if="runtimeProblem" class="shell__error" role="alert">{{ runtimeProblem }}</p>
+        <p v-else-if="runtimeOk" class="shell__runtime-ok">{{ t('onboarding.runtime.ready') }}</p>
       </div>
       <template #controls>
         <KBtn
@@ -395,6 +402,7 @@ import { useAuth } from 'stores/auth';
 import { useBoard } from 'stores/board';
 import { useProjectDocs } from 'stores/project-docs';
 import { IS_PREVIEW } from '../lib/preview';
+import { api } from '../lib/api';
 import { MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
 import { myBacklogTasks } from '../lib/tasks-view';
@@ -436,7 +444,7 @@ const projectDocs = useProjectDocs();
 const onb = useOnboarding();
 const route = useRoute();
 const router = useRouter();
-const { t } = useI18n();
+const { t, te } = useI18n();
 
 // The left sidebar collapses to give the board full width; the choice persists so a reload
 // keeps the operator's layout. breakpoint:0 means the drawer never self-closes, so this
@@ -1054,6 +1062,42 @@ function openCreateProject(workspaceId: string): void {
 const showOnboarding = computed(() => !!auth.user && auth.runtime === null);
 const onboardingChoice = ref<'omp' | 'claude-code' | null>(null);
 const onboardingBusy = ref(false);
+
+// PREFLIGHT state for the picked backend. The whole point is timing: the operator learns their
+// claude is signed out while they are choosing it, instead of after creating a chat that never
+// answers. It is advisory — `submitOnboarding` does not consult it — because a failing check is
+// often about to be fixed in a terminal, and trapping the operator behind it would be worse
+// than the silence this replaces.
+const runtimeChecking = ref(false);
+const runtimeOk = ref(false);
+const runtimeProblem = ref('');
+
+async function pickRuntime(kind: 'omp' | 'claude-code'): Promise<void> {
+  onboardingChoice.value = kind;
+  runtimeChecking.value = true;
+  runtimeOk.value = false;
+  runtimeProblem.value = '';
+  try {
+    const verdict = await api.checkAccountRuntime(kind);
+    if (verdict.ok) {
+      runtimeOk.value = true;
+      return;
+    }
+    // A classified cause has a localized `errors.runtime_*` message naming the fix; anything
+    // else falls back to the backend's own words, which beat a generic "something went wrong".
+    const key = `errors.runtime_${verdict.code ?? ''}`;
+    runtimeProblem.value =
+      verdict.code && te(key)
+        ? t(key)
+        : verdict.reason || t('onboarding.runtime.checkFailed');
+  } catch {
+    // The check itself could not run (api still booting). Not the operator's problem to solve,
+    // and not a reason to claim the backend is broken — say nothing and let them proceed.
+    runtimeProblem.value = '';
+  } finally {
+    runtimeChecking.value = false;
+  }
+}
 
 async function submitOnboarding(): Promise<void> {
   if (!onboardingChoice.value || onboardingBusy.value) return;
@@ -1691,6 +1735,15 @@ async function gitPull(): Promise<void> {
   background: var(--k-accent-bg);
   border-color: var(--k-accent);
   color: var(--k-accent);
+}
+
+/* The preflight's affirmative line. Muted rather than loud: a working backend is the
+   expected case, and only the failure above it needs to catch the eye. */
+.shell__runtime-ok {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--k-ok, var(--k-muted));
 }
 // A non-owner sees the value, cannot change it, and gets the same greyed-out signal as a
 // disabled KField (which is why the opacity matches KField's :disabled rule).

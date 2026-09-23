@@ -29,9 +29,14 @@ board, transcripts, worktrees, the RPC bridge — is shared.
   native addon.
 - **`omp` on your PATH, authenticated.** Sessions on the `omp` backend spawn
   `omp --mode rpc`; if `omp` is missing or unauthenticated, they cannot start.
-- **`claude` CLI installed and authenticated.** Required when a user's runtime
-  preference is `claude-code`; those sessions run through the
-  `@anthropic-ai/claude-agent-sdk` and cannot start without it.
+- **Claude signed in on this machine.** Required when a user's runtime preference
+  is `claude-code`. The *binary* does not need to be on your PATH — the SDK ships
+  its own as an optional platform package (`@anthropic-ai/claude-agent-sdk-<os>-<arch>`,
+  ~200 MB) that `pnpm install` fetches. What must come from your machine is the
+  **authentication**: the same credentials `claude /login` writes. A signed-out
+  machine, or one where that 200 MB package did not install, cannot start
+  `claude-code` sessions — the app now names which of the two it is, both when you
+  pick the backend and when a session fails to launch.
 - **pnpm** (the repo pins its version via `packageManager` in
   `package.json`).
 
@@ -42,6 +47,19 @@ sign-in picks `omp` or `claude-code`; you can change it later in profile
 settings, and the `KERMANYCH_RUNTIME` env var is a dev override. The choice
 applies to sessions created afterwards: each session keeps the runtime it was
 created with, and resuming or branching a session never switches its backend.
+
+Picking a backend runs a preflight against it — `GET /account/runtime/check?runtime=<kind>`
+— so an unusable one is named where the choice is made rather than surfacing later
+as a session that never answers. It asks the backend for its model catalog, which
+only succeeds if that backend is both installed and signed in, and reports either
+`{ ok: true }` or `{ ok: false, code }` where `code` names the fix (signed out vs
+binary missing). The check never blocks the choice: you may be about to run
+`claude /login`.
+
+If sessions on a backend refuse to start, that same code is what the error names.
+To see the raw reason directly, the api logs it at `warn` — including the one line
+explaining an empty model picker, which is the loudest symptom of an unusable
+backend.
 
 Not every feature is available on both. TTSR triggers, the skill-overlay
 config, subscription-plan spend, and the plan/todo chip are `omp`-only; on the
