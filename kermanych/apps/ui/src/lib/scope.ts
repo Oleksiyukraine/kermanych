@@ -20,10 +20,12 @@ export type TaskFilters = {
   assigneeFilter?: string | undefined;
 };
 
-// Workspace order is the cloud's (created_at); project order inside a group is the
-// cloud's too. A project whose workspace is absent from `workspaces` is DROPPED, not
-// re-homed: RLS decides which workspaces this user sees, and inventing a group for one
-// they cannot read would render a name that does not exist.
+// The groups render in the order `workspaces` is passed — the store hands them already
+// ordered by the user's saved sidebar order (see orderWorkspaces), falling back to the
+// cloud's created_at for any not yet placed. Project order inside a group is the cloud's.
+// A project whose workspace is absent from `workspaces` is DROPPED, not re-homed: RLS
+// decides which workspaces this user sees, and inventing a group for one they cannot read
+// would render a name that does not exist.
 export function groupProjectsByWorkspace(
   workspaces: Workspace[],
   cloudProjects: CloudProject[],
@@ -40,6 +42,40 @@ export function projectWorkspaceMap(cloudProjects: CloudProject[]): Record<strin
   const map: Record<string, string> = {};
   for (const p of cloudProjects) map[p.id] = p.workspaceId;
   return map;
+}
+
+// Apply a user's saved sidebar order to their workspaces. `order` is a list of ids: a
+// workspace named in it renders at that position, and any workspace NOT yet in it — one
+// created since the last reorder, or every workspace on a build before ordering existed —
+// keeps the cloud's created_at order AFTER the ordered ones. A stale id (a workspace the
+// user was removed from, or that was deleted) is skipped. Pure, so the reorder logic is
+// unit-tested here rather than inside the store.
+export function orderWorkspaces(workspaces: Workspace[], order: string[]): Workspace[] {
+  const byId = new Map(workspaces.map((w) => [w.id, w]));
+  const seen = new Set<string>();
+  const out: Workspace[] = [];
+  for (const id of order) {
+    const w = byId.get(id);
+    if (w && !seen.has(id)) {
+      out.push(w);
+      seen.add(id);
+    }
+  }
+  for (const w of workspaces) if (!seen.has(w.id)) out.push(w);
+  return out;
+}
+
+// The new id order after dragging `dragId` onto `targetId`: dragId is lifted out and
+// re-inserted immediately BEFORE targetId, so a release lands the dragged workspace where
+// the pointer is. `current` is the ids in their present display order. A drag onto itself,
+// or onto a target no longer in the list, returns `current` unchanged (the caller reads
+// identity to skip a needless write).
+export function reorderWorkspaces(current: string[], dragId: string, targetId: string): string[] {
+  if (dragId === targetId) return current;
+  const rest = current.filter((id) => id !== dragId);
+  const at = rest.indexOf(targetId);
+  if (at < 0) return current;
+  return [...rest.slice(0, at), dragId, ...rest.slice(at)];
 }
 
 // Scope stays at the WORKSPACE even when a project is selected: the project narrows

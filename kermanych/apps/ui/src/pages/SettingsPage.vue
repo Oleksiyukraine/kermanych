@@ -319,6 +319,11 @@
             :label="t('settings.workspace.color')"
             :class="{ 'set__locked': !isOwnerOfWorkspace }"
           />
+          <KEmojiPicker
+            v-model="wsDraft.icon"
+            :label="t('settings.workspace.icon')"
+            :class="{ 'set__locked': !isOwnerOfWorkspace }"
+          />
           <p v-if="!isOwnerOfWorkspace" class="set__note">{{ t('settings.workspace.ownerOnly') }}</p>
         </div>
 
@@ -655,6 +660,7 @@ import KCount from 'components/kit/KCount.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KColorPicker from 'components/kit/KColorPicker.vue';
+import KEmojiPicker from 'components/kit/KEmojiPicker.vue';
 import KEnvEditor from 'components/kit/KEnvEditor.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import KBtn from 'components/kit/KBtn.vue';
@@ -969,15 +975,15 @@ const gitToken = computed<string>({
 });
 
 // ── WORKSPACE DRAFT ─────────────────────────────────────────────────────────
-const wsDraft = ref({ name: '', color: '' });
-const wsBase = ref({ name: '', color: '' });
+const wsDraft = ref({ name: '', color: '', icon: '' });
+const wsBase = ref({ name: '', color: '', icon: '' });
 const wsDirty = computed(() => changedFields(wsDraft.value, wsBase.value));
 
 watch(
   workspace,
   (ws, prev) => {
     if (ws?.id !== prev?.id || wsDirty.value.length === 0) {
-      wsBase.value = { name: ws?.name ?? '', color: ws?.color ?? '' };
+      wsBase.value = { name: ws?.name ?? '', color: ws?.color ?? '', icon: ws?.icon ?? '' };
       wsDraft.value = { ...wsBase.value };
     }
   },
@@ -1154,9 +1160,10 @@ async function save(): Promise<void> {
         return;
       }
       // patchWorkspace replaces the row in the store list and rewrites the tree
-      // cache, so the sidebar picks the new name and colour up on its own.
-      await projects.patchWorkspace(ws.id, { name, color: wsDraft.value.color });
-      wsBase.value = { name, color: wsDraft.value.color };
+      // cache, so the sidebar picks the new name, colour and emoji up on its own.
+      const icon = wsDraft.value.icon;
+      await projects.patchWorkspace(ws.id, { name, color: wsDraft.value.color, icon });
+      wsBase.value = { name, color: wsDraft.value.color, icon };
       wsDraft.value = { ...wsBase.value };
     }
     store.notify(t('settings.save.saved'));

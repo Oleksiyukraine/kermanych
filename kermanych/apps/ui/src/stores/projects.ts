@@ -28,7 +28,7 @@ import {
 import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { api } from '../lib/api';
-import { groupProjectsByWorkspace, projectWorkspaceMap } from '../lib/scope';
+import { groupProjectsByWorkspace, orderWorkspaces, projectWorkspaceMap, reorderWorkspaces } from '../lib/scope';
 import { globalTr } from '../boot/i18n';
 
 // Cloud workspaces + projects + membership: the source of truth for project CONFIG, for
@@ -149,6 +149,54 @@ export const useProjects = defineStore('projects', () => {
   }
 
   readTreeCache();
+
+  // The sidebar's WORKSPACE ORDER is a per-user, per-machine preference, so it lives in
+  // localStorage rather than the cloud: a member belongs to workspaces owned by different
+  // people, and each must be free to arrange their own sidebar without an owner-only cloud
+  // write standing in the way. Stamped with the account like the tree cache above, for the
+  // same reason — one origin, several accounts — and holding only ids, so a workspace the
+  // user leaves simply drops out of the applied order (see orderWorkspaces).
+  const ORDER_CACHE_KEY = 'kermanych.workspace-order';
+  const workspaceOrder = ref<string[]>([]);
+
+  function readOrderCache(): void {
+    try {
+      const raw = localStorage.getItem(ORDER_CACHE_KEY);
+      if (!raw) return;
+      const cached = JSON.parse(raw) as Partial<{ userId: string; order: string[] }>;
+      if (cached.userId !== auth.user?.id || !Array.isArray(cached.order)) return;
+      workspaceOrder.value = cached.order.filter((x): x is string => typeof x === 'string');
+    } catch {
+      /* a corrupt order is not worth a crash; the next reorder overwrites it */
+    }
+  }
+
+  function writeOrderCache(): void {
+    const userId = auth.user?.id;
+    if (!userId) return;
+    try {
+      localStorage.setItem(ORDER_CACHE_KEY, JSON.stringify({ userId, order: workspaceOrder.value }));
+    } catch {
+      /* storage full or blocked: the order just falls back to the cloud's created_at */
+    }
+  }
+
+  readOrderCache();
+
+  // Workspaces in the user's saved sidebar order — the single ordered view the sidebar and
+  // every workspace-grouped surface read. Unordered ones trail in the cloud's created_at.
+  const orderedWorkspaces = computed(() => orderWorkspaces(workspaces.value, workspaceOrder.value));
+
+  // Reorder the sidebar: `dragId` lands immediately before `targetId`. The current display
+  // order (ordered ids, so a not-yet-placed workspace reorders from where it actually sits)
+  // is the basis; identity return means the drag was a no-op and nothing is written.
+  function moveWorkspace(dragId: string, targetId: string): void {
+    const current = orderedWorkspaces.value.map((w) => w.id);
+    const next = reorderWorkspaces(current, dragId, targetId);
+    if (next === current) return;
+    workspaceOrder.value = next;
+    writeOrderCache();
+  }
 
   async function load(): Promise<CloudProject[]> {
     loading.value = true;
@@ -390,7 +438,7 @@ export const useProjects = defineStore('projects', () => {
   const byId = computed(() => new Map(projects.value.map((p) => [p.id, p])));
   const workspaceById = computed(() => new Map(workspaces.value.map((w) => [w.id, w])));
   const projectsByWorkspace = computed(() =>
-    groupProjectsByWorkspace(workspaces.value, projects.value),
+    groupProjectsByWorkspace(orderedWorkspaces.value, projects.value),
   );
 
   // UX only — RLS is the real gate: the owner-only policies refuse a non-owner write
@@ -437,6 +485,8 @@ export const useProjects = defineStore('projects', () => {
     byId,
     workspaceById,
     projectsByWorkspace,
+    orderedWorkspaces,
+    moveWorkspace,
     load,
     createWorkspace,
     patchWorkspace,
