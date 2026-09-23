@@ -422,6 +422,13 @@
               >{{ t('agents.session.id') }}</dt>
               <dd class="agents__meta-value mono agents__meta-value--id">{{ selectedSession.id }}</dd>
             </div>
+            <div v-if="engineSessionId" class="agents__meta-row">
+              <dt
+                v-tip="engineSessionIdHint"
+                class="agents__meta-label"
+              >{{ t('agents.session.engineId') }}</dt>
+              <dd class="agents__meta-value mono agents__meta-value--id">{{ engineSessionId }}</dd>
+            </div>
           </dl>
         </div>
         <div v-if="detailTab === 'docs'" class="agents__tabpane agents__docs">
@@ -1184,13 +1191,21 @@ const launchScopeName = computed(() => {
 // A workspace is not a place a session can be created: it holds several projects and a session
 // row carries exactly one projectId. Rendered as visible text beside the disabled button, not
 // as its tooltip — see the template.
-// The two explanatory bubbles in the meta list. `v-tip`, not the native `title` they used to
+// The three explanatory bubbles in the meta list. `v-tip`, not the native `title` they used to
 // be: that one drew the OS rectangle after a ~1s delay, the single square bubble left in a
 // rounded UI. A <dt> is neither focusable nor disabled, so the directive fires on it.
 const skillsHint = computed(() => t('agents.session.skillsHint'));
 // The id is the same string the worktree folder under ~/.kermanych/worktrees is named after,
 // so the bubble says where to spend it rather than leaving an opaque uuid on screen.
 const sessionIdHint = computed(() => t('agents.session.idHint'));
+// The engine's own handle, which is what `claude --resume` takes — our id names the folder, not
+// the conversation. Shown for claude-code only: an omp agent reports a sessionId too, but omp
+// resumes from a session FILE (`ompSessionFile`), so printing its id would promise a `--resume`
+// that does not exist. Read from the session row, so a dormant agent still states it.
+const engineSessionId = computed(() =>
+  selectedSession.value?.runtime === 'claude-code' ? selectedSession.value.ompSessionId : undefined,
+);
+const engineSessionIdHint = computed(() => t('agents.session.engineIdHint'));
 const isBound = computed(() => !!launchProject.value?.localRepoPath);
 
 // Row-level check: the board can show sessions of an orphan project whose row is still here

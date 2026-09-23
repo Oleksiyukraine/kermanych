@@ -246,7 +246,9 @@ export const en: MessageSchema = {
       cost: 'Cost',
       tokenTotal: '{n} tok',
       id: 'Session ID',
-      idHint: 'This session’s identifier. Its worktree under ~/.kermanych/worktrees is named after it, so this is the string to quote in a bug report or when hunting for logs.',
+      idHint: 'The session’s identifier in Kermanych. Its worktree — ~/.kermanych/worktrees/<id> — is named after it, so this is the string to quote in a bug report or when hunting for logs. The conversation with the engine has its own id, below.',
+      engineId: 'Claude Code session',
+      engineIdHint: 'The identifier of the conversation inside Claude Code. To continue it natively, without Kermanych: cd into the session’s worktree (cd ~/.kermanych/worktrees/<Session ID>) and run claude --resume <this id>. The history lives in ~/.claude/projects keyed by that very folder, so both ids are needed together.',
     },
     docs: {
       usedTitle: 'Documentation used',
