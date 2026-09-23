@@ -415,6 +415,13 @@
               <dt class="agents__meta-label">{{ t('agents.session.cost') }}</dt>
               <dd class="agents__meta-value mono">{{ costLabel || '—' }}</dd>
             </div>
+            <div class="agents__meta-row">
+              <dt
+                v-tip="sessionIdHint"
+                class="agents__meta-label"
+              >{{ t('agents.session.id') }}</dt>
+              <dd class="agents__meta-value mono agents__meta-value--id">{{ selectedSession.id }}</dd>
+            </div>
           </dl>
         </div>
         <div v-if="detailTab === 'docs'" class="agents__tabpane agents__docs">
@@ -1177,10 +1184,13 @@ const launchScopeName = computed(() => {
 // A workspace is not a place a session can be created: it holds several projects and a session
 // row carries exactly one projectId. Rendered as visible text beside the disabled button, not
 // as its tooltip — see the template.
-// The one explanatory bubble in the meta list. `v-tip`, not the native `title` it used to
+// The two explanatory bubbles in the meta list. `v-tip`, not the native `title` they used to
 // be: that one drew the OS rectangle after a ~1s delay, the single square bubble left in a
 // rounded UI. A <dt> is neither focusable nor disabled, so the directive fires on it.
 const skillsHint = computed(() => t('agents.session.skillsHint'));
+// The id is the same string the worktree folder under ~/.kermanych/worktrees is named after,
+// so the bubble says where to spend it rather than leaving an opaque uuid on screen.
+const sessionIdHint = computed(() => t('agents.session.idHint'));
 const isBound = computed(() => !!launchProject.value?.localRepoPath);
 
 // Row-level check: the board can show sessions of an orphan project whose row is still here
@@ -3150,6 +3160,11 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-text);
   text-align: right;
   overflow-wrap: anywhere;
+}
+// The one value nobody reads and everybody copies: one click takes the whole uuid, so a
+// 36-character drag across a wrapped line can't end up short.
+.agents__meta-value--id {
+  user-select: all;
 }
 // No wrapping: the bar is 34px and a second row of glyphs would grow it. At most five fit
 // beside an ellipsised name at the detail pane's min width.

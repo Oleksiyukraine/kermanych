@@ -245,6 +245,8 @@ export const en: MessageSchema = {
       tokens: 'Tokens',
       cost: 'Cost',
       tokenTotal: '{n} tok',
+      id: 'Session ID',
+      idHint: 'This session’s identifier. Its worktree under ~/.kermanych/worktrees is named after it, so this is the string to quote in a bug report or when hunting for logs.',
     },
     docs: {
       usedTitle: 'Documentation used',
