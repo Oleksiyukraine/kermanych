@@ -15,7 +15,8 @@ import {
   deleteJiraIntegration,
   deleteJiraIssues,
   ensureJiraSyncState,
-  getJiraIntegration,
+  getJiraIntegrationById,
+  listJiraIntegrations,
   getJiraSyncState,
   listJiraIssues,
   patchJiraIssueBinding,
@@ -222,12 +223,13 @@ export class JiraService {
     return integration;
   }
 
-  async disconnect(workspaceId: string): Promise<void> {
-    await deleteJiraIntegration(this.auth.cloudClient(), workspaceId);
+  // Disconnect ONE board by its id — the workspace's other boards stay connected.
+  async disconnect(integrationId: string): Promise<void> {
+    await deleteJiraIntegration(this.auth.cloudClient(), integrationId);
   }
 
-  async integration(workspaceId: string): Promise<JiraIntegration | undefined> {
-    return getJiraIntegration(this.auth.cloudClient(), workspaceId);
+  listIntegrations(workspaceId: string): Promise<JiraIntegration[]> {
+    return listJiraIntegrations(this.auth.cloudClient(), workspaceId);
   }
 
   // ── the site's start-date field ──────────────────────────────────────────────
@@ -256,11 +258,12 @@ export class JiraService {
 
   // ── sync ─────────────────────────────────────────────────────────────────────
 
-  // One poll tick. Honors the shared lease so N open boards cost one poller; `full`
-  // bypasses it (connect and «Синхронізувати зараз» are deliberate human acts).
-  async sync(workspaceId: string, userId: string, full = false): Promise<{ synced: boolean }> {
+  // One poll tick for ONE board. Honors the shared lease so N open boards cost one poller
+  // per board; `full` bypasses it (connect and «Синхронізувати зараз» are deliberate human
+  // acts).
+  async sync(integrationId: string, userId: string, full = false): Promise<{ synced: boolean }> {
     const cloud = this.auth.cloudClient();
-    const integration = await getJiraIntegration(cloud, workspaceId);
+    const integration = await getJiraIntegrationById(cloud, integrationId);
     if (!integration) throw new Error("no jira integration");
     if (!full) {
       const leased = await takeJiraSyncLease(cloud, integration.id, LEASE_STALE_MS);
@@ -341,9 +344,9 @@ export class JiraService {
 
   // One issue, live → mirror. The action endpoints call this after their Jira write so
   // the board shows the result immediately; the dialog calls it on open for freshness.
-  async refreshIssue(workspaceId: string, key: string, userId: string): Promise<JiraIssue> {
+  async refreshIssue(integrationId: string, key: string, userId: string): Promise<JiraIssue> {
     const cloud = this.auth.cloudClient();
-    const integration = await getJiraIntegration(cloud, workspaceId);
+    const integration = await getJiraIntegrationById(cloud, integrationId);
     if (!integration) throw new Error("no jira integration");
     const client = this.clientFor(integration.siteUrl, userId);
     const startDateFieldId = await this.startDateFieldId(integration.siteUrl, client);
@@ -356,32 +359,32 @@ export class JiraService {
 
   // ── actions ──────────────────────────────────────────────────────────────────
 
-  private async withIntegration(workspaceId: string, userId: string): Promise<{
+  private async withIntegration(integrationId: string, userId: string): Promise<{
     cloud: SupabaseClient;
     integration: JiraIntegration;
     client: JiraClient;
   }> {
     const cloud = this.auth.cloudClient();
-    const integration = await getJiraIntegration(cloud, workspaceId);
+    const integration = await getJiraIntegrationById(cloud, integrationId);
     if (!integration) throw new Error("no jira integration");
     return { cloud, integration, client: this.clientFor(integration.siteUrl, userId) };
   }
 
-  async listTransitions(workspaceId: string, key: string, userId: string): Promise<JiraTransition[]> {
-    const { client } = await this.withIntegration(workspaceId, userId);
+  async listTransitions(integrationId: string, key: string, userId: string): Promise<JiraTransition[]> {
+    const { client } = await this.withIntegration(integrationId, userId);
     return client.listTransitions(key);
   }
 
-  async transition(workspaceId: string, key: string, transitionId: string, userId: string): Promise<JiraIssue> {
-    const { client } = await this.withIntegration(workspaceId, userId);
+  async transition(integrationId: string, key: string, transitionId: string, userId: string): Promise<JiraIssue> {
+    const { client } = await this.withIntegration(integrationId, userId);
     await client.transition(key, transitionId);
-    return this.refreshIssue(workspaceId, key, userId);
+    return this.refreshIssue(integrationId, key, userId);
   }
 
-  async addComment(workspaceId: string, key: string, body: string, userId: string): Promise<JiraIssue> {
-    const { client } = await this.withIntegration(workspaceId, userId);
+  async addComment(integrationId: string, key: string, body: string, userId: string): Promise<JiraIssue> {
+    const { client } = await this.withIntegration(integrationId, userId);
     await client.addComment(key, body);
-    return this.refreshIssue(workspaceId, key, userId);
+    return this.refreshIssue(integrationId, key, userId);
   }
 
   // «Log work»: one worklog into Jira under the acting user's own token — so the entry
@@ -392,8 +395,8 @@ export class JiraService {
   // The draft is off the wire, so the two things Jira would refuse in its own vocabulary
   // are refused here in the user's: an empty duration, and an adjustment mode whose value
   // is missing. The duration FORMAT stays Jira's to judge — it owns «3h 20m».
-  async logWork(workspaceId: string, key: string, draft: JiraWorklogDraft, userId: string): Promise<JiraIssue> {
-    const { client } = await this.withIntegration(workspaceId, userId);
+  async logWork(integrationId: string, key: string, draft: JiraWorklogDraft, userId: string): Promise<JiraIssue> {
+    const { client } = await this.withIntegration(integrationId, userId);
     const timeSpent = draft.timeSpent?.trim();
     if (!timeSpent) throw new Error("timeSpent is required");
     const adjust = normalizeWorklogAdjust(draft.adjust);
@@ -404,7 +407,7 @@ export class JiraService {
       ...(comment ? { comment: adfDoc(comment) } : {}),
       adjust,
     });
-    return this.refreshIssue(workspaceId, key, userId);
+    return this.refreshIssue(integrationId, key, userId);
   }
 
   // Editing an existing entry: the same three inputs, against a worklog id. Jira decides
@@ -415,13 +418,13 @@ export class JiraService {
   // `started` is required rather than defaulted: an edit that omitted it would silently
   // move the entry to now, and «I fixed the duration» must not restamp the day.
   async editWorklog(
-    workspaceId: string,
+    integrationId: string,
     key: string,
     worklogId: string,
     draft: JiraWorklogDraft,
     userId: string,
   ): Promise<JiraIssue> {
-    const { client } = await this.withIntegration(workspaceId, userId);
+    const { client } = await this.withIntegration(integrationId, userId);
     const timeSpent = draft.timeSpent?.trim();
     if (!timeSpent) throw new Error("timeSpent is required");
     if (!draft.started) throw new Error("started is required when editing a worklog");
@@ -435,21 +438,21 @@ export class JiraService {
       // Jira's update endpoint has no relative move — normalised away, not forwarded.
       adjust: normalizeWorklogAdjust(draft.adjust, false),
     });
-    return this.refreshIssue(workspaceId, key, userId);
+    return this.refreshIssue(integrationId, key, userId);
   }
 
   // Removing an entry. The adjustment's `manual` mode is Jira's `increaseBy` here: the
   // time the entry claimed goes back onto the remaining estimate.
   async deleteWorklog(
-    workspaceId: string,
+    integrationId: string,
     key: string,
     worklogId: string,
     adjust: JiraWorklogAdjust | undefined,
     userId: string,
   ): Promise<JiraIssue> {
-    const { client } = await this.withIntegration(workspaceId, userId);
+    const { client } = await this.withIntegration(integrationId, userId);
     await client.deleteWorklog(key, worklogId, normalizeWorklogAdjust(adjust));
-    return this.refreshIssue(workspaceId, key, userId);
+    return this.refreshIssue(integrationId, key, userId);
   }
 
   // ── authoring ────────────────────────────────────────────────────────────────
@@ -491,25 +494,25 @@ export class JiraService {
     return fields;
   }
 
-  async createIssue(workspaceId: string, draft: JiraIssueDraft, userId: string): Promise<JiraIssue> {
-    const { integration, client } = await this.withIntegration(workspaceId, userId);
+  async createIssue(integrationId: string, draft: JiraIssueDraft, userId: string): Promise<JiraIssue> {
+    const { integration, client } = await this.withIntegration(integrationId, userId);
     if (!draft.summary?.trim()) throw new Error("summary is required");
     // Resolved unconditionally: the refreshIssue below needs the same id anyway, so the
     // cache makes this free even for a draft that carries no start date.
     const startDateFieldId = await this.startDateFieldId(integration.siteUrl, client);
     const created = await client.createIssue(this.issueFields(integration, draft, true, startDateFieldId));
-    return this.refreshIssue(workspaceId, created.key, userId);
+    return this.refreshIssue(integrationId, created.key, userId);
   }
 
-  async editIssue(workspaceId: string, key: string, draft: JiraIssueDraft, userId: string): Promise<JiraIssue> {
-    const { integration, client } = await this.withIntegration(workspaceId, userId);
+  async editIssue(integrationId: string, key: string, draft: JiraIssueDraft, userId: string): Promise<JiraIssue> {
+    const { integration, client } = await this.withIntegration(integrationId, userId);
     const startDateFieldId = await this.startDateFieldId(integration.siteUrl, client);
     await client.editIssue(key, this.issueFields(integration, draft, false, startDateFieldId));
-    return this.refreshIssue(workspaceId, key, userId);
+    return this.refreshIssue(integrationId, key, userId);
   }
 
-  async deleteIssue(workspaceId: string, key: string, userId: string): Promise<void> {
-    const { cloud, integration, client } = await this.withIntegration(workspaceId, userId);
+  async deleteIssue(integrationId: string, key: string, userId: string): Promise<void> {
+    const { cloud, integration, client } = await this.withIntegration(integrationId, userId);
     const mirrored = await listJiraIssues(cloud, integration.id);
     const row = mirrored.find((i) => i.key === key);
     await client.deleteIssue(key);
@@ -520,7 +523,7 @@ export class JiraService {
 
   // ── editor vocabularies ──────────────────────────────────────────────────────
 
-  async editorOptions(workspaceId: string, userId: string): Promise<{
+  async editorOptions(integrationId: string, userId: string): Promise<{
     issueTypes: { id: string; name: string; subtask: boolean }[];
     priorities: { id: string; name: string }[];
     // Whether this site HAS a start-date field at all. The editors show the control only
@@ -533,7 +536,7 @@ export class JiraService {
     myAccountId: string;
     worklog: JiraWorklogPermissions;
   }> {
-    const { integration, client } = await this.withIntegration(workspaceId, userId);
+    const { integration, client } = await this.withIntegration(integrationId, userId);
     const [issueTypes, priorities, startDateFieldId, myAccountId, worklog] = await Promise.all([
       client.projectIssueTypes(integration.projectKey),
       client.listPriorities(),
@@ -582,11 +585,11 @@ export class JiraService {
   }
 
   async assignableUsers(
-    workspaceId: string,
+    integrationId: string,
     query: string,
     userId: string,
   ): Promise<{ accountId: string; displayName: string; avatar?: string }[]> {
-    const { integration, client } = await this.withIntegration(workspaceId, userId);
+    const { integration, client } = await this.withIntegration(integrationId, userId);
     const users = await client.assignableUsers(integration.projectKey, query);
     return users.map((u) => {
       const out: { accountId: string; displayName: string; avatar?: string } = {
@@ -602,24 +605,24 @@ export class JiraService {
   // ── attachments ──────────────────────────────────────────────────────────────
 
   async uploadAttachment(
-    workspaceId: string,
+    integrationId: string,
     key: string,
     filename: string,
     data: Buffer,
     mime: string,
     userId: string,
   ): Promise<JiraIssue> {
-    const { client } = await this.withIntegration(workspaceId, userId);
+    const { client } = await this.withIntegration(integrationId, userId);
     await client.uploadAttachment(key, filename, data, mime);
-    return this.refreshIssue(workspaceId, key, userId);
+    return this.refreshIssue(integrationId, key, userId);
   }
 
   async downloadAttachment(
-    workspaceId: string,
+    integrationId: string,
     attachmentId: string,
     userId: string,
   ): Promise<{ body: ReadableStream<Uint8Array>; contentType: string }> {
-    const { client } = await this.withIntegration(workspaceId, userId);
+    const { client } = await this.withIntegration(integrationId, userId);
     return client.downloadAttachment(attachmentId);
   }
 
@@ -629,14 +632,14 @@ export class JiraService {
   // session is the expensive, wanted thing, so a transition Jira refuses NEVER kills it —
   // the refusal comes back beside the session as a warning.
   async launch(
-    workspaceId: string,
+    integrationId: string,
     key: string,
     projectId: string,
     userId: string,
     transitionId?: string,
     images?: ImageInput[],
   ): Promise<JiraLaunchResult> {
-    const { cloud, integration, client } = await this.withIntegration(workspaceId, userId);
+    const { cloud, integration, client } = await this.withIntegration(integrationId, userId);
     const raw = await client.getIssue(key);
 
     // The shadow task: the whole existing pipeline (worktree, outbox, force-stop,
@@ -660,7 +663,7 @@ export class JiraService {
     if (!transitionId) return { session };
     try {
       await client.transition(key, transitionId);
-      await this.refreshIssue(workspaceId, key, userId);
+      await this.refreshIssue(integrationId, key, userId);
       return { session };
     } catch (err) {
       const message = err instanceof JiraHttpError ? err.message : (err as Error).message;

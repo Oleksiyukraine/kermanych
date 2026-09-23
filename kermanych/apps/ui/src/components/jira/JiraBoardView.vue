@@ -1,6 +1,15 @@
 <template>
   <div class="jbv">
     <div class="jbv__bar">
+      <KChipSelect
+        v-if="jira.integrations.length > 1"
+        :model-value="jira.activeId ?? ''"
+        :options="boardChoices"
+        icon="📋"
+        placement="down"
+        :title="t('jira.boardView.boardTitle')"
+        @update:model-value="switchBoard"
+      />
       <KField
         v-model="query"
         class="jbv__search"
@@ -22,7 +31,7 @@
       <KBtn
         :disabled="!jira.tokenPresent || jira.syncing"
         :title="jira.tokenPresent ? syncHint : readOnlyHint"
-        @click="jira.syncNow(workspaceId)"
+        @click="jira.syncNow()"
       >
         {{ jira.syncing ? t('jira.boardView.syncing') : t('jira.boardView.sync') }}
       </KBtn>
@@ -74,7 +83,7 @@
       v-if="openedIssue"
       v-model="dialogOpen"
       :issue="openedIssue"
-      :workspace-id="workspaceId"
+      :integration-id="integrationId"
       @launch="launchOpen = true"
       @edit="editorOpen = true"
       @subtask="subtaskOpen = true"
@@ -86,13 +95,14 @@
       v-model="launchOpen"
       :issue="openedIssue"
       :workspace-id="workspaceId"
+      :integration-id="integrationId"
       @launched="onLaunched"
     />
 
     <JiraIssueEditor
       v-if="openedIssue"
       v-model="editorOpen"
-      :workspace-id="workspaceId"
+      :integration-id="integrationId"
       :issue="openedIssue"
       @saved="jira.upsert"
     />
@@ -100,12 +110,12 @@
     <JiraIssueEditor
       v-if="openedIssue"
       v-model="subtaskOpen"
-      :workspace-id="workspaceId"
+      :integration-id="integrationId"
       :parent-key="openedIssue.key"
       @saved="jira.upsert"
     />
 
-    <JiraIssueEditor v-model="creatorOpen" :workspace-id="workspaceId" @saved="jira.upsert" />
+    <JiraIssueEditor v-model="creatorOpen" :integration-id="integrationId" @saved="jira.upsert" />
 
     <JiraStatusPickDialog
       v-model="dropPickOpen"
@@ -171,6 +181,15 @@ const assignee = ref('');
 // searching, and losing it mid-search reads as the board having changed.
 const boardName = computed(() => jira.integration?.boardName ?? '');
 
+// The active board's integration id — what every board-scoped api call signs with, and
+// what the child dialogs act on. The board switcher (shown only with more than one board)
+// moves it through the store.
+const integrationId = computed(() => jira.integration?.id ?? '');
+const boardChoices = computed(() => jira.integrations.map((i) => ({ value: i.id, label: i.boardName })));
+function switchBoard(id: string): void {
+  void jira.setActive(id);
+}
+
 // «Anyone» and «Unassigned» lead, then the people actually holding cards. The two standing
 // rows come from i18n, so they sort with the list rather than into it.
 const assigneeChoices = computed(() => [
@@ -225,7 +244,7 @@ function onLaunched(session: Session, transitionError?: string): void {
   if (transitionError) {
     local.notify(t('jira.boardView.transitionFailedAfterLaunch', { error: transitionError }), 'error');
   }
-  void jira.refreshIssue(props.workspaceId, openedIssue.value?.key ?? '');
+  void jira.refreshIssue(openedIssue.value?.key ?? '');
 }
 
 // ── drag → transition ─────────────────────────────────────────────────────────
@@ -246,7 +265,7 @@ async function onDrop(column: JiraColumn): Promise<void> {
 
   let transitions: JiraTransitionView[];
   try {
-    transitions = await api.jiraTransitions(props.workspaceId, issue.key);
+    transitions = await api.jiraTransitions(integrationId.value, issue.key);
   } catch (e) {
     local.notify(e instanceof Error ? e.message : String(e), 'error');
     return;
@@ -278,13 +297,13 @@ async function applyDrop(t: JiraTransitionView): Promise<void> {
 
 async function transitionIssue(issue: JiraIssue, transitionId: string): Promise<void> {
   try {
-    const updated = await api.jiraTransition(props.workspaceId, issue.key, transitionId);
+    const updated = await api.jiraTransition(integrationId.value, issue.key, transitionId);
     jira.upsert(updated);
   } catch (e) {
     // The stale-mirror case: Jira refused because the ticket moved meanwhile. Refresh the
     // one issue so the board shows where it actually is.
     local.notify(e instanceof Error ? e.message : String(e), 'error');
-    void jira.refreshIssue(props.workspaceId, issue.key);
+    void jira.refreshIssue(issue.key);
   }
 }
 

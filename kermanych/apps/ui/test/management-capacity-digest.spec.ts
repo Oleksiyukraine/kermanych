@@ -28,6 +28,12 @@ vi.mock('../src/stores/jira', () => ({
     get integration() {
       return jiraState.integration;
     },
+    get integrations() {
+      return jiraState.integration ? [jiraState.integration] : [];
+    },
+    get activeId() {
+      return jiraState.integration?.id ?? null;
+    },
     get issues() {
       return jiraState.issues;
     },

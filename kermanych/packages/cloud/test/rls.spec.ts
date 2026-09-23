@@ -24,7 +24,8 @@ import { listMembers } from "../src/workspaces";
 import {
   deleteJiraIntegration,
   ensureJiraSyncState,
-  getJiraIntegration,
+  getJiraIntegrationById,
+  listJiraIntegrations,
   listJiraColumns,
   listJiraIssues,
   replaceJiraColumns,
@@ -1183,9 +1184,36 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
       expect(connected.connectedBy).toBe(owner.id);
     });
 
-    it("a member reads the integration; an outsider sees nothing", async () => {
-      expect((await getJiraIntegration(member.client, jiraWs))?.id).toBe(integrationId);
-      expect(await getJiraIntegration(outsider.client, jiraWs)).toBeUndefined();
+    it("a member reads the workspace's boards; an outsider sees nothing", async () => {
+      expect((await listJiraIntegrations(member.client, jiraWs)).map((i) => i.id)).toEqual([integrationId]);
+      expect((await getJiraIntegrationById(member.client, integrationId))?.id).toBe(integrationId);
+      expect(await listJiraIntegrations(outsider.client, jiraWs)).toEqual([]);
+      expect(await getJiraIntegrationById(outsider.client, integrationId)).toBeUndefined();
+    });
+
+    it("a workspace holds several boards; re-connecting one updates it in place", async () => {
+      // A DIFFERENT board is a second row…
+      const second = await upsertJiraIntegration(owner.client, {
+        workspaceId: jiraWs,
+        siteUrl: "https://x.atlassian.net",
+        projectKey: "OPS",
+        boardId: 2,
+        boardName: "OPS board",
+      });
+      expect(second.id).not.toBe(integrationId);
+      expect((await listJiraIntegrations(member.client, jiraWs)).map((i) => i.boardId).sort()).toEqual([1, 2]);
+      // …re-connecting the SAME board (by workspace+board_id) updates rather than twins it.
+      const again = await upsertJiraIntegration(owner.client, {
+        workspaceId: jiraWs,
+        siteUrl: "https://x.atlassian.net",
+        projectKey: "OPS",
+        boardId: 2,
+        boardName: "OPS renamed",
+      });
+      expect(again.id).toBe(second.id);
+      expect(again.boardName).toBe("OPS renamed");
+      // Leave the workspace with only the original board for the disconnect test below.
+      await deleteJiraIntegration(owner.client, second.id);
     });
 
     it("any member writes the mirror; an outsider cannot read it", async () => {
@@ -1258,11 +1286,11 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
 
     it("disconnecting cascades the whole mirror away", async () => {
       // Member cannot disconnect…
-      await deleteJiraIntegration(member.client, jiraWs);
-      expect((await getJiraIntegration(member.client, jiraWs))?.id).toBe(integrationId);
+      await deleteJiraIntegration(member.client, integrationId);
+      expect((await getJiraIntegrationById(member.client, integrationId))?.id).toBe(integrationId);
       // …the owner can, and the cascade sweeps columns and issues with the row.
-      await deleteJiraIntegration(owner.client, jiraWs);
-      expect(await getJiraIntegration(owner.client, jiraWs)).toBeUndefined();
+      await deleteJiraIntegration(owner.client, integrationId);
+      expect(await getJiraIntegrationById(owner.client, integrationId)).toBeUndefined();
       expect(await listJiraIssues(owner.client, integrationId)).toEqual([]);
     });
   });

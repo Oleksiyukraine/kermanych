@@ -51,7 +51,7 @@ import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
   modelValue: boolean;
-  workspaceId: string;
+  integrationId: string;
   // Present = edit this issue; absent = create a new one.
   issue?: JiraIssue | undefined;
   // Create-only: make the new issue a subtask of this parent.
@@ -128,8 +128,8 @@ watch(
     dueDate.value = issue?.dueDate ?? '';
     try {
       const [opts, users] = await Promise.all([
-        api.jiraEditorOptions(props.workspaceId),
-        api.jiraAssignableUsers(props.workspaceId, ''),
+        api.jiraEditorOptions(props.integrationId),
+        api.jiraAssignableUsers(props.integrationId, ''),
       ]);
       options.value = opts;
       assignable.value = users;
@@ -176,8 +176,8 @@ async function save(): Promise<void> {
       ...(props.parentKey ? { parentKey: props.parentKey } : {}),
     };
     const saved = props.issue
-      ? await api.jiraEditIssue(props.workspaceId, props.issue.key, draft)
-      : await api.jiraCreateIssue(props.workspaceId, draft);
+      ? await api.jiraEditIssue(props.integrationId, props.issue.key, draft)
+      : await api.jiraCreateIssue(props.integrationId, draft);
     emit('update:modelValue', false);
     emit('saved', saved);
   } catch (e) {

@@ -274,25 +274,43 @@ function toJiraAttachment(row: AttachmentRow): JiraAttachment {
   };
 }
 
-// ── integration row ───────────────────────────────────────────────────────────
+// ── integration rows ──────────────────────────────────────────────────────────
 
-// `undefined` = the workspace has no integration OR the caller is not a member; both are
-// «немає Jira» to a client.
-export async function getJiraIntegration(
+// Every Jira board a workspace has connected, oldest first — the board switcher's order
+// and the assistant's enumeration. An empty array = the workspace has none OR the caller
+// is not a member; both are «немає Jira» to a client.
+export async function listJiraIntegrations(
   client: SupabaseClient,
   workspaceId: string,
-): Promise<JiraIntegration | undefined> {
+): Promise<JiraIntegration[]> {
   const { data, error } = await client
     .from("workspace_jira_integrations")
     .select(INTEGRATION_COLUMNS)
     .eq("workspace_id", workspaceId)
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data as IntegrationRow[]).map(toJiraIntegration);
+}
+
+// One board by its own id — the key every board-scoped action and the sync engine address
+// a board by now that a workspace may hold several. `undefined` = no such row or non-member.
+export async function getJiraIntegrationById(
+  client: SupabaseClient,
+  integrationId: string,
+): Promise<JiraIntegration | undefined> {
+  const { data, error } = await client
+    .from("workspace_jira_integrations")
+    .select(INTEGRATION_COLUMNS)
+    .eq("id", integrationId)
     .maybeSingle();
   if (error) throw new Error(error.message);
   return data ? toJiraIntegration(data as IntegrationRow) : undefined;
 }
 
-// Upsert on workspace_id: connecting and re-pointing at another board are the same write.
-// The touch trigger owns connected_by/timestamps; RLS makes this owner-only.
+// Upsert on (workspace_id, board_id): connecting a board and re-connecting the SAME board
+// (a name/site refresh) are the same write, but a DIFFERENT board is a new row up to the
+// workspace's ten-board cap. The touch trigger owns connected_by/timestamps; the limit
+// trigger refuses the eleventh; RLS makes this owner-only.
 export async function upsertJiraIntegration(
   client: SupabaseClient,
   input: JiraIntegrationInsert,
@@ -307,7 +325,7 @@ export async function upsertJiraIntegration(
         board_id: input.boardId,
         board_name: input.boardName,
       },
-      { onConflict: "workspace_id" },
+      { onConflict: "workspace_id,board_id" },
     )
     .select(INTEGRATION_COLUMNS)
     .single();
@@ -315,9 +333,10 @@ export async function upsertJiraIntegration(
   return toJiraIntegration(data as IntegrationRow);
 }
 
-// Cascade takes the whole mirror with it — columns, issues, children, sync state.
-export async function deleteJiraIntegration(client: SupabaseClient, workspaceId: string): Promise<void> {
-  const { error } = await client.from("workspace_jira_integrations").delete().eq("workspace_id", workspaceId);
+// Disconnect ONE board by its id. Cascade takes the whole mirror of that board with it —
+// columns, issues, children, sync state — and leaves the workspace's other boards alone.
+export async function deleteJiraIntegration(client: SupabaseClient, integrationId: string): Promise<void> {
+  const { error } = await client.from("workspace_jira_integrations").delete().eq("id", integrationId);
   if (error) throw new Error(error.message);
 }
 

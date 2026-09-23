@@ -397,7 +397,7 @@ import { useOrchestrator } from 'stores/orchestrator';
 const { t } = useI18n();
 const readOnlyHint = computed(() => t('jira.ticketDialog.readOnlyHint'));
 
-const props = defineProps<{ modelValue: boolean; issue: JiraIssue; workspaceId: string }>();
+const props = defineProps<{ modelValue: boolean; issue: JiraIssue; integrationId: string }>();
 const emit = defineEmits<{
   'update:modelValue': [value: boolean];
   launch: [];
@@ -569,7 +569,7 @@ watch(
     resetWorkDraft();
     deletingWorklogId.value = null;
     void jira.loadChildren(props.issue.issueId);
-    void jira.refreshIssue(props.workspaceId, props.issue.key);
+    void jira.refreshIssue(props.issue.key);
     if (canAct.value) void loadEditorLists();
   },
 );
@@ -590,8 +590,8 @@ watch(
 async function loadEditorLists(): Promise<void> {
   try {
     const [opts, users] = await Promise.all([
-      api.jiraEditorOptions(props.workspaceId),
-      api.jiraAssignableUsers(props.workspaceId, ''),
+      api.jiraEditorOptions(props.integrationId),
+      api.jiraAssignableUsers(props.integrationId, ''),
     ]);
     editorOptions.value = opts;
     assignable.value = users;
@@ -603,7 +603,7 @@ async function loadEditorLists(): Promise<void> {
 async function saveField(field: NonNullable<typeof savingField.value>, draft: JiraIssueDraftWire): Promise<void> {
   savingField.value = field;
   try {
-    jira.upsert(await api.jiraEditIssue(props.workspaceId, props.issue.key, draft));
+    jira.upsert(await api.jiraEditIssue(props.integrationId, props.issue.key, draft));
   } catch (e) {
     local.notify(e instanceof Error ? e.message : String(e), 'error');
     // A refused write leaves the mirror row as the truth: every draft returns to it.
@@ -648,7 +648,7 @@ async function openTransition(): Promise<void> {
   if (transitionsLoading.value) return;
   transitionsLoading.value = true;
   try {
-    transitionOptions.value = await api.jiraTransitions(props.workspaceId, props.issue.key);
+    transitionOptions.value = await api.jiraTransitions(props.integrationId, props.issue.key);
     transitionOpen.value = true;
   } catch (e) {
     local.notify(e instanceof Error ? e.message : String(e), 'error');
@@ -660,7 +660,7 @@ async function openTransition(): Promise<void> {
 async function applyTransition(t: JiraTransitionView): Promise<void> {
   transitioning.value = true;
   try {
-    const updated = await api.jiraTransition(props.workspaceId, props.issue.key, t.id);
+    const updated = await api.jiraTransition(props.integrationId, props.issue.key, t.id);
     jira.upsert(updated);
     transitionOpen.value = false;
   } catch (e) {
@@ -673,7 +673,7 @@ async function applyTransition(t: JiraTransitionView): Promise<void> {
 async function sendComment(): Promise<void> {
   commenting.value = true;
   try {
-    const updated = await api.jiraComment(props.workspaceId, props.issue.key, commentDraft.value.trim());
+    const updated = await api.jiraComment(props.integrationId, props.issue.key, commentDraft.value.trim());
     jira.upsert(updated);
     commentDraft.value = '';
     await jira.loadChildren(props.issue.issueId);
@@ -763,8 +763,8 @@ async function submitWork(): Promise<void> {
   try {
     jira.upsert(
       editing
-        ? await api.jiraEditWorklog(props.workspaceId, props.issue.key, editing, draft)
-        : await api.jiraLogWork(props.workspaceId, props.issue.key, draft),
+        ? await api.jiraEditWorklog(props.integrationId, props.issue.key, editing, draft)
+        : await api.jiraLogWork(props.integrationId, props.issue.key, draft),
     );
     resetWorkDraft();
     await jira.loadChildren(props.issue.issueId);
@@ -783,7 +783,7 @@ async function deleteWorklog(worklogId: string): Promise<void> {
   }
   logging.value = true;
   try {
-    jira.upsert(await api.jiraDeleteWorklog(props.workspaceId, props.issue.key, worklogId, adjust));
+    jira.upsert(await api.jiraDeleteWorklog(props.integrationId, props.issue.key, worklogId, adjust));
     deletingWorklogId.value = null;
     // A deleted entry must not stay loaded in the form behind it.
     if (editingWorklogId.value === worklogId) resetWorkDraft();
@@ -807,7 +807,7 @@ async function upload(e: Event): Promise<void> {
     const bytes = new Uint8Array(buf);
     for (const b of bytes) binary += String.fromCharCode(b);
     const updated = await api.jiraUploadAttachment(
-      props.workspaceId,
+      props.integrationId,
       props.issue.key,
       file.name,
       btoa(binary),
@@ -824,7 +824,7 @@ async function upload(e: Event): Promise<void> {
 
 async function download(a: JiraAttachment): Promise<void> {
   try {
-    const blob = await api.jiraDownloadAttachment(props.workspaceId, a.attachmentId);
+    const blob = await api.jiraDownloadAttachment(props.integrationId, a.attachmentId);
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -839,7 +839,7 @@ async function download(a: JiraAttachment): Promise<void> {
 async function doDelete(): Promise<void> {
   deleting.value = true;
   try {
-    await api.jiraDeleteIssue(props.workspaceId, props.issue.key);
+    await api.jiraDeleteIssue(props.integrationId, props.issue.key);
     jira.drop(props.issue.issueId);
     emit('update:modelValue', false);
     emit('deleted');
