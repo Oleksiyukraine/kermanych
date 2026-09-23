@@ -5,6 +5,7 @@ import type { AgentRuntime, RpcStateData, RuntimeLaunchOpts } from "./agent-runt
 import { initClaudeMapState, mapSdkMessage, type ClaudeMapState } from "./claude-event-map";
 import { toClaudeEffort, toClaudeThinking, fromClaudeEffort } from "./effort-map";
 import { claudeHistoryToOmp } from "./claude-history";
+import { authFailureCode } from "./auth-failure";
 
 type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options?: Options }) => Query;
 type GetSessionMessagesFn = (sessionId: string, options?: GetSessionMessagesOptions) => Promise<SessionMessage[]>;
@@ -65,6 +66,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
   private emit(e: RpcEvent): void { for (const cb of this.eventCbs) cb(e); }
 
+  // How long start() watches a freshly-spawned child before declaring it launched. The two
+  // failures that matter — a missing platform binary and a signed-out CLI — both reject the
+  // message stream in single-digit milliseconds (measured against the real SDK), so this
+  // window buys the difference between "created a dead session" and "told the operator why"
+  // at a cost no operator can perceive.
+  private static readonly START_GRACE_MS = 250;
+
   async start(): Promise<void> {
     const effort = toClaudeEffort(this.thinking);
     const options: Options = {
@@ -91,6 +99,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     const q = this.queryFn({ prompt: this.input, options });
     this.q = q;
     this.alive = true;
+    // A child that never launched (no platform binary, signed-out CLI) shows up ONLY as a
+    // rejection of this stream — query() itself does not throw. `died` lets start() below
+    // observe that, so a corpse is reported as a failed launch instead of a ready session.
+    const { promise: died, reject: onDeath } = Promise.withResolvers<never>();
+    // Nobody may be awaiting `died` once start() has returned; without this an early death
+    // after the grace window would be an unhandled rejection that takes the process down.
+    died.catch(() => {});
     // Drain the SDK stream in the background, translating each message to RpcEvent(s).
     // start() does NOT await `ready`: the streaming query() only emits system/init after the
     // first input turn is consumed, but callers send prompt() only after start() resolves.
@@ -109,10 +124,38 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       } catch (err) {
         this.alive = false;
         const reason = (err as Error).message ?? "claude query failed";
-        this.emit({ type: "notice", level: "warn", message: reason });
+        // The notice still fires: a child that dies mid-session (after start() long returned)
+        // has no launch to fail, and the transcript row is the only account of it.
+        const code = authFailureCode(reason);
+        this.emit({ type: "notice", level: "warn", message: reason, ...(code ? { code } : {}) });
         for (const cb of this.exitCbs) cb(null, reason);
+        onDeath(this.launchError(reason, code));
       }
     })();
+
+    // Watch the newborn child just long enough to catch an immediate death. A healthy child is
+    // silent here (init is gated on the first input turn), so the grace window elapsing is the
+    // success case — not evidence that anything started.
+    const grace = this.opts.startGraceMs ?? ClaudeCodeRuntime.START_GRACE_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        died,
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, grace); }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  // The launch failure a caller sees, carrying the child's own words plus the localizable
+  // cause. `code` rides on the Error because every existing caller (createChat, launch,
+  // doResume) already funnels a thrown start() into its own rollback and rethrow, so the
+  // code reaches the HTTP layer without a new channel.
+  private launchError(reason: string, code: string | undefined): Error & { code?: string } {
+    const err = new Error(reason) as Error & { code?: string };
+    if (code) err.code = code;
+    return err;
   }
 
   prompt(message: string, images?: ImageInput[]): void { this.input.push(userMessage(message, images)); }

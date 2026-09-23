@@ -5,13 +5,20 @@ import type { AgentRuntimeKind } from "@kermanych/core";
 import { AccountController } from "../src/http/account.controller";
 import type { RegistryService } from "../src/registry/registry.service";
 import type { AuthSessionRow } from "../src/registry/registry.service";
+import type { RuntimeCheckService } from "../src/runtime/runtime-check.service";
 
 function make(getSession?: AuthSessionRow | undefined, setCalled?: (row: AuthSessionRow) => void) {
   const registry = {
     getAuthSession: () => getSession,
     setAuthSession: (row: AuthSessionRow) => setCalled?.(row),
   } as unknown as RegistryService;
-  return new AccountController(registry);
+  return new AccountController(registry, checks());
+}
+
+// The preflight seam. Defaults to "usable" so every pre-existing case below is unaffected by
+// its arrival; the checkRuntime tests supply their own verdict.
+function checks(verdict: { ok: boolean; code?: string } = { ok: true }) {
+  return { check: async () => verdict } as unknown as RuntimeCheckService;
 }
 
 describe("AccountController", () => {
@@ -69,6 +76,28 @@ describe("AccountController", () => {
     controller.setRuntime({ runtime: "claude-code" });
 
     expect(captured?.agentRuntime).toBe("claude-code");
+  });
+
+  // GET /account/runtime/check — the preflight the onboarding gate and profile settings call so
+  // the operator learns a backend is unusable AT THE MOMENT THEY PICK IT, not after a chat that
+  // cannot answer. Read-only: it never writes the preference, so a failed check leaves the
+  // operator free to pick it anyway (they may be about to run `claude /login`).
+  it("GET /account/runtime/check passes a usable backend through", async () => {
+    const controller = new AccountController({} as unknown as RegistryService, checks({ ok: true }));
+    expect(await controller.checkRuntime("claude-code")).toEqual({ ok: true });
+  });
+
+  it("GET /account/runtime/check reports the cause of an unusable backend", async () => {
+    const controller = new AccountController(
+      {} as unknown as RegistryService,
+      checks({ ok: false, code: "claude_not_authenticated" }),
+    );
+    expect(await controller.checkRuntime("claude-code")).toEqual({ ok: false, code: "claude_not_authenticated" });
+  });
+
+  it("GET /account/runtime/check rejects a runtime it does not know", async () => {
+    const controller = new AccountController({} as unknown as RegistryService, checks());
+    await expect(controller.checkRuntime("nonsense")).rejects.toThrow(BadRequestException);
   });
 
   it("GET /account/language returns null when unset", () => {

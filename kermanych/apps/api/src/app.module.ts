@@ -24,6 +24,7 @@ import { SkillsService } from "./skills/skills.service";
 import { ManagementChatService } from "./management/management-chat.service";
 import { ReleaseNotesService } from "./management/release-notes.service";
 import { ModelsService } from "./models/models.service";
+import { RuntimeCheckService } from "./runtime/runtime-check.service";
 import { JiraController } from "./http/jira.controller";
 import { JiraService } from "./jira/jira.service";
 import { LinearController } from "./http/linear.controller";
@@ -40,6 +41,11 @@ import { DocIndexService } from "./docs/doc-index.service";
     // The local omp model catalog (`omp models --json`), read by GET /models and by the
     // supervisor when a running session's model is changed by provider + id.
     ModelsService,
+    // The "is this backend usable on this machine?" preflight behind GET
+    // /account/runtime/check. Distinct from ModelsService on purpose: that one degrades every
+    // failure to an empty catalog so a picker always renders, which is precisely the swallowing
+    // this check exists to undo.
+    RuntimeCheckService,
     // The Менеджмент assistant. Depends on RegistryService alone: it resolves the scoped
     // workspace's local repo paths and drives its own omp children, and it deliberately
     // knows nothing about SupervisorService — this chat has no session, branch or worktree.

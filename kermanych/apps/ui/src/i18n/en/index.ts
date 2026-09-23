@@ -375,6 +375,9 @@ export const en: MessageSchema = {
       omp: 'omp',
       claude: 'claude-code',
       confirm: 'Continue',
+      checking: 'Checking whether this backend works on this machine…',
+      ready: 'The backend answers — you are good to go.',
+      checkFailed: 'The backend did not answer. You can continue, but agents will not start until this is fixed.',
     },
     checklist: {
       navLabel: 'Get started',
@@ -2170,6 +2173,17 @@ export const en: MessageSchema = {
     omp_exited_during_generation: 'omp exited during generation: {reason}',
     generation_timeout: 'Generation did not finish within {seconds}s — try a narrower period or a smaller branch',
     model_no_text: 'The model returned no text — try again',
+    // The session could not start because this machine's agent backend is unusable. Each
+    // message names the one command that repairs it: without that, the operator only learned
+    // that a session failed, not what to do about it.
+    runtime_claude_not_authenticated:
+      'Claude is not signed in on this machine — run “claude /login” in a terminal, then try again',
+    runtime_claude_binary_missing:
+      'The claude binary is not installed — run “pnpm install” in the kermanych folder, then try again',
+    runtime_omp_not_authenticated:
+      'omp is not signed in on this machine — run “omp login” in a terminal, then try again',
+    runtime_omp_binary_missing:
+      'omp was not found on PATH — install omp and make sure the “omp” command resolves, then try again',
     move_refusal: 'The cloud refused: a project can only move between workspaces you belong to',
     assign_other: 'This task is assigned to someone else — only they can run it.',
     assign_not_member: 'This user is not a member of the task’s workspace.',
@@ -2204,6 +2218,17 @@ export const en: MessageSchema = {
     trigger_agent_launch_failed: 'trigger “{trigger}” failed to launch its agent: {reason}',
     session_dormant_merged: 'Session finished — the worktree is gone, the branch stayed. Press “↻ Restore” at the top to bring it up and continue.',
     session_dormant_inactive: 'Session inactive. Send a message to restore it and pull in its history.',
+    // The backend child died MID-SESSION — its launch succeeded long ago, so there is nobody to
+    // throw to and this transcript row is the only account of it. The same fault at launch time
+    // becomes a `runtime_*` error above instead.
+    claude_not_authenticated:
+      'Claude signed out — the session stopped. Run “claude /login” in a terminal and send your message again.',
+    claude_binary_missing:
+      'The claude binary went missing — the session stopped. Run “pnpm install” in the kermanych folder and send your message again.',
+    omp_not_authenticated:
+      'omp signed out — the session stopped. Run “omp login” in a terminal and send your message again.',
+    omp_binary_missing:
+      'omp went missing from PATH — the session stopped. Make sure the “omp” command resolves and send your message again.',
   },
   rejections: {
     risk_kind_unknown: 'unknown risk kind {value} (threat or opportunity)',

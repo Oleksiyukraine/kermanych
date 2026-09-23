@@ -3,6 +3,7 @@ import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post,
 import { isThinkingLevel } from "@kermanych/core";
 import type { BranchPrefix, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft, ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
+import { sessionFailure } from "./session-failure";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
 
@@ -24,7 +25,7 @@ export class SessionsController {
     try {
       return await this.sup.createChat(b.projectId);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -39,7 +40,7 @@ export class SessionsController {
     try {
       return await this.sup.createSessionFromTask(b.taskId, req.user.id, b.images);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -50,7 +51,7 @@ export class SessionsController {
     try {
       return await this.sup.promoteChatToAgent(id, b.taskId);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -59,7 +60,7 @@ export class SessionsController {
     try {
       return await this.sup.sendMessage(id, b.text, b.mode, b.images);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -71,7 +72,7 @@ export class SessionsController {
     try {
       return await this.sup.setEffort(id, b.level);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -84,7 +85,7 @@ export class SessionsController {
     try {
       return await this.sup.setSessionModel(id, b);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -93,7 +94,7 @@ export class SessionsController {
     try {
       return await this.sup.branchSession(id);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -102,7 +103,7 @@ export class SessionsController {
     try {
       return await this.sup.reviewSession(id);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -111,7 +112,7 @@ export class SessionsController {
     try {
       return await this.sup.mergeDiscussion(id, b.summary);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -120,7 +121,7 @@ export class SessionsController {
     try {
       return this.sup.answerUi(id, b.res);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -129,7 +130,7 @@ export class SessionsController {
     try {
       await this.sup.stopSession(id);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
     return { ok: true };
   }
@@ -152,7 +153,7 @@ export class SessionsController {
     try {
       return await this.preview.start(id);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -167,7 +168,7 @@ export class SessionsController {
     try {
       return await this.sup.finishInfo(id);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -177,7 +178,7 @@ export class SessionsController {
     try {
       return await this.sup.fileDiff(id, path ?? "");
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -188,7 +189,7 @@ export class SessionsController {
     try {
       return await this.sup.sessionTree(id, path ?? "");
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -197,7 +198,7 @@ export class SessionsController {
     try {
       return await this.sup.sessionFile(id, path ?? "");
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -207,7 +208,7 @@ export class SessionsController {
       this.preview.stop(id);
       return await this.sup.finishSession(id);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -216,7 +217,7 @@ export class SessionsController {
     try {
       return await this.sup.createPullRequest(id);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -225,7 +226,7 @@ export class SessionsController {
     try {
       return await this.sup.commitChanges(id);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -234,7 +235,7 @@ export class SessionsController {
     try {
       this.sup.setArchived(id, true);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
     return { ok: true };
   }
@@ -244,7 +245,7 @@ export class SessionsController {
     try {
       this.sup.setArchived(id, false);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
     return { ok: true };
   }
@@ -254,7 +255,7 @@ export class SessionsController {
     try {
       return this.sup.renameSession(id, b.name ?? "");
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -263,7 +264,7 @@ export class SessionsController {
     try {
       return this.sup.openInEditor(id);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -272,7 +273,7 @@ export class SessionsController {
     try {
       return await this.sup.resolveConflict(id);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -283,7 +284,7 @@ export class SessionsController {
     try {
       return await this.sup.resume(id);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -292,7 +293,7 @@ export class SessionsController {
     try {
       return await this.sup.restartSession(id);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -301,7 +302,7 @@ export class SessionsController {
     try {
       return await this.sup.reopenSession(id);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
   }
 
@@ -311,7 +312,7 @@ export class SessionsController {
       this.preview.stop(id);
       await this.sup.deleteSession(id);
     } catch (err) {
-      throw new BadRequestException((err as Error).message);
+      throw sessionFailure(err);
     }
     return { ok: true };
   }

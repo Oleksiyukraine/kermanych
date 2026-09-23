@@ -194,7 +194,10 @@ export type RpcEvent =
   // omp's `emitNotice` forwards its own level verbatim: it spells a warning `"warning"` and
   // never `"warn"`. Left as an open string because the vocabulary is omp's, not ours — the
   // transcript reducer normalises it into `TranscriptEntry`'s closed `info | warn | error`.
-  | { type: "notice"; message?: string; level?: string }
+  // `code` is OURS, not omp's: a runtime that recognises a machine fault in its child's dying
+  // words tags the notice so the UI can print the fix in the operator's locale. omp never
+  // sends it, so it stays optional and `message` remains the only guaranteed prose.
+  | { type: "notice"; message?: string; level?: string; code?: NoticeCode }
   | RpcExtensionUIRequest
   | { type: "rpc_chunk"; chunkId: string; index: number; count: number; byteLength: number; data: string }
   | { type: string; [k: string]: unknown };

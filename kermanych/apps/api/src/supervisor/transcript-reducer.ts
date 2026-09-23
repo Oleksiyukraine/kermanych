@@ -271,7 +271,9 @@ export function reduceRpcEvents(events: RpcEvent[], opts?: ReduceOpts): Reduced 
       // omp spells it `warning`, the transcript union spells it `warn`; anything else omp
       // adds later reads as `info` rather than leaking an unknown value into a typed field.
       const level = ev.level === "warn" || ev.level === "warning" ? "warn" : ev.level === "error" ? "error" : "info";
-      entries.push({ kind: "notice", id: `n${at}`, at, level, text });
+      // A runtime-tagged cause rides through to the entry so the UI localizes the fix instead
+      // of showing the child's raw English. Absent on every omp notice, which carries prose only.
+      entries.push({ kind: "notice", id: `n${at}`, at, level, text, ...(ev.code ? { code: ev.code } : {}) });
       continue;
     }
   }

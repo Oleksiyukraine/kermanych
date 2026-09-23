@@ -665,7 +665,7 @@ import KLangToggle from 'components/kit/KLangToggle.vue';
 
 const store = useOrchestrator();
 const projects = useProjects();
-const { t } = useI18n();
+const { t, te } = useI18n();
 const auth = useAuth();
 const route = useRoute();
 const router = useRouter();
@@ -1328,6 +1328,23 @@ async function pickRuntime(next: string): Promise<void> {
       `Failed to change runtime: ${e instanceof Error ? e.message : String(e)}`,
       'error'
     );
+    return;
+  }
+  // The switch already applied — now say whether the backend just chosen can actually run
+  // anything here. Deliberately AFTER the write and never blocking it: the operator owns the
+  // preference, and this only spares them discovering a signed-out CLI through a session that
+  // silently never answers.
+  try {
+    const verdict = await api.checkAccountRuntime(next as 'omp' | 'claude-code');
+    if (verdict.ok) return;
+    const key = `errors.runtime_${verdict.code ?? ''}`;
+    store.notify(
+      verdict.code && te(key) ? t(key) : verdict.reason || t('onboarding.runtime.checkFailed'),
+      'error',
+    );
+  } catch {
+    // The check could not run (api restarting). The preference is saved either way, and a
+    // failed self-test is not something to report as a backend fault.
   }
 }
 
