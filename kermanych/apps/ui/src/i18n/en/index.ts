@@ -883,7 +883,8 @@ export const en: MessageSchema = {
     workspace: {
       name: 'Workspace name',
       color: 'Workspace color',
-      ownerOnly: 'The workspace name and color are changed by its owner.',
+      icon: 'Workspace icon',
+      ownerOnly: 'The workspace name, color and icon are changed by its owner.',
       nameRequired: 'Workspace name cannot be empty',
       saveRefused: 'The cloud refused: only the owner can change the workspace',
     },
@@ -1921,6 +1922,20 @@ export const en: MessageSchema = {
     },
     colorPicker: {
       noColor: 'No color',
+    },
+    emojiPicker: {
+      default: 'Default dot (no emoji)',
+      defaultLabel: 'Dot',
+      category: {
+        smileys: 'Smileys & People',
+        animals: 'Animals & Nature',
+        food: 'Food & Drink',
+        activity: 'Activity',
+        travel: 'Travel & Places',
+        objects: 'Objects',
+        symbols: 'Symbols',
+        flags: 'Flags',
+      },
     },
     attachStrip: {
       remove: 'Remove',

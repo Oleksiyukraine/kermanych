@@ -111,6 +111,8 @@ owner's call too.
 |---|---|
 | create a workspace | anyone signed in — you become its owner |
 | rename or delete a workspace; invite or remove a member | the workspace owner |
+| set a workspace's colour or emoji marker | the workspace owner |
+| reorder workspaces in your sidebar | any member — a per-account, per-machine view |
 | create a project, edit its config, work the board | any workspace member |
 | delete a project | the workspace owner |
 | create a task | any workspace member |
@@ -124,6 +126,13 @@ deleted at all. Move a project by dragging it onto another workspace's row in th
 sidebar, or — without a mouse — by picking the new workspace in the project's
 settings. Both paths require membership of the source *and* the destination, and
 it is the database that enforces that, not the UI.
+
+**Each workspace carries a marker in the sidebar** — a coloured dot by default, or an
+emoji its owner sets in the workspace's settings (a flag, a face, a thumbs-up, from an
+iOS-style picker beside the colour). The emoji is part of the workspace and shared: every
+member sees it. **Order is the opposite — yours alone.** Drag a workspace's row up or down
+to arrange the sidebar; that order is kept per account on each machine, so rearranging your
+own view never moves anyone else's.
 
 **Clicking in the sidebar never navigates; it sets the scope.** A workspace scopes
 the board to the tasks of every project it holds, and «Агенти» to the sessions and
