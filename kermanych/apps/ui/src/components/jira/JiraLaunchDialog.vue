@@ -51,7 +51,7 @@ import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useI18n } from 'vue-i18n';
 
-const props = defineProps<{ modelValue: boolean; issue: JiraIssue; workspaceId: string }>();
+const props = defineProps<{ modelValue: boolean; issue: JiraIssue; workspaceId: string; integrationId: string }>();
 const emit = defineEmits<{
   'update:modelValue': [value: boolean];
   launched: [session: Session, transitionError?: string];
@@ -87,7 +87,7 @@ watch(
     error.value = '';
     transitions.value = [];
     try {
-      transitions.value = await api.jiraTransitions(props.workspaceId, props.issue.key);
+      transitions.value = await api.jiraTransitions(props.integrationId, props.issue.key);
     } catch (e) {
       // No transitions is a degraded launch, not a refusal: the session is the point.
       error.value = e instanceof Error ? e.message : String(e);
@@ -109,7 +109,7 @@ async function launch(): Promise<void> {
   error.value = '';
   try {
     const res = await api.jiraLaunch(
-      props.workspaceId,
+      props.integrationId,
       props.issue.key,
       projectPick.value,
       defaults.value.askStatus && transitionPick.value ? transitionPick.value : undefined,

@@ -27,10 +27,12 @@ vi.mock('../src/stores/orchestrator', () => ({
 }));
 vi.mock('../src/lib/preview', () => ({ IS_PREVIEW: false, PREVIEW_USER_ID: 'preview' }));
 vi.mock('@kermanych/cloud', () => ({
-  getJiraIntegration: vi.fn(),
+  listJiraIntegrations: vi.fn(),
+  getJiraIntegrationById: vi.fn(),
   listJiraColumns: (client: unknown, integrationId: string) => listJiraColumns(client, integrationId),
   listJiraIssues: (client: unknown, integrationId: string) => listJiraIssues(client, integrationId),
   listJiraIssueChildren: vi.fn(),
+  listJiraWorklogsBetween: vi.fn(),
   subscribeJiraIssues: vi.fn(() => () => {}),
 }));
 
@@ -55,8 +57,10 @@ const swept = {
 
 function board() {
   const store = useJira();
-  // The state open() would have installed: a connected workspace and this machine's token.
-  store.integration = integration as never;
+  // The state open() would have installed: a connected workspace with one active board and
+  // this machine's token.
+  store.integrations = [integration] as never;
+  store.activeId = 'i1';
   store.tokenPresent = true;
   return store;
 }
@@ -74,11 +78,11 @@ describe('jira syncNow', () => {
   it('runs a full sweep and re-reads the mirror, columns included', async () => {
     const store = board();
 
-    await store.syncNow('w1');
+    await store.syncNow();
 
     // `full` is the whole point: the api bypasses the shared lease for it, so the click
     // cannot be swallowed by another open board holding the poll.
-    expect(jiraSync).toHaveBeenCalledWith('w1', true);
+    expect(jiraSync).toHaveBeenCalledWith('i1', true);
     // jira_columns has no realtime channel — without this reload a relayout would stay
     // invisible until the view is reopened.
     expect(store.columns.map((c) => c.name)).toEqual(['To Do', 'Review']);
@@ -92,7 +96,7 @@ describe('jira syncNow', () => {
     jiraSync.mockReturnValue(gate.promise);
     const store = board();
 
-    const run = store.syncNow('w1');
+    const run = store.syncNow();
     expect(store.syncing).toBe(true); // the button's disabled/«Синхронізація…» state
 
     gate.resolve({ synced: true });
@@ -104,7 +108,7 @@ describe('jira syncNow', () => {
     const store = board();
     store.syncing = true; // the tick is mid-poll
 
-    await store.syncNow('w1');
+    await store.syncNow();
 
     expect(jiraSync).not.toHaveBeenCalled();
     expect(store.syncing).toBe(true); // and the running poll's spinner is left alone
@@ -114,7 +118,7 @@ describe('jira syncNow', () => {
     const store = board();
     store.tokenPresent = false;
 
-    await store.syncNow('w1');
+    await store.syncNow();
 
     expect(jiraSync).not.toHaveBeenCalled();
   });
@@ -123,7 +127,7 @@ describe('jira syncNow', () => {
     jiraSync.mockRejectedValue(new Error('jira token invalid'));
     const store = board();
 
-    await store.syncNow('w1');
+    await store.syncNow();
 
     expect(store.tokenPresent).toBe(false);
     expect(notify).toHaveBeenCalledWith('Синхронізація не вдалася: jira token invalid', 'error');
@@ -134,7 +138,7 @@ describe('jira syncNow', () => {
     jiraSync.mockRejectedValue(new Error('jira: 503 service unavailable'));
     const store = board();
 
-    await store.syncNow('w1');
+    await store.syncNow();
 
     expect(store.tokenPresent).toBe(true); // not a token problem — stay actionable
     expect(listJiraIssues).not.toHaveBeenCalled();

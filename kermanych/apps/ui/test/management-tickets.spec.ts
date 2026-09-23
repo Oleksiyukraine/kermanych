@@ -74,6 +74,15 @@ vi.mock('../src/stores/jira', () => ({
     get integration() {
       return jiraState.integration;
     },
+    get integrations() {
+      return jiraState.integration ? [jiraState.integration] : [];
+    },
+    get active() {
+      return jiraState.integration ?? null;
+    },
+    get activeId() {
+      return jiraState.integration?.id ?? null;
+    },
     get tokenPresent() {
       return jiraState.tokenPresent;
     },
@@ -84,7 +93,8 @@ vi.mock('../src/stores/jira', () => ({
     loadBoard: vi.fn(),
     fetchWorklogs: vi.fn(async () => []),
     probe: vi.fn(),
-    loadAssignable: (ws: string) => jiraLoadAssignable(ws),
+    setActive: vi.fn(),
+    loadAssignable: () => jiraLoadAssignable(),
     upsert: (issue: unknown) => jiraUpsert(issue),
   }),
 }));
@@ -269,7 +279,7 @@ describe('jira.ticket.create on the mirrored board', () => {
     // The names the model was allowed to state, turned into the ids Jira's API wants — the
     // mirror keeps no ids, which is why the editor options are read at all.
     const draft = jiraCreateIssue.mock.calls[0]?.[1] as Record<string, unknown>;
-    expect(jiraCreateIssue).toHaveBeenCalledWith('w1', expect.anything());
+    expect(jiraCreateIssue).toHaveBeenCalledWith('i1', expect.anything());
     expect(draft.issueTypeId).toBe('10002');
     expect(draft.priorityId).toBe('2');
     expect(draft.assigneeAccountId).toBe('acc-1');
@@ -381,7 +391,7 @@ describe('jira.ticket.create on the mirrored board', () => {
     await store.send('створи тікет у Jira на Maryna Koval', 'management-home');
 
     // Resolved against JIRA, not the roster — `members` has no Maryna and that is irrelevant.
-    expect(jiraAssignableUsers).toHaveBeenCalledWith('w1', 'Maryna Koval');
+    expect(jiraAssignableUsers).toHaveBeenCalledWith('i1', 'Maryna Koval');
     const draft = jiraCreateIssue.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(draft.assigneeAccountId).toBe('acc-maryna');
     expect(results(store.entries)[0]).toContain('Тікет KRM-216');
@@ -405,9 +415,9 @@ describe('jira.ticket.create on the mirrored board', () => {
     const store = useManagementChat();
     await store.send('кого можна поставити в Jira?', 'management-home');
 
-    expect(jiraLoadAssignable).toHaveBeenCalledWith('w1');
-    const ask = managementChat.mock.calls[0]?.[0] as { context: { jira?: { assignees: string[] }; members: { name: string }[] } };
-    expect(ask.context.jira?.assignees).toEqual(['Maryna Koval', 'Olya Petrenko']);
+    expect(jiraLoadAssignable).toHaveBeenCalled();
+    const ask = managementChat.mock.calls[0]?.[0] as { context: { jira?: { assignees: string[] }[]; members: { name: string }[] } };
+    expect(ask.context.jira?.[0]?.assignees).toEqual(['Maryna Koval', 'Olya Petrenko']);
     // Two distinct lists, never merged: the roster is still the native board's answer.
     expect(ask.context.members.map((m) => m.name)).toEqual(['olya', 'andrii']);
   });
@@ -425,9 +435,9 @@ describe('jira.ticket.create on the mirrored board', () => {
     const store = useManagementChat();
     await store.send('створи тікет у Jira', 'management-home');
 
-    const ask = managementChat.mock.calls[0]?.[0] as { context: { jira?: { assignees: string[]; canWrite: boolean } } };
-    expect(ask.context.jira?.assignees).toEqual([]);
-    expect(ask.context.jira?.canWrite).toBe(true);
+    const ask = managementChat.mock.calls[0]?.[0] as { context: { jira?: { assignees: string[]; canWrite: boolean }[] } };
+    expect(ask.context.jira?.[0]?.assignees).toEqual([]);
+    expect(ask.context.jira?.[0]?.canWrite).toBe(true);
     expect(results(store.entries)[0]).toContain('Тікет KRM-217');
   });
 
@@ -481,7 +491,7 @@ describe('jira.ticket.create on the mirrored board', () => {
     expect(user && 'files' in user ? user.files : undefined).toEqual([{ name: 'звіт.pdf' }]);
     // The named file lands on the issue; the invented name is refused per file, not per ticket.
     expect(jiraUploadAttachment).toHaveBeenCalledTimes(1);
-    expect(jiraUploadAttachment).toHaveBeenCalledWith('w1', 'KRM-218', 'звіт.pdf', 'QUJD', 'application/pdf');
+    expect(jiraUploadAttachment).toHaveBeenCalledWith('i1', 'KRM-218', 'звіт.pdf', 'QUJD', 'application/pdf');
     const lines = results(store.entries);
     expect(lines[0]).toContain('Тікет KRM-218');
     expect(lines[1]).toContain('Файл «звіт.pdf» прикріплено до KRM-218');
@@ -514,7 +524,7 @@ describe('jira.ticket.create on the mirrored board', () => {
       { name: ' screen.png ', mimeType: 'image/png', data: 'QUJD' },
     ]);
 
-    expect(jiraUploadAttachment).toHaveBeenCalledWith('w1', 'KRM-219', 'screen.png', 'QUJD', 'image/png');
+    expect(jiraUploadAttachment).toHaveBeenCalledWith('i1', 'KRM-219', 'screen.png', 'QUJD', 'image/png');
     expect(results(store.entries)[1]).toContain('Файл «screen.png» прикріплено до KRM-219');
   });
 });
@@ -567,12 +577,14 @@ describe('the ticket context on the ask', () => {
       { name: 'olya', role: 'developer' },
       { name: 'andrii', role: 'owner' },
     ]);
-    expect(ask.context.jira).toEqual({
-      projectKey: 'KRM',
-      boardName: 'Kermanych board',
-      canWrite: true,
-      assignees: ['Maryna Koval'],
-    });
+    expect(ask.context.jira).toEqual([
+      {
+        projectKey: 'KRM',
+        boardName: 'Kermanych board',
+        canWrite: true,
+        assignees: ['Maryna Koval'],
+      },
+    ]);
   });
 
   it('omits the Jira board entirely when the workspace has none', async () => {

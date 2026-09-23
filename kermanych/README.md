@@ -162,10 +162,15 @@ board to click.
 
 ### Jira
 
-A workspace can mirror **one Jira Cloud board** onto «Дошка». The owner connects it
-in **Менеджмент → Integrations** (site → personal API token → board picker); after
-that the board page grows a «Задачі | Jira» switcher, and the «Jira» view reproduces
-the board's own columns, tickets, labels, comments, worklogs and attachment lists.
+A workspace can mirror **up to ten Jira Cloud boards** onto «Дошка». The owner connects
+each one in **Менеджмент → Integrations** (site → personal API token → board picker), and
+may add more from the same card («Додати дошку») until the tenth; re-connecting a board
+already present just refreshes it. After the first board the board page grows a «Задачі |
+Jira» switcher, and the «Jira» view reproduces one board's own columns, tickets, labels,
+comments, worklogs and attachment lists. With several boards connected, a board picker in
+the «Jira» toolbar chooses which one you are looking at; the choice is remembered per
+workspace. Each board works exactly as the single board does — its own sync, actions and
+launches are independent, and its mirror is removed on its own «Відключити».
 
 - **Tokens are personal and local.** Every member who wants to *act* (drag a ticket
   between columns, comment, log work, create/edit/delete tickets, upload files) adds their own
@@ -579,9 +584,11 @@ That field is a real assistant, and it is deliberately narrow:
   is never answered with a refusal. Six rules make the ticket worth having:
   - **The default board is the workspace's own.** «Задачі» is the board that always exists,
     needs no integration and no personal token, so a request that does not name a board lands
-    there (`ticket.create`). The mirrored Jira board is opt-in BY NAME: only «створи в Jira…»
-    routes to it (`jira.ticket.create`). Naming Jira in a workspace that has none — or on a
-    machine with no personal Jira token — is refused with the reason, and NOT quietly filed on
+    there (`ticket.create`). The mirrored Jira boards are opt-in BY NAME: only «створи в Jira…»
+    routes to one (`jira.ticket.create`), and when the workspace has several the request names
+    which board (or the assistant asks); a workspace with one Jira board needs no naming. Naming
+    Jira in a workspace that has none — or on a machine with no personal Jira token — is refused
+    with the reason, and NOT quietly filed on
     the native board instead: you named a board, and a card on the other one is a card you
     will not find where you looked.
   - **The ticket is written as a project manager writes one, and the app owns its shape.**

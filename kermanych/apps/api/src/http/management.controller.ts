@@ -103,10 +103,21 @@ function attachmentRows(v: unknown): ManagementAttachment[] {
   return rows;
 }
 
-// The workspace's Jira board, or nothing. `undefined` is a meaningful value here — the
-// context block prints «не підключена» and the assistant then knows `jira.ticket.create` has
-// nowhere to land — so a half-filled row is dropped rather than repaired: a board with no
-// project key cannot be described to the model in any way it could act on.
+// The workspace's Jira boards, or an empty list. `undefined`/absent per board is a
+// meaningful drop — a board with no project key cannot be described to the model in any way
+// it could act on, so a half-filled row is dropped rather than repaired. The whole list is
+// capped at the same ten the db enforces: a client claiming more is not describing reality.
+function jiraBoards(v: unknown): ManagementJiraBoard[] {
+  if (!Array.isArray(v)) return [];
+  const out: ManagementJiraBoard[] = [];
+  for (const item of v) {
+    const board = jiraBoard(item);
+    if (board) out.push(board);
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
 function jiraBoard(v: unknown): ManagementJiraBoard | undefined {
   if (typeof v !== "object" || v === null) return undefined;
   const x = v as Record<string, unknown>;
@@ -346,7 +357,7 @@ export class ManagementController {
     if (!b?.context) throw badRequest("section_context_missing", "не передано контекст розділу");
     // Rebuilt rather than forwarded: `risks` is printed into the prompt as the state the
     // write actions operate on, and the rest of the block is prose the model reads as fact.
-    const jira = jiraBoard(b.context.jira);
+    const jira = jiraBoards(b.context.jira);
     const capacity = capacityDigest(b.context.capacity);
     const home = homeOverview(b.context.home);
     const docs = docsBlock(b.context.docs);
@@ -355,7 +366,7 @@ export class ManagementController {
       section: typeof b.context.section === "string" ? b.context.section : "",
       risks: riskRows(b.context.risks),
       members: memberRows(b.context.members),
-      ...(jira ? { jira } : {}),
+      ...(jira.length ? { jira } : {}),
       ...(capacity ? { capacity } : {}),
       ...(home ? { home } : {}),
       ...(docs ? { docs } : {}),

@@ -338,20 +338,20 @@ describe("buildManagementTurn", () => {
       context: {
         ...context,
         members: [{ name: "olya", role: "developer" }],
-        jira: {
-          projectKey: "KRM",
-          boardName: "Kermanych board",
-          canWrite: true,
-          assignees: ["Maryna Koval", "Olya Petrenko"],
-        },
+        jira: [
+          {
+            projectKey: "KRM",
+            boardName: "Kermanych board",
+            canWrite: true,
+            assignees: ["Maryna Koval", "Olya Petrenko"],
+          },
+        ],
       },
       today: TODAY,
       text: "?",
     });
-    expect(out).toContain("Виконавці Jira (2)");
-    expect(out).toContain("- Maryna Koval");
-    expect(out).toContain("- Olya Petrenko");
-    expect(out).toContain("а НЕ командою воркспейсу");
+    expect(out).toContain("«Kermanych board» · проєкт KRM");
+    expect(out).toContain("Виконавці Jira: Maryna Koval, Olya Petrenko");
   });
 
   // Empty is a FAILED READ (no token this turn, Jira unreachable), never «nobody is
@@ -363,13 +363,12 @@ describe("buildManagementTurn", () => {
       repos,
       context: {
         ...context,
-        jira: { projectKey: "KRM", boardName: "Kermanych board", canWrite: true, assignees: [] },
+        jira: [{ projectKey: "KRM", boardName: "Kermanych board", canWrite: true, assignees: [] }],
       },
       today: TODAY,
       text: "?",
     });
-    expect(out).toContain("Виконавці Jira (0)");
-    expect(out).toContain("список цього ходу недоступний");
+    expect(out).toContain("список виконавців цього ходу недоступний");
   });
 
   // Three states, three different sentences — and they are not interchangeable: no board is
@@ -377,7 +376,7 @@ describe("buildManagementTurn", () => {
   // only one of the three where a jira.ticket.create can succeed.
   it("states whether the Jira board exists and whether this machine may write to it", () => {
     const none = buildManagementTurn({ first: false, repos, context, today: TODAY, text: "?" });
-    expect(none).toContain("Дошка Jira: не підключена");
+    expect(none).toContain("Дошки Jira: не підключені");
     expect(none).not.toContain("Виконавці Jira");
 
     const readOnly = buildManagementTurn({
@@ -385,12 +384,12 @@ describe("buildManagementTurn", () => {
       repos,
       context: {
         ...context,
-        jira: { projectKey: "KRM", boardName: "Kermanych board", canWrite: false, assignees: [] },
+        jira: [{ projectKey: "KRM", boardName: "Kermanych board", canWrite: false, assignees: [] }],
       },
       today: TODAY,
       text: "?",
     });
-    expect(readOnly).toContain("Дошка Jira: Kermanych board · проєкт KRM");
+    expect(readOnly).toContain("«Kermanych board» · проєкт KRM");
     expect(readOnly).toContain("БЕЗ особистого токена Jira");
     // No token means no ticket to assign, so the list is not printed at all — an empty
     // «Виконавці Jira» beside «створити тікет неможливо» is two sentences for one fact.
@@ -401,7 +400,7 @@ describe("buildManagementTurn", () => {
       repos,
       context: {
         ...context,
-        jira: { projectKey: "KRM", boardName: "Kermanych board", canWrite: true, assignees: ["Maryna Koval"] },
+        jira: [{ projectKey: "KRM", boardName: "Kermanych board", canWrite: true, assignees: ["Maryna Koval"] }],
       },
       today: TODAY,
       text: "?",

@@ -66,6 +66,8 @@ vi.mock('../src/stores/board', () => ({ useBoard: () => ({ createTask: vi.fn() }
 vi.mock('../src/stores/jira', () => ({
   useJira: () => ({
     integration: null,
+    integrations: [],
+    activeId: null,
     tokenPresent: false,
     assignable: [],
     probe: vi.fn(),

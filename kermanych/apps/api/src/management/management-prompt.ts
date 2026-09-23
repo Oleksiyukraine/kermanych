@@ -146,7 +146,7 @@ function contract(locale: Locale | undefined): string {
     // the ticket, the assistant read this menu, concluded the action «не має поля для вкладень»
     // and told the operator to attach the file by hand in Jira — while the executor behind it
     // had been uploading named files all along.
-    '  { "kind": "jira.ticket.create", "ticket": { … }, "issueType": "…", "priority": "…", "labels": ["…"], "assignee": "…", "parentKey": "…", "attachments": ["імʼя файлу"] }',
+    '  { "kind": "jira.ticket.create", "board": "…", "ticket": { … }, "issueType": "…", "priority": "…", "labels": ["…"], "assignee": "…", "parentKey": "…", "attachments": ["імʼя файлу"] }',
     '  { "kind": "ticket.questions", "forTicket": "…", "questions": ["…", "…"] }',
     // Listed HERE and not only in homeProtocol() below — the risk.delete lesson: the menu
     // declares itself exhaustive, and a verb it does not carry is one the model will refuse
@@ -274,13 +274,16 @@ function ticketProtocol(): string {
   return [
     "ТІКЕТИ (дошка задач). Дошка — це НЕ розділ Менеджменту: тікет можна створити з будь-якого розділу.",
     "",
-    "ЯКА ДОШКА. Дошок дві:",
+    "ЯКА ДОШКА. Дошки бувають двох типів:",
     '  • власна дошка воркспейсу («Задачі») — дошка ЗА ЗАМОВЧУВАННЯМ. Дія: { "kind": "ticket.create", … }.',
-    '  • дзеркало дошки Jira («Jira») — лише якщо воркспейс її підключив (див. «Дошка Jira» у контексті). Дія: { "kind": "jira.ticket.create", … }.',
+    '  • дзеркала дошок Jira («Jira») — лише ті, що воркспейс підключив (див. «Дошки Jira» у контексті). Дія: { "kind": "jira.ticket.create", … }.',
     "  Jira вибирай ТІЛЬКИ тоді, коли користувач прямо назвав Jira (або тікет/ключ Jira). У всіх інших випадках —",
-    "  ticket.create, навіть якщо ти щойно читав про Jira. Не питай «на яку дошку?»: замовчування вже є відповіддю.",
+    "  ticket.create, навіть якщо ти щойно читав про Jira. Не питай «на власну чи Jira?»: замовчування вже є відповіддю.",
     "  Якщо Jira просять, а в контексті її немає (або немає особистого токена) — скажи це прозою і НЕ створюй тікет",
     "  на власній дошці замість неї: користувач назвав іншу дошку.",
+    "  ЯКА САМЕ дошка Jira: воркспейс може мати кілька. Якщо підключена одна — вона і є відповіддю, поле board можна не",
+    "  ставити. Якщо кілька — постав board з назвою дошки; коли користувач назвав ключ (напр. KRM-101) або проєкт,",
+    "  вибери дошку з тим проєктом; якщо однозначно визначити не вдається — спитай прозою, на яку дошку, і не вгадуй.",
     "",
     "МОВА ТІКЕТА — АНГЛІЙСЬКА. Поля `ticket` (title, context, userFlow, acceptanceCriteria, outOfScope) пиши",
     "АНГЛІЙСЬКОЮ — завжди, на обох дошках, незалежно від мови розмови. Картку читає вся команда, і дошка в неї одна.",
@@ -336,12 +339,13 @@ function ticketProtocol(): string {
     "    прикріпити його пізніше і не перенось тікет у Jira замість цього: дошку назвав користувач.",
     "",
     "ДОДАТКОВІ ПОЛЯ jira.ticket.create:",
+    "  board — назва дошки Jira РІВНО так, як її названо у блоці «Дошки Jira». Обовʼязкове, коли підключено кілька",
+    "    дошок; з однією можна пропустити. Проєкт Jira не задавай — він визначається обраною дошкою.",
     "  issueType, priority — НАЗВИ так, як їх показує Jira («Task», «Story», «Bug», «High»). Не назвали — не став:",
-    "    Jira підставить свої типові значення. Назви, якої на цій дошці немає, застосунок не знайде і скаже це.",
+    "    Jira підставить свої типові значення. Назви, якої на обраній дошці немає, застосунок не знайде і скаже це.",
     "  labels — масив міток без пробілів (необовʼязково).",
     "  parentKey — ключ батьківського тікета, ТІЛЬКИ якщо користувач назвав його сам (наприклад «підзадача до KRM-101»).",
     "    Списку тікетів Jira у тебе немає, тому ключів не вигадуй: ключа, якого немає, Jira не приймає.",
-    "  Проєкт Jira не вказуй — він визначений підключенням воркспейсу.",
     '  attachments — масив ІМЕН файлів з блоку «ДОЛУЧЕНІ ФАЙЛИ» цього ходу, РІВНО так, як вони там названі.',
     "    Це ЄДИНИЙ і робочий спосіб прикріпити файл до тікета: користувач попросив «додай зображення/файл до тікета» —",
     "    постав ці імена в attachments ТОГО САМОГО блоку jira.ticket.create. Застосунок завантажить їх у Jira відразу",
@@ -482,24 +486,29 @@ function riskLine(r: ManagementRiskRow): string {
 //
 // Printed only for a WRITABLE board: with no token there is no ticket to assign, and the
 // browser has no list to send either.
-function jiraLines(jira: ManagementJiraBoard | undefined): string {
-  if (jira === undefined)
-    return "Дошка Jira: не підключена — тікети створюються тільки на власній дошці воркспейсу";
+function jiraBoardLines(b: ManagementJiraBoard): string {
   const head =
-    `Дошка Jira: ${jira.boardName} · проєкт ${jira.projectKey} · ` +
-    (jira.canWrite
+    `- «${b.boardName}» · проєкт ${b.projectKey} · ` +
+    (b.canWrite
       ? "можна створювати тікети"
-      : "БЕЗ особистого токена Jira на цій машині — створити тікет неможливо, скажи це прозою");
-  if (!jira.canWrite) return head;
-  return [
-    head,
-    `Виконавці Jira (${jira.assignees.length}) — цим списком, а НЕ командою воркспейсу, називається assignee у jira.ticket.create:`,
-    // An empty list is a failed read, never «nobody is assignable», so the sentence says what
-    // to do about it instead of leaving the model to infer a refusal from a network error.
-    jira.assignees.length
-      ? jira.assignees.map((n) => `- ${n}`).join("\n")
-      : "- список цього ходу недоступний: якщо користувач назвав виконавця — постав його імʼя як є, застосунок перевірить його в Jira",
-  ].join("\n");
+      : "БЕЗ особистого токена Jira на цій машині — тікет сюди створити неможливо, скажи це прозою");
+  if (!b.canWrite) return head;
+  // An empty list is a failed read, never «nobody is assignable», so the sentence says what
+  // to do about it instead of leaving the model to infer a refusal from a network error.
+  const assignees = b.assignees.length
+    ? `  Виконавці Jira: ${b.assignees.join(", ")}`
+    : "  список виконавців цього ходу недоступний: якщо користувач назвав виконавця — постав його імʼя як є, застосунок перевірить його в Jira";
+  return `${head}\n${assignees}`;
+}
+
+function jiraLines(boards: ManagementJiraBoard[] | undefined): string {
+  if (!boards || boards.length === 0)
+    return "Дошки Jira: не підключені — тікети створюються тільки на власній дошці воркспейсу";
+  const head =
+    boards.length === 1
+      ? "Дошка Jira (підключена одна) — assignee в jira.ticket.create бери зі списку виконавців ЦІЄЇ дошки:"
+      : `Дошки Jira (${boards.length}) — у jira.ticket.create назви поле "board" РІВНО так, як дошку названо тут, і бери виконавця зі списку ТІЄЇ дошки:`;
+  return [head, ...boards.map(jiraBoardLines)].join("\n");
 }
 
 function hoursText(n: number): string {

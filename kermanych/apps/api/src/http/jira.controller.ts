@@ -83,6 +83,19 @@ export class JiraController {
     }
   }
 
+  // Every board this workspace has connected. The UI reads the mirror rows straight from
+  // Supabase; this endpoint exists so a caller can enumerate boards without a JWT read.
+  @Get("integrations/:workspaceId")
+  async integrations(@Param("workspaceId") workspaceId: string) {
+    try {
+      return await this.jira.listIntegrations(workspaceId);
+    } catch (err) {
+      rethrow(err);
+    }
+  }
+
+  // Connect (or re-connect) one board. A workspace may hold up to ten; the db refuses the
+  // eleventh, and re-connecting a board already present updates it in place.
   @Post("integrations")
   async connect(@Body() b: { workspaceId: string; siteUrl: string; boardId: number }, @Req() req: Authed) {
     if (!b?.workspaceId || !b?.siteUrl?.trim() || typeof b?.boardId !== "number")
@@ -94,10 +107,11 @@ export class JiraController {
     }
   }
 
-  @Delete("integrations/:workspaceId")
-  async disconnect(@Param("workspaceId") workspaceId: string) {
+  // Disconnect ONE board by its integration id — the workspace's other boards stay.
+  @Delete("integrations/:integrationId")
+  async disconnect(@Param("integrationId") integrationId: string) {
     try {
-      await this.jira.disconnect(workspaceId);
+      await this.jira.disconnect(integrationId);
       return { ok: true };
     } catch (err) {
       rethrow(err);
@@ -106,10 +120,10 @@ export class JiraController {
 
   // ── sync tick ────────────────────────────────────────────────────────────────
 
-  @Post("sync/:workspaceId")
-  async sync(@Param("workspaceId") workspaceId: string, @Body() b: { full?: boolean }, @Req() req: Authed) {
+  @Post("sync/:integrationId")
+  async sync(@Param("integrationId") integrationId: string, @Body() b: { full?: boolean }, @Req() req: Authed) {
     try {
-      return await this.jira.sync(workspaceId, req.user.id, b?.full === true);
+      return await this.jira.sync(integrationId, req.user.id, b?.full === true);
     } catch (err) {
       rethrow(err);
     }
@@ -117,40 +131,40 @@ export class JiraController {
 
   // ── issue actions ────────────────────────────────────────────────────────────
 
-  @Get("issues/:workspaceId/:key/transitions")
-  async transitions(@Param("workspaceId") ws: string, @Param("key") key: string, @Req() req: Authed) {
+  @Get("issues/:integrationId/:key/transitions")
+  async transitions(@Param("integrationId") integrationId: string, @Param("key") key: string, @Req() req: Authed) {
     try {
-      return await this.jira.listTransitions(ws, key, req.user.id);
+      return await this.jira.listTransitions(integrationId, key, req.user.id);
     } catch (err) {
       rethrow(err);
     }
   }
 
-  @Post("issues/:workspaceId/:key/transition")
+  @Post("issues/:integrationId/:key/transition")
   async transition(
-    @Param("workspaceId") ws: string,
+    @Param("integrationId") integrationId: string,
     @Param("key") key: string,
     @Body() b: { transitionId: string },
     @Req() req: Authed,
   ) {
     if (!b?.transitionId) throw new BadRequestException("transitionId is required");
     try {
-      return await this.jira.transition(ws, key, b.transitionId, req.user.id);
+      return await this.jira.transition(integrationId, key, b.transitionId, req.user.id);
     } catch (err) {
       rethrow(err);
     }
   }
 
-  @Post("issues/:workspaceId/:key/comments")
+  @Post("issues/:integrationId/:key/comments")
   async comment(
-    @Param("workspaceId") ws: string,
+    @Param("integrationId") integrationId: string,
     @Param("key") key: string,
     @Body() b: { body: string },
     @Req() req: Authed,
   ) {
     if (!b?.body?.trim()) throw new BadRequestException("comment body is required");
     try {
-      return await this.jira.addComment(ws, key, b.body.trim(), req.user.id);
+      return await this.jira.addComment(integrationId, key, b.body.trim(), req.user.id);
     } catch (err) {
       rethrow(err);
     }
@@ -158,16 +172,16 @@ export class JiraController {
 
   // «Log work». The acting user is the guard's, never the body's — a worklog carries a
   // name in Jira, and that name is whoever's token signs the call.
-  @Post("issues/:workspaceId/:key/worklogs")
+  @Post("issues/:integrationId/:key/worklogs")
   async logWork(
-    @Param("workspaceId") ws: string,
+    @Param("integrationId") integrationId: string,
     @Param("key") key: string,
     @Body() b: JiraWorklogDraft,
     @Req() req: Authed,
   ) {
     if (!b?.timeSpent?.trim()) throw new BadRequestException("timeSpent is required");
     try {
-      return await this.jira.logWork(ws, key, b, req.user.id);
+      return await this.jira.logWork(integrationId, key, b, req.user.id);
     } catch (err) {
       rethrow(err);
     }
@@ -176,9 +190,9 @@ export class JiraController {
   // Editing and removing an entry. Whether this member MAY is Jira's call, made under
   // their own token — the dialog only offers the controls GET /jira/editor-options said
   // Jira would honour, and a refusal that still arrives is Jira's own sentence.
-  @Put("issues/:workspaceId/:key/worklogs/:worklogId")
+  @Put("issues/:integrationId/:key/worklogs/:worklogId")
   async editWorklog(
-    @Param("workspaceId") ws: string,
+    @Param("integrationId") integrationId: string,
     @Param("key") key: string,
     @Param("worklogId") worklogId: string,
     @Body() b: JiraWorklogDraft,
@@ -187,7 +201,7 @@ export class JiraController {
     if (!b?.timeSpent?.trim()) throw new BadRequestException("timeSpent is required");
     if (!b?.started) throw new BadRequestException("started is required");
     try {
-      return await this.jira.editWorklog(ws, key, worklogId, b, req.user.id);
+      return await this.jira.editWorklog(integrationId, key, worklogId, b, req.user.id);
     } catch (err) {
       rethrow(err);
     }
@@ -196,9 +210,9 @@ export class JiraController {
   // The estimate adjustment travels as query parameters, not a body: a DELETE with a
   // payload is the kind of thing proxies drop, and this is the shape the token routes
   // already use for a delete that needs an argument.
-  @Delete("issues/:workspaceId/:key/worklogs/:worklogId")
+  @Delete("issues/:integrationId/:key/worklogs/:worklogId")
   async removeWorklog(
-    @Param("workspaceId") ws: string,
+    @Param("integrationId") integrationId: string,
     @Param("key") key: string,
     @Param("worklogId") worklogId: string,
     @Query("adjust") adjust: string | undefined,
@@ -207,7 +221,7 @@ export class JiraController {
   ) {
     try {
       return await this.jira.deleteWorklog(
-        ws,
+        integrationId,
         key,
         worklogId,
         adjust ? ({ mode: adjust, value: value ?? "" } as JiraWorklogAdjust) : undefined,
@@ -218,10 +232,10 @@ export class JiraController {
     }
   }
 
-  @Post("issues/:workspaceId/:key/refresh")
-  async refresh(@Param("workspaceId") ws: string, @Param("key") key: string, @Req() req: Authed) {
+  @Post("issues/:integrationId/:key/refresh")
+  async refresh(@Param("integrationId") integrationId: string, @Param("key") key: string, @Req() req: Authed) {
     try {
-      return await this.jira.refreshIssue(ws, key, req.user.id);
+      return await this.jira.refreshIssue(integrationId, key, req.user.id);
     } catch (err) {
       rethrow(err);
     }
@@ -229,47 +243,56 @@ export class JiraController {
 
   // ── authoring ────────────────────────────────────────────────────────────────
 
-  @Post("issues/:workspaceId")
-  async create(@Param("workspaceId") ws: string, @Body() b: JiraIssueDraft, @Req() req: Authed) {
+  @Post("issues/:integrationId")
+  async create(@Param("integrationId") integrationId: string, @Body() b: JiraIssueDraft, @Req() req: Authed) {
     try {
-      return await this.jira.createIssue(ws, b, req.user.id);
+      return await this.jira.createIssue(integrationId, b, req.user.id);
     } catch (err) {
       rethrow(err);
     }
   }
 
-  @Put("issues/:workspaceId/:key")
-  async edit(@Param("workspaceId") ws: string, @Param("key") key: string, @Body() b: JiraIssueDraft, @Req() req: Authed) {
+  @Put("issues/:integrationId/:key")
+  async edit(
+    @Param("integrationId") integrationId: string,
+    @Param("key") key: string,
+    @Body() b: JiraIssueDraft,
+    @Req() req: Authed,
+  ) {
     try {
-      return await this.jira.editIssue(ws, key, b, req.user.id);
+      return await this.jira.editIssue(integrationId, key, b, req.user.id);
     } catch (err) {
       rethrow(err);
     }
   }
 
-  @Delete("issues/:workspaceId/:key")
-  async remove(@Param("workspaceId") ws: string, @Param("key") key: string, @Req() req: Authed) {
+  @Delete("issues/:integrationId/:key")
+  async remove(@Param("integrationId") integrationId: string, @Param("key") key: string, @Req() req: Authed) {
     try {
-      await this.jira.deleteIssue(ws, key, req.user.id);
+      await this.jira.deleteIssue(integrationId, key, req.user.id);
       return { ok: true };
     } catch (err) {
       rethrow(err);
     }
   }
 
-  @Get("editor-options/:workspaceId")
-  async editorOptions(@Param("workspaceId") ws: string, @Req() req: Authed) {
+  @Get("editor-options/:integrationId")
+  async editorOptions(@Param("integrationId") integrationId: string, @Req() req: Authed) {
     try {
-      return await this.jira.editorOptions(ws, req.user.id);
+      return await this.jira.editorOptions(integrationId, req.user.id);
     } catch (err) {
       rethrow(err);
     }
   }
 
-  @Get("assignable/:workspaceId")
-  async assignable(@Param("workspaceId") ws: string, @Query("q") q: string | undefined, @Req() req: Authed) {
+  @Get("assignable/:integrationId")
+  async assignable(
+    @Param("integrationId") integrationId: string,
+    @Query("q") q: string | undefined,
+    @Req() req: Authed,
+  ) {
     try {
-      return await this.jira.assignableUsers(ws, q ?? "", req.user.id);
+      return await this.jira.assignableUsers(integrationId, q ?? "", req.user.id);
     } catch (err) {
       rethrow(err);
     }
@@ -279,9 +302,9 @@ export class JiraController {
 
   // JSON body with base64 data — the ImageInput convention the session endpoints already
   // use, so the api needs no multipart middleware.
-  @Post("issues/:workspaceId/:key/attachments")
+  @Post("issues/:integrationId/:key/attachments")
   async upload(
-    @Param("workspaceId") ws: string,
+    @Param("integrationId") integrationId: string,
     @Param("key") key: string,
     @Body() b: { filename: string; data: string; mimeType?: string },
     @Req() req: Authed,
@@ -289,7 +312,7 @@ export class JiraController {
     if (!b?.filename?.trim() || !b?.data) throw new BadRequestException("filename and data are required");
     try {
       return await this.jira.uploadAttachment(
-        ws,
+        integrationId,
         key,
         b.filename.trim(),
         Buffer.from(b.data, "base64"),
@@ -301,15 +324,15 @@ export class JiraController {
     }
   }
 
-  @Get("attachments/:workspaceId/:attachmentId")
+  @Get("attachments/:integrationId/:attachmentId")
   async download(
-    @Param("workspaceId") ws: string,
+    @Param("integrationId") integrationId: string,
     @Param("attachmentId") attachmentId: string,
     @Req() req: Authed,
     @Res() res: StreamResponse,
   ) {
     try {
-      const { body, contentType } = await this.jira.downloadAttachment(ws, attachmentId, req.user.id);
+      const { body, contentType } = await this.jira.downloadAttachment(integrationId, attachmentId, req.user.id);
       res.setHeader("content-type", contentType);
       // Web stream → Node response without buffering: the file passes through, never
       // touching disk or memory whole.
@@ -322,16 +345,16 @@ export class JiraController {
 
   // ── launch ───────────────────────────────────────────────────────────────────
 
-  @Post("issues/:workspaceId/:key/launch")
+  @Post("issues/:integrationId/:key/launch")
   async launch(
-    @Param("workspaceId") ws: string,
+    @Param("integrationId") integrationId: string,
     @Param("key") key: string,
     @Body() b: { projectId: string; transitionId?: string; images?: ImageInput[] },
     @Req() req: Authed,
   ) {
     if (!b?.projectId) throw new BadRequestException("projectId is required");
     try {
-      return await this.jira.launch(ws, key, b.projectId, req.user.id, b.transitionId, b.images);
+      return await this.jira.launch(integrationId, key, b.projectId, req.user.id, b.transitionId, b.images);
     } catch (err) {
       rethrow(err);
     }

@@ -273,15 +273,34 @@ export const useManagementChat = defineStore('management-chat', () => {
   // people the operator sees in Jira's own picker when they file the same ticket by hand.
   // Fetched by `loadAssignable`, which degrades to an empty list; `jiraLines` in the prompt
   // says so rather than reading empty as «nobody».
-  async function jiraDigest(workspaceId: string): Promise<ManagementJiraBoard | undefined> {
-    const row = jira.integration;
-    if (!row) return undefined;
-    return {
-      projectKey: row.projectKey,
-      boardName: row.boardName,
-      canWrite: jira.tokenPresent,
-      assignees: (await jira.loadAssignable(workspaceId)).map((u) => u.displayName),
-    };
+  async function jiraDigest(): Promise<ManagementJiraBoard[]> {
+    const boards = jira.integrations;
+    if (!boards.length) return [];
+    // canWrite = «does this machine hold a token for the board's site». The ACTIVE board's is
+    // the store's own flag (already probed); the OTHER boards need a local registry read per
+    // unique site — cheap, and usually one call because boards often share a site. Both
+    // degrade to false on failure.
+    const others = boards.filter((b) => b.id !== jira.activeId);
+    const present: Record<string, boolean> = {};
+    await Promise.all(
+      [...new Set(others.map((b) => b.siteUrl))].map(async (s) => {
+        try {
+          present[s] = (await api.jiraTokenStatus(s)).present;
+        } catch {
+          present[s] = false;
+        }
+      }),
+    );
+    // Assignees only for the ACTIVE board, whose roster the store already holds; the executor
+    // re-queries Jira live against whichever board a ticket actually targets, so a name off
+    // another board's picker is still resolved at create time.
+    const activeAssignees = jira.tokenPresent ? (await jira.loadAssignable()).map((u) => u.displayName) : [];
+    return boards.map((b) => ({
+      projectKey: b.projectKey,
+      boardName: b.boardName,
+      canWrite: b.id === jira.activeId ? jira.tokenPresent : (present[b.siteUrl] ?? false),
+      assignees: b.id === jira.activeId ? activeAssignees : [],
+    }));
   }
 
   // The Home overview as the assistant is shown it: the SAME data the dashboard tiles render
@@ -459,21 +478,33 @@ export const useManagementChat = defineStore('management-chat', () => {
   // a turn can be answered from a conversation that started before the integration was
   // removed, and «I created it» must never be said about a call that could not be signed.
   async function createJiraTicket(workspaceId: string, action: ManagementJiraTicketCreate): Promise<void> {
-    const row = jira.integration;
-    if (!row) {
+    const boards = jira.integrations;
+    if (!boards.length) {
+      result(workspaceId, 'warn', globalTr.t('jira.notify.noBoardForTicket'));
+      return;
+    }
+    // Which board the ticket lands on. Named by board name when the workspace has several;
+    // the sole board is the answer when only one is connected and none was named.
+    const target = action.board
+      ? boards.find((b) => b.boardName.toLowerCase() === action.board!.toLowerCase())
+      : boards.length === 1
+        ? boards[0]
+        : undefined;
+    if (!target) {
       result(
         workspaceId,
         'warn',
-        globalTr.t('jira.notify.noBoardForTicket'),
+        action.board
+          ? globalTr.t('jira.notify.unknownBoard', { board: action.board, boards: boards.map((b) => b.boardName).join(', ') })
+          : globalTr.t('jira.notify.boardNotNamed', { boards: boards.map((b) => b.boardName).join(', ') }),
       );
       return;
     }
+    // Make it the active board so its site token and assignable roster are the ones every
+    // call below signs and resolves against.
+    if (jira.activeId !== target.id) await jira.setActive(target.id);
     if (!jira.tokenPresent) {
-      result(
-        workspaceId,
-        'warn',
-        globalTr.t('jira.notify.noTokenForTicket'),
-      );
+      result(workspaceId, 'warn', globalTr.t('jira.notify.noTokenForTicket'));
       return;
     }
     try {
@@ -488,7 +519,7 @@ export const useManagementChat = defineStore('management-chat', () => {
         ...(action.parentKey ? { parentKey: action.parentKey } : {}),
       };
       if (action.issueType !== undefined || action.priority !== undefined) {
-        const options = await api.jiraEditorOptions(workspaceId);
+        const options = await api.jiraEditorOptions(target.id);
         if (action.issueType !== undefined) {
           const type = options.issueTypes.find((t) => t.name.toLowerCase() === action.issueType?.toLowerCase());
           if (!type) {
@@ -525,7 +556,7 @@ export const useManagementChat = defineStore('management-chat', () => {
       // for the ONE case that stays a refusal — a name Jira itself does not know refuses the
       // ticket instead of filing it into nobody's queue.
       if (action.assignee !== undefined) {
-        const candidates = await api.jiraAssignableUsers(workspaceId, action.assignee);
+        const candidates = await api.jiraAssignableUsers(target.id, action.assignee);
         const wanted = action.assignee.toLowerCase();
         const user =
           candidates.find((u) => u.displayName.toLowerCase() === wanted) ??
@@ -547,12 +578,12 @@ export const useManagementChat = defineStore('management-chat', () => {
         }
         draft.assigneeAccountId = user.accountId;
       }
-      const issue = await api.jiraCreateIssue(workspaceId, draft);
+      const issue = await api.jiraCreateIssue(target.id, draft);
       jira.upsert(issue);
       result(
         workspaceId,
         'info',
-        globalTr.t('jira.notify.ticketCreated', { key: issue.key, summary: issue.summary, board: row.boardName }),
+        globalTr.t('jira.notify.ticketCreated', { key: issue.key, summary: issue.summary, board: target.boardName }),
       );
       // The files the model asked to put on the issue — resolved by NAME against what the
       // operator actually attached this conversation, never from the model's own bytes. In
@@ -571,7 +602,7 @@ export const useManagementChat = defineStore('management-chat', () => {
           // that answer left «Файл прикріплено» beside a ticket whose «Вкладення» tab stayed
           // empty until the next 30-second poll — which reads exactly like the failure this
           // whole path is about.
-          jira.upsert(await api.jiraUploadAttachment(workspaceId, issue.key, name, file.data, file.mimeType));
+          jira.upsert(await api.jiraUploadAttachment(target.id, issue.key, name, file.data, file.mimeType));
           result(workspaceId, 'info', globalTr.t('management.chat.jiraAttachUploaded', { name, key: issue.key }));
         } catch (e) {
           result(
@@ -806,7 +837,7 @@ export const useManagementChat = defineStore('management-chat', () => {
           /* no roster this turn */
         }
       if (jira.integration === undefined) await jira.probe(workspaceId);
-      const jiraBoard = await jiraDigest(workspaceId);
+      const jiraBoards = await jiraDigest();
       const capacity = await capacityDigestFor(workspaceId);
       // Documentation retrieval, ONLY in the Проєктна документація section and only once a
       // project is selected: embed the question and search, in one Edge Function round trip,
@@ -825,7 +856,7 @@ export const useManagementChat = defineStore('management-chat', () => {
           section,
           risks: riskDigest(workspaceId),
           members: memberDigest(workspaceId),
-          ...(jiraBoard ? { jira: jiraBoard } : {}),
+          ...(jiraBoards.length ? { jira: jiraBoards } : {}),
           ...(capacity ? { capacity } : {}),
           home: await homeDigestFor(workspaceId),
           ...(docs ? { docs } : {}),

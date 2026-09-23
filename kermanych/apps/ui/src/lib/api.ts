@@ -312,35 +312,36 @@ export const api = {
     get<JiraBoardOption[]>(`/jira/boards?site=${encodeURIComponent(site)}`),
   jiraConnect: (workspaceId: string, siteUrl: string, boardId: number): Promise<JiraIntegration> =>
     post<JiraIntegration>('/jira/integrations', { workspaceId, siteUrl, boardId }),
-  jiraDisconnect: (workspaceId: string): Promise<void> => del(`/jira/integrations/${workspaceId}`),
+  // Disconnect ONE board by its integration id — the workspace's other boards stay.
+  jiraDisconnect: (integrationId: string): Promise<void> => del(`/jira/integrations/${integrationId}`),
 
-  jiraSync: (workspaceId: string, full = false): Promise<{ synced: boolean }> =>
-    post<{ synced: boolean }>(`/jira/sync/${workspaceId}`, { full }),
+  jiraSync: (integrationId: string, full = false): Promise<{ synced: boolean }> =>
+    post<{ synced: boolean }>(`/jira/sync/${integrationId}`, { full }),
 
-  jiraTransitions: (workspaceId: string, key: string): Promise<JiraTransitionWire[]> =>
-    get<JiraTransitionWire[]>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/transitions`),
-  jiraTransition: (workspaceId: string, key: string, transitionId: string): Promise<JiraIssue> =>
-    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/transition`, { transitionId }),
-  jiraComment: (workspaceId: string, key: string, body: string): Promise<JiraIssue> =>
-    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/comments`, { body }),
-  jiraRefreshIssue: (workspaceId: string, key: string): Promise<JiraIssue> =>
-    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/refresh`, {}),
-  jiraLogWork: (workspaceId: string, key: string, draft: JiraWorklogDraftWire): Promise<JiraIssue> =>
-    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/worklogs`, draft),
+  jiraTransitions: (integrationId: string, key: string): Promise<JiraTransitionWire[]> =>
+    get<JiraTransitionWire[]>(`/jira/issues/${integrationId}/${encodeURIComponent(key)}/transitions`),
+  jiraTransition: (integrationId: string, key: string, transitionId: string): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${integrationId}/${encodeURIComponent(key)}/transition`, { transitionId }),
+  jiraComment: (integrationId: string, key: string, body: string): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${integrationId}/${encodeURIComponent(key)}/comments`, { body }),
+  jiraRefreshIssue: (integrationId: string, key: string): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${integrationId}/${encodeURIComponent(key)}/refresh`, {}),
+  jiraLogWork: (integrationId: string, key: string, draft: JiraWorklogDraftWire): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${integrationId}/${encodeURIComponent(key)}/worklogs`, draft),
   jiraEditWorklog: (
-    workspaceId: string,
+    integrationId: string,
     key: string,
     worklogId: string,
     draft: JiraWorklogDraftWire,
   ): Promise<JiraIssue> =>
     put<JiraIssue>(
-      `/jira/issues/${workspaceId}/${encodeURIComponent(key)}/worklogs/${encodeURIComponent(worklogId)}`,
+      `/jira/issues/${integrationId}/${encodeURIComponent(key)}/worklogs/${encodeURIComponent(worklogId)}`,
       draft,
     ),
   // The estimate adjustment rides in the query string: a DELETE body is the kind of thing
   // intermediaries drop, and this is the shape the token route already uses.
   jiraDeleteWorklog: (
-    workspaceId: string,
+    integrationId: string,
     key: string,
     worklogId: string,
     adjust?: JiraWorklogAdjustWire,
@@ -349,36 +350,36 @@ export const api = {
       ? `?adjust=${adjust.mode}${'value' in adjust ? `&value=${encodeURIComponent(adjust.value)}` : ''}`
       : '';
     return delJson<JiraIssue>(
-      `/jira/issues/${workspaceId}/${encodeURIComponent(key)}/worklogs/${encodeURIComponent(worklogId)}${q}`,
+      `/jira/issues/${integrationId}/${encodeURIComponent(key)}/worklogs/${encodeURIComponent(worklogId)}${q}`,
     );
   },
 
-  jiraCreateIssue: (workspaceId: string, draft: JiraIssueDraftWire): Promise<JiraIssue> =>
-    post<JiraIssue>(`/jira/issues/${workspaceId}`, draft),
-  jiraEditIssue: (workspaceId: string, key: string, draft: JiraIssueDraftWire): Promise<JiraIssue> =>
-    put<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}`, draft),
-  jiraDeleteIssue: (workspaceId: string, key: string): Promise<void> =>
-    del(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}`),
+  jiraCreateIssue: (integrationId: string, draft: JiraIssueDraftWire): Promise<JiraIssue> =>
+    post<JiraIssue>(`/jira/issues/${integrationId}`, draft),
+  jiraEditIssue: (integrationId: string, key: string, draft: JiraIssueDraftWire): Promise<JiraIssue> =>
+    put<JiraIssue>(`/jira/issues/${integrationId}/${encodeURIComponent(key)}`, draft),
+  jiraDeleteIssue: (integrationId: string, key: string): Promise<void> =>
+    del(`/jira/issues/${integrationId}/${encodeURIComponent(key)}`),
 
-  jiraEditorOptions: (workspaceId: string): Promise<JiraEditorOptions> =>
-    get<JiraEditorOptions>(`/jira/editor-options/${workspaceId}`),
-  jiraAssignableUsers: (workspaceId: string, q: string): Promise<JiraAssignableUser[]> =>
-    get<JiraAssignableUser[]>(`/jira/assignable/${workspaceId}?q=${encodeURIComponent(q)}`),
+  jiraEditorOptions: (integrationId: string): Promise<JiraEditorOptions> =>
+    get<JiraEditorOptions>(`/jira/editor-options/${integrationId}`),
+  jiraAssignableUsers: (integrationId: string, q: string): Promise<JiraAssignableUser[]> =>
+    get<JiraAssignableUser[]>(`/jira/assignable/${integrationId}?q=${encodeURIComponent(q)}`),
 
   jiraUploadAttachment: (
-    workspaceId: string,
+    integrationId: string,
     key: string,
     filename: string,
     data: string,
     mimeType: string,
   ): Promise<JiraIssue> =>
-    post<JiraIssue>(`/jira/issues/${workspaceId}/${encodeURIComponent(key)}/attachments`, { filename, data, mimeType }),
+    post<JiraIssue>(`/jira/issues/${integrationId}/${encodeURIComponent(key)}/attachments`, { filename, data, mimeType }),
 
   // A fetch, not an <a href>: the proxy route is behind the same bearer guard as
   // everything else, so the bytes come back as a Blob the caller turns into an object
   // URL for the actual save.
-  jiraDownloadAttachment: async (workspaceId: string, attachmentId: string): Promise<Blob> => {
-    const r = await fetch(`${BASE}/jira/attachments/${workspaceId}/${attachmentId}`, {
+  jiraDownloadAttachment: async (integrationId: string, attachmentId: string): Promise<Blob> => {
+    const r = await fetch(`${BASE}/jira/attachments/${integrationId}/${attachmentId}`, {
       headers: authHeaders(false),
     });
     if (!r.ok) throw await toError(r);
@@ -386,14 +387,14 @@ export const api = {
   },
 
   jiraLaunch: (
-    workspaceId: string,
+    integrationId: string,
     key: string,
     projectId: string,
     transitionId?: string,
     images?: ImageInput[],
   ): Promise<{ session: Session; transitionError?: string }> =>
     post<{ session: Session; transitionError?: string }>(
-      `/jira/issues/${workspaceId}/${encodeURIComponent(key)}/launch`,
+      `/jira/issues/${integrationId}/${encodeURIComponent(key)}/launch`,
       { projectId, transitionId, images },
     ),
 

@@ -23,16 +23,19 @@
         <!-- Jira and Linear are live; Slack keeps the original presentation-only foot. -->
         <div v-if="brand.id === 'jira'" class="int__foot">
           <span class="int__state mono">
-            <i class="int__state-dot" :class="{ 'int__state-dot--on': !!jira.integration }" aria-hidden="true"></i>
-            <template v-if="jira.integration">{{ t('jira.connect.stateConnected', { board: jira.integration.boardName }) }}</template>
+            <i class="int__state-dot" :class="{ 'int__state-dot--on': jira.integrations.length > 0 }" aria-hidden="true"></i>
+            <template v-if="jira.integrations.length">{{ t('jira.connect.stateConnectedN', jira.integrations.length) }}</template>
             <template v-else>{{ t('management.integrations.notConnected') }}</template>
           </span>
-          <button
-            v-if="jira.integration"
-            class="int__cta"
-            type="button"
-            @click="openSettings"
-          >{{ t('jira.connect.configure') }}</button>
+          <template v-if="jira.integrations.length">
+            <button class="int__cta" type="button" @click="openSettings">{{ t('jira.connect.configure') }}</button>
+            <button
+              v-if="canConnect && jira.integrations.length < 10"
+              class="int__cta"
+              type="button"
+              @click="openConnect"
+            >{{ t('jira.connect.addBoard') }}</button>
+          </template>
           <button
             v-else
             v-tip="canConnect ? '' : t('jira.connect.ownerOnly')"
@@ -122,23 +125,31 @@
 
     <!-- SETTINGS — the connected tile's card: facts, the member's own token, owner actions. -->
     <KModal v-model="settingsOpen" title="Jira" width="520px">
-      <div v-if="jira.integration" class="int__flow">
+      <div v-if="settingsBoard" class="int__flow">
+        <!-- With several boards the card opens on a picker: whose facts, token and disconnect
+             the rest of the modal is about. -->
+        <KSelect
+          v-if="jira.integrations.length > 1"
+          v-model="settingsBoardId"
+          :label="t('jira.connect.boardLabel')"
+          :options="settingsBoardOptions"
+        />
         <dl class="int__facts">
-          <div><dt>{{ t('jira.connect.siteFact') }}</dt><dd class="mono">{{ jira.integration.siteUrl }}</dd></div>
-          <div><dt>{{ t('jira.connect.boardLabel') }}</dt><dd>{{ jira.integration.boardName }}</dd></div>
-          <div><dt>{{ t('jira.connect.projectFact') }}</dt><dd class="mono">{{ jira.integration.projectKey }}</dd></div>
+          <div><dt>{{ t('jira.connect.siteFact') }}</dt><dd class="mono">{{ settingsBoard.siteUrl }}</dd></div>
+          <div><dt>{{ t('jira.connect.boardLabel') }}</dt><dd>{{ settingsBoard.boardName }}</dd></div>
+          <div><dt>{{ t('jira.connect.projectFact') }}</dt><dd class="mono">{{ settingsBoard.projectKey }}</dd></div>
         </dl>
 
         <div class="int__token">
           <p class="int__token-state">
-            <template v-if="jira.tokenPresent">
-              {{ t('jira.connect.tokenOnMachine') }} <span class="mono">{{ jira.tokenEmail }}</span>
+            <template v-if="settingsTokenPresent">
+              {{ t('jira.connect.tokenOnMachine') }} <span class="mono">{{ settingsTokenEmail }}</span>
             </template>
             <template v-else>
               {{ t('jira.connect.noToken') }}
             </template>
           </p>
-          <template v-if="tokenEditing || !jira.tokenPresent">
+          <template v-if="tokenEditing || !settingsTokenPresent">
             <KField v-model="emailInput" :label="t('jira.connect.emailLabel')" placeholder="you@company.com" />
             <KField v-model="tokenInput" :label="t('jira.connect.tokenLabel')" type="password" placeholder="ATATT…" />
             <p class="int__hint">
@@ -160,7 +171,7 @@
         <p v-if="flowError" class="int__error mono">{{ flowError }}</p>
 
         <div v-if="isOwner" class="int__danger">
-          <KBtn variant="ghost" @click="changeBoard">{{ t('jira.connect.changeBoard') }}</KBtn>
+          <KBtn v-if="jira.integrations.length < 10" variant="ghost" @click="addBoardFromSettings">{{ t('jira.connect.addBoard') }}</KBtn>
           <KBtn variant="ghost" :loading="disconnecting" @click="disconnect">{{ t('jira.connect.disconnect') }}</KBtn>
         </div>
       </div>
@@ -296,9 +307,22 @@ const busy = ref(false);
 const flowError = ref('');
 
 const settingsOpen = ref(false);
+// Which connected board the settings card is about. Defaults to the active board, and the
+// picker (shown only with more than one) moves it.
+const settingsBoardId = ref('');
+// Token status for the SELECTED board's site, read here rather than off the store: the
+// store's `tokenPresent` follows the board view's active board, while this card can be about
+// any of the workspace's boards, each possibly on its own Jira site.
+const settingsTokenPresent = ref(false);
+const settingsTokenEmail = ref<string | undefined>(undefined);
 const tokenEditing = ref(false);
 const removingToken = ref(false);
 const disconnecting = ref(false);
+
+const settingsBoard = computed(() => jira.integrations.find((b) => b.id === settingsBoardId.value) ?? null);
+const settingsBoardOptions = computed<KSelectOption[]>(() =>
+  jira.integrations.map((b) => ({ value: b.id, label: `${b.boardName} · ${b.projectKey}` })),
+);
 
 // Boards without a project cannot be mirrored (the JQL needs a project key), so they are
 // not offered rather than failing at the last step.
@@ -308,9 +332,12 @@ const boardOptions = computed<KSelectOption[]>(() =>
     .map((b) => ({ value: String(b.id), label: `${b.name} · ${b.projectKey}` })),
 );
 
+// A new board's connect flow prefills the site of the first board, since a workspace often
+// mirrors several boards off ONE Jira site — one keystroke gets a second board there.
 function openConnect(): void {
   connectStep.value = 'site';
-  siteInput.value = jira.integration?.siteUrl ?? '';
+  siteInput.value = jira.integrations[0]?.siteUrl ?? '';
+  boardPick.value = '';
   flowError.value = '';
   connectOpen.value = true;
 }
@@ -320,6 +347,8 @@ function openSettings(): void {
   tokenEditing.value = false;
   emailInput.value = '';
   tokenInput.value = '';
+  settingsBoardId.value = jira.activeId ?? jira.integrations[0]?.id ?? '';
+  void loadSettingsToken();
   settingsOpen.value = true;
 }
 
@@ -360,7 +389,10 @@ async function tokenNext(): Promise<void> {
 }
 
 async function loadBoards(): Promise<void> {
-  boards.value = await api.jiraBoards(siteInput.value.trim());
+  // Boards already connected are dropped from the picker: the same board cannot be added
+  // twice (the db upserts on workspace+board), and offering it would read as a new one.
+  const connected = new Set(jira.integrations.map((b) => b.boardId));
+  boards.value = (await api.jiraBoards(siteInput.value.trim())).filter((b) => !connected.has(b.id));
   boardPick.value = boardOptions.value[0]?.value ?? '';
 }
 
@@ -369,8 +401,10 @@ async function connectFinish(): Promise<void> {
   flowError.value = '';
   busy.value = true;
   try {
-    await api.jiraConnect(props.workspaceId, siteInput.value.trim(), Number(boardPick.value));
+    const created = await api.jiraConnect(props.workspaceId, siteInput.value.trim(), Number(boardPick.value));
     await jira.probe(props.workspaceId);
+    // Land on the board just added.
+    await jira.setActive(created.id);
     connectOpen.value = false;
     local.notify(t('jira.notify.connected'), 'info');
   } catch (e) {
@@ -383,12 +417,38 @@ async function connectFinish(): Promise<void> {
 // ── settings actions ──────────────────────────────────────────────────────────
 function startTokenEdit(): void {
   tokenEditing.value = true;
-  emailInput.value = jira.tokenEmail ?? '';
+  emailInput.value = settingsTokenEmail.value ?? '';
   tokenInput.value = '';
 }
 
+// The selected board's site token. Reloaded whenever the picker moves so the card always
+// shows the token for the board it is describing.
+async function loadSettingsToken(): Promise<void> {
+  const site = settingsBoard.value?.siteUrl;
+  if (!site) {
+    settingsTokenPresent.value = false;
+    settingsTokenEmail.value = undefined;
+    return;
+  }
+  try {
+    const status = await api.jiraTokenStatus(site);
+    settingsTokenPresent.value = status.present;
+    settingsTokenEmail.value = status.email;
+  } catch {
+    settingsTokenPresent.value = false;
+  }
+}
+
+watch(settingsBoardId, () => {
+  tokenEditing.value = false;
+  emailInput.value = '';
+  tokenInput.value = '';
+  flowError.value = '';
+  if (settingsOpen.value) void loadSettingsToken();
+});
+
 async function saveToken(): Promise<void> {
-  const site = jira.integration?.siteUrl;
+  const site = settingsBoard.value?.siteUrl;
   if (!site) return;
   flowError.value = '';
   busy.value = true;
@@ -396,7 +456,9 @@ async function saveToken(): Promise<void> {
     await api.jiraSetToken(site, emailInput.value.trim(), tokenInput.value.trim());
     tokenInput.value = '';
     tokenEditing.value = false;
-    await refreshTokenState();
+    await loadSettingsToken();
+    // Keep the board view's active-board token in step if it shares this site.
+    await jira.probe(props.workspaceId);
     local.notify(t('jira.notify.tokenSaved'), 'info');
   } catch (e) {
     flowError.value = e instanceof Error ? e.message : String(e);
@@ -406,47 +468,39 @@ async function saveToken(): Promise<void> {
 }
 
 async function removeToken(): Promise<void> {
-  const site = jira.integration?.siteUrl;
+  const site = settingsBoard.value?.siteUrl;
   if (!site || removingToken.value) return;
   removingToken.value = true;
   try {
     await api.jiraDeleteToken(site);
-    await refreshTokenState();
+    await loadSettingsToken();
+    await jira.probe(props.workspaceId);
   } finally {
     removingToken.value = false;
   }
 }
 
-// Re-read the token alone, after THIS page changed it. `jira.probe` already reports the token
-// beside the integration row, so the two mount/watch calls below need nothing extra — but
-// saving or deleting a token must not re-fetch the integration to learn what this page just
-// did.
-async function refreshTokenState(): Promise<void> {
-  const site = jira.integration?.siteUrl;
-  if (!site) return;
-  try {
-    const status = await api.jiraTokenStatus(site);
-    jira.tokenPresent = status.present;
-    jira.tokenEmail = status.email;
-  } catch {
-    jira.tokenPresent = false;
-  }
-}
-
-function changeBoard(): void {
+function addBoardFromSettings(): void {
   settingsOpen.value = false;
   openConnect();
 }
 
 async function disconnect(): Promise<void> {
-  if (disconnecting.value) return;
+  const board = settingsBoard.value;
+  if (!board || disconnecting.value) return;
   flowError.value = '';
   disconnecting.value = true;
   try {
-    await api.jiraDisconnect(props.workspaceId);
-    settingsOpen.value = false;
+    await api.jiraDisconnect(board.id);
     await jira.probe(props.workspaceId);
     local.notify(t('jira.notify.disconnected'), 'info');
+    // Stay on the card for the workspace's remaining boards; close it when the last goes.
+    if (jira.integrations.length) {
+      settingsBoardId.value = jira.activeId ?? jira.integrations[0]?.id ?? '';
+      await loadSettingsToken();
+    } else {
+      settingsOpen.value = false;
+    }
   } catch (e) {
     flowError.value = e instanceof Error ? e.message : String(e);
   } finally {

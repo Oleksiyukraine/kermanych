@@ -230,14 +230,19 @@ export type ManagementAction =
       // files stayed in the chat.
       attachments?: string[];
     }
-  // File one issue on the workspace's mirrored Jira board. No `project`: the Jira project
-  // key comes from the workspace's integration row, so there is nothing here for the model
-  // to choose or mistake. `issueType` and `priority` are NAMES («Task», «Bug», «High»)
-  // because their Jira ids are not mirrored — jira_issues keeps only the display name — so
-  // the browser resolves them against the live editor options; omitting them lets the Jira
-  // project's own defaults apply, which is the honest answer when the operator did not say.
+  // File one issue on one of the workspace's mirrored Jira boards. `board` names WHICH
+  // board (its board name, exactly as the context lists it) and is required only when the
+  // workspace has more than one connected — with a single board it is the sole answer and
+  // may be omitted. No `project`: the Jira project key comes from the chosen board's
+  // integration row, so there is nothing here for the model to choose or mistake.
+  // `issueType` and `priority` are NAMES («Task», «Bug», «High») because their Jira ids are
+  // not mirrored — jira_issues keeps only the display name — so the browser resolves them
+  // against the chosen board's live editor options; omitting them lets the Jira project's
+  // own defaults apply, which is the honest answer when the operator did not say.
   | {
       kind: "jira.ticket.create";
+      // Which connected board to file on, by its board name. Omitted with a single board.
+      board?: string;
       ticket: ManagementTicketFields;
       issueType?: string;
       priority?: string;
@@ -518,10 +523,12 @@ export type ManagementContext = {
   // register's reason: membership changes, and a name the assistant remembers from turn one
   // is a foreign-key error on turn nine.
   members: ManagementMember[];
-  // The mirrored Jira board, absent when the workspace has none. Absent means the assistant
-  // may not offer Jira at all — which is also why this is context and not contract: an
-  // integration connected mid-conversation must reach the model on the next turn.
-  jira?: ManagementJiraBoard;
+  // The mirrored Jira boards, empty/absent when the workspace has none. A workspace may
+  // connect up to ten; each entry is one board the assistant may file a ticket on, and
+  // `jira.ticket.create.board` names which. Absent means the assistant may not offer Jira
+  // at all — which is also why this is context and not contract: a board connected
+  // mid-conversation must reach the model on the next turn.
+  jira?: ManagementJiraBoard[];
   // Team Capacity, present only when the workspace has a Jira board. Re-sent every turn:
   // estimates move between turns.
   capacity?: ManagementCapacity;
@@ -1185,7 +1192,7 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
 
     const a: ManagementJiraTicketCreate = { kind: "jira.ticket.create", ticket };
     if (assignee !== undefined) a.assignee = assignee;
-    for (const field of ["issueType", "priority", "parentKey"] as const) {
+    for (const field of ["board", "issueType", "priority", "parentKey"] as const) {
       const value = ticketName(o, field);
       if (isFail(value)) return value;
       if (value !== undefined) a[field] = value;
