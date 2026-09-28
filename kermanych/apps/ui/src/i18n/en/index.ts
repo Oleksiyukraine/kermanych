@@ -2710,6 +2710,7 @@ export const en: MessageSchema = {
     emptyFolder: 'Empty folder',
     loading: 'Loading…',
     binary: 'Binary file — no preview available.',
+    zoomHint: 'Enlarge {name}',
     indexHeading: 'Documentation index',
     indexNever: 'Not indexed yet',
     indexSummary: 'Indexed {files} files · {when}',

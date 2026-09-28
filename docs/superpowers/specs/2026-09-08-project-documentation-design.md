@@ -245,6 +245,14 @@ Layout and behaviour:
   and only ever through an `<img>`, which runs none of its scripts — other
   binaries as a download link. Images are never indexed for retrieval:
   `isDocPath` rejects them even under a `docs/` directory.
+- **Enlarge an SVG** — an SVG, whether opened as a file or embedded in a
+  rendered doc, shows a zoom-in cursor and an accent ring on hover/focus; a click
+  (or Enter/Space) opens it in a `KModal` overlay sized to 85% of the window
+  each way, titled with its path and scaled to fit (`object-fit: contain`).
+  Backdrop, Esc or a click on the enlarged picture closes it, and it closes by
+  itself when the preview changes (the object URL it shows may be revoked). An
+  SVG inside a link (a badge) keeps the link's click. Raster images are not
+  enlarged: upscaling them only blurs.
 - **Pre-focus** — if `useOrchestrator.selectedProjectId` is set, that project
   opens on entry, so the sidebar acts as a deep link into the single-project view.
 - **States (option A):** repo not bound on this machine → a "bind repo to view
