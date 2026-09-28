@@ -161,6 +161,13 @@ arrives with the «Проєкти» filter already set to that project. The boar
 filter, «Виконавці», narrows by assignee and offers «Не призначено» for unclaimed
 cards.
 
+**The collapsed sidebar shows workspaces only.** Collapse it with « at the bottom and
+the tree shrinks to one mark per workspace; its projects stay hidden until you click that
+workspace's mark, which scopes to the workspace and opens its project icons beneath it.
+Click the mark again to close it. Every workspace starts closed each time the sidebar is
+collapsed, and a project selected from outside the sidebar (a notification, say) opens its
+own workspace so the selection stays visible.
+
 **«Задачі» in «Агенти» is your inbox, not a local list.** It shows the cloud cards in
 `backlog` assigned to you within the current scope — including the ones a colleague
 filed for you. Unclaimed team cards are deliberately absent: they live on «Дошка»

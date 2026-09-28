@@ -64,12 +64,12 @@
           >
             <KWorkspaceRow
               :workspace="group.workspace"
-              :active="store.selectedWorkspaceId === group.workspace.id && !store.selectedProjectId"
+              :active="isWorkspaceActive(group.workspace.id)"
               :expanded="isExpanded(group.workspace.id)"
               :count="workspaceRunningCount(group.workspace.id)"
               :drop-target="dropTargetId === group.workspace.id"
               draggable
-              @select="selectWorkspace(group.workspace.id)"
+              @select="onWorkspaceSelect(group.workspace.id)"
               @toggle="toggleWorkspace(group.workspace.id)"
               @add-project="openCreateProject(group.workspace.id)"
               @dragstart="draggingWorkspaceId = $event"
@@ -471,6 +471,7 @@ watch(collapsed, (v) => {
   clearTimeout(revealTimer);
   if (v) {
     minified.value = true;
+    railOpen.value = [];
     return;
   }
   revealTimer = setTimeout(() => {
@@ -507,15 +508,32 @@ function isFolded(id: string): boolean {
   return collapsedWorkspaces.value.includes(id);
 }
 
-// The 76px rail ignores the folds. It hides the chevron — there is no room for three
-// controls in that column — so a group folded at full width would sit there with no
-// affordance to open it and its projects would be unreachable until the sidebar is widened.
-// The rail's job is a dense list of everything, not a navigable tree.
-//
+// The 76px rail keeps its OWN folds, separate from the full-width ones above. It hides the
+// chevron — there is no room for three controls in that column — so the workspace mark is
+// the control there: a click scopes to the workspace AND opens or closes its projects (see
+// onWorkspaceSelect). Every group starts closed, so the rail is a strip of workspace marks
+// and a project tile only shows under the workspace the operator opened. Not persisted, and
+// emptied on every collapse: the rail is a glance, and reopening it should read the same way
+// each time rather than replay whatever was open last. Sharing the full-width set instead
+// would fold the tree the operator reads at full width every time they peeked into the rail.
+const railOpen = ref<string[]>([]);
+
 // Keyed on `minified`, not `collapsed`: this decides which ROWS render, and rows must appear
 // and disappear in step with the styling that shapes them, not one animation frame apart.
 function isExpanded(id: string): boolean {
-  return minified.value || !isFolded(id);
+  return minified.value ? railOpen.value.includes(id) : !isFolded(id);
+}
+
+function setRailOpen(id: string, open: boolean): void {
+  if (open === railOpen.value.includes(id)) return;
+  railOpen.value = open ? [...railOpen.value, id] : railOpen.value.filter((x) => x !== id);
+}
+
+// The row lights up when it IS the scope, or when the selected project sits inside it while
+// its group is shut — otherwise a project selected before the collapse would leave the rail
+// with no highlight at all, since the tile carrying it is not rendered.
+function isWorkspaceActive(id: string): boolean {
+  return store.selectedWorkspaceId === id && (!store.selectedProjectId || !isExpanded(id));
 }
 
 // The ONE place the folded set is written, so the toggle and the selection watcher below
@@ -561,7 +579,9 @@ watch(
   () => store.selectedProjectId,
   (id) => {
     const workspaceId = id ? workspaceOf(id) : undefined;
-    if (workspaceId) setExpanded(workspaceId, true);
+    if (!workspaceId) return;
+    setExpanded(workspaceId, true);
+    if (minified.value) setRailOpen(workspaceId, true);
   },
 );
 
@@ -574,6 +594,13 @@ function selectProject(id: string): void {
 }
 function selectWorkspace(id: string): void {
   store.selectWorkspace(id);
+}
+// At full width the row body only scopes and the chevron folds (KWorkspaceRow). In the rail
+// the mark is the one control left, so it does both: the click that picks a workspace is also
+// the one that shows or hides its projects.
+function onWorkspaceSelect(id: string): void {
+  selectWorkspace(id);
+  if (minified.value) setRailOpen(id, !railOpen.value.includes(id));
 }
 
 // DO WE HOLD AN AUTHORITATIVE CLOUD PROJECT LIST? Everything in the sidebar that could state
@@ -1435,10 +1462,9 @@ const pullHint = computed(() => {
 // The tree collapses to the icon strip like the rail always did: the workspace row keeps
 // its colour dot as the group's marker and drops the name, the chevron and the end slot
 // that carries the count and the «+» — a 76px column has no room for three controls, and
-// the group cannot be folded or added to from a strip that cannot show which group it is.
-// Because the chevron goes, isExpanded() ignores the folded set while `shell--min` is on:
-// hiding the only control that unfolds a group while still honouring the fold would leave
-// its projects unreachable.
+// the group cannot be added to from a strip that cannot show which group it is. With the
+// chevron gone the mark itself opens the group, and isExpanded() reads the rail's own
+// `railOpen` set while `shell--min` is on rather than the full-width folds.
 .shell--min :deep(.k-ws__name),
 .shell--min :deep(.k-ws__end),
 .shell--min :deep(.k-ws__chevron) {
