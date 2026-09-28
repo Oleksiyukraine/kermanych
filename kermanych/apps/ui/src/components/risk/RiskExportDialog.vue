@@ -67,16 +67,8 @@ import type { WorkspaceRisk } from '@kermanych/cloud';
 import KModal from 'components/kit/KModal.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import { useOrchestrator } from 'stores/orchestrator';
-import {
-  riskExportFileName,
-  riskRegisterHtml,
-  riskRegisterSheet,
-  type RiskExportContext,
-  type RiskExportFormat,
-  type RiskExportScope,
-} from '../../lib/risk-export';
-import { XLSX_MIME, xlsxWorkbook } from '../../lib/xlsx';
-import { saveFile, savePdf } from '../../lib/export-file';
+import type { RiskExportContext, RiskExportFormat, RiskExportScope } from '../../lib/risk-export';
+import { saveRiskRegister } from '../../lib/export-file';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -118,10 +110,8 @@ async function run(): Promise<void> {
     scope: scope.value,
     nowMs: Date.now(),
   };
-  const fileName = riskExportFileName(ctx, format.value);
   try {
-    if (format.value === 'xlsx') saveFile(fileName, xlsxWorkbook(riskRegisterSheet(rows.value, ctx)), XLSX_MIME);
-    else await savePdf(fileName, riskRegisterHtml(rows.value, ctx));
+    await saveRiskRegister(rows.value, ctx, format.value);
     emit('update:modelValue', false);
   } catch (e) {
     notify(t('management.risks.export.failed', { error: e instanceof Error ? e.message : String(e) }), 'error');

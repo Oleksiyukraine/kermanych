@@ -5,6 +5,7 @@ import {
   MANAGEMENT_SECTIONS,
   PLATFORMS,
   RISK_CATEGORY_VALUES,
+  RISK_EXPORT_FORMATS,
   RISK_RESPONSES_BY_KIND,
   RISK_STATUS_VALUES,
   type ManagementCapacity,
@@ -115,6 +116,17 @@ describe("buildManagementTurn", () => {
     // Server-owned columns are never offered: a model that sends `code` is guessing at a
     // value the trigger mints under an advisory lock.
     expect(out).toContain("Не передавай code, exposure, emv");
+  });
+
+  // Export is a READ, and rule (в) answers reads in prose — so without its own rule the model
+  // pastes the register into the chat instead of producing the file. The format list is the
+  // validator's, and a missing format is a question, not a default.
+  it("teaches exporting the register as an action with the dialog's formats", () => {
+    const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
+    expect(out).toContain('"kind": "risk.export"');
+    expect(out).toContain("(в-2) ЕКСПОРТ РЕЄСТРУ РИЗИКІВ");
+    expect(out).toContain(`format — ${RISK_EXPORT_FORMATS.join(" | ")}`);
+    expect(out).toContain("Якщо формат не названо — спитай прозою");
   });
 
   // The distinction the delete action stands or falls on. Deleting a risk that HAPPENED

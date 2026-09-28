@@ -21,6 +21,7 @@ const managementChat = vi.fn();
 const riskRemove = vi.fn();
 const riskSave = vi.fn();
 const riskCreate = vi.fn();
+const saveRegister = vi.fn();
 
 function risk(code: string, event: string): WorkspaceRisk {
   return {
@@ -85,6 +86,9 @@ vi.mock('../src/stores/risks', () => ({
   }),
 }));
 vi.mock('../src/stores/release-notes', () => ({ useReleaseNotes: () => ({ generate: vi.fn(), byWorkspace: { w1: [] }, load: vi.fn() }) }));
+vi.mock('../src/lib/export-file', () => ({
+  saveRiskRegister: (rows: unknown, ctx: unknown, format: unknown) => saveRegister(rows, ctx, format),
+}));
 
 function reply(actions: ManagementChatReply['actions']): ManagementChatReply {
   return { text: 'Готово.', actions, rejected: [], notices: [], ms: 10 };
@@ -96,7 +100,7 @@ function results(entries: readonly MgmtChatEntry[]): string[] {
 
 beforeEach(() => {
   setActivePinia(createPinia());
-  for (const m of [managementChat, riskRemove, riskSave, riskCreate]) m.mockReset();
+  for (const m of [managementChat, riskRemove, riskSave, riskCreate, saveRegister]) m.mockReset();
 });
 
 describe('risk.delete', () => {
@@ -161,5 +165,51 @@ describe('risk.delete', () => {
 
     expect(riskSave).toHaveBeenCalledWith('w1', 'id-R-012', { probability: 2 });
     expect(results(store.entries)).toHaveLength(2);
+  });
+});
+
+// Export writes nothing, so its failure mode is a WRONG FILE rather than a wrong row: a file
+// missing a risk the operator named gets forwarded as if it were complete.
+describe('risk.export', () => {
+  it('exports exactly the rows named, marked as a selection', async () => {
+    managementChat.mockResolvedValue(reply([{ kind: 'risk.export', format: 'xlsx', codes: ['r12'] }]));
+    saveRegister.mockResolvedValue({ fileName: 'risk-register-Acme-2026-09-28.xlsx', via: 'file' });
+
+    const store = useManagementChat();
+    await store.send('вивантаж R-012 в Excel', 'management-risks');
+
+    expect(saveRegister).toHaveBeenCalledTimes(1);
+    const [rows, ctx, format] = saveRegister.mock.calls[0] as [WorkspaceRisk[], { scope: string; workspaceName: string }, string];
+    expect(rows.map((r) => r.code)).toEqual(['R-012']);
+    expect(ctx).toMatchObject({ scope: 'selected', workspaceName: 'Acme' });
+    expect(format).toBe('xlsx');
+    expect(results(store.entries)[0]).toContain('risk-register-Acme-2026-09-28.xlsx');
+  });
+
+  it('exports nothing when a named code is not in this register', async () => {
+    managementChat.mockResolvedValue(reply([{ kind: 'risk.export', format: 'pdf', codes: ['R-001', 'R-999'] }]));
+
+    const store = useManagementChat();
+    await store.send('експортуй R-001 і R-999', 'management-risks');
+
+    expect(saveRegister).not.toHaveBeenCalled();
+    const [line] = results(store.entries);
+    expect(line).toContain('R-999');
+    expect(line).not.toContain('R-001');
+  });
+
+  // A browser tab cannot write a PDF, so the document lands in the print dialog — and the line
+  // must say so, or the operator goes looking for a download that never happened.
+  it('exports the whole register without codes and says when it went to the print dialog', async () => {
+    managementChat.mockResolvedValue(reply([{ kind: 'risk.export', format: 'pdf' }]));
+    saveRegister.mockResolvedValue({ fileName: 'risk-register-Acme-2026-09-28.pdf', via: 'print' });
+
+    const store = useManagementChat();
+    await store.send('експортуй реєстр у PDF', 'management-risks');
+
+    const [rows, ctx] = saveRegister.mock.calls[0] as [WorkspaceRisk[], { scope: string }];
+    expect(rows).toHaveLength(register.length);
+    expect(ctx.scope).toBe('all');
+    expect(results(store.entries)[0]).toContain('Зберегти як PDF');
   });
 });

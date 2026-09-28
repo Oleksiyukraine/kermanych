@@ -7,6 +7,15 @@
 // the same HTML, src-electron/print-pdf.ts). A plain browser tab has no API that renders
 // HTML to a PDF file, so there the document opens in the print dialog, where «Save as PDF»
 // is the destination — the same pages, one click further away.
+import type { WorkspaceRisk } from '@kermanych/cloud';
+import {
+  riskExportFileName,
+  riskRegisterHtml,
+  riskRegisterSheet,
+  type RiskExportContext,
+  type RiskExportFormat,
+} from './risk-export';
+import { XLSX_MIME, xlsxWorkbook } from './xlsx';
 
 export const PDF_MIME = 'application/pdf';
 
@@ -23,13 +32,35 @@ export function saveFile(fileName: string, data: BlobPart, mimeType: string): vo
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-export async function savePdf(fileName: string, html: string): Promise<void> {
+// Answers where the document went: a file handed to the Save dialog, or the print dialog
+// (a plain browser tab), because the two ask different things of the operator next.
+export async function savePdf(fileName: string, html: string): Promise<'file' | 'print'> {
   const printToPdf = window.kermanych?.printToPdf;
-  if (!printToPdf) return await printInFrame(html);
+  if (!printToPdf) {
+    await printInFrame(html);
+    return 'print';
+  }
   const bytes = await printToPdf(html);
   // Copied into a fresh ArrayBuffer-backed view: what arrives over IPC may be a view onto a
   // larger shared buffer, and a Blob built from that would carry its neighbours too.
   saveFile(fileName, new Uint8Array(bytes), PDF_MIME);
+  return 'file';
+}
+
+export type SavedExport = { fileName: string; via: 'file' | 'print' };
+
+// The risk register as a file, in the format asked for — the ONE call behind both the Risk
+// Registry's Export dialog and the Менеджмент assistant's `risk.export`, so a file asked for
+// in the chat is the file the button makes.
+export async function saveRiskRegister(
+  rows: readonly WorkspaceRisk[],
+  ctx: RiskExportContext,
+  format: RiskExportFormat,
+): Promise<SavedExport> {
+  const fileName = riskExportFileName(ctx, format);
+  if (format === 'pdf') return { fileName, via: await savePdf(fileName, riskRegisterHtml(rows, ctx)) };
+  saveFile(fileName, xlsxWorkbook(riskRegisterSheet(rows, ctx)), XLSX_MIME);
+  return { fileName, via: 'file' };
 }
 
 // A hidden iframe rather than a new window: no popup blocker, no stray tab left behind, and

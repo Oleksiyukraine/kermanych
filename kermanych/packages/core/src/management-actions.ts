@@ -94,6 +94,12 @@ export type ManagementRiskFields = {
 // far more often than it means «erase this».
 export type ManagementRiskPatch = Partial<ManagementRiskFields>;
 
+// The two files the Risk Registry's Export dialog writes: a PDF to read, an Excel sheet to
+// work in. The executor hands `risk.export` to the same save path that dialog uses, so this
+// list is the dialog's list and nothing else.
+export const RISK_EXPORT_FORMATS = ["pdf", "xlsx"] as const;
+export type RiskExportFormat = (typeof RISK_EXPORT_FORMATS)[number];
+
 // ── Tickets ───────────────────────────────────────────────────────────────────
 
 // One ticket, in the five slots a project manager's ticket actually has.
@@ -189,6 +195,17 @@ export type ManagementAction =
   // the assistant to delete gets a postgrest refusal printed verbatim into the transcript
   // rather than a silent no-op — see the executor in stores/management-chat.ts.
   | { kind: "risk.delete"; code: string }
+  // Hand the register to the operator as a file — the Risk Registry's Export button, asked
+  // for in words. Writes nothing: the browser builds the file from the register it already
+  // holds (apps/ui/src/lib/risk-export.ts) and saves it through the same path the dialog
+  // does, so a file from the chat is byte-for-byte the file from the button.
+  //
+  // `codes` narrows it to named rows, by the register code for `risk.update`'s reason.
+  // Absent means the whole register. A subset the operator described rather than listed
+  // («відкриті загрози», «все, що вище 12») is resolved by the MODEL into codes off the
+  // register in the context block — the executor never interprets a filter it could get
+  // subtly wrong, it only looks up the rows it was named.
+  | { kind: "risk.export"; format: RiskExportFormat; codes?: string[] }
   // Write a new release note for one project of the workspace and store it. The project is
   // named the way the model was shown it — by NAME, in the prompt's repository list — for
   // the reason `risk.update` names a register code: a uuid is something the model has no
@@ -293,6 +310,7 @@ export type ManagementUnsupported = Extract<ManagementAction, { kind: "unsupport
 export type ManagementRiskCreate = Extract<ManagementAction, { kind: "risk.create" }>;
 export type ManagementRiskUpdate = Extract<ManagementAction, { kind: "risk.update" }>;
 export type ManagementRiskDelete = Extract<ManagementAction, { kind: "risk.delete" }>;
+export type ManagementRiskExport = Extract<ManagementAction, { kind: "risk.export" }>;
 export type ManagementReleaseNotes = Extract<ManagementAction, { kind: "release.notes" }>;
 export type ManagementTicketCreate = Extract<ManagementAction, { kind: "ticket.create" }>;
 export type ManagementJiraTicketCreate = Extract<ManagementAction, { kind: "jira.ticket.create" }>;
@@ -1072,6 +1090,29 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
     if (code === undefined)
       return { error: { text: "risk.delete без коду ризику (наприклад R-003)", code: "risk_delete_no_code" } };
     return { kind: "risk.delete", code };
+  }
+  // The format is required, not defaulted: the two files answer different needs (a PDF to
+  // forward, a sheet to filter), and the prompt tells the model to ask when the operator did
+  // not say. Case is the same value — «PDF» is pdf — so it is folded, num()'s reason.
+  if (kind === "risk.export") {
+    const allowed = RISK_EXPORT_FORMATS.join(" | ");
+    const raw = str(o.format);
+    if (raw === undefined)
+      return { error: { text: `risk.export без формату (${allowed})`, code: "risk_export_no_format", params: { allowed } } };
+    const format = RISK_EXPORT_FORMATS.find((f) => f === raw.toLowerCase());
+    if (format === undefined)
+      return {
+        error: {
+          text: `невідомий формат експорту ${JSON.stringify(o.format)} (${allowed})`,
+          code: "risk_export_format_unknown",
+          params: { value: JSON.stringify(o.format), allowed },
+        },
+      };
+    if (!has(o, "codes")) return { kind: "risk.export", format };
+    const codes = strList(o.codes, "codes");
+    if (isFail(codes)) return codes;
+    // An empty list is the same statement as no field: nothing was singled out.
+    return codes.length ? { kind: "risk.export", format, codes } : { kind: "risk.export", format };
   }
   if (kind === "release.notes") {
     // Named, not guessed: a workspace of five repositories has five different release

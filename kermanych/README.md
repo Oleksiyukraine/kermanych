@@ -572,7 +572,9 @@ That field is a real assistant, and it is deliberately narrow:
   («Ризик R-004 занесено…») is written by the app after Postgres answered — never by
   the model. Every turn also carries the current register, so it updates R-004 instead
   of filing it twice. Owners are not something it can set: `risk_owner` and
-  `action_owner` are profile ids, and those are assigned on the register screen.
+  `action_owner` are profile ids, and those are assigned on the register screen. It also
+  exports the register as PDF or Excel on request (`risk.export`, see *Exporting the risk
+  register* below).
 - **It writes release notes from the chat.** Type «зроби реліз-ноти по main за останній
   тиждень» into that field and it emits a `release.notes` action naming the project, the
   branch and the period — there is no button to press and no form to fill. A relative
@@ -718,6 +720,17 @@ plain browser tab there is no way to write a PDF file, so the document opens in 
 dialog instead, and you choose «Save as PDF» there. Both files are built in the browser from
 the register already on screen (`apps/ui/src/lib/risk-export.ts`), so exporting never goes
 back to Supabase.
+
+You can also ask for the file in the Менеджмент chat, from any section: «експортуй реєстр у
+PDF», «вивантаж відкриті загрози в Excel». The assistant emits a `risk.export` action with
+the format (`pdf` or `xlsx`) and, for part of the register, the codes of the rows it picked
+from the register every turn carries — a description like «все з експозицією від 12» is
+turned into codes by the model, never interpreted by the app. If you did not name a format it
+asks which one. Your browser then builds the file through the same function the Export button
+uses (`saveRiskRegister` in `apps/ui/src/lib/export-file.ts`), rows in the screen's default
+order (by exposure), and the chat line names the file — or, in a plain browser tab, says the
+PDF opened in the print dialog. A code the register does not hold exports nothing: a file
+quietly missing a row you asked for would be forwarded as complete.
 
 ### Giving another section something it can write
 

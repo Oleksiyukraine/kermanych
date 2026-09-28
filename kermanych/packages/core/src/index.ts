@@ -147,6 +147,7 @@ export {
 } from "./risks";
 export {
   MANAGEMENT_ACTION_FENCE,
+  RISK_EXPORT_FORMATS,
   parseManagementReply,
   renderTicketDescription,
   validateManagementAction,
@@ -155,6 +156,8 @@ export {
   type ManagementUnsupported,
   type ManagementRiskCreate,
   type ManagementRiskUpdate,
+  type ManagementRiskExport,
+  type RiskExportFormat,
   type ManagementReleaseNotes,
   type ManagementTicketCreate,
   type ManagementJiraTicketCreate,
