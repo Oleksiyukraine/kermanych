@@ -14,7 +14,7 @@ import type { TreeEntry } from '@kermanych/core';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjectDocs } from 'stores/project-docs';
-import { DOC_MARKUP_RE, renderDoc } from '../lib/markdown';
+import { DOC_MARKUP_RE, isSvgRef, renderDoc } from '../lib/markdown';
 import KFileView from 'components/kit/KFileView.vue';
 import DocTreeNode, { type DocNode } from './DocTreeNode.vue';
 import { useAuth } from 'stores/auth';
@@ -166,7 +166,12 @@ watch([previewHtml, previewEl], async () => {
   for (const img of Array.from(el.querySelectorAll<HTMLImageElement>('img[data-doc-path]'))) {
     const folder = img.getAttribute('data-doc-folder')!;
     const path = img.getAttribute('data-doc-path')!;
-    try { img.src = await docs.rawUrl(selectedId.value, folder, path); } catch { /* leave broken */ }
+    try { img.src = await docs.rawUrl(selectedId.value, folder, path); } catch { continue; /* leave broken */ }
+    markZoomable(img, path, path);
+  }
+  for (const img of Array.from(el.querySelectorAll<HTMLImageElement>('img:not([data-doc-path])'))) {
+    const src = img.getAttribute('src') ?? '';
+    markZoomable(img, src, img.alt || src);
   }
   for (const a of Array.from(el.querySelectorAll<HTMLAnchorElement>('a[data-doc-path]'))) {
     a.addEventListener('click', (ev) => {
@@ -177,6 +182,34 @@ watch([previewHtml, previewEl], async () => {
     });
   }
 });
+
+// Click-to-enlarge for SVG diagrams: the picture opens in an overlay of ~85% of the window,
+// scaled to fit (vector art stays sharp). The overlay reuses the preview's own object URL, so
+// it closes whenever the preview changes — a new file, or a pull re-reading the open one,
+// revokes that URL. Backdrop, Esc and a click on the enlarged picture all close it.
+const zoom = ref<{ src: string; label: string } | null>(null);
+const zoomOpenFile = computed(() => isSvgRef(docs.openPath));
+watch([() => docs.openPath, () => docs.imageUrl, previewHtml], () => { zoom.value = null; });
+
+// An SVG inside a link is a badge or a pointer: the click belongs to the link, not the zoom.
+function markZoomable(img: HTMLImageElement, target: string, label: string): void {
+  if (!isSvgRef(target) || img.closest('a')) return;
+  img.classList.add('docs__zoomable');
+  img.tabIndex = 0;
+  img.setAttribute('role', 'button');
+  img.setAttribute('aria-label', t('docsPage.zoomHint', { name: label }));
+  img.dataset.zoomLabel = label;
+}
+
+// One delegated handler for the open SVG file and SVGs inside a rendered doc (v-html content
+// has no template to bind to). Enter/Space make the keyboard path match the click.
+function openZoom(ev: MouseEvent | KeyboardEvent): void {
+  const img = ev.target;
+  if (!(img instanceof HTMLImageElement) || !img.classList.contains('docs__zoomable')) return;
+  if (ev instanceof KeyboardEvent && ev.key !== 'Enter' && ev.key !== ' ') return;
+  ev.preventDefault();
+  zoom.value = { src: img.currentSrc || img.src, label: img.dataset.zoomLabel ?? '' };
+}
 
 // ── Links ────────────────────────────────────────────────────────────────────
 
@@ -364,7 +397,7 @@ onBeforeUnmount(() => docs.releaseUrls());
       </nav>
     </aside>
 
-    <section class="docs__preview">
+    <section class="docs__preview" @click="openZoom" @keydown="openZoom">
       <!-- An open link. A manual popover only so «full screen» can lift this same element into
            the top layer (see `fullPage`); closed, the stylesheet keeps it in the page flow. -->
       <div v-if="openEntry" ref="viewerEl" popover="manual" class="docs__viewer">
@@ -415,7 +448,15 @@ onBeforeUnmount(() => docs.releaseUrls());
       <!-- An <img> never runs an SVG's scripts or loads its external resources, so a
            repository SVG is drawn without being trusted. -->
       <div v-else-if="docs.imageUrl" class="docs__image">
-        <img :src="docs.imageUrl" :alt="docs.openPath">
+        <img
+          :src="docs.imageUrl"
+          :alt="docs.openPath"
+          :class="{ docs__zoomable: zoomOpenFile }"
+          :tabindex="zoomOpenFile ? 0 : undefined"
+          :role="zoomOpenFile ? 'button' : undefined"
+          :aria-label="zoomOpenFile ? t('docsPage.zoomHint', { name: docs.openPath }) : undefined"
+          :data-zoom-label="docs.openPath"
+        >
       </div>
       <template v-else-if="docs.file && !docs.file.binary && !docs.file.truncated && isMarkdown">
         <!-- renderDoc keeps html:false, so v-html output is a controlled tag set. -->
@@ -480,6 +521,16 @@ onBeforeUnmount(() => docs.releaseUrls());
         </KBtn>
       </template>
     </KModal>
+
+    <KModal
+      :model-value="!!zoom"
+      :title="zoom?.label ?? ''"
+      width="85vw"
+      flush
+      @update:model-value="(open: boolean) => { if (!open) zoom = null; }"
+    >
+      <img v-if="zoom" class="docs__zoom" :src="zoom.src" :alt="zoom.label" @click="zoom = null">
+    </KModal>
   </div>
 </template>
 
@@ -494,6 +545,18 @@ onBeforeUnmount(() => docs.releaseUrls());
 .docs__nodes { list-style: none; margin: 0; padding-left: 0; }
 .docs__preview { overflow: auto; min-height: 0; }
 .docs__image { padding: var(--k-sp-3); img { display: block; max-width: 100%; height: auto; } }
+// Hover/focus ring says «this opens bigger»; :deep because rendered-doc images come from v-html.
+.docs__preview :deep(.docs__zoomable) {
+  cursor: zoom-in;
+  border-radius: 4px;
+  outline: 1px solid transparent;
+  outline-offset: 4px;
+  transition: outline-color 0.12s;
+  &:hover, &:focus-visible { outline-color: var(--k-accent); }
+}
+// The overlay body: 85vh minus KModal's title bar (88px), so the panel as a whole takes 85% of
+// the window each way; object-fit scales the SVG up or down to fit without distortion.
+.docs__zoom { display: block; width: 100%; height: calc(85vh - 88px); object-fit: contain; padding: var(--k-sp-4); cursor: zoom-out; }
 .docs__empty { color: var(--k-muted); font-size: 13px; padding: var(--k-sp-3); &--error { color: var(--k-danger); } }
 .docs__index { display: flex; flex-direction: column; gap: 4px; padding-bottom: var(--k-sp-2); border-bottom: 1px solid var(--k-line); }
 .docs__index-head { font-size: 12px; font-weight: 600; color: var(--k-muted); text-transform: uppercase; letter-spacing: 0.04em; }

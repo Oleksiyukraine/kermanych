@@ -41,6 +41,13 @@ export function resolveRel(dir: string, rel: string): string | null {
 // (isDocImagePath) or in the KFileView code viewer.
 export const DOC_MARKUP_RE = /\.(?:md|mdx|mdc|markdown|rst|adoc|asciidoc)$/i;
 
+// An SVG the docs preview lets the reader click to enlarge: a folder-relative path or an
+// external URL, judged without its query/hash. Vector art stays sharp at any size, which is
+// why it (and not a raster screenshot) is what the enlarged view is for.
+export function isSvgRef(ref: string): boolean {
+  return /\.svg$/i.test(ref.split(/[?#]/, 1)[0]!);
+}
+
 // GitHub-faithful renderer for repository documentation. Distinct instance from the chat
 // renderMarkdown: breaks:false (a single newline is not a <br>), fenced code highlighted, and
 // relative image/link targets rewritten to data-* attributes the docs screen resolves against

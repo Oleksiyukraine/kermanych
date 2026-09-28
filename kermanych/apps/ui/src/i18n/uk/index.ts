@@ -2715,6 +2715,7 @@ export const uk = {
     emptyFolder: 'Порожня тека',
     loading: 'Завантаження…',
     binary: 'Бінарний файл — прев\u2019ю недоступне.',
+    zoomHint: 'Збільшити {name}',
     indexHeading: 'Індекс документації',
     indexNever: 'Ще не проіндексовано',
     indexSummary: 'Проіндексовано файлів: {files} · {when}',
