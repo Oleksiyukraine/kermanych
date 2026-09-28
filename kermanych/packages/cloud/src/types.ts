@@ -422,6 +422,32 @@ export type WorkspaceReleaseNotePatch = {
   bodyMd?: string;
 };
 
+// A documentation link on the Project Documentation screen: a page that lives outside the
+// repository (Google Doc, Figma, a published artifact). Only the pointer is stored — the
+// page is loaded by each member's app from its own host. `projectId` and the created_*
+// provenance are frozen by project_doc_links_touch(), so the patch carries title and url only.
+export type ProjectDocLink = {
+  id: string;
+  projectId: string;
+  title: string;
+  url: string;
+  createdAt: string;
+  createdBy?: string;
+  updatedAt: string;
+  updatedBy?: string;
+};
+
+export type ProjectDocLinkInsert = {
+  projectId: string;
+  title: string;
+  url: string;
+};
+
+export type ProjectDocLinkPatch = {
+  title?: string;
+  url?: string;
+};
+
 // ── Jira mirror ───────────────────────────────────────────────────────────────
 // One Jira board mirrored per workspace (spec 2026-09-02). These are the camelCase
 // shapes of the jira_* tables; jira.ts owns the snake_case boundary. Jira is the

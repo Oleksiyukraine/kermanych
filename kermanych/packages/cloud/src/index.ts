@@ -38,6 +38,9 @@ export type {
   WorkspaceReleaseNote,
   WorkspaceReleaseNoteInsert,
   WorkspaceReleaseNotePatch,
+  ProjectDocLink,
+  ProjectDocLinkInsert,
+  ProjectDocLinkPatch,
   JiraStatusCategory,
   JiraIntegration,
   JiraIntegrationInsert,
@@ -95,6 +98,14 @@ export type {
   DocIndexResult,
 } from "./doc-rag";
 export { getDocIndexState, searchProjectDocs, indexProjectDocs } from "./doc-rag";
+
+export {
+  toProjectDocLink,
+  listProjectDocLinks,
+  createProjectDocLink,
+  patchProjectDocLink,
+  deleteProjectDocLink,
+} from "./doc-links";
 
 export type { CloudWorkspacePatch, CloudWorkspaceInsert } from "./workspaces";
 export {

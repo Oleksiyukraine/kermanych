@@ -35,6 +35,18 @@ export type TreeEntry = { name: string; type: "file" | "dir" };
 // oversized or binary blob reports a flag instead of a body, never a partial one.
 export type FileContent = { path: string; content: string; binary: boolean; truncated: boolean };
 
+// Whether a Project Documentation link's page may be drawn inside the app (GET
+// /docs/embed-check). A site opts out of being framed with X-Frame-Options or a CSP
+// `frame-ancestors` directive, and an iframe it refuses renders blank — so the screen asks
+// first and offers the default browser instead. `embeddable: null` = the local api could not
+// reach the page; the screen then tries the iframe anyway. `reason` names the header that
+// refused; `status` is the final HTTP status, for the message only.
+export type DocLinkEmbedCheck = {
+  embeddable: boolean | null;
+  reason?: "x-frame-options" | "frame-ancestors" | "unreachable";
+  status?: number;
+};
+
 export type Session = {
   id: string; projectId: string; name: string; task: string;
   // The cloud task this session executes, when it was launched from the board.

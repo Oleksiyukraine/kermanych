@@ -30,9 +30,10 @@ import { JiraService } from "./jira/jira.service";
 import { LinearController } from "./http/linear.controller";
 import { LinearService } from "./linear/linear.service";
 import { DocIndexService } from "./docs/doc-index.service";
+import { DocsController } from "./http/docs.controller";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ModelsController, JiraController, LinearController, AccountController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ModelsController, JiraController, LinearController, AccountController, DocsController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
