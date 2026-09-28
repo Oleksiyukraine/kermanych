@@ -529,6 +529,9 @@ export const api = {
   pullProject: (id: string): Promise<{ ok: boolean; out: string }> =>
     post<{ ok: boolean; out: string }>(`/projects/${id}/pull`, {}),
 
+  projectIncoming: (id: string, fetch: boolean): Promise<{ behind: number }> =>
+    get<{ behind: number }>(`/projects/${id}/incoming${fetch ? '?fetch=1' : ''}`),
+
   getEnv: (id: string, file?: string): Promise<EnvFileView> =>
     get<EnvFileView>(`/projects/${id}/env${file ? `?file=${encodeURIComponent(file)}` : ''}`),
 

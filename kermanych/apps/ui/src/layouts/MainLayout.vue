@@ -238,10 +238,14 @@
         type="button"
         class="shell__foot-btn"
         :disabled="!isBound || syncing"
-        v-tip="isBound ? t('common.nav.pullTip') : BIND_HINT"
-        aria-label="Pull"
+        v-tip="pullHint"
+        :aria-label="isBound && incoming > 0 ? `Pull — ${t('common.nav.pullIncoming', { count: incoming })}` : 'Pull'"
         @click="gitPull"
-      ><span class="k-glyph" aria-hidden="true">↓</span> Pull</button>
+      ><span class="k-glyph" aria-hidden="true">↓</span> Pull<span
+        v-if="isBound && incoming > 0"
+        class="shell__foot-badge"
+        aria-hidden="true"
+      >{{ incoming }} ↓</span></button>
       <span class="shell__foot-spacer"></span>
       <!-- The path is a STATUS read-out that doubles as the way to change it. It
            used to open the directory picker straight from here, which put the
@@ -411,6 +415,7 @@ import { theme, toggleTheme } from '../lib/theme';
 import type { KTheme } from '@kermanych/tokens';
 import { locale, toggleLocale } from '../lib/locale';
 import { isMoveRefusal, moveRefusalText } from '../lib/cloud-errors';
+import { installReconcile } from '../lib/reconcile';
 import { percent, planWindow, renderWindow } from '../lib/format';
 import { until, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
@@ -1328,7 +1333,48 @@ async function gitPull(): Promise<void> {
   } finally {
     syncing.value = false;
   }
+  // The pull fetched on its own, so a local recount is enough to clear (or keep) the badge.
+  void refreshIncoming(false);
 }
+
+// Footer Pull badge: commits waiting upstream for the selected project's current branch,
+// GitHub Desktop-style. The api fetches the remote on the project switch and on a slow
+// visible-only poll; a hidden window costs nothing and catches up when it returns.
+const INCOMING_POLL_MS = 5 * 60_000;
+const incoming = ref(0);
+async function refreshIncoming(fetch: boolean): Promise<void> {
+  const id = store.selectedProjectId;
+  if (!id || !isBound.value) return;
+  try {
+    const { behind } = await api.projectIncoming(id, fetch);
+    // A fetch can take seconds; the operator may have switched project meanwhile.
+    if (store.selectedProjectId === id) incoming.value = behind;
+  } catch {
+    // Local API unreachable or the binding just went away: keep the last known count.
+  }
+}
+watch(
+  () => [store.selectedProjectId, selectedProject.value?.localRepoPath] as const,
+  () => {
+    incoming.value = 0;
+    void refreshIncoming(true);
+  },
+  { immediate: true },
+);
+let stopIncomingPoll: (() => void) | undefined;
+onMounted(() => {
+  stopIncomingPoll = installReconcile(() => void refreshIncoming(true), {
+    intervalMs: INCOMING_POLL_MS,
+    staleHideMs: 60_000,
+  });
+});
+onUnmounted(() => stopIncomingPoll?.());
+
+const pullHint = computed(() => {
+  if (!isBound.value) return BIND_HINT.value;
+  const tip = t('common.nav.pullTip');
+  return incoming.value > 0 ? `${t('common.nav.pullIncoming', { count: incoming.value })} · ${tip}` : tip;
+});
 </script>
 
 <style scoped lang="scss">
@@ -1872,6 +1918,21 @@ async function gitPull(): Promise<void> {
 .shell__foot-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+// The Pull button's "N ↓" pill (GitHub Desktop's incoming-commits badge): shown only when
+// the selected project's upstream has commits the local branch lacks.
+.shell__foot-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--k-sp-2);
+  padding: 0 6px;
+  height: 16px;
+  border-radius: var(--k-r-pill);
+  background: var(--k-line-strong);
+  color: var(--k-text);
+  font-weight: var(--k-fw-medium);
+  line-height: 1;
 }
 
 // Dock toggles are glyph-only controls, so they take the icon-button look of the ШІ-session

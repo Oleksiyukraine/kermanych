@@ -27,6 +27,7 @@ export const uk = {
       langUk: 'Українська',
       langEn: 'Англійська',
       pullTip: 'git pull (--ff-only) поточної гілки репозиторію проєкту',
+      pullIncoming: 'Комітів для pull: {count}',
       changeInSettings: '{label} — змінити в налаштуваннях',
       changeFolder: 'Змінити теку',
       bindFolder: 'Прив’язати теку',
