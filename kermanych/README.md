@@ -132,6 +132,7 @@ owner's call too.
 | set a workspace's colour or emoji marker | the workspace owner |
 | reorder workspaces in your sidebar | any member — a per-account, per-machine view |
 | create a project, edit its config, work the board | any workspace member |
+| add, rename or remove a project's documentation links | any workspace member |
 | delete a project | the workspace owner |
 | create a task | any workspace member |
 | claim an unassigned task | any workspace member |
@@ -405,6 +406,19 @@ pnpm build:app    # build a macOS .dmg (unsigned)
 Links never open inside the desktop window: every `http(s)`/`mailto` link — Jira
 and Linear tickets, attachments, storage downloads, markdown links, and the session
 live preview — opens in your default browser (Chrome, Arc, Safari, …).
+
+The one deliberate exception is **Менеджмент → Project Documentation → Посилання**:
+links the team adds there (a Google Doc, a Figma file, a published Claude artifact,
+any page) are shown as preview cards and open *embedded* in the screen's preview pane,
+with a full-screen toggle (`Esc` leaves it). Only the title and URL are stored, in the
+cloud table `project_doc_links` (`20260928110000_project_doc_links.sql`, additive —
+push it before shipping this UI). Known providers are loaded through their embed form
+(a Google Doc's `/edit` becomes `/preview`, a YouTube `/watch` becomes `/embed/…`).
+Before drawing a page the local API asks its host whether it may be framed
+(`GET /api/docs/embed-check?url=…` reads `X-Frame-Options` / CSP `frame-ancestors`);
+a page that refuses — GitHub, or a private Google Doc that redirects to Google sign-in,
+which the app's window is not signed in to — gets **Відкрити в браузері** instead of a
+blank frame. That button always opens the stored URL in your default browser.
 
 The build is **unsigned**, so on first open macOS Gatekeeper blocks it. Open it
 with **right-click → Open** (once), or clear the quarantine flag:
