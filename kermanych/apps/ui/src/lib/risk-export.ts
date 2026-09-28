@@ -6,6 +6,7 @@
 //
 // Pure and DOM-free: the caller passes `t`, the member lookup and the clock, and gets back
 // a sheet model or an HTML string. Writing the bytes and saving them is lib/export-file.ts.
+import type { RiskExportFormat } from '@kermanych/core';
 import type { WorkspaceRisk } from '@kermanych/cloud';
 import { formatIsoDate, todayIso } from './calendar';
 import {
@@ -24,7 +25,9 @@ import {
 } from './risk';
 import { sheetName, type XlsxCell, type XlsxSheet } from './xlsx';
 
-export type RiskExportFormat = 'pdf' | 'xlsx';
+// Core's list, because the Менеджмент assistant's `risk.export` is validated against it and
+// must never name a format this file cannot build.
+export type { RiskExportFormat };
 
 // Which rows the operator asked for. It is printed in the document, because «12 risks» on a
 // page that is really a hand-picked subset reads as the whole register.

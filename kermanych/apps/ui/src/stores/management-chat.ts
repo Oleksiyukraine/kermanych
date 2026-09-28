@@ -47,6 +47,7 @@ import type {
   ManagementDocs,
   ManagementReleaseNotes,
   ManagementAttachment,
+  ManagementRiskExport,
   ManagementRiskRow,
   ManagementTicketCreate,
   ManagementWorkspaceProject,
@@ -73,6 +74,10 @@ import { useReleaseNotes } from './release-notes';
 import { useRisks } from './risks';
 import { useProjectDocs } from './project-docs';
 import { useAuth } from './auth';
+import { sortRisks } from '../lib/risk';
+import type { RiskExportContext } from '../lib/risk-export';
+import { saveRiskRegister } from '../lib/export-file';
+import type { WorkspaceRisk } from '@kermanych/cloud';
 import { getDocIndexState, searchProjectDocs } from '@kermanych/cloud';
 
 // One line of the conversation. `result` is neither the user's words nor the model's: it is
@@ -252,6 +257,62 @@ export const useManagementChat = defineStore('management-chat', () => {
         to: action.rangeTo,
       }),
     );
+  }
+
+  // The register as a file — the Risk Registry's Export dialog, asked for in words. Built from
+  // the register this store already holds (the rows the screen renders) by the same
+  // `saveRiskRegister` the dialog calls, so the chat's file is the button's file. Rows come in
+  // the screen's default order, by exposure: the chat has no table sort of its own to follow.
+  //
+  // A named code the register does not hold refuses the WHOLE export — the rule an unknown
+  // assignee follows for a ticket. A file quietly missing a row the operator asked for gets
+  // forwarded as if it were complete, and nobody reads a file back against the request.
+  async function exportRegister(workspaceId: string, action: ManagementRiskExport): Promise<void> {
+    const register = sortRisks(risks.byWorkspace[workspaceId] ?? [], 'exposure');
+    let rows: WorkspaceRisk[] = register;
+    if (action.codes) {
+      const picked = new Set<string>();
+      const missing: string[] = [];
+      for (const code of action.codes) {
+        const row = findRiskByCode(register, code);
+        if (row) picked.add(row.id);
+        else missing.push(code);
+      }
+      if (missing.length) {
+        result(workspaceId, 'warn', globalTr.t('management.chat.riskExportNotFound', { codes: missing.join(', ') }));
+        return;
+      }
+      rows = register.filter((r) => picked.has(r.id));
+    }
+    if (!rows.length) {
+      result(workspaceId, 'warn', globalTr.t('management.chat.riskExportEmpty'));
+      return;
+    }
+    const roster = projects.members[workspaceId] ?? [];
+    const ctx: RiskExportContext = {
+      t: (key, named) => globalTr.t(key, named),
+      // The Risk Registry screen's own owner label (ManagementRisksPage `memberOptions`), so
+      // an owner reads the same in this file as in the one the button makes.
+      memberName: (id) => {
+        const m = roster.find((x) => x.userId === id);
+        return m?.profile?.displayName ?? m?.profile?.githubUsername ?? id;
+      },
+      workspaceName: projects.workspaceById.get(workspaceId)?.name ?? '',
+      scope: action.codes ? 'selected' : 'all',
+      nowMs: Date.now(),
+    };
+    try {
+      const saved = await saveRiskRegister(rows, ctx, action.format);
+      result(
+        workspaceId,
+        'info',
+        saved.via === 'print'
+          ? globalTr.t('management.chat.riskExportPrinting', { n: rows.length }, rows.length)
+          : globalTr.t('management.chat.riskExportSaved', { n: rows.length, file: saved.fileName }, rows.length),
+      );
+    } catch (e) {
+      result(workspaceId, 'error', globalTr.t('management.risks.export.failed', { error: errorText(e) }));
+    }
   }
 
   // The roster as the assistant is shown it, and the list `findMemberByName` resolves an
@@ -696,6 +757,10 @@ export const useManagementChat = defineStore('management-chat', () => {
           globalTr.t('management.chat.riskDeleteFailed', { code: row.code, error: errorText(e) }),
         );
       }
+      return;
+    }
+    if (action.kind === 'risk.export') {
+      await exportRegister(workspaceId, action);
       return;
     }
     if (action.kind === 'release.notes') {

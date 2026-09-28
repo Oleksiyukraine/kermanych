@@ -180,6 +180,8 @@ export type ManagementRejectionCode =
   | "risk_update_no_patch" // a risk.update without a patch object (params: { code })
   | "risk_update_empty" // a risk.update that changes nothing (params: { code })
   | "risk_delete_no_code" // a risk.delete without a register code (params: none)
+  | "risk_export_no_format" // a risk.export without a format (params: { allowed })
+  | "risk_export_format_unknown" // a risk.export format the Export dialog does not write (params: { value, allowed })
   | "release_no_project" // a release.notes without a project name (params: none)
   | "release_no_branch" // a release.notes without a branch (params: { project })
   | "release_no_range" // a release.notes without an inclusive range (params: { project })
@@ -241,6 +243,8 @@ export const MANAGEMENT_REJECTION_CODES = [
   "risk_update_no_patch",
   "risk_update_empty",
   "risk_delete_no_code",
+  "risk_export_no_format",
+  "risk_export_format_unknown",
   "release_no_project",
   "release_no_branch",
   "release_no_range",

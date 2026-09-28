@@ -210,6 +210,27 @@ test("a risk.delete names one register code and takes no other field", () => {
   });
 });
 
+// An export writes nothing, so the only ways to be wrong are a file the dialog cannot make
+// and a row list that is not a list. The whole register is the absent (or empty) `codes`.
+test("a risk.export names a format the Export dialog writes and optionally the rows", () => {
+  expect(validateManagementAction({ kind: "risk.export", format: "PDF" })).toEqual({ kind: "risk.export", format: "pdf" });
+  expect(validateManagementAction({ kind: "risk.export", format: "xlsx", codes: ["R-001", " ", "R-004"] })).toEqual({
+    kind: "risk.export",
+    format: "xlsx",
+    codes: ["R-001", "R-004"],
+  });
+  expect(validateManagementAction({ kind: "risk.export", format: "xlsx", codes: [] })).toEqual({ kind: "risk.export", format: "xlsx" });
+  const noFormat = validateManagementAction({ kind: "risk.export" });
+  if (!("error" in noFormat)) throw new Error("expected a refusal");
+  expect(noFormat.error).toMatchObject({ code: "risk_export_no_format", params: { allowed: "pdf | xlsx" } });
+  const csv = validateManagementAction({ kind: "risk.export", format: "csv" });
+  if (!("error" in csv)) throw new Error("expected a refusal");
+  expect(csv.error).toMatchObject({ code: "risk_export_format_unknown", params: { value: '"csv"', allowed: "pdf | xlsx" } });
+  const oneString = validateManagementAction({ kind: "risk.export", format: "pdf", codes: "R-001, R-002" });
+  if (!("error" in oneString)) throw new Error("expected a refusal");
+  expect(oneString.error).toMatchObject({ code: "field_not_string_list", params: { field: "codes" } });
+});
+
 // A kind nobody implemented must be REPORTED, never dropped: an action silently discarded
 // while the prose claims success is the one failure the operator cannot see.
 test("an unknown kind is named in the rejection", () => {
