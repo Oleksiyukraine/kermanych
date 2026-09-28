@@ -1,27 +1,33 @@
 // Data access for the workspace password vault (the "Storage" section). Owns the snake_case
 // <-> camelCase boundary for `workspace_passwords`, `workspace_password_secrets` and
 // `workspace_password_access`, plus the `password-files` Storage bucket. Every call runs
-// under the caller's JWT, so the RLS policies and the two access rpcs in
-// 20260907120000_workspace_passwords.sql — not this code — are the authorization surface;
-// refusals surface as thrown postgrest messages, or (for a read a developer is not entitled
-// to) as an empty result the caller reads as "not permitted".
+// under the caller's JWT, so the RLS policies and the rpcs in
+// 20260907120000_workspace_passwords.sql and 20260928090000_workspace_password_fields.sql —
+// not this code — are the authorization surface; refusals surface as thrown postgrest
+// messages, or (for a read a developer is not entitled to) as an empty result the caller
+// reads as "not permitted".
 //
 // The title/secret split is the whole design: `listWorkspacePasswords` is readable by every
 // member and returns titles; `getPasswordSecret` returns a row ONLY when the caller may read
-// it, so a developer without an approved grant gets `null` rather than a leaked secret.
+// it, so a developer without an approved grant gets `null` rather than a leaked secret. The
+// additional fields and the 2FA marker live on the secret row, so they share its readers.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
+  PasswordHolder,
   WorkspacePassword,
   WorkspacePasswordAccess,
+  WorkspacePasswordField,
   WorkspacePasswordInsert,
   WorkspacePasswordPatch,
   WorkspacePasswordSecret,
+  WorkspacePasswordSecretPatch,
 } from "./types";
 
 // One string literal, not a concatenation: postgrest-js parses this at the TYPE level, and a
 // `+`-joined value degrades to GenericStringError.
 const PASSWORD_COLUMNS = "id, workspace_id, title, created_by, created_at, updated_by, updated_at";
-const SECRET_COLUMNS = "password_id, secret, file_path, file_name, updated_by, updated_at";
+const SECRET_COLUMNS =
+  "password_id, secret, fields, requires_two_factor, two_factor_owner, file_path, file_name, updated_by, updated_at";
 const ACCESS_COLUMNS =
   "id, password_id, workspace_id, requester_id, status, requested_at, decided_by, decided_at";
 
@@ -40,10 +46,21 @@ type PasswordRow = {
 type SecretRow = {
   password_id: string;
   secret: string;
+  fields: WorkspacePasswordField[];
+  requires_two_factor: boolean;
+  two_factor_owner: string | null;
   file_path: string | null;
   file_name: string | null;
   updated_by: string | null;
   updated_at: string;
+};
+
+type HolderRow = {
+  password_id: string;
+  user_id: string;
+  github_username: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
 };
 
 type AccessRow = {
@@ -74,8 +91,11 @@ export function toWorkspacePasswordSecret(row: SecretRow): WorkspacePasswordSecr
   const s: WorkspacePasswordSecret = {
     passwordId: row.password_id,
     secret: row.secret,
+    fields: row.fields ?? [],
+    requiresTwoFactor: row.requires_two_factor,
     updatedAt: row.updated_at,
   };
+  if (row.two_factor_owner) s.twoFactorOwner = row.two_factor_owner;
   if (row.file_path) s.filePath = row.file_path;
   if (row.file_name) s.fileName = row.file_name;
   if (row.updated_by) s.updatedBy = row.updated_by;
@@ -94,6 +114,21 @@ export function toWorkspacePasswordAccess(row: AccessRow): WorkspacePasswordAcce
   if (row.decided_by) a.decidedBy = row.decided_by;
   if (row.decided_at) a.decidedAt = row.decided_at;
   return a;
+}
+
+export function toPasswordHolder(row: HolderRow): PasswordHolder {
+  const h: PasswordHolder = { passwordId: row.password_id, userId: row.user_id };
+  if (row.github_username) h.githubUsername = row.github_username;
+  if (row.display_name) h.displayName = row.display_name;
+  if (row.avatar_url) h.avatarUrl = row.avatar_url;
+  return h;
+}
+
+// The owner column is meaningful only with the flag; Postgres refuses an owner without it,
+// so it is dropped here rather than surfacing as a constraint error. A blank owner is null.
+function twoFactorOwnerColumn(requiresTwoFactor: boolean, owner: string | null | undefined): string | null {
+  const trimmed = owner?.trim();
+  return requiresTwoFactor && trimmed ? trimmed : null;
 }
 
 // Slug a filename down to what a storage key tolerates — the extension survives, spaces and
@@ -162,6 +197,9 @@ export async function createWorkspacePassword(
       .insert({
         password_id: password.id,
         secret: input.secret,
+        fields: input.fields,
+        requires_two_factor: input.requiresTwoFactor,
+        two_factor_owner: twoFactorOwnerColumn(input.requiresTwoFactor, input.twoFactorOwner),
         file_path: filePath,
         file_name: file ? file.name : null,
       })
@@ -193,16 +231,28 @@ export async function patchWorkspacePassword(
   return toWorkspacePassword(data as PasswordRow);
 }
 
-// Change the secret text. Separate from the rename because the two rows have different
-// readers, and an editor that changed the title should not have to resend the secret.
+// Change what is inside the password — the secret text, the additional fields, the 2FA
+// marker. Separate from the rename because the two rows have different readers, and an
+// editor that changed the title should not have to resend the secret. Only the keys present
+// in `patch` are written, so two managers editing different parts do not clobber each other.
 export async function patchPasswordSecret(
   client: SupabaseClient,
   passwordId: string,
-  secret: string,
+  patch: WorkspacePasswordSecretPatch,
 ): Promise<WorkspacePasswordSecret> {
+  const row: Record<string, unknown> = {};
+  if (patch.secret !== undefined) row.secret = patch.secret;
+  if (patch.fields !== undefined) row.fields = patch.fields;
+  if (patch.requiresTwoFactor !== undefined) row.requires_two_factor = patch.requiresTwoFactor;
+  if (patch.twoFactorOwner !== undefined) {
+    const owner = patch.twoFactorOwner?.trim();
+    row.two_factor_owner = owner ? owner : null;
+  }
+  // Unticking 2FA always clears the owner: Postgres refuses an owner without the flag.
+  if (patch.requiresTwoFactor === false) row.two_factor_owner = null;
   const { data, error } = await client
     .from("workspace_password_secrets")
-    .update({ secret })
+    .update(row)
     .eq("password_id", passwordId)
     .select(SECRET_COLUMNS)
     .single();
@@ -337,4 +387,18 @@ export async function decidePasswordAccess(
   });
   if (res.error) throw new Error(res.error.message);
   return toWorkspacePasswordAccess(res.data as AccessRow);
+}
+
+// Who may read each password in one workspace: the owner, every seated manager, every
+// approved requester — the same answer `can_read_password_secret` gives, computed by a
+// security-definer rpc because a developer's own RLS on the ledger shows only their rows.
+// Every member may call it; the rows carry people, never secret content. Ordered per
+// password owner → managers → grants, so the first faces drawn are stable between reads.
+export async function listPasswordHolders(
+  client: SupabaseClient,
+  workspaceId: string,
+): Promise<PasswordHolder[]> {
+  const { data, error } = await client.rpc("list_password_holders", { p_workspace_id: workspaceId });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as HolderRow[]).map(toPasswordHolder);
 }

@@ -59,6 +59,33 @@
         <span class="vault__title">{{ row.title }}</span>
       </template>
 
+      <!-- Who may read this secret: owner, managers, approved grants — the same people
+           can_read_password_secret admits. At most four faces, then a «+N» chip. -->
+      <template #cell-holders="{ row }">
+        <div class="vault__holders">
+          <span
+            v-tip="t('management.storage.holdersHint', { n: holdersOf(row.id).length })"
+            class="vault__holders-count mono"
+          >{{ holdersOf(row.id).length }}</span>
+          <div class="vault__faces">
+            <KAvatar
+              v-for="h in holdersOf(row.id).slice(0, MAX_FACES)"
+              :key="h.userId"
+              :name="holderName(h)"
+              :avatar-url="h.avatarUrl"
+              :size="22"
+            />
+            <span
+              v-if="holdersOf(row.id).length > MAX_FACES"
+              v-tip="t('management.storage.holdersMore', { names: overflowNames(row.id) })"
+              class="vault__more mono"
+              role="img"
+              :aria-label="t('management.storage.holdersMore', { names: overflowNames(row.id) })"
+            >+{{ holdersOf(row.id).length - MAX_FACES }}</span>
+          </div>
+        </div>
+      </template>
+
       <template #cell-status="{ row }">
         <KTag v-if="canManage" plain>{{ t('management.storage.youManage') }}</KTag>
         <KTag v-else-if="statusOf(row.id) === 'approved'" plain class="vault__ok">
@@ -128,7 +155,34 @@
           >{{ showSecret ? '🙈' : '👁' }}</KIconButton>
           <KIconButton :title="t('management.storage.copy')" @click="copy(viewSecret.secret)">⧉</KIconButton>
         </div>
-        <span v-if="copied" class="vault__copied mono">{{ t('management.storage.copied') }}</span>
+
+        <!-- Additional fields: a secret one is masked like the main secret, a descriptive one
+             is shown as-is. Both copy. -->
+        <template v-for="(field, i) in viewSecret.fields" :key="i">
+          <label class="vault__reveal-label mono">{{ field.label }}</label>
+          <div class="vault__reveal-row">
+            <code class="vault__secret">
+              {{ field.secret && !revealedFields.has(i) ? mask(field.value) : field.value || '—' }}
+            </code>
+            <KIconButton
+              v-if="field.secret"
+              :title="revealedFields.has(i) ? t('management.storage.hideSecret') : t('management.storage.showSecret')"
+              @click="toggleField(i)"
+            >{{ revealedFields.has(i) ? '🙈' : '👁' }}</KIconButton>
+            <KIconButton :title="t('management.storage.copy')" @click="copy(field.value)">⧉</KIconButton>
+          </div>
+        </template>
+
+        <template v-if="viewSecret.requiresTwoFactor">
+          <label class="vault__reveal-label mono">{{ t('management.storage.twoFactorLabel') }}</label>
+          <div class="vault__reveal-row">
+            <span class="vault__two-factor">
+              {{ viewSecret.twoFactorOwner
+                ? t('management.storage.twoFactorHeldBy', { owner: viewSecret.twoFactorOwner })
+                : t('management.storage.twoFactorRequired') }}
+            </span>
+          </div>
+        </template>
 
         <template v-if="viewSecret.filePath">
           <label class="vault__reveal-label mono">{{ t('management.storage.fileLabel') }}</label>
@@ -139,6 +193,7 @@
             </KBtn>
           </div>
         </template>
+        <span v-if="copied" class="vault__copied mono">{{ t('management.storage.copied') }}</span>
       </div>
 
       <template #controls>
@@ -150,7 +205,7 @@
     <KModal
       :model-value="editorOpen"
       :title="draft.id ? t('management.storage.editTitle') : t('management.storage.createTitle')"
-      width="520px"
+      width="640px"
       persistent
       @update:model-value="closeEditor"
     >
@@ -169,6 +224,40 @@
         <button type="button" class="vault__link mono" @click="editorShowSecret = !editorShowSecret">
           {{ editorShowSecret ? t('management.storage.hideSecret') : t('management.storage.showSecret') }}
         </button>
+
+        <!-- Additional fields. Each row is a label, a value and a «secret» box: a ticked value
+             is masked here and in the view, an unticked one is plain descriptive text. -->
+        <div class="vault__fields">
+          <label class="vault__reveal-label mono">{{ t('management.storage.fieldsLabel') }}</label>
+          <div v-for="(field, i) in draft.fields" :key="field.uid" class="vault__field-row">
+            <KField
+              v-model="field.label"
+              class="vault__field-label"
+              :placeholder="t('management.storage.fieldLabelPlaceholder')"
+            />
+            <KField
+              v-model="field.value"
+              class="vault__field-value"
+              :placeholder="t('management.storage.fieldValuePlaceholder')"
+              :type="field.secret && !editorShowSecret ? 'password' : 'text'"
+            />
+            <KCheckbox v-model="field.secret" :label="t('management.storage.fieldIsSecret')" />
+            <KIconButton :title="t('management.storage.removeField')" @click="draft.fields.splice(i, 1)">✕</KIconButton>
+          </div>
+          <KBtn variant="ghost" class="vault__add-field" @click="addField()">
+            {{ t('management.storage.addField') }}
+          </KBtn>
+        </div>
+
+        <div class="vault__two-factor-field">
+          <KCheckbox v-model="draft.requiresTwoFactor" :label="t('management.storage.twoFactorCheck')" />
+          <KField
+            v-if="draft.requiresTwoFactor"
+            v-model="draft.twoFactorOwner"
+            :label="t('management.storage.twoFactorOwner')"
+            :placeholder="t('management.storage.twoFactorOwnerPlaceholder')"
+          />
+        </div>
 
         <div class="vault__file-field">
           <label class="vault__reveal-label mono">{{ t('management.storage.fileLabel') }}</label>
@@ -204,18 +293,23 @@
 //   * a manager/owner reads every secret, creates/edits/deletes, and answers access requests;
 //   * a developer sees every TITLE (so the team knows which credentials exist) and, per row,
 //     either an approved secret, a pending request, a declined mark, or a Request button.
+// Every member also sees WHO may read each password (count + faces), never what is inside.
+// A password's contents are its secret, any additional labelled fields (each secret or
+// descriptive), a 2FA marker naming who holds the second factor, and an optional file.
 // The screen owns view state only; every read and write goes through stores/passwords.ts,
 // under the operator's own JWT, so RLS — not this file — is the authorization surface. What
 // is drawn here is a courtesy that matches it, never a substitute for it.
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { WorkspacePassword } from '@kermanych/cloud';
+import type { PasswordHolder, WorkspacePassword, WorkspacePasswordField, WorkspacePasswordSecretPatch } from '@kermanych/cloud';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KTag from 'components/kit/KTag.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
+import KCheckbox from 'components/kit/KCheckbox.vue';
+import KAvatar from 'components/kit/KAvatar.vue';
 import { usePasswords } from 'stores/passwords';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -251,6 +345,7 @@ const rows = computed(() => {
 
 const columns = computed<KTableColumn[]>(() => [
   { key: 'title', label: t('management.storage.colTitle') },
+  { key: 'holders', label: t('management.storage.colHolders'), width: '220px' },
   { key: 'status', label: t('management.storage.colStatus'), width: '160px' },
   { key: 'actions', label: '', width: '200px', align: 'right' },
 ]);
@@ -280,6 +375,31 @@ function memberName(userId: string): string {
 }
 function passwordTitle(passwordId: string): string {
   return all.value.find((p) => p.id === passwordId)?.title ?? passwordId;
+}
+
+// ── who holds each password ─────────────────────────────────────────────────
+// Grouped once per read rather than filtered per cell. The rpc already orders each
+// password's holders owner → managers → grants, so the first MAX_FACES are stable.
+const MAX_FACES = 4;
+const holdersByPassword = computed(() => {
+  const map = new Map<string, PasswordHolder[]>();
+  for (const h of store.holdersByWorkspace[props.workspaceId] ?? []) {
+    const list = map.get(h.passwordId);
+    if (list) list.push(h);
+    else map.set(h.passwordId, [h]);
+  }
+  return map;
+});
+function holdersOf(passwordId: string): PasswordHolder[] {
+  return holdersByPassword.value.get(passwordId) ?? [];
+}
+// Same fallback chain as lib/members.ts handleOf, so a face here carries the name the
+// board and the members panel give the same person.
+function holderName(h: PasswordHolder): string {
+  return h.githubUsername ?? h.displayName ?? h.userId;
+}
+function overflowNames(passwordId: string): string {
+  return holdersOf(passwordId).slice(MAX_FACES).map(holderName).join(', ');
 }
 
 // ── request / decide ────────────────────────────────────────────────────────
@@ -314,11 +434,14 @@ async function decide(req: { id: string; passwordId: string }, approve: boolean)
 const viewOpen = ref(false);
 const viewing = ref<WorkspacePassword | undefined>(undefined);
 const showSecret = ref(false);
+// Indices of the additional fields whose secret value is currently unmasked.
+const revealedFields = ref(new Set<number>());
 const copied = ref(false);
 const viewSecret = computed(() => (viewing.value ? store.secretByPassword[viewing.value.id] : undefined));
 
 async function openView(row: WorkspacePassword): Promise<void> {
   showSecret.value = false;
+  revealedFields.value = new Set();
   copied.value = false;
   try {
     const secret = await store.reveal(row.id);
@@ -336,6 +459,11 @@ function closeView(open: boolean): void {
   if (open) return;
   viewOpen.value = false;
   viewing.value = undefined;
+}
+function toggleField(i: number): void {
+  const next = new Set(revealedFields.value);
+  if (!next.delete(i)) next.add(i);
+  revealedFields.value = next;
 }
 
 function mask(secret: string): string {
@@ -358,18 +486,52 @@ const editorError = ref<string | null>(null);
 const saving = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 
-// `id` absent = create. `secretLoaded` records the original so a save only sends the halves
-// that changed. `pickedFile` is a fresh upload; `removeFile` marks the existing one for
-// detach; `existingFile` is the name/path already stored.
-const draft = reactive<{ id?: string; title: string; secret: string }>({ title: '', secret: '' });
+// `id` absent = create. `original` records what was loaded so a save only sends what
+// changed. `pickedFile` is a fresh upload; `removeExisting` marks the existing one for
+// detach; `existingFile` is the name/path already stored. Each draft field carries a local
+// `uid` so Vue keeps its inputs attached to the right row when one above it is removed.
+type DraftField = WorkspacePasswordField & { uid: number };
+let nextFieldUid = 0;
+const draft = reactive<{
+  id?: string;
+  title: string;
+  secret: string;
+  fields: DraftField[];
+  requiresTwoFactor: boolean;
+  twoFactorOwner: string;
+}>({ title: '', secret: '', fields: [], requiresTwoFactor: false, twoFactorOwner: '' });
 const pickedFile = ref<File | null>(null);
 const removeExisting = ref(false);
 const existingFile = reactive<{ path: string | undefined; name: string | undefined }>({
   path: undefined,
   name: undefined,
 });
-const originalTitle = ref('');
-const originalSecret = ref('');
+const original = reactive({
+  title: '',
+  secret: '',
+  fields: '[]', // JSON of the loaded fields, for a cheap structural compare
+  requiresTwoFactor: false,
+  twoFactorOwner: '',
+});
+
+function addField(): void {
+  draft.fields.push({ uid: nextFieldUid++, label: '', value: '', secret: false });
+}
+
+// The fields as they will be stored: labels trimmed, fully blank rows dropped (an «Add
+// field» click that was never filled in), values verbatim — a secret is never trimmed.
+// `null` when a row has a value but no label; Postgres would refuse it anyway, and the
+// editor says why instead.
+function collectFields(): WorkspacePasswordField[] | null {
+  const out: WorkspacePasswordField[] = [];
+  for (const f of draft.fields) {
+    const label = f.label.trim();
+    if (!label && !f.value) continue;
+    if (!label) return null;
+    out.push({ label, value: f.value, secret: f.secret });
+  }
+  return out;
+}
 
 const hasFile = computed(() => !!pickedFile.value || (!!existingFile.path && !removeExisting.value));
 const fileFieldLabel = computed(() => {
@@ -381,13 +543,19 @@ const fileFieldLabel = computed(() => {
 function resetDraft(): void {
   draft.title = '';
   draft.secret = '';
+  draft.fields = [];
+  draft.requiresTwoFactor = false;
+  draft.twoFactorOwner = '';
   delete draft.id;
   pickedFile.value = null;
   removeExisting.value = false;
   existingFile.path = undefined;
   existingFile.name = undefined;
-  originalTitle.value = '';
-  originalSecret.value = '';
+  original.title = '';
+  original.secret = '';
+  original.fields = '[]';
+  original.requiresTwoFactor = false;
+  original.twoFactorOwner = '';
   editorError.value = null;
   editorShowSecret.value = false;
   if (fileInput.value) fileInput.value.value = '';
@@ -407,8 +575,15 @@ async function openEdit(row: WorkspacePassword): Promise<void> {
     draft.id = row.id;
     draft.title = row.title;
     draft.secret = secret?.secret ?? '';
-    originalTitle.value = row.title;
-    originalSecret.value = secret?.secret ?? '';
+    const fields = secret?.fields ?? [];
+    draft.fields = fields.map((f) => ({ ...f, uid: nextFieldUid++ }));
+    draft.requiresTwoFactor = secret?.requiresTwoFactor ?? false;
+    draft.twoFactorOwner = secret?.twoFactorOwner ?? '';
+    original.title = row.title;
+    original.secret = secret?.secret ?? '';
+    original.fields = JSON.stringify(fields);
+    original.requiresTwoFactor = draft.requiresTwoFactor;
+    original.twoFactorOwner = draft.twoFactorOwner;
     existingFile.path = secret?.filePath;
     existingFile.name = secret?.fileName;
     editorOpen.value = true;
@@ -439,11 +614,28 @@ function clearDraftFile(): void {
 async function save(): Promise<void> {
   const title = draft.title.trim();
   if (!title) return;
+  const fields = collectFields();
+  if (!fields) {
+    editorError.value = t('management.storage.fieldLabelMissing');
+    return;
+  }
+  const twoFactorOwner = draft.requiresTwoFactor ? draft.twoFactorOwner.trim() : '';
   saving.value = true;
   editorError.value = null;
   try {
-    if (draft.id) await saveEdit(draft.id, title);
-    else await store.create(props.workspaceId, { title, secret: draft.secret }, pickedFile.value);
+    if (draft.id) await saveEdit(draft.id, title, fields, twoFactorOwner);
+    else
+      await store.create(
+        props.workspaceId,
+        {
+          title,
+          secret: draft.secret,
+          fields,
+          requiresTwoFactor: draft.requiresTwoFactor,
+          ...(twoFactorOwner ? { twoFactorOwner } : {}),
+        },
+        pickedFile.value,
+      );
     editorOpen.value = false;
     resetDraft();
   } catch (e) {
@@ -453,11 +645,22 @@ async function save(): Promise<void> {
   }
 }
 
-// Only the halves that changed are sent: a title rename never rewrites the secret, and vice
-// versa, so two managers editing different fields do not clobber each other.
-async function saveEdit(id: string, title: string): Promise<void> {
-  if (title !== originalTitle.value) await store.rename(props.workspaceId, id, title);
-  if (draft.secret !== originalSecret.value) await store.saveSecret(id, draft.secret);
+// Only what changed is sent: a title rename never rewrites the secret row, and the secret
+// row's patch carries only the columns that moved, so two managers editing different parts
+// do not clobber each other.
+async function saveEdit(
+  id: string,
+  title: string,
+  fields: WorkspacePasswordField[],
+  twoFactorOwner: string,
+): Promise<void> {
+  if (title !== original.title) await store.rename(props.workspaceId, id, title);
+  const patch: WorkspacePasswordSecretPatch = {};
+  if (draft.secret !== original.secret) patch.secret = draft.secret;
+  if (JSON.stringify(fields) !== original.fields) patch.fields = fields;
+  if (draft.requiresTwoFactor !== original.requiresTwoFactor) patch.requiresTwoFactor = draft.requiresTwoFactor;
+  if (twoFactorOwner !== original.twoFactorOwner) patch.twoFactorOwner = twoFactorOwner || null;
+  if (Object.keys(patch).length) await store.saveSecret(id, patch);
   if (pickedFile.value) await store.attachFile(id, pickedFile.value, existingFile.path);
   else if (removeExisting.value && existingFile.path) await store.removeFile(id, existingFile.path);
 }
@@ -673,5 +876,70 @@ function errText(e: unknown): string {
   margin: 0;
   font-size: var(--k-fs-sm);
   color: var(--k-danger);
+}
+
+.vault__holders {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+}
+
+.vault__holders-count {
+  min-width: 1.5em;
+  font-size: var(--k-fs-sm);
+  color: var(--k-muted);
+}
+
+.vault__faces {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+// The overflow chip is round on purpose, so «+N more» never reads as one more (square) face.
+.vault__more {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+  color: var(--k-text);
+  background: var(--k-surface2);
+  border: 1px solid var(--k-line-strong);
+  border-radius: 50%;
+}
+
+.vault__fields,
+.vault__two-factor-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
+}
+
+.vault__field-row {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+}
+
+.vault__field-label {
+  flex: 0 0 34%;
+  min-width: 0;
+}
+
+.vault__field-value {
+  flex: 1;
+  min-width: 0;
+}
+
+.vault__add-field {
+  align-self: flex-start;
+}
+
+.vault__two-factor {
+  font-size: var(--k-fs-sm);
+  color: var(--k-text);
 }
 </style>
