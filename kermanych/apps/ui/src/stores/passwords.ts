@@ -2,9 +2,12 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type {
+  PasswordHolder,
   WorkspacePassword,
   WorkspacePasswordAccess,
+  WorkspacePasswordContents,
   WorkspacePasswordSecret,
+  WorkspacePasswordSecretPatch,
 } from '@kermanych/cloud';
 import {
   clearPasswordFile as cloudClearFile,
@@ -13,6 +16,7 @@ import {
   deleteWorkspacePassword as cloudDelete,
   getPasswordSecret as cloudGetSecret,
   listPasswordAccess as cloudListAccess,
+  listPasswordHolders as cloudListHolders,
   listWorkspacePasswords as cloudList,
   patchPasswordSecret as cloudPatchSecret,
   patchWorkspacePassword as cloudRename,
@@ -28,10 +32,12 @@ import { globalTr } from '../boot/i18n';
 // is a screen you open for one group, and the group's membership plus each member's role is
 // what decides who may read a secret.
 //
-// Three caches, because the vault is three reads with three different audiences:
+// Four caches, because the vault is four reads with different audiences:
 //   * `byWorkspace` — the TITLES, which every member sees;
 //   * `accessByWorkspace` — the request ledger the caller may see (own rows for a developer,
 //     all rows for a manager/owner), the input for the Request/Approve/Decline buttons;
+//   * `holdersByWorkspace` — WHO may read each password (owner, managers, approved grants),
+//     which every member sees as the table's access column; people only, never contents;
 //   * `secretByPassword` — the SECRETS the caller has actually revealed. Never pre-loaded:
 //     a developer without an approved grant gets `null` from the database, and a manager only
 //     pays for the secrets they open.
@@ -44,6 +50,7 @@ export const usePasswords = defineStore('passwords', () => {
 
   const byWorkspace = ref<Record<string, WorkspacePassword[]>>({});
   const accessByWorkspace = ref<Record<string, WorkspacePasswordAccess[]>>({});
+  const holdersByWorkspace = ref<Record<string, PasswordHolder[]>>({});
   const secretByPassword = ref<Record<string, WorkspacePasswordSecret>>({});
   const loading = ref(false);
   // Inline on the screen, never a toast: an unreachable Supabase must not greet someone who
@@ -72,12 +79,14 @@ export const usePasswords = defineStore('passwords', () => {
     loading.value = true;
     loadError.value = null;
     try {
-      const [passwords, access] = await Promise.all([
+      const [passwords, access, holders] = await Promise.all([
         cloudList(auth.client, workspaceId),
         cloudListAccess(auth.client, workspaceId),
+        cloudListHolders(auth.client, workspaceId),
       ]);
       byWorkspace.value = { ...byWorkspace.value, [workspaceId]: passwords };
       accessByWorkspace.value = { ...accessByWorkspace.value, [workspaceId]: access };
+      holdersByWorkspace.value = { ...holdersByWorkspace.value, [workspaceId]: holders };
     } catch (e) {
       loadError.value = e instanceof Error ? e.message : String(e);
     } finally {
@@ -85,17 +94,30 @@ export const usePasswords = defineStore('passwords', () => {
     }
   }
 
+  // Re-read who holds what after a write that changes it (a new password, a decision). Not
+  // worth a toast or the inline load error when it fails: the column simply keeps its last
+  // answer until the next open.
+  async function refreshHolders(workspaceId: string): Promise<void> {
+    try {
+      const holders = await cloudListHolders(auth.client, workspaceId);
+      holdersByWorkspace.value = { ...holdersByWorkspace.value, [workspaceId]: holders };
+    } catch {
+      /* stale column until the next load */
+    }
+  }
+
   // Writes THROW so the editor can keep its form open and say WHY. Manager/owner only by RLS;
   // a developer's insert is refused on the title row before anything else runs.
   async function create(
     workspaceId: string,
-    input: { title: string; secret: string },
+    input: { title: string } & WorkspacePasswordContents,
     file?: File | null,
   ): Promise<WorkspacePassword> {
     if (!auth.user) throw new Error(globalTr.t('common.notify.signInFirst'));
     const { password, secret } = await cloudCreate(auth.client, { workspaceId, ...input }, file);
     upsertPassword(workspaceId, password);
     secretByPassword.value = { ...secretByPassword.value, [password.id]: secret };
+    void refreshHolders(workspaceId);
     return password;
   }
 
@@ -105,8 +127,11 @@ export const usePasswords = defineStore('passwords', () => {
     return updated;
   }
 
-  async function saveSecret(passwordId: string, secret: string): Promise<WorkspacePasswordSecret> {
-    const saved = await cloudPatchSecret(auth.client, passwordId, secret);
+  async function saveSecret(
+    passwordId: string,
+    patch: WorkspacePasswordSecretPatch,
+  ): Promise<WorkspacePasswordSecret> {
+    const saved = await cloudPatchSecret(auth.client, passwordId, patch);
     secretByPassword.value = { ...secretByPassword.value, [passwordId]: saved };
     return saved;
   }
@@ -157,6 +182,10 @@ export const usePasswords = defineStore('passwords', () => {
       ...accessByWorkspace.value,
       [workspaceId]: (accessByWorkspace.value[workspaceId] ?? []).filter((a) => a.passwordId !== id),
     };
+    holdersByWorkspace.value = {
+      ...holdersByWorkspace.value,
+      [workspaceId]: (holdersByWorkspace.value[workspaceId] ?? []).filter((h) => h.passwordId !== id),
+    };
     const nextSecrets = { ...secretByPassword.value };
     delete nextSecrets[id];
     secretByPassword.value = nextSecrets;
@@ -171,7 +200,9 @@ export const usePasswords = defineStore('passwords', () => {
     return row;
   }
 
-  // A manager/owner approves or declines. Merges the decided row in place.
+  // A manager/owner approves or declines. Merges the decided row in place; an approval adds a
+  // holder, and a decline may take one away (a re-request resets an approved grant), so the
+  // access column is re-read either way.
   async function decideAccess(
     workspaceId: string,
     requestId: string,
@@ -179,12 +210,14 @@ export const usePasswords = defineStore('passwords', () => {
   ): Promise<WorkspacePasswordAccess> {
     const row = await cloudDecide(auth.client, requestId, approve);
     upsertAccess(workspaceId, row);
+    void refreshHolders(workspaceId);
     return row;
   }
 
   return {
     byWorkspace,
     accessByWorkspace,
+    holdersByWorkspace,
     secretByPassword,
     loading,
     loadError,

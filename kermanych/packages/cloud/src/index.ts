@@ -56,9 +56,13 @@ export type {
   LinearComment,
   LinearAttachment,
   WorkspacePassword,
+  WorkspacePasswordField,
   WorkspacePasswordSecret,
+  WorkspacePasswordContents,
   WorkspacePasswordInsert,
   WorkspacePasswordPatch,
+  WorkspacePasswordSecretPatch,
+  PasswordHolder,
   WorkspacePasswordAccess,
   PasswordAccessStatus,
 } from "./types";
@@ -185,6 +189,8 @@ export {
   listPasswordAccess,
   requestPasswordAccess,
   decidePasswordAccess,
+  toPasswordHolder,
+  listPasswordHolders,
 } from "./passwords";
 
 export type { JiraIssueChange, JiraIssueChildren } from "./jira";

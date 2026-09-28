@@ -680,32 +680,74 @@ export type WorkspacePassword = {
   updatedAt: string;
 };
 
+// One additional field on a password: a label, a value, and whether the value is itself a
+// secret (masked on screen) or descriptive text (shown as-is). Lives with the secret, so it
+// has exactly the secret's readers.
+export type WorkspacePasswordField = {
+  label: string;
+  value: string;
+  secret: boolean;
+};
+
 // The contents, read only when `can_read_password_secret` permits. `secret` may be an empty
 // string — a file-only credential is valid — but the row always exists for a password.
 // `filePath` is the object path in the private `password-files` bucket (never a URL; the
 // screen mints a signed URL on demand); `fileName` is the original name for the download.
+// `twoFactorOwner` is free text naming who holds the second factor; Postgres refuses it
+// unless `requiresTwoFactor` is set.
 export type WorkspacePasswordSecret = {
   passwordId: string;
   secret: string;
+  fields: WorkspacePasswordField[];
+  requiresTwoFactor: boolean;
+  twoFactorOwner?: string;
   filePath?: string;
   fileName?: string;
   updatedBy?: string;
   updatedAt: string;
 };
 
-// Create carries both halves in one call from the editor; the cloud module writes the title
-// row, then the secret row, then (if a file was picked) uploads it. Manager/owner only, by RLS.
-export type WorkspacePasswordInsert = {
-  workspaceId: string;
-  title: string;
+// Everything inside a password except its file, which has its own upload/clear calls. The
+// editor always sends the whole set on create; a patch sends only the keys that changed.
+export type WorkspacePasswordContents = {
   secret: string;
+  fields: WorkspacePasswordField[];
+  requiresTwoFactor: boolean;
+  twoFactorOwner?: string;
 };
 
-// An absent key leaves a half alone: a title-only rename never rewrites the secret, and vice
-// versa. The file is handled through its own upload/clear calls, not this patch.
+// Create carries both halves in one call from the editor; the cloud module writes the title
+// row, then the secret row, then (if a file was picked) uploads it. Manager/owner only, by RLS.
+export type WorkspacePasswordInsert = WorkspacePasswordContents & {
+  workspaceId: string;
+  title: string;
+};
+
+// A rename touches only the title row. The secret row has its own patch
+// (`WorkspacePasswordSecretPatch`), so a rename never rewrites the secret, and vice versa.
 export type WorkspacePasswordPatch = {
-  title?: string;
+  title: string;
+};
+
+// An absent key leaves that column alone. `twoFactorOwner: null` clears it — unticking 2FA
+// sends `requiresTwoFactor: false` together with it, since Postgres refuses an owner without
+// the flag.
+export type WorkspacePasswordSecretPatch = {
   secret?: string;
+  fields?: WorkspacePasswordField[];
+  requiresTwoFactor?: boolean;
+  twoFactorOwner?: string | null;
+};
+
+// One person who may read a password's secret, as `list_password_holders` reports it: the
+// owner, a seated manager, or an approved requester. Profile fields come with the row
+// because an approved requester may no longer be on the workspace roster.
+export type PasswordHolder = {
+  passwordId: string;
+  userId: string;
+  githubUsername?: string;
+  displayName?: string;
+  avatarUrl?: string;
 };
 
 export type PasswordAccessStatus = "pending" | "approved" | "declined";
