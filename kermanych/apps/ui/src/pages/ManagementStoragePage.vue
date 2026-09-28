@@ -102,6 +102,13 @@
 
       <template #cell-actions="{ row }">
         <div class="vault__actions">
+          <!-- The password's owner — its filer, the workspace owner or a manager: share it with
+               a member directly, no request in between. -->
+          <KIconButton
+            v-if="canShare(row)"
+            :title="t('management.storage.share')"
+            @click="openShare(row)"
+          >👥</KIconButton>
           <!-- Manager/owner: open, edit, delete. -->
           <template v-if="canManage">
             <KIconButton :title="t('management.storage.view')" @click="openView(row)">👁</KIconButton>
@@ -201,6 +208,38 @@
       </template>
     </KModal>
 
+    <!-- ── share (the password's owner) ─────────────────────────────────────── -->
+    <KModal
+      :model-value="shareOpen"
+      :title="t('management.storage.shareTitle', { title: sharing?.title ?? '' })"
+      width="480px"
+      persistent
+      @update:model-value="closeShare"
+    >
+      <div class="vault__form">
+        <p class="vault__note">{{ t('management.storage.shareNote') }}</p>
+        <KSelect
+          v-if="shareOptions.length"
+          v-model="shareTo"
+          :label="t('management.storage.shareWith')"
+          :options="shareOptions"
+          :placeholder="t('management.storage.sharePick')"
+          searchable
+        />
+        <p v-else class="vault__note">{{ t('management.storage.shareNobody') }}</p>
+        <p v-if="shareError" class="vault__form-error">{{ shareError }}</p>
+      </div>
+
+      <template #controls>
+        <KBtn variant="ghost" :disabled="shareBusy" @click="closeShare(false)">
+          {{ t('management.storage.cancel') }}
+        </KBtn>
+        <KBtn variant="primary" :disabled="shareBusy || !shareTo" @click="confirmShare">
+          {{ shareBusy ? t('management.storage.sharing') : t('management.storage.share') }}
+        </KBtn>
+      </template>
+    </KModal>
+
     <!-- ── create / edit (manager/owner) ─────────────────────────────────────── -->
     <KModal
       :model-value="editorOpen"
@@ -294,6 +333,8 @@
 //   * a developer sees every TITLE (so the team knows which credentials exist) and, per row,
 //     either an approved secret, a pending request, a declined mark, or a Request button.
 // Every member also sees WHO may read each password (count + faces), never what is inside.
+// A password's owner — the member who filed it, the workspace owner or a manager — may also
+// share it with a member outright, which lands as that member's approved grant.
 // A password's contents are its secret, any additional labelled fields (each secret or
 // descriptive), a 2FA marker naming who holds the second factor, and an optional file.
 // The screen owns view state only; every read and write goes through stores/passwords.ts,
@@ -310,6 +351,7 @@ import KTag from 'components/kit/KTag.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KAvatar from 'components/kit/KAvatar.vue';
+import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import { usePasswords } from 'stores/passwords';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -347,7 +389,7 @@ const columns = computed<KTableColumn[]>(() => [
   { key: 'title', label: t('management.storage.colTitle') },
   { key: 'holders', label: t('management.storage.colHolders'), width: '220px' },
   { key: 'status', label: t('management.storage.colStatus'), width: '160px' },
-  { key: 'actions', label: '', width: '200px', align: 'right' },
+  { key: 'actions', label: '', width: '240px', align: 'right' },
 ]);
 
 // The caller's own request row per password, so the button state is a lookup rather than a
@@ -428,6 +470,63 @@ async function decide(req: { id: string; passwordId: string }, approve: boolean)
   } finally {
     deciding.value = '';
   }
+}
+
+// ── share ───────────────────────────────────────────────────────────────────
+// Mirrors can_share_password: the filer of the password while still on the roster, or anyone
+// who manages the vault. UX gate only — share_password refuses everyone else.
+function canShare(row: WorkspacePassword): boolean {
+  if (canManage.value) return true;
+  const uid = auth.user?.id;
+  return !!uid && row.createdBy === uid && !!projects.myRole(props.workspaceId);
+}
+
+const shareOpen = ref(false);
+const sharing = ref<WorkspacePassword | undefined>(undefined);
+const shareTo = ref('');
+const shareBusy = ref(false);
+const shareError = ref<string | null>(null);
+
+// Everyone else on the roster who cannot read this password yet — never the caller, whom
+// share_password refuses. A member with a pending or declined ask is offered too: sharing
+// turns that ask into the grant.
+const shareOptions = computed<KSelectOption[]>(() => {
+  const row = sharing.value;
+  if (!row) return [];
+  const holding = new Set(holdersOf(row.id).map((h) => h.userId));
+  const uid = auth.user?.id;
+  return (projects.members[props.workspaceId] ?? [])
+    .filter((m) => m.userId !== uid && !holding.has(m.userId))
+    .map((m) => ({ value: m.userId, label: memberName(m.userId) }));
+});
+
+function openShare(row: WorkspacePassword): void {
+  sharing.value = row;
+  shareTo.value = '';
+  shareError.value = null;
+  shareOpen.value = true;
+}
+function closeShare(open: boolean): void {
+  if (open || shareBusy.value) return;
+  shareOpen.value = false;
+  sharing.value = undefined;
+}
+async function confirmShare(): Promise<void> {
+  const row = sharing.value;
+  const userId = shareTo.value;
+  if (!row || !userId) return;
+  shareBusy.value = true;
+  shareError.value = null;
+  try {
+    await store.share(props.workspaceId, row.id, userId);
+  } catch (e) {
+    shareError.value = t('management.storage.shareFailed', { error: errText(e) });
+    return;
+  } finally {
+    shareBusy.value = false;
+  }
+  notify(t('management.storage.shared', { title: row.title, who: memberName(userId) }), 'info');
+  closeShare(false);
 }
 
 // ── view / reveal ─────────────────────────────────────────────────────────────
@@ -941,5 +1040,12 @@ function errText(e: unknown): string {
 .vault__two-factor {
   font-size: var(--k-fs-sm);
   color: var(--k-text);
+}
+
+.vault__note {
+  margin: 0;
+  font-size: var(--k-fs-sm);
+  line-height: 1.5;
+  color: var(--k-muted);
 }
 </style>

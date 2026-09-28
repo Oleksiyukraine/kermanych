@@ -753,8 +753,9 @@ export type PasswordHolder = {
 export type PasswordAccessStatus = "pending" | "approved" | "declined";
 
 // One row of the request -> approve/decline ledger, one per (password, requester). Written
-// only by the `request_password_access` / `decide_password_access` rpcs. A developer sees
-// their own rows; a manager/owner sees every row in the workspace.
+// only by the `request_password_access` / `decide_password_access` / `share_password` rpcs;
+// a shared row is born approved, with `requesterId` the recipient and `decidedBy` the sharer.
+// A developer sees their own rows; a manager/owner sees every row in the workspace.
 export type WorkspacePasswordAccess = {
   id: string;
   passwordId: string;

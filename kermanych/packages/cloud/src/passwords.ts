@@ -2,7 +2,8 @@
 // <-> camelCase boundary for `workspace_passwords`, `workspace_password_secrets` and
 // `workspace_password_access`, plus the `password-files` Storage bucket. Every call runs
 // under the caller's JWT, so the RLS policies and the rpcs in
-// 20260907120000_workspace_passwords.sql and 20260928090000_workspace_password_fields.sql —
+// 20260907120000_workspace_passwords.sql, 20260928090000_workspace_password_fields.sql and
+// 20260928100000_workspace_password_share.sql —
 // not this code — are the authorization surface; refusals surface as thrown postgrest
 // messages, or (for a read a developer is not entitled to) as an empty result the caller
 // reads as "not permitted".
@@ -385,6 +386,20 @@ export async function decidePasswordAccess(
     p_request_id: requestId,
     p_approve: approve,
   });
+  if (res.error) throw new Error(res.error.message);
+  return toWorkspacePasswordAccess(res.data as AccessRow);
+}
+
+// Share one password with one workspace member: their ledger row becomes an approved grant
+// with no request in between (a pending or declined ask of theirs is turned into it). The
+// password's filer, the workspace owner or a manager only, enforced inside the rpc. Returns
+// the approved row so the screen updates in place.
+export async function sharePassword(
+  client: SupabaseClient,
+  passwordId: string,
+  userId: string,
+): Promise<WorkspacePasswordAccess> {
+  const res = await client.rpc("share_password", { p_password_id: passwordId, p_user_id: userId });
   if (res.error) throw new Error(res.error.message);
   return toWorkspacePasswordAccess(res.data as AccessRow);
 }
