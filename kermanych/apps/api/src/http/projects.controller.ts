@@ -1,8 +1,5 @@
 // apps/api/src/http/projects.controller.ts
-import { BadRequestException, Body, Controller, Get, Logger, NotFoundException, Param, Patch, Post, Put, Query, Res } from "@nestjs/common";
-// @types/express is intentionally not a dependency (cf. jira.controller.ts); the docs raw
-// route only needs setHeader, so type the @Res() passthrough object by that one member.
-type RawResponse = { setHeader(name: string, value: string): void };
+import { BadRequestException, Body, Controller, Get, Logger, NotFoundException, Param, Patch, Post, Put, Query, StreamableFile } from "@nestjs/common";
 import type { CloudProject } from "@kermanych/cloud";
 import type { ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
@@ -118,13 +115,11 @@ export class ProjectsController {
     }
   }
 
+  // StreamableFile, not a bare Buffer: Nest's Express adapter JSON-serializes any object
+  // body, so a returned Buffer would reach the browser as {"type":"Buffer","data":[…]}
+  // under an image Content-Type — a broken image in the docs preview.
   @Get(":id/docs/raw")
-  async docsRaw(
-    @Param("id") id: string,
-    @Query("folder") folder: string,
-    @Query("path") path: string,
-    @Res({ passthrough: true }) res: RawResponse,
-  ) {
+  async docsRaw(@Param("id") id: string, @Query("folder") folder: string, @Query("path") path: string) {
     let file: { bytes: Buffer; contentType: string } | null;
     try {
       file = await this.sup.docsRaw(id, folder ?? "", path ?? "");
@@ -132,8 +127,7 @@ export class ProjectsController {
       throw new BadRequestException((err as Error).message);
     }
     if (!file) throw new NotFoundException("file not found");
-    res.setHeader("Content-Type", file.contentType);
-    return file.bytes;
+    return new StreamableFile(file.bytes, { type: file.contentType, length: file.bytes.length });
   }
 
   @Get(":id/env")
