@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { FileContent, TreeEntry } from '@kermanych/core';
+import { isDocImagePath, type FileContent, type TreeEntry } from '@kermanych/core';
 import { api } from '../lib/api';
 
 // Read-only view state for the Project Documentation screen. It owns NO document content of
@@ -13,8 +13,14 @@ export const useProjectDocs = defineStore('project-docs', () => {
   const openFolder = ref('');
   const openPath = ref('');
   const file = ref<FileContent | null>(null);
+  // Object URL of the open file when it is an image (SVG included): images are shown as the
+  // picture they draw, so their bytes come from the raw route and never through `file`.
+  const imageUrl = ref<string | null>(null);
   const loadingFile = ref(false);
   const fileError = ref<string | null>(null);
+  // Guards openFile against an out-of-order answer: an image and a text file load through
+  // different routes, so a slow earlier click must not overwrite a later one.
+  let openSeq = 0;
   // Bumped by refreshIfActive so the docs screen re-fetches the currently-expanded tree
   // level after a pull (files added/removed under an open folder must appear).
   const refreshNonce = ref(0);
@@ -23,13 +29,23 @@ export const useProjectDocs = defineStore('project-docs', () => {
 
   function setActive(projectId: string): void {
     if (projectId === activeProjectId.value) return;
-    // Free the object URLs of the project we are leaving before its state is dropped.
+    // Free the object URLs of the project we are leaving before its state is dropped, and
+    // orphan any open still in flight so it cannot land in the new project's preview.
     releaseUrls();
+    openSeq += 1;
     activeProjectId.value = projectId;
     openFolder.value = '';
     openPath.value = '';
     file.value = null;
+    setImage(null);
     fileError.value = null;
+  }
+
+  // The open image's URL is owned here, not by urlCache: the screen releases the cache when it
+  // unmounts, and an image still selected on return must not point at a revoked URL.
+  function setImage(url: string | null): void {
+    if (imageUrl.value) URL.revokeObjectURL(imageUrl.value);
+    imageUrl.value = url;
   }
 
   async function treeOf(projectId: string, folder: string, path: string): Promise<TreeEntry[]> {
@@ -37,17 +53,26 @@ export const useProjectDocs = defineStore('project-docs', () => {
   }
 
   async function openFile(projectId: string, folder: string, path: string): Promise<void> {
+    const seq = ++openSeq;
     openFolder.value = folder;
     openPath.value = path;
     loadingFile.value = true;
     fileError.value = null;
+    file.value = null;
+    setImage(null);
     try {
-      file.value = await api.projectDocsFile(projectId, folder, path);
+      if (isDocImagePath(path)) {
+        const url = URL.createObjectURL(await api.projectDocsRaw(projectId, folder, path));
+        if (seq === openSeq) setImage(url);
+        else URL.revokeObjectURL(url);
+      } else {
+        const fc = await api.projectDocsFile(projectId, folder, path);
+        if (seq === openSeq) file.value = fc;
+      }
     } catch (e) {
-      file.value = null;
-      fileError.value = e instanceof Error ? e.message : String(e);
+      if (seq === openSeq) fileError.value = e instanceof Error ? e.message : String(e);
     } finally {
-      loadingFile.value = false;
+      if (seq === openSeq) loadingFile.value = false;
     }
   }
 
@@ -64,7 +89,8 @@ export const useProjectDocs = defineStore('project-docs', () => {
   function refreshIfActive(projectId: string): void {
     if (projectId !== activeProjectId.value) return;
     // A pull may have changed the tree and images too: bump the nonce so the screen re-fetches
-    // its open tree level, and drop the object-URL cache so images refetch.
+    // its open tree level, and drop the object-URL cache so images refetch (the open file,
+    // image or not, is re-read below).
     refreshNonce.value += 1;
     releaseUrls();
     if (!openFolder.value || !openPath.value) return;
@@ -76,5 +102,5 @@ export const useProjectDocs = defineStore('project-docs', () => {
     urlCache.clear();
   }
 
-  return { activeProjectId, openFolder, openPath, file, loadingFile, fileError, refreshNonce, setActive, treeOf, openFile, rawUrl, refreshIfActive, releaseUrls };
+  return { activeProjectId, openFolder, openPath, file, imageUrl, loadingFile, fileError, refreshNonce, setActive, treeOf, openFile, rawUrl, refreshIfActive, releaseUrls };
 });

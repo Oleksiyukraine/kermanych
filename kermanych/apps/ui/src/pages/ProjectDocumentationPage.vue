@@ -9,7 +9,7 @@ import type { TreeEntry } from '@kermanych/core';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjectDocs } from 'stores/project-docs';
-import { renderDoc } from '../lib/markdown';
+import { DOC_MARKUP_RE, renderDoc } from '../lib/markdown';
 import KFileView from 'components/kit/KFileView.vue';
 import DocTreeNode, { type DocNode } from './DocTreeNode.vue';
 import { useAuth } from 'stores/auth';
@@ -137,7 +137,7 @@ async function refreshNode(node: DocNode): Promise<void> {
 
 watch(() => docs.refreshNonce, () => { for (const r of roots.value) void refreshNode(r); });
 
-const isMarkdown = computed(() => /\.(?:md|mdx|mdc|markdown|rst|adoc|asciidoc)$/i.test(docs.openPath));
+const isMarkdown = computed(() => DOC_MARKUP_RE.test(docs.openPath));
 const previewHtml = computed(() => {
   const f = docs.file;
   if (!f || f.binary || f.truncated || !isMarkdown.value) return '';
@@ -221,6 +221,11 @@ onBeforeUnmount(() => docs.releaseUrls());
     <section class="docs__preview">
       <p v-if="docs.loadingFile" class="docs__empty">{{ t('docsPage.loading') }}</p>
       <p v-else-if="docs.fileError" class="docs__empty docs__empty--error">{{ docs.fileError }}</p>
+      <!-- An <img> never runs an SVG's scripts or loads its external resources, so a
+           repository SVG is drawn without being trusted. -->
+      <div v-else-if="docs.imageUrl" class="docs__image">
+        <img :src="docs.imageUrl" :alt="docs.openPath">
+      </div>
       <template v-else-if="docs.file && !docs.file.binary && !docs.file.truncated && isMarkdown">
         <!-- renderDoc keeps html:false, so v-html output is a controlled tag set. -->
         <div ref="previewEl" class="k-log__markdown" v-html="previewHtml"></div>
@@ -246,6 +251,7 @@ onBeforeUnmount(() => docs.releaseUrls());
 .docs__project:hover { background: var(--k-surface2); }
 .docs__nodes { list-style: none; margin: 0; padding-left: 0; }
 .docs__preview { overflow: auto; min-height: 0; }
+.docs__image { padding: var(--k-sp-3); img { display: block; max-width: 100%; height: auto; } }
 .docs__empty { color: var(--k-muted); font-size: 13px; padding: var(--k-sp-3); &--error { color: var(--k-danger); } }
 .docs__index { display: flex; flex-direction: column; gap: 4px; padding-bottom: var(--k-sp-2); border-bottom: 1px solid var(--k-line); }
 .docs__index-head { font-size: 12px; font-weight: 600; color: var(--k-muted); text-transform: uppercase; letter-spacing: 0.04em; }
