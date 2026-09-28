@@ -39,6 +39,19 @@ describe("renderDoc", () => {
     expect(html).toContain('data-doc-path="guide/other.md"');
   });
 
+  it("rewrites a relative link to a non-markdown file (an SVG diagram) to in-app navigation", () => {
+    const html = renderDoc("[diagram](../arch.svg)", base);
+    expect(html).toContain('data-doc-path="arch.svg"');
+    expect(html).not.toContain('href="../arch.svg"');
+  });
+
+  it("leaves a directory link and an external link as real hrefs", () => {
+    expect(renderDoc("[dir](./sub/)", base)).toContain('href="./sub/"');
+    const ext = renderDoc("[x](https://example.com/a.md)", base);
+    expect(ext).toContain('href="https://example.com/a.md"');
+    expect(ext).not.toContain("data-doc-path");
+  });
+
   it("escapes embedded raw HTML (html:false kept)", () => {
     expect(renderDoc("<script>alert(1)</script>", base)).not.toContain("<script>");
   });

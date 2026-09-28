@@ -37,12 +37,15 @@ export function resolveRel(dir: string, rel: string): string | null {
   return parts.join('/') || null;
 }
 
-const DOC_LINK_RE = /\.(?:md|mdx|mdc|markdown|rst|adoc|asciidoc)$/i;
+// Files the docs preview renders through renderDoc; every other file opens as an inline image
+// (isDocImagePath) or in the KFileView code viewer.
+export const DOC_MARKUP_RE = /\.(?:md|mdx|mdc|markdown|rst|adoc|asciidoc)$/i;
 
 // GitHub-faithful renderer for repository documentation. Distinct instance from the chat
 // renderMarkdown: breaks:false (a single newline is not a <br>), fenced code highlighted, and
 // relative image/link targets rewritten to data-* attributes the docs screen resolves against
-// the authed raw endpoint (images) or in-app tree navigation (doc links). html:false is kept,
+// the authed raw endpoint (images) or in-app tree navigation (links to any file in the folder:
+// a doc, an SVG diagram, a config sample). html:false is kept,
 // so embedded raw HTML stays escaped and v-html output is a controlled tag set.
 const docMd: MarkdownIt = new MarkdownIt({
   html: false,
@@ -97,10 +100,11 @@ docMd.renderer.rules.link_open = (tokens, idx, options, env, self) => {
   const token = tokens[idx]!;
   const href = token.attrGet('href') ?? '';
   const rel = resolveRel(base.dir, href);
-  if (rel && DOC_LINK_RE.test(rel.split(/[?#]/, 1)[0]!)) {
+  // A trailing slash names a directory, which the preview cannot open.
+  if (rel && !href.split(/[?#]/, 1)[0]!.endsWith('/')) {
     return `<a href="#"${attr(base.folder, rel)}>`;
   }
-  // External links open in a new tab; anchors/other relative links pass through.
+  // External links open in a new tab; anchors pass through.
   if (/^[a-z][a-z0-9+.-]*:/i.test(href)) { token.attrSet('target', '_blank'); token.attrSet('rel', 'noopener noreferrer'); }
   return self.renderToken(tokens, idx, options);
 };

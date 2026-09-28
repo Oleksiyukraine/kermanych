@@ -201,9 +201,10 @@ where GitHub fidelity requires:
 - **Relative links are rewritten** by overriding the `image` and `link_open`
   renderer rules: a relative `src`/`href` (not `http(s):`, not `//`, not a bare
   `#anchor`) is resolved against the file's own folder/path and rewritten —
-  images to the `docs/raw` endpoint, `.md`-family links to an in-app navigation
-  target that opens that file in the tree, other relative links left as a
-  resolved repo-relative path. Absolute and anchor links pass through unchanged.
+  images to the `docs/raw` endpoint; links to any file in the folder (a `.md`
+  doc, an `.svg` diagram, a config sample) to an in-app navigation target that
+  opens that file in the preview. A trailing-slash (directory) link, absolute and
+  anchor links pass through unchanged.
 
 This renderer is a pure function of `(src, current folder+path)`; the resolver
 closures are provided by the store (§3.5) so the URL shape stays in one place.
@@ -236,9 +237,14 @@ Layout and behaviour:
   gathered within all projects").
 - **Select a project** — its `docFolders` render as a **merged browsable tree**
   (each configured folder is a top-level node, its children lazily fetched via
-  `api.projectDocsTree`). Selecting a file loads it: markdown/markup through
-  `renderDoc` (§3.3), code through the `KFileView` highlighter, images inline via
-  `docs/raw`, other binaries as a download link.
+  `api.projectDocsTree`). The tree lists every file, not only markdown.
+  Selecting a file loads it: markdown/markup through `renderDoc` (§3.3), code
+  and other text through the `KFileView` highlighter, images
+  (`svg|png|jpe?g|gif|webp|avif|bmp|ico`, `isDocImagePath` in `@kermanych/core`)
+  inline via `docs/raw` — an SVG is drawn as the picture, never shown as its XML,
+  and only ever through an `<img>`, which runs none of its scripts — other
+  binaries as a download link. Images are never indexed for retrieval:
+  `isDocPath` rejects them even under a `docs/` directory.
 - **Pre-focus** — if `useOrchestrator.selectedProjectId` is set, that project
   opens on entry, so the sidebar acts as a deep link into the single-project view.
 - **States (option A):** repo not bound on this machine → a "bind repo to view

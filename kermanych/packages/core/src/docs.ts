@@ -11,18 +11,32 @@ import type { TranscriptEntry } from "./types";
 // segments, or a full repo-relative path from `git diff` — so it decides from the tail alone
 // and tolerates a trailing `:from-to` read range. `.txt` is deliberately excluded: it is as
 // often data as prose, and the conventional-name rule still catches README.txt and friends.
+// Images are never documentation prose, even under docs/: an SVG is text, and without this
+// exclusion its XML would be chunked and embedded into the docs index as if it were prose.
 const DOC_EXT_RE = /\.(?:md|mdx|mdc|markdown|rst|adoc|asciidoc)$/i;
 const DOC_NAME_RE = /^(?:README|CHANGELOG|CHANGES|CONTRIBUTING|LICEN[CS]E|NOTICE|AUTHORS|TODO)(?:[.\-_]|$)/i;
 const DOC_DIR_RE = /(?:^|\/)docs?\//i;
+const DOC_IMAGE_RE = /\.(?:svg|png|jpe?g|gif|webp|avif|bmp|ico)$/i;
+
+// Strip a read target's `:from-to`/`:raw` selector and a URL-ish query/hash so the bare path
+// is judged. Repo paths here are POSIX and never contain a colon of their own.
+function barePath(path: string): string {
+  return path.split(/[?#]/, 1)[0]!.split(":", 1)[0]!;
+}
 
 export function isDocPath(path: string): boolean {
   if (!path) return false;
-  // A read target can carry a `:from-to`/`:raw` selector, and a URL-ish path a query/hash;
-  // judge the bare path. Repo paths here are POSIX and never contain a colon of their own.
-  const clean = path.split(/[?#]/, 1)[0]!.split(":", 1)[0]!;
-  if (!clean) return false;
+  const clean = barePath(path);
+  if (!clean || DOC_IMAGE_RE.test(clean)) return false;
   const base = clean.slice(clean.lastIndexOf("/") + 1);
   return DOC_EXT_RE.test(base) || DOC_NAME_RE.test(base) || DOC_DIR_RE.test(clean);
+}
+
+// An image the docs preview renders inline (served by the api's docs/raw route with a matching
+// image Content-Type) instead of reading it as text — SVG included, which is shown as the
+// picture it draws, never as its XML source.
+export function isDocImagePath(path: string): boolean {
+  return !!path && DOC_IMAGE_RE.test(barePath(path));
 }
 
 // Which documentation files a session READ, in order of first read, de-duplicated. Mirrors

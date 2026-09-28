@@ -27,6 +27,8 @@ test("isDocPath accepts markup files, conventional doc names and docs/ dirs", ()
     "requirements.txt", // .txt is not treated as documentation
     "image.png",
     "mydocs/logo.svg", // docs/ must be a real path segment, not a suffix
+    "docs/architecture.svg", // an image under docs/ is not prose to index
+    "docs/img/screen.PNG",
     "src/a.ts:10-20",
   ])
     expect(isDocPath(no)).toBe(false);

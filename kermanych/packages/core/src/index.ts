@@ -78,7 +78,7 @@ export {
   type SkillDef,
   type SkillView,
 } from "./skills";
-export { isDocPath, docsRead } from "./docs";
+export { isDocPath, isDocImagePath, docsRead } from "./docs";
 export { chunkMarkdown, type DocChunk } from "./doc-chunk";
 export {
   DEFAULT_HELPERS,

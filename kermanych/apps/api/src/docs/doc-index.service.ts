@@ -142,8 +142,8 @@ export class DocIndexService {
         await this.walk(dir, folder, childRel, out);
         continue;
       }
-      // isDocPath excludes images and source: only markup-family and conventional doc names
-      // pass, which is exactly the "index prose, skip binaries/images/code" scope.
+      // isDocPath excludes images (SVG included, though it is text) and source: only
+      // markup-family and conventional doc names pass — "index prose, skip images/code".
       if (!isDocPath(childRel)) continue;
       const fc = await this.worktree.readFileContent(dir, childRel).catch(() => null);
       if (!fc || fc.binary || fc.truncated || fc.content.trim() === "") continue;
