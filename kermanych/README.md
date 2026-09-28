@@ -402,6 +402,10 @@ pnpm dev:app      # run the desktop app in dev
 pnpm build:app    # build a macOS .dmg (unsigned)
 ```
 
+Links never open inside the desktop window: every `http(s)`/`mailto` link — Jira
+and Linear tickets, attachments, storage downloads, markdown links, and the session
+live preview — opens in your default browser (Chrome, Arc, Safari, …).
+
 The build is **unsigned**, so on first open macOS Gatekeeper blocks it. Open it
 with **right-click → Open** (once), or clear the quarantine flag:
 
