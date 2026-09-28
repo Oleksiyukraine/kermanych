@@ -71,7 +71,19 @@
       <KSelect v-model="statusModel" :options="STATUS_OPTIONS" />
       <KSelect v-model="sortModel" :options="SORT_OPTIONS" />
       <KCheckbox v-model="filter.aboveTolerance" :label="t('management.risks.aboveToleranceOnly')" />
+      <KBtn variant="secondary" :disabled="!all.length" @click="exportOpen = true">
+        {{ selectedRisks.length ? t('management.risks.exportSelected', { count: selectedRisks.length }) : t('management.risks.exportAction') }}
+      </KBtn>
       <KBtn variant="primary" @click="create()">{{ t('management.risks.newRisk') }}</KBtn>
+    </div>
+
+    <!-- What is ticked, stated once above the table: a selection can hold rows the current
+         filter hides, and the count is the only place those are still visible. -->
+    <div v-if="selectedRisks.length" class="risk__selection">
+      <span class="mono">{{ t('management.risks.selectedCount', { count: selectedRisks.length }) }}</span>
+      <button class="risk__card-clear" type="button" @click="selectedIds = new Set()">
+        {{ t('management.risks.clearSelection') }}
+      </button>
     </div>
 
     <p v-if="store.loadError" class="risk__error">
@@ -95,6 +107,19 @@
         clickable
         @row-click="edit"
       >
+        <!-- Ticking a row is not opening it: the box stops the click (and Enter) before the
+             row turns it into «edit». -->
+        <template #head-select>
+          <span :title="t('management.risks.selectShown')" @click.stop>
+            <KCheckbox :model-value="allShownSelected" @update:model-value="selectShown" />
+          </span>
+        </template>
+        <template #cell-select="{ row }">
+          <span :title="t('management.risks.selectRow', { code: row.code })" @click.stop @keydown.enter.stop>
+            <KCheckbox :model-value="selectedIds.has(row.id)" @update:model-value="(on: boolean) => selectRow(row.id, on)" />
+          </span>
+        </template>
+
         <template #cell-code="{ row }">
           <span class="risk__code mono">{{ row.code }}</span>
         </template>
@@ -196,6 +221,14 @@
       :risk="editing"
       :members="memberOptions"
     />
+
+    <RiskExportDialog
+      v-model="exportOpen"
+      :workspace-name="workspaceName"
+      :all="exportAll"
+      :selected="selectedRisks"
+      :member-name="memberName"
+    />
   </section>
 </template>
 
@@ -220,6 +253,7 @@ import KCheckbox from 'components/kit/KCheckbox.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import RiskMatrix from 'components/risk/RiskMatrix.vue';
 import RiskEditor from 'components/risk/RiskEditor.vue';
+import RiskExportDialog from 'components/risk/RiskExportDialog.vue';
 import { useRisks } from 'stores/risks';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -271,6 +305,7 @@ const { t } = useI18n();
 const now = useNow(60_000);
 
 const COLUMNS = computed<KTableColumn[]>(() => [
+  { key: 'select', label: '', width: '36px' },
   { key: 'code', label: 'ID', width: '70px', mono: true },
   { key: 'statement', label: t('management.risks.colStatement') },
   { key: 'score', label: 'P×I', align: 'center', width: '62px' },
@@ -303,12 +338,18 @@ const reviewing = ref('');
 // would land on a row the first has already removed, and earn a postgrest error about an
 // id that no longer exists.
 const deleting = ref('');
+const exportOpen = ref(false);
+// Ticked rows, by id. Kept across filter changes on purpose — search for one, tick it, search
+// for the next — and read back through `all`, so a row deleted meanwhile simply drops out.
+const selectedIds = ref(new Set<string>());
 
 // The register is read on open and whenever the sidebar moves to another workspace. No
-// Realtime channel: see the header of stores/risks.ts.
+// Realtime channel: see the header of stores/risks.ts. A selection belongs to the register it
+// was made in, so moving workspaces drops it.
 watch(
   () => props.workspaceId,
   (id) => {
+    selectedIds.value = new Set();
     if (id) void store.load(id);
   },
   { immediate: true },
@@ -343,6 +384,30 @@ const counts = computed(() => matrixCounts(all.value));
 const top = computed(() => topByExposure(all.value, 5));
 
 const rows = computed(() => sortRisks(filterRisks(all.value, filter), sort.value));
+
+// The export follows the table's sort, so the file reads in the order the screen does. The
+// whole-register export ignores the filters: it is the register, not the current view.
+const exportAll = computed(() => sortRisks(all.value, sort.value));
+const selectedRisks = computed(() => exportAll.value.filter((r) => selectedIds.value.has(r.id)));
+const allShownSelected = computed(() => rows.value.length > 0 && rows.value.every((r) => selectedIds.value.has(r.id)));
+
+function selectRow(id: string, on: boolean): void {
+  const next = new Set(selectedIds.value);
+  if (on) next.add(id);
+  else next.delete(id);
+  selectedIds.value = next;
+}
+
+// The header box acts on the rows SHOWN: under a filter it ticks what the filter matched,
+// and leaves ticks on hidden rows alone either way.
+function selectShown(on: boolean): void {
+  const next = new Set(selectedIds.value);
+  for (const r of rows.value) {
+    if (on) next.add(r.id);
+    else next.delete(r.id);
+  }
+  selectedIds.value = next;
+}
 
 // KSelect speaks strings; these three narrow back to the filter's own unions on the way in.
 const categoryModel = computed({
@@ -674,8 +739,22 @@ function rowClass(risk: WorkspaceRisk): string | undefined {
     min-width: 0;
   }
 
-  > :last-child {
+  // Export and «+ New risk» sit together on the right; the first of the pair takes the slack.
+  > :nth-last-child(2) {
     margin-left: auto;
+  }
+}
+
+.risk__selection {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-3);
+  margin-top: calc(-1 * var(--k-sp-2));
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
+
+  .risk__card-clear {
+    align-self: center;
   }
 }
 

@@ -10,6 +10,10 @@ declare global {
       // Optional so a stale packaged preload degrades to the browser flow
       // instead of throwing.
       startOAuth?: (authorizeUrl: string) => Promise<{ code: string }>;
+      // Electron only. Main renders a standalone HTML document in a hidden, script-less
+      // window and resolves with its PDF bytes. Optional for the same stale-preload
+      // reason; lib/export-file.ts falls back to the print dialog without it.
+      printToPdf?: (html: string) => Promise<Uint8Array>;
     };
   }
 }

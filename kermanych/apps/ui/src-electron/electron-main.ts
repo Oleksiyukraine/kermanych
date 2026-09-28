@@ -6,6 +6,7 @@ import { bootstrap } from '@kermanych/api';
 import type { INestApplication } from '@nestjs/common';
 import { closeLoopback, startLoopbackOAuth } from './oauth-loopback';
 import { routeLinksToDefaultBrowser } from './external-links';
+import { htmlToPdf } from './print-pdf';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -95,6 +96,10 @@ ipcMain.on('kermanych:focus', () => {
 ipcMain.handle('kermanych:oauth', async (_event, authorizeUrl: string) => {
   return await startLoopbackOAuth(authorizeUrl, (url) => shell.openExternal(url));
 });
+
+// A register export's PDF. The bytes go back to the renderer, which saves them through the
+// same download path as the Excel export, so both formats end in the same Save dialog.
+ipcMain.handle('kermanych:print-pdf', async (_event, html: string) => await htmlToPdf(html));
 
 void app.whenReady().then(async () => {
   try {

@@ -11,4 +11,6 @@ contextBridge.exposeInMainWorld('kermanych', {
   // Its presence is how stores/auth.ts detects the desktop build.
   startOAuth: (authorizeUrl: string): Promise<{ code: string }> =>
     ipcRenderer.invoke('kermanych:oauth', authorizeUrl),
+  // Resolves with the PDF bytes of a standalone HTML document (a register export).
+  printToPdf: (html: string): Promise<Uint8Array> => ipcRenderer.invoke('kermanych:print-pdf', html),
 });

@@ -15,7 +15,8 @@ export interface KTableColumn {
 // Modernist data table (design-system: rounded container, hairline rules, mono
 // header, single accent for the selected row). Presentational only — cells are
 // driven by `#cell-<key>` scoped slots ({ row, value }); the fallback renders the
-// raw field as text. Row state (e.g. "running") rides in via `rowClass`.
+// raw field as text. A `#head-<key>` slot replaces a header label (a select-all box).
+// Row state (e.g. "running") rides in via `rowClass`.
 const props = withDefaults(
   defineProps<{
     columns: KTableColumn[];
@@ -51,7 +52,7 @@ function onRowClick(row: T): void {
           :class="`k-table__cell--${col.align ?? 'left'}`"
           :style="col.width ? { width: col.width } : undefined"
         >
-          {{ col.label }}
+          <slot :name="`head-${col.key}`">{{ col.label }}</slot>
         </th>
       </tr>
     </thead>

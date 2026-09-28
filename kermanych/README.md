@@ -697,6 +697,28 @@ That field is a real assistant, and it is deliberately narrow:
   is reported as the prompt malfunction it is, not dressed in a limitation the table does
   not have.
 
+### Exporting the risk register
+
+The Risk Registry screen exports to **PDF** or **Excel (.xlsx)** from the **Export** button in
+its toolbar. The dialog asks for two things:
+
+- **Which risks.** *Whole register* is every risk in the workspace, whatever the filters
+  show. *Selected rows* is the rows ticked in the table's first column; the header box ticks
+  every row the current filter shows, and a selection survives filter changes, so you can
+  search, tick, and search again. The selection is dropped when you switch workspaces. Rows
+  come out in the table's current sort order.
+- **Which format.** The PDF is for reading: landscape A4, one row per risk with the
+  statement, both scores banded like the screen, the response and its owner, and rows over
+  tolerance marked. The Excel sheet is for working with the data: every field, one row per
+  risk, scores and money as numbers, a frozen header and a filter.
+
+The desktop app renders the PDF itself (Chromium's `printToPDF` in the main process,
+`apps/ui/src-electron/print-pdf.ts`) and both formats end in the usual Save dialog. In a
+plain browser tab there is no way to write a PDF file, so the document opens in the print
+dialog instead, and you choose «Save as PDF» there. Both files are built in the browser from
+the register already on screen (`apps/ui/src/lib/risk-export.ts`), so exporting never goes
+back to Supabase.
+
 ### Giving another section something it can write
 
 The Risk Registry and Release Notes are wired end to end; Team Capacity is `read` (a screen
