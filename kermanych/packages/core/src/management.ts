@@ -94,7 +94,7 @@ export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
     hint: "специфікації й рішення",
     capability: "read",
     limitation:
-      "розділ показує документацію з репозиторіїв проєктів як є — асистент може лише згадати її, але не редагує файли",
+      "розділ показує документацію з репозиторіїв проєктів як є та посилання, додані командою — асистент може лише згадати їх, але не редагує ні файли, ні посилання",
   },
   // A section the assistant can WRITE, because it has a real store behind it:
   // `workspace_risks` (threat vs opportunity, cause·event·consequence, 1-5 probability ×

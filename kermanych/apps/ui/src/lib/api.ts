@@ -19,6 +19,7 @@ import type {
   RpcExtensionUIResponse,
   TreeEntry,
   FileContent,
+  DocLinkEmbedCheck,
   ModelOption,
   ApiErrorCode,
   ApiErrorParams,
@@ -573,6 +574,11 @@ export const api = {
 
   projectDocsRaw: (id: string, folder: string, path: string): Promise<Blob> =>
     getBlob(`/projects/${id}/docs/raw?folder=${encodeURIComponent(folder)}&path=${encodeURIComponent(path)}`),
+
+  // Whether a documentation link's page allows being framed (the api reads its
+  // X-Frame-Options / CSP frame-ancestors once; nothing is cached server-side).
+  docsEmbedCheck: (url: string): Promise<DocLinkEmbedCheck> =>
+    get<DocLinkEmbedCheck>(`/docs/embed-check?url=${encodeURIComponent(url)}`),
 
   // Manual "reindex everything" for the Проєктна документація tab. The api walks the bound
   // checkout's published doc folders, chunks changed files and hands them to the docs-rag
