@@ -24,10 +24,18 @@ import { useAuth } from './auth';
 //     operator's own JWT. Only the pointer is stored; the page itself is loaded by the
 //     preview's iframe straight from its host.
 //
-// At most one of the two is open: opening a file closes the link and vice versa.
+// The screen shows them on two tabs, and each tab keeps its own selection: opening a file
+// switches to the Repository tab without closing the open link, and vice versa, so going back
+// to a tab finds the page the reader left there.
+export type DocSource = 'repo' | 'links';
+
 export const useProjectDocs = defineStore('project-docs', () => {
   const auth = useAuth();
   const activeProjectId = ref('');
+  // Which tab the screen shows. Store-held (not page-local) because a file is also opened from
+  // outside the screen — a documentation citation in the management chat — and must land on
+  // the tab that draws it.
+  const source = ref<DocSource>('repo');
   const openFolder = ref('');
   const openPath = ref('');
   const file = ref<FileContent | null>(null);
@@ -87,7 +95,7 @@ export const useProjectDocs = defineStore('project-docs', () => {
 
   async function openFile(projectId: string, folder: string, path: string): Promise<void> {
     const seq = ++openSeq;
-    openLinkId.value = '';
+    source.value = 'repo';
     openFolder.value = folder;
     openPath.value = path;
     loadingFile.value = true;
@@ -152,15 +160,9 @@ export const useProjectDocs = defineStore('project-docs', () => {
     }
   }
 
-  // Close whatever file is open (and orphan its in-flight load) and show the link instead.
+  // Show the link on the Links tab. The open file stays open on the Repository tab.
   function openLink(id: string): void {
-    openSeq += 1;
-    openFolder.value = '';
-    openPath.value = '';
-    file.value = null;
-    setImage(null);
-    fileError.value = null;
-    loadingFile.value = false;
+    source.value = 'links';
     openLinkId.value = id;
   }
 
@@ -204,7 +206,7 @@ export const useProjectDocs = defineStore('project-docs', () => {
   }
 
   return {
-    activeProjectId, openFolder, openPath, file, imageUrl, loadingFile, fileError, refreshNonce,
+    source, activeProjectId, openFolder, openPath, file, imageUrl, loadingFile, fileError, refreshNonce,
     links, linksLoading, linksError, openLinkId, embedChecks,
     setActive, treeOf, openFile, rawUrl, refreshIfActive, releaseUrls,
     loadLinks, openLink, addLink, saveLink, removeLink, checkEmbed,

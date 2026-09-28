@@ -407,9 +407,12 @@ Links never open inside the desktop window: every `http(s)`/`mailto` link — Ji
 and Linear tickets, attachments, storage downloads, markdown links, and the session
 live preview — opens in your default browser (Chrome, Arc, Safari, …).
 
-The one deliberate exception is **Менеджмент → Project Documentation → Посилання**:
-links the team adds there (a Google Doc, a Figma file, a published Claude artifact,
-any page) are shown as preview cards and open *embedded* in the screen's preview pane,
+The one deliberate exception is **Менеджмент → Project Documentation → Посилання**.
+The screen splits a project's documentation into two tabs, always both present:
+**Репозиторій** (the bound checkout's doc folders) and **Посилання** (pages outside
+the repository); each tab keeps its own open item. Links the team adds on the
+**Посилання** tab (a Google Doc, a Figma file, a published Claude artifact, any page)
+are shown as preview cards and open *embedded* in the screen's preview pane,
 with a full-screen toggle (`Esc` leaves it). Only the title and URL are stored, in the
 cloud table `project_doc_links` (`20260928110000_project_doc_links.sql`, additive —
 push it before shipping this UI). Known providers are loaded through their embed form
