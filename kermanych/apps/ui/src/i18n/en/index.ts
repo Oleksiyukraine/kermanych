@@ -2718,7 +2718,8 @@ export const en: MessageSchema = {
     reindexing: 'Reindexing…',
     reindexOk: 'Reindexed {files} files ({chunks} chunks)',
     reindexFail: 'Reindex failed: {error}',
-    linksHeading: 'Links',
+    repoTab: 'Repository',
+    linksTab: 'Links',
     linksEmpty: 'Add a Google Doc, a Figma file, an artifact or any other documentation page.',
     addLink: 'Add link',
     editLink: 'Edit link',
@@ -2741,6 +2742,6 @@ export const en: MessageSchema = {
     blockedSignIn: 'This usually means the page is private and needs a sign-in — it will open in the browser you are already signed in to.',
     showAnyway: 'Try here anyway',
     blankHint: 'Blank? The site may need a sign-in — open it in your browser.',
-    pickFileOrLink: 'Pick a file or a link on the left.',
+    pickLink: 'Pick a link on the left or a card below.',
   },
 };

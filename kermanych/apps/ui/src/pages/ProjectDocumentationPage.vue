@@ -6,14 +6,16 @@
 //
 // Beside the folders sit the project's documentation LINKS — pages that live outside the
 // repository (a Google Doc, a Figma file, a published artifact). They are cloud rows shared
-// by the team, so they show whether or not this machine has the checkout bound. A link opens
-// in the same preview pane, embedded in an iframe, and can be blown up to the whole window.
+// by the team, so they show whether or not this machine has the checkout bound. The two
+// sources sit on their own tabs — Repository and Links — always both present, each with its
+// own list on the left and its own selection in the preview pane. A link opens embedded in
+// an iframe and can be blown up to the whole window.
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { TreeEntry } from '@kermanych/core';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
-import { useProjectDocs } from 'stores/project-docs';
+import { useProjectDocs, type DocSource } from 'stores/project-docs';
 import { DOC_MARKUP_RE, isSvgRef, renderDoc } from '../lib/markdown';
 import KFileView from 'components/kit/KFileView.vue';
 import DocTreeNode, { type DocNode } from './DocTreeNode.vue';
@@ -26,6 +28,7 @@ import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
+import KTabs from 'components/kit/KTabs.vue';
 
 const props = defineProps<{ workspaceId: string; workspaceName: string }>();
 const { t } = useI18n();
@@ -211,6 +214,21 @@ function openZoom(ev: MouseEvent | KeyboardEvent): void {
   zoom.value = { src: img.currentSrc || img.src, label: img.dataset.zoomLabel ?? '' };
 }
 
+// ── Source tabs ──────────────────────────────────────────────────────────────
+
+// A preview has no cloud and so no links (lib/preview.ts): it shows the repository alone,
+// without a one-tab row.
+const showSources = computed(() => !!selectedId.value && !IS_PREVIEW);
+const sourceTab = computed({
+  get: (): DocSource => docs.source,
+  set: (v: string) => { docs.source = v === 'links' ? 'links' : 'repo'; },
+});
+const linksShown = computed(() => showSources.value && docs.source === 'links');
+const sourceTabs = computed(() => [
+  { value: 'repo', label: t('docsPage.repoTab') },
+  { value: 'links', label: t('docsPage.linksTab'), count: docs.links.length },
+]);
+
 // ── Links ────────────────────────────────────────────────────────────────────
 
 // The mark in a link's badge — a letter or glyph per provider, coloured by the stylesheet.
@@ -261,6 +279,8 @@ watch(() => docs.openLinkId, () => {
   forceEmbed.value = false;
   if (!docs.openLinkId) fullPage.value = false;
 });
+// Leaving the Links tab unmounts the viewer; it must not come back already full-screen.
+watch(() => docs.source, (s) => { if (s !== 'links') fullPage.value = false; });
 
 function onKey(ev: KeyboardEvent): void {
   if (ev.key === 'Escape' && fullPage.value) fullPage.value = false;
@@ -338,31 +358,15 @@ onBeforeUnmount(() => docs.releaseUrls());
         >{{ p.name }}</button>
       </div>
 
-      <div v-if="selectedId && isBound" class="docs__index">
-        <div class="docs__index-head">{{ t('docsPage.indexHeading') }}</div>
-        <p class="docs__index-state">
-          <template v-if="indexState && indexState.fileCount > 0">
-            {{ t('docsPage.indexSummary', { files: indexState.fileCount, when: (indexState.lastIndexedAt || '').slice(0, 10) }) }}
-          </template>
-          <template v-else>{{ t('docsPage.indexNever') }}</template>
-        </p>
-        <button type="button" class="docs__reindex" :disabled="reindexing" @click="reindex">
-          {{ reindexing ? t('docsPage.reindexing') : t('docsPage.reindex') }}
-        </button>
-        <p
-          v-if="reindexMsg"
-          class="docs__index-msg"
-          :class="{ 'docs__index-msg--error': reindexMsg.level === 'error' }"
-        >{{ reindexMsg.text }}</p>
-      </div>
-
-      <div v-if="selectedId && !IS_PREVIEW" class="docs__links">
-        <div class="docs__links-head">
-          <span class="docs__index-head">{{ t('docsPage.linksHeading') }}</span>
+      <KTabs v-if="showSources" v-model="sourceTab" :tabs="sourceTabs" class="docs__sources">
+        <template v-if="linksShown" #end>
           <KIconButton :title="t('docsPage.addLink')" @click="openEditor()">+</KIconButton>
-        </div>
+        </template>
+      </KTabs>
+
+      <!-- The empty state lives in the preview pane, beside its «Add link» button. -->
+      <div v-if="linksShown" class="docs__links">
         <p v-if="docs.linksError" class="docs__index-msg docs__index-msg--error">{{ docs.linksError }}</p>
-        <p v-else-if="!docs.links.length && !docs.linksLoading" class="docs__index-msg">{{ t('docsPage.linksEmpty') }}</p>
         <ul v-if="linkViews.length" class="docs__link-list">
           <li v-for="e in linkViews" :key="e.link.id">
             <button
@@ -381,128 +385,158 @@ onBeforeUnmount(() => docs.releaseUrls());
         </ul>
       </div>
 
-      <nav class="docs__tree">
-        <template v-if="!wsProjects.length"><p class="docs__empty">{{ t('docsPage.noProjects') }}</p></template>
-        <template v-else-if="!selectedId"><p class="docs__empty">{{ t('docsPage.pickProject') }}</p></template>
-        <template v-else-if="!isBound"><p class="docs__empty">{{ t('docsPage.bindPrompt') }}</p></template>
-        <template v-else-if="!docFolders.length"><p class="docs__empty">{{ t('docsPage.noFolders') }}</p></template>
-        <ul v-else class="docs__nodes">
-          <DocTreeNode
-            v-for="n in roots"
-            :key="n.folder"
-            :project-id="selectedId"
-            :node="n"
-          />
-        </ul>
-      </nav>
+      <template v-else>
+        <div v-if="selectedId && isBound" class="docs__index">
+          <div class="docs__index-head">{{ t('docsPage.indexHeading') }}</div>
+          <p class="docs__index-state">
+            <template v-if="indexState && indexState.fileCount > 0">
+              {{ t('docsPage.indexSummary', { files: indexState.fileCount, when: (indexState.lastIndexedAt || '').slice(0, 10) }) }}
+            </template>
+            <template v-else>{{ t('docsPage.indexNever') }}</template>
+          </p>
+          <button type="button" class="docs__reindex" :disabled="reindexing" @click="reindex">
+            {{ reindexing ? t('docsPage.reindexing') : t('docsPage.reindex') }}
+          </button>
+          <p
+            v-if="reindexMsg"
+            class="docs__index-msg"
+            :class="{ 'docs__index-msg--error': reindexMsg.level === 'error' }"
+          >{{ reindexMsg.text }}</p>
+        </div>
+
+        <nav class="docs__tree">
+          <template v-if="!wsProjects.length"><p class="docs__empty">{{ t('docsPage.noProjects') }}</p></template>
+          <template v-else-if="!selectedId"><p class="docs__empty">{{ t('docsPage.pickProject') }}</p></template>
+          <template v-else-if="!isBound"><p class="docs__empty">{{ t('docsPage.bindPrompt') }}</p></template>
+          <template v-else-if="!docFolders.length"><p class="docs__empty">{{ t('docsPage.noFolders') }}</p></template>
+          <ul v-else class="docs__nodes">
+            <DocTreeNode
+              v-for="n in roots"
+              :key="n.folder"
+              :project-id="selectedId"
+              :node="n"
+            />
+          </ul>
+        </nav>
+      </template>
     </aside>
 
     <section class="docs__preview" @click="openZoom" @keydown="openZoom">
-      <!-- An open link. A manual popover only so «full screen» can lift this same element into
-           the top layer (see `fullPage`); closed, the stylesheet keeps it in the page flow. -->
-      <div v-if="openEntry" ref="viewerEl" popover="manual" class="docs__viewer">
-        <header class="docs__viewer-bar">
-          <span class="docs__badge" :data-provider="openEntry.view.provider">{{ BADGE[openEntry.view.provider] }}</span>
-          <div class="docs__viewer-title">
-            <strong>{{ openEntry.link.title }}</strong>
-            <span class="docs__link-host">{{ openEntry.view.label === openEntry.view.host ? openEntry.view.host : `${openEntry.view.label} · ${openEntry.view.host}` }}</span>
-          </div>
-          <a class="docs__open" :href="openEntry.link.url" target="_blank" rel="noopener noreferrer">{{ t('docsPage.openInBrowser') }} ↗</a>
-          <KIconButton :title="t('docsPage.editLink')" @click="openEditor(openEntry.link.id)">✎</KIconButton>
-          <KIconButton :title="t('docsPage.removeLink')" @click="removeLink(openEntry.link.id)">×</KIconButton>
-          <KIconButton
-            :title="fullPage ? t('docsPage.exitFullPage') : t('docsPage.fullPage')"
-            :active="fullPage"
-            @click="fullPage = !fullPage"
-          >{{ fullPage ? '⤡' : '⤢' }}</KIconButton>
-        </header>
-        <div class="docs__viewer-body">
-          <p v-if="!openCheck" class="docs__empty">{{ t('docsPage.checking') }}</p>
-          <div v-else-if="openCheck.embeddable === false && !forceEmbed" class="docs__blocked">
-            <h3>{{ t('docsPage.blockedTitle') }}</h3>
-            <p>{{ t('docsPage.blockedFrame', { host: openEntry.view.host, header: openCheck.reason === 'frame-ancestors' ? 'CSP frame-ancestors' : 'X-Frame-Options' }) }}</p>
-            <p>{{ t('docsPage.blockedSignIn') }}</p>
-            <div class="docs__blocked-actions">
-              <a class="docs__open docs__open--primary" :href="openEntry.link.url" target="_blank" rel="noopener noreferrer">{{ t('docsPage.openInBrowser') }} ↗</a>
-              <KBtn variant="ghost" @click="forceEmbed = true">{{ t('docsPage.showAnyway') }}</KBtn>
+      <template v-if="linksShown">
+        <!-- An open link. A manual popover only so «full screen» can lift this same element
+             into the top layer (see `fullPage`); closed, the stylesheet keeps it in the page flow. -->
+        <div v-if="openEntry" ref="viewerEl" popover="manual" class="docs__viewer">
+          <header class="docs__viewer-bar">
+            <span class="docs__badge" :data-provider="openEntry.view.provider">{{ BADGE[openEntry.view.provider] }}</span>
+            <div class="docs__viewer-title">
+              <strong>{{ openEntry.link.title }}</strong>
+              <span class="docs__link-host">{{ openEntry.view.label === openEntry.view.host ? openEntry.view.host : `${openEntry.view.label} · ${openEntry.view.host}` }}</span>
             </div>
-          </div>
-          <template v-else>
-            <!-- No allow-top-navigation: an embedded page cannot replace the app. Popups are
-                 allowed and escape the sandbox — the desktop app routes them to the default
-                 browser (src-electron/external-links.ts). -->
-            <iframe
-              :key="openEntry.view.embedUrl"
-              class="docs__frame"
-              :src="openEntry.view.embedUrl"
-              :title="openEntry.link.title"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-downloads"
-              allow="fullscreen; clipboard-write; autoplay; encrypted-media; picture-in-picture"
-            />
-            <p v-if="openCheck.embeddable !== true" class="docs__frame-hint">{{ t('docsPage.blankHint') }}</p>
-          </template>
-        </div>
-      </div>
-      <p v-else-if="docs.loadingFile" class="docs__empty">{{ t('docsPage.loading') }}</p>
-      <p v-else-if="docs.fileError" class="docs__empty docs__empty--error">{{ docs.fileError }}</p>
-      <!-- An <img> never runs an SVG's scripts or loads its external resources, so a
-           repository SVG is drawn without being trusted. -->
-      <div v-else-if="docs.imageUrl" class="docs__image">
-        <img
-          :src="docs.imageUrl"
-          :alt="docs.openPath"
-          :class="{ docs__zoomable: zoomOpenFile }"
-          :tabindex="zoomOpenFile ? 0 : undefined"
-          :role="zoomOpenFile ? 'button' : undefined"
-          :aria-label="zoomOpenFile ? t('docsPage.zoomHint', { name: docs.openPath }) : undefined"
-          :data-zoom-label="docs.openPath"
-        >
-      </div>
-      <template v-else-if="docs.file && !docs.file.binary && !docs.file.truncated && isMarkdown">
-        <!-- renderDoc keeps html:false, so v-html output is a controlled tag set. -->
-        <div ref="previewEl" class="k-log__markdown" v-html="previewHtml"></div>
-      </template>
-      <KFileView
-        v-else-if="docs.file && !docs.file.binary"
-        :path="docs.openPath"
-        :file="docs.file"
-      />
-      <p v-else-if="docs.file && docs.file.binary" class="docs__empty">{{ t('docsPage.binary') }}</p>
-      <!-- Nothing open: the links as preview cards. A live miniature only for a page the api
-           confirmed may be framed — anything else would be a blank or «refused» tile. -->
-      <div v-else-if="linkViews.length" class="docs__gallery">
-        <p class="docs__empty">{{ t('docsPage.pickFileOrLink') }}</p>
-        <div class="docs__cards">
-          <button
-            v-for="e in linkViews"
-            :key="e.link.id"
-            type="button"
-            class="docs__card"
-            @click="docs.openLink(e.link.id)"
-          >
-            <span class="docs__card-thumb" :data-provider="e.view.provider">
+            <a class="docs__open" :href="openEntry.link.url" target="_blank" rel="noopener noreferrer">{{ t('docsPage.openInBrowser') }} ↗</a>
+            <KIconButton :title="t('docsPage.editLink')" @click="openEditor(openEntry.link.id)">✎</KIconButton>
+            <KIconButton :title="t('docsPage.removeLink')" @click="removeLink(openEntry.link.id)">×</KIconButton>
+            <KIconButton
+              :title="fullPage ? t('docsPage.exitFullPage') : t('docsPage.fullPage')"
+              :active="fullPage"
+              @click="fullPage = !fullPage"
+            >{{ fullPage ? '⤡' : '⤢' }}</KIconButton>
+          </header>
+          <div class="docs__viewer-body">
+            <p v-if="!openCheck" class="docs__empty">{{ t('docsPage.checking') }}</p>
+            <div v-else-if="openCheck.embeddable === false && !forceEmbed" class="docs__blocked">
+              <h3>{{ t('docsPage.blockedTitle') }}</h3>
+              <p>{{ t('docsPage.blockedFrame', { host: openEntry.view.host, header: openCheck.reason === 'frame-ancestors' ? 'CSP frame-ancestors' : 'X-Frame-Options' }) }}</p>
+              <p>{{ t('docsPage.blockedSignIn') }}</p>
+              <div class="docs__blocked-actions">
+                <a class="docs__open docs__open--primary" :href="openEntry.link.url" target="_blank" rel="noopener noreferrer">{{ t('docsPage.openInBrowser') }} ↗</a>
+                <KBtn variant="ghost" @click="forceEmbed = true">{{ t('docsPage.showAnyway') }}</KBtn>
+              </div>
+            </div>
+            <template v-else>
+              <!-- No allow-top-navigation: an embedded page cannot replace the app. Popups are
+                   allowed and escape the sandbox — the desktop app routes them to the default
+                   browser (src-electron/external-links.ts). -->
               <iframe
-                v-if="docs.embedChecks[e.view.embedUrl]?.embeddable === true"
-                class="docs__card-frame"
-                :src="e.view.embedUrl"
-                tabindex="-1"
-                aria-hidden="true"
-                loading="lazy"
-                sandbox="allow-scripts allow-same-origin"
+                :key="openEntry.view.embedUrl"
+                class="docs__frame"
+                :src="openEntry.view.embedUrl"
+                :title="openEntry.link.title"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-downloads"
+                allow="fullscreen; clipboard-write; autoplay; encrypted-media; picture-in-picture"
               />
-              <span v-else class="docs__card-mark">{{ BADGE[e.view.provider] }}</span>
-            </span>
-            <span class="docs__card-meta">
-              <span class="docs__badge" :data-provider="e.view.provider">{{ BADGE[e.view.provider] }}</span>
-              <span class="docs__link-text">
-                <span class="docs__link-title">{{ e.link.title }}</span>
-                <span class="docs__link-host">{{ e.view.label === e.view.host ? e.view.host : `${e.view.label} · ${e.view.host}` }}</span>
-              </span>
-            </span>
-          </button>
+              <p v-if="openCheck.embeddable !== true" class="docs__frame-hint">{{ t('docsPage.blankHint') }}</p>
+            </template>
+          </div>
         </div>
-      </div>
-      <p v-else class="docs__empty">{{ t('docsPage.pickFile') }}</p>
+        <!-- Nothing open: the links as preview cards. A live miniature only for a page the api
+             confirmed may be framed — anything else would be a blank or «refused» tile. -->
+        <div v-else-if="linkViews.length" class="docs__gallery">
+          <p class="docs__empty">{{ t('docsPage.pickLink') }}</p>
+          <div class="docs__cards">
+            <button
+              v-for="e in linkViews"
+              :key="e.link.id"
+              type="button"
+              class="docs__card"
+              @click="docs.openLink(e.link.id)"
+            >
+              <span class="docs__card-thumb" :data-provider="e.view.provider">
+                <iframe
+                  v-if="docs.embedChecks[e.view.embedUrl]?.embeddable === true"
+                  class="docs__card-frame"
+                  :src="e.view.embedUrl"
+                  tabindex="-1"
+                  aria-hidden="true"
+                  loading="lazy"
+                  sandbox="allow-scripts allow-same-origin"
+                />
+                <span v-else class="docs__card-mark">{{ BADGE[e.view.provider] }}</span>
+              </span>
+              <span class="docs__card-meta">
+                <span class="docs__badge" :data-provider="e.view.provider">{{ BADGE[e.view.provider] }}</span>
+                <span class="docs__link-text">
+                  <span class="docs__link-title">{{ e.link.title }}</span>
+                  <span class="docs__link-host">{{ e.view.label === e.view.host ? e.view.host : `${e.view.label} · ${e.view.host}` }}</span>
+                </span>
+              </span>
+            </button>
+          </div>
+        </div>
+        <p v-else-if="docs.linksLoading" class="docs__empty">{{ t('docsPage.loading') }}</p>
+        <div v-else-if="!docs.linksError" class="docs__empty">
+          <p>{{ t('docsPage.linksEmpty') }}</p>
+          <KBtn variant="primary" @click="openEditor()">{{ t('docsPage.addLink') }}</KBtn>
+        </div>
+      </template>
+
+      <template v-else>
+        <p v-if="docs.loadingFile" class="docs__empty">{{ t('docsPage.loading') }}</p>
+        <p v-else-if="docs.fileError" class="docs__empty docs__empty--error">{{ docs.fileError }}</p>
+        <!-- An <img> never runs an SVG's scripts or loads its external resources, so a
+             repository SVG is drawn without being trusted. -->
+        <div v-else-if="docs.imageUrl" class="docs__image">
+          <img
+            :src="docs.imageUrl"
+            :alt="docs.openPath"
+            :class="{ docs__zoomable: zoomOpenFile }"
+            :tabindex="zoomOpenFile ? 0 : undefined"
+            :role="zoomOpenFile ? 'button' : undefined"
+            :aria-label="zoomOpenFile ? t('docsPage.zoomHint', { name: docs.openPath }) : undefined"
+            :data-zoom-label="docs.openPath"
+          >
+        </div>
+        <template v-else-if="docs.file && !docs.file.binary && !docs.file.truncated && isMarkdown">
+          <!-- renderDoc keeps html:false, so v-html output is a controlled tag set. -->
+          <div ref="previewEl" class="k-log__markdown" v-html="previewHtml"></div>
+        </template>
+        <KFileView
+          v-else-if="docs.file && !docs.file.binary"
+          :path="docs.openPath"
+          :file="docs.file"
+        />
+        <p v-else-if="docs.file && docs.file.binary" class="docs__empty">{{ t('docsPage.binary') }}</p>
+        <p v-else class="docs__empty">{{ t('docsPage.pickFile') }}</p>
+      </template>
     </section>
 
     <KModal v-model="editorOpen" :title="editingId ? t('docsPage.editLink') : t('docsPage.addLink')" width="520px">
@@ -538,6 +572,8 @@ onBeforeUnmount(() => docs.releaseUrls());
 .docs { display: grid; grid-template-columns: minmax(200px, 280px) 1fr; gap: var(--k-sp-4); height: 100%; min-height: 0; }
 .docs__nav { display: flex; flex-direction: column; gap: var(--k-sp-2); overflow: hidden; min-height: 0; border-right: 1px solid var(--k-line); padding-right: var(--k-sp-3); }
 .docs__projects { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: var(--k-sp-2); border-bottom: 1px solid var(--k-line); }
+// Repository | Links. The row keeps its height even when a tab's list is long.
+.docs__sources { flex: none; }
 .docs__tree { overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 2px; }
 .docs__project { text-align: left; background: none; border: 1px solid var(--k-line); color: var(--k-text); cursor: pointer; padding: 4px 6px; border-radius: 6px; font: inherit; }
 .docs__project--on { background: var(--k-surface2); }
@@ -557,7 +593,7 @@ onBeforeUnmount(() => docs.releaseUrls());
 // The overlay body: 85vh minus KModal's title bar (88px), so the panel as a whole takes 85% of
 // the window each way; object-fit scales the SVG up or down to fit without distortion.
 .docs__zoom { display: block; width: 100%; height: calc(85vh - 88px); object-fit: contain; padding: var(--k-sp-4); cursor: zoom-out; }
-.docs__empty { color: var(--k-muted); font-size: 13px; padding: var(--k-sp-3); &--error { color: var(--k-danger); } }
+.docs__empty { color: var(--k-muted); font-size: 13px; padding: var(--k-sp-3); &--error { color: var(--k-danger); } p { margin: 0 0 var(--k-sp-3); } }
 .docs__index { display: flex; flex-direction: column; gap: 4px; padding-bottom: var(--k-sp-2); border-bottom: 1px solid var(--k-line); }
 .docs__index-head { font-size: 12px; font-weight: 600; color: var(--k-muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .docs__index-state { margin: 0; font-size: 13px; color: var(--k-text); }
@@ -567,8 +603,7 @@ onBeforeUnmount(() => docs.releaseUrls());
 .docs__index-msg { margin: 0; font-size: 12px; color: var(--k-muted); &--error { color: var(--k-danger); } }
 
 // ── Links ──
-.docs__links { display: flex; flex-direction: column; gap: 4px; padding-bottom: var(--k-sp-2); border-bottom: 1px solid var(--k-line); min-height: 0; max-height: 40%; }
-.docs__links-head { display: flex; align-items: center; justify-content: space-between; }
+.docs__links { display: flex; flex-direction: column; gap: 4px; min-height: 0; flex: 1; }
 .docs__link-list { list-style: none; margin: 0; padding: 0; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
 .docs__link { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none; border: 1px solid transparent; color: var(--k-text); cursor: pointer; padding: 4px 6px; border-radius: 6px; font: inherit; }
 .docs__link:hover { background: var(--k-surface2); }
