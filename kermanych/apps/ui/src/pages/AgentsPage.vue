@@ -2515,8 +2515,13 @@ async function launchInto(win: Window | null, s: Session): Promise<void> {
       openPreviewConfig(s);
       return;
     }
-    if (res.url && win) win.location.href = res.url;
-    else win?.close();
+    // In a browser the placeholder tab (opened inside the click, before any await, so no
+    // popup blocker bites) is pointed at the preview. The desktop app denies that
+    // placeholder — every link goes to the default browser — so `win` is null there and
+    // the ready URL is opened directly; main hands it to the OS.
+    if (!res.url) win?.close();
+    else if (win) win.location.href = res.url;
+    else window.open(res.url, '_blank');
   } catch (e) {
     win?.close();
     window.alert(t('agents.preview.launchFailed', { error: e instanceof Error ? e.message : String(e) }));

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { bootstrap } from '@kermanych/api';
 import type { INestApplication } from '@nestjs/common';
 import { closeLoopback, startLoopbackOAuth } from './oauth-loopback';
+import { routeLinksToDefaultBrowser } from './external-links';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -52,6 +53,7 @@ async function createWindow(apiBase: string) {
       additionalArguments: [`--api-base=${apiBase}`],
     },
   });
+  routeLinksToDefaultBrowser(mainWindow, (url) => shell.openExternal(url));
 
   if (process.env.DEV) {
     // Vite serves optimized deps as `immutable` under a `?v=<browserHash>` query that does NOT
