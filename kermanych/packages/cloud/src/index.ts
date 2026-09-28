@@ -189,6 +189,7 @@ export {
   listPasswordAccess,
   requestPasswordAccess,
   decidePasswordAccess,
+  sharePassword,
   toPasswordHolder,
   listPasswordHolders,
 } from "./passwords";

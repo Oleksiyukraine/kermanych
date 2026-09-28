@@ -22,6 +22,7 @@ import {
   patchWorkspacePassword as cloudRename,
   requestPasswordAccess as cloudRequest,
   setPasswordFile as cloudSetFile,
+  sharePassword as cloudShare,
   signedPasswordFileUrl as cloudSignedUrl,
 } from '@kermanych/cloud';
 import { useAuth } from './auth';
@@ -214,6 +215,18 @@ export const usePasswords = defineStore('passwords', () => {
     return row;
   }
 
+  // The password's owner (its filer, the workspace owner or a manager) hands it to a member
+  // without a request. Merges the approved row — which also clears that member's pending ask
+  // from the requests panel, the rpc having turned it into this grant — and re-reads the
+  // access column, which gains the recipient. THROWS so the dialog can say why.
+  async function share(workspaceId: string, passwordId: string, userId: string): Promise<WorkspacePasswordAccess> {
+    if (!auth.user) throw new Error(globalTr.t('common.notify.signInFirst'));
+    const row = await cloudShare(auth.client, passwordId, userId);
+    upsertAccess(workspaceId, row);
+    await refreshHolders(workspaceId);
+    return row;
+  }
+
   return {
     byWorkspace,
     accessByWorkspace,
@@ -232,5 +245,6 @@ export const usePasswords = defineStore('passwords', () => {
     remove,
     requestAccess,
     decideAccess,
+    share,
   };
 });
