@@ -85,6 +85,18 @@ export class ProjectsController {
     }
   }
 
+  // The footer Pull badge: commits waiting upstream for the project's current branch.
+  // `?fetch=1` asks the remote first; without it the count is against the last fetch
+  // (what the UI wants right after a pull, which fetched on its own).
+  @Get(":id/incoming")
+  async incoming(@Param("id") id: string, @Query("fetch") fetch?: string) {
+    try {
+      return await this.sup.projectIncoming(id, fetch === "1");
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   // Manual "reindex everything" for the Проєктна документація tab: re-embeds every published
   // doc file regardless of hash. Blocks until done so the tab can show the fresh state and
   // surface an error (unbound project, Voyage unavailable) instead of failing silently.

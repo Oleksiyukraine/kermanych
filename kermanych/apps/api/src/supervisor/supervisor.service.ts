@@ -393,6 +393,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return this.worktree.pull(this.boundProject(projectId).localRepoPath);
   }
 
+  // How many upstream commits the footer Pull would bring into the bound repo's current
+  // branch; `fetch` refreshes the remote-tracking ref first. Unbound throws like projectPull.
+  async projectIncoming(projectId: string, fetch: boolean): Promise<{ behind: number }> {
+    return { behind: await this.worktree.incoming(this.boundProject(projectId).localRepoPath, fetch) };
+  }
+
   // The docs preview reads files from a folder the project PUBLISHED (project.docFolders)
   // inside its bound local checkout. Two guards before any disk access: the project must be
   // bound (boundProject throws otherwise), and `folder` must be one the project actually

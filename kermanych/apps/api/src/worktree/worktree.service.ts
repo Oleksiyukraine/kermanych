@@ -24,6 +24,10 @@ const RAW_PATHS = ["-c", "core.quotePath=false"];
 // read `*`, `[` or a leading `:` in a name as a glob or as pathspec magic.
 const LITERAL_PATHS = ["--literal-pathspecs"];
 
+// Ceiling on the footer's background `git fetch`: a hung remote must not keep the request
+// (and the per-repo in-flight slot) open forever.
+const FETCH_TIMEOUT_MS = 30_000;
+
 // A small extension→MIME table for the docs raw route. Anything not listed streams as
 // application/octet-stream, which a browser downloads rather than mis-renders.
 const DOC_MIME: Record<string, string> = {
@@ -32,9 +36,15 @@ const DOC_MIME: Record<string, string> = {
   ".bmp": "image/bmp", ".pdf": "application/pdf",
 };
 
-function git(cwd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
+// `opts` is for the few calls that talk to a remote: `env` to refuse credential prompts,
+// `timeoutMs` so an unreachable host cannot pin a request open (git is killed, `ok` false).
+function git(
+  cwd: string,
+  args: string[],
+  opts: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
+): Promise<{ ok: boolean; out: string }> {
   const { promise, resolve } = Promise.withResolvers<{ ok: boolean; out: string }>();
-  const p = spawn("git", ["-C", cwd, ...args]);
+  const p = spawn("git", ["-C", cwd, ...args], { env: opts.env, timeout: opts.timeoutMs });
   const chunks: Buffer[] = [];
   p.stdout.on("data", (b: Buffer) => chunks.push(b));
   p.stderr.on("data", (b: Buffer) => chunks.push(b));
@@ -77,6 +87,9 @@ async function addedLines(file: string): Promise<number> {
 
 @Injectable()
 export class WorktreeService {
+  // In-flight `git fetch` per repo directory, shared by concurrent `incoming` calls.
+  private readonly fetching = new Map<string, Promise<{ ok: boolean; out: string }>>();
+
   async isGitRepo(dir: string): Promise<boolean> {
     return (await git(dir, ["rev-parse", "--is-inside-work-tree"])).ok;
   }
@@ -370,6 +383,29 @@ export class WorktreeService {
   // the PR flow, which is the agent's own `git push` inside its worktree.
   async pull(repoDir: string): Promise<{ ok: boolean; out: string }> {
     return git(repoDir, ["pull", "--ff-only"]);
+  }
+
+  // Commits on the current branch's upstream that HEAD does not have yet — the count the
+  // footer Pull button badges. With `fetch` the remote is asked first (`git fetch` of the
+  // branch's own remote), so the number reflects what a pull would bring; a fetch that fails
+  // (offline, auth) still counts against the last-known remote-tracking ref, like the pull
+  // itself would. Concurrent fetches of one repo share a single run: two would race on the
+  // same ref locks. 0 on a detached HEAD, a branch without upstream, or any git failure.
+  async incoming(repoDir: string, fetch: boolean): Promise<number> {
+    if (fetch) {
+      let run = this.fetching.get(repoDir);
+      if (!run) {
+        run = git(repoDir, ["fetch", "--quiet"], {
+          env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+          timeoutMs: FETCH_TIMEOUT_MS,
+        }).finally(() => this.fetching.delete(repoDir));
+        this.fetching.set(repoDir, run);
+      }
+      await run;
+    }
+    const r = await git(repoDir, ["rev-list", "--count", "HEAD..@{upstream}"]);
+    const n = r.ok ? Number(r.out.trim()) : 0;
+    return Number.isFinite(n) ? n : 0;
   }
 
   // True when `ref` resolves — tells a reopen whether the session's own branch is still there.

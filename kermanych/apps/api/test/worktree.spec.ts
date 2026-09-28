@@ -99,3 +99,35 @@ test("listBranches returns the repo's local branch names", async () => {
   expect(branches).toContain("dev");
   expect(branches).toContain("feature/x");
 });
+
+test("incoming counts upstream commits the branch lacks, seen only once fetched", async () => {
+  // `repo` plays the remote; `local` is the operator's bound checkout tracking it.
+  const local = mkdtempSync(join(tmpdir(), "kmq-wt-clone-"));
+  try {
+    git(local, "clone", "-q", repo, ".");
+    expect(await wt.incoming(local, true)).toBe(0);
+
+    for (const n of ["a", "b"]) {
+      writeFileSync(join(repo, "file.txt"), `${n}\n`);
+      git(repo, "commit", "-qam", n);
+    }
+    expect(await wt.incoming(local, false)).toBe(0); // remote-tracking ref not refreshed yet
+    expect(await wt.incoming(local, true)).toBe(2);
+
+    // A local commit of our own is ahead, not incoming.
+    writeFileSync(join(local, "other.txt"), "x\n");
+    git(local, "add", "-A");
+    git(local, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "mine");
+    expect(await wt.incoming(local, false)).toBe(2);
+
+    git(local, "reset", "-q", "--hard", "HEAD~1");
+    expect((await wt.pull(local)).ok).toBe(true);
+    expect(await wt.incoming(local, false)).toBe(0);
+  } finally {
+    rmSync(local, { recursive: true, force: true });
+  }
+});
+
+test("incoming is 0 for a branch with no upstream", async () => {
+  expect(await wt.incoming(repo, true)).toBe(0);
+});
