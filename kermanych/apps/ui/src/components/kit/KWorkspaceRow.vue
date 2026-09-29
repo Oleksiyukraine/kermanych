@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { describeAttention, type Attention } from '../../lib/attention';
+import KAttentionBadge from './KAttentionBadge.vue';
 
 // A workspace row in the left sidebar: the group header that is also the scope selector
 // and the drop target for projects.
@@ -22,13 +24,14 @@ const props = withDefaults(
     workspace: { id: string; name: string; color?: string | undefined; icon?: string | undefined };
     active?: boolean;
     expanded?: boolean;
-    count?: number;
+    // The sum of its projects' tallies, so a folded workspace still says one inside waits.
+    attention: Attention;
     dropTarget?: boolean;
     // Draggable so the row can be lifted to reorder the sidebar. Off by default; MainLayout
     // turns it on once the cloud list is in hand, matching the project rows below it.
     draggable?: boolean;
   }>(),
-  { count: 0, active: false, expanded: true, dropTarget: false, draggable: false },
+  { active: false, expanded: true, dropTarget: false, draggable: false },
 );
 
 const emit = defineEmits<{
@@ -52,23 +55,12 @@ function onDragStart(e: DragEvent): void {
 
 const { t } = useI18n();
 
-// The counter is aria-hidden (a bare digit reads as noise), so the count reaches assistive
-// tech through the row's label instead. Count-agnostic phrasing — «запущено агентів: 3» —
-// because Ukrainian would otherwise need three plural forms for one tooltip.
+// The mark is aria-hidden, so the breakdown reaches assistive tech through the row's label
+// instead.
 //
 // Feeds `v-tip` + `aria-label`, like the chevron and «+» beside it — this row was the odd one
 // out on a native `title`, which the OS draws as an unstyled square after ~1s.
-const title = computed(
-  () =>
-    props.workspace.name +
-    (props.count > 0
-      ? t('kit.workspaceRow.running', { count: props.count })
-      : t('kit.workspaceRow.none')),
-);
-
-// The visible counter, empty when nothing runs. Resolved here rather than in the template
-// because `withDefaults` only narrows `count` away from `undefined` on this side.
-const badge = computed(() => (props.count > 0 ? String(props.count) : ''));
+const title = computed(() => props.workspace.name + describeAttention(props.attention, t));
 
 // Each glyph control gets ONE string that is both its visible tip and its accessible name —
 // the house rule KIconButton and MainLayout's «+» already follow. Diverging the two fails
@@ -122,16 +114,16 @@ const addLabel = computed(() => t('kit.workspaceRow.addProject', { name: props.w
       ></span>
       <span class="k-ws__name">{{ workspace.name }}</span>
     </button>
-    <!-- The row's right end is ONE 28px slot, and the counter and the «+» take turns in
-         it: the counter while the row rests, the button while it is pointed at or its
+    <!-- The row's right end is ONE 28px slot, and the attention mark and the «+» take turns
+         in it: the mark while the row rests, the button while it is pointed at or its
          control is focused. They cannot share it — a slot wide enough for both would push
-         this row's counter 28px out of the column KNavItem and KRailItem keep theirs in,
+         this row's mark 28px out of the column KNavItem and KRailItem keep theirs in,
          which is exactly the raggedness this replaced — and they must not reflow into each
          other either, so the slot's width is fixed and neither move nor truncate the name
-         when the swap happens. Nothing is lost while the «+» shows: the count is
+         when the swap happens. Nothing is lost while the «+» shows: the mark is
          decoration here (aria-hidden), and the row's own label carries it. -->
     <span class="k-ws__end">
-      <span v-if="badge" class="k-ws__count mono" aria-hidden="true">{{ badge }}</span>
+      <KAttentionBadge class="k-ws__count" :attention="attention" />
       <button
         class="k-ws__add"
         type="button"
@@ -249,10 +241,12 @@ const addLabel = computed(() => t('kit.workspaceRow.addProject', { name: props.w
 }
 
 // The two occupants of the slot are stacked, so the one that is not wanted has to go
-// quiet as the other arrives — otherwise the «+» is drawn straight over the digit.
+// quiet as the other arrives — otherwise the «+» is drawn straight over the mark.
+// `visibility`, not `opacity`: the waiting-for-an-answer mark pulses by animating opacity,
+// and an animation outranks this rule, so an opacity hide let it blink through the «+».
 .k-ws:hover .k-ws__count,
 .k-ws:has(.k-ws__add:focus-visible) .k-ws__count {
-  opacity: 0;
+  visibility: hidden;
 }
 
 .k-ws__body {
@@ -310,9 +304,9 @@ const addLabel = computed(() => t('kit.workspaceRow.addProject', { name: props.w
   font-weight: var(--k-fw-medium);
 }
 
-// The right-end slot the counter and the «+» share. 28px wide because that is the button
+// The right-end slot the mark and the «+» share. 28px wide because that is the button
 // pinned inside it, and the 12px of padding is the rail's indicator gutter: it puts this
-// digit's right edge exactly where KNavItem's counter and KRailItem's badge sit.
+// mark's right edge exactly where KNavItem's counter and KRailItem's mark sit.
 // `min-width`, not `width`, so a three-digit count widens the slot instead of spilling
 // over the name.
 .k-ws__end {
@@ -324,11 +318,5 @@ const addLabel = computed(() => t('kit.workspaceRow.addProject', { name: props.w
   min-width: 28px;
   height: 28px;
   padding-right: var(--k-sp-3);
-}
-
-.k-ws__count {
-  font-size: var(--k-fs-xs);
-  color: var(--k-muted);
-  transition: opacity 0.12s;
 }
 </style>

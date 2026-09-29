@@ -198,7 +198,7 @@
           :key="r.project.id"
           :project="r.project"
           :active="r.active"
-          :count="r.count"
+          :attention="r.attention"
         />
         <KUserButton label="oleksii-motornyi" :title="t('kit.gallery.userTitle')" />
       </div>
@@ -211,7 +211,7 @@
             :workspace="w"
             :active="w.id === wsActive"
             :expanded="wsExpanded.includes(w.id)"
-            :count="w.count"
+            :attention="sumAttention(railProjects.filter((p) => p.workspaceId === w.id).map((p) => p.attention))"
             :drop-target="w.id === wsDropTarget"
             @select="onWsSelect(w.id)"
             @toggle="onWsToggle(w.id)"
@@ -226,7 +226,7 @@
             :key="r.project.id"
             :project="r.project"
             :active="r.project.id === wsDragged"
-            :count="r.count"
+            :attention="r.attention"
             indent
             draggable
             @dragstart="wsDragged = $event"
@@ -477,6 +477,7 @@ import KPanel from 'components/kit/KPanel.vue';
 import KLogBlock from 'components/kit/KLogBlock.vue';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KWorkspaceRow from 'components/kit/KWorkspaceRow.vue';
+import { sumAttention, NO_ATTENTION, type Attention } from '../lib/attention';
 import KSelect from 'components/kit/KSelect.vue';
 import KDateField from 'components/kit/KDateField.vue';
 import KUserButton from 'components/kit/KUserButton.vue';
@@ -737,17 +738,20 @@ const logSamples: TranscriptEntry[] = [
   // `turn` is ledger data for block summaries — it renders nothing, by design.
   { kind: 'turn', id: '10', at: nowMs, model: 'claude-opus-5', ms: 21_300 },
 ];
-const railProjects: { project: RailProject; active: boolean; count: number; workspaceId: string }[] = [
-  { project: { id: 'p1', name: 'api-gateway', state: 'bound' }, active: true, count: 12, workspaceId: 'w1' },
-  { project: { id: 'p2', name: 'web client', state: 'unbound' }, active: false, count: 0, workspaceId: 'w1' },
-  { project: { id: 'p3', name: 'billing', state: 'orphan' }, active: false, count: 1, workspaceId: 'w2' },
+// One row per attention level, top priority first, so every mark the sidebar can wear shows.
+const railProjects: { project: RailProject; active: boolean; attention: Attention; workspaceId: string }[] = [
+  { project: { id: 'p1', name: 'api-gateway', state: 'bound' }, active: true, attention: { ...NO_ATTENTION, input: 1, running: 3 }, workspaceId: 'w1' },
+  { project: { id: 'p2', name: 'web client', state: 'unbound' }, active: false, attention: NO_ATTENTION, workspaceId: 'w1' },
+  { project: { id: 'p3', name: 'billing', state: 'orphan' }, active: false, attention: { ...NO_ATTENTION, error: 1, running: 1 }, workspaceId: 'w2' },
+  { project: { id: 'p4', name: 'docs site', state: 'bound' }, active: false, attention: { ...NO_ATTENTION, running: 12 }, workspaceId: 'w2' },
+  { project: { id: 'p5', name: 'mobile', state: 'bound' }, active: false, attention: { ...NO_ATTENTION, result: 2 }, workspaceId: 'w2' },
 ];
 
 // One coloured, one not, so both dot states show. The ids are what KSelect's pair form
 // carries below — a filter keyed by the NAME breaks the day a second «Особисте» appears.
 const galleryWorkspaces = [
-  { id: 'w1', name: t('kit.gallery.workspace.kermanych'), color: '#ff563c', count: 12 },
-  { id: 'w2', name: t('kit.gallery.workspace.personal'), count: 1 },
+  { id: 'w1', name: t('kit.gallery.workspace.kermanych'), color: '#ff563c' },
+  { id: 'w2', name: t('kit.gallery.workspace.personal') },
 ];
 const wsActive = ref('w1');
 const wsExpanded = ref(['w1', 'w2']);
