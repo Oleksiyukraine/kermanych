@@ -40,9 +40,8 @@ import type {
   JiraTransition,
   JiraWorklogAdjust,
 } from "./jira-client";
+import { adfDoc, adfMarkdown } from "./jira-adf";
 import {
-  adfDoc,
-  adfText,
   fullJql,
   incrementalJql,
   mapAttachments,
@@ -381,9 +380,11 @@ export class JiraService {
     return this.refreshIssue(integrationId, key, userId);
   }
 
+  // The composer's text is markdown like every other body the app writes to Jira, so
+  // «**bold**» or a «- [ ]» list arrive formatted rather than as literal punctuation.
   async addComment(integrationId: string, key: string, body: string, userId: string): Promise<JiraIssue> {
     const { client } = await this.withIntegration(integrationId, userId);
-    await client.addComment(key, body);
+    await client.addComment(key, adfDoc(body));
     return this.refreshIssue(integrationId, key, userId);
   }
 
@@ -468,10 +469,9 @@ export class JiraService {
     const fields: Record<string, unknown> = {};
     if (forCreate) fields.project = { key: integration.projectKey };
     if (draft.summary !== undefined) fields.summary = draft.summary.trim();
-    // Through `adfDoc` rather than one text node: a ticket written from the Менеджмент chat
-    // arrives as several lines (context, flow, acceptance criteria) and ADF renders a `\n`
-    // inside a text node as nothing, so a single node collapsed the whole body into one
-    // paragraph.
+    // Markdown into real ADF structure (jira-adf.ts): the Менеджмент chat writes its tickets
+    // as «## Context» / «- [ ] criterion» markdown, and sent as text nodes those arrived in
+    // Jira as literal hashes and brackets instead of headings and action items.
     if (draft.description !== undefined) fields.description = adfDoc(draft.description);
     if (draft.issueTypeId) fields.issuetype = { id: draft.issueTypeId };
     if (draft.priorityId) fields.priority = { id: draft.priorityId };
@@ -509,6 +509,14 @@ export class JiraService {
     const startDateFieldId = await this.startDateFieldId(integration.siteUrl, client);
     await client.editIssue(key, this.issueFields(integration, draft, false, startDateFieldId));
     return this.refreshIssue(integrationId, key, userId);
+  }
+
+  // What the editor opens an existing ticket with: the description as markdown, read from
+  // Jira's own ADF. Saving it back goes through adfDoc, so the headings, lists and action
+  // items the ticket had come back as themselves instead of one flattened paragraph.
+  async issueDescription(integrationId: string, key: string, userId: string): Promise<{ markdown: string }> {
+    const { client } = await this.withIntegration(integrationId, userId);
+    return { markdown: adfMarkdown(await client.issueDescription(key)) };
   }
 
   async deleteIssue(integrationId: string, key: string, userId: string): Promise<void> {
@@ -648,7 +656,9 @@ export class JiraService {
       projectId,
       // `summary` is a plain string in the v3 payload (only description is ADF).
       title: `${key} — ${typeof raw.fields.summary === "string" && raw.fields.summary ? raw.fields.summary : key}`,
-      description: adfText(raw.fields.description),
+      // Markdown, not concatenated text: the task body keeps the ticket's headings, lists
+      // and paragraph breaks, which is what both the board and the agent read.
+      description: adfMarkdown(raw.fields.description),
       assigneeId: userId,
       createdBy: userId,
       jiraKey: key,
