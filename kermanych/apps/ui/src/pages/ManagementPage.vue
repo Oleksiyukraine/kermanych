@@ -380,7 +380,7 @@ function autoGrow(): void {
 const canSend = computed(() => (draft.value.trim().length > 0 || attachFiles.value.length > 0) && !chat.busy);
 
 // Attachments — images the model sees natively plus the documents (PDF, Excel, Word,
-// Pages) the api lands on disk for the read tool. Collected by paste, drop or the 📎
+// Pages, Markdown) the api lands on disk for the read tool. Collected by paste, drop or the 📎
 // pick; sent with the turn and cleared the moment it is on its way, like the draft.
 const {
   files: attachFiles,

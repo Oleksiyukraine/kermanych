@@ -1253,7 +1253,7 @@ export const uk = {
       sendShort: 'Надіслати',
       thinking: 'Думає…',
       thinkingSec: 'Думає… {sec} с',
-      attach: 'Долучити файл — зображення, PDF, Excel, Word або Pages',
+      attach: 'Долучити файл — зображення, PDF, Excel, Word, Pages або Markdown',
       removeFile: 'Прибрати файл «{name}»',
     },
     plan: {
@@ -2343,7 +2343,7 @@ export const uk = {
       readFailed: 'не вдалося прочитати файл',
     },
     file: {
-      unsupported: '{name}: непідтримуваний тип файлу (PNG/JPEG/GIF/WebP, PDF, XLS/XLSX, DOCX, Pages)',
+      unsupported: '{name}: непідтримуваний тип файлу (PNG/JPEG/GIF/WebP, PDF, XLS/XLSX, DOCX, Pages, MD)',
       tooLarge: '{name}: файл завеликий — {size} МіБ (макс 20)',
     },
   },
