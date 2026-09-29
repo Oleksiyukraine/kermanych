@@ -1,15 +1,17 @@
 <script setup lang="ts">
-// The Project Documentation screen. Two levels in one place: the workspace's projects are
-// listed (the workspace-level aggregation), and selecting one renders its configured doc
-// folders as a browsable tree + a faithful GitHub-style preview of the actual repository
-// files (decision A — read live from THIS machine's bound checkout; nothing is uploaded).
+// The Project Documentation screen, on two levels — one per tab:
 //
-// Beside the folders sit the project's documentation LINKS — pages that live outside the
-// repository (a Google Doc, a Figma file, a published artifact). They are cloud rows shared
-// by the team, so they show whether or not this machine has the checkout bound. The two
-// sources sit on their own tabs — Repository and Links — always both present, each with its
-// own list on the left and its own selection in the preview pane. A link opens embedded in
-// an iframe and can be blown up to the whole window.
+//   * Repository — PROJECT level: the workspace's projects are listed, and selecting one
+//     renders its configured doc folders as a browsable tree + a faithful GitHub-style preview
+//     of the actual repository files (decision A — read live from THIS machine's bound
+//     checkout; nothing is uploaded);
+//   * Links — WORKSPACE level: pages that live outside every repository (a Google Doc, a Figma
+//     file, a published artifact). They are cloud rows shared by the whole workspace team, so
+//     the tab is always present — with no project selected, with no checkout bound, even in a
+//     workspace without projects — and the project switcher does not apply to it.
+//
+// Each tab has its own list on the left and its own selection in the preview pane. A link
+// opens embedded in an iframe and can be blown up to the whole window.
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { TreeEntry } from '@kermanych/core';
@@ -54,6 +56,9 @@ watch(
   },
   { immediate: true },
 );
+
+// The Links tab's list follows the workspace, never the project switcher.
+watch(() => props.workspaceId, (id) => docs.setWorkspace(id), { immediate: true });
 
 function select(id: string): void {
   selectedId.value = id;
@@ -217,8 +222,9 @@ function openZoom(ev: MouseEvent | KeyboardEvent): void {
 // ── Source tabs ──────────────────────────────────────────────────────────────
 
 // A preview has no cloud and so no links (lib/preview.ts): it shows the repository alone,
-// without a one-tab row.
-const showSources = computed(() => !!selectedId.value && !IS_PREVIEW);
+// without a one-tab row. Everywhere else both tabs are always there: the links belong to the
+// workspace, so they need neither a selected project nor a bound checkout.
+const showSources = computed(() => !IS_PREVIEW);
 const sourceTab = computed({
   get: (): DocSource => docs.source,
   set: (v: string) => { docs.source = v === 'links' ? 'links' : 'repo'; },
@@ -322,7 +328,7 @@ async function saveLink(): Promise<void> {
   editorError.value = null;
   try {
     if (editingId.value) await docs.saveLink(editingId.value, { title, url });
-    else docs.openLink((await docs.addLink(selectedId.value, title, url)).id);
+    else docs.openLink((await docs.addLink(props.workspaceId, title, url)).id);
     editorOpen.value = false;
   } catch (e) {
     editorError.value = e instanceof Error ? e.message : String(e);
@@ -347,17 +353,6 @@ onBeforeUnmount(() => docs.releaseUrls());
 <template>
   <div class="docs">
     <aside class="docs__nav">
-      <div v-if="wsProjects.length > 1" class="docs__projects">
-        <button
-          v-for="p in wsProjects"
-          :key="p.id"
-          type="button"
-          class="docs__project"
-          :class="{ 'docs__project--on': p.id === selectedId }"
-          @click="select(p.id)"
-        >{{ p.name }}</button>
-      </div>
-
       <KTabs v-if="showSources" v-model="sourceTab" :tabs="sourceTabs" class="docs__sources">
         <template v-if="linksShown" #end>
           <KIconButton :title="t('docsPage.addLink')" @click="openEditor()">+</KIconButton>
@@ -386,6 +381,18 @@ onBeforeUnmount(() => docs.releaseUrls());
       </div>
 
       <template v-else>
+        <!-- The project switcher scopes the Repository tab only; links are the workspace's. -->
+        <div v-if="wsProjects.length > 1" class="docs__projects">
+          <button
+            v-for="p in wsProjects"
+            :key="p.id"
+            type="button"
+            class="docs__project"
+            :class="{ 'docs__project--on': p.id === selectedId }"
+            @click="select(p.id)"
+          >{{ p.name }}</button>
+        </div>
+
         <div v-if="selectedId && isBound" class="docs__index">
           <div class="docs__index-head">{{ t('docsPage.indexHeading') }}</div>
           <p class="docs__index-state">

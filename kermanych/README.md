@@ -415,14 +415,18 @@ and Linear tickets, attachments, storage downloads, markdown links, and the sess
 live preview — opens in your default browser (Chrome, Arc, Safari, …).
 
 The one deliberate exception is **Менеджмент → Project Documentation → Посилання**.
-The screen splits a project's documentation into two tabs, always both present:
-**Репозиторій** (the bound checkout's doc folders) and **Посилання** (pages outside
-the repository); each tab keeps its own open item. Links the team adds on the
-**Посилання** tab (a Google Doc, a Figma file, a published Claude artifact, any page)
-are shown as preview cards and open *embedded* in the screen's preview pane,
-with a full-screen toggle (`Esc` leaves it). Only the title and URL are stored, in the
-cloud table `project_doc_links` (`20260928110000_project_doc_links.sql`, additive —
-push it before shipping this UI). Known providers are loaded through their embed form
+The screen splits documentation into two tabs, always both present, on two levels:
+**Репозиторій** is per project (pick the project, then browse the bound checkout's doc
+folders) and **Посилання** is per *workspace* (pages outside any repository, shared by
+every project of the workspace — the project switcher does not apply to it, and the tab
+is there even with no project selected or bound); each tab keeps its own open item. Links
+the team adds on the **Посилання** tab (a Google Doc, a Figma file, a published Claude
+artifact, any page) are shown as preview cards and open *embedded* in the screen's
+preview pane, with a full-screen toggle (`Esc` leaves it). Only the title and URL are
+stored, in the cloud table `workspace_doc_links` (created per project by
+`20260928110000_project_doc_links.sql`, moved to the workspace by
+`20260929090000_workspace_doc_links.sql`, which re-homes existing links to their
+project's workspace — push it before shipping this UI). Known providers are loaded through their embed form
 (a Google Doc's `/edit` becomes `/preview`, a YouTube `/watch` becomes `/embed/…`).
 Before drawing a page the local API asks its host whether it may be framed
 (`GET /api/docs/embed-check?url=…` reads `X-Frame-Options` / CSP `frame-ancestors`);
