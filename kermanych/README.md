@@ -703,13 +703,17 @@ That field is a real assistant, and it is deliberately narrow:
   - **It edits existing Jira tickets.** «Переведи KRM-101 у Done», «перепиши тікет про
     експорт інвойсів», «признач KRM-88 на Марину і постав дедлайн 10 жовтня» emit a
     `jira.ticket.update` naming the issue by key and only what changes: a full rewrite of the
-    ticket (same five slots and rules as a new one), a rename, type, priority, labels,
+    ticket (same five slots as a new one), a rename, type, priority, labels,
     assignee (or unassign), status, start/due dates, original estimate, parent, and files to
-    attach. Status is applied as the workflow transition that lands there; a status the
-    workflow cannot reach from where the issue stands is refused with the reachable ones
-    listed. Everything the edit names is resolved before anything is written, so a refusal
-    means nothing changed. Written under your own Jira token, like every other Jira write;
-    cards on the workspace's own board have no edit verb here — that stays in the card.
+    attach. The open-question refusal above applies to NEW tickets only: an existing issue
+    whose text already says «unclear», «TBD» or asks a question can still be rewritten or
+    renamed — the edit keeps that text or drops it once you have answered, and is never
+    swapped for a `ticket.questions` round trip. Status is applied as the workflow transition
+    that lands there; a status the workflow cannot reach from where the issue stands is
+    refused with the reachable ones listed. Everything the edit names is resolved before
+    anything is written, so a refusal means nothing changed. Written under your own Jira
+    token, like every other Jira write; cards on the workspace's own board have no edit verb
+    here — that stays in the card.
   - **It can look through the Jira boards.** Every turn the browser sends each connected
     board's mirrored tickets (key, title, type, status, priority, assignee, parent, labels,
     dates, estimate, description), and the local API writes one snapshot file per board to
