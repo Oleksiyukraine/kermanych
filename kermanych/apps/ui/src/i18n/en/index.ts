@@ -2795,7 +2795,7 @@ export const en: MessageSchema = {
     linkUrlPlaceholder: 'https://docs.google.com/document/d/…',
     linkTitle: 'Title (optional)',
     linkUrlInvalid: 'Enter a web address: http(s)://…',
-    linkHint: 'The whole project team sees this link. Only the address is stored — the page loads straight from its own site.',
+    linkHint: 'The whole workspace team sees this link, across all its projects. Only the address is stored — the page loads straight from its own site.',
     save: 'Save',
     saving: 'Saving…',
     cancel: 'Cancel',

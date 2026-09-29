@@ -32,7 +32,7 @@ export type DocLinkView = {
   embedUrl: string;
 };
 
-const MAX_URL = 2048; // mirrors the project_doc_links.url check
+const MAX_URL = 2048; // mirrors the workspace_doc_links.url check
 
 // What the person typed → the URL to store, or null when it cannot be a web link. A bare
 // «docs.google.com/…» gets https:// (people paste without the scheme); any other scheme —

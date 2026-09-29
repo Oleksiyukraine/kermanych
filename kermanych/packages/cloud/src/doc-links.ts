@@ -1,16 +1,16 @@
-// Data access for the Project Documentation screen's links (`project_doc_links`). Owns the
+// Data access for the Project Documentation screen's links (`workspace_doc_links`). Owns the
 // snake_case <-> camelCase boundary. Every call runs under the caller's JWT: the RLS policy
-// (read and write = project member) is the authorization surface, and refusals surface as
+// (read and write = workspace member) is the authorization surface, and refusals surface as
 // thrown postgrest messages.
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ProjectDocLink, ProjectDocLinkInsert, ProjectDocLinkPatch } from "./types";
+import type { WorkspaceDocLink, WorkspaceDocLinkInsert, WorkspaceDocLinkPatch } from "./types";
 
 // One string literal, not a concatenation: postgrest-js parses this at the TYPE level.
-const LINK_COLUMNS = "id, project_id, title, url, created_at, created_by, updated_at, updated_by";
+const LINK_COLUMNS = "id, workspace_id, title, url, created_at, created_by, updated_at, updated_by";
 
 type LinkRow = {
   id: string;
-  project_id: string;
+  workspace_id: string;
   title: string;
   url: string;
   created_at: string;
@@ -19,10 +19,10 @@ type LinkRow = {
   updated_by: string | null;
 };
 
-export function toProjectDocLink(row: LinkRow): ProjectDocLink {
+export function toWorkspaceDocLink(row: LinkRow): WorkspaceDocLink {
   return {
     id: row.id,
-    projectId: row.project_id,
+    workspaceId: row.workspace_id,
     title: row.title,
     url: row.url,
     createdAt: row.created_at,
@@ -32,35 +32,35 @@ export function toProjectDocLink(row: LinkRow): ProjectDocLink {
   };
 }
 
-// One project's links in the order they were added — the list reads like the folder tree
-// beside it, which does not reshuffle when something is edited.
-export async function listProjectDocLinks(client: SupabaseClient, projectId: string): Promise<ProjectDocLink[]> {
+// One workspace's links in the order they were added — the list does not reshuffle when
+// something is edited.
+export async function listWorkspaceDocLinks(client: SupabaseClient, workspaceId: string): Promise<WorkspaceDocLink[]> {
   const { data, error } = await client
-    .from("project_doc_links")
+    .from("workspace_doc_links")
     .select(LINK_COLUMNS)
-    .eq("project_id", projectId)
+    .eq("workspace_id", workspaceId)
     .order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
-  return (data as LinkRow[]).map(toProjectDocLink);
+  return (data as LinkRow[]).map(toWorkspaceDocLink);
 }
 
-export async function createProjectDocLink(client: SupabaseClient, input: ProjectDocLinkInsert): Promise<ProjectDocLink> {
+export async function createWorkspaceDocLink(client: SupabaseClient, input: WorkspaceDocLinkInsert): Promise<WorkspaceDocLink> {
   const { data, error } = await client
-    .from("project_doc_links")
-    .insert({ project_id: input.projectId, title: input.title.trim(), url: input.url })
+    .from("workspace_doc_links")
+    .insert({ workspace_id: input.workspaceId, title: input.title.trim(), url: input.url })
     .select(LINK_COLUMNS)
     .single();
   if (error) throw new Error(error.message);
-  return toProjectDocLink(data as LinkRow);
+  return toWorkspaceDocLink(data as LinkRow);
 }
 
-export async function patchProjectDocLink(
+export async function patchWorkspaceDocLink(
   client: SupabaseClient,
   id: string,
-  patch: ProjectDocLinkPatch,
-): Promise<ProjectDocLink> {
+  patch: WorkspaceDocLinkPatch,
+): Promise<WorkspaceDocLink> {
   const { data, error } = await client
-    .from("project_doc_links")
+    .from("workspace_doc_links")
     .update({
       ...(patch.title === undefined ? {} : { title: patch.title.trim() }),
       ...(patch.url === undefined ? {} : { url: patch.url }),
@@ -69,14 +69,14 @@ export async function patchProjectDocLink(
     .select(LINK_COLUMNS)
     .single();
   if (error) throw new Error(error.message);
-  return toProjectDocLink(data as LinkRow);
+  return toWorkspaceDocLink(data as LinkRow);
 }
 
 // A DELETE the USING clause filters out matches zero rows and reports NO error, so a refusal
 // and an already-gone link would both look like success. `.select()` returns the deleted rows,
 // and an empty set is reported rather than taken as done.
-export async function deleteProjectDocLink(client: SupabaseClient, id: string): Promise<void> {
-  const { data, error } = await client.from("project_doc_links").delete().eq("id", id).select("id");
+export async function deleteWorkspaceDocLink(client: SupabaseClient, id: string): Promise<void> {
+  const { data, error } = await client.from("workspace_doc_links").delete().eq("id", id).select("id");
   if (error) throw new Error(error.message);
   if (!data || data.length === 0) {
     throw new Error("the link was not removed: the delete was refused or the link is already gone");

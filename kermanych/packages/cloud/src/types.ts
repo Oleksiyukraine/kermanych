@@ -422,13 +422,14 @@ export type WorkspaceReleaseNotePatch = {
   bodyMd?: string;
 };
 
-// A documentation link on the Project Documentation screen: a page that lives outside the
-// repository (Google Doc, Figma, a published artifact). Only the pointer is stored — the
-// page is loaded by each member's app from its own host. `projectId` and the created_*
-// provenance are frozen by project_doc_links_touch(), so the patch carries title and url only.
-export type ProjectDocLink = {
+// A documentation link on the Project Documentation screen: a page that lives outside every
+// repository (Google Doc, Figma, a published artifact), shared by the whole WORKSPACE. Only the
+// pointer is stored — the page is loaded by each member's app from its own host. `workspaceId`
+// and the created_* provenance are frozen by workspace_doc_links_touch(), so the patch carries
+// title and url only.
+export type WorkspaceDocLink = {
   id: string;
-  projectId: string;
+  workspaceId: string;
   title: string;
   url: string;
   createdAt: string;
@@ -437,13 +438,13 @@ export type ProjectDocLink = {
   updatedBy?: string;
 };
 
-export type ProjectDocLinkInsert = {
-  projectId: string;
+export type WorkspaceDocLinkInsert = {
+  workspaceId: string;
   title: string;
   url: string;
 };
 
-export type ProjectDocLinkPatch = {
+export type WorkspaceDocLinkPatch = {
   title?: string;
   url?: string;
 };

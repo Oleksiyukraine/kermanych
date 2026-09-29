@@ -2,27 +2,30 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { isDocImagePath, type DocLinkEmbedCheck, type FileContent, type TreeEntry } from '@kermanych/core';
 import {
-  createProjectDocLink,
-  deleteProjectDocLink,
-  listProjectDocLinks,
-  patchProjectDocLink,
-  type ProjectDocLink,
-  type ProjectDocLinkPatch,
+  createWorkspaceDocLink,
+  deleteWorkspaceDocLink,
+  listWorkspaceDocLinks,
+  patchWorkspaceDocLink,
+  type WorkspaceDocLink,
+  type WorkspaceDocLinkPatch,
 } from '@kermanych/cloud';
 import { api } from '../lib/api';
 import { IS_PREVIEW } from '../lib/preview';
 import { globalTr } from '../boot/i18n';
 import { useAuth } from './auth';
 
-// View state for the Project Documentation screen. Two sources feed its preview pane:
+// View state for the Project Documentation screen. Two sources feed its preview pane, on two
+// different levels:
 //
-//   * repository files — fetched live from the bound local checkout through the api on every
-//     navigation (decision A — nothing is cached in the cloud); raw image bytes are turned
-//     into object URLs (the raw route needs the auth bearer, which an <img src> cannot carry,
-//     so the bytes are fetched by the authed api client and handed to the DOM as a blob);
-//   * documentation links — rows of `project_doc_links`, read from the cloud under the
-//     operator's own JWT. Only the pointer is stored; the page itself is loaded by the
-//     preview's iframe straight from its host.
+//   * repository files — PROJECT level: fetched live from the selected project's bound local
+//     checkout through the api on every navigation (decision A — nothing is cached in the
+//     cloud); raw image bytes are turned into object URLs (the raw route needs the auth
+//     bearer, which an <img src> cannot carry, so the bytes are fetched by the authed api
+//     client and handed to the DOM as a blob);
+//   * documentation links — WORKSPACE level: rows of `workspace_doc_links`, read from the
+//     cloud under the operator's own JWT. A link is not tied to any project, so switching the
+//     project leaves the list and the open link alone. Only the pointer is stored; the page
+//     itself is loaded by the preview's iframe straight from its host.
 //
 // The screen shows them on two tabs, and each tab keeps its own selection: opening a file
 // switches to the Repository tab without closing the open link, and vice versa, so going back
@@ -51,15 +54,16 @@ export const useProjectDocs = defineStore('project-docs', () => {
   // level after a pull (files added/removed under an open folder must appear).
   const refreshNonce = ref(0);
 
-  // The active project's links, in the order they were added.
-  const links = ref<ProjectDocLink[]>([]);
+  // The workspace whose links are listed, and those links in the order they were added.
+  const activeWorkspaceId = ref('');
+  const links = ref<WorkspaceDocLink[]>([]);
   const linksLoading = ref(false);
   // Inline on the screen, never a toast: an unreachable cloud must not greet someone who came
   // to read the repository docs (same call as stores/risks.ts).
   const linksError = ref<string | null>(null);
   const openLinkId = ref('');
   // Per embed URL, for the life of the app: whether the host lets the page be framed. A
-  // missing key means «not asked yet»; the answer is a property of the host, not the project.
+  // missing key means «not asked yet»; the answer is a property of the host, not the workspace.
   const embedChecks = ref<Record<string, DocLinkEmbedCheck>>({});
   const embedInFlight = new Set<string>();
 
@@ -77,9 +81,17 @@ export const useProjectDocs = defineStore('project-docs', () => {
     file.value = null;
     setImage(null);
     fileError.value = null;
+  }
+
+  // The links belong to the workspace, so only a workspace switch resets them.
+  function setWorkspace(workspaceId: string): void {
+    if (workspaceId === activeWorkspaceId.value) return;
+    activeWorkspaceId.value = workspaceId;
     openLinkId.value = '';
     links.value = [];
-    void loadLinks(projectId);
+    linksError.value = null;
+    linksLoading.value = false;
+    void loadLinks(workspaceId);
   }
 
   // The open image's URL is owned here, not by urlCache: the screen releases the cache when it
@@ -144,19 +156,19 @@ export const useProjectDocs = defineStore('project-docs', () => {
     urlCache.clear();
   }
 
-  async function loadLinks(projectId: string): Promise<void> {
+  async function loadLinks(workspaceId: string): Promise<void> {
     await auth.ready;
     // A preview signs in against a cloudless api (lib/preview.ts): there are no links to read.
-    if (IS_PREVIEW || !auth.user || !projectId) return;
+    if (IS_PREVIEW || !auth.user || !workspaceId) return;
     linksLoading.value = true;
     linksError.value = null;
     try {
-      const rows = await listProjectDocLinks(auth.client, projectId);
-      if (projectId === activeProjectId.value) links.value = rows;
+      const rows = await listWorkspaceDocLinks(auth.client, workspaceId);
+      if (workspaceId === activeWorkspaceId.value) links.value = rows;
     } catch (e) {
-      if (projectId === activeProjectId.value) linksError.value = e instanceof Error ? e.message : String(e);
+      if (workspaceId === activeWorkspaceId.value) linksError.value = e instanceof Error ? e.message : String(e);
     } finally {
-      if (projectId === activeProjectId.value) linksLoading.value = false;
+      if (workspaceId === activeWorkspaceId.value) linksLoading.value = false;
     }
   }
 
@@ -168,23 +180,23 @@ export const useProjectDocs = defineStore('project-docs', () => {
 
   // Writes THROW so the add/edit dialog can stay open and say why; the row lands in the list
   // only once Postgres has accepted it (the audit columns are server-stamped).
-  async function addLink(projectId: string, title: string, url: string): Promise<ProjectDocLink> {
+  async function addLink(workspaceId: string, title: string, url: string): Promise<WorkspaceDocLink> {
     if (!auth.user) throw new Error(globalTr.t('common.notify.signInFirst'));
-    const created = await createProjectDocLink(auth.client, { projectId, title, url });
-    if (projectId === activeProjectId.value) links.value = [...links.value, created];
+    const created = await createWorkspaceDocLink(auth.client, { workspaceId, title, url });
+    if (workspaceId === activeWorkspaceId.value) links.value = [...links.value, created];
     return created;
   }
 
-  async function saveLink(id: string, patch: ProjectDocLinkPatch): Promise<ProjectDocLink> {
+  async function saveLink(id: string, patch: WorkspaceDocLinkPatch): Promise<WorkspaceDocLink> {
     if (!auth.user) throw new Error(globalTr.t('common.notify.signInFirst'));
-    const saved = await patchProjectDocLink(auth.client, id, patch);
+    const saved = await patchWorkspaceDocLink(auth.client, id, patch);
     links.value = links.value.map((l) => (l.id === id ? saved : l));
     return saved;
   }
 
   async function removeLink(id: string): Promise<void> {
     if (!auth.user) throw new Error(globalTr.t('common.notify.signInFirst'));
-    await deleteProjectDocLink(auth.client, id);
+    await deleteWorkspaceDocLink(auth.client, id);
     links.value = links.value.filter((l) => l.id !== id);
     if (openLinkId.value === id) openLinkId.value = '';
   }
@@ -206,9 +218,9 @@ export const useProjectDocs = defineStore('project-docs', () => {
   }
 
   return {
-    source, activeProjectId, openFolder, openPath, file, imageUrl, loadingFile, fileError, refreshNonce,
+    source, activeProjectId, activeWorkspaceId, openFolder, openPath, file, imageUrl, loadingFile, fileError, refreshNonce,
     links, linksLoading, linksError, openLinkId, embedChecks,
-    setActive, treeOf, openFile, rawUrl, refreshIfActive, releaseUrls,
+    setActive, setWorkspace, treeOf, openFile, rawUrl, refreshIfActive, releaseUrls,
     loadLinks, openLink, addLink, saveLink, removeLink, checkEmbed,
   };
 });
