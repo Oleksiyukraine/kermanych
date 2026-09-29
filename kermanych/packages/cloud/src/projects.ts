@@ -8,7 +8,7 @@ import type { CloudProject } from "./types";
 import type { ThinkingLevel } from "@kermanych/core";
 
 const PROJECT_COLUMNS =
-  "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, default_effort, carry_files, env_keys, color, doc_folders, created_at";
+  "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, default_effort, carry_files, env_keys, color, doc_folders, docs_required, created_at";
 
 type ProjectRow = {
   id: string;
@@ -25,6 +25,7 @@ type ProjectRow = {
   env_keys: string[] | null;
   color: string | null;
   doc_folders: string[] | null;
+  docs_required: boolean | null;
   created_at: string;
 };
 
@@ -34,7 +35,7 @@ type ProjectRow = {
 export type CloudProjectPatch = Partial<
   Pick<
     CloudProject,
-    "name" | "workspaceId" | "gitRemoteUrl" | "conventions" | "previewCommand" | "apiCommand" | "defaultBranch" | "defaultModel" | "carryFiles" | "envKeys" | "docFolders" | "color"
+    "name" | "workspaceId" | "gitRemoteUrl" | "conventions" | "previewCommand" | "apiCommand" | "defaultBranch" | "defaultModel" | "carryFiles" | "envKeys" | "docFolders" | "docsRequired" | "color"
   >
 > & { defaultEffort?: ThinkingLevel | "" };
 
@@ -47,6 +48,8 @@ export function toCloudProject(row: ProjectRow): CloudProject {
     carryFiles: row.carry_files ?? [".env"],
     envKeys: row.env_keys ?? [],
     docFolders: row.doc_folders ?? [],
+    // `not null default false` in Postgres; `=== true` keeps a pre-migration row "off".
+    docsRequired: row.docs_required === true,
     workspaceId: row.workspace_id,
     createdAt: row.created_at,
   };
@@ -81,6 +84,7 @@ export function toProjectRow(patch: CloudProjectPatch): Record<string, unknown> 
   if (patch.defaultEffort !== undefined) row.default_effort = patch.defaultEffort.trim() || null;
   if (patch.carryFiles !== undefined) row.carry_files = patch.carryFiles;
   if (patch.docFolders !== undefined) row.doc_folders = patch.docFolders;
+  if (patch.docsRequired !== undefined) row.docs_required = patch.docsRequired;
   if (patch.envKeys !== undefined) row.env_keys = patch.envKeys;
   if (patch.color !== undefined) row.color = patch.color.trim() || null;
   return row;

@@ -57,6 +57,7 @@ const projectRow = {
   env_keys: ["GITHUB_TOKEN"],
   color: "#ff563c",
   doc_folders: ["docs"],
+  docs_required: true,
   workspace_id: "w1",
   created_at: "2026-08-21T00:00:00.000Z",
 };
@@ -87,6 +88,7 @@ describe("listProjects", () => {
       envKeys: ["GITHUB_TOKEN"],
       color: "#ff563c",
       docFolders: ["docs"],
+      docsRequired: true,
       workspaceId: "w1",
       createdAt: "2026-08-21T00:00:00.000Z",
     });
@@ -101,7 +103,7 @@ describe("listProjects", () => {
     await listProjects(client);
     expect(queries[0]!.ops[0]).toEqual([
       "select",
-      "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, default_effort, carry_files, env_keys, color, doc_folders, created_at",
+      "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, default_effort, carry_files, env_keys, color, doc_folders, docs_required, created_at",
     ]);
   });
 
@@ -236,7 +238,7 @@ describe("doc_folders mapping", () => {
       conventions: null, preview_command: null, api_command: null,
       default_branch: null, default_model: null, default_effort: null,
       carry_files: [".env"], env_keys: [], color: null,
-      doc_folders: ["docs", "packages/core/docs"], created_at: "t",
+      doc_folders: ["docs", "packages/core/docs"], docs_required: false, created_at: "t",
     });
     expect(p.docFolders).toEqual(["docs", "packages/core/docs"]);
   });
@@ -247,7 +249,7 @@ describe("doc_folders mapping", () => {
       conventions: null, preview_command: null, api_command: null,
       default_branch: null, default_model: null, default_effort: null,
       carry_files: null, env_keys: null, color: null,
-      doc_folders: null, created_at: "t",
+      doc_folders: null, docs_required: null, created_at: "t",
     });
     expect(p.docFolders).toEqual([]);
   });
@@ -256,5 +258,19 @@ describe("doc_folders mapping", () => {
     expect(toProjectRow({}).doc_folders).toBeUndefined();
     expect(toProjectRow({ docFolders: ["docs"] }).doc_folders).toEqual(["docs"]);
     expect(toProjectRow({ docFolders: [] }).doc_folders).toEqual([]);
+  });
+});
+
+describe("docs_required mapping", () => {
+  it("round-trips docs_required and reads a missing value as off", () => {
+    expect(toCloudProject(projectRow).docsRequired).toBe(true);
+    expect(toCloudProject({ ...projectRow, docs_required: false }).docsRequired).toBe(false);
+    expect(toCloudProject({ ...projectRow, docs_required: null }).docsRequired).toBe(false);
+  });
+
+  it("sends docs_required only when present in the patch, false included", () => {
+    expect(toProjectRow({})).not.toHaveProperty("docs_required");
+    expect(toProjectRow({ docsRequired: true }).docs_required).toBe(true);
+    expect(toProjectRow({ docsRequired: false }).docs_required).toBe(false);
   });
 });

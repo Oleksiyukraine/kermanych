@@ -19,6 +19,15 @@ import {
   PR_CONVENTIONS_FALLBACK,
   COAUTHOR_DIRECTIVE,
   DOC_MAINTAIN_DIRECTIVE,
+  DOCS_POLICY_APPEND,
+  FRONTEND_HANDOFF_SKILL,
+  TASK_SPEC_SKILL,
+  docsCompletionPrompt,
+  docsGateFailures,
+  docsLayoutKind,
+  isMarkupPath,
+  type DocsGate,
+  type DocsGateFailure,
   QA_CHECKLIST_DIRECTIVE,
   buildQaChecklist,
   parseTaskActions,
@@ -83,9 +92,9 @@ type Live = {
   prRequested?: boolean;
   prOpened?: boolean;
   // The task artifacts this session has already attached to its card, by kind. An agent emits
-  // each via the shared kermanych-action mechanism (a QA checklist at «Створити ПР», a doc
-  // report from the librarian skill); onRpcEvent captures the FIRST valid block of each kind
-  // and applyTaskArtifact writes it. Live-only, so an api restart mid-flow simply re-captures.
+  // each via the shared kermanych-action mechanism (a QA checklist at «Створити ПР»);
+  // onRpcEvent captures the FIRST valid block of each kind and applyTaskArtifact writes it.
+  // Live-only, so an api restart mid-flow simply re-captures.
   captured?: Set<string>;
   // The operator asked, from a session already «На ревʼю», to land more work onto the open PR
   // (via «Закоміти»). Unlike `prRequested`, there is no URL to wait for — the PR exists — so
@@ -320,7 +329,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.events.next({ type: "project_removed", projectId: id });
   }
 
-  async updateProject(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string }): Promise<Project> {
+  async updateProject(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string }): Promise<Project> {
     if (patch.name !== undefined) {
       const name = patch.name.trim();
       if (!name) throw new Error("project name cannot be empty");
@@ -357,6 +366,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         apiCommand: c.apiCommand,
         carryFiles: c.carryFiles,
         docFolders: c.docFolders,
+        docsRequired: c.docsRequired,
         defaultBranch: c.defaultBranch,
         defaultModel: c.defaultModel,
         defaultEffort: c.defaultEffort,
@@ -478,6 +488,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           previewCommand: cloudProject.previewCommand,
           apiCommand: cloudProject.apiCommand,
           carryFiles: cloudProject.carryFiles,
+          docsRequired: cloudProject.docsRequired,
           defaultBranch: cloudProject.defaultBranch,
           defaultModel: cloudProject.defaultModel,
           defaultEffort: cloudProject.defaultEffort,
@@ -563,7 +574,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     });
     const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
     const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
-    const rpc = createRuntime(session.runtime ?? "omp", { cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.languageOpts() });
+    const rpc = createRuntime(session.runtime ?? "omp", { cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(project.id) });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await rpc.start();
@@ -692,12 +703,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return resolveRuntime(process.env.KERMANYCH_RUNTIME, this.registry.getAuthSession()?.agentRuntime);
   }
 
-  // The system-prompt append carrying the user's agent communication language, shaped for a
-  // spread into any createRuntime() opts. Empty object when no language is chosen, so the
-  // agent keeps its own default. Read fresh per launch: a preference change takes on the next
-  // spawn without a restart.
-  private languageOpts(): { appendSystemPrompt?: string } {
-    const append = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
+  // The system-prompt append for one spawn, shaped for a spread into any createRuntime() opts:
+  // the user's agent communication language, then — when the project has «Обовʼязкова
+  // документація» on — the documentation policy (DOCS_POLICY_APPEND). Every createRuntime site
+  // passes it, so the policy reaches chats, agents, discussions, reviews and resumes alike on
+  // both runtimes. Empty object when neither applies, so the agent keeps its own default. Read
+  // fresh per spawn: a preference or setting change takes on the next spawn without a restart.
+  private systemAppendOpts(projectId: string): { appendSystemPrompt?: string } {
+    const language = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
+    const docs = this.registry.listProjects().find((p) => p.id === projectId)?.docsRequired ? DOCS_POLICY_APPEND : undefined;
+    const append = [language, docs].filter(Boolean).join("\n\n");
     return append ? { appendSystemPrompt: append } : {};
   }
 
@@ -738,7 +753,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const cwd = worktree ? wtDir : project.localRepoPath;
     const configPath = await this.ompSkills(project.id, cwd, id);
     const extensionPath = await this.ompTriggers(project.id, cwd, id);
-    const rpc = createRuntime(session.runtime ?? "omp", { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.languageOpts() });
+    const rpc = createRuntime(session.runtime ?? "omp", { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(project.id) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await rpc.start();
@@ -818,7 +833,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, noTools: true, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.languageOpts() });
+    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, noTools: true, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
@@ -880,7 +895,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = createRuntime(child.runtime ?? "omp", { cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.languageOpts() });
+    const rpc = createRuntime(child.runtime ?? "omp", { cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
@@ -1114,7 +1129,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       }
     }
     // Task artifacts an agent attaches to its card via the shared kermanych-action mechanism —
-    // a QA checklist from a «Створити ПР» run, a documentation report from the librarian skill.
+    // a QA checklist from a «Створити ПР» run.
     // Captured off the assistant text of any task-born session (not just a PR flow), the FIRST
     // valid block of each kind winning, and written by applyTaskArtifact. Same tolerance as the
     // PR-URL scan above: the block may land in a later turn than the one that asked for it.
@@ -1553,10 +1568,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // session so that, once a PR URL surfaces in its output, its next `agent_end` settles it at
   // `in_review` instead of `done` (onRpcEvent). The flag survives across turns, so a PR flow
   // that stops to ask the operator for a token still lands on review when it finally opens.
-  async createPullRequest(id: string): Promise<{ ok: true }> {
+  async createPullRequest(id: string, opts: { handoff?: boolean } = {}): Promise<{ ok: true }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     if (s.kind !== "agent") throw new Error(`only agent sessions can open a pull request (this is a ${s.kind})`);
+    await this.assertDocsGate(id, opts.handoff === true);
     const g = this.project(s.projectId);
 
     const baseHint = (s.baseBranch || g.defaultBranch || "").trim();
@@ -1614,10 +1630,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // session's feed, the branch/worktree stay intact. Unlike it, this arms `reviewPending` so
   // the turn settles back at `in_review` (the PR is still the outcome), and there is no PR URL
   // to wait for.
-  async commitChanges(id: string): Promise<{ ok: true }> {
+  async commitChanges(id: string, opts: { handoff?: boolean } = {}): Promise<{ ok: true }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     if (s.kind !== "agent") throw new Error(`only agent sessions can commit and push (this is a ${s.kind})`);
+    await this.assertDocsGate(id, opts.handoff === true);
     const g = this.project(s.projectId);
 
     const { template, block } = await this.agentPrompt(s.projectId, "commit", s.worktreePath || g.localRepoPath);
@@ -1728,9 +1745,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Preview of what "finish" will do: the base the branch will be PR'd against, how many
-  // commits the branch carries, and whether the worktree has uncommitted work that would be
-  // auto-committed before it is retired.
-  async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[]; files: ChangedFile[] }> {
+  // commits the branch carries, whether the worktree has uncommitted work that would be
+  // auto-committed before it is retired, and the documentation gate over the same file list
+  // (`handoff` = the finish sheet's «Хендоф для фронта» checkbox).
+  async finishInfo(id: string, handoff = false): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[]; files: ChangedFile[]; docsGate: DocsGate }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
@@ -1744,7 +1762,71 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const dirty = await this.worktree.hasUncommitted(dir);
     const conflicts = await this.worktree.unmergedFiles(dir);
     const files = await this.worktree.changedFiles(dir, target);
-    return { branch: s.branch, target, ahead, dirty, conflicts, files };
+    const docsGate = await this.evaluateDocsGate(g, dir, files, handoff);
+    return { branch: s.branch, target, ahead, dirty, conflicts, files, docsGate };
+  }
+
+  // «Обовʼязкова документація» (docs/specs/2026-09-28-mandatory-documentation-design.md §3.5):
+  // whether this session's branch carries the documentation its project requires. Same
+  // directory and fork point as finishInfo, so the sheet's file list and its gate agree.
+  // With the project setting off nothing is read and the gate is `required: false`.
+  async docsGate(id: string, handoff = false): Promise<DocsGate> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    if (!this.project(s.projectId).docsRequired) return { required: false, failures: [] };
+    const g = this.boundProject(s.projectId);
+    if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
+    const dir = s.worktreePath || g.localRepoPath;
+    const target = s.baseBranch || (s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : "");
+    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, target), handoff);
+  }
+
+  // The pure gate (core docsGateFailures) over an already-listed change set. Only the changed
+  // task documents are read — for their `## Documentation impact` declaration; a deleted or
+  // unreadable one reads as empty, so it can never declare `None`.
+  private async evaluateDocsGate(project: Project, dir: string, files: readonly ChangedFile[], handoff: boolean): Promise<DocsGate> {
+    if (!project.docsRequired) return { required: false, failures: [] };
+    const paths = files.map((f) => f.path);
+    const specBodies = await Promise.all(
+      paths
+        .filter((p) => docsLayoutKind(p) === "spec" && isMarkupPath(p))
+        .map((p) => this.worktree.readFileContent(dir, p).then((f) => f.content, () => "")),
+    );
+    return { required: true, failures: docsGateFailures({ paths, specBodies, handoff }) };
+  }
+
+  // PR, commit-to-PR and finish refuse while the gate fails — right after each action's own
+  // kind checks, before any side effect. The message prefix is the contract the ui matches.
+  private async assertDocsGate(id: string, handoff: boolean): Promise<void> {
+    const { failures } = await this.docsGate(id, handoff);
+    if (failures.length) throw new Error(`documentation required: ${failures.join(", ")} — use «Доповнити документацію»`);
+  }
+
+  // «Доповнити документацію»: one Kermanych prompt asking the session's own agent for exactly
+  // the missing documents, with the resolved `task-spec` / `frontend-handoff` skill bodies
+  // inlined (so a project or repository override wins). sendAsKermanych revives a dormant
+  // session. `sent: false` means nothing was missing and no prompt went out.
+  async completeDocs(id: string, opts: { handoff?: boolean } = {}): Promise<{ sent: boolean; failures: DocsGateFailure[] }> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    if (s.kind !== "agent") throw new Error(`only agent sessions can complete documentation (this is a ${s.kind})`);
+    const { failures } = await this.docsGate(id, opts.handoff === true);
+    if (!failures.length) return { sent: false, failures: [] };
+    const names = [
+      ...(failures.includes("task-spec") ? [TASK_SPEC_SKILL] : []),
+      ...(failures.includes("handoff") ? [FRONTEND_HANDOFF_SKILL] : []),
+    ];
+    let block = "";
+    if (names.length) {
+      // Degrades like agentPrompt: the failing items alone are still a complete ask.
+      try {
+        block = (await this.skills.assignedForNames(this.aiScope(s.projectId), names, s.worktreePath || this.project(s.projectId).localRepoPath)).block;
+      } catch (err) {
+        console.warn(`[supervisor] no documentation skills for ${id}: ${(err as Error).message}`);
+      }
+    }
+    await this.sendAsKermanych(id, docsCompletionPrompt(failures) + block, "prompt");
+    return { sent: true, failures };
   }
 
   // The Зміни tab opens one of the files `finishInfo` listed. Same worktree and same fork
@@ -1784,13 +1866,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // merged anywhere — code leaves Kermanych through a pull request only, so the BRANCH is
   // kept: it is what the PR points at, and reopening the session continues on it. The row
   // stays as `merged` history.
-  async finishSession(id: string): Promise<{ finished: true; branch: string }> {
+  async finishSession(id: string, opts: { handoff?: boolean } = {}): Promise<{ finished: true; branch: string }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
     if (s.kind !== "agent")
       throw new Error(`${s.kind} branches can't be finished — merge or discard instead`);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree");
+    await this.assertDocsGate(id, opts.handoff === true);
 
     const dir = s.worktreePath || g.localRepoPath;
     const base = s.worktree ? "" : (s.baseBranch ?? "");
@@ -2049,7 +2132,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // read per backend, so both re-render their prior transcript on wake.
     const runtimeKind = s.runtime ?? "omp";
     const resumeHandle = runtimeKind === "claude-code" ? s.ompSessionId : s.ompSessionFile;
-    const rpc = createRuntime(runtimeKind, { cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.languageOpts() });
+    const rpc = createRuntime(runtimeKind, { cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await rpc.start();

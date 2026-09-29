@@ -32,6 +32,13 @@ export function isDocPath(path: string): boolean {
   return DOC_EXT_RE.test(base) || DOC_NAME_RE.test(base) || DOC_DIR_RE.test(clean);
 }
 
+// A markup-family prose file (Markdown, reStructuredText, AsciiDoc) — the only kind of file
+// that can BE a task document or handoff; the doc-policy gate needs this narrower check
+// because isDocPath also accepts any file sitting under a docs/ directory.
+export function isMarkupPath(path: string): boolean {
+  return !!path && DOC_EXT_RE.test(barePath(path));
+}
+
 // An image the docs preview renders inline (served by the api's docs/raw route with a matching
 // image Content-Type) instead of reading it as text — SVG included, which is shown as the
 // picture it draws, never as its XML source.

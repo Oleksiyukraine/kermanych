@@ -492,6 +492,44 @@ phases, interactive prompts and the provider-plan spend under the account name (
 THAT a task waits for input, and only the person running it can answer, on their own
 machine.
 
+### Mandatory documentation
+
+A project can require that every task is documented in its repository. The switch is
+«Обовʼязкова документація» in the project's Git settings. It is off by default, because
+turning it on blocks pull requests for the whole project. Once it is on, every session of the
+project (chats, agents, discussions, reviews, resumes) is told where documentation goes,
+whichever runtime it uses, and Kermanych checks for it before letting work leave the branch.
+
+The layout is fixed and repository-relative. These folders override any skill or plugin
+default, superpowers' `docs/superpowers/specs|plans` included:
+
+| Folder | Holds |
+| --- | --- |
+| `docs/specs/YYYY-MM-DD-<topic>.md` | the task document, required for every task that changes the repository |
+| `docs/plans/YYYY-MM-DD-<topic>.md` | an implementation plan, when the work needs one |
+| `docs/schemas/` | how the service works: architecture, flows, data models, API contracts |
+| `docs/handoffs/YYYY-MM-DD-<topic>.md` | a frontend handoff, when the finish sheet asks for one |
+
+«Створити ПР», «Закоміти» and «Завершити» are refused (by the API, not just the UI) until:
+
+- the branch changes a task document under `docs/specs/`;
+- if code changed, the living documentation changed too (`docs/schemas/` or the project's
+  other docs). The one escape hatch is explicit: the task document has a
+  `## Documentation impact` section whose first line starts with `None`, followed by the
+  reason. The reviewer sees that reason in the diff;
+- if «Хендоф для фронта» is ticked, the branch changes a document under `docs/handoffs/`.
+
+The finish sheet shows «Хендоф для фронта», which is on each time the sheet opens, and lists
+whatever is still missing in plain language. «Доповнити документацію» sends the agent one
+prompt naming exactly the missing documents and closes the sheet. You watch the agent write
+and commit them in the transcript, and it pushes them if the PR is already open. Changed
+documents appear in the session's «Документація» tab tagged специфікація / план / схема /
+хендоф, which is where you find the handoff.
+
+The instructions for the task document and the handoff are the `task-spec` and
+`frontend-handoff` skills. Like any default skill, a project, workspace or repository can
+override them by name.
+
 ### Offline behaviour
 
 Local work never waits for the cloud:

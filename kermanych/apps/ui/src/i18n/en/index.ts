@@ -274,8 +274,14 @@ export const en: MessageSchema = {
     },
     docs: {
       usedTitle: 'Documentation used',
-      usedHint: 'Documentation files the agent read while working. When the «Librarian» produced a report, this list comes from it. The path is shown for reference only and cannot be opened from here.',
+      usedHint: 'Documentation files the agent read while working — collected from its read calls in the transcript. The path is shown for reference only and cannot be opened from here.',
       changedTitle: 'Created or updated',
+      kind: {
+        spec: 'spec',
+        plan: 'plan',
+        schema: 'schema',
+        handoff: 'handoff',
+      },
       empty: 'This session neither read nor changed any documentation.',
     },
     qa: {
@@ -377,6 +383,15 @@ export const en: MessageSchema = {
       createPr: 'Create PR',
       commit: 'Commit',
       action: 'Finish',
+      handoff: 'Frontend handoff',
+      docsMissing: 'This project requires documentation, and some is missing:',
+      docsFailure: {
+        taskSpec: 'no task document in docs/specs',
+        docsImpact: 'code changed, but neither docs/schemas nor other documentation was updated, and the task document does not explain under «## Documentation impact» why none was needed',
+        handoff: 'no frontend handoff in docs/handoffs',
+      },
+      docsBlocked: 'PR, commit and finish are blocked until the documentation is in place.',
+      completeDocs: 'Complete the documentation',
     },
     notify: {
       reopened: 'Session “{name}” reopened — the worktree is up, you can continue',
@@ -387,6 +402,8 @@ export const en: MessageSchema = {
       kindBranch: 'the branch',
       prCreating: 'Creating a PR for “{name}” — tracking the branch in chat',
       committing: 'Updating the PR for “{name}” — committing and pushing, tracking the branch in chat',
+      docsCompleting: 'The agent is completing the documentation for “{name}” — tracking the branch in chat',
+      docsComplete: 'The documentation for “{name}” is already in place',
       deleteCard: 'Delete task “{title}”?',
       deleteStranded: 'Delete local task “{name}”?',
     },
@@ -858,6 +875,8 @@ export const en: MessageSchema = {
       remove: 'Remove {folder}',
       bindHint: 'Bind a local repository to preview its documentation.',
       note: 'Paths relative to the repository root. The preview shows files as-is.',
+      required: 'Mandatory documentation',
+      requiredHint: 'Every task is documented in the repository: docs/specs for the task document, docs/plans for a plan, docs/schemas for how the service works, docs/handoffs for a frontend handoff. «Create PR», «Commit» and «Finish» are blocked until the documentation is in place.',
     },
     commands: {
       preview: 'Preview command (web)',

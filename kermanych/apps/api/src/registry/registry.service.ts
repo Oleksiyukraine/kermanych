@@ -153,6 +153,13 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: «Обовʼязкова документація» arrived after the initial schema
+    // (mirrors cloud projects.docs_required). 0/1, default off like the cloud column.
+    try {
+      this.db.exec(`ALTER TABLE projects ADD COLUMN docs_required INTEGER NOT NULL DEFAULT 0`);
+    } catch {
+      /* column already exists */
+    }
     // Additive migration: backlog tasks persist their launch config (branch prefix + model)
     // so "Start" can spawn them later with the same settings the operator chose.
     for (const col of ["model", "prefix", "platform"]) {
@@ -273,12 +280,12 @@ export class RegistryService {
   listProjects(): Project[] {
     const rows = this.db
       .prepare(
-        `SELECT id, name, local_repo_path as localRepoPath, workspace_id as workspaceId, color, preview_command as previewCommand, api_command as apiCommand, carry_files as carryFiles, doc_folders as docFolders, default_branch as defaultBranch, default_model as defaultModel, default_effort as defaultEffort, conventions, created_at as createdAt FROM projects ORDER BY created_at`,
+        `SELECT id, name, local_repo_path as localRepoPath, workspace_id as workspaceId, color, preview_command as previewCommand, api_command as apiCommand, carry_files as carryFiles, doc_folders as docFolders, docs_required as docsRequired, default_branch as defaultBranch, default_model as defaultModel, default_effort as defaultEffort, conventions, created_at as createdAt FROM projects ORDER BY created_at`,
       )
-      .all() as (Omit<Project, "carryFiles" | "docFolders"> & { carryFiles: string; docFolders: string })[];
+      .all() as (Omit<Project, "carryFiles" | "docFolders" | "docsRequired"> & { carryFiles: string; docFolders: string; docsRequired: number })[];
     // An unbound project stores NULL/"" for its path; hand callers a plain "" so a
     // `!project.localRepoPath` check is all the launch path ever needs.
-    return rows.map((r) => ({ ...r, localRepoPath: r.localRepoPath ?? "", workspaceId: r.workspaceId ?? undefined, carryFiles: JSON.parse(r.carryFiles) as string[], docFolders: JSON.parse(r.docFolders) as string[], color: r.color ?? undefined, defaultBranch: r.defaultBranch ?? undefined, defaultModel: r.defaultModel ?? undefined, defaultEffort: r.defaultEffort ?? undefined, conventions: r.conventions ?? undefined }));
+    return rows.map((r) => ({ ...r, localRepoPath: r.localRepoPath ?? "", workspaceId: r.workspaceId ?? undefined, carryFiles: JSON.parse(r.carryFiles) as string[], docFolders: JSON.parse(r.docFolders) as string[], docsRequired: r.docsRequired === 1, color: r.color ?? undefined, defaultBranch: r.defaultBranch ?? undefined, defaultModel: r.defaultModel ?? undefined, defaultEffort: r.defaultEffort ?? undefined, conventions: r.conventions ?? undefined }));
   }
 
   // Local project rows MIRROR cloud projects, so the id always comes from the caller —
@@ -290,12 +297,13 @@ export class RegistryService {
       localRepoPath: p.localRepoPath ?? "",
       carryFiles: p.carryFiles ?? [".env"],
       docFolders: p.docFolders ?? [],
+      docsRequired: p.docsRequired ?? false,
       createdAt: p.createdAt ?? new Date().toISOString(),
     };
     this.db
       .prepare(
-        `INSERT INTO projects (id, name, local_repo_path, workspace_id, color, preview_command, api_command, carry_files, doc_folders, default_branch, default_model, default_effort, conventions, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `INSERT INTO projects (id, name, local_repo_path, workspace_id, color, preview_command, api_command, carry_files, doc_folders, docs_required, default_branch, default_model, default_effort, conventions, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name,
            local_repo_path = CASE WHEN excluded.local_repo_path = '' THEN projects.local_repo_path ELSE excluded.local_repo_path END,
@@ -305,24 +313,25 @@ export class RegistryService {
            api_command = excluded.api_command,
            carry_files = excluded.carry_files,
            doc_folders = excluded.doc_folders,
+           docs_required = excluded.docs_required,
            default_branch = excluded.default_branch,
            default_model = excluded.default_model,
            default_effort = excluded.default_effort,
            conventions = excluded.conventions`,
       )
-      .run(row.id, row.name, row.localRepoPath, row.workspaceId || null, row.color || null, row.previewCommand ?? null, row.apiCommand ?? null, JSON.stringify(row.carryFiles), JSON.stringify(row.docFolders), row.defaultBranch || null, row.defaultModel || null, row.defaultEffort || null, row.conventions || null, row.createdAt);
+      .run(row.id, row.name, row.localRepoPath, row.workspaceId || null, row.color || null, row.previewCommand ?? null, row.apiCommand ?? null, JSON.stringify(row.carryFiles), JSON.stringify(row.docFolders), row.docsRequired ? 1 : 0, row.defaultBranch || null, row.defaultModel || null, row.defaultEffort || null, row.conventions || null, row.createdAt);
     // Re-read: the CASE may have kept a binding (and the original created_at) the caller
     // never sent, so the in-memory `row` is not the truth.
     return this.listProjects().find((x) => x.id === row.id)!;
   }
 
-  patchProject(id: string, patch: { name?: string; localRepoPath?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string }): Project {
+  patchProject(id: string, patch: { name?: string; localRepoPath?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string }): Project {
     const cur = this.listProjects().find((p) => p.id === id);
     if (!cur) throw new Error("project not found");
-    const next = { ...cur, ...patch, color: (patch.color ?? cur.color) || undefined, defaultBranch: (patch.defaultBranch ?? cur.defaultBranch) || undefined, defaultModel: (patch.defaultModel ?? cur.defaultModel) || undefined, defaultEffort: (patch.defaultEffort ?? cur.defaultEffort) || undefined, conventions: (patch.conventions ?? cur.conventions) || undefined };
+    const next = { ...cur, ...patch, color: (patch.color ?? cur.color) || undefined, docsRequired: patch.docsRequired ?? cur.docsRequired, defaultBranch: (patch.defaultBranch ?? cur.defaultBranch) || undefined, defaultModel: (patch.defaultModel ?? cur.defaultModel) || undefined, defaultEffort: (patch.defaultEffort ?? cur.defaultEffort) || undefined, conventions: (patch.conventions ?? cur.conventions) || undefined };
     this.db
-      .prepare(`UPDATE projects SET name=?, local_repo_path=?, color=?, preview_command=?, api_command=?, carry_files=?, doc_folders=?, default_branch=?, default_model=?, default_effort=?, conventions=? WHERE id=?`)
-      .run(next.name, next.localRepoPath, next.color || null, next.previewCommand ?? null, next.apiCommand ?? null, JSON.stringify(next.carryFiles ?? [".env"]), JSON.stringify(next.docFolders ?? []), next.defaultBranch || null, next.defaultModel || null, next.defaultEffort || null, next.conventions || null, id);
+      .prepare(`UPDATE projects SET name=?, local_repo_path=?, color=?, preview_command=?, api_command=?, carry_files=?, doc_folders=?, docs_required=?, default_branch=?, default_model=?, default_effort=?, conventions=? WHERE id=?`)
+      .run(next.name, next.localRepoPath, next.color || null, next.previewCommand ?? null, next.apiCommand ?? null, JSON.stringify(next.carryFiles ?? [".env"]), JSON.stringify(next.docFolders ?? []), next.docsRequired ? 1 : 0, next.defaultBranch || null, next.defaultModel || null, next.defaultEffort || null, next.conventions || null, id);
     return next;
   }
 

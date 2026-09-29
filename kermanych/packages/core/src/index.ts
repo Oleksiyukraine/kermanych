@@ -78,7 +78,21 @@ export {
   type SkillDef,
   type SkillView,
 } from "./skills";
-export { isDocPath, isDocImagePath, docsRead } from "./docs";
+export { isDocPath, isDocImagePath, isMarkupPath, docsRead } from "./docs";
+export {
+  DOCS_LAYOUT,
+  DOCS_GATE_FAILURES,
+  DOCS_POLICY_APPEND,
+  TASK_SPEC_SKILL,
+  FRONTEND_HANDOFF_SKILL,
+  docsLayoutKind,
+  docsGateFailures,
+  docsCompletionPrompt,
+  type DocsLayoutKind,
+  type DocsGateFailure,
+  type DocsGateInput,
+  type DocsGate,
+} from "./doc-policy";
 export { chunkMarkdown, type DocChunk } from "./doc-chunk";
 export {
   DEFAULT_HELPERS,

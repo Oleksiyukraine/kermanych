@@ -23,6 +23,7 @@ function proj(id: string, workspaceId: string, name = id): CloudProject {
     carryFiles: ['.env'],
     envKeys: [],
     docFolders: [],
+    docsRequired: false,
     createdAt: '2026-01-01T00:00:00.000Z',
   };
 }

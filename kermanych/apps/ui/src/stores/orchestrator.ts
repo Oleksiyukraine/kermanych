@@ -219,7 +219,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // Actions delegating to the REST api. There is deliberately no createProject/
   // deleteProject: projects are born and die in the cloud (stores/projects.ts), and the
   // local rows follow through syncProjects.
-  function patchProject(id: string, body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; defaultBranch?: string; conventions?: string }) {
+  function patchProject(id: string, body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; defaultBranch?: string; conventions?: string }) {
     return api.patchProject(id, body);
   }
 
@@ -346,8 +346,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.saveEnv(id, patch);
   }
 
-  function finishInfo(id: string) {
-    return api.finishInfo(id);
+  function finishInfo(id: string, handoff = false) {
+    return api.finishInfo(id, handoff);
   }
 
   function fileDiff(id: string, path: string) {
@@ -362,8 +362,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.sessionFile(id, path);
   }
 
-  async function finishSession(id: string) {
-    const res = await api.finish(id);
+  async function finishSession(id: string, handoff = false) {
+    const res = await api.finish(id, { handoff });
     // preview is stopped server-side on finish; drop its local url too.
     if (previews.value[id]) {
       const next = { ...previews.value };
@@ -373,12 +373,16 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return res;
   }
 
-  function createPr(id: string) {
-    return api.createPr(id);
+  function createPr(id: string, handoff = false) {
+    return api.createPr(id, { handoff });
   }
 
-  function commitChanges(id: string) {
-    return api.commitChanges(id);
+  function commitChanges(id: string, handoff = false) {
+    return api.commitChanges(id, { handoff });
+  }
+
+  function completeDocs(id: string, handoff: boolean) {
+    return api.completeDocs(id, handoff);
   }
 
   // Minimal transient notifications. notify() pushes a toast that auto-dismisses;
@@ -470,6 +474,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     finishSession,
     createPr,
     commitChanges,
+    completeDocs,
     archiveSession,
     unarchiveSession,
     renameSession,

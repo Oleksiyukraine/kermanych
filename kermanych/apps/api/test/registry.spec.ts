@@ -100,6 +100,19 @@ test("project docFolders is reset from the incoming row on a bare upsert, mirror
   expect(r.listProjects().find((p) => p.id === "p1")!.docFolders).toEqual([]);
 });
 
+// «Обовʼязкова документація» is off unless set; a patch that does not name it keeps it.
+test("project docsRequired defaults to false, round-trips, and survives an unrelated patch", () => {
+  const r = new RegistryService(":memory:");
+  expect(r.upsertProject({ id: "p1", name: "P" }).docsRequired).toBe(false);
+
+  expect(r.patchProject("p1", { docsRequired: true }).docsRequired).toBe(true);
+  expect(r.patchProject("p1", { name: "Q" }).docsRequired).toBe(true);
+  expect(r.listProjects().find((p) => p.id === "p1")!.docsRequired).toBe(true);
+
+  r.upsertProject({ id: "p1", name: "Q", docsRequired: false });
+  expect(r.listProjects().find((p) => p.id === "p1")!.docsRequired).toBe(false);
+});
+
 test("patchProject renames the project and round-trips", () => {
   const r = new RegistryService(":memory:");
   const g = r.upsertProject({ id: "p-app", name: "old", localRepoPath: "/tmp/app" });
