@@ -548,7 +548,7 @@ machine.
 ### Mandatory documentation
 
 A project can require that every task is documented in its repository. The switch is
-«Обовʼязкова документація» in the project's Git settings. It is off by default, because
+«Обовʼязкова документація» in the project's «Основне» settings. It is off by default, because
 turning it on blocks pull requests for the whole project. Once it is on, every session of the
 project (chats, agents, discussions, reviews, resumes) is told where documentation goes,
 whichever runtime it uses, and Kermanych checks for it before letting work leave the branch.
