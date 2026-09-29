@@ -3,7 +3,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { LineSplitter, ChunkReassembler } from "@kermanych/core";
 import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, SubagentSubscriptionLevel, SubagentInfo, SubagentMessagesPage } from "@kermanych/core";
-import type { AgentRuntime, RpcStateData } from "../runtime/agent-runtime";
+import type { AgentRuntime, RpcStateData, RuntimeLaunchOpts } from "../runtime/agent-runtime";
+import { MCP_TOKEN_ENV, MCP_URL_ENV, ompMcpBridgePath } from "../runtime/omp-mcp-bridge";
 
 interface RpcResponseFrame {
   type: "response"; id?: string; command: string; success: boolean; data?: unknown; error?: string;
@@ -38,7 +39,7 @@ export class RpcSession implements AgentRuntime {
   // otherwise liveOrResume's fast path hands a caller the dying child and the write to its
   // already-ended stdin vanishes, the exact silent loss the resume-on-dead contract prevents.
   private stopping = false;
-  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; appendSystemPrompt?: string; commandTimeoutMs?: number; configPath?: string; extensionPath?: string; subagentSubscription?: SubagentSubscriptionLevel }) {}
+  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; appendSystemPrompt?: string; commandTimeoutMs?: number; configPath?: string; extensionPath?: string; subagentSubscription?: SubagentSubscriptionLevel; mcp?: RuntimeLaunchOpts["mcp"] }) {}
 
   onEvent(cb: (e: RpcEvent) => void) { this.eventCbs.push(cb); }
   onExit(cb: (code: number | null, reason: string) => void) { this.exitCbs.push(cb); }
@@ -64,7 +65,14 @@ export class RpcSession implements AgentRuntime {
     if (this.opts.noTools) argv.push("--no-tools");
     if (this.opts.tools?.length) argv.push("--tools", this.opts.tools.join(","));
     if (this.opts.ompPath) argv[0] = this.opts.ompPath;
-    this.proc = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+    // The MCP server rides a bridge extension (omp reads MCP only from config files); its
+    // address and bearer go in the child's environment so the secret never touches disk.
+    let env: NodeJS.ProcessEnv | undefined;
+    if (this.opts.mcp) {
+      argv.push("-e", await ompMcpBridgePath());
+      env = { ...process.env, [MCP_URL_ENV]: this.opts.mcp.url, [MCP_TOKEN_ENV]: this.opts.mcp.token };
+    }
+    this.proc = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"], ...(env ? { env } : {}) });
     // Persistent decoders buffer partial multibyte (UTF-8) sequences split across chunk boundaries.
     const outDec = new StringDecoder("utf8");
     const errDec = new StringDecoder("utf8");

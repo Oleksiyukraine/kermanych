@@ -7,7 +7,7 @@
 //
 // A workspace may connect several boards; the store keeps them all in `integrations` and
 // tracks ONE `active` board — the switcher's selection, persisted per workspace. Everything
-// derived (columns/issues/children/assignable/token/realtime/tick) belongs to the active
+// derived (columns/issues/children/token/realtime/tick) belongs to the active
 // board and is rebuilt when the selection changes, so a second board behaves exactly like
 // the first did when it was the only one.
 //
@@ -28,7 +28,7 @@ import {
   listJiraWorklogsBetween,
   subscribeJiraIssues,
 } from '@kermanych/cloud';
-import { api, type JiraAssignableUser } from '../lib/api';
+import { api } from '../lib/api';
 import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { IS_PREVIEW } from '../lib/preview';
@@ -75,9 +75,6 @@ export const useJira = defineStore('jira', () => {
   const children = ref<Record<string, JiraIssueChildren>>({});
   const tokenPresent = ref(false);
   const tokenEmail = ref<string | undefined>(undefined);
-  // Jira's own assignable users for the active board's project — the assignee picker's list,
-  // and the ONLY set an issue on that board may be assigned from.
-  const assignable = ref<JiraAssignableUser[]>([]);
   const loading = ref(false);
   const loadError = ref<string | null>(null);
   const syncing = ref(false);
@@ -149,10 +146,6 @@ export const useJira = defineStore('jira', () => {
       return;
     }
     const mine = ++generation;
-    // The cached assignee list belongs to the board this probe is about to replace, so it is
-    // dropped here: a Jira roster held over from the previous workspace would be printed into
-    // the next workspace's prompt as its own.
-    assignable.value = [];
     try {
       const rows = await listJiraIntegrations(auth.client, ws);
       if (mine !== generation) return;
@@ -197,41 +190,16 @@ export const useJira = defineStore('jira', () => {
         /* private mode: the selection is just not remembered across reloads */
       }
     }
-    // The previous board's cards, columns, children and roster do not belong to this one.
+    // The previous board's cards, columns and children do not belong to this one.
     generation++;
     columns.value = [];
     issues.value = [];
     children.value = {};
-    assignable.value = [];
     loadError.value = null;
     await refreshTokenStatus();
     if (sessionOpen) {
       teardownFeed();
       await startFeed();
-    }
-  }
-
-  // Jira's assignable users for the active board's project, cached after the first answer. A
-  // Jira call, so it is NOT part of `probe`: the board tab only needs to know whether Jira
-  // exists, while the people who may be assigned matter only to something about to assign one.
-  //
-  // Never throws. An unreadable list costs the caller the ability to name an assignee, not its
-  // whole turn — and it degrades to the empty list, which every reader states as «not
-  // available» rather than as «nobody is assignable». Empty is therefore not cached either: a
-  // turn that failed on a dropped connection retries on the next one, which is the whole
-  // difference between a transient failure and a board with nobody on it.
-  async function loadAssignable(): Promise<JiraAssignableUser[]> {
-    const row = active.value;
-    if (!row || !tokenPresent.value) return [];
-    if (assignable.value.length) return assignable.value;
-    const mine = generation;
-    try {
-      const users = await api.jiraAssignableUsers(row.id, '');
-      if (mine !== generation) return [];
-      assignable.value = users;
-      return users;
-    } catch {
-      return [];
     }
   }
 
@@ -403,12 +371,10 @@ export const useJira = defineStore('jira', () => {
     children,
     tokenPresent,
     tokenEmail,
-    assignable,
     loading,
     loadError,
     syncing,
     probe,
-    loadAssignable,
     loadBoard,
     fetchWorklogs,
     open,

@@ -574,14 +574,14 @@ field docked to the foot of the page.
 
 That field is a real assistant, and it is deliberately narrow:
 
-- **It only reads code, and it writes in exactly four places.** Its tools are the read-only
-  subset (`read`, `grep`, `glob`) — it can look at your repositories but it cannot edit a
-  file, create a branch or start a session. The Менеджмент sections it can WRITE are the ones
-  the section table marks `read_write`: the Risk Registry, Release Notes, and the Home
-  overview — the last through create, update and delete on its Action List tile (below).
+- **It only reads code, and it writes in exactly five places.** Its file tools are the
+  read-only subset (`read`, `grep`, `glob`) — it can look at your repositories but it cannot
+  edit a file, create a branch or start a session. The Менеджмент sections it can WRITE are
+  the ones the section table marks `read_write`: the Risk Registry, Release Notes, and the
+  Home overview — the last through create, update and delete on its Action List tile (below).
   Everywhere else in Менеджмент it reads, explains and refuses, and says which it is doing.
   The fourth write target is not a section at all — it is «Дошка», where it files tickets
-  (below).
+  (below) — and the fifth is Jira itself, through its live Jira tools (below).
 - **It keeps the risk register.** Ask it to file a risk and it emits a `risk.create`
   action carrying that schema's own vocabulary — threat or opportunity, one of the
   fourteen categories, cause·event·consequence, 1–5 probability × impact, a PMI
@@ -644,13 +644,12 @@ That field is a real assistant, and it is deliberately narrow:
   тікет» (or «зміни KRM-101») is never answered with a refusal. What makes it worth having:
   - **The default board is the workspace's own.** «Задачі» is the board that always exists,
     needs no integration and no personal token, so a request that does not name a board lands
-    there (`ticket.create`). The mirrored Jira boards are opt-in BY NAME: only «створи в Jira…»
-    routes to one (`jira.ticket.create`), and when the workspace has several the request names
-    which board (or the assistant asks); a workspace with one Jira board needs no naming. Naming
-    Jira in a workspace that has none — or on a machine with no personal Jira token — is refused
-    with the reason, and NOT quietly filed on
-    the native board instead: you named a board, and a card on the other one is a card you
-    will not find where you looked.
+    there (`ticket.create`). Jira is opt-in BY NAME: only «створи в Jira…» routes there (the
+    `jira_create_issue` tool), and when the workspace has several boards the request names the
+    project or board (or the assistant asks); a workspace with one Jira board needs no naming.
+    Naming Jira in a workspace that has none — or on a machine with no personal Jira token — is
+    refused with the reason, and NOT quietly filed on the native board instead: you named a
+    board, and a card on the other one is a card you will not find where you looked.
   - **The ticket is written as a project manager writes one, and the app owns its shape.**
     The action carries five named slots — a business context, an optional user flow,
     acceptance criteria, an optional out-of-scope list, and the title — and
@@ -674,62 +673,62 @@ That field is a real assistant, and it is deliberately narrow:
     decide — the scope, an edge case, the assignee, which project — the assistant emits
     `ticket.questions` instead: the chat prints the numbered questions and states that the
     ticket was NOT created. Answer in the next message and it files the ticket; do not answer
-    and there is no ticket. Belt and braces: a ticket whose text still contains «TBD», «to be
-    decided», «needs clarification», «at the developer's discretion» — or their Ukrainian
+    and there is no ticket. Belt and braces: a NEW ticket whose text still contains «TBD», «to
+    be decided», «needs clarification», «at the developer's discretion» — or their Ukrainian
     counterparts, for the tickets you asked in Ukrainian — a `<placeholder>`, a code fence or
-    an acceptance criterion phrased as a question is refused in your browser with the
-    offending fragment quoted back.
-  - **Each board has its own people, and neither list is guessed.** They are not the same set
-    and the assistant is shown both. For the workspace's own board, `tasks.assignee_id` is a
-    profile id, so every turn carries the workspace roster by the same name the app shows you
-    and the browser matches the name back to that id. For Jira the roster has no say at all: a
-    Jira assignee is an Atlassian account, so every turn carries **Jira's own assignable
-    users** — the same list the ticket dialog's picker offers — and someone with a Jira seat
-    and no Kermanych account is assigned there exactly as you would assign them by hand. A
-    name that matches nobody on the board it was named for refuses that ticket and lists who
-    can be assigned, rather than filing a card into nobody's queue.
-  - **A file you attached can ride onto the Jira card.** The chat's composer takes images and
-    documents (📎, paste or drop); images reach the model natively, documents land in the
-    conversation's temp directory and are read with the read tool. Say «створи тікет у Jira і
-    прикріпи це зображення» and the file is uploaded onto the issue right after it is created,
-    under your own Jira token, and the chat reports each file by name on its own line. Names
-    are the whole vocabulary: the assistant may only name files YOU attached to this
-    conversation — including ones from earlier messages, which is what makes «прикріпи те, що
-    я скидав» work across a `ticket.questions` round trip — and the bytes always come from the
-    browser's own copy, never from the model. A name nobody attached is refused per file, and
-    the ticket that already exists survives it. The workspace's own board has no attachments
-    at all, so the same request there files the ticket and says the file stayed in the chat —
-    it is not quietly re-routed to Jira, because you named the board.
-  - **Several tickets in one request, as a sequence if you want one.** «Розбий це на тікети»,
-    «створи п'ять тікетів на …» or «епік і історії під ним у Jira» files every ticket in one
-    reply — one action per ticket, run in the order the work should happen, each held to the
-    same rules as a single ticket. On Jira a sequence can be a hierarchy: the parent carries a
-    reply-local label (`ref`) and each child names it (`parentRef`), and the app substitutes
-    the key Jira minted for the parent, which nobody knew when the reply was written. A child
-    whose parent was not created is refused with the reason rather than filed parentless, and
-    an open question about any ticket of the series holds back the whole series.
-  - **It edits existing Jira tickets.** «Переведи KRM-101 у Done», «перепиши тікет про
-    експорт інвойсів», «признач KRM-88 на Марину і постав дедлайн 10 жовтня» emit a
-    `jira.ticket.update` naming the issue by key and only what changes: a full rewrite of the
-    ticket (same five slots as a new one), a rename, type, priority, labels,
-    assignee (or unassign), status, start/due dates, original estimate, parent, and files to
-    attach. The open-question refusal above applies to NEW tickets only: an existing issue
-    whose text already says «unclear», «TBD» or asks a question can still be rewritten or
-    renamed — the edit keeps that text or drops it once you have answered, and is never
-    swapped for a `ticket.questions` round trip. Status is applied as the workflow transition
-    that lands there; a status the workflow cannot reach from where the issue stands is
-    refused with the reachable ones listed. Everything the edit names is resolved before
-    anything is written, so a refusal means nothing changed. Written under your own Jira
-    token, like every other Jira write; cards on the workspace's own board have no edit verb
-    here — that stays in the card.
-  - **It can look through the Jira boards.** Every turn the browser sends each connected
-    board's mirrored tickets (key, title, type, status, priority, assignee, parent, labels,
-    dates, estimate, description), and the local API writes one snapshot file per board to
-    the OS temp directory (`kermanych-management-jira/<conversation>/`) and names its path in
-    the turn. The assistant greps it with its read-only tools, so «тікет про експорт» resolves
-    to a real key, a ticket is read before it is edited, and a duplicate is spotted before it
-    is filed. The file is rewritten every turn and removed with the conversation; a board
-    whose mirror could not be read is stated as unavailable, never as empty.
+    an acceptance criterion phrased as a question is refused (in your browser for the native
+    board, by the Jira tool for Jira) with the offending fragment quoted back.
+  - **Each board has its own people, and neither list is guessed.** They are not the same set.
+    For the workspace's own board, `tasks.assignee_id` is a profile id, so every turn carries
+    the workspace roster by the same name the app shows you and the browser matches the name
+    back to that id. For Jira the roster has no say at all: a Jira assignee is an Atlassian
+    account, so the name you said goes to the Jira tool, which resolves it against the people
+    Jira itself will accept for that project — someone with a Jira seat and no Kermanych
+    account is assigned exactly as you would assign them by hand, and an ambiguous or unknown
+    name comes back to the assistant with the candidates instead of landing in nobody's queue.
+  - **Several tickets in one request.** «Розбий це на тікети» or «створи п'ять тікетів на …»
+    files every ticket, each held to the same rules as a single ticket. On the native board a
+    series is several `ticket.create` actions; on Jira it is a real hierarchy (below).
+- **It works in Jira live, with the same reach as a Jira MCP server.** The assistant is given
+  a set of `jira_*` tools, served by the local API as an MCP endpoint
+  (`POST /api/management/mcp`, `apps/api/src/jira/jira-tools.service.ts`) and called DURING
+  the turn — so it sees Jira's answer, including a refusal, and can fix and retry before it
+  replies. Every call runs under your own personal Jira token and reaches only the sites of
+  the boards the workspace connected; each chat's agent child gets its own bearer secret,
+  revoked with the conversation. The claude runtime takes the endpoint as a native MCP server
+  (`mcp__kermanych__jira_*`); omp, which reads MCP servers only from config files, gets it
+  through a small generated extension (`apps/api/src/runtime/omp-mcp-bridge.ts`) with the URL
+  and secret in its environment. What that covers:
+  - **Reading the whole picture.** JQL search across the site (any project, open or done,
+    paged), a full issue read (every field with custom fields by name, description and
+    comments as markdown, parent, subtasks, issue links, attachments, time tracking, and on
+    request changelog, worklogs, transitions, remote links and watchers), attachment download
+    for the read tool, and the vocabularies: projects, boards, issue types with hierarchy,
+    the create and edit screens (required fields and allowed values), field ids, statuses,
+    transitions, link types, users, sprints, versions and components.
+  - **Writing.** Create (issue type required — taken from the project's own list — plus
+    priority, assignee, labels, components, fix versions, parent, dates, estimate and any
+    custom field by id), update (only what is named; `description` replaces the whole body,
+    so it is read first; labels can be added or removed one at a time), transition by status
+    or transition name (with transition-screen fields and a comment), comments (add, edit,
+    delete), worklogs, issue links and web links, watchers, attachments (the files you
+    attached to this conversation, images included, by the exact names the turn lists),
+    delete, sprints (create, update, start/close, add issues, move to backlog) and versions
+    (create, update, release, archive). New Jira tickets use the same five slots, English
+    rule and open-question refusal as native ones.
+  - **Sequences that hold together.** An epic and its stories — or a story and its sub-tasks —
+    are filed one at a time, parent first, each child created with the key Jira just returned
+    as its parent; ordering and dependencies become real issue links («KRM-1 blocks KRM-2»).
+    A write Jira accepted is always reported with its key, even when the board mirror could not
+    be refreshed afterwards (the mirror catches up on its next sync), so a series never stalls
+    or duplicates on a mirror hiccup.
+  - **What you see.** Every Jira write prints its own line in the chat («Jira: створено KRM-215
+    — …», «Jira: KRM-101 → Done»), the board mirror is refreshed so «Дошка» shows the change
+    at once, and the assistant's prose summarises only what the tools confirmed. Deleting an
+    issue, a comment or a link happens only when you asked for exactly that.
+  - **Not covered** (present in some Jira MCP servers): Jira Service Management queues and
+    customer requests, ProForma forms, development info (PRs/commits), moving an issue to
+    another project, entity properties, dashboards and saved filters.
 - **It spends the same subscription your agents spend.** It runs through the same
   `omp` on your PATH, the same provider account and the same plan; there is no second
   key to configure and no separate budget. The mono pill on the right of the field is

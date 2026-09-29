@@ -146,26 +146,28 @@ function captureQuery() {
 }
 
 describe("ClaudeCodeRuntime tool options", () => {
-  it("noTools maps to an empty allowedTools allowlist and sets no `tools` key", async () => {
+  it("noTools empties the built-in set, not just the auto-approve list", async () => {
     const { queryFn, captured } = captureQuery();
     const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0, noTools: true }, queryFn as never);
     await rt.start();
+    expect(captured.options?.tools).toEqual([]);
     expect(captured.options?.allowedTools).toEqual([]);
-    expect("tools" in (captured.options ?? {})).toBe(false);
   });
 
-  it("tools passes straight through as allowedTools", async () => {
+  // `allowedTools` alone only skips the permission prompt; a «read-only» child launched with
+  // the backend-neutral lowercase names used to keep Bash, Edit and Write.
+  it("tools restricts the built-in set to Claude Code's names for them", async () => {
     const { queryFn, captured } = captureQuery();
     const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0, tools: ["read", "grep", "glob"] }, queryFn as never);
     await rt.start();
-    expect(captured.options?.allowedTools).toEqual(["read", "grep", "glob"]);
+    expect(captured.options?.tools).toEqual(["Read", "Grep", "Glob"]);
   });
 
   it("noTools wins over a stray tools allowlist", async () => {
     const { queryFn, captured } = captureQuery();
     const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0, tools: ["read"], noTools: true }, queryFn as never);
     await rt.start();
-    expect(captured.options?.allowedTools).toEqual([]);
+    expect(captured.options?.tools).toEqual([]);
   });
 
   it("neither tools nor noTools leaves allowedTools unset", async () => {

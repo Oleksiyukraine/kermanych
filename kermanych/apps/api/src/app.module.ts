@@ -31,9 +31,12 @@ import { LinearController } from "./http/linear.controller";
 import { LinearService } from "./linear/linear.service";
 import { DocIndexService } from "./docs/doc-index.service";
 import { DocsController } from "./http/docs.controller";
+import { ManagementMcpController } from "./http/management-mcp.controller";
+import { ManagementMcpService } from "./management/management-mcp.service";
+import { JiraToolsService } from "./jira/jira-tools.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ModelsController, JiraController, LinearController, AccountController, DocsController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, AccountController, DocsController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -47,10 +50,15 @@ import { DocsController } from "./http/docs.controller";
     // failure to an empty catalog so a picker always renders, which is precisely the swallowing
     // this check exists to undo.
     RuntimeCheckService,
-    // The Менеджмент assistant. Depends on RegistryService alone: it resolves the scoped
-    // workspace's local repo paths and drives its own omp children, and it deliberately
-    // knows nothing about SupervisorService — this chat has no session, branch or worktree.
+    // The Менеджмент assistant. Resolves the scoped workspace's local repo paths
+    // (RegistryService), drives its own agent children, and hands each child the Jira tools
+    // through ManagementMcpService. It deliberately knows nothing about SupervisorService —
+    // this chat has no session, branch or worktree.
     ManagementChatService,
+    // The assistant's live Jira tools (JiraToolsService, over JiraService under the acting
+    // user's own token) served as MCP to the chat's children, one bearer secret per child.
+    JiraToolsService,
+    ManagementMcpService,
     // The Release Notes generator: one one-shot omp child per request, reading the bound
     // repo's git history through { RegistryService, WorktreeService }. Like the chat it
     // knows nothing about SupervisorService — a generation has no session and no worktree.

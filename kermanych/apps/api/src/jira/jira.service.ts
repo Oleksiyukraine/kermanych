@@ -185,8 +185,10 @@ export class JiraService {
   }
 
   // The per-request client for the acting user. Its absence is the read-only state, and
-  // the message is what the UI shows beside the token block on the Integrations tab.
-  private clientFor(siteUrl: string, userId: string): JiraClient {
+  // the message is what the UI shows beside the token block on the Integrations tab. Public
+  // for the Менеджмент assistant's tools (jira-tools.service.ts), which reach any issue on a
+  // connected site — not only the mirrored project — under the same token.
+  clientFor(siteUrl: string, userId: string): JiraClient {
     const site = normalizeSiteUrl(siteUrl);
     const row = this.registry.getJiraToken(site, userId);
     if (!row) throw new Error("no jira token");
@@ -241,7 +243,7 @@ export class JiraService {
   // older site, simply has no start date. The board keeps rendering with a blank one, the
   // negative answer is cached like a positive one, and only an explicit start-date WRITE
   // (issueFields) turns the absence into a refusal the user can read.
-  private async startDateFieldId(siteUrl: string, client: JiraClient): Promise<string | undefined> {
+  async startDateFieldId(siteUrl: string, client: JiraClient): Promise<string | undefined> {
     const site = normalizeSiteUrl(siteUrl);
     const cached = this.startDateFields.get(site);
     if (cached && cached.at > Date.now() - FIELD_TTL_MS) return cached.id;

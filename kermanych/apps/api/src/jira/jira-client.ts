@@ -94,11 +94,13 @@ export function flattenJiraError(status: number, body: unknown): string {
 }
 
 // One issue comment as GET .../comment returns it; `renderedBody` is present because the
-// client always asks for the renderedBody expand.
+// client always asks for the renderedBody expand, and `body` (the ADF source) always rides
+// beside it — the Менеджмент assistant's tools read that one back as markdown.
 export type JiraRawComment = {
   id: string;
   author?: { displayName?: string; avatarUrls?: Record<string, string> };
   renderedBody?: string;
+  body?: unknown;
   created: string;
   updated: string;
 };
@@ -110,6 +112,82 @@ export type JiraRawWorklog = {
   timeSpentSeconds?: number;
   started: string;
   comment?: unknown;
+};
+
+// The shapes below serve the Менеджмент assistant's tools (jira-tools.service.ts). Only the
+// members the tool layer reads are typed; Jira sends more, and the tools pass what they
+// read through to the model rather than re-modelling Jira.
+export type JiraRawChange = {
+  id: string;
+  author?: { displayName?: string };
+  created: string;
+  items: { field: string; fromString?: string | null; toString?: string | null }[];
+};
+
+// One entry of an issue's `issuelinks`, read from THAT issue's side: `outwardIssue` present
+// means «this issue <type.outward> outwardIssue», `inwardIssue` means «this issue
+// <type.inward> inwardIssue» (developer.atlassian.com, «Jira issue linking model»).
+export type JiraRawIssueLink = {
+  id: string;
+  type: { name: string; inward: string; outward: string };
+  inwardIssue?: { key: string; fields?: Record<string, unknown> };
+  outwardIssue?: { key: string; fields?: Record<string, unknown> };
+};
+
+export type JiraProjectSummary = {
+  id: string;
+  key: string;
+  name: string;
+  projectTypeKey?: string;
+  // "next-gen" = team-managed, "classic" = company-managed — the two differ in how issue
+  // types and parents are configured, which is worth telling the model.
+  style?: string;
+};
+
+export type JiraCreateMetaIssueType = {
+  id: string;
+  name: string;
+  subtask?: boolean;
+  hierarchyLevel?: number;
+  description?: string;
+};
+
+export type JiraFieldMeta = {
+  fieldId: string;
+  key?: string;
+  name: string;
+  required: boolean;
+  hasDefaultValue?: boolean;
+  schema?: { type?: string; items?: string; system?: string; custom?: string };
+  allowedValues?: unknown[];
+};
+
+export type JiraUserSummary = {
+  accountId: string;
+  displayName: string;
+  emailAddress?: string;
+  active?: boolean;
+  accountType?: string;
+};
+
+export type JiraSprint = {
+  id: number;
+  name: string;
+  state?: string;
+  startDate?: string;
+  endDate?: string;
+  completeDate?: string;
+  goal?: string;
+};
+
+export type JiraVersion = {
+  id: string;
+  name: string;
+  description?: string;
+  released?: boolean;
+  archived?: boolean;
+  startDate?: string;
+  releaseDate?: string;
 };
 
 // Jira's remaining-estimate adjustment, the choice its own «Log work» dialog offers. It
@@ -297,8 +375,19 @@ export class JiraClient {
     return this.request("POST", "/rest/api/3/issue", { fields });
   }
 
-  editIssue(key: string, fields: Record<string, unknown>): Promise<void> {
-    return this.request("PUT", `/rest/api/3/issue/${encodeURIComponent(key)}`, { fields });
+  // `update` is Jira's verb form (`labels: [{ add: "x" }]`), which the assistant uses to add
+  // or remove one label without restating — and so racing — the whole list.
+  editIssue(key: string, fields: Record<string, unknown>, update?: Record<string, unknown>): Promise<void> {
+    return this.request("PUT", `/rest/api/3/issue/${encodeURIComponent(key)}`, { fields, ...(update ? { update } : {}) });
+  }
+
+  // The links of one issue alone — how the link tool reads back which direction Jira stored.
+  async issueLinks(key: string): Promise<JiraRawIssueLink[]> {
+    const res = await this.request<{ fields?: { issuelinks?: JiraRawIssueLink[] } }>(
+      "GET",
+      `/rest/api/3/issue/${encodeURIComponent(key)}?fields=issuelinks`,
+    );
+    return res.fields?.issuelinks ?? [];
   }
 
   deleteIssue(key: string): Promise<void> {
@@ -317,9 +406,18 @@ export class JiraClient {
     return res.transitions;
   }
 
-  transition(key: string, transitionId: string): Promise<void> {
+  // `extra` is what a transition screen may ask for on the way (a resolution, a comment):
+  // Jira refuses a transition whose screen requires a field the request did not carry, so
+  // the assistant's tools pass them through. The board's own drag sends none.
+  transition(
+    key: string,
+    transitionId: string,
+    extra: { fields?: Record<string, unknown>; comment?: Record<string, unknown> } = {},
+  ): Promise<void> {
     return this.request("POST", `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, {
       transition: { id: transitionId },
+      ...(extra.fields ? { fields: extra.fields } : {}),
+      ...(extra.comment ? { update: { comment: [{ add: { body: extra.comment } }] } } : {}),
     });
   }
 
@@ -479,5 +577,240 @@ export class JiraClient {
       "GET",
       `/rest/api/3/user/assignable/search?project=${encodeURIComponent(projectKey)}&maxResults=${PAGE}${q}`,
     );
+  }
+
+  // ── the Менеджмент assistant's tools ────────────────────────────────────────
+  //
+  // Everything below exists for apps/api/src/jira/jira-tools.service.ts: the live Jira surface
+  // the chat assistant reads and writes through, at parity with the public Jira MCP servers.
+  // Payloads are returned close to Jira's own shape — the tool layer decides what the model
+  // is shown, and a second tolerant mapping here would only hide fields from it.
+
+  // One page of a JQL search. Unlike `searchIssues` (the sync loop, which drains every page
+  // with a fixed field set), the caller names the fields and holds the cursor: an assistant
+  // asking «what is open in this sprint» wants the first page now, not the whole project.
+  // `names` maps each returned field id to its display name, so a custom field reads as
+  // «Story Points» and not as customfield_10016.
+  searchPage(input: {
+    jql: string;
+    fields: string[];
+    maxResults: number;
+    nextPageToken?: string;
+  }): Promise<{ issues?: JiraRawIssue[]; nextPageToken?: string; names?: Record<string, string> }> {
+    return this.request("POST", "/rest/api/3/search/jql", {
+      jql: input.jql,
+      fields: input.fields,
+      maxResults: input.maxResults,
+      expand: "names",
+      ...(input.nextPageToken ? { nextPageToken: input.nextPageToken } : {}),
+    });
+  }
+
+  // An issue with every field the site defines (`*all`) and their display names. The sync's
+  // `getIssue` asks for the mirror's fixed subset; this is the whole picture — links,
+  // subtasks, components, versions, sprint, every custom field.
+  issueFull(key: string): Promise<JiraRawIssue & { names?: Record<string, string> }> {
+    return this.request("GET", `/rest/api/3/issue/${encodeURIComponent(key)}?fields=*all&expand=names`);
+  }
+
+  // The history, oldest first, capped: a ticket with thousands of edits is a log nobody
+  // reads to the end, and the caller keeps only the tail anyway.
+  async issueChangelog(key: string, cap = 500): Promise<JiraRawChange[]> {
+    const out: JiraRawChange[] = [];
+    for (let startAt = 0; out.length < cap; startAt += 100) {
+      const page = await this.request<{ values?: JiraRawChange[]; isLast?: boolean; total?: number }>(
+        "GET",
+        `/rest/api/3/issue/${encodeURIComponent(key)}/changelog?startAt=${startAt}&maxResults=100`,
+      );
+      const values = page.values ?? [];
+      out.push(...values);
+      if (page.isLast !== false || values.length === 0) break;
+    }
+    return out;
+  }
+
+  remoteLinks(key: string): Promise<{ id: number; relationship?: string; object?: { url?: string; title?: string } }[]> {
+    return this.request("GET", `/rest/api/3/issue/${encodeURIComponent(key)}/remotelink`);
+  }
+
+  addRemoteLink(key: string, link: { url: string; title: string }): Promise<{ id: number }> {
+    return this.request("POST", `/rest/api/3/issue/${encodeURIComponent(key)}/remotelink`, { object: link });
+  }
+
+  async watchers(key: string): Promise<{ accountId: string; displayName?: string }[]> {
+    const res = await this.request<{ watchers?: { accountId: string; displayName?: string }[] }>(
+      "GET",
+      `/rest/api/3/issue/${encodeURIComponent(key)}/watchers`,
+    );
+    return res.watchers ?? [];
+  }
+
+  // Jira takes the bare accountId as a JSON STRING body — `request` stringifies it into
+  // exactly that.
+  addWatcher(key: string, accountId: string): Promise<void> {
+    return this.request("POST", `/rest/api/3/issue/${encodeURIComponent(key)}/watchers`, accountId);
+  }
+
+  removeWatcher(key: string, accountId: string): Promise<void> {
+    return this.request(
+      "DELETE",
+      `/rest/api/3/issue/${encodeURIComponent(key)}/watchers?accountId=${encodeURIComponent(accountId)}`,
+    );
+  }
+
+  async searchProjects(query: string): Promise<JiraProjectSummary[]> {
+    const out: JiraProjectSummary[] = [];
+    const q = query ? `&query=${encodeURIComponent(query)}` : "";
+    for (let startAt = 0; out.length < 500; startAt += PAGE) {
+      const page = await this.request<{ values?: JiraProjectSummary[]; isLast?: boolean }>(
+        "GET",
+        `/rest/api/3/project/search?startAt=${startAt}&maxResults=${PAGE}${q}`,
+      );
+      const values = page.values ?? [];
+      out.push(...values);
+      if (page.isLast !== false || values.length === 0) break;
+    }
+    return out;
+  }
+
+  project(projectKey: string): Promise<JiraProjectSummary> {
+    return this.request("GET", `/rest/api/3/project/${encodeURIComponent(projectKey)}`);
+  }
+
+  // The issue types a CREATE in this project may use — createmeta rather than the project's
+  // `issueTypes`, because createmeta is what POST /issue is judged against, and it carries
+  // `hierarchyLevel`, which is how a parent/child pairing is chosen right (-1 sub-task,
+  // 0 standard, 1 epic).
+  async createMetaIssueTypes(projectKey: string): Promise<JiraCreateMetaIssueType[]> {
+    const res = await this.request<{ issueTypes?: JiraCreateMetaIssueType[]; values?: JiraCreateMetaIssueType[] }>(
+      "GET",
+      `/rest/api/3/issue/createmeta/${encodeURIComponent(projectKey)}/issuetypes?maxResults=200`,
+    );
+    return res.issueTypes ?? res.values ?? [];
+  }
+
+  // The create screen of one issue type: which fields exist, which are REQUIRED, and the
+  // allowed values of each — the answer to «Field X is required» before Jira has to say it.
+  async createMetaFields(projectKey: string, issueTypeId: string): Promise<JiraFieldMeta[]> {
+    const out: JiraFieldMeta[] = [];
+    for (let startAt = 0; ; startAt += 200) {
+      const page = await this.request<{ fields?: JiraFieldMeta[]; results?: JiraFieldMeta[]; total?: number }>(
+        "GET",
+        `/rest/api/3/issue/createmeta/${encodeURIComponent(projectKey)}/issuetypes/${encodeURIComponent(issueTypeId)}?startAt=${startAt}&maxResults=200`,
+      );
+      const values = page.fields ?? page.results ?? [];
+      out.push(...values);
+      if (values.length < 200 || (page.total !== undefined && out.length >= page.total)) return out;
+    }
+  }
+
+  // The edit screen of one existing issue — what an update may touch, keyed by field id.
+  async editMeta(key: string): Promise<Record<string, Omit<JiraFieldMeta, "fieldId">>> {
+    const res = await this.request<{ fields?: Record<string, Omit<JiraFieldMeta, "fieldId">> }>(
+      "GET",
+      `/rest/api/3/issue/${encodeURIComponent(key)}/editmeta`,
+    );
+    return res.fields ?? {};
+  }
+
+  // Any user the token may see — watchers and «who is X» questions. Assignment keeps using
+  // `assignableUsers`, which is the narrower set Jira will actually accept as an assignee.
+  searchUsers(query: string): Promise<JiraUserSummary[]> {
+    return this.request("GET", `/rest/api/3/user/search?query=${encodeURIComponent(query)}&maxResults=${PAGE}`);
+  }
+
+  async issueLinkTypes(): Promise<{ id: string; name: string; inward: string; outward: string }[]> {
+    const res = await this.request<{ issueLinkTypes?: { id: string; name: string; inward: string; outward: string }[] }>(
+      "GET",
+      "/rest/api/3/issueLinkType",
+    );
+    return res.issueLinkTypes ?? [];
+  }
+
+  // 201 with an empty body; the link's id is only learnable by reading an issue back.
+  createIssueLink(input: {
+    typeName: string;
+    inwardKey: string;
+    outwardKey: string;
+    comment?: Record<string, unknown>;
+  }): Promise<void> {
+    return this.request("POST", "/rest/api/3/issueLink", {
+      type: { name: input.typeName },
+      inwardIssue: { key: input.inwardKey },
+      outwardIssue: { key: input.outwardKey },
+      ...(input.comment ? { comment: { body: input.comment } } : {}),
+    });
+  }
+
+  deleteIssueLink(linkId: string): Promise<void> {
+    return this.request("DELETE", `/rest/api/3/issueLink/${encodeURIComponent(linkId)}`);
+  }
+
+  updateComment(key: string, commentId: string, body: Record<string, unknown>): Promise<{ id: string }> {
+    return this.request(
+      "PUT",
+      `/rest/api/3/issue/${encodeURIComponent(key)}/comment/${encodeURIComponent(commentId)}`,
+      { body },
+    );
+  }
+
+  deleteComment(key: string, commentId: string): Promise<void> {
+    return this.request("DELETE", `/rest/api/3/issue/${encodeURIComponent(key)}/comment/${encodeURIComponent(commentId)}`);
+  }
+
+  async attachmentMeta(attachmentId: string): Promise<{ filename?: string; mimeType?: string; size?: number }> {
+    return this.request("GET", `/rest/api/3/attachment/${encodeURIComponent(attachmentId)}`);
+  }
+
+  // ── agile: sprints and backlog ───────────────────────────────────────────────
+
+  async boardSprints(boardId: number, state?: string): Promise<JiraSprint[]> {
+    const out: JiraSprint[] = [];
+    const s = state ? `&state=${encodeURIComponent(state)}` : "";
+    for (let startAt = 0; ; startAt += PAGE) {
+      const page = await this.request<{ values?: JiraSprint[]; isLast?: boolean }>(
+        "GET",
+        `/rest/agile/1.0/board/${boardId}/sprint?startAt=${startAt}&maxResults=${PAGE}${s}`,
+      );
+      const values = page.values ?? [];
+      out.push(...values);
+      if (page.isLast !== false || values.length === 0) return out;
+    }
+  }
+
+  createSprint(input: { boardId: number; name: string; startDate?: string; endDate?: string; goal?: string }): Promise<JiraSprint> {
+    const { boardId, ...rest } = input;
+    return this.request("POST", "/rest/agile/1.0/sprint", { originBoardId: boardId, ...rest });
+  }
+
+  // POST is Jira's PARTIAL update of a sprint (PUT would blank every field left out).
+  updateSprint(sprintId: number, patch: Partial<Omit<JiraSprint, "id">>): Promise<JiraSprint> {
+    return this.request("POST", `/rest/agile/1.0/sprint/${sprintId}`, patch);
+  }
+
+  moveToSprint(sprintId: number, keys: string[]): Promise<void> {
+    return this.request("POST", `/rest/agile/1.0/sprint/${sprintId}/issue`, { issues: keys });
+  }
+
+  moveToBacklog(keys: string[]): Promise<void> {
+    return this.request("POST", "/rest/agile/1.0/backlog/issue", { issues: keys });
+  }
+
+  // ── versions and components ─────────────────────────────────────────────────
+
+  projectVersions(projectKey: string): Promise<JiraVersion[]> {
+    return this.request("GET", `/rest/api/3/project/${encodeURIComponent(projectKey)}/versions`);
+  }
+
+  createVersion(input: { projectId: string } & Partial<Omit<JiraVersion, "id">>): Promise<JiraVersion> {
+    return this.request("POST", "/rest/api/3/version", input);
+  }
+
+  updateVersion(versionId: string, patch: Partial<Omit<JiraVersion, "id">>): Promise<JiraVersion> {
+    return this.request("PUT", `/rest/api/3/version/${encodeURIComponent(versionId)}`, patch);
+  }
+
+  projectComponents(projectKey: string): Promise<{ id: string; name: string; description?: string; lead?: { displayName?: string } }[]> {
+    return this.request("GET", `/rest/api/3/project/${encodeURIComponent(projectKey)}/components`);
   }
 }

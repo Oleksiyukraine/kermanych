@@ -1,5 +1,5 @@
 // apps/api/src/http/management.controller.ts
-import { BadRequestException, Body, Controller, Post } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Post, Req } from "@nestjs/common";
 import {
   isReleaseDate,
   isRiskCategory,
@@ -16,7 +16,6 @@ import {
   type ManagementDocFragment,
   type ManagementDocs,
   type ManagementJiraBoard,
-  type ManagementJiraIssueRow,
   type ManagementHome,
   type ManagementHomeRelease,
   type ManagementHomeTask,
@@ -128,52 +127,10 @@ function jiraBoard(v: unknown): ManagementJiraBoard | undefined {
     boardName: typeof x.boardName === "string" ? x.boardName : "",
     // Write capability is never assumed: absent means «не можу створити», which is the safe
     // way round — the assistant says so instead of promising a ticket the api cannot sign.
+    // Tickets and assignees are NOT taken from the browser: the assistant reads them live
+    // through its Jira tools (jira/jira-tools.service.ts).
     canWrite: x.canWrite === true,
-    // Jira's own assignable users, by display name. Read from the browser for `memberRows`'
-    // reason inverted: the api COULD ask Jira itself, but the browser already holds the list
-    // its ticket dialog renders, and a second fetch here would let the prompt name people
-    // the operator's own picker does not show. Blank entries are dropped — a blank name is
-    // an assignee nothing could resolve back to an accountId.
-    assignees: Array.isArray(x.assignees)
-      ? x.assignees.filter((n): n is string => typeof n === "string" && n.trim() !== "").map((n) => n.trim())
-      : [],
-    ...(Array.isArray(x.issues) ? { issues: jiraIssueRows(x.issues) } : {}),
   };
-}
-
-// The board's tickets, rebuilt field by field for `riskRows`' reason: the snapshot file is
-// what the assistant reads as the board's truth. A row without a key is one nothing could
-// address and is dropped. The caps bound a pathological client, not a real board: a mirror
-// of three thousand issues is still grepped in one call, and a description past the cap is
-// a document, not a ticket body — its first part is what an edit needs to preserve.
-const MAX_JIRA_ISSUES = 3000;
-const MAX_JIRA_DESCRIPTION = 20_000;
-
-function jiraIssueRows(v: unknown[]): ManagementJiraIssueRow[] {
-  const text = (x: unknown): string => (typeof x === "string" ? x.trim() : "");
-  const out: ManagementJiraIssueRow[] = [];
-  for (const item of v.slice(0, MAX_JIRA_ISSUES)) {
-    if (typeof item !== "object" || item === null) continue;
-    const y = item as Record<string, unknown>;
-    const key = text(y.key);
-    if (!key) continue;
-    const parentKey = text(y.parentKey);
-    out.push({
-      key,
-      summary: text(y.summary),
-      type: text(y.type),
-      status: text(y.status),
-      priority: text(y.priority),
-      assignee: text(y.assignee),
-      ...(parentKey ? { parentKey } : {}),
-      labels: Array.isArray(y.labels) ? y.labels.map(text).filter(Boolean) : [],
-      startDate: text(y.startDate),
-      dueDate: text(y.dueDate),
-      originalEstimate: text(y.originalEstimate),
-      description: typeof y.description === "string" ? y.description.slice(0, MAX_JIRA_DESCRIPTION) : "",
-    });
-  }
-  return out;
 }
 
 // The documentation fragments the browser retrieved for this turn, rebuilt field by field
@@ -366,7 +323,7 @@ export class ManagementController {
   ) {}
 
   @Post("chat")
-  async ask(@Body() b: ManagementChatAsk): Promise<ManagementChatReply> {
+  async ask(@Body() b: ManagementChatAsk, @Req() req: { user: { id: string } }): Promise<ManagementChatReply> {
     const conversationId = typeof b?.conversationId === "string" ? b.conversationId.trim() : "";
     if (!conversationId) throw badRequest("conversation_id_missing", "не вказано розмову (conversationId)");
     const text = typeof b?.text === "string" ? b.text.trim() : "";
@@ -409,7 +366,7 @@ export class ManagementController {
       ...(docs ? { docs } : {}),
     };
     try {
-      return await this.chat.ask({ ...b, conversationId, text, workspaceId, workspaceProjects, context, attachments });
+      return await this.chat.ask({ ...b, conversationId, text, workspaceId, workspaceProjects, context, attachments }, req.user.id);
     } catch (err) {
       // A missing `omp`, a start timeout or a turn timeout are all operator-actionable
       // sentences already; a 500 would hide every one of them behind "Internal Server

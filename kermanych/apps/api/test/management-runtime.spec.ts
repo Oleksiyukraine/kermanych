@@ -106,7 +106,7 @@ beforeEach(() => {
 describe("ManagementChatService runtime", () => {
   it("defaults to omp when no preference is cached", async () => {
     const svc = new ManagementChatService(registry());
-    await svc.ask(chatAsk());
+    await svc.ask(chatAsk(), "u1");
     expect(calls).toHaveLength(1);
     expect(calls[0]?.kind).toBe("omp");
     expect(calls[0]?.opts.tools).toEqual(["read", "grep", "glob"]);
@@ -115,7 +115,7 @@ describe("ManagementChatService runtime", () => {
 
   it("spawns the cached claude-code runtime when the user chose it", async () => {
     const svc = new ManagementChatService(registry("claude-code"));
-    await svc.ask(chatAsk());
+    await svc.ask(chatAsk(), "u1");
     expect(calls).toHaveLength(1);
     expect(calls[0]?.kind).toBe("claude-code");
   });
