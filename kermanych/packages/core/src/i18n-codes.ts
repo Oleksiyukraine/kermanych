@@ -197,7 +197,7 @@ export type ManagementRejectionCode =
   | "ticket_no_context" // a ticket without its business context (params: { title })
   | "ticket_no_acceptance" // a ticket without any acceptance criterion (params: { title })
   | "ticket_field_invalid" // a nested ticket list field failed validation (params: { title, detail })
-  | "ticket_open_question" // a ticket carries an unanswered open question (params: { title, value })
+  | "ticket_open_question" // a ticket being CREATED carries an unanswered open question; never raised by jira.ticket.update (params: { title, value })
   | "field_not_name_string" // a name field arrived as a non-string (params: { field, value })
   // ticket.create / jira.ticket.create — the block as a whole, per board:
   | "ticket_no_project" // a ticket.create without a project name (params: { title })

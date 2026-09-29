@@ -175,10 +175,11 @@ export type ManagementTodoPatch = { text?: string; kind?: "check" | "number"; do
 // the two overlap (names, never ids), plus the handful of things only an existing issue has.
 //
 //   * `ticket` REWRITES the issue: summary and the whole description, rendered by
-//     `renderTicketDescription` exactly as a created ticket is, and validated by the same
-//     `ticketFields` — an edit is not a back door for a worse ticket. `title` renames only
-//     and leaves the description alone; stating both is refused, because the two disagree
-//     about the one field they share.
+//     `renderTicketDescription` exactly as a created ticket is, and held to the same five-slot
+//     shape by `ticketFields`. The open-question refusal is the one creation rule it skips:
+//     the issue is already on the board, so an edit that keeps (or resolves) a question the
+//     issue already carries must go through. `title` renames only and leaves the description
+//     alone; stating both is refused, because the two disagree about the one field they share.
 //   * `unassign` is its own flag rather than `assignee: null`: `null` reads as «no value»
 //     everywhere else in this protocol, and «I had nothing to say» must never clear a field.
 //   * `dueDate` / `startDate` / `originalEstimate` take `""` to CLEAR — an explicit empty
@@ -1008,7 +1009,9 @@ function openQuestion(t: ManagementTicketFields): string | undefined {
 // One ticket, validated into the five slots. Shared by both boards: a Jira issue and a board
 // card differ in where they go and in the vocabulary AROUND the ticket (issue type, branch
 // prefix), never in what makes the ticket readable — so there is one shape, one set of
-// refusals, and no board on which a worse ticket is acceptable.
+// refusals, and no board on which a worse ticket is acceptable. The open-question refusal is
+// NOT here: it is a gate on creation (`newTicketFields`), and a rewrite of an existing issue
+// passes through this shape alone.
 function ticketFields(v: unknown): ManagementTicketFields | Fail {
   if (!isObj(v)) return { error: { text: "дія без об'єкта ticket", code: "ticket_not_object" } };
   const title = str(v.title);
@@ -1075,19 +1078,28 @@ function ticketFields(v: unknown): ManagementTicketFields | Fail {
       };
     if (out.length) t.outOfScope = out;
   }
+  return t;
+}
 
+// A ticket about to be FILED: the five slots plus the open-question refusal. Only creation is
+// gated, because only creation is what the gate protects — a question kept off the board. An
+// existing Jira issue already carries whatever it carries; refusing an edit of it keeps no
+// question off any board and leaves the operator unable to touch the ticket at all, the
+// question included (a requirements issue that says «unclear» could never be rewritten).
+function newTicketFields(v: unknown): ManagementTicketFields | Fail {
+  const t = ticketFields(v);
+  if (isFail(t)) return t;
   const open = openQuestion(t);
   if (open !== undefined)
     return {
       error: {
         text:
-          `тікет «${title}» містить відкрите питання (${JSON.stringify(open)}) — такий тікет не створюється. ` +
+          `тікет «${t.title}» містить відкрите питання (${JSON.stringify(open)}) — такий тікет не створюється. ` +
           "Постав питання через ticket.questions і дочекайся відповіді.",
         code: "ticket_open_question",
-        params: { title, value: JSON.stringify(open) },
+        params: { title: t.title, value: JSON.stringify(open) },
       },
     };
-
   return t;
 }
 
@@ -1146,8 +1158,8 @@ function jiraLabels(v: unknown): string[] | Fail {
   return labels;
 }
 
-// A rename alone. Held to the same two refusals a created title is — the kanban limit and the
-// open-question markers — because the title is the one line everybody reads.
+// A rename alone. Held to the kanban limit a created title is; not to the open-question
+// markers, for the reason `newTicketFields` gives — the issue already exists.
 function jiraTitle(v: unknown): string | Fail {
   const title = str(v);
   if (title === undefined) return { error: { text: "тікет без назви (title)", code: "ticket_no_title" } };
@@ -1159,19 +1171,6 @@ function jiraTitle(v: unknown): string | Fail {
         params: { max: TICKET_TITLE_MAX },
       },
     };
-  for (const re of OPEN_QUESTION_MARKERS) {
-    const m = re.exec(title);
-    if (m)
-      return {
-        error: {
-          text:
-            `тікет «${title}» містить відкрите питання (${JSON.stringify(m[0])}) — такий тікет не створюється. ` +
-            "Постав питання через ticket.questions і дочекайся відповіді.",
-          code: "ticket_open_question",
-          params: { title, value: JSON.stringify(m[0]) },
-        },
-      };
-  }
   return title;
 }
 
@@ -1347,7 +1346,7 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
     return { kind: "release.notes", project, branch, rangeFrom, rangeTo };
   }
   if (kind === "ticket.create" || kind === "jira.ticket.create") {
-    const ticket = ticketFields(o.ticket);
+    const ticket = newTicketFields(o.ticket);
     if (isFail(ticket)) return ticket;
 
     const assignee = ticketName(o, "assignee");

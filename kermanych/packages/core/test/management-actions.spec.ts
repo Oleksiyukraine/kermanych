@@ -650,12 +650,35 @@ test("a jira.ticket.update names the issue by key and carries only what changes"
     key: "KRM-101",
     patch: { title: "Renamed", status: "Done", labels: [], dueDate: "", startDate: "2026-10-01", originalEstimate: "3d 4h", unassign: true },
   });
-  // A full rewrite goes through the same ticket validation a created ticket does.
+  // A full rewrite is held to the same five-slot shape a created ticket is.
   expect(validateManagementAction({ kind: "jira.ticket.update", key: "KRM-1", patch: { ticket: { ...TICKET, acceptanceCriteria: [] } } })).toMatchObject({
     error: { code: "ticket_no_acceptance" },
   });
-  expect(validateManagementAction({ kind: "jira.ticket.update", key: "KRM-1", patch: { title: "Decide TBD" } })).toMatchObject({
-    error: { code: "ticket_open_question" },
+});
+
+// The open-question refusal gates CREATION only. The issue already exists: refusing the edit
+// keeps no question off the board and leaves the operator unable to change the ticket at all —
+// including to resolve the very question it carries.
+test("a jira.ticket.update may keep an open question the existing issue already carries", () => {
+  const ticket = {
+    ...TICKET,
+    title: "Platinum OS V2 — Business Logic Requirements (Products, Inventory, Warehouses)",
+    context: "Stock ownership between warehouses is unclear today; this issue collects the rules.",
+    acceptanceCriteria: ["Transfers between warehouses keep the product's history", "Who approves a write-off?"],
+  };
+  expect(validateManagementAction({ kind: "jira.ticket.update", key: "PLAT-7", patch: { ticket } })).toEqual({
+    kind: "jira.ticket.update",
+    key: "PLAT-7",
+    patch: { ticket },
+  });
+  expect(validateManagementAction({ kind: "jira.ticket.update", key: "PLAT-7", patch: { title: "Decide TBD" } })).toEqual({
+    kind: "jira.ticket.update",
+    key: "PLAT-7",
+    patch: { title: "Decide TBD" },
+  });
+  // The same ticket is still refused as a NEW one, on either board.
+  expect(validateManagementAction({ kind: "jira.ticket.create", ticket })).toMatchObject({
+    error: { code: "ticket_open_question", params: { value: '"unclear"' } },
   });
 });
 
