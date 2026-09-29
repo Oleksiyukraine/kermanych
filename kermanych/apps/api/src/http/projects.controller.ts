@@ -39,7 +39,7 @@ export class ProjectsController {
   @Patch(":id")
   async update(
     @Param("id") id: string,
-    @Body() b: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string },
+    @Body() b: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string },
   ) {
     try {
       return await this.sup.updateProject(id, b);

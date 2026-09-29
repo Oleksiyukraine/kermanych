@@ -46,6 +46,9 @@ export type CloudProject = {
   // renders. Team-shared selection; the content is read from each machine's local
   // checkout, never stored in the cloud.
   docFolders: string[];
+  // «Обовʼязкова документація»: every session gets the documentation policy, and PR /
+  // commit / finish are refused until the branch is documented. Defaults to false.
+  docsRequired: boolean;
   color?: string;
   // The group that owns this project AND supplies its member list. `not null` in
   // Postgres: there are no workspace-less projects in the cloud.

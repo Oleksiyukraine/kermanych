@@ -162,6 +162,19 @@
             <p class="set__note">{{ t('settings.docs.note') }}</p>
           </div>
 
+          <!-- MANDATORY DOCUMENTATION. Off by default: switching it on makes the api refuse
+               «Створити ПР», «Закоміти» and «Завершити» for EVERY session of the project until
+               the task document (and, when code changed, the living docs) are in place — the
+               operator's choice, never a migration's. -->
+          <div class="set__group">
+            <KCheckbox
+              v-model="draft.docsRequired"
+              :label="t('settings.docs.required')"
+              :disabled="cloudLocked"
+            />
+            <p class="set__note">{{ t('settings.docs.requiredHint') }}</p>
+          </div>
+
           <div class="set__rule"></div>
 
           <!-- SECRETS. A token is a VALUE, so it lives where every value in this
@@ -664,6 +677,7 @@ import KEmojiPicker from 'components/kit/KEmojiPicker.vue';
 import KEnvEditor from 'components/kit/KEnvEditor.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import KBtn from 'components/kit/KBtn.vue';
+import KCheckbox from 'components/kit/KCheckbox.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KTag from 'components/kit/KTag.vue';
@@ -799,6 +813,7 @@ interface ProjectDraft {
   apiCommand: string;
   carryFiles: string[];
   docFolders: string[];
+  docsRequired: boolean;
 }
 
 const draft = ref<ProjectDraft | null>(null);
@@ -828,6 +843,7 @@ function seedProject(): void {
     apiCommand: c?.apiCommand ?? row?.apiCommand ?? '',
     carryFiles: [...(c?.carryFiles ?? row?.carryFiles ?? ['.env'])],
     docFolders: [...(c?.docFolders ?? row?.docFolders ?? [])],
+    docsRequired: c?.docsRequired ?? row?.docsRequired ?? false,
   };
   draft.value = { ...next, carryFiles: [...next.carryFiles], docFolders: [...next.docFolders] };
   base.value = next;
@@ -1135,6 +1151,7 @@ async function saveProject(): Promise<void> {
       // the worktree.
       carryFiles: d.carryFiles.length ? d.carryFiles : ['.env'],
       docFolders: d.docFolders,
+      docsRequired: d.docsRequired,
       ...(envKeys ? { envKeys } : {}),
       ...(moved ? { workspaceId: d.workspaceId } : {}),
     });

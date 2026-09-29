@@ -39,7 +39,7 @@ function make() {
 
 function cloudProject(id: string, over: Partial<CloudProject> = {}): CloudProject {
   return {
-    id, name: `cloud ${id}`, carryFiles: [".env"], envKeys: [], docFolders: [],
+    id, name: `cloud ${id}`, carryFiles: [".env"], envKeys: [], docFolders: [], docsRequired: false,
     workspaceId: "00000000-0000-4000-8000-000000000ws1",
     createdAt: "2026-08-21T00:00:00.000Z", ...over,
   };
@@ -77,7 +77,7 @@ describe("syncProjects", () => {
     registry.upsertProject({ id: "p1", name: "Old", localRepoPath: "/tmp/bound" });
 
     const after = await sup.syncProjects([
-      cloudProject("p1", { name: "New", conventions: "rule", defaultBranch: "dev", carryFiles: [".env", ".env.local"] }),
+      cloudProject("p1", { name: "New", conventions: "rule", defaultBranch: "dev", carryFiles: [".env", ".env.local"], docsRequired: true }),
     ]);
 
     const p = after.find((x) => x.id === "p1")!;
@@ -86,6 +86,7 @@ describe("syncProjects", () => {
     expect(p.conventions).toBe("rule");
     expect(p.defaultBranch).toBe("dev");
     expect(p.carryFiles).toEqual([".env", ".env.local"]);
+    expect(p.docsRequired).toBe(true);
   });
 
   it("creates an unbound row for a cloud project this machine has never seen", async () => {

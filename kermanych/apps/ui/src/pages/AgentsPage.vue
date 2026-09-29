@@ -471,6 +471,9 @@
                     @click="toggleFile(d.path)"
                   >
                     <span class="agents__file-path mono">{{ d.path }}</span>
+                    <KTag v-if="docsLayoutKind(d.path)" class="agents__docs-kind">
+                      {{ t(`agents.docs.kind.${docsLayoutKind(d.path)}`) }}
+                    </KTag>
                     <span class="agents__file-stat mono">
                       <span class="agents__diff-add">+{{ d.added }}</span>
                       <span class="agents__diff-del">−{{ d.removed }}</span>
@@ -800,6 +803,24 @@
             {{ t('agents.finish.aheadInfo', { n: finishData.ahead, base: finishData.target, dirty: finishData.dirty ? t('agents.finish.aheadDirty') : '' }, finishData.ahead) }}
           </p>
           <p v-else class="agents__hint mono">{{ t('agents.changes.preparing') }}</p>
+          <!-- MANDATORY DOCUMENTATION — only for a project that switched it on. The box is on
+               by default on every open and re-reads the gate on toggle, so the list below is
+               always what the api will check when a button is pressed. -->
+          <template v-if="finishData?.docsGate.required">
+            <KCheckbox
+              :model-value="finishHandoff"
+              :label="t('agents.finish.handoff')"
+              :disabled="docsBusy || prBusy || finishBusy"
+              @update:model-value="setFinishHandoff"
+            />
+            <template v-if="docsFailures.length">
+              <p class="agents__error" role="alert">{{ t('agents.finish.docsMissing') }}</p>
+              <ul class="agents__conflict">
+                <li v-for="f in docsFailures" :key="f">{{ t(DOCS_FAILURE_KEYS[f]) }}</li>
+              </ul>
+              <p class="agents__hint mono">{{ t('agents.finish.docsBlocked') }}</p>
+            </template>
+          </template>
         </div>
         <p v-if="finishError" class="agents__error" role="alert">{{ finishError }}</p>
       </div>
@@ -807,16 +828,23 @@
         <KBtn variant="ghost" @click="finishOpen = false">{{ t('agents.finish.close') }}</KBtn>
         <KBtn v-show="finishFiles.length" variant="secondary" :loading="resolveBusy" @click="resolveAuto">{{ t('agents.finish.resolveAuto') }}</KBtn>
         <KBtn
+          v-if="!finishFiles.length && docsFailures.length"
+          variant="secondary"
+          :loading="docsBusy"
+          :disabled="prBusy || finishBusy || docsRefreshing"
+          @click="submitDocs"
+        >{{ t('agents.finish.completeDocs') }}</KBtn>
+        <KBtn
           v-show="!finishFiles.length"
           variant="secondary"
           :loading="prBusy"
-          :disabled="finishBusy || !finishData"
+          :disabled="finishBusy || docsBusy || docsRefreshing || !finishData || !!docsFailures.length"
           @click="finishHasPr ? submitCommit() : submitPr()"
         >{{ finishHasPr ? t('agents.finish.commit') : t('agents.finish.createPr') }}</KBtn>
         <KBtn
           variant="primary"
           :loading="finishBusy"
-          :disabled="prBusy || !!finishFiles.length || !finishData"
+          :disabled="prBusy || docsBusy || docsRefreshing || !!finishFiles.length || !finishData || !!docsFailures.length"
           @click="submitFinish"
         >{{ t('agents.finish.action') }}</KBtn>
       </template>
@@ -868,6 +896,8 @@ import {
   skillsUsed,
   docsRead,
   isDocPath,
+  docsLayoutKind,
+  type DocsGateFailure,
   type ImageInput,
   type Session,
   type SessionStatus,
@@ -2345,11 +2375,24 @@ async function onUnarchive(s: Session): Promise<void> {
 // ── Finish (retire the worktree; the branch stays for its PR) ──────────────
 const finishOpen = ref(false);
 const finishFor = ref<Session | null>(null);
-const finishData = ref<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[] } | null>(null);
+const finishData = ref<Awaited<ReturnType<typeof store.finishInfo>> | null>(null);
 const finishError = ref<string | null>(null);
 const finishBusy = ref(false);
 const prBusy = ref(false);
 const resolveBusy = ref(false);
+// Mandatory documentation (project setting). `finishHandoff` is «Хендоф для фронта» — on by
+// default every time the sheet opens — and is sent with every action so the api's gate checks
+// exactly what the sheet listed. `docsRefreshing` covers the re-read after a toggle: the
+// buttons wait for the gate that matches the box.
+const finishHandoff = ref(true);
+const docsBusy = ref(false);
+const docsRefreshing = ref(false);
+const docsFailures = computed<DocsGateFailure[]>(() => finishData.value?.docsGate.failures ?? []);
+const DOCS_FAILURE_KEYS: Record<DocsGateFailure, string> = {
+  'task-spec': 'agents.finish.docsFailure.taskSpec',
+  'docs-impact': 'agents.finish.docsFailure.docsImpact',
+  handoff: 'agents.finish.docsFailure.handoff',
+};
 
 // Files still to resolve in the worktree: a tree left mid-merge (the agent folded the base
 // in) cannot be retired, so the modal shows them instead of the finish summary.
@@ -2367,11 +2410,33 @@ async function openFinish(s: Session): Promise<void> {
   finishData.value = null;
   finishError.value = null;
   finishBusy.value = false;
+  docsBusy.value = false;
+  docsRefreshing.value = false;
+  finishHandoff.value = true;
   finishOpen.value = true;
   try {
-    finishData.value = await store.finishInfo(s.id);
+    finishData.value = await store.finishInfo(s.id, finishHandoff.value);
   } catch (e) {
     finishError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+// Toggling «Хендоф для фронта» changes what the gate demands, so the gate is re-read rather
+// than patched locally — the handoff rule lives in core, not here. A reply for a box state the
+// operator has already flipped past is dropped.
+async function setFinishHandoff(value: boolean): Promise<void> {
+  const s = finishFor.value;
+  if (!s) return;
+  finishHandoff.value = value;
+  docsRefreshing.value = true;
+  finishError.value = null;
+  try {
+    const info = await store.finishInfo(s.id, value);
+    if (finishFor.value?.id === s.id && finishHandoff.value === value) finishData.value = info;
+  } catch (e) {
+    finishError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    if (finishHandoff.value === value) docsRefreshing.value = false;
   }
 }
 
@@ -2445,7 +2510,7 @@ async function submitFinish(): Promise<void> {
   finishBusy.value = true;
   finishError.value = null;
   try {
-    await store.finishSession(s.id);
+    await store.finishSession(s.id, finishHandoff.value);
     finishOpen.value = false;
   } catch (e) {
     finishError.value = e instanceof Error ? e.message : String(e);
@@ -2460,7 +2525,7 @@ async function submitPr(): Promise<void> {
   prBusy.value = true;
   finishError.value = null;
   try {
-    await store.createPr(s.id);
+    await store.createPr(s.id, finishHandoff.value);
     finishOpen.value = false; // agent pushes + opens the PR in the background — watch it in chat
     store.selectSession(s.id);
     store.notify(t('agents.notify.prCreating', { name: s.name }), 'info');
@@ -2477,7 +2542,7 @@ async function submitCommit(): Promise<void> {
   prBusy.value = true;
   finishError.value = null;
   try {
-    await store.commitChanges(s.id);
+    await store.commitChanges(s.id, finishHandoff.value);
     finishOpen.value = false; // agent commits + pushes to the open PR in the background — watch it in chat
     store.selectSession(s.id);
     store.notify(t('agents.notify.committing', { name: s.name }), 'info');
@@ -2485,6 +2550,27 @@ async function submitCommit(): Promise<void> {
     finishError.value = e instanceof Error ? e.message : String(e);
   } finally {
     prBusy.value = false;
+  }
+}
+
+// «Доповнити документацію»: the api sends the agent one prompt listing exactly the missing
+// documents (with the project's task-spec / frontend-handoff skills inlined), so the sheet
+// closes and the work is watched in the transcript, like «Створити ПР». `sent: false` means the
+// gate passed in the meantime — nothing was asked of the agent.
+async function submitDocs(): Promise<void> {
+  const s = finishFor.value;
+  if (!s) return;
+  docsBusy.value = true;
+  finishError.value = null;
+  try {
+    const res = await store.completeDocs(s.id, finishHandoff.value);
+    finishOpen.value = false;
+    store.selectSession(s.id);
+    store.notify(t(res.sent ? 'agents.notify.docsCompleting' : 'agents.notify.docsComplete', { name: s.name }), 'info');
+  } catch (e) {
+    finishError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    docsBusy.value = false;
   }
 }
 
@@ -3223,6 +3309,9 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-muted);
 }
 .agents__docs-read { margin: 0; padding: 0; list-style: none; }
+// The layout badge (специфікація/план/схема/хендоф) sits right before the +/− stat: the row is
+// space-between, so the auto margin keeps it off the middle of a short path.
+.agents__docs-kind { flex: none; margin-left: auto; }
 .agents__docs-read-item {
   padding: 6px 0;
   border-bottom: 1px solid var(--k-line);

@@ -25,6 +25,8 @@ import type {
   ApiErrorParams,
   AgentRuntimeKind,
   AgentLanguage,
+  DocsGate,
+  DocsGateFailure,
 } from '@kermanych/core';
 import type { CloudProject, JiraIntegration, JiraIssue, LinearIntegration, LinearIssue } from '@kermanych/cloud';
 import { globalTr } from '../boot/i18n';
@@ -272,7 +274,7 @@ export const api = {
 
   patchProject: (
     id: string,
-    body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; defaultBranch?: string; conventions?: string },
+    body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; defaultBranch?: string; conventions?: string },
   ): Promise<Project> => patchJson<Project>(`/projects/${id}`, body),
 
   // The resolved library (defaults + project rows, with the repo-shadowed ones marked), AND
@@ -549,8 +551,11 @@ export const api = {
 
   stopPreview: (id: string): Promise<void> => del(`/sessions/${id}/preview`),
 
+  // `handoff` is the finish sheet's «Хендоф для фронта» box: it only changes `docsGate`, which
+  // then also demands a docs/handoffs document. The Зміни tab reads without it.
   finishInfo: (
     id: string,
+    handoff = false,
   ): Promise<{
     branch: string;
     target: string;
@@ -558,7 +563,8 @@ export const api = {
     dirty: boolean;
     conflicts: string[];
     files: { path: string; added: number; removed: number }[];
-  }> => get(`/sessions/${id}/finish`),
+    docsGate: DocsGate;
+  }> => get(`/sessions/${id}/finish${handoff ? '?handoff=1' : ''}`),
 
   fileDiff: (id: string, path: string): Promise<FileDiff> =>
     get<FileDiff>(`/sessions/${id}/diff?path=${encodeURIComponent(path)}`),
@@ -591,14 +597,21 @@ export const api = {
   ): Promise<{ indexedFiles: number; deletedFiles: number; unchangedFiles: number; chunkCount: number; embeddingModel: string }> =>
     post(`/projects/${id}/docs/reindex`, {}),
 
-  finish: (id: string): Promise<{ finished: boolean; branch: string }> =>
-    post(`/sessions/${id}/finish`, {}),
+  // The three finish-sheet actions carry `handoff` so the api's documentation gate checks the
+  // same thing the sheet showed; a project without mandatory documentation ignores it.
+  finish: (id: string, body: { handoff?: boolean } = {}): Promise<{ finished: boolean; branch: string }> =>
+    post(`/sessions/${id}/finish`, body),
 
-  createPr: (id: string): Promise<{ ok: boolean }> =>
-    post<{ ok: boolean }>(`/sessions/${id}/pr`, {}),
+  createPr: (id: string, body: { handoff?: boolean } = {}): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>(`/sessions/${id}/pr`, body),
 
-  commitChanges: (id: string): Promise<{ ok: boolean }> =>
-    post<{ ok: boolean }>(`/sessions/${id}/commit`, {}),
+  commitChanges: (id: string, body: { handoff?: boolean } = {}): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>(`/sessions/${id}/commit`, body),
+
+  // «Доповнити документацію»: one Kermanych prompt asking the agent for exactly the missing
+  // documents. `sent: false` means the gate already passed and nothing was sent.
+  completeDocs: (id: string, handoff: boolean): Promise<{ sent: boolean; failures: DocsGateFailure[] }> =>
+    post(`/sessions/${id}/docs`, { handoff }),
 
   archiveSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/archive`, {}),

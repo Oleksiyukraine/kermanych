@@ -175,10 +175,12 @@ export class SessionsController {
     return { ok: true };
   }
 
+  // `?handoff=1` evaluates the documentation gate with the finish sheet's «Хендоф для фронта»
+  // checked; any other value (or none) means no handoff was asked for.
   @Get(":id/finish")
-  async finishInfo(@Param("id") id: string) {
+  async finishInfo(@Param("id") id: string, @Query("handoff") handoff?: string) {
     try {
-      return await this.sup.finishInfo(id);
+      return await this.sup.finishInfo(id, handoff === "1" || handoff === "true");
     } catch (err) {
       throw sessionFailure(err);
     }
@@ -214,29 +216,42 @@ export class SessionsController {
     }
   }
 
+  // PR / commit / finish carry `{ handoff?: boolean }` from the finish sheet; absent = false.
+  // A failing documentation gate is a plain 400 starting `documentation required:`.
   @Post(":id/finish")
-  async finish(@Param("id") id: string) {
+  async finish(@Param("id") id: string, @Body() b?: { handoff?: boolean }) {
     try {
       this.preview.stop(id);
-      return await this.sup.finishSession(id);
+      return await this.sup.finishSession(id, { handoff: b?.handoff === true });
     } catch (err) {
       throw sessionFailure(err);
     }
   }
 
   @Post(":id/pr")
-  async pr(@Param("id") id: string) {
+  async pr(@Param("id") id: string, @Body() b?: { handoff?: boolean }) {
     try {
-      return await this.sup.createPullRequest(id);
+      return await this.sup.createPullRequest(id, { handoff: b?.handoff === true });
     } catch (err) {
       throw sessionFailure(err);
     }
   }
 
   @Post(":id/commit")
-  async commit(@Param("id") id: string) {
+  async commit(@Param("id") id: string, @Body() b?: { handoff?: boolean }) {
     try {
-      return await this.sup.commitChanges(id);
+      return await this.sup.commitChanges(id, { handoff: b?.handoff === true });
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // «Доповнити документацію»: one Kermanych prompt for exactly the missing documents.
+  // `{ sent: false }` when nothing was missing.
+  @Post(":id/docs")
+  async completeDocs(@Param("id") id: string, @Body() b?: { handoff?: boolean }) {
+    try {
+      return await this.sup.completeDocs(id, { handoff: b?.handoff === true });
     } catch (err) {
       throw sessionFailure(err);
     }
