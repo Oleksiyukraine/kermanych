@@ -1,7 +1,7 @@
 // apps/ui/src/lib/files.ts
 // Client-side loading for the management chat's mixed attachments: the images omp takes
 // natively plus the document types a manager actually mails around (PDF, Excel, Word,
-// Pages). Failure messages are coded like lib/images.ts — they resolve through the global
+// Pages, Markdown). Failure messages are coded like lib/images.ts — they resolve through the global
 // i18n adapter (`errors.file.*`), so the composer's error line shows them in the active
 // locale.
 import { globalTr } from '../boot/i18n';
@@ -16,6 +16,7 @@ const DOC_TYPES: Record<string, string> = {
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   pages: 'application/vnd.apple.pages',
+  md: 'text/markdown',
 };
 
 // What the file-pick dialog offers: every supported image mime plus the document

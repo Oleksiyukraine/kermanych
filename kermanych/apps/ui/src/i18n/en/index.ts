@@ -1248,7 +1248,7 @@ export const en: MessageSchema = {
       sendShort: 'Send',
       thinking: 'Thinking…',
       thinkingSec: 'Thinking… {sec} s',
-      attach: 'Attach a file — image, PDF, Excel, Word or Pages',
+      attach: 'Attach a file — image, PDF, Excel, Word, Pages or Markdown',
       removeFile: 'Remove file “{name}”',
     },
     plan: {
@@ -2338,7 +2338,7 @@ export const en: MessageSchema = {
       readFailed: 'could not read the file',
     },
     file: {
-      unsupported: '{name}: unsupported file type (PNG/JPEG/GIF/WebP, PDF, XLS/XLSX, DOCX, Pages)',
+      unsupported: '{name}: unsupported file type (PNG/JPEG/GIF/WebP, PDF, XLS/XLSX, DOCX, Pages, MD)',
       tooLarge: '{name}: file too large — {size} MiB (max 20)',
     },
   },
