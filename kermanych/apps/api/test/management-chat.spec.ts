@@ -278,6 +278,48 @@ describe("ManagementChatService", () => {
     expect(sent[2]?.text).not.toContain("── ДОЛУЧЕНІ ФАЙЛИ ──");
   });
 
+  // The board's tickets land where the read/grep tools can reach them, and the turn names the
+  // file — a snapshot is the board as of THIS turn, so a board gone by the next turn must
+  // not leave a file the model could still read as if it were there.
+  it("writes each Jira board's tickets to a snapshot file the turn names, fresh every turn", async () => {
+    const svc = make();
+    const board = {
+      projectKey: "KRM",
+      boardName: "Kermanych board",
+      canWrite: true,
+      assignees: [],
+      issues: [
+        {
+          key: "KRM-7",
+          summary: "Export invoices",
+          type: "Story",
+          status: "To Do",
+          priority: "High",
+          assignee: "",
+          labels: [],
+          startDate: "",
+          dueDate: "",
+          originalEstimate: "",
+          description: "<p>Accounting needs a file.</p>",
+        },
+      ],
+    };
+    const withBoard = (text: string, jira?: (typeof board)[]): ManagementChatAsk => {
+      const base = ask(text);
+      return { ...base, conversationId: "management:w-jira", context: { ...base.context, ...(jira ? { jira } : {}) } };
+    };
+    turns = [reply("бачу дошку"), reply("ок")];
+    await svc.ask(withBoard("знайди тікет про експорт", [board]));
+    const path = join(tmpdir(), "kermanych-management-jira", "management-w-jira", "1-KRM.md");
+    expect(sent[0]?.text).toContain(`Тікети дошки (1) — знімок: ${path}`);
+    const text = (await readFile(path)).toString();
+    expect(text).toContain("### KRM-7 · Export invoices");
+    expect(text).toContain("  Accounting needs a file.");
+    await svc.ask(withBoard("а тепер без дошки"));
+    expect(existsSync(path)).toBe(false);
+    await svc.reset("management:w-jira");
+  });
+
   // A conversation that keeps attaching must not grow the turn without bound: the list is a
   // reminder of what can be named, and the oldest names stop being what «прикріпи файл»
   // means long before the process is evicted.

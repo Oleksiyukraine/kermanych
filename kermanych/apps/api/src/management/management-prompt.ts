@@ -148,7 +148,10 @@ function contract(locale: Locale | undefined): string {
     // the ticket, the assistant read this menu, concluded the action «не має поля для вкладень»
     // and told the operator to attach the file by hand in Jira — while the executor behind it
     // had been uploading named files all along.
-    '  { "kind": "jira.ticket.create", "board": "…", "ticket": { … }, "issueType": "…", "priority": "…", "labels": ["…"], "assignee": "…", "parentKey": "…", "attachments": ["імʼя файлу"] }',
+    '  { "kind": "jira.ticket.create", "board": "…", "ticket": { … }, "issueType": "…", "priority": "…", "labels": ["…"], "assignee": "…", "parentKey": "…", "ref": "…", "parentRef": "…", "attachments": ["імʼя файлу"] }',
+    // Listed HERE for the risk.delete lesson below: a verb absent from the exhaustive menu is
+    // one the model tells the operator to go and perform by hand in Jira.
+    '  { "kind": "jira.ticket.update", "key": "KRM-101", "patch": { "ticket": { … }, "title": "…", "issueType": "…", "priority": "…", "labels": ["…"], "assignee": "…", "unassign": true, "status": "…", "dueDate": "РРРР-ММ-ДД", "startDate": "РРРР-ММ-ДД", "originalEstimate": "3d 4h", "parentKey": "…", "attachments": ["імʼя файлу"] } }',
     '  { "kind": "ticket.questions", "forTicket": "…", "questions": ["…", "…"] }',
     // Listed HERE and not only in homeProtocol() below — the risk.delete lesson: the menu
     // declares itself exhaustive, and a verb it does not carry is one the model will refuse
@@ -174,7 +177,7 @@ function contract(locale: Locale | undefined): string {
     `(а) якщо просять ЗМІНИТИ розділ з capability=read_write (${writable}) — віддай відповідний блок дії. Дію виконує застосунок, не ти: у прозі опиши, ЩО саме робиш, і не пиши, що це вже зроблено — результат («Ризик R-004 занесено…», «Реліз-ноти готові…») чат покаже сам;`,
     '(б) якщо просять ЗМІНИТИ розділ, у якого capability НЕ read_write — віддай { "kind": "unsupported", "section": "<назва розділу>", "request": "<що просили>" } І поясни це прозою, цитуючи обмеження цього розділу зі списку вище. Ніколи не пиши, що ти щось записав, створив або оновив;',
     "(в) якщо просять ПРОЧИТАТИ або пояснити — відповідай звичайною прозою, без блоку дії. Ти можеш читати репозиторії воркспейсу (див. контекст) своїми read/grep/glob;",
-    "(в-1) СТВОРЕННЯ ТІКЕТА — окремий випадок: дошка задач не є розділом Менеджменту, тому тікет можна створити з будь-якого розділу, і на прохання «створи тікет» НІКОЛИ не відповідай unsupported. Дій за протоколом ТІКЕТІВ нижче;",
+    "(в-1) СТВОРЕННЯ ТІКЕТА — окремий випадок: дошка задач не є розділом Менеджменту, тому тікет можна створити з будь-якого розділу, і на прохання «створи тікет» (або кілька тікетів) НІКОЛИ не відповідай unsupported. Так само ЗМІНА наявного тікета Jira — це jira.ticket.update, а не unsupported. Дій за протоколом ТІКЕТІВ нижче;",
     // Rule (в) says a READ is answered in prose, and an export reads like a read — without this
     // line the model summarises the register in the chat instead of producing the file.
     "(в-2) ЕКСПОРТ РЕЄСТРУ РИЗИКІВ у файл (PDF чи Excel) — теж блок дії, risk.export, хоча нічого не змінює, і працює з будь-якого розділу. Не переписуй реєстр у чат замість файлу. Дій за протоколом РЕЄСТРУ РИЗИКІВ нижче;",
@@ -357,8 +360,10 @@ function ticketProtocol(): string {
     "  issueType, priority — НАЗВИ так, як їх показує Jira («Task», «Story», «Bug», «High»). Не назвали — не став:",
     "    Jira підставить свої типові значення. Назви, якої на обраній дошці немає, застосунок не знайде і скаже це.",
     "  labels — масив міток без пробілів (необовʼязково).",
-    "  parentKey — ключ батьківського тікета, ТІЛЬКИ якщо користувач назвав його сам (наприклад «підзадача до KRM-101»).",
-    "    Списку тікетів Jira у тебе немає, тому ключів не вигадуй: ключа, якого немає, Jira не приймає.",
+    "  parentKey — ключ УЖЕ ІСНУЮЧОГО батьківського тікета: той, що назвав користувач («підзадача до KRM-101»), або той,",
+    "    який ти знайшов у знімку дошки (блок «Дошки Jira» у контексті). Ключів не вигадуй: ключа, якого немає, Jira не приймає.",
+    "  ref, parentRef — для батька, який створюється В ЦІЙ САМІЙ відповіді (див. «КІЛЬКА ТІКЕТІВ» нижче). parentKey і",
+    "    parentRef разом не став.",
     '  attachments — масив ІМЕН файлів з блоку «ДОЛУЧЕНІ ФАЙЛИ» цього ходу, РІВНО так, як вони там названі.',
     "    Це ЄДИНИЙ і робочий спосіб прикріпити файл до тікета: користувач попросив «додай зображення/файл до тікета» —",
     "    постав ці імена в attachments ТОГО САМОГО блоку jira.ticket.create. Застосунок завантажить їх у Jira відразу",
@@ -370,6 +375,40 @@ function ticketProtocol(): string {
     "    розмови теж можна називати — блок «ДОЛУЧЕНІ ФАЙЛИ» перелічує всі файли розмови, а не тільки нові.",
     "    Файл як ДЖЕРЕЛО для тексту тікета — це не attachments: просто прочитай його і пиши тікет.",
     "",
+    "КІЛЬКА ТІКЕТІВ. Одна відповідь може створити скільки завгодно тікетів — обмеження «один тікет за раз» НЕМАЄ.",
+    "  Коли користувач просить кілька тікетів, серію, послідовність або «розбий це на тікети» — віддай ОКРЕМУ дію",
+    "  створення на КОЖЕН тікет (кілька блоків або один блок з масивом) у тому порядку, в якому роботу слід робити.",
+    "  Не зливай їх в один тікет і не обмежуйся першим. Кожен тікет самодостатній: свої title, context і",
+    "  acceptanceCriteria — критерій «див. попередній тікет» неперевіряльний. Порядок, якщо він важливий, назви у context",
+    "  («Follows “Export invoices to CSV”») і не нумеруй заголовки. Просили ОДИН тікет — не дроби його сам.",
+    "  Епік із дочірніми тікетами в Jira однією відповіддю: батьківському постав \"ref\" (довільна мітка, напр. \"epic\"),",
+    "  дочірнім — \"parentRef\" з тією самою міткою; батько ОБОВʼЯЗКОВО йде раніше за дітей. Ключ, який Jira дасть батькові,",
+    "  підставить застосунок; дочірній тікет, чий батько не створився, теж не створюється. На власній дошці («Задачі»)",
+    "  батьків немає — там серія це просто кілька ticket.create.",
+    "  Відкрите питання хоч до одного тікета серії — постав його через ticket.questions і НЕ створюй цього ходу жодного",
+    "  тікета серії: частково створена серія гірша, ніж жодної.",
+    "",
+    "ЗМІНИТИ НАЯВНИЙ ТІКЕТ JIRA — це jira.ticket.update:",
+    '  { "kind": "jira.ticket.update", "key": "KRM-101", "patch": { … } }',
+    "  key — ключ тікета: названий користувачем або знайдений у ЗНІМКУ ДОШКИ. Знімок — файл, шлях до якого стоїть біля",
+    "    дошки в блоці «Дошки Jira»: там КОЖЕН тікет дошки — ключ, назва, тип, статус, пріоритет, виконавець, батько,",
+    "    мітки, дати, оцінка й опис. Шукай у ньому grep-ом (за ключем або словами з назви) і читай read-ом. Описав",
+    "    користувач тікет словами («тікет про експорт») — знайди його там; підходить кілька — спитай прозою, який;",
+    "    не знайшов жодного — скажи це і нічого не змінюй. Ключів не вигадуй.",
+    "  Перед зміною ПРОЧИТАЙ тікет у знімку: ти змінюєш те, що там є, а не те, що памʼятаєш.",
+    "  patch містить ЛИШЕ те, що змінюється:",
+    "    ticket — ПЕРЕПИСАТИ тікет цілком (назва + опис) за правилами «ЯК ПИСАТИ ТІКЕТ» і «МОВА ТІКЕТА». Опис замінюється",
+    "      повністю, тож перенеси в нові поля все з поточного опису, що має лишитися, — інакше воно зникне.",
+    "    title — лише перейменувати, опис не чіпати. ticket і title разом не став.",
+    "    issueType, priority, assignee — НАЗВИ, як для jira.ticket.create; unassign: true — зняти виконавця.",
+    "    status — НАЗВА статусу, в який перевести («In Progress», «Done»); застосунок знайде перехід у Jira і скаже,",
+    "      якщо з поточного статусу туди не можна.",
+    "    labels — НОВИЙ повний список міток: щоб додати мітку, перелічи й наявні зі знімка; [] — прибрати всі.",
+    "    dueDate, startDate — РРРР-ММ-ДД; \"\" — очистити дату. originalEstimate — тривалість Jira («3d 4h»); \"\" — очистити.",
+    "    parentKey — новий батько (ключ наявного тікета). attachments — імена файлів розмови, як у jira.ticket.create.",
+    "  Кілька тікетів змінюють — окремий jira.ticket.update на кожен. Змінювати можна тільки тікети Jira: для карток",
+    "  власної дошки («Задачі») дії зміни немає — скажи прозою, що це робиться в самій картці на «Дошці».",
+    "",
     "ЯКЩО ЧОГОСЬ НЕ ЗНАЄШ. Тікет з відкритим питанням не створюється. Коли для тікета бракує рішення, яке може",
     "ухвалити тільки користувач (межі роботи, поведінка в крайньому випадку, пріоритет, виконавець, проєкт) —",
     'віддай { "kind": "ticket.questions", "forTicket": "<робоча назва тікета>", "questions": ["…", "…"] } і НЕ давай',
@@ -379,8 +418,9 @@ function ticketProtocol(): string {
     "Те, що можна вивести з коду або з контексту, питанням не є: прочитай і виріши сам. І виконавець, якого",
     "користувач НАЗВАВ, теж не питання — постав його за правилом «ХТО ВИКОНАВЕЦЬ» вище, а не питай про нього.",
     "",
-    "Тікет створює застосунок, не ти: у прозі скажи, який тікет і на яку дошку ти подаєш, і не пиши, що він уже",
-    "створений — рядок з номером картки («Тікет KRM-214 створено…») чат покаже сам.",
+    "Тікет створює і змінює застосунок, не ти: у прозі скажи, які тікети й на яку дошку ти подаєш або що саме в якому",
+    "тікеті змінюєш, і не пиши, що це вже зроблено — рядки з номерами карток («Тікет KRM-214 створено…», «Тікет KRM-101",
+    "оновлено…») чат покаже сам.",
   ].join("\n");
 }
 
@@ -497,31 +537,103 @@ function riskLine(r: ManagementRiskRow): string {
 // («створи тікет у Jira на Марину») became «немає в команді воркспейсу, тікет не створено».
 // The roster is the native board's answer; this is Jira's.
 //
-// Printed only for a WRITABLE board: with no token there is no ticket to assign, and the
-// browser has no list to send either.
-function jiraBoardLines(b: ManagementJiraBoard): string {
+// The writable board's assignees are printed only for a WRITABLE board: with no token there is
+// no ticket to assign, and the browser has no list to send either.
+//
+// The last line names the board's SNAPSHOT file — every ticket on it, written beside the
+// conversation's attachments this turn (`jiraBoardSnapshot` below). It is how the assistant
+// finds a key the operator described and reads an issue before `jira.ticket.update` touches
+// it, and it is a PATH rather than the tickets themselves because a board of hundreds of
+// issues re-printed into every turn would spend the operator's plan re-reading them. Printed
+// for a read-only board too: reading the mirror needs no token.
+function jiraBoardLines(b: ManagementJiraBoard, file: string | undefined): string {
   const head =
     `- «${b.boardName}» · проєкт ${b.projectKey} · ` +
     (b.canWrite
-      ? "можна створювати тікети"
-      : "БЕЗ особистого токена Jira на цій машині — тікет сюди створити неможливо, скажи це прозою");
-  if (!b.canWrite) return head;
+      ? "можна створювати й змінювати тікети"
+      : "БЕЗ особистого токена Jira на цій машині — тікет тут створити чи змінити неможливо, скажи це прозою");
+  const lines = [head];
   // An empty list is a failed read, never «nobody is assignable», so the sentence says what
   // to do about it instead of leaving the model to infer a refusal from a network error.
-  const assignees = b.assignees.length
-    ? `  Виконавці Jira: ${b.assignees.join(", ")}`
-    : "  список виконавців цього ходу недоступний: якщо користувач назвав виконавця — постав його імʼя як є, застосунок перевірить його в Jira";
-  return `${head}\n${assignees}`;
+  if (b.canWrite)
+    lines.push(
+      b.assignees.length
+        ? `  Виконавці Jira: ${b.assignees.join(", ")}`
+        : "  список виконавців цього ходу недоступний: якщо користувач назвав виконавця — постав його імʼя як є, застосунок перевірить його в Jira",
+    );
+  lines.push(
+    file !== undefined && b.issues !== undefined
+      ? `  Тікети дошки (${b.issues.length}) — знімок: ${file} (шукай ключ чи слова назви grep-ом, читай тікет read-ом)`
+      : "  знімок тікетів цього ходу недоступний: ключ тікета бери лише зі слів користувача й не вигадуй",
+  );
+  return lines.join("\n");
 }
 
-function jiraLines(boards: ManagementJiraBoard[] | undefined): string {
+function jiraLines(boards: ManagementJiraBoard[] | undefined, files: (string | undefined)[] = []): string {
   if (!boards || boards.length === 0)
     return "Дошки Jira: не підключені — тікети створюються тільки на власній дошці воркспейсу";
   const head =
     boards.length === 1
-      ? "Дошка Jira (підключена одна) — assignee в jira.ticket.create бери зі списку виконавців ЦІЄЇ дошки:"
-      : `Дошки Jira (${boards.length}) — у jira.ticket.create назви поле "board" РІВНО так, як дошку названо тут, і бери виконавця зі списку ТІЄЇ дошки:`;
-  return [head, ...boards.map(jiraBoardLines)].join("\n");
+      ? "Дошка Jira (підключена одна) — assignee в jira.ticket.create/update бери зі списку виконавців ЦІЄЇ дошки:"
+      : `Дошки Jira (${boards.length}) — у jira.ticket.create назви поле "board" РІВНО так, як дошку названо тут, і бери виконавця зі списку ТІЄЇ дошки; jira.ticket.update знаходить дошку за ключем тікета:`;
+  return [head, ...boards.map((b, i) => jiraBoardLines(b, files[i]))].join("\n");
+}
+
+// The mirror's rendered description HTML as plain text the model can read and carry into a
+// rewrite. Block boundaries become line breaks and list items keep a dash — flattening to
+// textContent would glue «Context» and its first sentence into one word. No DOM on this side,
+// and none is needed: this is Jira's own renderer output, not arbitrary markup.
+const HTML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+
+export function htmlText(html: string): string {
+  return html
+    .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<li\b[^>]*>/gi, "\n- ")
+    .replace(/<\/(p|div|h[1-6]|tr|pre|blockquote|ul|ol|table)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+      if (e[0] !== "#") return HTML_ENTITIES[e.toLowerCase()] ?? m;
+      const code = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+    })
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+// A ticket body past this is a document; its head is what an edit has to preserve, and the
+// cut is announced so the model never mistakes it for the whole.
+const SNAPSHOT_DESCRIPTION_MAX = 4000;
+
+// One board's snapshot file. Every issue opens with a `### KEY · summary` line, so a grep for
+// a key or for words of a title lands on the header, and the lines under it are the fields an
+// update names — in the vocabulary it names them in.
+export function jiraBoardSnapshot(b: ManagementJiraBoard, today: string): string {
+  const issues = b.issues ?? [];
+  const out = [
+    `Знімок дошки Jira «${b.boardName}» · проєкт ${b.projectKey} · тікетів: ${issues.length} · станом на ${today}`,
+    "Кожен тікет починається рядком «### КЛЮЧ · назва»; під ним — поля й опис.",
+  ];
+  for (const i of issues) {
+    const facts = [
+      `тип: ${i.type || "—"}`,
+      `статус: ${i.status || "—"}`,
+      `пріоритет: ${i.priority || "—"}`,
+      `виконавець: ${i.assignee || "не призначено"}`,
+      ...(i.parentKey ? [`батько: ${i.parentKey}`] : []),
+      ...(i.labels.length ? [`мітки: ${i.labels.join(", ")}`] : []),
+      ...(i.startDate ? [`старт: ${i.startDate}`] : []),
+      ...(i.dueDate ? [`дедлайн: ${i.dueDate}`] : []),
+      ...(i.originalEstimate ? [`оцінка: ${i.originalEstimate}`] : []),
+    ];
+    const text = htmlText(i.description);
+    const body =
+      text.length > SNAPSHOT_DESCRIPTION_MAX ? `${text.slice(0, SNAPSHOT_DESCRIPTION_MAX)}\n… (опис обрізано)` : text;
+    out.push("", `### ${i.key} · ${i.summary}`, facts.join(" · "));
+    out.push(body ? `опис:\n${body.replace(/^(?=.)/gm, "  ")}` : "опис: (порожній)");
+  }
+  return `${out.join("\n")}\n`;
 }
 
 function hoursText(n: number): string {
@@ -635,7 +747,7 @@ function docsLines(d: ManagementDocs): string {
   return [head, ...d.fragments.map(fragmentLines)].join("\n");
 }
 
-function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: string): string {
+function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: string, jiraFiles?: (string | undefined)[]): string {
   const s = managementSection(c.section);
   // An unresolved section name is still printed: the model must be able to say WHICH
   // screen it was asked about even when the ui sent a name this build does not know.
@@ -661,7 +773,7 @@ function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: stri
     // assigns by. Re-sent every turn for the register's reason: membership changes.
     `Команда воркспейсу (${c.members.length}) — імʼя · роль (виконавця тікета на ВЛАСНІЙ дошці називай саме цим імʼям):`,
     c.members.length ? c.members.map((m) => `- ${m.name} · ${m.role}`).join("\n") : "- список недоступний",
-    jiraLines(c.jira),
+    jiraLines(c.jira, jiraFiles),
     capacityLines(c.capacity),
     homeLines(c.home),
     // Documentation fragments, present only in the Проєктна документація section once a
@@ -696,9 +808,13 @@ export function buildManagementTurn(input: {
   // `ticket.questions` round trip — and a block that listed only this message's files left
   // that turn with no names to put in `attachments` at all.
   attachments?: ManagementTurnFile[];
+  // Where this turn's board snapshots were written, aligned with `context.jira` by position
+  // (`undefined` for a board whose tickets could not be read). Per-turn like the context
+  // block: the board changes between turns, not least through this chat's own writes.
+  jiraFiles?: (string | undefined)[];
 }): string {
   const parts = input.first ? [contract(input.locale), ""] : [];
-  parts.push(contextBlock(input.repos, input.context, input.today), "");
+  parts.push(contextBlock(input.repos, input.context, input.today, input.jiraFiles), "");
   if (input.attachments?.length) parts.push(attachmentsBlock(input.attachments), "");
   parts.push("── ПОВІДОМЛЕННЯ КОРИСТУВАЧА ──", input.text);
   return parts.join("\n");

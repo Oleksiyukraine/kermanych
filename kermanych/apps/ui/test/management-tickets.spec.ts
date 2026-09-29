@@ -24,6 +24,9 @@ const loadMembers = vi.fn();
 const jiraUpsert = vi.fn();
 const jiraLoadAssignable = vi.fn();
 const jiraUploadAttachment = vi.fn();
+const jiraEditIssue = vi.fn();
+const jiraTransitions = vi.fn();
+const jiraTransition = vi.fn();
 
 const members = [
   { workspaceId: 'w1', userId: 'u-olya', role: 'developer', addedAt: '', profile: { id: 'u-olya', githubUsername: 'olya', displayName: 'Оля Петренко' } },
@@ -49,6 +52,9 @@ vi.mock('../src/lib/api', () => ({
     jiraTokenStatus: (site: string) => jiraTokenStatus(site),
     jiraUploadAttachment: (ws: string, key: string, filename: string, data: string, mimeType: string) =>
       jiraUploadAttachment(ws, key, filename, data, mimeType),
+    jiraEditIssue: (ws: string, key: string, draft: unknown) => jiraEditIssue(ws, key, draft),
+    jiraTransitions: (ws: string, key: string) => jiraTransitions(ws, key),
+    jiraTransition: (ws: string, key: string, id: string) => jiraTransition(ws, key, id),
   },
 }));
 vi.mock('../src/stores/orchestrator', () => ({
@@ -127,7 +133,7 @@ function results(entries: readonly MgmtChatEntry[]): string[] {
 
 beforeEach(() => {
   setActivePinia(createPinia());
-  for (const m of [managementChat, jiraCreateIssue, jiraEditorOptions, jiraAssignableUsers, jiraTokenStatus, createTask, loadMembers, jiraUpsert, jiraLoadAssignable, jiraUploadAttachment])
+  for (const m of [managementChat, jiraCreateIssue, jiraEditorOptions, jiraAssignableUsers, jiraTokenStatus, createTask, loadMembers, jiraUpsert, jiraLoadAssignable, jiraUploadAttachment, jiraEditIssue, jiraTransitions, jiraTransition])
     m.mockReset();
   jiraState.integration = null;
   jiraState.tokenPresent = false;
@@ -529,6 +535,127 @@ describe('jira.ticket.create on the mirrored board', () => {
   });
 });
 
+// A sequence is several creates in ONE reply, run in order; a child names its parent by the
+// reply-local `ref`, because the key Jira mints does not exist when the model writes them.
+describe('a sequence of Jira tickets in one reply', () => {
+  const integration = { id: 'i1', siteUrl: 'https://acme.atlassian.net', projectKey: 'KRM', boardName: 'Kermanych board' };
+
+  it('files the parent first and hangs each child under the key Jira gave it', async () => {
+    jiraState.integration = integration;
+    jiraState.tokenPresent = true;
+    jiraCreateIssue
+      .mockResolvedValueOnce({ key: 'KRM-300', summary: 'Epic', issueId: '1' })
+      .mockResolvedValueOnce({ key: 'KRM-301', summary: 'Story A', issueId: '2' })
+      .mockResolvedValueOnce({ key: 'KRM-302', summary: 'Story B', issueId: '3' });
+    managementChat.mockResolvedValue(
+      reply([
+        { kind: 'jira.ticket.create', ticket: { ...TICKET, title: 'Epic' }, ref: 'epic' },
+        { kind: 'jira.ticket.create', ticket: { ...TICKET, title: 'Story A' }, parentRef: 'epic' },
+        { kind: 'jira.ticket.create', ticket: { ...TICKET, title: 'Story B' }, parentRef: 'epic' },
+      ]),
+    );
+
+    const store = useManagementChat();
+    await store.send('створи епік і дві історії в Jira', 'management-home');
+
+    expect(jiraCreateIssue).toHaveBeenCalledTimes(3);
+    expect((jiraCreateIssue.mock.calls[0]?.[1] as Record<string, unknown>).parentKey).toBeUndefined();
+    expect((jiraCreateIssue.mock.calls[1]?.[1] as Record<string, unknown>).parentKey).toBe('KRM-300');
+    expect((jiraCreateIssue.mock.calls[2]?.[1] as Record<string, unknown>).parentKey).toBe('KRM-300');
+    expect(results(store.entries)).toHaveLength(3);
+  });
+
+  // A story outside its epic is a misfiling nobody notices; a child whose parent did not
+  // land is refused with the reason, and the rest of the batch still runs.
+  it('refuses a child whose parent was not created instead of filing it parentless', async () => {
+    jiraState.integration = integration;
+    jiraState.tokenPresent = true;
+    jiraCreateIssue
+      .mockRejectedValueOnce(new Error('Field "customfield_10010" is required'))
+      .mockResolvedValueOnce({ key: 'KRM-310', summary: 'Standalone', issueId: '4' });
+    managementChat.mockResolvedValue(
+      reply([
+        { kind: 'jira.ticket.create', ticket: { ...TICKET, title: 'Epic' }, ref: 'epic' },
+        { kind: 'jira.ticket.create', ticket: { ...TICKET, title: 'Story A' }, parentRef: 'epic' },
+        { kind: 'jira.ticket.create', ticket: { ...TICKET, title: 'Standalone' } },
+      ]),
+    );
+
+    const store = useManagementChat();
+    await store.send('створи епік з історією і ще один тікет у Jira', 'management-home');
+
+    expect(jiraCreateIssue).toHaveBeenCalledTimes(2);
+    const lines = results(store.entries);
+    expect(lines[1]).toContain('Тікет «Story A» не створено');
+    expect(lines[1]).toContain('«epic»');
+    expect(lines[2]).toContain('Тікет KRM-310');
+  });
+});
+
+// Editing an existing issue: the board is found by the key's project, every name is resolved
+// BEFORE anything is written, and `status` becomes the workflow transition that lands there.
+describe('jira.ticket.update on an existing issue', () => {
+  const integration = { id: 'i1', siteUrl: 'https://acme.atlassian.net', projectKey: 'KRM', boardName: 'Kermanych board' };
+  const transitions = [
+    { id: '21', name: 'Start', to: { id: '3', name: 'In Progress', statusCategory: { key: 'indeterminate' } } },
+    { id: '31', name: 'Finish', to: { id: '4', name: 'Done', statusCategory: { key: 'done' } } },
+  ];
+
+  it('edits the fields, applies the transition and reports what changed', async () => {
+    jiraState.integration = integration;
+    jiraState.tokenPresent = true;
+    jiraEditorOptions.mockResolvedValue({ issueTypes: [], priorities: [{ id: '2', name: 'High' }] });
+    jiraTransitions.mockResolvedValue(transitions);
+    jiraEditIssue.mockResolvedValue({ key: 'KRM-101', summary: 'Export invoices', issueId: '9' });
+    jiraTransition.mockResolvedValue({ key: 'KRM-101', summary: 'Export invoices', issueId: '9', statusName: 'Done' });
+    managementChat.mockResolvedValue(
+      reply([{ kind: 'jira.ticket.update', key: 'KRM-101', patch: { priority: 'high', labels: ['billing'], status: 'done' } }]),
+    );
+
+    const store = useManagementChat();
+    await store.send('KRM-101: пріоритет High, мітка billing, закрий', 'management-home');
+
+    expect(jiraEditIssue).toHaveBeenCalledWith('i1', 'KRM-101', { priorityId: '2', labels: ['billing'] });
+    expect(jiraTransition).toHaveBeenCalledWith('i1', 'KRM-101', '31');
+    expect(jiraUpsert).toHaveBeenLastCalledWith(expect.objectContaining({ statusName: 'Done' }));
+    const line = results(store.entries)[0] ?? '';
+    expect(line).toContain('Тікет KRM-101 «Export invoices» оновлено');
+    expect(line).toContain('status → Done');
+  });
+
+  it('changes nothing when the workflow has no way into the named status', async () => {
+    jiraState.integration = integration;
+    jiraState.tokenPresent = true;
+    jiraTransitions.mockResolvedValue(transitions);
+    managementChat.mockResolvedValue(
+      reply([{ kind: 'jira.ticket.update', key: 'KRM-101', patch: { title: 'Renamed', status: 'Archived' } }]),
+    );
+
+    const store = useManagementChat();
+    await store.send('перейменуй KRM-101 і архівуй', 'management-home');
+
+    // The rename was resolvable, but the edit is all-or-nothing: a half-applied edit reads as
+    // done in Jira while its line says it was refused.
+    expect(jiraEditIssue).not.toHaveBeenCalled();
+    expect(jiraTransition).not.toHaveBeenCalled();
+    const line = results(store.entries)[0] ?? '';
+    expect(line).toContain('«Archived»');
+    expect(line).toContain('In Progress, Done');
+  });
+
+  it('refuses a key whose project no connected board holds', async () => {
+    jiraState.integration = integration;
+    jiraState.tokenPresent = true;
+    managementChat.mockResolvedValue(reply([{ kind: 'jira.ticket.update', key: 'OPS-4', patch: { title: 'X' } }]));
+
+    const store = useManagementChat();
+    await store.send('перейменуй OPS-4', 'management-home');
+
+    expect(jiraEditIssue).not.toHaveBeenCalled();
+    expect(results(store.entries)[0]).toContain('проєкт OPS');
+  });
+});
+
 // The requirement's second half: an assistant with open questions asks them AND files nothing,
 // and the app says so in its own voice — a question buried in prose is a ticket the operator
 // keeps waiting for.
@@ -583,6 +710,9 @@ describe('the ticket context on the ask', () => {
         boardName: 'Kermanych board',
         canWrite: true,
         assignees: ['Maryna Koval'],
+        // The board's tickets travel too — the snapshot the assistant finds keys in. An
+        // empty mirror is an empty list, not an absent one: absent means «could not read».
+        issues: [],
       },
     ]);
   });

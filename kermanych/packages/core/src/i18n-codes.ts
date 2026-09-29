@@ -204,6 +204,16 @@ export type ManagementRejectionCode =
   | "ticket_prefix_unknown" // a branch prefix nobody offers (params: { value, allowed })
   | "ticket_platform_unknown" // a platform nobody offers (params: { value, allowed })
   | "jira_label_has_space" // a Jira label containing whitespace (params: { value })
+  | "jira_key_invalid" // a Jira key field that is not KEY-123 (params: { field, value })
+  | "jira_parent_conflict" // a jira.ticket.create with both parentKey and parentRef (params: { title })
+  // jira.ticket.update — one change to an existing Jira issue:
+  | "jira_update_no_key" // a jira.ticket.update without an issue key (params: none)
+  | "jira_update_no_patch" // a jira.ticket.update without a patch object (params: { key })
+  | "jira_update_empty" // a jira.ticket.update that changes nothing (params: { key })
+  | "jira_update_title_conflict" // both a full ticket rewrite and a bare title (params: { key })
+  | "jira_assignee_conflict" // both an assignee and unassign (params: { key })
+  | "jira_date_format" // dueDate/startDate neither YYYY-MM-DD nor "" (params: { field, value })
+  | "jira_estimate_format" // originalEstimate not a Jira duration nor "" (params: { value })
   // ticket.questions — the unfiled-ticket questions block:
   | "ticket_questions_no_target" // a ticket.questions without a forTicket (params: none)
   | "ticket_questions_empty" // a ticket.questions with no questions (params: { forTicket })
@@ -265,6 +275,15 @@ export const MANAGEMENT_REJECTION_CODES = [
   "ticket_prefix_unknown",
   "ticket_platform_unknown",
   "jira_label_has_space",
+  "jira_key_invalid",
+  "jira_parent_conflict",
+  "jira_update_no_key",
+  "jira_update_no_patch",
+  "jira_update_empty",
+  "jira_update_title_conflict",
+  "jira_assignee_conflict",
+  "jira_date_format",
+  "jira_estimate_format",
   "ticket_questions_no_target",
   "ticket_questions_empty",
   "todo_create_empty",

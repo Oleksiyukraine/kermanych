@@ -613,6 +613,72 @@ test("a jira.ticket.create may name the operator's attached files", () => {
   });
 });
 
+// A sequence in one reply: the parent's key does not exist when the model writes the batch,
+// so children name it by a reply-local label. Both parents at once is refused — the executor
+// could only guess which one the operator meant.
+test("a jira.ticket.create in a sequence names its parent by a label from the same reply", () => {
+  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, ref: "epic" })).toEqual({
+    kind: "jira.ticket.create",
+    ticket: TICKET,
+    ref: "epic",
+  });
+  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, parentRef: "epic" })).toEqual({
+    kind: "jira.ticket.create",
+    ticket: TICKET,
+    parentRef: "epic",
+  });
+  expect(
+    validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, parentRef: "epic", parentKey: "KRM-1" }),
+  ).toMatchObject({ error: { code: "jira_parent_conflict" } });
+  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, parentKey: "the epic" })).toMatchObject({
+    error: { code: "jira_key_invalid", params: { field: "parentKey" } },
+  });
+});
+
+// An edit names an existing issue by key and states only what moves. The key is folded to
+// upper case because the executor finds the board by its project prefix; an empty labels
+// list and "" dates are statements (clear them), not absences.
+test("a jira.ticket.update names the issue by key and carries only what changes", () => {
+  expect(
+    validateManagementAction({
+      kind: "jira.ticket.update",
+      key: "krm-101",
+      patch: { title: "Renamed", status: "Done", labels: [], dueDate: "", startDate: "2026-10-01", originalEstimate: "3d 4h", unassign: true },
+    }),
+  ).toEqual({
+    kind: "jira.ticket.update",
+    key: "KRM-101",
+    patch: { title: "Renamed", status: "Done", labels: [], dueDate: "", startDate: "2026-10-01", originalEstimate: "3d 4h", unassign: true },
+  });
+  // A full rewrite goes through the same ticket validation a created ticket does.
+  expect(validateManagementAction({ kind: "jira.ticket.update", key: "KRM-1", patch: { ticket: { ...TICKET, acceptanceCriteria: [] } } })).toMatchObject({
+    error: { code: "ticket_no_acceptance" },
+  });
+  expect(validateManagementAction({ kind: "jira.ticket.update", key: "KRM-1", patch: { title: "Decide TBD" } })).toMatchObject({
+    error: { code: "ticket_open_question" },
+  });
+});
+
+test("a jira.ticket.update that is ambiguous or empty is refused before anything is written", () => {
+  const refuse = (raw: Record<string, unknown>) => validateManagementAction({ kind: "jira.ticket.update", ...raw });
+  expect(refuse({ patch: { title: "X" } })).toMatchObject({ error: { code: "jira_update_no_key" } });
+  expect(refuse({ key: "KRM-1" })).toMatchObject({ error: { code: "jira_update_no_patch", params: { key: "KRM-1" } } });
+  expect(refuse({ key: "KRM-1", patch: {} })).toMatchObject({ error: { code: "jira_update_empty" } });
+  expect(refuse({ key: "KRM-1", patch: { title: "X", ticket: TICKET } })).toMatchObject({
+    error: { code: "jira_update_title_conflict" },
+  });
+  expect(refuse({ key: "KRM-1", patch: { assignee: "Olya", unassign: true } })).toMatchObject({
+    error: { code: "jira_assignee_conflict" },
+  });
+  // A day that matches the pattern but not the calendar, and prose where a duration belongs.
+  expect(refuse({ key: "KRM-1", patch: { dueDate: "2026-02-31" } })).toMatchObject({
+    error: { code: "jira_date_format", params: { field: "dueDate" } },
+  });
+  expect(refuse({ key: "KRM-1", patch: { originalEstimate: "two days" } })).toMatchObject({
+    error: { code: "jira_estimate_format" },
+  });
+});
+
 // The same names survive on the NATIVE board, where nothing can be done with them: `tasks`
 // has no attachment storage. Parsed rather than dropped because dropping is silent — the
 // executor files the card and states that the files stayed in the chat, and it cannot state

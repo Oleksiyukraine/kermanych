@@ -16,6 +16,7 @@ import {
   type ManagementDocFragment,
   type ManagementDocs,
   type ManagementJiraBoard,
+  type ManagementJiraIssueRow,
   type ManagementHome,
   type ManagementHomeRelease,
   type ManagementHomeTask,
@@ -136,7 +137,43 @@ function jiraBoard(v: unknown): ManagementJiraBoard | undefined {
     assignees: Array.isArray(x.assignees)
       ? x.assignees.filter((n): n is string => typeof n === "string" && n.trim() !== "").map((n) => n.trim())
       : [],
+    ...(Array.isArray(x.issues) ? { issues: jiraIssueRows(x.issues) } : {}),
   };
+}
+
+// The board's tickets, rebuilt field by field for `riskRows`' reason: the snapshot file is
+// what the assistant reads as the board's truth. A row without a key is one nothing could
+// address and is dropped. The caps bound a pathological client, not a real board: a mirror
+// of three thousand issues is still grepped in one call, and a description past the cap is
+// a document, not a ticket body — its first part is what an edit needs to preserve.
+const MAX_JIRA_ISSUES = 3000;
+const MAX_JIRA_DESCRIPTION = 20_000;
+
+function jiraIssueRows(v: unknown[]): ManagementJiraIssueRow[] {
+  const text = (x: unknown): string => (typeof x === "string" ? x.trim() : "");
+  const out: ManagementJiraIssueRow[] = [];
+  for (const item of v.slice(0, MAX_JIRA_ISSUES)) {
+    if (typeof item !== "object" || item === null) continue;
+    const y = item as Record<string, unknown>;
+    const key = text(y.key);
+    if (!key) continue;
+    const parentKey = text(y.parentKey);
+    out.push({
+      key,
+      summary: text(y.summary),
+      type: text(y.type),
+      status: text(y.status),
+      priority: text(y.priority),
+      assignee: text(y.assignee),
+      ...(parentKey ? { parentKey } : {}),
+      labels: Array.isArray(y.labels) ? y.labels.map(text).filter(Boolean) : [],
+      startDate: text(y.startDate),
+      dueDate: text(y.dueDate),
+      originalEstimate: text(y.originalEstimate),
+      description: typeof y.description === "string" ? y.description.slice(0, MAX_JIRA_DESCRIPTION) : "",
+    });
+  }
+  return out;
 }
 
 // The documentation fragments the browser retrieved for this turn, rebuilt field by field

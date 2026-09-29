@@ -20,6 +20,7 @@ import {
   parseManagementReply,
   type ImageInput,
   type ManagementAttachment,
+  type ManagementJiraBoard,
   type ManagementChatAsk,
   type ManagementChatReply,
   type ManagementRepo,
@@ -35,6 +36,7 @@ import { RegistryService } from "../registry/registry.service";
 import { reduceRpcEvents, sumTurnUsage } from "../supervisor/transcript-reducer";
 import {
   buildManagementTurn,
+  jiraBoardSnapshot,
   managementCwd,
   managementRepos,
   todayIso,
@@ -204,6 +206,7 @@ export class ManagementChatService implements OnModuleDestroy {
     // conversation can legally follow at once, and its first attachment must not race a
     // removal still in flight.
     await rm(this.attachDir(key), { recursive: true, force: true }).catch(() => {});
+    await rm(this.snapshotDir(key), { recursive: true, force: true }).catch(() => {});
     if (!live) return;
     // An in-flight turn is told why it will never finish. Stopping the child first would
     // surface as `onExit` on a callback we are about to clear, i.e. as a hang.
@@ -236,14 +239,19 @@ export class ManagementChatService implements OnModuleDestroy {
     // them. Both are NAMED in the turn (see attachmentsBlock) — the names are also the
     // vocabulary of `jira.ticket.create.attachments`.
     const { images, files } = await this.storeAttachments(key, input.attachments ?? []);
+    const today = todayIso();
+    // The boards' tickets, written where the read/grep tools can reach them — the only way
+    // the assistant finds a key it was not told or reads an issue before changing it.
+    const jiraFiles = await this.storeJiraSnapshots(key, input.context?.jira ?? [], today);
     const message = buildManagementTurn({
       first,
       repos,
       context: input.context,
-      today: todayIso(),
+      today,
       text: helped.text,
       locale: input.locale,
       ...(files.length ? { attachments: files } : {}),
+      ...(jiraFiles.length ? { jiraFiles } : {}),
     });
     const { events, notices } = await this.drive(key, live, message, images);
     // First, because it describes the message that produced everything after it.
@@ -411,6 +419,7 @@ export class ManagementChatService implements OnModuleDestroy {
     // Same best-effort cleanup as reset: the documents are as disposable as the child, and
     // the names go with them — an evicted conversation starts its next turn as a new one.
     void rm(this.attachDir(key), { recursive: true, force: true }).catch(() => {});
+    void rm(this.snapshotDir(key), { recursive: true, force: true }).catch(() => {});
     this.files.delete(key);
     const live = this.map.get(key);
     if (!live) return;
@@ -481,6 +490,55 @@ export class ManagementChatService implements OnModuleDestroy {
     const earlier: ManagementTurnFile[] = [];
     for (const f of ledger.values()) if (!fresh.some((n) => n.name === f.name)) earlier.push({ ...f, earlier: true });
     return { images, files: [...fresh, ...earlier] };
+  }
+
+  // ── Jira board snapshots on disk ─────────────────────────────────────────────
+
+  // A root of its own rather than a subdirectory of `attachDir`: an operator's document may
+  // be called anything, and a file named like the snapshot directory must not be able to
+  // shadow it. Same sanitised key, so no client string becomes a path segment.
+  private snapshotDir(key: string): string {
+    return join(tmpdir(), "kermanych-management-jira", key.replace(/[^A-Za-z0-9._-]/g, "-"));
+  }
+
+  // Rewritten from scratch every turn: a snapshot is the board as of THIS turn, and a file
+  // left over from a board disconnected since would be read as a board that still exists.
+  // Returns one path per board, aligned with `boards`; `undefined` where the browser sent no
+  // tickets (the mirror was unreadable) or the write failed — the prompt then says the
+  // snapshot is unavailable rather than naming a file that is not there.
+  private async storeJiraSnapshots(
+    key: string,
+    boards: ManagementJiraBoard[],
+    today: string,
+  ): Promise<(string | undefined)[]> {
+    const dir = this.snapshotDir(key);
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+    if (!boards.some((b) => b.issues !== undefined)) return [];
+    const out: (string | undefined)[] = [];
+    for (const [i, b] of boards.entries()) {
+      if (b.issues === undefined) {
+        out.push(undefined);
+        continue;
+      }
+      const path = join(dir, `${i + 1}-${b.projectKey.replace(/[^A-Za-z0-9_-]/g, "-")}.md`);
+      const text = jiraBoardSnapshot(b, today);
+      // mkdir per file and one retry, for storeAttachments' reason: drop() removes the
+      // directory fire-and-forget, and losing that race must cost a retry, not the snapshot.
+      try {
+        await mkdir(dir, { recursive: true });
+        await writeFile(path, text);
+        out.push(path);
+      } catch {
+        try {
+          await mkdir(dir, { recursive: true });
+          await writeFile(path, text);
+          out.push(path);
+        } catch {
+          out.push(undefined);
+        }
+      }
+    }
+    return out;
   }
 
   // Idle eviction on use, not on a timer: a conversation nobody has touched for the TTL is

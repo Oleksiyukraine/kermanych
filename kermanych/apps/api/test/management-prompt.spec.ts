@@ -16,7 +16,7 @@ import {
   type ManagementRiskRow,
   type Project,
 } from "@kermanych/core";
-import { buildManagementTurn, managementCwd, managementRepos, todayIso } from "../src/management/management-prompt";
+import { buildManagementTurn, jiraBoardSnapshot, managementCwd, managementRepos, todayIso } from "../src/management/management-prompt";
 
 function project(p: Partial<Project> & { id: string }): Project {
   return { name: p.id, localRepoPath: "", createdAt: "2026-08-30T00:00:00.000Z", ...p };
@@ -263,6 +263,17 @@ describe("buildManagementTurn", () => {
     expect(out).toContain(`platform — ${PLATFORMS.join(" | ")}`);
   });
 
+  // The two reported gaps, stated where the model decides: a request for several tickets was
+  // answered with one, and «зміни KRM-101» had no verb at all — a verb absent from the
+  // exhaustive menu is one the model sends the operator to do by hand in Jira.
+  it("offers editing an existing Jira ticket and creating a sequence in one reply", () => {
+    const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
+    expect(out).toContain('{ "kind": "jira.ticket.update", "key": "KRM-101", "patch": {');
+    expect(out).toContain("обмеження «один тікет за раз» НЕМАЄ");
+    expect(out).toContain('"parentRef"');
+    expect(out).toContain("батько ОБОВʼЯЗКОВО йде раніше за дітей");
+  });
+
   // The reported bug, one layer up from the executor that was already correct: asked to put
   // the operator's image on a Jira ticket, the assistant filed the ticket and answered that
   // «дія створення Jira-тікета не має поля для вкладень — прикріпити файл можна лише вручну
@@ -417,7 +428,61 @@ describe("buildManagementTurn", () => {
       today: TODAY,
       text: "?",
     });
-    expect(writable).toContain("можна створювати тікети");
+    expect(writable).toContain("можна створювати й змінювати тікети");
+  });
+
+  // Editing a ticket the operator only described («тікет про експорт») needs its key, and a
+  // key the model cannot see is one it invents. The board's tickets therefore reach it as a
+  // FILE it can grep — and when the browser could not read the mirror, the line must say so
+  // rather than name a file, or the model greps nothing and reports an empty board.
+  it("names each board's snapshot file, or says the snapshot is unavailable", () => {
+    const board = { projectKey: "KRM", boardName: "Kermanych board", canWrite: true, assignees: [] };
+    const out = buildManagementTurn({
+      first: false,
+      repos,
+      context: { ...context, jira: [{ ...board, issues: [] }, { ...board, boardName: "Other" }] },
+      today: TODAY,
+      text: "?",
+      jiraFiles: ["/tmp/snap/1-KRM.md", undefined],
+    });
+    expect(out).toContain("Тікети дошки (0) — знімок: /tmp/snap/1-KRM.md");
+    expect(out).toContain("знімок тікетів цього ходу недоступний");
+  });
+
+  // The file is grepped by key and by title words, so every issue must open with one header
+  // line carrying both, and the body must be text the model can carry into a rewrite — not
+  // Jira's HTML, whose paragraphs flattened by textContent glue a heading onto its sentence.
+  it("writes one greppable header per issue and the description as readable text", () => {
+    const out = jiraBoardSnapshot(
+      {
+        projectKey: "KRM",
+        boardName: "Kermanych board",
+        canWrite: true,
+        assignees: [],
+        issues: [
+          {
+            key: "KRM-7",
+            summary: "Export invoices",
+            type: "Story",
+            status: "In Progress",
+            priority: "High",
+            assignee: "",
+            parentKey: "KRM-1",
+            labels: ["billing"],
+            startDate: "",
+            dueDate: "2026-10-01",
+            originalEstimate: "2d",
+            description: "<h2>Context</h2><p>Accounting needs a file &amp; a date.</p><ul><li>One</li><li>Two</li></ul>",
+          },
+        ],
+      },
+      TODAY,
+    );
+    expect(out).toContain("### KRM-7 · Export invoices");
+    expect(out).toContain(
+      "тип: Story · статус: In Progress · пріоритет: High · виконавець: не призначено · батько: KRM-1 · мітки: billing · дедлайн: 2026-10-01 · оцінка: 2d",
+    );
+    expect(out).toContain("  Context\n  Accounting needs a file & a date.\n\n  - One\n  - Two");
   });
 
   // The contract half of the same fix. The rule the assistant follows must name TWO lists and
