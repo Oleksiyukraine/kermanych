@@ -70,9 +70,7 @@ vi.mock('../src/stores/jira', () => ({
     integrations: [],
     activeId: null,
     tokenPresent: false,
-    assignable: [],
     probe: vi.fn(),
-    loadAssignable: vi.fn(),
     upsert: vi.fn(),
   }),
 }));
@@ -91,7 +89,7 @@ vi.mock('../src/lib/export-file', () => ({
 }));
 
 function reply(actions: ManagementChatReply['actions']): ManagementChatReply {
-  return { text: 'Готово.', actions, rejected: [], notices: [], ms: 10 };
+  return { text: 'Готово.', actions, rejected: [], notices: [], jiraChanges: [], ms: 10 };
 }
 
 function results(entries: readonly MgmtChatEntry[]): string[] {

@@ -143,12 +143,12 @@ export type ManagementTicketFields = {
   outOfScope?: string[];
 };
 
-// The body of a ticket, rendered once and identically for both boards.
+// The body of a ticket, rendered once and identically wherever it is filed.
 //
-// Markdown, because `tasks.description` is rendered as markdown on «Дошка»; the Jira path
-// feeds the same string to the api, which splits it into ADF paragraphs, so the headings
-// survive as lines there too. One renderer rather than two: a ticket that reads differently
-// depending on which board it landed on is the same defect as two section tables.
+// Markdown, because `tasks.description` is rendered as markdown on «Дошка»; the api's
+// `jira_create_issue` tool feeds the same string to Jira, split into ADF paragraphs, so the
+// headings survive as lines there too. One renderer rather than two: a ticket that reads
+// differently depending on which board it landed on is the same defect as two section tables.
 export function renderTicketDescription(t: ManagementTicketFields): string {
   const out: string[] = ["## Context", t.context];
   if (t.userFlow?.length) {
@@ -169,41 +169,6 @@ export function renderTicketDescription(t: ManagementTicketFields): string {
 // nesting it here is why `todo.update` carries a `patch` rather than flat fields, the same
 // collision `risk.create` avoids by nesting under `risk`.
 export type ManagementTodoPatch = { text?: string; kind?: "check" | "number"; done?: boolean };
-
-// What a `jira.ticket.update` may change on an existing issue, each optional — an update
-// names only what moves, the `risk.update` shape. Vocabulary is `jira.ticket.create`'s where
-// the two overlap (names, never ids), plus the handful of things only an existing issue has.
-//
-//   * `ticket` REWRITES the issue: summary and the whole description, rendered by
-//     `renderTicketDescription` exactly as a created ticket is, and held to the same five-slot
-//     shape by `ticketFields`. The open-question refusal is the one creation rule it skips:
-//     the issue is already on the board, so an edit that keeps (or resolves) a question the
-//     issue already carries must go through. `title` renames only and leaves the description
-//     alone; stating both is refused, because the two disagree about the one field they share.
-//   * `unassign` is its own flag rather than `assignee: null`: `null` reads as «no value»
-//     everywhere else in this protocol, and «I had nothing to say» must never clear a field.
-//   * `dueDate` / `startDate` / `originalEstimate` take `""` to CLEAR — an explicit empty
-//     string, which a model writes only when it means it.
-//   * `status` is a status NAME. Jira moves an issue through workflow transitions, not by
-//     assignment, so the browser finds the transition that lands in this status and applies
-//     it — and refuses, naming the reachable ones, when the workflow has none.
-//   * `attachments` uploads the operator's named files onto the issue, the create path's
-//     vocabulary and resolution.
-export type ManagementJiraTicketPatch = {
-  ticket?: ManagementTicketFields;
-  title?: string;
-  issueType?: string;
-  priority?: string;
-  labels?: string[];
-  assignee?: string;
-  unassign?: true;
-  status?: string;
-  dueDate?: string;
-  startDate?: string;
-  originalEstimate?: string;
-  parentKey?: string;
-  attachments?: string[];
-};
 
 export type ManagementAction =
   // The model was asked to change a section that cannot be changed. It reports WHICH
@@ -251,10 +216,9 @@ export type ManagementAction =
   // File one card on the workspace's own board — «Дошка» → «Задачі», which is `tasks` rows
   // and therefore the DEFAULT board: it is the one that always exists, needs no integration
   // and no personal token, and every member of the workspace can already see it. A request
-  // that does not name a board lands here, and `jira.ticket.create` is emitted only when the
-  // operator named Jira — that asymmetry is the routing rule, expressed as two kinds rather
-  // than one `board` field, because the two boards genuinely take different fields and a
-  // single kind with everything optional would validate to no discipline at all.
+  // that does not name a board lands here; a Jira issue is filed only when the operator
+  // named Jira, and then not through an action block at all but live, through the api's
+  // Jira tools during the turn (the reply reports it in `jiraChanges`).
   //
   // `project` is a NAME from the prompt's repository list, for the reason `release.notes`
   // names one: a card belongs to exactly one `projects` row, a uuid is something the model
@@ -282,46 +246,6 @@ export type ManagementAction =
       // files stayed in the chat.
       attachments?: string[];
     }
-  // File one issue on one of the workspace's mirrored Jira boards. `board` names WHICH
-  // board (its board name, exactly as the context lists it) and is required only when the
-  // workspace has more than one connected — with a single board it is the sole answer and
-  // may be omitted. No `project`: the Jira project key comes from the chosen board's
-  // integration row, so there is nothing here for the model to choose or mistake.
-  // `issueType` and `priority` are NAMES («Task», «Bug», «High») because their Jira ids are
-  // not mirrored — jira_issues keeps only the display name — so the browser resolves them
-  // against the chosen board's live editor options; omitting them lets the Jira project's
-  // own defaults apply, which is the honest answer when the operator did not say.
-  | {
-      kind: "jira.ticket.create";
-      // Which connected board to file on, by its board name. Omitted with a single board.
-      board?: string;
-      ticket: ManagementTicketFields;
-      issueType?: string;
-      priority?: string;
-      labels?: string[];
-      assignee?: string;
-      // An existing key on the mirrored board, when the operator asked for a subtask.
-      parentKey?: string;
-      // A SEQUENCE in one reply: `ref` is a label this reply gives the ticket, and a later
-      // `jira.ticket.create` of the SAME reply names it in `parentRef` to become its child —
-      // an epic and its stories filed in one go. The key Jira mints is unknown until the
-      // parent exists, so the model cannot write it; the executor runs the batch in order
-      // and substitutes it. Exclusive with `parentKey`, which names an issue that already
-      // exists. Labels live for one reply only — they are not keys and never reach Jira.
-      ref?: string;
-      parentRef?: string;
-      // NAMES of files the operator attached to the conversation («долучені файли» in the
-      // context of the turn) that should be uploaded onto the created issue — stated only
-      // when the operator asked for it. Names, not bytes: the browser holds the attached
-      // files and resolves each name back to the payload it already has, so the model can
-      // never invent content — an unknown name is refused with the file left unattached.
-      attachments?: string[];
-    }
-  // Change one EXISTING issue on a mirrored Jira board, named by its key («KRM-101») — never
-  // by id. The board is the one whose project key prefixes it, so there is no `board` field
-  // for the model to disagree with the key about. The assistant finds keys and reads the
-  // current text in the per-turn board snapshot (management-prompt.ts `jiraLines`).
-  | { kind: "jira.ticket.update"; key: string; patch: ManagementJiraTicketPatch }
   // The ticket was NOT written, because writing it would have required the assistant to
   // decide something only the operator can. Writes nothing — its whole job is to make the
   // app state that, in the app's own voice, exactly as `unsupported` does for a section that
@@ -361,8 +285,6 @@ export type ManagementRiskDelete = Extract<ManagementAction, { kind: "risk.delet
 export type ManagementRiskExport = Extract<ManagementAction, { kind: "risk.export" }>;
 export type ManagementReleaseNotes = Extract<ManagementAction, { kind: "release.notes" }>;
 export type ManagementTicketCreate = Extract<ManagementAction, { kind: "ticket.create" }>;
-export type ManagementJiraTicketCreate = Extract<ManagementAction, { kind: "jira.ticket.create" }>;
-export type ManagementJiraTicketUpdate = Extract<ManagementAction, { kind: "jira.ticket.update" }>;
 export type ManagementTicketQuestions = Extract<ManagementAction, { kind: "ticket.questions" }>;
 export type ManagementTodoCreate = Extract<ManagementAction, { kind: "todo.create" }>;
 export type ManagementTodoUpdate = Extract<ManagementAction, { kind: "todo.update" }>;
@@ -380,10 +302,9 @@ export type ManagementWorkspaceProject = {
   gitRemoteUrl?: string;
 };
 
-// One file the operator attached to a chat turn: the display name (also the name the model
-// may quote back in `jira.ticket.create.attachments`), the mime type and the raw base64
-// payload. Images reach the model natively through omp's image slots; everything else the
-// api writes to disk so the read tool can open it.
+// One file the operator attached to a chat turn: the display name, the mime type and the raw
+// base64 payload. Images reach the model natively through omp's image slots; everything else
+// the api writes to disk so the read tool can open it.
 export type ManagementAttachment = {
   name: string;
   mimeType: string;
@@ -447,66 +368,26 @@ export type ManagementMember = {
   role: string;
 };
 
-// The workspace's mirrored Jira board, when it has one — the second board a ticket may be
-// filed on, and the only one that can be absent.
+// One of the workspace's connected Jira boards, as the assistant is shown it.
 //
-// Both flags matter and they fail differently. No integration row at all: there is no Jira
-// board in this workspace and the assistant must say so rather than quietly filing on the
-// native one. An integration but no personal token on THIS machine: the board is visible and
-// unwritable, because every Jira write is signed with the acting user's own token from the
-// local registry — and «I created it» would be a lie one round trip later.
+// The list tells the assistant which boards (and so which Jira projects) exist in this
+// workspace, and whether this machine holds the operator's personal Jira token for them
+// (`canWrite`). Nothing else: the tickets themselves are read and written LIVE through the
+// api's Jira tools during the turn, so no snapshot of issues, assignees or options rides on
+// the ask — a copy taken before the turn would be stale by the first write the turn makes.
+//
+// Both facts matter and they fail differently. No board at all: there is no Jira in this
+// workspace and the assistant must say so rather than quietly filing on the native board. A
+// board but no token on THIS machine: the board is visible and unwritable, because every Jira
+// write is signed with the acting user's own token from the local registry — and «I created
+// it» would be a lie one round trip later.
 export type ManagementJiraBoard = {
   // Jira's project key (`KRM`) — the prefix of every key on that board, so the assistant can
-  // recognise a key the operator quotes at it.
+  // recognise a key the operator quotes at it and knows which project its tools address.
   projectKey: string;
   boardName: string;
   // Whether this operator has a Jira token on this machine.
   canWrite: boolean;
-  // Who JIRA says may be assigned an issue on this project, by display name — Jira's own
-  // assignee picker, the same list the ticket dialog offers.
-  //
-  // Deliberately NOT `members`, and that distinction is the whole point of this field. A Jira
-  // assignee is an Atlassian account on that site; a `ManagementMember` is somebody who can
-  // sign into Kermanych. The two sets merely overlap, so naming a Jira assignee from the
-  // roster refuses exactly the people the operator can see in Jira — a designer with a Jira
-  // seat and no Kermanych account is assignable in Jira and absent from every roster.
-  //
-  // Names only, no `accountId`: the model is never given an opaque id it could invent, and
-  // the browser matches the name it chose back to an id against Jira's live list — the same
-  // shape as the roster, where the uuid never reaches the prompt either.
-  //
-  // Empty means the list could not be read this turn (no token on this machine, or Jira was
-  // unreachable), which the context block states rather than hides: an empty list read as
-  // «nobody is assignable» would be a refusal invented out of a network failure.
-  assignees: string[];
-  // The board's tickets as the mirror holds them this turn — what lets the assistant find a
-  // key the operator described («тікет про експорт»), read an issue before editing it, and
-  // avoid filing a duplicate. Absent means the mirror could not be read this turn, which
-  // the prompt states rather than implying an empty board.
-  //
-  // NOT printed into the prompt: a board is hundreds of issues, and a context block re-sent
-  // every turn would spend the operator's plan re-reading them. The api writes it to a file
-  // beside the conversation's attachments and names the path, so the model greps it with
-  // the tools it already has.
-  issues?: ManagementJiraIssueRow[];
-};
-
-// One mirrored issue as the snapshot file carries it. Names, never ids — the vocabulary the
-// write actions take. `description` is the mirror's rendered HTML; the api flattens it to
-// text when it writes the file.
-export type ManagementJiraIssueRow = {
-  key: string;
-  summary: string;
-  type: string;
-  status: string;
-  priority: string;
-  assignee: string;
-  parentKey?: string;
-  labels: string[];
-  startDate: string;
-  dueDate: string;
-  originalEstimate: string;
-  description: string;
 };
 
 // One week of somebody's (or everybody's) capacity, in hours with one decimal. `week` is
@@ -614,15 +495,14 @@ export type ManagementContext = {
   risks: ManagementRiskRow[];
   // The workspace roster, for assigning a ticket on the NATIVE board — and only there.
   // `tasks.assignee_id` is a profile uuid, so this is the set of people that board can name;
-  // a Jira issue is assigned from `jira.assignees` instead. Re-sent every turn for the
-  // register's reason: membership changes, and a name the assistant remembers from turn one
-  // is a foreign-key error on turn nine.
+  // a Jira issue's assignee is looked up live through the api's Jira tools instead. Re-sent
+  // every turn for the register's reason: membership changes, and a name the assistant
+  // remembers from turn one is a foreign-key error on turn nine.
   members: ManagementMember[];
-  // The mirrored Jira boards, empty/absent when the workspace has none. A workspace may
-  // connect up to ten; each entry is one board the assistant may file a ticket on, and
-  // `jira.ticket.create.board` names which. Absent means the assistant may not offer Jira
-  // at all — which is also why this is context and not contract: a board connected
-  // mid-conversation must reach the model on the next turn.
+  // The connected Jira boards, empty/absent when the workspace has none. A workspace may
+  // connect up to ten. Absent means the assistant may not offer Jira at all — which is also
+  // why this is context and not contract: a board connected mid-conversation must reach the
+  // model on the next turn.
   jira?: ManagementJiraBoard[];
   // Team Capacity, present only when the workspace has a Jira board. Re-sent every turn:
   // estimates move between turns.
@@ -674,6 +554,12 @@ export type ManagementChatReply = {
   // omp notices raised during the turn (dropped frames, provider warnings, a cancelled
   // interactive prompt).
   notices: Notice[];
+  // One line per Jira write the assistant made through the api's Jira tools during the turn,
+  // in the order it made them (created KRM-12, moved KRM-9 to Done, …). The writes already
+  // happened server-side, so the browser executes nothing here: it prints each line into the
+  // transcript and refreshes its Jira board so the screen shows what the turn changed.
+  // Required, and empty when the turn wrote nothing to Jira.
+  jiraChanges: Notice[];
   // What the turn cost on the connected plan. This chat runs through the same `omp` binary,
   // the same provider account and the same subscription as every agent, so a turn here is a
   // turn debited there — and the composer says so.
@@ -1010,8 +896,7 @@ function openQuestion(t: ManagementTicketFields): string | undefined {
 // card differ in where they go and in the vocabulary AROUND the ticket (issue type, branch
 // prefix), never in what makes the ticket readable — so there is one shape, one set of
 // refusals, and no board on which a worse ticket is acceptable. The open-question refusal is
-// NOT here: it is a gate on creation (`newTicketFields`), and a rewrite of an existing issue
-// passes through this shape alone.
+// layered on top by `validateNewTicket`, the one entry point.
 function ticketFields(v: unknown): ManagementTicketFields | Fail {
   if (!isObj(v)) return { error: { text: "дія без об'єкта ticket", code: "ticket_not_object" } };
   const title = str(v.title);
@@ -1081,12 +966,13 @@ function ticketFields(v: unknown): ManagementTicketFields | Fail {
   return t;
 }
 
-// A ticket about to be FILED: the five slots plus the open-question refusal. Only creation is
-// gated, because only creation is what the gate protects — a question kept off the board. An
-// existing Jira issue already carries whatever it carries; refusing an edit of it keeps no
-// question off any board and leaves the operator unable to touch the ticket at all, the
-// question included (a requirements issue that says «unclear» could never be rewritten).
-function newTicketFields(v: unknown): ManagementTicketFields | Fail {
+// A ticket about to be FILED: the five slots plus the open-question refusal. Exported because
+// it is the gate for BOTH boards: `ticket.create` below, and the api's `jira_create_issue`
+// tool (jira-tools.service.ts), which files a Jira issue live during the turn and must refuse
+// exactly what the native board refuses. Only creation is gated, because only creation is
+// what the gate protects — a question kept off the board; an existing issue already carries
+// whatever it carries.
+export function validateNewTicket(v: unknown): ManagementTicketFields | { error: ManagementRejection } {
   const t = ticketFields(v);
   if (isFail(t)) return t;
   const open = openQuestion(t);
@@ -1117,95 +1003,6 @@ function ticketName(v: unknown, field: string): string | undefined | Fail {
       },
     };
   return str(raw);
-}
-
-// ── Jira vocabulary ───────────────────────────────────────────────────────────
-
-// A Jira issue key: the project key (a letter, then letters, digits or underscores) and a
-// positive number. Folded to upper case — «krm-101» names the same issue, and a lowercase key
-// would miss the board lookup the executor does by project-key prefix.
-const JIRA_KEY_RE = /^[A-Z][A-Z0-9_]*-[1-9]\d*$/;
-
-function jiraKey(o: Record<string, unknown>, field: string): string | undefined | Fail {
-  const name = ticketName(o, field);
-  if (name === undefined || isFail(name)) return name;
-  const key = name.toUpperCase();
-  if (!JIRA_KEY_RE.test(key))
-    return {
-      error: {
-        text: `${field}=${JSON.stringify(name)} — це не ключ тікета Jira (наприклад KRM-101)`,
-        code: "jira_key_invalid",
-        params: { field, value: JSON.stringify(name) },
-      },
-    };
-  return key;
-}
-
-// Labels as Jira accepts them. Jira refuses a label containing whitespace, and it does so as a
-// 400 naming a field path; refused here instead, with the offending label quoted.
-function jiraLabels(v: unknown): string[] | Fail {
-  const labels = strList(v, "labels");
-  if (isFail(labels)) return labels;
-  const spaced = labels.find((l) => /\s/.test(l));
-  if (spaced !== undefined)
-    return {
-      error: {
-        text: `мітка ${JSON.stringify(spaced)} містить пробіл — Jira такі мітки не приймає`,
-        code: "jira_label_has_space",
-        params: { value: JSON.stringify(spaced) },
-      },
-    };
-  return labels;
-}
-
-// A rename alone. Held to the kanban limit a created title is; not to the open-question
-// markers, for the reason `newTicketFields` gives — the issue already exists.
-function jiraTitle(v: unknown): string | Fail {
-  const title = str(v);
-  if (title === undefined) return { error: { text: "тікет без назви (title)", code: "ticket_no_title" } };
-  if (title.length > TICKET_TITLE_MAX)
-    return {
-      error: {
-        text: `назва тікета довша за ${TICKET_TITLE_MAX} символів — це вже опис, а не назва`,
-        code: "ticket_title_too_long",
-        params: { max: TICKET_TITLE_MAX },
-      },
-    };
-  return title;
-}
-
-// A Jira planning day on an update: YYYY-MM-DD, or "" to clear it. The calendar is checked
-// too — 2026-02-31 matches the pattern and is a day Jira would only refuse after the other
-// fields of the same edit had already been resolved.
-function jiraDate(o: Record<string, unknown>, field: string): string | undefined | Fail {
-  if (!has(o, field)) return undefined;
-  const raw = o[field];
-  const value = typeof raw === "string" ? raw.trim() : "-";
-  if (value === "") return "";
-  const at = DATE_RE.test(value) ? new Date(`${value}T00:00:00Z`) : undefined;
-  if (at !== undefined && !Number.isNaN(at.getTime()) && at.toISOString().startsWith(value)) return value;
-  return {
-    error: {
-      text: `${field}=${JSON.stringify(raw)} — це не дата у форматі РРРР-ММ-ДД (порожній рядок очищає дату)`,
-      code: "jira_date_format",
-      params: { field, value: JSON.stringify(raw) },
-    },
-  };
-}
-
-// Jira's own duration spelling («3d 4h», «1w», «30m»), or "" to clear the estimate. Anything
-// else is refused here rather than as Jira's «invalid time duration» one round trip later.
-function jiraEstimate(raw: unknown): string | Fail {
-  const value = typeof raw === "string" ? raw.trim() : undefined;
-  if (value === "") return "";
-  if (value !== undefined && /^(?:\d+(?:\.\d+)?[wdhm]\s*)+$/i.test(value)) return value;
-  return {
-    error: {
-      text: `originalEstimate=${JSON.stringify(raw)} — це не тривалість Jira (наприклад «3d 4h»; порожній рядок очищає оцінку)`,
-      code: "jira_estimate_format",
-      params: { value: JSON.stringify(raw) },
-    },
-  };
 }
 
 // One parsed block -> one action, or a sentence explaining why not. The sentence is user
@@ -1345,17 +1142,15 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
       };
     return { kind: "release.notes", project, branch, rangeFrom, rangeTo };
   }
-  if (kind === "ticket.create" || kind === "jira.ticket.create") {
-    const ticket = newTicketFields(o.ticket);
+  if (kind === "ticket.create") {
+    const ticket = validateNewTicket(o.ticket);
     if (isFail(ticket)) return ticket;
 
     const assignee = ticketName(o, "assignee");
     if (isFail(assignee)) return assignee;
 
-    // Named files, parsed for BOTH kinds and before the split: the operator's request
-    // («тікет із цим файлом») does not change with the board — only what can be done about
-    // it does. Jira uploads them, the native board has nowhere to put them and says so, and
-    // the empty list is the same statement as no field at all.
+    // Named files: parsed so the executor can say they stayed in the chat (see the field's
+    // comment), and the empty list is the same statement as no field at all.
     let attached: string[] | undefined;
     if (has(o, "attachments")) {
       const parsed = strList(o.attachments, "attachments");
@@ -1363,149 +1158,48 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
       if (parsed.length > 0) attached = parsed;
     }
 
-    if (kind === "ticket.create") {
-      // Named, not guessed — a card belongs to exactly one project, and the wrong one puts a
-      // ticket in front of a team that does not own the work. The prompt tells the model to
-      // ask in prose when the workspace has several and the operator named none; this is the
-      // refusal if it did not.
-      const project = str(o.project);
-      if (project === undefined)
-        return {
-          error: {
-            text: `тікет «${ticket.title}» без проєкту — назви його так, як він стоїть у списку репозиторіїв`,
-            code: "ticket_no_project",
-            params: { title: ticket.title },
-          },
-        };
-      const a: ManagementTicketCreate = { kind: "ticket.create", project, ticket };
-      if (assignee !== undefined) a.assignee = assignee;
-      // The two launch hints a manager legitimately knows. Validated against the same core
-      // constants the board's own form offers, so a value Postgres would happily store but no
-      // screen can render is refused here with the list attached.
-      if (has(o, "prefix")) {
-        if (!BRANCH_PREFIXES.includes(o.prefix as BranchPrefix))
-          return {
-            error: {
-              text: `невідомий тип задачі ${JSON.stringify(o.prefix)} (${BRANCH_PREFIXES.join(", ")})`,
-              code: "ticket_prefix_unknown",
-              params: { value: JSON.stringify(o.prefix), allowed: BRANCH_PREFIXES.join(", ") },
-            },
-          };
-        a.prefix = o.prefix as BranchPrefix;
-      }
-      if (has(o, "platform")) {
-        if (!PLATFORMS.includes(o.platform as Platform))
-          return {
-            error: {
-              text: `невідома платформа ${JSON.stringify(o.platform)} (${PLATFORMS.join(", ")})`,
-              code: "ticket_platform_unknown",
-              params: { value: JSON.stringify(o.platform), allowed: PLATFORMS.join(", ") },
-            },
-          };
-        a.platform = o.platform as Platform;
-      }
-      if (attached !== undefined) a.attachments = attached;
-      return a;
-    }
-
-    const a: ManagementJiraTicketCreate = { kind: "jira.ticket.create", ticket };
-    if (assignee !== undefined) a.assignee = assignee;
-    for (const field of ["board", "issueType", "priority", "ref", "parentRef"] as const) {
-      const value = ticketName(o, field);
-      if (isFail(value)) return value;
-      if (value !== undefined) a[field] = value;
-    }
-    const parentKey = jiraKey(o, "parentKey");
-    if (isFail(parentKey)) return parentKey;
-    if (parentKey !== undefined) a.parentKey = parentKey;
-    // Two parents is no parent: the executor could only pick one, and whichever it picked
-    // would be a guess about which of the two the operator meant.
-    if (a.parentKey !== undefined && a.parentRef !== undefined)
+    // Named, not guessed — a card belongs to exactly one project, and the wrong one puts a
+    // ticket in front of a team that does not own the work. The prompt tells the model to
+    // ask in prose when the workspace has several and the operator named none; this is the
+    // refusal if it did not.
+    const project = str(o.project);
+    if (project === undefined)
       return {
         error: {
-          text: `тікет «${ticket.title}»: parentKey і parentRef разом — батько або вже існує (parentKey), або створюється в цій же відповіді (parentRef)`,
-          code: "jira_parent_conflict",
+          text: `тікет «${ticket.title}» без проєкту — назви його так, як він стоїть у списку репозиторіїв`,
+          code: "ticket_no_project",
           params: { title: ticket.title },
         },
       };
-    if (has(o, "labels")) {
-      const labels = jiraLabels(o.labels);
-      if (isFail(labels)) return labels;
-      if (labels.length) a.labels = labels;
+    const a: ManagementTicketCreate = { kind: "ticket.create", project, ticket };
+    if (assignee !== undefined) a.assignee = assignee;
+    // The two launch hints a manager legitimately knows. Validated against the same core
+    // constants the board's own form offers, so a value Postgres would happily store but no
+    // screen can render is refused here with the list attached.
+    if (has(o, "prefix")) {
+      if (!BRANCH_PREFIXES.includes(o.prefix as BranchPrefix))
+        return {
+          error: {
+            text: `невідомий тип задачі ${JSON.stringify(o.prefix)} (${BRANCH_PREFIXES.join(", ")})`,
+            code: "ticket_prefix_unknown",
+            params: { value: JSON.stringify(o.prefix), allowed: BRANCH_PREFIXES.join(", ") },
+          },
+        };
+      a.prefix = o.prefix as BranchPrefix;
+    }
+    if (has(o, "platform")) {
+      if (!PLATFORMS.includes(o.platform as Platform))
+        return {
+          error: {
+            text: `невідома платформа ${JSON.stringify(o.platform)} (${PLATFORMS.join(", ")})`,
+            code: "ticket_platform_unknown",
+            params: { value: JSON.stringify(o.platform), allowed: PLATFORMS.join(", ") },
+          },
+        };
+      a.platform = o.platform as Platform;
     }
     if (attached !== undefined) a.attachments = attached;
     return a;
-  }
-  if (kind === "jira.ticket.update") {
-    const k = jiraKey(o, "key");
-    if (isFail(k)) return k;
-    if (k === undefined)
-      return { error: { text: "jira.ticket.update без ключа тікета (наприклад KRM-101)", code: "jira_update_no_key" } };
-    if (!isObj(o.patch))
-      return { error: { text: `jira.ticket.update ${k} без об'єкта patch`, code: "jira_update_no_patch", params: { key: k } } };
-    const p = o.patch;
-    const patch: ManagementJiraTicketPatch = {};
-    if (has(p, "ticket") && has(p, "title"))
-      return {
-        error: {
-          text: `jira.ticket.update ${k}: ticket і title разом — ticket переписує тікет цілком, title лише перейменовує`,
-          code: "jira_update_title_conflict",
-          params: { key: k },
-        },
-      };
-    if (has(p, "ticket")) {
-      const ticket = ticketFields(p.ticket);
-      if (isFail(ticket)) return ticket;
-      patch.ticket = ticket;
-    }
-    if (has(p, "title")) {
-      const title = jiraTitle(p.title);
-      if (isFail(title)) return title;
-      patch.title = title;
-    }
-    for (const field of ["issueType", "priority", "assignee", "status"] as const) {
-      const value = ticketName(p, field);
-      if (isFail(value)) return value;
-      if (value !== undefined) patch[field] = value;
-    }
-    if (p.unassign === true || p.unassign === "true") {
-      if (patch.assignee !== undefined)
-        return {
-          error: {
-            text: `jira.ticket.update ${k}: assignee і unassign разом — або призначити, або зняти виконавця`,
-            code: "jira_assignee_conflict",
-            params: { key: k },
-          },
-        };
-      patch.unassign = true;
-    }
-    if (has(p, "labels")) {
-      // An empty list IS a statement here, unlike on create: it clears the issue's labels.
-      const labels = jiraLabels(p.labels);
-      if (isFail(labels)) return labels;
-      patch.labels = labels;
-    }
-    for (const field of ["dueDate", "startDate"] as const) {
-      const value = jiraDate(p, field);
-      if (isFail(value)) return value;
-      if (value !== undefined) patch[field] = value;
-    }
-    if (has(p, "originalEstimate")) {
-      const estimate = jiraEstimate(p.originalEstimate);
-      if (isFail(estimate)) return estimate;
-      patch.originalEstimate = estimate;
-    }
-    const parentKey = jiraKey(p, "parentKey");
-    if (isFail(parentKey)) return parentKey;
-    if (parentKey !== undefined) patch.parentKey = parentKey;
-    if (has(p, "attachments")) {
-      const files = strList(p.attachments, "attachments");
-      if (isFail(files)) return files;
-      if (files.length) patch.attachments = files;
-    }
-    if (Object.keys(patch).length === 0)
-      return { error: { text: `jira.ticket.update ${k} нічого не змінює`, code: "jira_update_empty", params: { key: k } } };
-    return { kind: "jira.ticket.update", key: k, patch };
   }
   if (kind === "ticket.questions") {
     const forTicket = str(o.forTicket);

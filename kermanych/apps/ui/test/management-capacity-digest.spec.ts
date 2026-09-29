@@ -38,9 +38,7 @@ vi.mock('../src/stores/jira', () => ({
       return jiraState.issues;
     },
     tokenPresent: false,
-    assignable: [],
     probe: vi.fn(),
-    loadAssignable: vi.fn(async () => []),
     loadBoard: () => loadBoard(),
     fetchWorklogs: (range: unknown) => fetchWorklogs(range),
     upsert: vi.fn(),
@@ -49,7 +47,7 @@ vi.mock('../src/stores/jira', () => ({
 vi.mock('../src/stores/risks', () => ({ useRisks: () => ({ byWorkspace: { w1: [] }, load: vi.fn(), create: vi.fn(), save: vi.fn() }) }));
 vi.mock('../src/stores/release-notes', () => ({ useReleaseNotes: () => ({ generate: vi.fn(), byWorkspace: { w1: [] }, load: vi.fn() }) }));
 
-const reply: ManagementChatReply = { text: 'ok', actions: [], rejected: [], notices: [], ms: 1 };
+const reply: ManagementChatReply = { text: 'ok', actions: [], rejected: [], notices: [], jiraChanges: [], ms: 1 };
 
 const issue = (over: Record<string, unknown>) => ({
   integrationId: 'i1', workspaceId: 'w1', issueId: '1', key: 'KAN-1', summary: 's', descriptionHtml: '',

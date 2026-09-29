@@ -42,6 +42,12 @@ export interface RuntimeLaunchOpts {
   // How much of omp's subagent activity to forward (omp defaults to "off"). Ignored by
   // non-omp backends. Undefined lets the omp runtime pick its own default ("progress").
   subagentSubscription?: SubagentSubscriptionLevel; // omp-only
+  // One HTTP MCP server whose tools the child gets beside its built-ins — the Менеджмент
+  // chat's Jira tools (management-mcp.service.ts). claude takes it as `mcpServers`; omp,
+  // which reads MCP only from config files, gets the omp-mcp-bridge.ts extension with the URL
+  // and bearer in its environment. Tool names: `name` is the server's name, so claude shows
+  // them as `mcp__<name>__<tool>` and omp as the bare `<tool>`.
+  mcp?: { name: string; url: string; token: string };
 }
 
 // The backend-neutral session surface the supervisor drives. Method names match the current

@@ -32,23 +32,26 @@ function make(over: { chat?: Partial<ManagementChatService>; releases?: Partial<
 const chatAsk = (over: Partial<ManagementChatAsk> = {}): ManagementChatAsk =>
   ({ conversationId: "c1", workspaceId: "w1", workspaceProjects: [], text: "hi", context: { workspaceName: "A", section: "s", risks: [] }, ...over }) as ManagementChatAsk;
 
+// What the global guard attaches: the acting user decides whose Jira token the chat's tools sign with.
+const REQ = { user: { id: "u1" } };
+
 const relAsk = (over: Partial<ReleaseNotesAsk> = {}): ReleaseNotesAsk =>
   ({ projectId: "p1", workspaceName: "A", branch: "main", rangeFrom: "2026-08-01", rangeTo: "2026-08-31", ...over }) as ReleaseNotesAsk;
 
 describe("ManagementController — chat validations", () => {
   it("codes a missing conversationId", async () => {
-    const body = await refusal(() => make().ask(chatAsk({ conversationId: "" })));
+    const body = await refusal(() => make().ask(chatAsk({ conversationId: "" }), REQ));
     expect(body.code).toBe("conversation_id_missing");
     expect(body.message).toBe("не вказано розмову (conversationId)");
   });
   it("codes a blank message", async () => {
-    expect((await refusal(() => make().ask(chatAsk({ text: "  " })))).code).toBe("message_empty");
+    expect((await refusal(() => make().ask(chatAsk({ text: "  " }), REQ))).code).toBe("message_empty");
   });
   it("codes a missing workspace", async () => {
-    expect((await refusal(() => make().ask(chatAsk({ workspaceId: "" })))).code).toBe("workspace_missing");
+    expect((await refusal(() => make().ask(chatAsk({ workspaceId: "" }), REQ))).code).toBe("workspace_missing");
   });
   it("codes a missing section context", async () => {
-    expect((await refusal(() => make().ask(chatAsk({ context: undefined as never })))).code).toBe("section_context_missing");
+    expect((await refusal(() => make().ask(chatAsk({ context: undefined as never }), REQ))).code).toBe("section_context_missing");
   });
   it("codes a missing conversationId on reset", async () => {
     expect((await refusal(() => make().reset({ conversationId: "" }))).code).toBe("conversation_id_missing");
@@ -60,18 +63,18 @@ describe("ManagementController — chat validations", () => {
   it("accepts a turn of files alone and hands the sanitized list to the service", async () => {
     let seen: ManagementChatAsk | undefined;
     const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as never });
-    await ctl.ask(chatAsk({ text: "", attachments: [{ name: " report.pdf ", mimeType: "application/pdf", data: "QUJD" }] }));
+    await ctl.ask(chatAsk({ text: "", attachments: [{ name: " report.pdf ", mimeType: "application/pdf", data: "QUJD" }] }), REQ);
     expect(seen?.attachments).toEqual([{ name: "report.pdf", mimeType: "application/pdf", data: "QUJD" }]);
   });
   it("codes an oversized attachment", async () => {
     const big = { name: "big.pdf", mimeType: "application/pdf", data: "x".repeat(Math.ceil((20 * 1024 * 1024 * 4) / 3) + 1) };
-    const body = await refusal(() => make().ask(chatAsk({ attachments: [big] })));
+    const body = await refusal(() => make().ask(chatAsk({ attachments: [big] }), REQ));
     expect(body.code).toBe("attachment_too_large");
     expect(body.params).toEqual({ name: "big.pdf" });
   });
   it("codes too many attachments", async () => {
     const one = { name: "a.pdf", mimeType: "application/pdf", data: "QQ==" };
-    const body = await refusal(() => make().ask(chatAsk({ attachments: Array.from({ length: 11 }, () => one) })));
+    const body = await refusal(() => make().ask(chatAsk({ attachments: Array.from({ length: 11 }, () => one) }), REQ));
     expect(body.code).toBe("attachments_too_many");
     expect(body.params).toEqual({ count: 11, max: 10 });
   });
@@ -116,7 +119,7 @@ describe("ManagementController — CodedError relay", () => {
         },
       },
     });
-    const body = await refusal(() => controller.ask(chatAsk()));
+    const body = await refusal(() => controller.ask(chatAsk(), REQ));
     expect(body.code).toBe("assistant_no_reply_timeout");
     expect(body.params).toEqual({ seconds: 240 });
   });
@@ -127,25 +130,23 @@ describe("ManagementController — capacity context", () => {
     let seen: ManagementChatAsk | undefined;
     const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
     const weeks = Array.from({ length: 20 }, (_, i) => ({ week: `2026-01-${String(i + 1).padStart(2, "0")}`, capacityH: 40, plannedH: -3, loggedH: 1.26 }));
-    await ctl.ask(
-      chatAsk({
-        context: {
-          workspaceName: "A",
-          section: "s",
-          risks: [],
-          members: [],
-          capacity: {
-            from: "2026-08-17",
-            to: "2026-10-11",
-            hoursPerDay: 8,
-            team: weeks,
-            persons: [{ name: " Марина ", weeks, openIssues: 2.7, unscheduled: -1, overdue: 1 }, { name: 7 }],
-            unscheduled: 1,
-            overdue: "x",
-          },
-        } as unknown as ManagementChatAsk["context"],
-      }),
-    );
+    await ctl.ask(chatAsk({
+      context: {
+        workspaceName: "A",
+        section: "s",
+        risks: [],
+        members: [],
+        capacity: {
+          from: "2026-08-17",
+          to: "2026-10-11",
+          hoursPerDay: 8,
+          team: weeks,
+          persons: [{ name: " Марина ", weeks, openIssues: 2.7, unscheduled: -1, overdue: 1 }, { name: 7 }],
+          unscheduled: 1,
+          overdue: "x",
+        },
+      } as unknown as ManagementChatAsk["context"],
+    }), REQ);
     const c = seen!.context.capacity!;
     expect(c.team).toHaveLength(12);
     expect(c.team[0]).toEqual({ week: "2026-01-01", capacityH: 40, plannedH: 0, loggedH: 1.3 });
@@ -154,7 +155,7 @@ describe("ManagementController — capacity context", () => {
     expect(c.persons[1]).toMatchObject({ name: "", weeks: [] });
     expect(c.overdue).toBe(0);
 
-    await ctl.ask(chatAsk({ context: { workspaceName: "A", section: "s", risks: [], members: [], capacity: { from: "не дата" } } as unknown as ManagementChatAsk["context"] }));
+    await ctl.ask(chatAsk({ context: { workspaceName: "A", section: "s", risks: [], members: [], capacity: { from: "не дата" } } as unknown as ManagementChatAsk["context"] }), REQ);
     expect("capacity" in seen!.context).toBe(false);
   });
 });
@@ -163,29 +164,27 @@ describe("ManagementController — home context", () => {
   it("rebuilds the home digest field by field and drops junk rows", async () => {
     let seen: ManagementChatAsk | undefined;
     const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
-    await ctl.ask(
-      chatAsk({
-        context: {
-          workspaceName: "A",
-          section: "s",
-          risks: [],
-          members: [],
-          home: {
-            tiles: [{ id: " todo ", w: 2.9, h: -1 }, { id: "" }, "junk"],
-            todo: [
-              { text: "перший", kind: "number", done: true },
-              { kind: "check" }, // no text → dropped
-              { text: "другий", kind: "ghost", done: true }, // unknown kind → check
-            ],
-            tasksToday: [
-              { name: " Оля ", tasks: [{ key: " K-1 ", summary: "s", overdue: "yes" }, { key: "" }] },
-              { name: "порожня", tasks: [] }, // a person with no valid tasks is dropped
-            ],
-            releases: [{ title: " R1 ", projectName: "P", createdAt: "2026-01-01" }, { title: "" }],
-          },
-        } as unknown as ManagementChatAsk["context"],
-      }),
-    );
+    await ctl.ask(chatAsk({
+      context: {
+        workspaceName: "A",
+        section: "s",
+        risks: [],
+        members: [],
+        home: {
+          tiles: [{ id: " todo ", w: 2.9, h: -1 }, { id: "" }, "junk"],
+          todo: [
+            { text: "перший", kind: "number", done: true },
+            { kind: "check" }, // no text → dropped
+            { text: "другий", kind: "ghost", done: true }, // unknown kind → check
+          ],
+          tasksToday: [
+            { name: " Оля ", tasks: [{ key: " K-1 ", summary: "s", overdue: "yes" }, { key: "" }] },
+            { name: "порожня", tasks: [] }, // a person with no valid tasks is dropped
+          ],
+          releases: [{ title: " R1 ", projectName: "P", createdAt: "2026-01-01" }, { title: "" }],
+        },
+      } as unknown as ManagementChatAsk["context"],
+    }), REQ);
     const h = seen!.context.home!;
     expect(h.tiles).toEqual([{ id: "todo", w: 2, h: 1 }]);
     expect(h.todo).toEqual([
@@ -199,9 +198,9 @@ describe("ManagementController — home context", () => {
   it("omits home entirely when the client sent none or junk", async () => {
     let seen: ManagementChatAsk | undefined;
     const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
-    await ctl.ask(chatAsk());
+    await ctl.ask(chatAsk(), REQ);
     expect("home" in seen!.context).toBe(false);
-    await ctl.ask(chatAsk({ context: { workspaceName: "A", section: "s", risks: [], members: [], home: "junk" } as unknown as ManagementChatAsk["context"] }));
+    await ctl.ask(chatAsk({ context: { workspaceName: "A", section: "s", risks: [], members: [], home: "junk" } as unknown as ManagementChatAsk["context"] }), REQ);
     expect("home" in seen!.context).toBe(false);
   });
 });
@@ -224,17 +223,15 @@ describe("ManagementController — documentation context", () => {
   it("hands the retrieved documentation fragments to the service", async () => {
     let seen: ManagementChatAsk | undefined;
     const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
-    await ctl.ask(
-      chatAsk({
-        context: {
-          workspaceName: "A",
-          section: "management-docs",
-          risks: [],
-          members: [],
-          docs: { status: "ok", projectName: "kermanych", fragments: [fragment] },
-        } as unknown as ManagementChatAsk["context"],
-      }),
-    );
+    await ctl.ask(chatAsk({
+      context: {
+        workspaceName: "A",
+        section: "management-docs",
+        risks: [],
+        members: [],
+        docs: { status: "ok", projectName: "kermanych", fragments: [fragment] },
+      } as unknown as ManagementChatAsk["context"],
+    }), REQ);
     const d = seen!.context.docs!;
     expect(d.status).toBe("ok");
     expect(d.projectName).toBe("kermanych");
@@ -244,72 +241,64 @@ describe("ManagementController — documentation context", () => {
   it("keeps the not-indexed status, which the prompt turns into «індексу ще немає»", async () => {
     let seen: ManagementChatAsk | undefined;
     const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
-    await ctl.ask(
-      chatAsk({
-        context: {
-          workspaceName: "A",
-          section: "management-docs",
-          risks: [],
-          members: [],
-          docs: { status: "not-indexed", projectName: "kermanych", fragments: [] },
-        } as unknown as ManagementChatAsk["context"],
-      }),
-    );
+    await ctl.ask(chatAsk({
+      context: {
+        workspaceName: "A",
+        section: "management-docs",
+        risks: [],
+        members: [],
+        docs: { status: "not-indexed", projectName: "kermanych", fragments: [] },
+      } as unknown as ManagementChatAsk["context"],
+    }), REQ);
     expect(seen!.context.docs).toEqual({ status: "not-indexed", projectName: "kermanych", fragments: [] });
   });
 
   it("drops a malformed block rather than printing half a fragment as fact", async () => {
     let seen: ManagementChatAsk | undefined;
     const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
-    await ctl.ask(
-      chatAsk({
-        context: {
-          workspaceName: "A",
-          section: "management-docs",
-          risks: [],
-          members: [],
-          docs: { status: "нізвідки", projectName: "kermanych", fragments: [fragment] },
-        } as unknown as ManagementChatAsk["context"],
-      }),
-    );
+    await ctl.ask(chatAsk({
+      context: {
+        workspaceName: "A",
+        section: "management-docs",
+        risks: [],
+        members: [],
+        docs: { status: "нізвідки", projectName: "kermanych", fragments: [fragment] },
+      } as unknown as ManagementChatAsk["context"],
+    }), REQ);
     expect("docs" in seen!.context).toBe(false);
   });
 
   it("caps how many fragments a client can put into the prompt", async () => {
     let seen: ManagementChatAsk | undefined;
     const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
-    await ctl.ask(
-      chatAsk({
-        context: {
-          workspaceName: "A",
-          section: "management-docs",
-          risks: [],
-          members: [],
-          docs: { status: "ok", projectName: "kermanych", fragments: Array.from({ length: 80 }, () => fragment) },
-        } as unknown as ManagementChatAsk["context"],
-      }),
-    );
+    await ctl.ask(chatAsk({
+      context: {
+        workspaceName: "A",
+        section: "management-docs",
+        risks: [],
+        members: [],
+        docs: { status: "ok", projectName: "kermanych", fragments: Array.from({ length: 80 }, () => fragment) },
+      } as unknown as ManagementChatAsk["context"],
+    }), REQ);
     expect(seen!.context.docs!.fragments).toHaveLength(24);
   });
 
   it("drops fragments that are not whole, keeping the ones that are", async () => {
     let seen: ManagementChatAsk | undefined;
     const ctl = make({ chat: { ask: async (a: ManagementChatAsk) => ((seen = a), {}) } as Partial<ManagementChatService> });
-    await ctl.ask(
-      chatAsk({
-        context: {
-          workspaceName: "A",
-          section: "management-docs",
-          risks: [],
-          members: [],
-          docs: {
-            status: "fulltext",
-            projectName: "kermanych",
-            fragments: [fragment, { folder: "docs", path: "", headingPath: "x", startLine: 1, endLine: 2, content: "y" }, { path: 7 }],
-          },
-        } as unknown as ManagementChatAsk["context"],
-      }),
-    );
+    await ctl.ask(chatAsk({
+      context: {
+        workspaceName: "A",
+        section: "management-docs",
+        risks: [],
+        members: [],
+        docs: {
+          status: "fulltext",
+          projectName: "kermanych",
+          fragments: [fragment, { folder: "docs", path: "", headingPath: "x", startLine: 1, endLine: 2, content: "y" }, { path: 7 }],
+        },
+      } as unknown as ManagementChatAsk["context"],
+    }), REQ);
     const d = seen!.context.docs!;
     expect(d.status).toBe("fulltext");
     expect(d.fragments).toEqual([fragment]);

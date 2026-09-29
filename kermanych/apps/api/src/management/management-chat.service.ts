@@ -12,7 +12,8 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Injectable, Logger, type OnModuleDestroy } from "@nestjs/common";
+import { Injectable, Logger, Optional, type OnModuleDestroy } from "@nestjs/common";
+import { HttpAdapterHost } from "@nestjs/core";
 import {
   INTERACTIVE_UI_METHODS,
   expandHelpers,
@@ -20,7 +21,6 @@ import {
   parseManagementReply,
   type ImageInput,
   type ManagementAttachment,
-  type ManagementJiraBoard,
   type ManagementChatAsk,
   type ManagementChatReply,
   type ManagementRepo,
@@ -34,21 +34,27 @@ import { languageAppendFor } from "../runtime/resolve-language";
 import { CodedError } from "./coded-error";
 import { RegistryService } from "../registry/registry.service";
 import { reduceRpcEvents, sumTurnUsage } from "../supervisor/transcript-reducer";
+import { ManagementMcpService } from "./management-mcp.service";
+import type { JiraToolScope } from "../jira/jira-tools.service";
 import {
   buildManagementTurn,
-  jiraBoardSnapshot,
   managementCwd,
   managementRepos,
   todayIso,
   type ManagementTurnFile,
 } from "./management-prompt";
 
-// Read-only, and not a setting: a management chat that can write to the repository is a
-// different — and far more dangerous — product than one that reads it to answer about
-// risks. The same subset the quick chats run with (supervisor.service.ts CHAT_TOOLS),
-// which is the existing proof that omp is happy in a bare project directory with no git
-// and no edit tools.
+// Read-only on disk, and not a setting: a management chat that can write to the repository
+// is a different — and far more dangerous — product than one that reads it to answer about
+// risks. The same subset the quick chats run with (supervisor.service.ts CHAT_TOOLS), which is
+// the existing proof that omp is happy in a bare project directory with no git and no edit
+// tools. Jira is the one thing it WRITES, and only through the Jira tools the child is handed
+// over MCP (management-mcp.service.ts), never through a file tool.
 export const MANAGEMENT_TOOLS = ["read", "grep", "glob"] as const;
+
+// The name the Jira tool server is given in the child. claude shows the tools as
+// `mcp__kermanych__jira_*`; omp shows them bare (`jira_*`).
+const MCP_SERVER_NAME = "kermanych";
 
 // Documentation turns answer from passages the browser retrieved before the turn, and the
 // docs protocol forbids them to go looking for more — so there is no exploration left to
@@ -107,7 +113,16 @@ const LEDGER_MAX = 20;
 // turn two's frames.
 type Turn = { on: (e: RpcEvent) => void; fail: (reason: string) => void };
 
-type Live = { rpc: AgentRuntime; greeted: boolean; lastAt: number; turn?: Turn };
+// One file of the conversation as the api holds it: the prompt's view of it, plus where its
+// bytes are and what they are — the Jira tools upload from here. Images are on disk too (the
+// prompt still names them without a path: the model sees them through the image slots).
+type StoredFile = ManagementTurnFile & { stored: string; mimeType: string };
+
+// The Jira tools' scope for one child, mutated turn by turn: the acting user and workspace come
+// with each ask, and `changed` points at the current turn's collector.
+type ToolBinding = { token: string; scope: JiraToolScope; sink?: Notice[] };
+
+type Live = { rpc: AgentRuntime; greeted: boolean; lastAt: number; turn?: Turn; tools?: ToolBinding };
 
 // RpcSession bounds its command round trips (`commandTimeoutMs`) but neither `start()` nor
 // a turn, and neither does omp bound a provider request that never answers. Without this
@@ -144,11 +159,17 @@ export class ManagementChatService implements OnModuleDestroy {
   // operator's files did not go anywhere — and the reason it exists at all is the ordinary
   // two-turn ticket: attach an image, ask for a Jira ticket, answer the assistant's
   // `ticket.questions`, and the turn that finally files the ticket is a turn with no
-  // attachments of its own. Listing only that turn's files left the model with no name to
-  // put in `jira.ticket.create.attachments`, so the ticket was filed without the image.
-  private files = new Map<string, Map<string, ManagementTurnFile>>();
+  // attachments of its own. The Jira tools upload from this ledger by name, so a file must
+  // still be here the turn the ticket is finally filed.
+  private files = new Map<string, Map<string, StoredFile>>();
 
-  constructor(private registry: RegistryService) {}
+  constructor(
+    private registry: RegistryService,
+    // Both optional so a spec can build the chat without an http server: a child spawned
+    // without them simply has no Jira tools, which the prompt's board lines still describe.
+    @Optional() private mcp?: ManagementMcpService,
+    @Optional() private http?: HttpAdapterHost,
+  ) {}
 
   // Per-user preference (Inc 2/3): env override → cached cloud preference → omp. These
   // ephemeral chats have no sessions row to stamp, so the runtime is resolved fresh per child.
@@ -156,7 +177,9 @@ export class ManagementChatService implements OnModuleDestroy {
     return resolveRuntime(process.env.KERMANYCH_RUNTIME, this.registry.getAuthSession()?.agentRuntime);
   }
 
-  async ask(input: ManagementChatAsk): Promise<ManagementChatReply> {
+  // `userId` is the guard's, never the body's (the jira controller's rule): it decides whose
+  // Jira token every tool call of this turn is signed with.
+  async ask(input: ManagementChatAsk, userId: string): Promise<ManagementChatReply> {
     const startedAt = Date.now();
     this.sweep();
     // A workspace whose projects are all unbound on this machine — or which holds none at
@@ -165,7 +188,7 @@ export class ManagementChatService implements OnModuleDestroy {
     // the management surface, not the source, so there is nothing to refuse here.
     const repos = managementRepos(this.registry.listProjects(), input.workspaceProjects);
     const key = childKey(input.conversationId, input.context?.section);
-    const run = (): Promise<ManagementChatReply> => this.turn(key, repos, input, startedAt);
+    const run = (): Promise<ManagementChatReply> => this.turn(key, repos, input, userId, startedAt);
     // `then(run, run)` and not `finally`: a rejected predecessor must not cancel the ask
     // behind it, and the queue must not stay poisoned by one failed turn.
     const next = this.tail.get(key)?.then(run, run) ?? run();
@@ -206,7 +229,8 @@ export class ManagementChatService implements OnModuleDestroy {
     // conversation can legally follow at once, and its first attachment must not race a
     // removal still in flight.
     await rm(this.attachDir(key), { recursive: true, force: true }).catch(() => {});
-    await rm(this.snapshotDir(key), { recursive: true, force: true }).catch(() => {});
+    await rm(this.jiraDir(key), { recursive: true, force: true }).catch(() => {});
+    if (live?.tools) this.mcp?.close(live.tools.token);
     if (!live) return;
     // An in-flight turn is told why it will never finish. Stopping the child first would
     // surface as `onExit` on a callback we are about to clear, i.e. as a hang.
@@ -226,34 +250,45 @@ export class ManagementChatService implements OnModuleDestroy {
     key: string,
     repos: ManagementRepo[],
     input: ManagementChatAsk,
+    userId: string,
     startedAt: number,
   ): Promise<ManagementChatReply> {
-    const live = await this.child(key, repos, input.context?.section === DOCS_SECTION ? DOCS_MODEL : undefined);
+    const docs = input.context?.section === DOCS_SECTION;
+    const live = await this.child(key, repos, docs ? DOCS_MODEL : undefined, !docs);
+    // Re-pointed every turn: the child outlives any one ask, and the tools must act for the
+    // operator and workspace of THIS one and report into THIS reply.
+    const jiraChanges: Notice[] = [];
+    if (live.tools) {
+      live.tools.scope.userId = userId;
+      live.tools.scope.workspaceId = input.workspaceId;
+      live.tools.sink = jiraChanges;
+    }
     const first = !live.greeted;
     // Хелпери are expanded HERE rather than inside buildManagementTurn: that function wraps
     // the operator's text in the contract and the context markers, so by the time the child
     // reads it a leading `/el10` is no longer leading and would expand nowhere.
     const helped = expandHelpers(input.text);
     // The operator's files, split by how the model reaches them: images ride the message
-    // through omp's own image slots, documents land on disk so the read tool can open
-    // them. Both are NAMED in the turn (see attachmentsBlock) — the names are also the
-    // vocabulary of `jira.ticket.create.attachments`.
+    // through omp's own image slots, documents are opened by the read tool. Both are NAMED
+    // in the turn (see attachmentsBlock) — the names are also what the Jira tools upload by.
     const { images, files } = await this.storeAttachments(key, input.attachments ?? []);
-    const today = todayIso();
-    // The boards' tickets, written where the read/grep tools can reach them — the only way
-    // the assistant finds a key it was not told or reads an issue before changing it.
-    const jiraFiles = await this.storeJiraSnapshots(key, input.context?.jira ?? [], today);
     const message = buildManagementTurn({
       first,
       repos,
       context: input.context,
-      today,
+      today: todayIso(),
       text: helped.text,
       locale: input.locale,
       ...(files.length ? { attachments: files } : {}),
-      ...(jiraFiles.length ? { jiraFiles } : {}),
     });
-    const { events, notices } = await this.drive(key, live, message, images);
+    let events: RpcEvent[];
+    let notices: Notice[];
+    try {
+      ({ events, notices } = await this.drive(key, live, message, images));
+    } finally {
+      // A tool call still in flight after the turn ended (timeout) reports nowhere.
+      if (live.tools) live.tools.sink = undefined;
+    }
     // First, because it describes the message that produced everything after it.
     if (helped.used.length) notices.unshift(helperNotice(helped.used));
 
@@ -278,6 +313,7 @@ export class ManagementChatService implements OnModuleDestroy {
       actions: parsed.actions,
       rejected: parsed.rejected,
       notices,
+      jiraChanges,
       ...(usage === undefined ? {} : { usage }),
       ...(model === undefined ? {} : { model }),
       // Wall time as the operator experienced it — the queue wait and the spawn included,
@@ -286,11 +322,35 @@ export class ManagementChatService implements OnModuleDestroy {
     };
   }
 
+  // The Jira tools for one child: a fresh bearer secret bound to a scope this service keeps
+  // pointing at the current turn. Absent when the api has no MCP service or no listening
+  // http server to name (specs), in which case the child runs without them.
+  private bindTools(key: string): { binding: ToolBinding; mcp: { name: string; url: string; token: string } } | undefined {
+    const address = this.http?.httpAdapter?.getHttpServer()?.address() as { port?: number } | string | null | undefined;
+    const port = address && typeof address === "object" ? address.port : undefined;
+    if (!this.mcp || !port) return undefined;
+    const binding: ToolBinding = {
+      token: "",
+      scope: {
+        userId: "",
+        workspaceId: "",
+        file: (name) => {
+          const f = this.files.get(key)?.get(name.trim());
+          return f ? { path: f.stored, mimeType: f.mimeType } : undefined;
+        },
+        downloadDir: this.jiraDir(key),
+        changed: (n) => binding.sink?.push(n),
+      },
+    };
+    binding.token = this.mcp.open(binding.scope);
+    return { binding, mcp: { name: MCP_SERVER_NAME, url: `http://127.0.0.1:${port}/api/management/mcp`, token: binding.token } };
+  }
+
   // The live child for a conversation, spawned on first use and respawned when the
   // previous one died between turns. A dead child must never be written to: the write to
   // its closed stdin is swallowed (rpc-session.ts:181-186), so the message would vanish
   // and the turn would hang until TURN_TIMEOUT_MS for no reason at all.
-  private async child(key: string, repos: ManagementRepo[], model?: string): Promise<Live> {
+  private async child(key: string, repos: ManagementRepo[], model: string | undefined, withTools: boolean): Promise<Live> {
     const cur = this.map.get(key);
     if (cur?.rpc.isAlive()) {
       cur.lastAt = Date.now();
@@ -298,17 +358,22 @@ export class ManagementChatService implements OnModuleDestroy {
     }
     if (cur) {
       this.map.delete(key);
+      if (cur.tools) this.mcp?.close(cur.tools.token);
       await cur.rpc.stop().catch(() => {});
     }
     const cwd = managementCwd(repos);
     const append = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
+    // Documentation turns answer from retrieved passages only (docsProtocol) and never touch
+    // Jira, so their child gets no Jira tools.
+    const tools = withTools ? this.bindTools(key) : undefined;
     const rpc = createRuntime(this.runtimeFor(), {
       cwd,
       tools: [...MANAGEMENT_TOOLS],
       ...(model ? { model } : {}),
       ...(append ? { appendSystemPrompt: append } : {}),
+      ...(tools ? { mcp: tools.mcp } : {}),
     });
-    const live: Live = { rpc, greeted: false, lastAt: Date.now() };
+    const live: Live = { rpc, greeted: false, lastAt: Date.now(), ...(tools ? { tools: tools.binding } : {}) };
     rpc.onEvent((e) => live.turn?.on(e));
     rpc.onExit((_code, reason) => live.turn?.fail(reason));
     try {
@@ -328,6 +393,7 @@ export class ManagementChatService implements OnModuleDestroy {
       // — and the operator's natural next move is to retry, orphaning one more each time.
       // The child is never put in `map` on this path, so this is the only chance to stop it.
       await rpc.stop().catch(() => {});
+      if (tools) this.mcp?.close(tools.binding.token);
       throw err;
     }
     this.map.set(key, live);
@@ -419,12 +485,13 @@ export class ManagementChatService implements OnModuleDestroy {
     // Same best-effort cleanup as reset: the documents are as disposable as the child, and
     // the names go with them — an evicted conversation starts its next turn as a new one.
     void rm(this.attachDir(key), { recursive: true, force: true }).catch(() => {});
-    void rm(this.snapshotDir(key), { recursive: true, force: true }).catch(() => {});
+    void rm(this.jiraDir(key), { recursive: true, force: true }).catch(() => {});
     this.files.delete(key);
     const live = this.map.get(key);
     if (!live) return;
     this.map.delete(key);
     live.turn = undefined;
+    if (live.tools) this.mcp?.close(live.tools.token);
     void live.rpc.stop().catch(() => {});
   }
 
@@ -437,24 +504,21 @@ export class ManagementChatService implements OnModuleDestroy {
     return join(tmpdir(), "kermanych-management", key.replace(/[^A-Za-z0-9._-]/g, "-"));
   }
 
-  // Persist the turn's documents, split out the images, and return every file the
-  // conversation has carried: THIS message's first, then the earlier ones marked as such.
-  // Documents accumulate on disk for the life of the conversation — the model may come back
-  // to turn one's document on turn nine — and a re-attached name overwrites both the bytes
-  // and its place in the ledger, which is what «here is the newer version» means.
+  // Persist the turn's files and return every file the conversation has carried: THIS
+  // message's first, then the earlier ones marked as such. Every file lands on disk — the
+  // Jira tools upload from there, images included — while images additionally ride the
+  // message through the image slots, which is how the model SEES them (the prompt names
+  // them without a path). Files accumulate for the life of the conversation — the model may
+  // come back to turn one's document on turn nine — and a re-attached name overwrites both
+  // the bytes and its place in the ledger, which is what «here is the newer version» means.
   private async storeAttachments(
     key: string,
     attachments: ManagementAttachment[],
   ): Promise<{ images: ImageInput[]; files: ManagementTurnFile[] }> {
     const images: ImageInput[] = [];
-    const fresh: ManagementTurnFile[] = [];
+    const fresh: StoredFile[] = [];
     const dir = this.attachDir(key);
     for (const a of attachments) {
-      if (a.mimeType.startsWith("image/")) {
-        images.push({ data: a.data, mimeType: a.mimeType });
-        fresh.push({ name: a.name });
-        continue;
-      }
       // The name is display text from the browser; flattened to one safe segment so it can
       // never climb out of the conversation's directory.
       const safe = a.name.replace(/[/\\]/g, "-").replace(/^\.+/, "") || "file";
@@ -470,9 +534,11 @@ export class ManagementChatService implements OnModuleDestroy {
         await mkdir(dir, { recursive: true });
         await writeFile(path, bytes);
       }
-      fresh.push({ name: a.name, path });
+      const image = a.mimeType.startsWith("image/");
+      if (image) images.push({ data: a.data, mimeType: a.mimeType });
+      fresh.push({ name: a.name, ...(image ? {} : { path }), stored: path, mimeType: a.mimeType });
     }
-    const ledger = this.files.get(key) ?? new Map<string, ManagementTurnFile>();
+    const ledger = this.files.get(key) ?? new Map<string, StoredFile>();
     for (const f of fresh) {
       // Deleted before set so a re-attached name moves to the END of the ledger: the cap
       // below drops the oldest, and the file the operator just sent is never the oldest.
@@ -485,60 +551,24 @@ export class ManagementChatService implements OnModuleDestroy {
       ledger.delete(oldest.value);
     }
     if (ledger.size > 0) this.files.set(key, ledger);
-    // `earlier` is set on a COPY: the ledger holds how the file arrived, and the flag is a
-    // statement about this turn only — the same entry is «this message» exactly once.
+    // The prompt's view only: where the bytes are stored is the tools' business. `earlier`
+    // is a statement about this turn, so the ledger itself never carries it.
+    const view = (f: StoredFile, earlier: boolean): ManagementTurnFile => ({
+      name: f.name,
+      ...(f.path !== undefined ? { path: f.path } : {}),
+      ...(earlier ? { earlier: true } : {}),
+    });
     const earlier: ManagementTurnFile[] = [];
-    for (const f of ledger.values()) if (!fresh.some((n) => n.name === f.name)) earlier.push({ ...f, earlier: true });
-    return { images, files: [...fresh, ...earlier] };
+    for (const f of ledger.values()) if (!fresh.some((n) => n.name === f.name)) earlier.push(view(f, true));
+    return { images, files: [...fresh.map((f) => view(f, false)), ...earlier] };
   }
 
-  // ── Jira board snapshots on disk ─────────────────────────────────────────────
-
-  // A root of its own rather than a subdirectory of `attachDir`: an operator's document may
-  // be called anything, and a file named like the snapshot directory must not be able to
-  // shadow it. Same sanitised key, so no client string becomes a path segment.
-  private snapshotDir(key: string): string {
+  // Where jira_download_attachment writes for this conversation. A root of its own rather
+  // than a subdirectory of `attachDir`: an operator's document may be called anything, and a
+  // file named like this directory must not be able to shadow it. Same sanitised key, so no
+  // client string becomes a path segment.
+  private jiraDir(key: string): string {
     return join(tmpdir(), "kermanych-management-jira", key.replace(/[^A-Za-z0-9._-]/g, "-"));
-  }
-
-  // Rewritten from scratch every turn: a snapshot is the board as of THIS turn, and a file
-  // left over from a board disconnected since would be read as a board that still exists.
-  // Returns one path per board, aligned with `boards`; `undefined` where the browser sent no
-  // tickets (the mirror was unreadable) or the write failed — the prompt then says the
-  // snapshot is unavailable rather than naming a file that is not there.
-  private async storeJiraSnapshots(
-    key: string,
-    boards: ManagementJiraBoard[],
-    today: string,
-  ): Promise<(string | undefined)[]> {
-    const dir = this.snapshotDir(key);
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
-    if (!boards.some((b) => b.issues !== undefined)) return [];
-    const out: (string | undefined)[] = [];
-    for (const [i, b] of boards.entries()) {
-      if (b.issues === undefined) {
-        out.push(undefined);
-        continue;
-      }
-      const path = join(dir, `${i + 1}-${b.projectKey.replace(/[^A-Za-z0-9_-]/g, "-")}.md`);
-      const text = jiraBoardSnapshot(b, today);
-      // mkdir per file and one retry, for storeAttachments' reason: drop() removes the
-      // directory fire-and-forget, and losing that race must cost a retry, not the snapshot.
-      try {
-        await mkdir(dir, { recursive: true });
-        await writeFile(path, text);
-        out.push(path);
-      } catch {
-        try {
-          await mkdir(dir, { recursive: true });
-          await writeFile(path, text);
-          out.push(path);
-        } catch {
-          out.push(undefined);
-        }
-      }
-    }
-    return out;
   }
 
   // Idle eviction on use, not on a timer: a conversation nobody has touched for the TTL is

@@ -10,10 +10,10 @@
 // array in lockstep with its union.
 
 // Notices — prose RETURNED to the operator as a transcript `notice` entry (supervisor) or a
-// `ManagementChatReply.notices` line (management chat). These never abort a turn: they ride
-// alongside a real answer. A turn that FAILS is an `ApiErrorCode`, thrown to the controller.
-// `params` documents the values the localized message interpolates; a code with no params
-// carries a fixed sentence.
+// `ManagementChatReply.notices` / `.jiraChanges` line (management chat). These never abort a
+// turn: they ride alongside a real answer. A turn that FAILS is an `ApiErrorCode`, thrown to
+// the controller. `params` documents the values the localized message interpolates; a code
+// with no params carries a fixed sentence.
 export type NoticeCode =
   // management-chat.service.ts — asides a completed turn appends to its reply:
   | "interactive_request_cancelled" // management-chat.service.ts:255 — an interactive prompt was auto-cancelled (params: { method })
@@ -36,7 +36,29 @@ export type NoticeCode =
   | "claude_not_authenticated" // claude-code-runtime.ts — the claude CLI is signed out (params: none)
   | "claude_binary_missing" // claude-code-runtime.ts — the SDK's platform binary is absent (params: none)
   | "omp_not_authenticated" // rpc-session.ts — the omp CLI is signed out (params: none)
-  | "omp_binary_missing"; // rpc-session.ts — omp is not on PATH (params: none)
+  | "omp_binary_missing" // rpc-session.ts — omp is not on PATH (params: none)
+  // jira-tools.service.ts — one `ManagementChatReply.jiraChanges` line per Jira write the
+  // assistant made through its Jira tools during the turn:
+  | "jira_issue_created" // jira-tools.service.ts — jira_create_issue filed an issue (params: { key, summary })
+  | "jira_issue_updated" // jira-tools.service.ts — jira_update_issue changed fields (params: { key, fields } — comma-joined names)
+  | "jira_issue_transitioned" // jira-tools.service.ts — jira_transition_issue moved an issue (params: { key, status })
+  | "jira_issue_deleted" // jira-tools.service.ts — jira_delete_issue removed an issue (params: { key })
+  | "jira_comment_added" // jira-tools.service.ts — a comment was added (params: { key })
+  | "jira_comment_updated" // jira-tools.service.ts — a comment was edited (params: { key })
+  | "jira_comment_deleted" // jira-tools.service.ts — a comment was removed (params: { key })
+  | "jira_worklog_added" // jira-tools.service.ts — work was logged (params: { key, time })
+  | "jira_link_created" // jira-tools.service.ts — two issues were linked (params: { from, type, to })
+  | "jira_link_removed" // jira-tools.service.ts — an issue link was removed (params: { id })
+  | "jira_remote_link_added" // jira-tools.service.ts — a web link was attached (params: { key, url })
+  | "jira_watcher_added" // jira-tools.service.ts — a watcher was added (params: { key, user })
+  | "jira_watcher_removed" // jira-tools.service.ts — a watcher was removed (params: { key, user })
+  | "jira_attachment_added" // jira-tools.service.ts — a file was uploaded onto an issue (params: { key, name })
+  | "jira_sprint_created" // jira-tools.service.ts — a sprint was created (params: { name })
+  | "jira_sprint_updated" // jira-tools.service.ts — a sprint was changed (params: { name })
+  | "jira_issues_moved_to_sprint" // jira-tools.service.ts — issues moved into a sprint (params: { keys, sprint } — keys comma-joined)
+  | "jira_issues_moved_to_backlog" // jira-tools.service.ts — issues moved to the backlog (params: { keys } — comma-joined)
+  | "jira_version_created" // jira-tools.service.ts — a fix version was created (params: { name, project })
+  | "jira_version_updated"; // jira-tools.service.ts — a fix version was changed (params: { name })
 
 // HTTP errors — Ukrainian prose thrown as an exception and shown to the operator in place
 // of a 500. The controller carries `{ code, message, params }` in the response body (see
@@ -92,6 +114,26 @@ export const NOTICE_CODES = [
   "claude_binary_missing",
   "omp_not_authenticated",
   "omp_binary_missing",
+  "jira_issue_created",
+  "jira_issue_updated",
+  "jira_issue_transitioned",
+  "jira_issue_deleted",
+  "jira_comment_added",
+  "jira_comment_updated",
+  "jira_comment_deleted",
+  "jira_worklog_added",
+  "jira_link_created",
+  "jira_link_removed",
+  "jira_remote_link_added",
+  "jira_watcher_added",
+  "jira_watcher_removed",
+  "jira_attachment_added",
+  "jira_sprint_created",
+  "jira_sprint_updated",
+  "jira_issues_moved_to_sprint",
+  "jira_issues_moved_to_backlog",
+  "jira_version_created",
+  "jira_version_updated",
 ] as const satisfies readonly NoticeCode[];
 
 export const API_ERROR_CODES = [
@@ -188,7 +230,8 @@ export type ManagementRejectionCode =
   | "release_date_format" // a release.notes range bound that is not a date (params: { field, value })
   | "release_range_reversed" // a release.notes range whose start is after its end (params: { from, to })
   | "action_kind_unknown" // a block whose kind nobody implemented (params: { value })
-  // ticketFields / strList / ticketName — one field or shape of a ticket block:
+  // validateNewTicket / strList / ticketName — one field or shape of a ticket block (also
+  // produced by the api's jira_create_issue tool, which gates on validateNewTicket):
   | "field_not_string_list" // a list field arrived as a non-array (params: { field })
   | "field_list_not_all_strings" // a list field held a non-string entry (params: { field, value })
   | "ticket_not_object" // the ticket body was not a JSON object (params: none)
@@ -197,23 +240,12 @@ export type ManagementRejectionCode =
   | "ticket_no_context" // a ticket without its business context (params: { title })
   | "ticket_no_acceptance" // a ticket without any acceptance criterion (params: { title })
   | "ticket_field_invalid" // a nested ticket list field failed validation (params: { title, detail })
-  | "ticket_open_question" // a ticket being CREATED carries an unanswered open question; never raised by jira.ticket.update (params: { title, value })
+  | "ticket_open_question" // a ticket being CREATED carries an unanswered open question (params: { title, value })
   | "field_not_name_string" // a name field arrived as a non-string (params: { field, value })
-  // ticket.create / jira.ticket.create — the block as a whole, per board:
+  // ticket.create — the block as a whole:
   | "ticket_no_project" // a ticket.create without a project name (params: { title })
   | "ticket_prefix_unknown" // a branch prefix nobody offers (params: { value, allowed })
   | "ticket_platform_unknown" // a platform nobody offers (params: { value, allowed })
-  | "jira_label_has_space" // a Jira label containing whitespace (params: { value })
-  | "jira_key_invalid" // a Jira key field that is not KEY-123 (params: { field, value })
-  | "jira_parent_conflict" // a jira.ticket.create with both parentKey and parentRef (params: { title })
-  // jira.ticket.update — one change to an existing Jira issue:
-  | "jira_update_no_key" // a jira.ticket.update without an issue key (params: none)
-  | "jira_update_no_patch" // a jira.ticket.update without a patch object (params: { key })
-  | "jira_update_empty" // a jira.ticket.update that changes nothing (params: { key })
-  | "jira_update_title_conflict" // both a full ticket rewrite and a bare title (params: { key })
-  | "jira_assignee_conflict" // both an assignee and unassign (params: { key })
-  | "jira_date_format" // dueDate/startDate neither YYYY-MM-DD nor "" (params: { field, value })
-  | "jira_estimate_format" // originalEstimate not a Jira duration nor "" (params: { value })
   // ticket.questions — the unfiled-ticket questions block:
   | "ticket_questions_no_target" // a ticket.questions without a forTicket (params: none)
   | "ticket_questions_empty" // a ticket.questions with no questions (params: { forTicket })
@@ -274,16 +306,6 @@ export const MANAGEMENT_REJECTION_CODES = [
   "ticket_no_project",
   "ticket_prefix_unknown",
   "ticket_platform_unknown",
-  "jira_label_has_space",
-  "jira_key_invalid",
-  "jira_parent_conflict",
-  "jira_update_no_key",
-  "jira_update_no_patch",
-  "jira_update_empty",
-  "jira_update_title_conflict",
-  "jira_assignee_conflict",
-  "jira_date_format",
-  "jira_estimate_format",
   "ticket_questions_no_target",
   "ticket_questions_empty",
   "todo_create_empty",

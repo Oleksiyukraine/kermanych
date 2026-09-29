@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from "vitest";
 import { MANAGEMENT_SECTIONS, managementSection } from "../src/management";
-import { parseManagementReply, renderTicketDescription, validateManagementAction } from "../src/management-actions";
+import { parseManagementReply, renderTicketDescription, validateManagementAction, validateNewTicket } from "../src/management-actions";
 import type { ManagementRejection } from "../src/i18n-codes";
 
 function block(body: string): string {
@@ -566,142 +566,6 @@ test("ordinary prose that merely contains a question word is not an open questio
   });
 });
 
-// The second board. No `project`: the Jira project key comes from the workspace's integration,
-// so there is nothing here for the model to choose or mistake.
-test("a jira.ticket.create names its type and priority by name and takes no project", () => {
-  expect(
-    validateManagementAction({
-      kind: "jira.ticket.create",
-      ticket: TICKET,
-      issueType: "Story",
-      priority: "High",
-      labels: ["billing", "web"],
-      assignee: "Olya Petrenko",
-      parentKey: "KRM-101",
-    }),
-  ).toEqual({
-    kind: "jira.ticket.create",
-    ticket: TICKET,
-    issueType: "Story",
-    priority: "High",
-    labels: ["billing", "web"],
-    assignee: "Olya Petrenko",
-    parentKey: "KRM-101",
-  });
-  // Jira refuses a label with whitespace as a 400 naming a field path; refused here with the
-  // offending label quoted instead.
-  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, labels: ["two words"] })).toMatchObject({
-    error: { code: "jira_label_has_space", text: 'мітка "two words" містить пробіл — Jira такі мітки не приймає' },
-  });
-});
-
-// The names the browser resolves back to the operator's own files. Names only — the model
-// never carries bytes — and a wrong TYPE is refused the way every list field is.
-test("a jira.ticket.create may name the operator's attached files", () => {
-  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, attachments: ["report.pdf", " screen.png "] })).toEqual({
-    kind: "jira.ticket.create",
-    ticket: TICKET,
-    attachments: ["report.pdf", "screen.png"],
-  });
-  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, attachments: "report.pdf" })).toMatchObject({
-    error: { code: "field_not_string_list", params: { field: "attachments" } },
-  });
-  // An empty list is the same statement as no field at all.
-  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, attachments: [] })).toEqual({
-    kind: "jira.ticket.create",
-    ticket: TICKET,
-  });
-});
-
-// A sequence in one reply: the parent's key does not exist when the model writes the batch,
-// so children name it by a reply-local label. Both parents at once is refused — the executor
-// could only guess which one the operator meant.
-test("a jira.ticket.create in a sequence names its parent by a label from the same reply", () => {
-  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, ref: "epic" })).toEqual({
-    kind: "jira.ticket.create",
-    ticket: TICKET,
-    ref: "epic",
-  });
-  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, parentRef: "epic" })).toEqual({
-    kind: "jira.ticket.create",
-    ticket: TICKET,
-    parentRef: "epic",
-  });
-  expect(
-    validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, parentRef: "epic", parentKey: "KRM-1" }),
-  ).toMatchObject({ error: { code: "jira_parent_conflict" } });
-  expect(validateManagementAction({ kind: "jira.ticket.create", ticket: TICKET, parentKey: "the epic" })).toMatchObject({
-    error: { code: "jira_key_invalid", params: { field: "parentKey" } },
-  });
-});
-
-// An edit names an existing issue by key and states only what moves. The key is folded to
-// upper case because the executor finds the board by its project prefix; an empty labels
-// list and "" dates are statements (clear them), not absences.
-test("a jira.ticket.update names the issue by key and carries only what changes", () => {
-  expect(
-    validateManagementAction({
-      kind: "jira.ticket.update",
-      key: "krm-101",
-      patch: { title: "Renamed", status: "Done", labels: [], dueDate: "", startDate: "2026-10-01", originalEstimate: "3d 4h", unassign: true },
-    }),
-  ).toEqual({
-    kind: "jira.ticket.update",
-    key: "KRM-101",
-    patch: { title: "Renamed", status: "Done", labels: [], dueDate: "", startDate: "2026-10-01", originalEstimate: "3d 4h", unassign: true },
-  });
-  // A full rewrite is held to the same five-slot shape a created ticket is.
-  expect(validateManagementAction({ kind: "jira.ticket.update", key: "KRM-1", patch: { ticket: { ...TICKET, acceptanceCriteria: [] } } })).toMatchObject({
-    error: { code: "ticket_no_acceptance" },
-  });
-});
-
-// The open-question refusal gates CREATION only. The issue already exists: refusing the edit
-// keeps no question off the board and leaves the operator unable to change the ticket at all —
-// including to resolve the very question it carries.
-test("a jira.ticket.update may keep an open question the existing issue already carries", () => {
-  const ticket = {
-    ...TICKET,
-    title: "Platinum OS V2 — Business Logic Requirements (Products, Inventory, Warehouses)",
-    context: "Stock ownership between warehouses is unclear today; this issue collects the rules.",
-    acceptanceCriteria: ["Transfers between warehouses keep the product's history", "Who approves a write-off?"],
-  };
-  expect(validateManagementAction({ kind: "jira.ticket.update", key: "PLAT-7", patch: { ticket } })).toEqual({
-    kind: "jira.ticket.update",
-    key: "PLAT-7",
-    patch: { ticket },
-  });
-  expect(validateManagementAction({ kind: "jira.ticket.update", key: "PLAT-7", patch: { title: "Decide TBD" } })).toEqual({
-    kind: "jira.ticket.update",
-    key: "PLAT-7",
-    patch: { title: "Decide TBD" },
-  });
-  // The same ticket is still refused as a NEW one, on either board.
-  expect(validateManagementAction({ kind: "jira.ticket.create", ticket })).toMatchObject({
-    error: { code: "ticket_open_question", params: { value: '"unclear"' } },
-  });
-});
-
-test("a jira.ticket.update that is ambiguous or empty is refused before anything is written", () => {
-  const refuse = (raw: Record<string, unknown>) => validateManagementAction({ kind: "jira.ticket.update", ...raw });
-  expect(refuse({ patch: { title: "X" } })).toMatchObject({ error: { code: "jira_update_no_key" } });
-  expect(refuse({ key: "KRM-1" })).toMatchObject({ error: { code: "jira_update_no_patch", params: { key: "KRM-1" } } });
-  expect(refuse({ key: "KRM-1", patch: {} })).toMatchObject({ error: { code: "jira_update_empty" } });
-  expect(refuse({ key: "KRM-1", patch: { title: "X", ticket: TICKET } })).toMatchObject({
-    error: { code: "jira_update_title_conflict" },
-  });
-  expect(refuse({ key: "KRM-1", patch: { assignee: "Olya", unassign: true } })).toMatchObject({
-    error: { code: "jira_assignee_conflict" },
-  });
-  // A day that matches the pattern but not the calendar, and prose where a duration belongs.
-  expect(refuse({ key: "KRM-1", patch: { dueDate: "2026-02-31" } })).toMatchObject({
-    error: { code: "jira_date_format", params: { field: "dueDate" } },
-  });
-  expect(refuse({ key: "KRM-1", patch: { originalEstimate: "two days" } })).toMatchObject({
-    error: { code: "jira_estimate_format" },
-  });
-});
-
 // The same names survive on the NATIVE board, where nothing can be done with them: `tasks`
 // has no attachment storage. Parsed rather than dropped because dropping is silent — the
 // executor files the card and states that the files stayed in the chat, and it cannot state
@@ -715,18 +579,18 @@ test("a ticket.create keeps the named files so the executor can say they cannot 
     ticket: TICKET,
     attachments: ["screen.png"],
   });
-  // And the same type discipline as the Jira twin — one parse, both kinds.
+  // And the same type discipline as every list field.
   expect(
     validateManagementAction({ kind: "ticket.create", project: "Alpha", ticket: TICKET, attachments: "screen.png" }),
   ).toMatchObject({ error: { code: "field_not_string_list", params: { field: "attachments" } } });
 });
 
 // Both boards hold the ticket to the same standard: there is no board on which a worse ticket
-// is acceptable.
+// is acceptable. `validateNewTicket` is the gate the api's jira_create_issue tool files a Jira
+// issue through, and the same one `ticket.create` goes through.
 test("a Jira ticket is held to the same ticket rules as a board card", () => {
-  expect(
-    validateManagementAction({ kind: "jira.ticket.create", ticket: { ...TICKET, acceptanceCriteria: ["TODO"] } }),
-  ).toMatchObject({
+  expect(validateNewTicket(TICKET)).toEqual(TICKET);
+  expect(validateNewTicket({ ...TICKET, acceptanceCriteria: ["TODO"] })).toMatchObject({
     error: {
       code: "ticket_open_question",
       text:

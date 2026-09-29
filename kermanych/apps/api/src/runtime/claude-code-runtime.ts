@@ -47,6 +47,15 @@ function userMessage(text: string, images?: ImageInput[]): SDKUserMessage {
   return { type: "user", message: { role: "user", content }, parent_tool_use_id: null } as unknown as SDKUserMessage;
 }
 
+// Launch options name tools the way omp does (lowercase); Claude Code's built-ins are
+// capitalised. An unknown name passes through untouched — a caller naming a Claude tool
+// directly means that tool.
+const CLAUDE_TOOL_NAMES: Record<string, string> = { read: "Read", grep: "Grep", glob: "Glob", bash: "Bash", edit: "Edit", write: "Write" };
+
+function claudeToolName(name: string): string {
+  return CLAUDE_TOOL_NAMES[name] ?? name;
+}
+
 export class ClaudeCodeRuntime implements AgentRuntime {
   readonly droppedFrames = 0;
   private input = new InputQueue();
@@ -94,11 +103,26 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       thinking: toClaudeThinking(this.thinking),
       ...(this.opts.model ? { model: this.opts.model } : {}),
       ...(effort ? { effort } : {}),
-      ...(this.opts.tools ? { allowedTools: this.opts.tools } : {}),
-      // noTools wins over a stray `tools` allowlist: an empty allowlist = no tools. Placed
-      // last so it overwrites `allowedTools` above. `tools: []` (the prior code) is not a
-      // canonical SDK Option and was a silent no-op.
-      ...(this.opts.noTools ? { allowedTools: [] } : {}),
+      // `tools` is the SDK's actual restriction of the built-in set; `allowedTools` only
+      // skips the permission prompt. The launch names tools in the backend-neutral (omp)
+      // spelling, so they are mapped to Claude Code's — passing `read` as-is restricted
+      // nothing, and a «read-only» chat child quietly had Bash, Edit and Write.
+      ...(this.opts.tools ? { tools: this.opts.tools.map(claudeToolName), allowedTools: this.opts.tools.map(claudeToolName) } : {}),
+      // noTools wins over a stray `tools` allowlist: an empty base set = no built-in tools.
+      ...(this.opts.noTools ? { tools: [], allowedTools: [] } : {}),
+      // MCP tools are not built-ins, so the restriction above leaves them available.
+      ...(this.opts.mcp
+        ? {
+            mcpServers: {
+              [this.opts.mcp.name]: {
+                type: "http" as const,
+                url: this.opts.mcp.url,
+                headers: { Authorization: `Bearer ${this.opts.mcp.token}` },
+                alwaysLoad: true,
+              },
+            },
+          }
+        : {}),
       // A fork copies the parent session (new id); a plain resume continues the same id in
       // place. `fork` wins if both are set — a branch is a fork.
       ...(this.opts.fork ? { resume: this.opts.fork, forkSession: true } : this.opts.resume ? { resume: this.opts.resume } : {}),

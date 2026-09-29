@@ -16,7 +16,7 @@ import {
   type ManagementRiskRow,
   type Project,
 } from "@kermanych/core";
-import { buildManagementTurn, jiraBoardSnapshot, managementCwd, managementRepos, todayIso } from "../src/management/management-prompt";
+import { buildManagementTurn, managementCwd, managementRepos, todayIso } from "../src/management/management-prompt";
 
 function project(p: Partial<Project> & { id: string }): Project {
   return { name: p.id, localRepoPath: "", createdAt: "2026-08-30T00:00:00.000Z", ...p };
@@ -247,7 +247,7 @@ describe("buildManagementTurn", () => {
   it("teaches ticket creation as a cross-section action, not a section write", () => {
     const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
     expect(out).toContain('"kind": "ticket.create"');
-    expect(out).toContain('"kind": "jira.ticket.create"');
+    expect(out).toContain("jira_create_issue");
     expect(out).toContain('"kind": "ticket.questions"');
     expect(out).toContain("НІКОЛИ не відповідай unsupported");
     // The routing rule: one board is the default and the other is opt-in by name.
@@ -263,33 +263,31 @@ describe("buildManagementTurn", () => {
     expect(out).toContain(`platform — ${PLATFORMS.join(" | ")}`);
   });
 
-  // The two reported gaps, stated where the model decides: a request for several tickets was
-  // answered with one, and «зміни KRM-101» had no verb at all — a verb absent from the
-  // exhaustive menu is one the model sends the operator to do by hand in Jira.
-  it("offers editing an existing Jira ticket and creating a sequence in one reply", () => {
+  // The reported failures, stated where the model decides. A create without an issue type was
+  // a guaranteed Jira 400 (the old protocol said «leave it out, Jira defaults it» — it does
+  // not); a series was filed blindly after its parent failed; a rewrite was made from a
+  // truncated copy. The protocol names the fix for each.
+  it("teaches the Jira workflow: issue type required, parent first, read before change", () => {
     const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
-    expect(out).toContain('{ "kind": "jira.ticket.update", "key": "KRM-101", "patch": {');
+    expect(out).toContain("issueType ОБОВʼЯЗКОВИЙ");
+    expect(out).toContain("створюй ПО ОДНОМУ, батька першим");
+    expect(out).toContain("jira_create_issue_link");
+    expect(out).toContain("спершу ПРОЧИТАЙ його (jira_get_issue)");
+    // A refusal is something to fix with the create screen, not to hand to the operator.
+    expect(out).toContain("Відмова Jira");
+    expect(out).toContain("jira_get_create_fields");
     expect(out).toContain("обмеження «один тікет за раз» НЕМАЄ");
-    expect(out).toContain('"parentRef"');
-    expect(out).toContain("батько ОБОВʼЯЗКОВО йде раніше за дітей");
+    // Jira is no longer an action block, so the exhaustive menu must not offer one.
+    const menu = out.split("Не вигадуй інші `kind`")[0] ?? "";
+    expect(menu).not.toContain("jira.ticket");
   });
 
-  // The reported bug, one layer up from the executor that was already correct: asked to put
-  // the operator's image on a Jira ticket, the assistant filed the ticket and answered that
-  // «дія створення Jira-тікета не має поля для вкладень — прикріпити файл можна лише вручну
-  // на екрані Jira». The field existed, the upload path existed, and the ONE authoritative
-  // list of allowed forms — the one introduced by «Дозволені ТІЛЬКИ такі форми» — did not
-  // mention it. So the menu carries it now, and the rule says out loud what must never be
-  // claimed.
-  it("lists attachments among the allowed forms and forbids denying the capability", () => {
+  // The reported bug behind the attachment rule: asked to put the operator's image on a Jira
+  // ticket, the assistant answered that attachments were impossible. The capability now lives
+  // on the tools, and the rule still says out loud what must never be claimed.
+  it("forbids denying the attachment capability and keeps the native board's opposite truth", () => {
     const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
-    // In the exhaustive menu itself, not only in the prose 170 lines below it.
-    const menu = out.split("Не вигадуй інші `kind`")[0] ?? "";
-    expect(menu).toContain('"attachments": ["імʼя файлу"]');
-    expect(out).toContain("НІКОЛИ не пиши, що поля для вкладень немає");
-    expect(out).toContain("Зображення — такий самий файл, як документ");
-    // And the other board's truth, which is the opposite one: there is nowhere to put a file
-    // on a native card, so that is stated instead of left to the model to improvise.
+    expect(out).toContain("НІКОЛИ не пиши, що вкладення неможливі");
     expect(out).toContain("Вкладень у власної дошки НЕМАЄ");
   });
 
@@ -310,7 +308,7 @@ describe("buildManagementTurn", () => {
       ],
     });
     expect(out).toContain("── ДОЛУЧЕНІ ФАЙЛИ ──");
-    expect(out).toContain("вокабуляр поля `attachments` у jira.ticket.create");
+    expect(out).toContain("files у jira_add_attachment");
     expect(out).toContain("- «screen.png» — зображення, додане до цього повідомлення");
     expect(out).toContain("- «старе.png» — зображення, з попереднього повідомлення цієї розмови");
     expect(out).toContain("- «звіт.pdf» — /tmp/kermanych-management/management-w1/звіт.pdf");
@@ -350,152 +348,41 @@ describe("buildManagementTurn", () => {
     expect(out).toContain("на ВЛАСНІЙ дошці");
   });
 
-  // The regression this whole field exists for: a Jira issue is assigned to an ATLASSIAN
-  // account, so the roster cannot answer it. With only the roster in the prompt the assistant
-  // refused «створи тікет у Jira на Марину» because Maryna has no Kermanych seat — while the
-  // same ticket filed by hand offers her, because Jira's own picker does.
-  it("prints Jira's own assignable users and tells the model not to use the roster for them", () => {
-    const out = buildManagementTurn({
-      first: false,
-      repos,
-      context: {
-        ...context,
-        members: [{ name: "olya", role: "developer" }],
-        jira: [
-          {
-            projectKey: "KRM",
-            boardName: "Kermanych board",
-            canWrite: true,
-            assignees: ["Maryna Koval", "Olya Petrenko"],
-          },
-        ],
-      },
-      today: TODAY,
-      text: "?",
-    });
-    expect(out).toContain("«Kermanych board» · проєкт KRM");
-    expect(out).toContain("Виконавці Jira: Maryna Koval, Olya Petrenko");
-  });
-
-  // Empty is a FAILED READ (no token this turn, Jira unreachable), never «nobody is
-  // assignable». Read as the latter it becomes a refusal invented out of a network error —
-  // the exact failure this feature was reported for, one layer down.
-  it("says the Jira assignee list is unavailable rather than implying nobody is assignable", () => {
-    const out = buildManagementTurn({
-      first: false,
-      repos,
-      context: {
-        ...context,
-        jira: [{ projectKey: "KRM", boardName: "Kermanych board", canWrite: true, assignees: [] }],
-      },
-      today: TODAY,
-      text: "?",
-    });
-    expect(out).toContain("список виконавців цього ходу недоступний");
-  });
-
   // Three states, three different sentences — and they are not interchangeable: no board is
   // the owner's job in Integrations, no token is this operator's, and a writable board is the
-  // only one of the three where a jira.ticket.create can succeed.
+  // only one of the three where the Jira tools work.
   it("states whether the Jira board exists and whether this machine may write to it", () => {
     const none = buildManagementTurn({ first: false, repos, context, today: TODAY, text: "?" });
     expect(none).toContain("Дошки Jira: не підключені");
-    expect(none).not.toContain("Виконавці Jira");
 
     const readOnly = buildManagementTurn({
       first: false,
       repos,
-      context: {
-        ...context,
-        jira: [{ projectKey: "KRM", boardName: "Kermanych board", canWrite: false, assignees: [] }],
-      },
+      context: { ...context, jira: [{ projectKey: "KRM", boardName: "Kermanych board", canWrite: false }] },
       today: TODAY,
       text: "?",
     });
     expect(readOnly).toContain("«Kermanych board» · проєкт KRM");
     expect(readOnly).toContain("БЕЗ особистого токена Jira");
-    // No token means no ticket to assign, so the list is not printed at all — an empty
-    // «Виконавці Jira» beside «створити тікет неможливо» is two sentences for one fact.
-    expect(readOnly).not.toContain("Виконавці Jira");
 
     const writable = buildManagementTurn({
       first: false,
       repos,
-      context: {
-        ...context,
-        jira: [{ projectKey: "KRM", boardName: "Kermanych board", canWrite: true, assignees: ["Maryna Koval"] }],
-      },
+      context: { ...context, jira: [{ projectKey: "KRM", boardName: "Kermanych board", canWrite: true }] },
       today: TODAY,
       text: "?",
     });
-    expect(writable).toContain("можна створювати й змінювати тікети");
+    expect(writable).toContain("є особистий токен — читай і змінюй інструментами jira_*");
   });
 
-  // Editing a ticket the operator only described («тікет про експорт») needs its key, and a
-  // key the model cannot see is one it invents. The board's tickets therefore reach it as a
-  // FILE it can grep — and when the browser could not read the mirror, the line must say so
-  // rather than name a file, or the model greps nothing and reports an empty board.
-  it("names each board's snapshot file, or says the snapshot is unavailable", () => {
-    const board = { projectKey: "KRM", boardName: "Kermanych board", canWrite: true, assignees: [] };
-    const out = buildManagementTurn({
-      first: false,
-      repos,
-      context: { ...context, jira: [{ ...board, issues: [] }, { ...board, boardName: "Other" }] },
-      today: TODAY,
-      text: "?",
-      jiraFiles: ["/tmp/snap/1-KRM.md", undefined],
-    });
-    expect(out).toContain("Тікети дошки (0) — знімок: /tmp/snap/1-KRM.md");
-    expect(out).toContain("знімок тікетів цього ходу недоступний");
-  });
-
-  // The file is grepped by key and by title words, so every issue must open with one header
-  // line carrying both, and the body must be text the model can carry into a rewrite — not
-  // Jira's HTML, whose paragraphs flattened by textContent glue a heading onto its sentence.
-  it("writes one greppable header per issue and the description as readable text", () => {
-    const out = jiraBoardSnapshot(
-      {
-        projectKey: "KRM",
-        boardName: "Kermanych board",
-        canWrite: true,
-        assignees: [],
-        issues: [
-          {
-            key: "KRM-7",
-            summary: "Export invoices",
-            type: "Story",
-            status: "In Progress",
-            priority: "High",
-            assignee: "",
-            parentKey: "KRM-1",
-            labels: ["billing"],
-            startDate: "",
-            dueDate: "2026-10-01",
-            originalEstimate: "2d",
-            description: "<h2>Context</h2><p>Accounting needs a file &amp; a date.</p><ul><li>One</li><li>Two</li></ul>",
-          },
-        ],
-      },
-      TODAY,
-    );
-    expect(out).toContain("### KRM-7 · Export invoices");
-    expect(out).toContain(
-      "тип: Story · статус: In Progress · пріоритет: High · виконавець: не призначено · батько: KRM-1 · мітки: billing · дедлайн: 2026-10-01 · оцінка: 2d",
-    );
-    expect(out).toContain("  Context\n  Accounting needs a file & a date.\n\n  - One\n  - Two");
-  });
-
-  // The contract half of the same fix. The rule the assistant follows must name TWO lists and
-  // say outright that absence from the workspace is not a reason to refuse a Jira assignee,
-  // otherwise the printed list above is one the model has no instruction to read.
-  it("gives each board its own assignee list and forbids judging a Jira assignee by the roster", () => {
+  // A Jira issue is assigned to an ATLASSIAN account, so the roster cannot answer it: with only
+  // the roster to go by, the assistant refused «створи тікет у Jira на Марину» because Maryna
+  // has no Kermanych seat. The rule names both sets and sends the Jira name to the tool.
+  it("keeps the two assignee sets apart and never refuses a Jira assignee by the roster", () => {
     const out = buildManagementTurn({ first: true, repos, context, today: TODAY, text: "?" });
     expect(out).toContain("У кожної дошки СВІЙ список людей");
-    expect(out).toContain("«Виконавці Jira»");
     expect(out).toContain("НЕ причина відмовити чи спитати");
-    // Jira's list is page-capped, so a name the operator gave explicitly is passed through
-    // and checked against live Jira instead of being refused against a truncated list.
-    expect(out).toContain("все одно постав це імʼя в assignee");
+    expect(out).toContain("назване імʼя передай у assignee як є");
     // And a named assignee is never turned into a ticket.questions round trip.
     expect(out).toContain("користувач НАЗВАВ, теж не питання");
   });

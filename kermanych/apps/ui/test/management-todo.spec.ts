@@ -38,9 +38,7 @@ vi.mock('../src/stores/jira', () => ({
     integrations: [],
     activeId: null,
     tokenPresent: false,
-    assignable: [],
     probe: vi.fn(),
-    loadAssignable: vi.fn(),
     upsert: vi.fn(),
   }),
 }));
@@ -50,7 +48,7 @@ vi.mock('../src/stores/risks', () => ({
 vi.mock('../src/stores/release-notes', () => ({ useReleaseNotes: () => ({ generate: vi.fn(), byWorkspace: { w1: [] }, load: vi.fn() }) }));
 
 function reply(actions: ManagementChatReply['actions']): ManagementChatReply {
-  return { text: 'Додаю.', actions, rejected: [], notices: [], ms: 10 };
+  return { text: 'Додаю.', actions, rejected: [], notices: [], jiraChanges: [], ms: 10 };
 }
 
 function results(entries: readonly MgmtChatEntry[]): string[] {
