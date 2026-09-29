@@ -18,24 +18,27 @@ export type RailProject = {
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { initialsOf } from '../../lib/initials';
+import { describeAttention, type Attention } from '../../lib/attention';
+import KAttentionBadge from './KAttentionBadge.vue';
 
-// A project row in the left sidebar. The name plus the running-agent badge on the right: a
-// green pill carrying the count while agents work, a bare red dot when none does. Binding
-// state stays in the tooltip — one indicator cannot carry two meanings, and "is anything
-// running here" is the question the rail gets scanned for. The active row gets a subtle
-// surface highlight — no colour fill, no initials chip.
+// A project row in the left sidebar. The name plus the attention mark on the right
+// (KAttentionBadge): whether an agent waits for an answer, has failed, is running, or has
+// left a result nobody opened — and no mark when nothing is going on. Binding state stays
+// in the tooltip — one indicator cannot carry two meanings, and «does this project need me»
+// is the question the rail gets scanned for. The active row gets a subtle surface
+// highlight — no colour fill, no initials chip.
 const props = withDefaults(
   defineProps<{
     project: RailProject;
     active?: boolean;
-    count?: number;
+    attention: Attention;
     // Nested under a workspace row in the tree.
     indent?: boolean;
     // Draggable so it can be moved to another workspace. Off by default: a local-only
     // project has no cloud row and therefore nowhere to move to.
     draggable?: boolean;
   }>(),
-  { count: 0, indent: false, draggable: false },
+  { indent: false, draggable: false },
 );
 
 const emit = defineEmits<{ dragstart: [id: string]; dragend: [] }>();
@@ -45,27 +48,16 @@ const { t } = useI18n();
 const stateHint = (state: RailProject['state']): string =>
   state === 'unbound' ? t('kit.railItem.unbound') : state === 'orphan' ? t('kit.railItem.orphan') : '';
 
-// The badge is aria-hidden (a bare digit reads as noise), so the count travels to assistive
-// tech through the button's label instead. Count-agnostic phrasing — «запущено агентів: 3»
-// — because Ukrainian would otherwise need three plural forms for one tooltip.
+// The mark is aria-hidden, so the breakdown travels to assistive tech through the button's
+// label instead.
 //
 // Feeds `v-tip` (src/lib/tip.ts) AND `aria-label`, never the native `title`: the rail is the
 // most-hovered surface in the app, and `title` drew the OS rectangle there — square, delayed,
 // and the one bubble in the UI the app does not style.
 const title = computed(
-  () =>
-    props.project.name +
-    stateHint(props.project.state) +
-    (props.count > 0
-      ? t('kit.railItem.running', { count: props.count })
-      : t('kit.railItem.none')),
+  () => props.project.name + stateHint(props.project.state) + describeAttention(props.attention, t),
 );
 const initials = computed(() => initialsOf(props.project.name, '#'));
-
-// The badge's text, and by its emptiness the badge's shape: a digit while agents run,
-// nothing when the pill collapses into the bare idle dot. Resolved here rather than in the
-// template because `withDefaults` only narrows `count` away from `undefined` on this side.
-const badge = computed(() => (props.count > 0 ? String(props.count) : ''));
 
 // `setData` is what makes this a standards-conformant drag, but the DROP cannot read it
 // back: under the protected-mode rules `getData()` returns '' during `dragover`, which
@@ -93,11 +85,9 @@ function onDragStart(e: DragEvent): void {
   >
     <span class="k-rail__initials" aria-hidden="true">{{ initials }}</span>
     <span class="k-rail__name">{{ project.name }}</span>
-    <span
-      class="k-rail__agents"
-      :class="{ 'k-rail__agents--idle': !badge }"
-      aria-hidden="true"
-    >{{ badge }}</span>
+    <!-- `k-rail__agents` names the slot so the minified rail (MainLayout's .shell--min)
+         can hide it; the look lives in KAttentionBadge. -->
+    <KAttentionBadge class="k-rail__agents" :attention="attention" />
   </button>
 </template>
 
@@ -173,35 +163,5 @@ function onDragStart(e: DragEvent): void {
   font-family: var(--k-font-ui);
   font-size: var(--k-fs-xs);
   font-weight: var(--k-fw-semibold);
-}
-
-// Running-agent badge — a green pill around the count. `--k-on-accent` is the token for
-// text on a saturated fill and flips with the theme, so the digits stay legible on both
-// the bright dark-theme green and the dark light-theme one. One digit lands on the 16px
-// min-width (a circle); two or more grow the pill sideways.
-.k-rail__agents {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 var(--k-sp-1);
-  border-radius: var(--k-r-pill);
-  background: var(--k-success);
-  color: var(--k-on-accent);
-  font-family: var(--k-font-mono);
-  font-size: var(--k-fs-xs);
-  font-weight: var(--k-fw-semibold);
-  line-height: 1;
-}
-
-// Nothing running — the badge collapses to a bare red dot; there is no number to show.
-.k-rail__agents--idle {
-  min-width: 0;
-  width: 7px;
-  height: 7px;
-  padding: 0;
-  background: var(--k-danger);
 }
 </style>

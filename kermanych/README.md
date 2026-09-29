@@ -161,6 +161,23 @@ arrives with the «Проєкти» filter already set to that project. The boar
 filter, «Виконавці», narrows by assignee and offers «Не призначено» for unclaimed
 cards.
 
+**The mark at the end of a sidebar row says whether the project needs you.** Only the
+most urgent state shows, and hovering the row lists all of them:
+
+| Mark | Meaning |
+| --- | --- |
+| pulsing orange pill with a number | agents waiting for your answer to a question |
+| red dot | an agent failed or hit a merge conflict |
+| green pill with a number | agents running |
+| orange ring | an agent finished (`done` or a PR in review) and you have not opened it since |
+| nothing | nothing going on — no live agents, nothing unread |
+
+A workspace row wears the same mark summed over its projects, so a folded workspace still
+shows that something inside it is waiting. Chats, archived and merged agents, and agents
+you stopped yourself never mark a row. A result counts as read once you open the agent in
+«Агенти» while the window is visible. Read state is kept per machine, in the browser's
+local storage; finished agents from before this feature shipped count as read.
+
 **The collapsed sidebar shows workspaces only.** Collapse it with « at the bottom and
 the tree shrinks to one mark per workspace; its projects stay hidden until you click that
 workspace's mark, which scopes to the workspace and opens its project icons beneath it.

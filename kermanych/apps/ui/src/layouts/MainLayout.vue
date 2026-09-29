@@ -66,7 +66,7 @@
               :workspace="group.workspace"
               :active="isWorkspaceActive(group.workspace.id)"
               :expanded="isExpanded(group.workspace.id)"
-              :count="workspaceRunningCount(group.workspace.id)"
+              :attention="workspaceAttention(group.workspace.id)"
               :drop-target="dropTargetId === group.workspace.id"
               draggable
               @select="onWorkspaceSelect(group.workspace.id)"
@@ -85,7 +85,7 @@
                   :project="p"
                   indent
                   :active="p.id === store.selectedProjectId"
-                  :count="runningCount(p.id)"
+                  :attention="attentionOf(p.id)"
                   :draggable="hasCloudList"
                   @click="selectProject(p.id)"
                   @dragstart="draggingProjectId = $event"
@@ -104,7 +104,7 @@
                   :project="p"
                   indent
                   :active="p.id === store.selectedProjectId"
-                  :count="runningCount(p.id)"
+                  :attention="attentionOf(p.id)"
                   @click="selectProject(p.id)"
                 />
               </li>
@@ -399,18 +399,20 @@
 import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import type { Session, SessionStatus } from '@kermanych/core';
+import type { Session } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
 import { useBoard } from 'stores/board';
 import { useProjectDocs } from 'stores/project-docs';
+import { useSeen } from 'stores/seen';
 import { IS_PREVIEW } from '../lib/preview';
 import { api } from '../lib/api';
 import { MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
 import { myBacklogTasks } from '../lib/tasks-view';
 import { bucketOf, type Bucket } from '../lib/buckets';
+import { attentionByProject, sumAttention, NO_ATTENTION, type Attention } from '../lib/attention';
 import { theme, toggleTheme } from '../lib/theme';
 import type { KTheme } from '@kermanych/tokens';
 import { locale, toggleLocale } from '../lib/locale';
@@ -680,27 +682,18 @@ watch(
   },
 );
 
-// A session is "running" while it is queued or actively working; waiting means it is blocking
-// on an interactive UI request; done is terminal-success.
-const RUNNING: readonly SessionStatus[] = ['queued', 'thinking', 'tool'];
+// What each project's sidebar row reports (lib/attention.ts): who waits for an answer, who
+// failed, who runs, which result is unread — in ONE pass over the sessions. Both the project
+// rows and the group rows read it, and it has to be a computed rather than a function
+// because the tree asks per project on EVERY MainLayout render — every socket session event,
+// plus the 30-second useNow tick behind the account plan lines — and a filter-per-project
+// there is O(projects × sessions) against a registry that already carries 69 sessions on one
+// project.
+const seen = useSeen();
+const attentionById = computed(() => attentionByProject(store.sessions, seen.isUnseen));
 
-// Running agents per project, in ONE pass over the sessions. Both the project tiles and the
-// group badges read it, and it has to be a computed rather than a function because the tree
-// asks for a count per project on EVERY MainLayout render — every socket session event, plus
-// the 30-second useNow tick behind the account plan lines — and a filter-per-project there
-// is O(projects × sessions) against a registry that already carries 69 sessions on one
-// project. `sessionsOf` is gone with it: this was its only caller.
-const runningCountById = computed(() => {
-  const counts = new Map<string, number>();
-  for (const s of store.sessions) {
-    if (s.archived || s.kind === 'chat' || !RUNNING.includes(s.status)) continue;
-    counts.set(s.projectId, (counts.get(s.projectId) ?? 0) + 1);
-  }
-  return counts;
-});
-
-function runningCount(projectId: string): number {
-  return runningCountById.value.get(projectId) ?? 0;
+function attentionOf(projectId: string): Attention {
+  return attentionById.value.get(projectId) ?? NO_ATTENTION;
 }
 
 // Segmented view nav. One table drives the labels, the active segment and the
@@ -918,13 +911,11 @@ const localOnlyLabel = computed(() =>
   hasCloudList.value ? t('common.nav.localOnly') : t('common.nav.workspaceUnknown'),
 );
 
-// The group header's badge: what is running anywhere inside it, so a folded workspace still
+// The group header's mark: the sum over everything inside it, so a folded workspace still
 // says whether it needs attention. Off the rail tiles rather than the cloud group, or the
-// badge would read zero for every offline group whose tiles came from the cached map.
-function workspaceRunningCount(workspaceId: string): number {
-  let n = 0;
-  for (const p of sidebarProjects.value.byWorkspace.get(workspaceId) ?? []) n += runningCount(p.id);
-  return n;
+// mark would read nothing for every offline group whose tiles came from the cached map.
+function workspaceAttention(workspaceId: string): Attention {
+  return sumAttention((sidebarProjects.value.byWorkspace.get(workspaceId) ?? []).map((p) => attentionOf(p.id)));
 }
 
 // DRAG A PROJECT INTO ANOTHER WORKSPACE — hand-rolled HTML5 DnD. It is one gesture, and a

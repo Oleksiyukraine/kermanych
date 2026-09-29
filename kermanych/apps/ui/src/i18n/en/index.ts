@@ -1958,8 +1958,6 @@ export const en: MessageSchema = {
       think: 'thinking {value}',
     },
     workspaceRow: {
-      running: ' · running agents: {count}',
-      none: ' · no running agents',
       collapse: 'Collapse “{name}”',
       expand: 'Expand “{name}”',
       addProject: 'New project in “{name}”',
@@ -2030,8 +2028,13 @@ export const en: MessageSchema = {
     railItem: {
       unbound: ' · not linked',
       orphan: ' · outside the cloud',
-      running: ' · running agents: {count}',
-      none: ' · no running agents',
+    },
+    attention: {
+      input: 'awaiting an answer: {count}',
+      error: 'failed: {count}',
+      running: 'running: {count}',
+      result: 'new result: {count}',
+      none: 'nothing going on',
     },
     colorPicker: {
       noColor: 'No color',
@@ -2152,7 +2155,7 @@ export const en: MessageSchema = {
         kbd: 'KKbd · ⌘ and ⏎ carry far less ink than a letter of the same em, so the chip is sized off the ICON scale (--k-icon-sm), never off --k-fs-*, and is never dimmed with opacity. tone="on-accent" inherits the control colour for a chip riding inside a filled button; tone="muted" is the standalone hint. aria-hidden: the keybinding belongs in the control label, not in this span.',
         fields: 'branch={branch} · select(rows)={branchSel} · select(pairs)={wsSel} · select(search)={modelSel} · date={date} — the list shows the name on the right while the model holds the id: a name filter breaks the moment a second workspace with the same name appears. The date lives in the model as YYYY-MM-DD and shows itself as dd.mm.yyyy — either can be typed by hand.',
         lastAction: 'last action: {action}',
-        rail: 'To the right of a project — a counter of running agents: a green pill with a number, and a red dot without a number when none are running. The account tile sits at the foot of the rail (click to sign out). With no GitHub picture — initials.',
+        rail: 'To the right of a project — a «does this need me» mark, by priority: a pulsing orange pill with a number — an agent awaits an answer; a red dot — an error or conflict; a green pill with a number — agents are running; an orange ring — a new result nobody has opened yet; nothing — nothing going on. A workspace row shows the same over all its projects, the tooltip gives the full breakdown. The account tile sits at the foot of the rail (click to sign out). With no GitHub picture — initials.',
         wsTree: 'Three click zones in a workspace row: the chevron only collapses (does not touch scope), «+» (shown on hover) creates a project inside, the rest of the row switches scope. Projects inside — indented and draggable: drag onto another workspace and it gets outlined with the accent. last action: {action}',
         table: 'selected: {selected} · action: {action}',
         navRow: 'rail row: label + counter — and the same row with a second line of text (the Management section rail)',

@@ -913,6 +913,7 @@ import { useRouter } from 'vue-router';
 import { useProjects } from 'stores/projects';
 import { useBoard } from 'stores/board';
 import { useAuth } from 'stores/auth';
+import { useSeen } from 'stores/seen';
 import { api, type FileDiff, type MessageMode } from '../lib/api';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import { sessionScopedProjectIds } from '../lib/scope';
@@ -1277,13 +1278,9 @@ watch([query, () => store.selectedBucket], () => {
 // do that quietly, and it does not widen the scope by itself either (the rail owns
 // selection): it names the projects to click.
 //
-// Named rather than merely counted, and that is not decoration. A count has to point
-// somewhere, and the obvious pointer — the rail's running badges — answers a DIFFERENT
-// question: MainLayout's RUNNING is queued|thinking|tool and deliberately omits
-// `waiting_input`, which is the case an operator most needs back (the agent asked something
-// and the screen moved on). Observed in the browser: an out-of-scope `waiting_input` agent
-// leaves no badge at all, so «look at the counters» would have been a false pointer for it.
-// A project name is true whatever the badge shows.
+// Named rather than merely counted. The rail's marks (lib/attention.ts) do flag a waiting or
+// running agent now, but a mark on a folded workspace, or on a row scrolled out of the
+// sidebar, still leaves the operator hunting for it; a project name is the direct pointer.
 const outsideScopeProjects = computed(() => {
   const names = new Map<string, string>();
   for (const s of store.sessions) {
@@ -1359,6 +1356,20 @@ function isBoundFor(projectId: string): boolean {
 const selectedSession = computed(() =>
   store.sessions.find((s) => s.id === store.selectedSessionId),
 );
+
+// The open session is READ, as it stands, for the sidebar's unread-result mark
+// (stores/seen.ts). Re-marked whenever it moves while open, so a result that lands under the
+// operator's eyes never lights the sidebar — but only while the window is actually visible:
+// a result that arrives behind another app has not been seen, and is marked the moment the
+// window comes back.
+const seen = useSeen();
+function markOpenSessionSeen(): void {
+  const s = selectedSession.value;
+  if (s && document.visibilityState === 'visible') seen.markSeen(s.id, s.lastActivityAt);
+}
+watch(() => [selectedSession.value?.id, selectedSession.value?.lastActivityAt], markOpenSessionSeen, { immediate: true });
+onMounted(() => document.addEventListener('visibilitychange', markOpenSessionSeen));
+onBeforeUnmount(() => document.removeEventListener('visibilitychange', markOpenSessionSeen));
 
 // A session whose worktree has been retired keeps `worktree: true` but loses its
 // `worktreePath` — this is every finished/merged agent now in «Завершені» or «Очікують». The

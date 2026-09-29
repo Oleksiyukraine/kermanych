@@ -6,7 +6,7 @@ export const INTERACTIVE_UI_METHODS: Record<string, true> = { select: true, conf
 
 // Active = the omp process is mid-work or blocked on the user; archiving these is refused.
 // Broader than a "running" bucket: waiting_input counts as active here. Check with
-// ACTIVE_STATUSES.includes(status) — mirrors MainLayout's RUNNING convention.
+// ACTIVE_STATUSES.includes(status).
 export const ACTIVE_STATUSES: readonly SessionStatus[] = ["queued", "thinking", "tool", "waiting_input"];
 
 // Statuses worth a native notification: the agent needs the operator, or it finished.
