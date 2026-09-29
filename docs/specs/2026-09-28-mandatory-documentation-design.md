@@ -1,6 +1,6 @@
 # Kermanych — Mandatory Documentation (Design)
 
-- **Status:** Approved in discussion, implementing
+- **Status:** Implemented (`e38feae`, branch `feature/docs-main-pattern`)
 - **Date:** 2026-09-28
 - **Scope:** `supabase/migrations` (one column), `packages/core` (documentation
   policy, gate, two default skills, librarian fix), `packages/cloud` (project
@@ -198,6 +198,27 @@ repository by name like any default:
   специфікація / план / схема / хендоф. This makes the handoff findable where
   decision 5 puts it. The stale `usedHint` copy about the «Бібліотекар» report is
   corrected.
+
+### 3.8 Superpowers compatibility and known limits
+
+- **What the override covers.** Superpowers 6.4.1 `brainstorming/SKILL.md:241-242`
+  and `writing-plans/SKILL.md:18-19` make their paths defaults that "User
+  preferences … override", and `using-superpowers/SKILL.md:65` ranks user
+  instructions above skills. `DOCS_POLICY_APPEND` rule 3 is that instruction.
+  Specs and plans therefore land in `docs/specs` / `docs/plans`.
+- **What it does not cover.** Superpowers knows no `docs/schemas` or
+  `docs/handoffs` and writes no `## Documentation impact` section. The policy,
+  the `task-spec` / `frontend-handoff` skills and the gate supply those, so the
+  contract holds with or without the plugin.
+- **Unverified.** The override has not been exercised in a live session with
+  the plugin. `ClaudeCodeRuntime` passes no `settingSources`, so whether
+  `~/.claude` plugins load on the claude-code runtime at all is unconfirmed.
+- **Running sessions.** The policy reaches a session at spawn. A session already
+  running when the setting is switched on gets it on its next resume or restart.
+  The gate applies immediately.
+- **Trigger-run PRs** evaluate the gate with `handoff: false`.
+- **Rollout order.** Apply migration `20260928090000_project_docs_required.sql`
+  before deploying the API: `PROJECT_COLUMNS` selects `docs_required`.
 
 ## 4. Out of scope
 

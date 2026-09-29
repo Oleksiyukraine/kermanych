@@ -530,6 +530,22 @@ The instructions for the task document and the handoff are the `task-spec` and
 `frontend-handoff` skills. Like any default skill, a project, workspace or repository can
 override them by name.
 
+**Superpowers and other plugins.** Kermanych does not depend on them: the policy, the two
+skills and the gate work with no plugin installed. When superpowers is present, its
+`brainstorming` and `writing-plans` skills state that their `docs/superpowers/specs|plans`
+paths are defaults that user instructions override, and the policy is exactly such an
+instruction, so specs and plans land in `docs/specs` / `docs/plans`. Superpowers has no notion
+of `docs/schemas` or `docs/handoffs` and does not add the `## Documentation impact` section.
+Those come from the policy, the skills and the gate. Whether the claude-code runtime loads
+`~/.claude` plugins at all is unverified: Kermanych sets no `settingSources`.
+
+**Limits.** A session that was already running when the setting was switched on gets the
+policy in its system prompt on its next spawn (resume, restart). The gate applies to it
+immediately. A pull request opened by a trigger is checked without the handoff rule.
+
+Design, decisions and rationale:
+[`docs/specs/2026-09-28-mandatory-documentation-design.md`](../docs/specs/2026-09-28-mandatory-documentation-design.md).
+
 ### Offline behaviour
 
 Local work never waits for the cloud:
