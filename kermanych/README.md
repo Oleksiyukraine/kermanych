@@ -631,9 +631,9 @@ That field is a real assistant, and it is deliberately narrow:
   (every mirror tile is owned by the section it snapshots), and the list itself is your own
   scratch pad, stored only in your browser — the assistant says so instead of promising the
   team will see it.
-- **It files tickets on «Дошка».** Say «створи тікет: …» and the ticket appears on the board
-  — the board is not a Менеджмент section, so this works from any section, and «створи тікет»
-  is never answered with a refusal. Six rules make the ticket worth having:
+- **It files and edits tickets on «Дошка».** Say «створи тікет: …» and the ticket appears on the
+  board — the board is not a Менеджмент section, so this works from any section, and «створи
+  тікет» (or «зміни KRM-101») is never answered with a refusal. What makes it worth having:
   - **The default board is the workspace's own.** «Задачі» is the board that always exists,
     needs no integration and no personal token, so a request that does not name a board lands
     there (`ticket.create`). The mirrored Jira boards are opt-in BY NAME: only «створи в Jira…»
@@ -692,6 +692,32 @@ That field is a real assistant, and it is deliberately narrow:
     the ticket that already exists survives it. The workspace's own board has no attachments
     at all, so the same request there files the ticket and says the file stayed in the chat —
     it is not quietly re-routed to Jira, because you named the board.
+  - **Several tickets in one request, as a sequence if you want one.** «Розбий це на тікети»,
+    «створи п'ять тікетів на …» or «епік і історії під ним у Jira» files every ticket in one
+    reply — one action per ticket, run in the order the work should happen, each held to the
+    same rules as a single ticket. On Jira a sequence can be a hierarchy: the parent carries a
+    reply-local label (`ref`) and each child names it (`parentRef`), and the app substitutes
+    the key Jira minted for the parent, which nobody knew when the reply was written. A child
+    whose parent was not created is refused with the reason rather than filed parentless, and
+    an open question about any ticket of the series holds back the whole series.
+  - **It edits existing Jira tickets.** «Переведи KRM-101 у Done», «перепиши тікет про
+    експорт інвойсів», «признач KRM-88 на Марину і постав дедлайн 10 жовтня» emit a
+    `jira.ticket.update` naming the issue by key and only what changes: a full rewrite of the
+    ticket (same five slots and rules as a new one), a rename, type, priority, labels,
+    assignee (or unassign), status, start/due dates, original estimate, parent, and files to
+    attach. Status is applied as the workflow transition that lands there; a status the
+    workflow cannot reach from where the issue stands is refused with the reachable ones
+    listed. Everything the edit names is resolved before anything is written, so a refusal
+    means nothing changed. Written under your own Jira token, like every other Jira write;
+    cards on the workspace's own board have no edit verb here — that stays in the card.
+  - **It can look through the Jira boards.** Every turn the browser sends each connected
+    board's mirrored tickets (key, title, type, status, priority, assignee, parent, labels,
+    dates, estimate, description), and the local API writes one snapshot file per board to
+    the OS temp directory (`kermanych-management-jira/<conversation>/`) and names its path in
+    the turn. The assistant greps it with its read-only tools, so «тікет про експорт» resolves
+    to a real key, a ticket is read before it is edited, and a duplicate is spotted before it
+    is filed. The file is rewritten every turn and removed with the conversation; a board
+    whose mirror could not be read is stated as unavailable, never as empty.
 - **It spends the same subscription your agents spend.** It runs through the same
   `omp` on your PATH, the same provider account and the same plan; there is no second
   key to configure and no separate budget. The mono pill on the right of the field is

@@ -170,6 +170,40 @@ export function renderTicketDescription(t: ManagementTicketFields): string {
 // collision `risk.create` avoids by nesting under `risk`.
 export type ManagementTodoPatch = { text?: string; kind?: "check" | "number"; done?: boolean };
 
+// What a `jira.ticket.update` may change on an existing issue, each optional — an update
+// names only what moves, the `risk.update` shape. Vocabulary is `jira.ticket.create`'s where
+// the two overlap (names, never ids), plus the handful of things only an existing issue has.
+//
+//   * `ticket` REWRITES the issue: summary and the whole description, rendered by
+//     `renderTicketDescription` exactly as a created ticket is, and validated by the same
+//     `ticketFields` — an edit is not a back door for a worse ticket. `title` renames only
+//     and leaves the description alone; stating both is refused, because the two disagree
+//     about the one field they share.
+//   * `unassign` is its own flag rather than `assignee: null`: `null` reads as «no value»
+//     everywhere else in this protocol, and «I had nothing to say» must never clear a field.
+//   * `dueDate` / `startDate` / `originalEstimate` take `""` to CLEAR — an explicit empty
+//     string, which a model writes only when it means it.
+//   * `status` is a status NAME. Jira moves an issue through workflow transitions, not by
+//     assignment, so the browser finds the transition that lands in this status and applies
+//     it — and refuses, naming the reachable ones, when the workflow has none.
+//   * `attachments` uploads the operator's named files onto the issue, the create path's
+//     vocabulary and resolution.
+export type ManagementJiraTicketPatch = {
+  ticket?: ManagementTicketFields;
+  title?: string;
+  issueType?: string;
+  priority?: string;
+  labels?: string[];
+  assignee?: string;
+  unassign?: true;
+  status?: string;
+  dueDate?: string;
+  startDate?: string;
+  originalEstimate?: string;
+  parentKey?: string;
+  attachments?: string[];
+};
+
 export type ManagementAction =
   // The model was asked to change a section that cannot be changed. It reports WHICH
   // section and WHAT was asked; the reason shown to the user is read from the section
@@ -267,6 +301,14 @@ export type ManagementAction =
       assignee?: string;
       // An existing key on the mirrored board, when the operator asked for a subtask.
       parentKey?: string;
+      // A SEQUENCE in one reply: `ref` is a label this reply gives the ticket, and a later
+      // `jira.ticket.create` of the SAME reply names it in `parentRef` to become its child —
+      // an epic and its stories filed in one go. The key Jira mints is unknown until the
+      // parent exists, so the model cannot write it; the executor runs the batch in order
+      // and substitutes it. Exclusive with `parentKey`, which names an issue that already
+      // exists. Labels live for one reply only — they are not keys and never reach Jira.
+      ref?: string;
+      parentRef?: string;
       // NAMES of files the operator attached to the conversation («долучені файли» in the
       // context of the turn) that should be uploaded onto the created issue — stated only
       // when the operator asked for it. Names, not bytes: the browser holds the attached
@@ -274,6 +316,11 @@ export type ManagementAction =
       // never invent content — an unknown name is refused with the file left unattached.
       attachments?: string[];
     }
+  // Change one EXISTING issue on a mirrored Jira board, named by its key («KRM-101») — never
+  // by id. The board is the one whose project key prefixes it, so there is no `board` field
+  // for the model to disagree with the key about. The assistant finds keys and reads the
+  // current text in the per-turn board snapshot (management-prompt.ts `jiraLines`).
+  | { kind: "jira.ticket.update"; key: string; patch: ManagementJiraTicketPatch }
   // The ticket was NOT written, because writing it would have required the assistant to
   // decide something only the operator can. Writes nothing — its whole job is to make the
   // app state that, in the app's own voice, exactly as `unsupported` does for a section that
@@ -314,6 +361,7 @@ export type ManagementRiskExport = Extract<ManagementAction, { kind: "risk.expor
 export type ManagementReleaseNotes = Extract<ManagementAction, { kind: "release.notes" }>;
 export type ManagementTicketCreate = Extract<ManagementAction, { kind: "ticket.create" }>;
 export type ManagementJiraTicketCreate = Extract<ManagementAction, { kind: "jira.ticket.create" }>;
+export type ManagementJiraTicketUpdate = Extract<ManagementAction, { kind: "jira.ticket.update" }>;
 export type ManagementTicketQuestions = Extract<ManagementAction, { kind: "ticket.questions" }>;
 export type ManagementTodoCreate = Extract<ManagementAction, { kind: "todo.create" }>;
 export type ManagementTodoUpdate = Extract<ManagementAction, { kind: "todo.update" }>;
@@ -430,6 +478,34 @@ export type ManagementJiraBoard = {
   // unreachable), which the context block states rather than hides: an empty list read as
   // «nobody is assignable» would be a refusal invented out of a network failure.
   assignees: string[];
+  // The board's tickets as the mirror holds them this turn — what lets the assistant find a
+  // key the operator described («тікет про експорт»), read an issue before editing it, and
+  // avoid filing a duplicate. Absent means the mirror could not be read this turn, which
+  // the prompt states rather than implying an empty board.
+  //
+  // NOT printed into the prompt: a board is hundreds of issues, and a context block re-sent
+  // every turn would spend the operator's plan re-reading them. The api writes it to a file
+  // beside the conversation's attachments and names the path, so the model greps it with
+  // the tools it already has.
+  issues?: ManagementJiraIssueRow[];
+};
+
+// One mirrored issue as the snapshot file carries it. Names, never ids — the vocabulary the
+// write actions take. `description` is the mirror's rendered HTML; the api flattens it to
+// text when it writes the file.
+export type ManagementJiraIssueRow = {
+  key: string;
+  summary: string;
+  type: string;
+  status: string;
+  priority: string;
+  assignee: string;
+  parentKey?: string;
+  labels: string[];
+  startDate: string;
+  dueDate: string;
+  originalEstimate: string;
+  description: string;
 };
 
 // One week of somebody's (or everybody's) capacity, in hours with one decimal. `week` is
@@ -1031,6 +1107,108 @@ function ticketName(v: unknown, field: string): string | undefined | Fail {
   return str(raw);
 }
 
+// ── Jira vocabulary ───────────────────────────────────────────────────────────
+
+// A Jira issue key: the project key (a letter, then letters, digits or underscores) and a
+// positive number. Folded to upper case — «krm-101» names the same issue, and a lowercase key
+// would miss the board lookup the executor does by project-key prefix.
+const JIRA_KEY_RE = /^[A-Z][A-Z0-9_]*-[1-9]\d*$/;
+
+function jiraKey(o: Record<string, unknown>, field: string): string | undefined | Fail {
+  const name = ticketName(o, field);
+  if (name === undefined || isFail(name)) return name;
+  const key = name.toUpperCase();
+  if (!JIRA_KEY_RE.test(key))
+    return {
+      error: {
+        text: `${field}=${JSON.stringify(name)} — це не ключ тікета Jira (наприклад KRM-101)`,
+        code: "jira_key_invalid",
+        params: { field, value: JSON.stringify(name) },
+      },
+    };
+  return key;
+}
+
+// Labels as Jira accepts them. Jira refuses a label containing whitespace, and it does so as a
+// 400 naming a field path; refused here instead, with the offending label quoted.
+function jiraLabels(v: unknown): string[] | Fail {
+  const labels = strList(v, "labels");
+  if (isFail(labels)) return labels;
+  const spaced = labels.find((l) => /\s/.test(l));
+  if (spaced !== undefined)
+    return {
+      error: {
+        text: `мітка ${JSON.stringify(spaced)} містить пробіл — Jira такі мітки не приймає`,
+        code: "jira_label_has_space",
+        params: { value: JSON.stringify(spaced) },
+      },
+    };
+  return labels;
+}
+
+// A rename alone. Held to the same two refusals a created title is — the kanban limit and the
+// open-question markers — because the title is the one line everybody reads.
+function jiraTitle(v: unknown): string | Fail {
+  const title = str(v);
+  if (title === undefined) return { error: { text: "тікет без назви (title)", code: "ticket_no_title" } };
+  if (title.length > TICKET_TITLE_MAX)
+    return {
+      error: {
+        text: `назва тікета довша за ${TICKET_TITLE_MAX} символів — це вже опис, а не назва`,
+        code: "ticket_title_too_long",
+        params: { max: TICKET_TITLE_MAX },
+      },
+    };
+  for (const re of OPEN_QUESTION_MARKERS) {
+    const m = re.exec(title);
+    if (m)
+      return {
+        error: {
+          text:
+            `тікет «${title}» містить відкрите питання (${JSON.stringify(m[0])}) — такий тікет не створюється. ` +
+            "Постав питання через ticket.questions і дочекайся відповіді.",
+          code: "ticket_open_question",
+          params: { title, value: JSON.stringify(m[0]) },
+        },
+      };
+  }
+  return title;
+}
+
+// A Jira planning day on an update: YYYY-MM-DD, or "" to clear it. The calendar is checked
+// too — 2026-02-31 matches the pattern and is a day Jira would only refuse after the other
+// fields of the same edit had already been resolved.
+function jiraDate(o: Record<string, unknown>, field: string): string | undefined | Fail {
+  if (!has(o, field)) return undefined;
+  const raw = o[field];
+  const value = typeof raw === "string" ? raw.trim() : "-";
+  if (value === "") return "";
+  const at = DATE_RE.test(value) ? new Date(`${value}T00:00:00Z`) : undefined;
+  if (at !== undefined && !Number.isNaN(at.getTime()) && at.toISOString().startsWith(value)) return value;
+  return {
+    error: {
+      text: `${field}=${JSON.stringify(raw)} — це не дата у форматі РРРР-ММ-ДД (порожній рядок очищає дату)`,
+      code: "jira_date_format",
+      params: { field, value: JSON.stringify(raw) },
+    },
+  };
+}
+
+// Jira's own duration spelling («3d 4h», «1w», «30m»), or "" to clear the estimate. Anything
+// else is refused here rather than as Jira's «invalid time duration» one round trip later.
+function jiraEstimate(raw: unknown): string | Fail {
+  const value = typeof raw === "string" ? raw.trim() : undefined;
+  if (value === "") return "";
+  if (value !== undefined && /^(?:\d+(?:\.\d+)?[wdhm]\s*)+$/i.test(value)) return value;
+  return {
+    error: {
+      text: `originalEstimate=${JSON.stringify(raw)} — це не тривалість Jira (наприклад «3d 4h»; порожній рядок очищає оцінку)`,
+      code: "jira_estimate_format",
+      params: { value: JSON.stringify(raw) },
+    },
+  };
+}
+
 // One parsed block -> one action, or a sentence explaining why not. The sentence is user
 // facing, so it names the offending value rather than a schema path.
 export function validateManagementAction(raw: unknown): ManagementAction | { error: ManagementRejection } {
@@ -1233,29 +1411,102 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
 
     const a: ManagementJiraTicketCreate = { kind: "jira.ticket.create", ticket };
     if (assignee !== undefined) a.assignee = assignee;
-    for (const field of ["board", "issueType", "priority", "parentKey"] as const) {
+    for (const field of ["board", "issueType", "priority", "ref", "parentRef"] as const) {
       const value = ticketName(o, field);
       if (isFail(value)) return value;
       if (value !== undefined) a[field] = value;
     }
+    const parentKey = jiraKey(o, "parentKey");
+    if (isFail(parentKey)) return parentKey;
+    if (parentKey !== undefined) a.parentKey = parentKey;
+    // Two parents is no parent: the executor could only pick one, and whichever it picked
+    // would be a guess about which of the two the operator meant.
+    if (a.parentKey !== undefined && a.parentRef !== undefined)
+      return {
+        error: {
+          text: `тікет «${ticket.title}»: parentKey і parentRef разом — батько або вже існує (parentKey), або створюється в цій же відповіді (parentRef)`,
+          code: "jira_parent_conflict",
+          params: { title: ticket.title },
+        },
+      };
     if (has(o, "labels")) {
-      const labels = strList(o.labels, "labels");
+      const labels = jiraLabels(o.labels);
       if (isFail(labels)) return labels;
-      // Jira refuses a label containing whitespace, and it does so as a 400 naming a field
-      // path. Refused here instead, with the offending label quoted.
-      const spaced = labels.find((l) => /\s/.test(l));
-      if (spaced !== undefined)
-        return {
-          error: {
-            text: `мітка ${JSON.stringify(spaced)} містить пробіл — Jira такі мітки не приймає`,
-            code: "jira_label_has_space",
-            params: { value: JSON.stringify(spaced) },
-          },
-        };
       if (labels.length) a.labels = labels;
     }
     if (attached !== undefined) a.attachments = attached;
     return a;
+  }
+  if (kind === "jira.ticket.update") {
+    const k = jiraKey(o, "key");
+    if (isFail(k)) return k;
+    if (k === undefined)
+      return { error: { text: "jira.ticket.update без ключа тікета (наприклад KRM-101)", code: "jira_update_no_key" } };
+    if (!isObj(o.patch))
+      return { error: { text: `jira.ticket.update ${k} без об'єкта patch`, code: "jira_update_no_patch", params: { key: k } } };
+    const p = o.patch;
+    const patch: ManagementJiraTicketPatch = {};
+    if (has(p, "ticket") && has(p, "title"))
+      return {
+        error: {
+          text: `jira.ticket.update ${k}: ticket і title разом — ticket переписує тікет цілком, title лише перейменовує`,
+          code: "jira_update_title_conflict",
+          params: { key: k },
+        },
+      };
+    if (has(p, "ticket")) {
+      const ticket = ticketFields(p.ticket);
+      if (isFail(ticket)) return ticket;
+      patch.ticket = ticket;
+    }
+    if (has(p, "title")) {
+      const title = jiraTitle(p.title);
+      if (isFail(title)) return title;
+      patch.title = title;
+    }
+    for (const field of ["issueType", "priority", "assignee", "status"] as const) {
+      const value = ticketName(p, field);
+      if (isFail(value)) return value;
+      if (value !== undefined) patch[field] = value;
+    }
+    if (p.unassign === true || p.unassign === "true") {
+      if (patch.assignee !== undefined)
+        return {
+          error: {
+            text: `jira.ticket.update ${k}: assignee і unassign разом — або призначити, або зняти виконавця`,
+            code: "jira_assignee_conflict",
+            params: { key: k },
+          },
+        };
+      patch.unassign = true;
+    }
+    if (has(p, "labels")) {
+      // An empty list IS a statement here, unlike on create: it clears the issue's labels.
+      const labels = jiraLabels(p.labels);
+      if (isFail(labels)) return labels;
+      patch.labels = labels;
+    }
+    for (const field of ["dueDate", "startDate"] as const) {
+      const value = jiraDate(p, field);
+      if (isFail(value)) return value;
+      if (value !== undefined) patch[field] = value;
+    }
+    if (has(p, "originalEstimate")) {
+      const estimate = jiraEstimate(p.originalEstimate);
+      if (isFail(estimate)) return estimate;
+      patch.originalEstimate = estimate;
+    }
+    const parentKey = jiraKey(p, "parentKey");
+    if (isFail(parentKey)) return parentKey;
+    if (parentKey !== undefined) patch.parentKey = parentKey;
+    if (has(p, "attachments")) {
+      const files = strList(p.attachments, "attachments");
+      if (isFail(files)) return files;
+      if (files.length) patch.attachments = files;
+    }
+    if (Object.keys(patch).length === 0)
+      return { error: { text: `jira.ticket.update ${k} нічого не змінює`, code: "jira_update_empty", params: { key: k } } };
+    return { kind: "jira.ticket.update", key: k, patch };
   }
   if (kind === "ticket.questions") {
     const forTicket = str(o.forTicket);
