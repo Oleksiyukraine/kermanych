@@ -266,6 +266,16 @@ export class JiraController {
     }
   }
 
+  // The editor's starting description, as markdown from the ticket's own ADF.
+  @Get("issues/:integrationId/:key/description")
+  async description(@Param("integrationId") integrationId: string, @Param("key") key: string, @Req() req: Authed) {
+    try {
+      return await this.jira.issueDescription(integrationId, key, req.user.id);
+    } catch (err) {
+      rethrow(err);
+    }
+  }
+
   @Delete("issues/:integrationId/:key")
   async remove(@Param("integrationId") integrationId: string, @Param("key") key: string, @Req() req: Authed) {
     try {

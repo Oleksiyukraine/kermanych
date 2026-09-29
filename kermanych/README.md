@@ -210,6 +210,14 @@ launches are independent, and its mirror is removed on its own «Відключ�
   «Синхронізувати» in the Jira view's toolbar forces that poll now: it skips the
   shared lease and runs a full sweep, so tickets closed or moved in Jira — and any
   change to the board's columns — land immediately instead of at the next tick.
+- **Text arrives in Jira formatted, not as markup.** Every body Kermanych writes to
+  Jira — a description (from the ticket editor or the Менеджмент chat), a comment, a
+  worklog note — is Markdown converted to Jira's own document format: `##` becomes a
+  heading, `- [ ]`/`- [x]` become Jira action items (checkboxes), and lists, tables,
+  code, quotes, bold/italic/strike and links become their Jira equivalents. The
+  editor opens an existing ticket with its description read back as the same
+  Markdown, and leaves the description untouched when you only change other fields —
+  images, mentions and panels, which Markdown cannot carry, survive such an edit.
 - **Work is logged where it is done.** The ticket dialog's «Ворклоги» tab reproduces
   Jira's own «Log work»: time spent in Jira's spelling («3h 20m»), when it started,
   an optional description, and what the entry does to the remaining estimate

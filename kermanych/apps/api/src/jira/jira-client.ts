@@ -136,7 +136,7 @@ export type JiraWorklogWrite = {
   timeSpent: string;
   // Already in Jira's worklog spelling — see toJiraStarted in jira-map.ts.
   started: string;
-  // An ADF doc; the service builds it, because adfDoc lives beside the other mappers.
+  // An ADF doc; the service builds it from the note's markdown (adfDoc, jira-adf.ts).
   comment?: Record<string, unknown>;
   adjust: JiraWorklogAdjust;
 };
@@ -283,6 +283,16 @@ export class JiraClient {
     );
   }
 
+  // The raw ADF description alone — the editor's starting text is read from this tree
+  // rather than from renderedFields, whose HTML is a lossy, simplified rendering of it.
+  async issueDescription(key: string): Promise<unknown> {
+    const res = await this.request<{ fields?: { description?: unknown } }>(
+      "GET",
+      `/rest/api/3/issue/${encodeURIComponent(key)}?fields=description`,
+    );
+    return res.fields?.description;
+  }
+
   createIssue(fields: Record<string, unknown>): Promise<{ id: string; key: string }> {
     return this.request("POST", "/rest/api/3/issue", { fields });
   }
@@ -329,15 +339,10 @@ export class JiraClient {
     }
   }
 
-  // v3 comments are ADF documents; the composer sends one paragraph of plain text.
-  addComment(key: string, text: string): Promise<{ id: string }> {
-    return this.request("POST", `/rest/api/3/issue/${encodeURIComponent(key)}/comment`, {
-      body: {
-        type: "doc",
-        version: 1,
-        content: [{ type: "paragraph", content: [{ type: "text", text }] }],
-      },
-    });
+  // v3 comments are ADF documents; the service builds one from the composer's markdown
+  // (adfDoc, jira-adf.ts).
+  addComment(key: string, body: Record<string, unknown>): Promise<{ id: string }> {
+    return this.request("POST", `/rest/api/3/issue/${encodeURIComponent(key)}/comment`, { body });
   }
 
   async listWorklogs(key: string): Promise<JiraRawWorklog[]> {

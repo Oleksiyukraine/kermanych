@@ -144,17 +144,6 @@ describe("JiraClient", () => {
     ]);
   });
 
-  it("wraps a plain comment into a one-paragraph ADF document", async () => {
-    const calls = mockFetch({ json: { id: "c1" } });
-    await client().addComment("KAN-1", "готово");
-    const body = JSON.parse(String(calls[0]!.init.body)) as { body: { content: unknown[] } };
-    expect(body.body).toEqual({
-      type: "doc",
-      version: 1,
-      content: [{ type: "paragraph", content: [{ type: "text", text: "готово" }] }],
-    });
-  });
-
   it("posts a worklog with Jira's default estimate adjustment and no extra parameter", async () => {
     const calls = mockFetch({ json: { id: "w1" } });
     await client().addWorklog("KAN-1", {

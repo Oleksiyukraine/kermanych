@@ -359,6 +359,9 @@ export const api = {
     post<JiraIssue>(`/jira/issues/${integrationId}`, draft),
   jiraEditIssue: (integrationId: string, key: string, draft: JiraIssueDraftWire): Promise<JiraIssue> =>
     put<JiraIssue>(`/jira/issues/${integrationId}/${encodeURIComponent(key)}`, draft),
+  // An existing ticket's description as markdown (from Jira's ADF) — the editor's start.
+  jiraIssueDescription: (integrationId: string, key: string): Promise<{ markdown: string }> =>
+    get<{ markdown: string }>(`/jira/issues/${integrationId}/${encodeURIComponent(key)}/description`),
   jiraDeleteIssue: (integrationId: string, key: string): Promise<void> =>
     del(`/jira/issues/${integrationId}/${encodeURIComponent(key)}`),
 

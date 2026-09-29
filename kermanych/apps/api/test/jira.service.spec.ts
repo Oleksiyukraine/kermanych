@@ -230,7 +230,7 @@ describe("launch", () => {
     expect(res.transitionError).toBe("issue was moved already");
   });
 
-  it("derives the shadow task's title and plain-text description from the issue", async () => {
+  it("derives the shadow task's title and markdown description from the issue", async () => {
     const { client, queries } = fakeCloud({
       workspace_jira_integrations: [{ data: integrationRow, error: null }],
       tasks: [{ data: shadowTaskRow(), error: null }],

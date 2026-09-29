@@ -34,7 +34,8 @@
 
 <script setup lang="ts">
 // Create/edit a Jira ticket with the STANDARD fields only (the agreed v1 line): summary,
-// plain-text description, type, priority, assignee (from Jira's own assignable list),
+// markdown description (the api turns it into Jira's own headings, lists and action items),
+// type, priority, assignee (from Jira's own assignable list),
 // labels, and the two planning dates — Jira's system `duedate` plus the site's «Start
 // date» field, the one custom field the mirror carries because Jira's own board shows it.
 // Other custom fields are not editable here.
@@ -62,6 +63,10 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [issue:
 
 const summary = ref('');
 const description = ref('');
+// The description as it was loaded, so a save that did not touch it leaves Jira's body
+// alone: markdown cannot carry everything ADF can (images, mentions, panels), and an edit
+// of the priority must not rewrite the text through it.
+const loadedDescription = ref('');
 const typePick = ref('');
 const priorityPick = ref('');
 const assigneePick = ref('');
@@ -116,10 +121,11 @@ watch(
     error.value = '';
     const issue = props.issue;
     summary.value = issue?.summary ?? '';
-    // Edit starts from PLAIN TEXT: the mirror holds rendered HTML, and round-tripping it
-    // through an ADF paragraph would double-encode markup. Stripping tags is the honest
-    // degradation for a v1 whose composer is plain text anyway.
-    description.value = issue ? htmlToText(issue.descriptionHtml) : '';
+    // Edit starts from MARKDOWN read out of the ticket's own ADF (not the mirror's rendered
+    // HTML, whose text has lost its structure), so a save round-trips headings, lists and
+    // action items. Blank until it arrives; a failed load leaves it blank and unsent.
+    description.value = '';
+    loadedDescription.value = '';
     priorityPick.value = '';
     typePick.value = '';
     assigneePick.value = issue?.assigneeAccountId ?? '';
@@ -127,12 +133,15 @@ watch(
     startDate.value = issue?.startDate ?? '';
     dueDate.value = issue?.dueDate ?? '';
     try {
-      const [opts, users] = await Promise.all([
+      const [opts, users, desc] = await Promise.all([
         api.jiraEditorOptions(props.integrationId),
         api.jiraAssignableUsers(props.integrationId, ''),
+        issue ? api.jiraIssueDescription(props.integrationId, issue.key) : Promise.resolve({ markdown: '' }),
       ]);
       options.value = opts;
       assignable.value = users;
+      description.value = desc.markdown;
+      loadedDescription.value = desc.markdown;
       if (issue) {
         priorityPick.value = opts.priorities.find((p) => p.name === issue.priorityName)?.id ?? '';
       } else {
@@ -143,12 +152,6 @@ watch(
     }
   },
 );
-
-function htmlToText(html: string): string {
-  const tpl = document.createElement('template');
-  tpl.innerHTML = html;
-  return tpl.content.textContent?.trim() ?? '';
-}
 
 async function save(): Promise<void> {
   busy.value = true;
@@ -167,7 +170,7 @@ async function save(): Promise<void> {
       dates.startDate = startDate.value;
     const draft: JiraIssueDraftWire = {
       summary: summary.value,
-      description: description.value,
+      ...(props.issue && description.value === loadedDescription.value ? {} : { description: description.value }),
       ...(typePick.value ? { issueTypeId: typePick.value } : {}),
       ...(priorityPick.value ? { priorityId: priorityPick.value } : {}),
       labels,
