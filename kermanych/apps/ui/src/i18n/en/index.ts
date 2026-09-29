@@ -752,8 +752,8 @@ export const en: MessageSchema = {
     categories: {
       'project-basics': {
         label: 'Basics',
-        sub: 'name, colour, folder',
-        blurb: 'What the project is called, which workspace it lives in, and where its folder is on this machine.',
+        sub: 'name, colour, folder, docs',
+        blurb: 'What the project is called, which workspace it lives in, where its folder is on this machine, and whether its documentation is mandatory.',
       },
       'project-git': {
         label: 'Git settings',

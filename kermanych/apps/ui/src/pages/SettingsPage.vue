@@ -92,6 +92,19 @@
             :disabled="cloudLocked"
           />
 
+          <!-- MANDATORY DOCUMENTATION. Off by default: switching it on makes the api refuse
+               «Створити ПР», «Закоміти» and «Завершити» for EVERY session of the project until
+               the task document (and, when code changed, the living docs) are in place — the
+               operator's choice, never a migration's. -->
+          <div class="set__group">
+            <KCheckbox
+              v-model="draft.docsRequired"
+              :label="t('settings.docs.required')"
+              :disabled="cloudLocked"
+            />
+            <p class="set__note">{{ t('settings.docs.requiredHint') }}</p>
+          </div>
+
           <div class="set__rule"></div>
 
           <!-- The binding is per machine and manual (Requirement 3): the path must
@@ -160,19 +173,6 @@
               />
             </div>
             <p class="set__note">{{ t('settings.docs.note') }}</p>
-          </div>
-
-          <!-- MANDATORY DOCUMENTATION. Off by default: switching it on makes the api refuse
-               «Створити ПР», «Закоміти» and «Завершити» for EVERY session of the project until
-               the task document (and, when code changed, the living docs) are in place — the
-               operator's choice, never a migration's. -->
-          <div class="set__group">
-            <KCheckbox
-              v-model="draft.docsRequired"
-              :label="t('settings.docs.required')"
-              :disabled="cloudLocked"
-            />
-            <p class="set__note">{{ t('settings.docs.requiredHint') }}</p>
           </div>
 
           <div class="set__rule"></div>

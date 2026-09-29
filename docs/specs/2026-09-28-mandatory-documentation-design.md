@@ -75,9 +75,10 @@ Decisions taken in discussion:
   column `docs_required INTEGER NOT NULL DEFAULT 0` (list/upsert/patch),
   `SupervisorService.updateProject`/`syncProjects`/the from-task refresh, and the
   `PATCH /projects/:id` body.
-- **UI:** a `KCheckbox` «Обовʼязкова документація» in the `project-git` pane,
-  next to the documentation-folders editor, with a hint that names the layout.
-  It is saved through the existing `projects.patch` path.
+- **UI:** a `KCheckbox` «Обовʼязкова документація» with a hint that names the layout,
+  saved through the existing `projects.patch` path. It first lived in the `project-git`
+  pane next to the documentation-folders editor; it now sits in `project-basics`
+  («Основне») — see `docs/specs/2026-09-29-docs-required-in-basics.md`.
 
 ### 3.2 Layout (repository-relative)
 
