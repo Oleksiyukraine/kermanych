@@ -3,7 +3,7 @@
 
 import { defineConfig } from '#q-app/wrappers';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 export default defineConfig((ctx) => {
@@ -83,10 +83,12 @@ export default defineConfig((ctx) => {
         appId: 'com.kermanych.app',
         productName: 'Kermanych',
         mac: { target: 'dmg', identity: null }, // identity:null → unsigned
-        // better-sqlite3's native .node must live OUTSIDE the asar — Electron cannot dlopen
-        // from an archive. Its v13 prebuilds are N-API (ABI-stable across Node/Electron), so
-        // unpacking them suffices; electron-builder's own native rebuild is unnecessary here.
-        asarUnpack: ['**/node_modules/better-sqlite3/**'],
+        // better-sqlite3's and node-pty's native .node files must live OUTSIDE the asar —
+        // Electron cannot dlopen from an archive, and node-pty also execs its spawn-helper
+        // from disk (it rewrites the path to app.asar.unpacked itself). Both ship N-API
+        // prebuilds (ABI-stable across Node/Electron), so unpacking them suffices;
+        // electron-builder's own native rebuild is unnecessary here.
+        asarUnpack: ['**/node_modules/better-sqlite3/**', '**/node_modules/node-pty/**'],
         npmRebuild: false,
       },
 
@@ -122,6 +124,18 @@ export default defineConfig((ctx) => {
         rmSync(dest, { recursive: true, force: true });
         renameSync(join(deployTmp, 'node_modules'), dest);
         rmSync(deployTmp, { recursive: true, force: true });
+
+        // node-pty 1.1.0's tarball ships prebuilds/<platform>/spawn-helper without the exec
+        // bit; every terminal spawn then fails with «posix_spawnp failed». The api restores
+        // the bit at runtime too (terminal.service.ts), but an app bundle must not depend on
+        // being writable.
+        const ptyPrebuilds = join(dest, 'node-pty', 'prebuilds');
+        if (existsSync(ptyPrebuilds)) {
+          for (const platform of readdirSync(ptyPrebuilds)) {
+            const helper = join(ptyPrebuilds, platform, 'spawn-helper');
+            if (existsSync(helper)) chmodSync(helper, 0o755);
+          }
+        }
 
         // Quasar keeps `workspace:*` specifiers in the generated manifest; rewrite them to
         // '*' so electron-builder's production-dependency scan accepts them (the packages are

@@ -4,7 +4,9 @@
 import { io, type Socket } from 'socket.io-client';
 import type { ServerEvent } from '@kermanych/core';
 
-const URL =
+// The API's origin (the REST base without `/api`) — socket.io namespaces hang off it:
+// the default one here, `/terminal` in stores/terminal.ts.
+export const SOCKET_ORIGIN =
   ((typeof window !== 'undefined' && window.kermanych?.apiBase) ||
     (import.meta.env.VITE_API_BASE ?? 'http://localhost:4317/api')).replace(/\/api\/?$/, '') ||
   'http://localhost:4317';
@@ -65,7 +67,7 @@ export function installVisibilityResync(
  * covers the silent-death-after-sleep case the built-in reconnect misses.
  */
 export function connectSocket(handler: ServerEventHandler): Socket {
-  const socket = io(URL);
+  const socket = io(SOCKET_ORIGIN);
   socket.on('event', (e: ServerEvent) => handler(e));
   if (typeof document !== 'undefined') installVisibilityResync(socket, document);
   return socket;

@@ -124,6 +124,14 @@ export class AuthService {
     return this.cached;
   }
 
+  // The one rule every local entry point applies to a presented bearer — the REST guard
+  // and the terminal socket handshake: ONLY the cached token is accepted, expiry
+  // included. Returns the signed-in user's id, or undefined for anything else.
+  userForToken(token: string | undefined): string | undefined {
+    const cur = this.cached;
+    return token && cur && cur.accessToken === token ? cur.userId : undefined;
+  }
+
   // A Supabase client pinned to the user's JWT. RLS is the authorization surface;
   // there is no service-role key on this machine.
   cloudClient(): SupabaseClient {

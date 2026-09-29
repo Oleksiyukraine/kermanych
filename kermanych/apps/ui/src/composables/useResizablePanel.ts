@@ -1,24 +1,25 @@
-// apps/ui/src/composables/useResizableWidth.ts
+// apps/ui/src/composables/useResizablePanel.ts
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 
-export interface ResizableWidthOptions {
-  /** localStorage key used to persist the width across reloads. */
+export interface ResizablePanelOptions {
+  /** localStorage key used to persist the size across reloads. */
   storageKey: string;
-  /** Width in px used when nothing is persisted yet. */
-  defaultWidth: number;
-  /** Smallest allowed width in px. */
+  /** Size in px used when nothing is persisted yet. */
+  defaultSize: number;
+  /** Smallest allowed size in px. */
   min: number;
   /**
-   * Largest allowed width. A number for a fixed cap, or a getter evaluated on
+   * Largest allowed size. A number for a fixed cap, or a getter evaluated on
    * every drag/clamp so it can track a live container size. Return
    * `Number.POSITIVE_INFINITY` while the container is not yet measurable.
    */
   max: number | (() => number);
   /**
-   * Which edge carries the drag handle. 'left' (default) grows the panel when
-   * the pointer moves left; 'right' mirrors it.
+   * Which edge carries the drag handle. 'left' (default) grows the panel's width
+   * when the pointer moves left, 'right' mirrors it; 'top' grows its height when
+   * the pointer moves up, 'bottom' mirrors that.
    */
-  edge?: 'left' | 'right';
+  edge?: 'left' | 'right' | 'top' | 'bottom';
   /** Keyboard step in px for Arrow keys (Shift = 3× for coarse moves). */
   step?: number;
 }
@@ -28,13 +29,15 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max));
 }
 
-// A persistent, clamped panel width driven by a pointer-drag handle. Direction,
-// bounds, and the storage key are supplied by the host; the composable owns the
-// pointer capture, keyboard nudging, persistence, and viewport-resize clamping.
-export function useResizableWidth(opts: ResizableWidthOptions) {
+// A persistent, clamped panel size (a width for a side edge, a height for top/bottom)
+// driven by a pointer-drag handle. Direction, bounds, and the storage key are supplied by
+// the host; the composable owns the pointer capture, keyboard nudging, persistence, and
+// viewport-resize clamping.
+export function useResizablePanel(opts: ResizablePanelOptions) {
   const step = opts.step ?? 16;
-  // Sign of a rightward pointer delta that should widen the panel.
-  const grow = opts.edge === 'right' ? 1 : -1;
+  const vertical = opts.edge === 'top' || opts.edge === 'bottom';
+  // Sign of a rightward (downward, for a vertical panel) pointer delta that grows the panel.
+  const grow = opts.edge === 'right' || opts.edge === 'bottom' ? 1 : -1;
 
   function readStored(): number | null {
     try {
@@ -46,9 +49,9 @@ export function useResizableWidth(opts: ResizableWidthOptions) {
     }
   }
 
-  const width = ref(
+  const size = ref(
     clamp(
-      readStored() ?? opts.defaultWidth,
+      readStored() ?? opts.defaultSize,
       opts.min,
       typeof opts.max === 'function' ? opts.max() : opts.max,
     ),
@@ -57,15 +60,15 @@ export function useResizableWidth(opts: ResizableWidthOptions) {
 
   function persist(): void {
     try {
-      localStorage.setItem(opts.storageKey, String(Math.round(width.value)));
+      localStorage.setItem(opts.storageKey, String(Math.round(size.value)));
     } catch {
-      /* storage unavailable (private mode / SSR) — width still works in-memory */
+      /* storage unavailable (private mode / SSR) — size still works in-memory */
     }
   }
 
   function set(px: number): void {
     const max = typeof opts.max === 'function' ? opts.max() : opts.max;
-    width.value = clamp(px, opts.min, max);
+    size.value = clamp(px, opts.min, max);
   }
 
   function startResize(ev: PointerEvent): void {
@@ -73,12 +76,12 @@ export function useResizableWidth(opts: ResizableWidthOptions) {
     if (ev.button !== 0) return;
     ev.preventDefault();
     const handle = ev.currentTarget as HTMLElement;
-    const startX = ev.clientX;
-    const startWidth = width.value;
+    const start = vertical ? ev.clientY : ev.clientX;
+    const startSize = size.value;
     resizing.value = true;
 
     const onMove = (e: PointerEvent): void => {
-      set(startWidth + (e.clientX - startX) * grow);
+      set(startSize + ((vertical ? e.clientY : e.clientX) - start) * grow);
     };
     const onUp = (): void => {
       resizing.value = false;
@@ -106,11 +109,12 @@ export function useResizableWidth(opts: ResizableWidthOptions) {
     }
   }
 
-  // ArrowLeft/ArrowRight move the separator itself; growth follows `edge`.
+  // The arrow keys along the panel's axis move the separator itself; growth follows `edge`.
   function onKeydown(e: KeyboardEvent): void {
     const delta = e.shiftKey ? step * 3 : step;
-    if (e.key === 'ArrowLeft') set(width.value + -delta * grow);
-    else if (e.key === 'ArrowRight') set(width.value + delta * grow);
+    const [back, forward] = vertical ? ['ArrowUp', 'ArrowDown'] : ['ArrowLeft', 'ArrowRight'];
+    if (e.key === back) set(size.value + -delta * grow);
+    else if (e.key === forward) set(size.value + delta * grow);
     else return;
     e.preventDefault();
     persist();
@@ -119,11 +123,11 @@ export function useResizableWidth(opts: ResizableWidthOptions) {
   // Re-clamp against the live max — the host calls this when the container
   // becomes measurable; the viewport-resize listener keeps it honest after.
   function refresh(): void {
-    set(width.value);
+    set(size.value);
   }
 
   onMounted(() => window.addEventListener('resize', refresh));
   onBeforeUnmount(() => window.removeEventListener('resize', refresh));
 
-  return { width, resizing, startResize, onKeydown, refresh };
+  return { size, resizing, startResize, onKeydown, refresh };
 }

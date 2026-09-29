@@ -29,6 +29,7 @@ export const en: MessageSchema = {
       bindFolder: 'Bind folder',
       fileManagerLeft: 'Files on the left (between the sidebar and the session)',
       fileManagerRight: 'Files on the right (past the main section)',
+      terminal: 'Project terminal (Ctrl+`)',
       nameLabel: 'Name',
       workspaceFormHint: 'A workspace groups projects and holds the team roster: one invite opens access to all of its projects.',
       cancel: 'Cancel',
@@ -132,6 +133,25 @@ export const en: MessageSchema = {
     title: 'Files',
     close: 'Collapse files',
     noSession: 'Pick a session to see its worktree.',
+  },
+  terminal: {
+    title: 'Terminal',
+    tabLabel: '{n}: {shell}',
+    new: 'New terminal',
+    kill: 'Kill terminal',
+    hide: 'Hide the terminal panel',
+    resize: 'Terminal panel height',
+    noProject: 'Pick a project — the terminal opens in its folder.',
+    notBound: 'This project is not bound to a folder on this machine, so there is nowhere to open a terminal.',
+    empty: 'No terminals in this project.',
+    errors: {
+      project_not_found: 'The project is not on this machine.',
+      project_not_bound: 'The project is not bound to a folder — the terminal opens in it.',
+      cwd_missing: 'The project folder is gone from disk. Bind it again in settings.',
+      spawn_failed: 'Could not start the shell',
+      terminal_not_found: 'This terminal has already exited.',
+      unreachable: 'The local API is not answering — the terminal is unavailable.',
+    },
   },
   agents: {
     role: {

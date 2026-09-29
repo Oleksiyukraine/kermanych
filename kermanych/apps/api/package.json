@@ -26,6 +26,7 @@
     "@supabase/supabase-js": "^2",
     "better-sqlite3": "^13",
     "markdown-it": "^14.3.0",
+    "node-pty": "1.1.0",
     "reflect-metadata": "^0.2",
     "rxjs": "^7",
     "socket.io": "^4"

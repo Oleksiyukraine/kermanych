@@ -48,6 +48,12 @@ export function setAuthToken(token: string | undefined): void {
   authToken = token;
 }
 
+// For the one transport that cannot go through authHeaders(): the terminal socket's
+// handshake (stores/terminal.ts), read on every (re)connect so a refreshed token is used.
+export function getAuthToken(): string | undefined {
+  return authToken;
+}
+
 export function setUnauthorizedHandler(fn: () => void): void {
   onUnauthorized = fn;
 }

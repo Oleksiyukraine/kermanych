@@ -203,19 +203,23 @@
     <q-page-container>
       <!-- The router view, flanked by the file-manager dock — a shell-level panel (VS Code /
            Zed style) showing the selected session's worktree. It docks left of or right of
-           the page, toggled from the footer, and persists across views. -->
-      <div class="shell__workarea">
-        <KFileManager
-          v-if="store.fileManagerVisible && store.fileManagerSide === 'left'"
-          class="shell__fm shell__fm--left"
-        />
-        <div class="shell__page">
-          <router-view />
+           the page, toggled from the footer, and persists across views. Under both sits the
+           integrated terminal panel, as in an IDE: it takes its height from the work area. -->
+      <div class="shell__main">
+        <div class="shell__workarea">
+          <KFileManager
+            v-if="store.fileManagerVisible && store.fileManagerSide === 'left'"
+            class="shell__fm shell__fm--left"
+          />
+          <div class="shell__page">
+            <router-view />
+          </div>
+          <KFileManager
+            v-if="store.fileManagerVisible && store.fileManagerSide === 'right'"
+            class="shell__fm shell__fm--right"
+          />
         </div>
-        <KFileManager
-          v-if="store.fileManagerVisible && store.fileManagerSide === 'right'"
-          class="shell__fm shell__fm--right"
-        />
+        <KTerminalPanel v-if="terminal.panelVisible" />
       </div>
     </q-page-container>
 
@@ -234,6 +238,16 @@
         :aria-pressed="store.fileManagerVisible && store.fileManagerSide === 'left'"
         @click="store.toggleFileManager('left')"
       ><span aria-hidden="true">◧</span></button>
+      <!-- Integrated terminal: the bottom panel with the selected project's shells. -->
+      <button
+        type="button"
+        class="shell__foot-btn shell__foot-btn--icon shell__foot-btn--term"
+        :class="{ 'shell__foot-btn--on': terminal.panelVisible }"
+        v-tip="t('common.nav.terminal')"
+        :aria-label="t('common.nav.terminal')"
+        :aria-pressed="terminal.panelVisible"
+        @click="toggleTerminal"
+      ><span aria-hidden="true">&gt;_</span></button>
       <button
         type="button"
         class="shell__foot-btn"
@@ -433,6 +447,8 @@ import KToast from 'components/kit/KToast.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KUserButton from 'components/kit/KUserButton.vue';
 import KFileManager from 'components/kit/KFileManager.vue';
+import KTerminalPanel from 'components/kit/KTerminalPanel.vue';
+import { useTerminal } from 'stores/terminal';
 import JiraMergePrompt from 'components/jira/JiraMergePrompt.vue';
 import LinearMergePrompt from 'components/linear/LinearMergePrompt.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
@@ -444,6 +460,7 @@ import { useOnboarding } from 'stores/onboarding';
 // rows and sessions streamed over the socket, `projects` (useProjects) owns the CLOUD project
 // list and membership. The rail is the join of the two.
 const store = useOrchestrator();
+const terminal = useTerminal();
 const projects = useProjects();
 const auth = useAuth();
 const board = useBoard();
@@ -626,6 +643,10 @@ onMounted(async () => {
   // The router guard already keeps this layout signed-in-only, but on a cold start `ready`
   // may still be pending, and useProjects() needs the session for RLS to return any row.
   await auth.ready;
+  // The terminal namespace authenticates its handshake with the session token, so it waits
+  // for `ready` too. Connecting now, rather than on first open, is what puts the shells that
+  // outlived a reload back under their tabs before the operator looks for them.
+  terminal.connect();
   // A preview has no cloud (lib/preview.ts): skip the read entirely. Never calling load() is
   // the point — it leaves `listRead` false, so no seeded local row is labelled «поза хмарою»
   // on the strength of a list nobody read, and load()'s prune never runs against one.
@@ -670,6 +691,33 @@ function onFileManagerHotkey(e: KeyboardEvent): void {
 }
 onMounted(() => window.addEventListener('keydown', onFileManagerHotkey));
 onBeforeUnmount(() => window.removeEventListener('keydown', onFileManagerHotkey));
+
+// The integrated terminal (KTerminalPanel). Opening the panel on a bound project that has no
+// shell starts one, as VS Code does — the click means «give me a terminal», not «show me an
+// empty box». Only once the api's list has answered: before that, «no shell» is unknown.
+function toggleTerminal(): void {
+  if (terminal.panelVisible) {
+    terminal.setPanel(false);
+    return;
+  }
+  terminal.setPanel(true);
+  const p = selectedProject.value;
+  if (p?.localRepoPath && terminal.loaded && !terminal.projectTerminals(p.id).length) {
+    void terminal.open(p.id);
+  }
+}
+
+// Ctrl+` — VS Code's terminal toggle, on every platform (⌘` is macOS's window cycling).
+// Matched on the physical key, so it works on a Ukrainian layout too. Not skipped inside
+// inputs: the terminal itself is a textarea, and toggling from there is the common case
+// (KTerminalView lets this key through instead of sending it to the shell).
+function onTerminalHotkey(e: KeyboardEvent): void {
+  if (e.code !== 'Backquote' || !e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+  e.preventDefault();
+  toggleTerminal();
+}
+onMounted(() => window.addEventListener('keydown', onTerminalHotkey));
+onBeforeUnmount(() => window.removeEventListener('keydown', onTerminalHotkey));
 
 // 0 → n only, and it has to live here for the same reason the mount call does: the store
 // rebuilds a channel on every project-set change but SKIPS a set that never had one
@@ -1975,6 +2023,11 @@ const pullHint = computed(() => {
   border-color: var(--k-accent);
   color: var(--k-accent);
 }
+// `>_` is two characters: the label-sized mono glyph keeps it inside the 28px square.
+.shell__foot-btn--term {
+  font-size: var(--k-fs-xs);
+  font-weight: var(--k-fw-medium);
+}
 
 .shell__foot-spacer {
   flex: 1;
@@ -1997,13 +2050,22 @@ const pullHint = computed(() => {
 }
 
 // ── File-manager dock (VS Code / Zed style) ─────────────────────────────────
-// The page and the dock share the work area between header and footer. The page keeps its
-// own padding, so it fills whatever the dock leaves; the dock is a fixed column that owns
-// its scroll. Its `flex: none` is what keeps the page from eating the dock's width.
+// The work area and the terminal panel under it split the height between header and footer:
+// the panel keeps its own (resizable) height and the work area takes the rest.
+.shell__main {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 90px);
+  min-height: 0;
+  overflow: hidden;
+}
+// The page and the dock share the work area. The page keeps its own padding, so it fills
+// whatever the dock leaves; the dock is a fixed column that owns its scroll. Its
+// `flex: none` is what keeps the page from eating the dock's width.
 .shell__workarea {
   display: flex;
+  flex: 1 1 auto;
   align-items: stretch;
-  height: calc(100vh - 90px);
   min-height: 0;
   overflow: hidden;
 }

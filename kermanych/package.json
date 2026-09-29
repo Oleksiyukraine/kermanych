@@ -11,6 +11,6 @@
     "build:app": "pnpm --filter @kermanych/ui build -m electron"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["@nestjs/core", "better-sqlite3", "esbuild", "electron"]
+    "onlyBuiltDependencies": ["@nestjs/core", "better-sqlite3", "esbuild", "electron", "node-pty"]
   }
 }

@@ -34,6 +34,8 @@ import { DocsController } from "./http/docs.controller";
 import { ManagementMcpController } from "./http/management-mcp.controller";
 import { ManagementMcpService } from "./management/management-mcp.service";
 import { JiraToolsService } from "./jira/jira-tools.service";
+import { TerminalService } from "./terminal/terminal.service";
+import { TerminalGateway } from "./ws/terminal.gateway";
 
 @Module({
   controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, AccountController, DocsController],
@@ -80,6 +82,10 @@ import { JiraToolsService } from "./jira/jira-tools.service";
     // (@kermanych/core), and hands them to the docs-rag Edge Function under the operator's
     // JWT (AuthService.cloudClient). Triggered after pull and by the manual reindex route.
     DocIndexService,
+    // The integrated terminal: project-rooted shells (node-pty) that outlive a socket, and
+    // their authenticated `/terminal` socket.io namespace.
+    TerminalService,
+    TerminalGateway,
     // Global by design: the api binds 127.0.0.1 but was previously drivable by
     // anything on the machine, including GET /fs/list (arbitrary local directory
     // enumeration). Opt out per route with @Public(), never per module.
