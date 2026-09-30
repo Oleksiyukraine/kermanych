@@ -63,9 +63,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   function setBucket(b: Bucket): void { selectedBucket.value = b; }
 
   // File-manager dock: a global panel (KFileManager) that shows the selected session's
-  // worktree tree, docked to the left of or right of the page — VS Code / Zed style. It used
-  // to be the «Файли» tab of the detail panel; lifting it to the shell lets it stand beside
-  // any view. Visibility and side persist so a reload keeps the operator's layout.
+  // worktree tree — or, with no session selected, the selected project's checkout — docked
+  // to the left of or right of the page, VS Code / Zed style. It used to be the «Файли» tab
+  // of the detail panel; lifting it to the shell lets it stand beside any view. Visibility
+  // and side persist so a reload keeps the operator's layout.
   const fileManagerVisible = ref(localStorage.getItem('kermanych.fileManager.visible') === '1');
   const fileManagerSide = ref<'left' | 'right'>(
     localStorage.getItem('kermanych.fileManager.side') === 'right' ? 'right' : 'left',
@@ -362,6 +363,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.sessionFile(id, path);
   }
 
+  function projectTree(id: string, path: string) {
+    return api.projectTree(id, path);
+  }
+
+  function projectFile(id: string, path: string) {
+    return api.projectFile(id, path);
+  }
+
   async function finishSession(id: string, handoff = false) {
     const res = await api.finish(id, { handoff });
     // preview is stopped server-side on finish; drop its local url too.
@@ -471,6 +480,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     fileDiff,
     sessionTree,
     sessionFile,
+    projectTree,
+    projectFile,
     finishSession,
     createPr,
     commitChanges,

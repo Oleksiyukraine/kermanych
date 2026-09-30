@@ -132,7 +132,8 @@ export const en: MessageSchema = {
   fileManager: {
     title: 'Files',
     close: 'Collapse files',
-    noSession: 'Pick a session to see its worktree.',
+    noSelection: 'Pick a project or a session to see its files.',
+    notBound: 'The project is not bound to a folder on this machine, so there are no files to show.',
   },
   terminal: {
     title: 'Terminal',

@@ -1867,6 +1867,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return this.worktree.readFileContent(dir, path);
   }
 
+  // The file-manager dock with no session selected: the project's own checkout on this
+  // machine. Same readers (and so the same path guard) as the session reads above.
+  async projectTree(projectId: string, path: string): Promise<TreeEntry[]> {
+    return this.worktree.listTree(this.boundProject(projectId).localRepoPath, path);
+  }
+
+  async projectFile(projectId: string, path: string): Promise<FileContent> {
+    return this.worktree.readFileContent(this.boundProject(projectId).localRepoPath, path);
+  }
+
   // Retire the session: commit whatever is loose so nothing is lost, stop the omp child and
   // drop the worktree (in-place: hand the project repo back to its base branch). Nothing is
   // merged anywhere — code leaves Kermanych through a pull request only, so the BRANCH is
