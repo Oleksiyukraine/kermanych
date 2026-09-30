@@ -526,16 +526,23 @@ const teamColumns = computed<KTableColumn[]>(() => [
   { key: 'open', label: t('management.capacity.col.open'), align: 'right', width: '56px', mono: true },
 ]);
 
-const teamRows = computed<TeamRow[]>(() => [
-  ...report.value.persons.map((p) => ({
-    id: p.id,
-    name: personName(p),
-    cells: report.value.cells[p.id]!,
-    total: sumCells(report.value.cells[p.id]!),
-    open: report.value.issues.filter((r) => r.person.id === p.id).length,
-  })),
-  { id: TEAM, name: t('management.capacity.teamTotal'), cells: report.value.totals, total: report.value.summary, open: report.value.issues.length },
-]);
+// Only the active roster gets a row, as only it gets a chart series: a muted person is out of
+// the «Команда» total, and a row for them would read as part of it. The team row's open count
+// follows the same set, so the table adds up to what it shows.
+const teamRows = computed<TeamRow[]>(() => {
+  const muted = new Set(report.value.excluded);
+  const rows = report.value.persons
+    .filter((p) => !muted.has(p.id))
+    .map((p) => ({
+      id: p.id,
+      name: personName(p),
+      cells: report.value.cells[p.id]!,
+      total: sumCells(report.value.cells[p.id]!),
+      open: report.value.issues.filter((r) => r.person.id === p.id).length,
+    }));
+  const open = rows.reduce((s, r) => s + r.open, 0);
+  return [...rows, { id: TEAM, name: t('management.capacity.teamTotal'), cells: report.value.totals, total: report.value.summary, open }];
+});
 
 function cellTip(row: TeamRow, i: number): string {
   const c = row.cells[i]!;
