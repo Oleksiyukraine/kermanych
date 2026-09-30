@@ -350,6 +350,7 @@ export const useProjects = defineStore('projects', () => {
       ...(localRow.defaultBranch ? { defaultBranch: localRow.defaultBranch } : {}),
       ...(localRow.conventions ? { conventions: localRow.conventions } : {}),
       ...(localRow.docsRequired ? { docsRequired: true } : {}),
+      ...(localRow.docsPolicy ? { docsPolicy: localRow.docsPolicy } : {}),
     });
     projects.value = [...projects.value, created];
     pushProjectWorkspace(created);

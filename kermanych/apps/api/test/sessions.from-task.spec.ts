@@ -4,7 +4,7 @@ import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AuthService } from "../src/auth/auth.service";
 import type { ModelsService } from "../src/models/models.service";
 import type { CloudProject, Task } from "@kermanych/cloud";
-import { DOCS_POLICY_APPEND } from "@kermanych/core";
+import { DEFAULT_DOCS_POLICY, docsPolicyAppend } from "@kermanych/core";
 
 // The runtime-aware model guard (ModelsService.validModel) is not under test here; an identity
 // stub returns the wanted model unchanged so createSessionFromTask keeps task.model as before.
@@ -130,6 +130,7 @@ function bind(registry: RegistryService, localRepoPath = "/tmp/proj"): void {
     envKeys: ["GITHUB_TOKEN"],
     docFolders: [],
     docsRequired: false,
+    docsPolicy: DEFAULT_DOCS_POLICY,
     defaultBranch: "main",
     workspaceId: "00000000-0000-4000-8000-000000000ws1",
     createdAt: NOW,
@@ -362,17 +363,19 @@ describe("createSessionFromTask", () => {
     expect(images).toEqual([{ data: "aGk=", mimeType: "image/png" }]);
   });
 
-  // The from-task refresh is how a teammate's «Обовʼязкова документація» reaches this
-  // machine before its first launch; the launch then carries the policy in its system prompt.
-  it("refreshes docsRequired from the cloud and launches with the documentation policy", async () => {
+  // The from-task refresh is how a teammate's documentation policy reaches this machine
+  // before its first launch; the launch then carries the policy in its system prompt.
+  it("refreshes the documentation policy from the cloud and launches with it", async () => {
     const { sup, registry } = make();
     bind(registry);
     cloudProjects[0]!.docsRequired = true;
+    cloudProjects[0]!.docsPolicy = { ...DEFAULT_DOCS_POLICY, plan: "required" };
     task({ assigneeId: USER, createdBy: USER });
 
     await sup.createSessionFromTask("task-1", USER);
 
     expect(registry.listProjects()[0]!.docsRequired).toBe(true);
-    expect(started.at(-1)).toMatchObject({ appendSystemPrompt: expect.stringContaining(DOCS_POLICY_APPEND) });
+    expect(registry.listProjects()[0]!.docsPolicy!.plan).toBe("required");
+    expect(started.at(-1)).toMatchObject({ appendSystemPrompt: expect.stringContaining(docsPolicyAppend({ ...DEFAULT_DOCS_POLICY, plan: "required" })) });
   });
 });

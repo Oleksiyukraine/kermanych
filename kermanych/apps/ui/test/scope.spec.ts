@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CloudProject, Task, Workspace } from '@kermanych/cloud';
+import { DEFAULT_DOCS_POLICY } from '@kermanych/core';
 import {
   UNASSIGNED,
   canDropProject,
@@ -24,6 +25,7 @@ function proj(id: string, workspaceId: string, name = id): CloudProject {
     envKeys: [],
     docFolders: [],
     docsRequired: false,
+    docsPolicy: { ...DEFAULT_DOCS_POLICY },
     createdAt: '2026-01-01T00:00:00.000Z',
   };
 }

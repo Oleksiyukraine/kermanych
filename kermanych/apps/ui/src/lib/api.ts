@@ -27,6 +27,8 @@ import type {
   AgentLanguage,
   DocsGate,
   DocsGateFailure,
+  DocsPolicy,
+  DocsRequested,
 } from '@kermanych/core';
 import type { CloudProject, JiraIntegration, JiraIssue, LinearIntegration, LinearIssue } from '@kermanych/cloud';
 import { globalTr } from '../boot/i18n';
@@ -280,7 +282,7 @@ export const api = {
 
   patchProject: (
     id: string,
-    body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; defaultBranch?: string; conventions?: string },
+    body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; conventions?: string },
   ): Promise<Project> => patchJson<Project>(`/projects/${id}`, body),
 
   // The resolved library (defaults + project rows, with the repo-shadowed ones marked), AND
@@ -557,11 +559,12 @@ export const api = {
 
   stopPreview: (id: string): Promise<void> => del(`/sessions/${id}/preview`),
 
-  // `handoff` is the finish sheet's «Хендоф для фронта» box: it only changes `docsGate`, which
-  // then also demands a docs/handoffs document. The Зміни tab reads without it.
+  // `requested` is the finish sheet's ticked boxes («Хендоф для фронта», «Запит на розширення
+  // API»): they only change `docsGate`, which then also demands those documents. Only true
+  // flags go on the query. The Зміни tab reads without them.
   finishInfo: (
     id: string,
-    handoff = false,
+    requested: DocsRequested = {},
   ): Promise<{
     branch: string;
     target: string;
@@ -570,7 +573,10 @@ export const api = {
     conflicts: string[];
     files: { path: string; added: number; removed: number }[];
     docsGate: DocsGate;
-  }> => get(`/sessions/${id}/finish${handoff ? '?handoff=1' : ''}`),
+  }> => {
+    const q = (Object.keys(requested) as (keyof DocsRequested)[]).filter((k) => requested[k] === true).map((k) => `${k}=1`);
+    return get(`/sessions/${id}/finish${q.length ? `?${q.join('&')}` : ''}`);
+  },
 
   fileDiff: (id: string, path: string): Promise<FileDiff> =>
     get<FileDiff>(`/sessions/${id}/diff?path=${encodeURIComponent(path)}`),
@@ -609,21 +615,21 @@ export const api = {
   ): Promise<{ indexedFiles: number; deletedFiles: number; unchangedFiles: number; chunkCount: number; embeddingModel: string }> =>
     post(`/projects/${id}/docs/reindex`, {}),
 
-  // The three finish-sheet actions carry `handoff` so the api's documentation gate checks the
-  // same thing the sheet showed; a project without mandatory documentation ignores it.
-  finish: (id: string, body: { handoff?: boolean } = {}): Promise<{ finished: boolean; branch: string }> =>
+  // The three finish-sheet actions carry the ticked boxes so the api's documentation gate checks
+  // the same thing the sheet showed; a project without mandatory documentation ignores them.
+  finish: (id: string, body: DocsRequested = {}): Promise<{ finished: boolean; branch: string }> =>
     post(`/sessions/${id}/finish`, body),
 
-  createPr: (id: string, body: { handoff?: boolean } = {}): Promise<{ ok: boolean }> =>
+  createPr: (id: string, body: DocsRequested = {}): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/pr`, body),
 
-  commitChanges: (id: string, body: { handoff?: boolean } = {}): Promise<{ ok: boolean }> =>
+  commitChanges: (id: string, body: DocsRequested = {}): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/commit`, body),
 
   // «Доповнити документацію»: one Kermanych prompt asking the agent for exactly the missing
   // documents. `sent: false` means the gate already passed and nothing was sent.
-  completeDocs: (id: string, handoff: boolean): Promise<{ sent: boolean; failures: DocsGateFailure[] }> =>
-    post(`/sessions/${id}/docs`, { handoff }),
+  completeDocs: (id: string, requested: DocsRequested): Promise<{ sent: boolean; failures: DocsGateFailure[] }> =>
+    post(`/sessions/${id}/docs`, requested),
 
   archiveSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/archive`, {}),

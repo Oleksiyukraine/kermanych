@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { AgentLanguage, AgentRuntime, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus, ThinkingLevel } from "@kermanych/core";
+import type { AgentLanguage, AgentRuntime, DocsPolicy, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same eleven labels.
@@ -46,9 +46,13 @@ export type CloudProject = {
   // renders. Team-shared selection; the content is read from each machine's local
   // checkout, never stored in the cloud.
   docFolders: string[];
-  // «Обовʼязкова документація»: every session gets the documentation policy, and PR /
-  // commit / finish are refused until the branch is documented. Defaults to false.
+  // The documentation policy's master switch: when on, every session gets the policy in its
+  // system prompt and PR / commit / finish are refused while a demanded document is
+  // missing. Defaults to false.
   docsRequired: boolean;
+  // Its per-kind rules (core DocsPolicy), always normalised: `{}` in Postgres reads as
+  // DEFAULT_DOCS_POLICY.
+  docsPolicy: DocsPolicy;
   color?: string;
   // The group that owns this project AND supplies its member list. `not null` in
   // Postgres: there are no workspace-less projects in the cloud.

@@ -1,11 +1,15 @@
 // apps/api/src/http/sessions.controller.ts
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from "@nestjs/common";
 import { isThinkingLevel } from "@kermanych/core";
-import type { BranchPrefix, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft, ThinkingLevel } from "@kermanych/core";
+import type { BranchPrefix, DocsRequested, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft, ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { sessionFailure } from "./session-failure";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
+
+// The finish sheet's ticked documentation boxes. Only a literal `true` counts, so an absent
+// or malformed body asks for nothing (a trigger-run PR sends none).
+const requestedDocs = (b?: DocsRequested): DocsRequested => ({ handoff: b?.handoff === true, apiRequest: b?.apiRequest === true });
 
 @Controller("sessions")
 export class SessionsController {
@@ -175,12 +179,13 @@ export class SessionsController {
     return { ok: true };
   }
 
-  // `?handoff=1` evaluates the documentation gate with the finish sheet's «Хендоф для фронта»
-  // checked; any other value (or none) means no handoff was asked for.
+  // `?handoff=1&apiRequest=1` evaluate the documentation gate with the finish sheet's
+  // «Хендоф для фронта» / «Запит на розширення API» ticked; any other value (or none) means
+  // that document was not asked for.
   @Get(":id/finish")
-  async finishInfo(@Param("id") id: string, @Query("handoff") handoff?: string) {
+  async finishInfo(@Param("id") id: string, @Query("handoff") handoff?: string, @Query("apiRequest") apiRequest?: string) {
     try {
-      return await this.sup.finishInfo(id, handoff === "1" || handoff === "true");
+      return await this.sup.finishInfo(id, { handoff: handoff === "1" || handoff === "true", apiRequest: apiRequest === "1" || apiRequest === "true" });
     } catch (err) {
       throw sessionFailure(err);
     }
@@ -216,31 +221,31 @@ export class SessionsController {
     }
   }
 
-  // PR / commit / finish carry `{ handoff?: boolean }` from the finish sheet; absent = false.
+  // PR / commit / finish carry `{ handoff?, apiRequest? }` from the finish sheet; absent = false.
   // A failing documentation gate is a plain 400 starting `documentation required:`.
   @Post(":id/finish")
-  async finish(@Param("id") id: string, @Body() b?: { handoff?: boolean }) {
+  async finish(@Param("id") id: string, @Body() b?: DocsRequested) {
     try {
       this.preview.stop(id);
-      return await this.sup.finishSession(id, { handoff: b?.handoff === true });
+      return await this.sup.finishSession(id, requestedDocs(b));
     } catch (err) {
       throw sessionFailure(err);
     }
   }
 
   @Post(":id/pr")
-  async pr(@Param("id") id: string, @Body() b?: { handoff?: boolean }) {
+  async pr(@Param("id") id: string, @Body() b?: DocsRequested) {
     try {
-      return await this.sup.createPullRequest(id, { handoff: b?.handoff === true });
+      return await this.sup.createPullRequest(id, requestedDocs(b));
     } catch (err) {
       throw sessionFailure(err);
     }
   }
 
   @Post(":id/commit")
-  async commit(@Param("id") id: string, @Body() b?: { handoff?: boolean }) {
+  async commit(@Param("id") id: string, @Body() b?: DocsRequested) {
     try {
-      return await this.sup.commitChanges(id, { handoff: b?.handoff === true });
+      return await this.sup.commitChanges(id, requestedDocs(b));
     } catch (err) {
       throw sessionFailure(err);
     }
@@ -249,9 +254,9 @@ export class SessionsController {
   // «Доповнити документацію»: one Kermanych prompt for exactly the missing documents.
   // `{ sent: false }` when nothing was missing.
   @Post(":id/docs")
-  async completeDocs(@Param("id") id: string, @Body() b?: { handoff?: boolean }) {
+  async completeDocs(@Param("id") id: string, @Body() b?: DocsRequested) {
     try {
-      return await this.sup.completeDocs(id, { handoff: b?.handoff === true });
+      return await this.sup.completeDocs(id, requestedDocs(b));
     } catch (err) {
       throw sessionFailure(err);
     }

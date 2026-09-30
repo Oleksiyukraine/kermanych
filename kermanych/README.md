@@ -568,59 +568,89 @@ phases, interactive prompts and the provider-plan spend under the account name (
 THAT a task waits for input, and only the person running it can answer, on their own
 machine.
 
-### Mandatory documentation
+### Project documentation
 
-A project can require that every task is documented in its repository. The switch is
-«Обовʼязкова документація» in the project's «Основне» settings. It is off by default, because
-turning it on blocks pull requests for the whole project. Once it is on, every session of the
-project (chats, agents, discussions, reviews, resumes) is told where documentation goes,
-whichever runtime it uses, and Kermanych checks for it before letting work leave the branch.
+A project can require that its tasks are documented in its repository. The rules live in the
+framed «Документація» subsection of the project's «Основне» settings. The switch «Увімкнути
+правила документації» is off by default, because it can block pull requests for the whole
+project. Once it is on, every session of the project (chats, agents, discussions, reviews,
+resumes) is told where documentation goes and which of it is required, whichever runtime it
+uses, and Kermanych checks the required part before letting work leave the branch.
 
 The layout is fixed and repository-relative. These folders override any skill or plugin
-default, superpowers' `docs/superpowers/specs|plans` included:
+default, superpowers' `docs/superpowers/specs|plans` included. Each kind has its own rule:
 
-| Folder | Holds |
-| --- | --- |
-| `docs/specs/YYYY-MM-DD-<topic>.md` | the task document, required for every task that changes the repository |
-| `docs/plans/YYYY-MM-DD-<topic>.md` | an implementation plan, when the work needs one |
-| `docs/schemas/` | how the service works: architecture, flows, data models, API contracts |
-| `docs/handoffs/YYYY-MM-DD-<topic>.md` | a frontend handoff, when the finish sheet asks for one |
+| Group | Kind | Folder | Rules | Default |
+| --- | --- | --- | --- | --- |
+| Документація задачі | task document | `docs/specs/YYYY-MM-DD-<topic>.md` | off · optional · required | required |
+| | plan | `docs/plans/YYYY-MM-DD-<topic>.md` | off · optional · required | optional |
+| Жива документація | how the service works | `docs/schemas/` (or the project's own docs) | off · optional · required | required |
+| Фронтенд ↔ бекенд | frontend handoff | `docs/handoffs/YYYY-MM-DD-<topic>.md` | off · optional · ask · required | ask |
+| | API extension request | `docs/api-requests/YYYY-MM-DD-<topic>.md` | off · optional · ask | off |
 
-«Створити ПР», «Закоміти» and «Завершити» are refused (by the API, not just the UI) until:
+- **off** — the agent is not told about the kind; nothing is checked.
+- **optional** («За потреби») — the agent writes it where it applies; nothing blocks.
+- **ask** («Питати») — the finish sheet shows a checkbox for it: «Хендоф для фронта» (on
+  each time the sheet opens) or «Запит на розширення API» (off). Ticked, the document is
+  required.
+- **required** — the document is required on every branch that changes the repository.
 
-- the branch changes a task document under `docs/specs/`;
-- if code changed, the living documentation changed too (`docs/schemas/` or the project's
-  other docs). The one escape hatch is explicit: the task document has a
-  `## Documentation impact` section whose first line starts with `None`, followed by the
-  reason. The reviewer sees that reason in the diff;
-- if «Хендоф для фронта» is ticked, the branch changes a document under `docs/handoffs/`.
+The defaults are exactly what the single «Обовʼязкова документація» switch meant before the
+rules existed, so a project that had it on behaves the same until someone changes a rule.
 
-The finish sheet shows «Хендоф для фронта», which is on each time the sheet opens, and lists
-whatever is still missing in plain language. «Доповнити документацію» sends the agent one
-prompt naming exactly the missing documents and closes the sheet. You watch the agent write
-and commit them in the transcript, and it pushes them if the PR is already open. Changed
-documents appear in the session's «Документація» tab tagged специфікація / план / схема /
-хендоф, which is where you find the handoff.
+**API extension requests** are the answer to "the frontend needs something the API does not
+have yet". With the kind on, the agent does not invent the backend side or fake it silently:
+it writes `docs/api-requests/…` — what is needed and why, the proposed contract, what the
+client does until it ships — and names it in the handoff or PR. A backend task that answers
+a request links it from its handoff.
 
-The instructions for the task document and the handoff are the `task-spec` and
-`frontend-handoff` skills. Like any default skill, a project, workspace or repository can
-override them by name.
+«Створити ПР», «Закоміти» and «Завершити» are refused (by the API, not just the UI) until
+every required document is on the branch:
 
-**Superpowers and other plugins.** Kermanych does not depend on them: the policy, the two
-skills and the gate work with no plugin installed. When superpowers is present, its
+- task document / plan / handoff / API request: the branch changes a markup file in that
+  folder;
+- living documentation: if code changed, the living documentation changed too
+  (`docs/schemas/` or the project's other docs). The one escape hatch is explicit: a task
+  document has a `## Documentation impact` section whose first line starts with `None`,
+  followed by the reason. The reviewer sees that reason in the diff.
+
+The finish sheet shows the checkboxes of the kinds set to «Питати» and lists whatever is
+still missing in plain language. «Доповнити документацію» sends the agent one prompt naming
+exactly the missing documents and closes the sheet. You watch the agent write and commit them
+in the transcript, and it pushes them if the PR is already open. Changed documents appear in
+the session's «Документація» tab tagged специфікація / план / схема / хендоф / запит API.
+
+The instructions for each document are the default skills `task-spec`, `task-plan`,
+`frontend-handoff` and `api-request`. Like any default skill, a project, workspace or
+repository can override them by name («ШІ-команда → Навички»; the settings subsection links
+there).
+
+The API takes the finish sheet's boxes as `{ handoff?: boolean; apiRequest?: boolean }` on
+`POST /sessions/:id/pr|commit|finish|docs` and as `?handoff=1&apiRequest=1` on
+`GET /sessions/:id/finish`; the answer's `docsGate` is `{ enabled, asks, failures }`. The rules
+are stored in `projects.docs_policy` (migration `20260930090000_project_docs_policy.sql`, to be
+applied before deploying the API, which selects the column); `projects.docs_required` stays
+the switch.
+
+**Superpowers and other plugins.** Kermanych does not depend on them: the policy, the skills
+and the gate work with no plugin installed. When superpowers is present, its
 `brainstorming` and `writing-plans` skills state that their `docs/superpowers/specs|plans`
 paths are defaults that user instructions override, and the policy is exactly such an
 instruction, so specs and plans land in `docs/specs` / `docs/plans`. Superpowers has no notion
-of `docs/schemas` or `docs/handoffs` and does not add the `## Documentation impact` section.
-Those come from the policy, the skills and the gate. Whether the claude-code runtime loads
-`~/.claude` plugins at all is unverified: Kermanych sets no `settingSources`.
+of `docs/schemas`, `docs/handoffs` or `docs/api-requests` and does not add the
+`## Documentation impact` section. Those come from the policy, the skills and the gate.
+Whether the claude-code runtime loads `~/.claude` plugins at all is unverified: Kermanych sets
+no `settingSources`.
 
-**Limits.** A session that was already running when the setting was switched on gets the
+**Limits.** A session that was already running when the switch or a rule changed gets the new
 policy in its system prompt on its next spawn (resume, restart). The gate applies to it
-immediately. A pull request opened by a trigger is checked without the handoff rule.
+immediately. A pull request opened by a trigger ticks no finish-sheet box, so only the
+`required` rules apply to it.
 
 Design, decisions and rationale:
-[`docs/specs/2026-09-28-mandatory-documentation-design.md`](../docs/specs/2026-09-28-mandatory-documentation-design.md).
+[`docs/specs/2026-09-28-mandatory-documentation-design.md`](../docs/specs/2026-09-28-mandatory-documentation-design.md),
+per-kind rules:
+[`docs/specs/2026-09-30-documentation-settings.md`](../docs/specs/2026-09-30-documentation-settings.md).
 
 ### Offline behaviour
 

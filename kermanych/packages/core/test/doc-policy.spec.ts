@@ -1,16 +1,26 @@
 import { expect, test } from "vitest";
 import {
+  DEFAULT_DOCS_POLICY,
   DOCS_GATE_FAILURES,
+  docsAsks,
   docsCompletionPrompt,
+  docsFailureSkills,
   docsGateFailures,
   docsLayoutKind,
+  docsPolicy,
+  docsPolicyAppend,
+  type DocsPolicy,
+  type DocsRequested,
 } from "../src/doc-policy";
 
 const SPEC = "docs/specs/2026-09-28-x.md";
 const CODE = "src/app.ts";
 const impact = (line: string) => `# Task\n\n## Documentation impact\n\n${line}\n`;
 const gate = (paths: string[], specBodies: string[] = [], handoff = false) =>
-  docsGateFailures({ paths, specBodies, handoff });
+  docsGateFailures({ policy: DEFAULT_DOCS_POLICY, paths, specBodies, requested: { handoff } });
+const ruled = (over: Partial<DocsPolicy>, paths: string[], requested: DocsRequested = {}, specBodies: string[] = []) =>
+  docsGateFailures({ policy: { ...DEFAULT_DOCS_POLICY, ...over }, paths, specBodies, requested });
+const ALL_OFF: DocsPolicy = { spec: "off", plan: "off", schemas: "off", handoff: "off", apiRequest: "off" };
 
 test("a change without a task document fails task-spec", () => {
   expect(gate(["README.md"])).toEqual(["task-spec"]);
@@ -27,8 +37,8 @@ test("a docs-only change needs no impact declaration", () => {
 
 test("code with no living doc and no declaration fails docs-impact", () => {
   expect(gate([SPEC, CODE], [impact("Changed the login flow.")])).toEqual(["docs-impact"]);
-  // Task, plan and handoff documents are not living documentation.
-  expect(gate([SPEC, CODE, "docs/plans/p.md", "docs/handoffs/h.md"], ["# no section"])).toEqual(["docs-impact"]);
+  // Task, plan, handoff and API-request documents are not living documentation.
+  expect(gate([SPEC, CODE, "docs/plans/p.md", "docs/handoffs/h.md", "docs/api-requests/r.md"], ["# no section"])).toEqual(["docs-impact"]);
   expect(gate([CODE])).toEqual(["task-spec", "docs-impact"]);
 });
 
@@ -69,11 +79,54 @@ test("a requested handoff must be present", () => {
   expect(gate([SPEC], [], true)).toEqual(["handoff"]);
   expect(gate([SPEC, "docs/handoffs/2026-09-28-x.md"], [], true)).toEqual([]);
   expect(gate([SPEC], [], false)).toEqual([]);
-  expect(gate([CODE], [], true)).toEqual(DOCS_GATE_FAILURES);
+  expect(gate([CODE], [], true)).toEqual(["task-spec", "docs-impact", "handoff"]);
 });
 
 test("an empty change set has nothing to document", () => {
-  expect(gate([], [], true)).toEqual([]);
+  expect(ruled({ plan: "required", handoff: "required" }, [], { handoff: true })).toEqual([]);
+});
+
+test("off and optional rules never block", () => {
+  expect(docsGateFailures({ policy: ALL_OFF, paths: [CODE], specBodies: [], requested: { handoff: true, apiRequest: true } })).toEqual([]);
+  const optional: DocsPolicy = { spec: "optional", plan: "optional", schemas: "optional", handoff: "optional", apiRequest: "optional" };
+  expect(docsGateFailures({ policy: optional, paths: [CODE], specBodies: [], requested: { handoff: true, apiRequest: true } })).toEqual([]);
+});
+
+test("a required plan must be present", () => {
+  expect(ruled({ plan: "required" }, [SPEC, "docs/schemas/a.md", CODE])).toEqual(["plan"]);
+  expect(ruled({ plan: "required" }, [SPEC, "docs/plans/2026-09-30-x.md", "docs/schemas/a.md", CODE])).toEqual([]);
+});
+
+test("a required handoff ignores the finish-sheet box", () => {
+  expect(ruled({ handoff: "required" }, [SPEC], { handoff: false })).toEqual(["handoff"]);
+  expect(ruled({ handoff: "required" }, [SPEC, "docs/handoffs/x.md"], { handoff: false })).toEqual([]);
+});
+
+test("an API request is demanded only when asked and ticked", () => {
+  expect(ruled({ apiRequest: "ask" }, [SPEC], { apiRequest: true })).toEqual(["api-request"]);
+  expect(ruled({ apiRequest: "ask" }, [SPEC], { apiRequest: false })).toEqual([]);
+  expect(ruled({ apiRequest: "ask" }, [SPEC, "docs/api-requests/2026-09-30-x.md"], { apiRequest: true })).toEqual([]);
+  expect(ruled({ apiRequest: "optional" }, [SPEC], { apiRequest: true })).toEqual([]);
+});
+
+test("every failure kind comes back in display order", () => {
+  const strict: DocsPolicy = { spec: "required", plan: "required", schemas: "required", handoff: "ask", apiRequest: "ask" };
+  expect(docsGateFailures({ policy: strict, paths: [CODE], specBodies: [], requested: { handoff: true, apiRequest: true } })).toEqual(DOCS_GATE_FAILURES);
+});
+
+test("docsPolicy fills gaps and drops unsupported rules with the kind's default", () => {
+  expect(docsPolicy({})).toEqual(DEFAULT_DOCS_POLICY);
+  expect(docsPolicy(null)).toEqual(DEFAULT_DOCS_POLICY);
+  expect(docsPolicy(["off"])).toEqual(DEFAULT_DOCS_POLICY);
+  expect(docsPolicy({ plan: "required", handoff: "off" })).toEqual({ ...DEFAULT_DOCS_POLICY, plan: "required", handoff: "off" });
+  // `ask` exists only for handoff / API request; an API request is never `required`.
+  expect(docsPolicy({ spec: "ask", apiRequest: "required", schemas: "sometimes" })).toEqual(DEFAULT_DOCS_POLICY);
+});
+
+test("docsAsks lists the kinds the finish sheet offers", () => {
+  expect(docsAsks(DEFAULT_DOCS_POLICY)).toEqual(["handoff"]);
+  expect(docsAsks({ ...DEFAULT_DOCS_POLICY, apiRequest: "ask" })).toEqual(["handoff", "apiRequest"]);
+  expect(docsAsks({ ...DEFAULT_DOCS_POLICY, handoff: "required" })).toEqual([]);
 });
 
 test("docsLayoutKind classifies by repo-root prefix", () => {
@@ -81,9 +134,27 @@ test("docsLayoutKind classifies by repo-root prefix", () => {
   expect(docsLayoutKind("docs/plans/a.md")).toBe("plan");
   expect(docsLayoutKind("docs/schemas/sub/flow.svg")).toBe("schema");
   expect(docsLayoutKind("docs/handoffs/a.md")).toBe("handoff");
+  expect(docsLayoutKind("docs/api-requests/a.md")).toBe("api-request");
   expect(docsLayoutKind("docs/other/a.md")).toBeUndefined();
   expect(docsLayoutKind("docs/specsx/a.md")).toBeUndefined();
   expect(docsLayoutKind("app/docs/specs/a.md")).toBeUndefined();
+});
+
+test("the policy append names only the kinds that are on, and blocks only when something can", () => {
+  expect(docsPolicyAppend(ALL_OFF)).toBe("");
+
+  const soft = docsPolicyAppend({ ...ALL_OFF, spec: "optional", apiRequest: "optional" });
+  expect(soft).toContain("docs/specs/");
+  expect(soft).toContain("docs/api-requests/");
+  expect(soft).not.toContain("docs/plans/YYYY");
+  expect(soft).not.toContain("docs/handoffs/");
+  expect(soft).not.toMatch(/refuses/);
+
+  const def = docsPolicyAppend(DEFAULT_DOCS_POLICY);
+  for (const dir of ["docs/specs/", "docs/plans/", "docs/schemas/", "docs/handoffs/"]) expect(def).toContain(dir);
+  expect(def).not.toContain("docs/api-requests/");
+  expect(def).toMatch(/begins with `None`/);
+  expect(def).toMatch(/refuses to open a pull request/);
 });
 
 test("the completion prompt asks only for the failing items", () => {
@@ -92,6 +163,11 @@ test("the completion prompt asks only for the failing items", () => {
   expect(only).not.toContain("docs/specs/");
   expect(only).not.toContain("docs/schemas/");
   const all = docsCompletionPrompt(DOCS_GATE_FAILURES);
-  for (const dir of ["docs/specs/", "docs/schemas/", "docs/handoffs/"]) expect(all).toContain(dir);
+  for (const dir of ["docs/specs/", "docs/plans/", "docs/schemas/", "docs/handoffs/", "docs/api-requests/"]) expect(all).toContain(dir);
   expect(all).toMatch(/do not change code in this turn/);
+});
+
+test("the completion skills follow the failures, none for docs-impact", () => {
+  expect(docsFailureSkills(["docs-impact"])).toEqual([]);
+  expect(docsFailureSkills(["api-request", "task-spec", "plan", "handoff"])).toEqual(["task-spec", "task-plan", "frontend-handoff", "api-request"]);
 });
