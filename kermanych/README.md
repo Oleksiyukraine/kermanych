@@ -711,7 +711,8 @@ That field is a real assistant, and it is deliberately narrow:
 - **It reads the team's capacity.** Team Capacity is the one section marked `read`: the
   screen adds up the Jira board's remaining estimates (spread over business days up to
   each ticket's due date) and its worklogs against 8 h per person per business day, for a
-  date range you pick, as a chart or a table, for the whole team or one assignee. The
+  date range you pick, as a chart or a table, for the whole team or the people you tick
+  in the roster picker — the chart, the table and the totals all show that same selection. The
   browser hands the assistant the same numbers by week — two weeks back, six ahead — as
   `context.capacity` on every turn, so «what's Marina's load for the next two weeks» is
   answered from the figures on the screen, never from the model's memory. Nothing there is
