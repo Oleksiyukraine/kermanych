@@ -114,30 +114,9 @@ const roots = ref<DocNode[]>([]);
 // this watch exists), so without it a page entered with a project already selected would build
 // no root nodes and render an empty tree even though docFolders is set.
 watch([selectedId, docFolders, isBound], () => {
-  const id = selectedId.value;
-  const built: DocNode[] = docFolders.value.map((f) => ({ folder: f, path: '', name: f, type: 'dir' as const }));
-  roots.value = built;
-  // Auto-expand every configured folder so its files are visible on arrival. A root folder
-  // that must be clicked open reads as «no docs» — the reported bug. Each root fetches its own
-  // one level; an absent/empty folder resolves to an empty listing and shows the empty note.
-  for (const r of built) void openNode(id, r);
+  // Roots start collapsed; DocTreeNode fetches a folder's one level on its first click.
+  roots.value = docFolders.value.map((f) => ({ folder: f, path: '', name: f, type: 'dir' as const }));
 }, { immediate: true });
-
-// Expand a dir node and lazily fetch its one level of children. Guarded by the captured
-// project id so a fast project switch cannot graft one project's tree onto another.
-async function openNode(id: string, node: DocNode): Promise<void> {
-  if (node.type !== 'dir') return;
-  node.open = true;
-  if (node.children) return;
-  const entries: TreeEntry[] = await docs.treeOf(id, node.folder, node.path);
-  if (id !== selectedId.value) return;
-  node.children = entries.map((e) => ({
-    folder: node.folder,
-    path: node.path ? `${node.path}/${e.name}` : e.name,
-    name: e.name,
-    type: e.type,
-  }));
-}
 
 // A pull can add or remove files under an already-expanded folder (spec §3.6). When the store
 // signals a refresh, walk every open dir and re-fetch its level, preserving expansion state.
