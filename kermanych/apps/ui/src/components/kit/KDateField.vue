@@ -88,7 +88,7 @@
             }"
             role="gridcell"
             :aria-selected="cell.iso === modelValue"
-            @mouseenter="activeIso = cell.iso"
+            @mouseenter="hover(cell)"
             @mousedown.prevent
             @click="commit(cell.iso)"
           >{{ cell.day }}</div>
@@ -119,6 +119,7 @@ let seq = 0;
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
+  type CalendarCell,
   WEEKDAY_KEYS,
   formatIsoDate,
   isoParts,
@@ -177,16 +178,32 @@ const popEl = ref<HTMLElement | null>(null);
 // What the input SHOWS, which is not the model: it holds half-typed text («20.09.20») that is
 // not a date yet, and the model must not see those.
 const text = ref(formatIsoDate(props.modelValue));
-// The day the grid highlights and Enter picks. Follows the model, then the keyboard.
+// The day the grid highlights and Enter picks. Follows the model, then the keyboard and the
+// pointer — which may leave it on a faded day of the neighbouring month.
 const activeIso = ref('');
+// A day inside the month on screen; the view is its month. Separate from `activeIso` because
+// the pointer crosses the grid's faded neighbour days on its way anywhere, and the month
+// jumping under it was unusable — only the arrows, the keyboard and a typed date move it.
+const viewIso = ref('');
 
 const today = computed(() => todayIso(props.nowMs ?? Date.now()));
 
-// The month on screen comes from the ACTIVE day, so stepping months and moving days are one
-// piece of state — a separate «visible month» drifts out of step with the highlighted day.
-const view = computed(() => isoParts(activeIso.value) ?? isoParts(today.value)!);
+const view = computed(() => isoParts(viewIso.value) ?? isoParts(today.value)!);
 const cells = computed(() => monthGrid(view.value.year, view.value.month));
 const title = computed(() => t('common.calendar.monthTitle', { month: t(monthNameKey(view.value.month)), year: view.value.year }));
+
+// Highlights `iso` and brings its month on screen.
+function moveTo(iso: string): void {
+  activeIso.value = iso;
+  viewIso.value = iso;
+}
+
+// Highlight only: an in-month day also becomes the day a month step starts from, a faded one
+// never moves the view.
+function hover(cell: CalendarCell): void {
+  activeIso.value = cell.iso;
+  if (cell.inMonth) viewIso.value = cell.iso;
+}
 
 let naturalH = 0;
 
@@ -211,7 +228,7 @@ function onInput(e: Event): void {
   text.value = (e.target as HTMLInputElement).value;
   const iso = parseTypedDate(text.value);
   if (iso) {
-    activeIso.value = iso;
+    moveTo(iso);
     // A complete date reaches the model as it is typed; the calendar follows along.
     if (iso !== props.modelValue) emit('update:modelValue', iso);
     // A month step can redraw the popup at a different width for a longer title, so the
@@ -240,7 +257,7 @@ function toggle(): void {
 
 async function openCalendar(): Promise<void> {
   if (props.disabled || open.value) return;
-  activeIso.value = isoParts(props.modelValue) ? props.modelValue! : today.value;
+  moveTo(isoParts(props.modelValue) ? props.modelValue! : today.value);
   open.value = true;
   placed.value = false;
   naturalH = 0;
@@ -295,7 +312,9 @@ function place(): void {
 }
 
 function stepMonth(by: number): void {
-  activeIso.value = shiftMonths(activeIso.value || today.value, by);
+  // From the month on screen, not from the highlight: a hovered faded day belongs to the
+  // neighbouring month and would make the step land one month too far.
+  moveTo(shiftMonths(viewIso.value || today.value, by));
   inputEl.value?.focus();
 }
 
@@ -332,11 +351,11 @@ function onKeydown(e: KeyboardEvent): void {
     // enough — see the note at the top of the file.
     case 'ArrowDown':
       e.preventDefault();
-      activeIso.value = shiftDays(activeIso.value || today.value, 7);
+      moveTo(shiftDays(activeIso.value || today.value, 7));
       return;
     case 'ArrowUp':
       e.preventDefault();
-      activeIso.value = shiftDays(activeIso.value || today.value, -7);
+      moveTo(shiftDays(activeIso.value || today.value, -7));
       return;
     case 'PageDown':
       e.preventDefault();
