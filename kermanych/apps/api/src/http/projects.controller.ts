@@ -142,6 +142,26 @@ export class ProjectsController {
     return new StreamableFile(file.bytes, { type: file.contentType, length: file.bytes.length });
   }
 
+  // The file-manager dock with no session selected: one level of the bound checkout, and one
+  // file read-only — the same shape as /sessions/:id/tree and /sessions/:id/file.
+  @Get(":id/tree")
+  async tree(@Param("id") id: string, @Query("path") path?: string) {
+    try {
+      return await this.sup.projectTree(id, path ?? "");
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  @Get(":id/file")
+  async file(@Param("id") id: string, @Query("path") path?: string) {
+    try {
+      return await this.sup.projectFile(id, path ?? "");
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   @Get(":id/env")
   async getEnv(@Param("id") id: string, @Query("file") file?: string) {
     const p = this.reg.listProjects().find((x) => x.id === id);

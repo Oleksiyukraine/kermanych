@@ -1,9 +1,10 @@
 <script setup lang="ts">
-// Global file-manager dock — the worktree tree + a read-only viewer for the selected
-// session, lifted out of the Агенти detail panel's old «Файли» tab so it can stand beside
-// any view (VS Code / Zed style). It reads the selection straight from the store: whichever
-// session is open in Агенти is the one whose files this shows. Shell-level placement (which
-// side, whether it is open) lives in the store; this component owns only the tree.
+// Global file-manager dock — a directory tree + a read-only viewer, lifted out of the Агенти
+// detail panel's old «Файли» tab so it can stand beside any view (VS Code / Zed style). It
+// reads the selection straight from the store: the session open in Агенти shows its
+// worktree; with no session selected, the selected project shows its own checkout. Shell-level
+// placement (which side, whether it is open) lives in the store; this component owns only
+// the tree.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -17,6 +18,9 @@ const { t } = useI18n();
 const selectedSession = computed(() =>
   store.sessions.find((s) => s.id === store.selectedSessionId),
 );
+const selectedProject = computed(() =>
+  store.projects.find((p) => p.id === store.selectedProjectId),
+);
 
 // A retired worktree keeps `worktree: true` but loses its `worktreePath`; there is then no
 // directory to read, so the panel shows a calm empty-state instead of an ENOENT error —
@@ -24,8 +28,28 @@ const selectedSession = computed(() =>
 const worktreeGone = computed(
   () => !!selectedSession.value?.worktree && !selectedSession.value.worktreePath,
 );
+// Without a session the project's checkout is read, which needs a local binding.
+const projectUnbound = computed(
+  () => !selectedSession.value && !!selectedProject.value && !selectedProject.value.localRepoPath,
+);
 
-// The tree loads one level at a time: the root when the session opens, deeper levels lazily
+// Where the tree comes from: the selected session wins, else the selected project. null
+// while nothing is selected or the directory is unreadable (worktree gone / unbound).
+type Source = { kind: 'session' | 'project'; id: string };
+const source = computed<Source | null>(() => {
+  if (selectedSession.value) {
+    return worktreeGone.value ? null : { kind: 'session', id: selectedSession.value.id };
+  }
+  if (selectedProject.value) {
+    return projectUnbound.value ? null : { kind: 'project', id: selectedProject.value.id };
+  }
+  return null;
+});
+// A string key so the watcher reloads only on a real source change, not on every
+// sessions/projects push that rebuilds the object.
+const sourceKey = computed(() => (source.value ? `${source.value.kind}:${source.value.id}` : ''));
+
+// The tree loads one level at a time: the root when the source opens, deeper levels lazily
 // through loadTreeLevel as KFileTree expands folders. Opening a file fetches its body into
 // the viewer, ordered by treeFileRun so a slow read cannot overwrite a newer one.
 const treeRoot = ref<TreeEntry[]>([]);
@@ -41,26 +65,31 @@ const treeFileError = ref<string | null>(null);
 const treeFileMaximized = ref(false);
 let treeFileRun = 0;
 
-function loadTreeLevel(path: string): Promise<TreeEntry[]> {
-  const id = store.selectedSessionId;
-  return id ? store.sessionTree(id, path) : Promise.resolve([]);
+function listLevel(src: Source, path: string): Promise<TreeEntry[]> {
+  return src.kind === 'session' ? store.sessionTree(src.id, path) : store.projectTree(src.id, path);
 }
 
-async function loadTreeRoot(id: string): Promise<void> {
+function loadTreeLevel(path: string): Promise<TreeEntry[]> {
+  return source.value ? listLevel(source.value, path) : Promise.resolve([]);
+}
+
+async function loadTreeRoot(src: Source): Promise<void> {
+  const key = sourceKey.value;
   treeError.value = null;
   treeLoading.value = true;
   try {
-    treeRoot.value = await store.sessionTree(id, '');
+    const entries = await listLevel(src, '');
+    if (key === sourceKey.value) treeRoot.value = entries;
   } catch (e) {
-    treeError.value = e instanceof Error ? e.message : String(e);
+    if (key === sourceKey.value) treeError.value = e instanceof Error ? e.message : String(e);
   } finally {
-    treeLoading.value = false;
+    if (key === sourceKey.value) treeLoading.value = false;
   }
 }
 
 async function openTreeFileAt(path: string): Promise<void> {
-  const id = store.selectedSessionId;
-  if (!id) return;
+  const src = source.value;
+  if (!src) return;
   const run = ++treeFileRun;
   openTreeFile.value = path;
   treeFileMaximized.value = true;
@@ -68,7 +97,7 @@ async function openTreeFileAt(path: string): Promise<void> {
   treeFileError.value = null;
   treeFileLoading.value = true;
   try {
-    const f = await store.sessionFile(id, path);
+    const f = src.kind === 'session' ? await store.sessionFile(src.id, path) : await store.projectFile(src.id, path);
     if (run !== treeFileRun) return;
     treeFile.value = f;
   } catch (e) {
@@ -104,13 +133,13 @@ onMounted(() => window.addEventListener('keydown', onKeydown));
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
 
 watch(
-  () => store.selectedSessionId,
-  (id) => {
+  sourceKey,
+  () => {
     closeTreeFile();
     treeRoot.value = [];
     treeError.value = null;
-    if (!id || worktreeGone.value) return;
-    void loadTreeRoot(id);
+    treeLoading.value = false;
+    if (source.value) void loadTreeRoot(source.value);
   },
   { immediate: true },
 );
@@ -125,6 +154,11 @@ watch(
         class="k-fm__session mono"
         :title="selectedSession.name"
       >{{ selectedSession.branch || selectedSession.name }}</span>
+      <span
+        v-else-if="selectedProject"
+        class="k-fm__session mono"
+        :title="selectedProject.localRepoPath || selectedProject.name"
+      >{{ selectedProject.name }}</span>
       <span class="k-fm__spacer"></span>
       <button
         type="button"
@@ -135,12 +169,15 @@ watch(
       >✕</button>
     </header>
     <div class="k-fm__body">
-      <div v-if="!selectedSession" class="k-fm__blank">
-        <p class="k-fm__blank-text">{{ t('fileManager.noSession') }}</p>
+      <div v-if="!selectedSession && !selectedProject" class="k-fm__blank">
+        <p class="k-fm__blank-text">{{ t('fileManager.noSelection') }}</p>
       </div>
       <div v-else-if="worktreeGone" class="k-fm__blank">
         <span class="k-fm__blank-eyebrow mono">{{ t('agents.changes.historyEyebrow') }}</span>
         <p class="k-fm__blank-text">{{ t('agents.files.gone') }}</p>
+      </div>
+      <div v-else-if="projectUnbound" class="k-fm__blank">
+        <p class="k-fm__blank-text">{{ t('fileManager.notBound') }}</p>
       </div>
       <p v-else-if="treeLoading" class="k-fm__msg mono">{{ t('agents.changes.preparing') }}</p>
       <p v-else-if="treeError" class="k-fm__error" role="alert">{{ treeError }}</p>
