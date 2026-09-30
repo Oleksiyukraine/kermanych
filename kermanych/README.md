@@ -422,8 +422,8 @@ pnpm dev:ui           # Quasar UI on  http://localhost:5317
 Run the two dev commands in separate terminals, then open
 <http://localhost:5317> in your browser. The UI talks to the API on `:4317`.
 
-> **Note:** `better-sqlite3` v13 ships an N-API prebuilt binary, so switching
-> Node versions (≥22.12) needs no rebuild.
+> **Note:** `better-sqlite3` v13 and `node-pty` 1.1 ship N-API prebuilt binaries, so
+> switching Node versions (≥22.12) needs no rebuild.
 
 ## Desktop app (macOS)
 
@@ -466,8 +466,31 @@ with **right-click → Open** (once), or clear the quarantine flag:
 xattr -cr /Applications/Kermanych.app
 ```
 
-Native module note: `better-sqlite3` is pinned to v13 (N-API); one prebuilt
-binary works under both the Node (≥22.12) and Electron ABIs, so no rebuild.
+Native module note: `better-sqlite3` is pinned to v13 (N-API) and `node-pty` to 1.1
+(N-API prebuilds for macOS and Windows); one prebuilt binary works under both the Node
+(≥22.12) and Electron ABIs, so no rebuild. Both are unpacked from the asar. `node-pty`
+1.1's tarball ships `spawn-helper` without the exec bit, which makes every terminal fail
+with `posix_spawnp failed`; the API restores it before the first shell and the app build
+sets it in the bundle.
+
+## Integrated terminal
+
+Every project can open a shell, like the terminal panel of VS Code: the **`>_`** button
+in the status bar, or <kbd>Ctrl</kbd>+<kbd>`</kbd> (also from inside the terminal),
+toggles a panel under the page. Opening it on a bound project with no terminal starts
+one; **+** adds another tab, 🗑 ends the active one, ✕ hides the panel; drag its top
+edge to resize (the height and whether it is open are remembered).
+
+- The shell is your login shell (`$SHELL -l`, so the profile's `PATH` applies even in the
+  desktop app) started in the project's bound folder. An unbound project has no terminal.
+- Tabs belong to the selected project. Switching project shows that project's terminals;
+  the others keep running.
+- Terminals live in the local API, not in the window: reloading the UI re-attaches to
+  them and repaints the last 256 KiB of output. They end when the shell exits, when you
+  kill them, or when the API (the desktop app) quits.
+- Transport is the `/terminal` socket.io namespace of the API. Its handshake must carry
+  the same bearer token the REST API accepts (`auth: { token }`) — a socket there can run
+  commands, so no other page on the machine may connect to it.
 
 ## Monorepo layout
 

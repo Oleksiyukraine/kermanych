@@ -295,3 +295,29 @@ export type SubagentNode = {
   startedAt?: number;
   toolCalls?: number;
 };
+
+// ── Integrated terminal (apps/api/src/ws/terminal.gateway.ts) ──────────────────
+// One running shell. It lives in the api, not in a socket: a UI reload re-attaches to it.
+export type TerminalInfo = {
+  id: string;
+  projectId: string;
+  // The directory the shell started in — the project's checkout on this machine.
+  cwd: string;
+  // Basename of the shell executable (`zsh`), the tab's label.
+  shell: string;
+  pid: number;
+  createdAt: string;
+};
+
+// Why an `open` or `attach` was refused. The ui translates these (i18n `terminal.errors`).
+export type TerminalErrorCode =
+  | "project_not_found"
+  | "project_not_bound"
+  | "cwd_missing"
+  | "spawn_failed"
+  | "terminal_not_found";
+
+export type TerminalError = { error: TerminalErrorCode; message: string };
+export type TerminalOpenReply = { terminal: TerminalInfo } | TerminalError;
+// `replay` is the terminal's recent output (bounded), written before live data flows.
+export type TerminalAttachReply = { terminal: TerminalInfo; replay: string } | TerminalError;

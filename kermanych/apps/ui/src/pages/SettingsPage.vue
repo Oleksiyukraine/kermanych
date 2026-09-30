@@ -1493,7 +1493,7 @@ const badges = computed<Record<string, number | undefined>>(() => ({
 .set {
   display: flex;
   gap: var(--k-sp-3);
-  height: calc(100vh - 90px);
+  height: 100%; // the work area (MainLayout .shell__workarea), which the terminal panel shares
   min-height: 0;
   padding: var(--k-sp-4);
   background: var(--k-canvas);

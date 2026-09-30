@@ -944,7 +944,7 @@ import { relativeTime, renderTime } from '../lib/time';
 import { tokens, usageTokens, usd } from '../lib/format';
 import { EFFORT_OPTIONS } from '../lib/effort';
 import { modelOptions, effortOptions } from '../lib/models';
-import { useResizableWidth } from '../composables/useResizableWidth';
+import { useResizablePanel } from '../composables/useResizablePanel';
 import { useVirtualList } from '../composables/useVirtualList';
 
 // The Агенти screen (design-system section 07): the board of session cards for whatever is
@@ -1469,14 +1469,14 @@ const MIN_DETAIL = 360;
 const MIN_BOARD = 300;
 const contentEl = ref<HTMLElement | null>(null);
 const {
-  width: detailWidth,
+  size: detailWidth,
   resizing,
   startResize,
   onKeydown: onResizeKeydown,
   refresh: refreshDetailWidth,
-} = useResizableWidth({
+} = useResizablePanel({
   storageKey: 'kermanych.agents.board-width',
-  defaultWidth: 340,
+  defaultSize: 340,
   min: MIN_BOARD,
   edge: 'right',
   max: () =>
@@ -2702,10 +2702,10 @@ async function submitPreviewConfig(): Promise<void> {
 </script>
 
 <style scoped lang="scss">
-// Fixed header (48px) + footer (30px) are overlaid by the Quasar layout; the
-// Агенти screen fills exactly the space between them.
+// The Агенти screen fills exactly the work area between the header and the footer — less
+// the terminal panel when it is open (MainLayout .shell__main).
 .agents {
-  height: calc(100vh - 90px);
+  height: 100%;
   overflow: hidden;
   padding: var(--k-sp-3);
 }

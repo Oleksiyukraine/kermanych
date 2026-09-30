@@ -543,7 +543,7 @@ const workspaceIcon = computed(() => {
   display: grid;
   grid-template-columns: 244px minmax(0, 1fr);
   gap: var(--k-sp-4);
-  height: calc(100vh - 90px);
+  height: 100%; // the work area (MainLayout .shell__workarea), which the terminal panel shares
   min-height: 0;
   padding: var(--k-sp-4);
   background: var(--k-canvas);

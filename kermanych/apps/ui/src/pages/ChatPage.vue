@@ -193,7 +193,7 @@ import { taskInsertFromDraft } from '../lib/tasks-view';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import { relativeTime, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
-import { useResizableWidth } from '../composables/useResizableWidth';
+import { useResizablePanel } from '../composables/useResizablePanel';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
@@ -332,14 +332,14 @@ const MIN_HISTORY = 240;
 const MIN_DETAIL = 360;
 const contentEl = ref<HTMLElement | null>(null);
 const {
-  width: historyWidth,
+  size: historyWidth,
   resizing,
   startResize,
   onKeydown: onResizeKeydown,
   refresh: refreshHistoryWidth,
-} = useResizableWidth({
+} = useResizablePanel({
   storageKey: 'kermanych.chat.history-width',
-  defaultWidth: 300,
+  defaultSize: 300,
   min: MIN_HISTORY,
   max: () => (contentEl.value ? contentEl.value.clientWidth - MIN_DETAIL : Number.POSITIVE_INFINITY),
 });
@@ -701,7 +701,7 @@ watch(chatId, () => {
 
 <style scoped lang="scss">
 .chat {
-  height: calc(100vh - 90px);
+  height: 100%; // the work area (MainLayout .shell__workarea), which the terminal panel shares
   overflow: hidden;
   padding: var(--k-sp-3);
   display: flex;

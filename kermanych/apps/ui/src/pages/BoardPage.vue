@@ -1251,7 +1251,7 @@ function onDelete(task: Task): void {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  height: calc(100vh - 90px);
+  height: 100%; // the work area (MainLayout .shell__workarea), which the terminal panel shares
   min-height: 0;
   padding: var(--k-sp-3);
   background: var(--k-canvas);
