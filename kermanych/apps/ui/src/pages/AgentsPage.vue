@@ -803,16 +803,21 @@
             {{ t('agents.finish.aheadInfo', { n: finishData.ahead, base: finishData.target, dirty: finishData.dirty ? t('agents.finish.aheadDirty') : '' }, finishData.ahead) }}
           </p>
           <p v-else class="agents__hint mono">{{ t('agents.changes.preparing') }}</p>
-          <!-- MANDATORY DOCUMENTATION — only for a project that switched it on. The box is on
-               by default on every open and re-reads the gate on toggle, so the list below is
-               always what the api will check when a button is pressed. -->
-          <template v-if="finishData?.docsGate.required">
-            <KCheckbox
-              :model-value="finishHandoff"
-              :label="t('agents.finish.handoff')"
-              :disabled="docsBusy || prBusy || finishBusy"
-              @update:model-value="setFinishHandoff"
-            />
+          <!-- DOCUMENTATION POLICY — only for a project that switched it on. One box per kind
+               the policy leaves to the operator (`docsGate.asks`); each opens in its
+               DOCS_ASK_DEFAULTS state on every open and re-reads the gate on toggle, so the
+               list below is always what the api will check when a button is pressed. -->
+          <template v-if="finishData?.docsGate.enabled">
+            <div v-if="finishData.docsGate.asks.length" class="agents__asks">
+              <KCheckbox
+                v-for="a in finishData.docsGate.asks"
+                :key="a"
+                :model-value="finishAsks[a] === true"
+                :label="t(DOCS_ASK_KEYS[a])"
+                :disabled="docsBusy || prBusy || finishBusy"
+                @update:model-value="setFinishAsk(a, $event)"
+              />
+            </div>
             <template v-if="docsFailures.length">
               <p class="agents__error" role="alert">{{ t('agents.finish.docsMissing') }}</p>
               <ul class="agents__conflict">
@@ -886,7 +891,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   slugify,
@@ -897,7 +902,10 @@ import {
   docsRead,
   isDocPath,
   docsLayoutKind,
+  type DocsAsk,
   type DocsGateFailure,
+  type DocsRequested,
+  DOCS_ASK_DEFAULTS,
   type ImageInput,
   type Session,
   type SessionStatus,
@@ -2391,18 +2399,26 @@ const finishError = ref<string | null>(null);
 const finishBusy = ref(false);
 const prBusy = ref(false);
 const resolveBusy = ref(false);
-// Mandatory documentation (project setting). `finishHandoff` is «Хендоф для фронта» — on by
-// default every time the sheet opens — and is sent with every action so the api's gate checks
-// exactly what the sheet listed. `docsRefreshing` covers the re-read after a toggle: the
-// buttons wait for the gate that matches the box.
-const finishHandoff = ref(true);
+// Documentation policy (project setting). `finishAsks` holds the finish sheet's boxes
+// («Хендоф для фронта», «Запит на розширення API») — reset to DOCS_ASK_DEFAULTS every time the
+// sheet opens — and is sent with every action so the api's gate checks exactly what the sheet
+// listed. `docsRefreshing` covers the re-read after a toggle: the buttons wait for the gate
+// that matches the boxes. A shallowRef, never replaced in place: the stale-reply guard in
+// setFinishAsk compares by identity, which a deep ref's proxy would defeat.
+const finishAsks = shallowRef<DocsRequested>({ ...DOCS_ASK_DEFAULTS });
 const docsBusy = ref(false);
 const docsRefreshing = ref(false);
 const docsFailures = computed<DocsGateFailure[]>(() => finishData.value?.docsGate.failures ?? []);
 const DOCS_FAILURE_KEYS: Record<DocsGateFailure, string> = {
   'task-spec': 'agents.finish.docsFailure.taskSpec',
+  plan: 'agents.finish.docsFailure.plan',
   'docs-impact': 'agents.finish.docsFailure.docsImpact',
   handoff: 'agents.finish.docsFailure.handoff',
+  'api-request': 'agents.finish.docsFailure.apiRequest',
+};
+const DOCS_ASK_KEYS: Record<DocsAsk, string> = {
+  handoff: 'agents.finish.handoff',
+  apiRequest: 'agents.finish.apiRequest',
 };
 
 // Files still to resolve in the worktree: a tree left mid-merge (the agent folded the base
@@ -2423,31 +2439,32 @@ async function openFinish(s: Session): Promise<void> {
   finishBusy.value = false;
   docsBusy.value = false;
   docsRefreshing.value = false;
-  finishHandoff.value = true;
+  finishAsks.value = { ...DOCS_ASK_DEFAULTS };
   finishOpen.value = true;
   try {
-    finishData.value = await store.finishInfo(s.id, finishHandoff.value);
+    finishData.value = await store.finishInfo(s.id, finishAsks.value);
   } catch (e) {
     finishError.value = e instanceof Error ? e.message : String(e);
   }
 }
 
-// Toggling «Хендоф для фронта» changes what the gate demands, so the gate is re-read rather
-// than patched locally — the handoff rule lives in core, not here. A reply for a box state the
-// operator has already flipped past is dropped.
-async function setFinishHandoff(value: boolean): Promise<void> {
+// Toggling a box changes what the gate demands, so the gate is re-read rather than patched
+// locally — the rules live in core, not here. Every toggle swaps in a fresh object, so a reply
+// for a box state the operator has already flipped past is recognised by identity and dropped.
+async function setFinishAsk(ask: DocsAsk, value: boolean): Promise<void> {
   const s = finishFor.value;
   if (!s) return;
-  finishHandoff.value = value;
+  const next = { ...finishAsks.value, [ask]: value };
+  finishAsks.value = next;
   docsRefreshing.value = true;
   finishError.value = null;
   try {
-    const info = await store.finishInfo(s.id, value);
-    if (finishFor.value?.id === s.id && finishHandoff.value === value) finishData.value = info;
+    const info = await store.finishInfo(s.id, next);
+    if (finishFor.value?.id === s.id && finishAsks.value === next) finishData.value = info;
   } catch (e) {
     finishError.value = e instanceof Error ? e.message : String(e);
   } finally {
-    if (finishHandoff.value === value) docsRefreshing.value = false;
+    if (finishAsks.value === next) docsRefreshing.value = false;
   }
 }
 
@@ -2521,7 +2538,7 @@ async function submitFinish(): Promise<void> {
   finishBusy.value = true;
   finishError.value = null;
   try {
-    await store.finishSession(s.id, finishHandoff.value);
+    await store.finishSession(s.id, finishAsks.value);
     finishOpen.value = false;
   } catch (e) {
     finishError.value = e instanceof Error ? e.message : String(e);
@@ -2536,7 +2553,7 @@ async function submitPr(): Promise<void> {
   prBusy.value = true;
   finishError.value = null;
   try {
-    await store.createPr(s.id, finishHandoff.value);
+    await store.createPr(s.id, finishAsks.value);
     finishOpen.value = false; // agent pushes + opens the PR in the background — watch it in chat
     store.selectSession(s.id);
     store.notify(t('agents.notify.prCreating', { name: s.name }), 'info');
@@ -2553,7 +2570,7 @@ async function submitCommit(): Promise<void> {
   prBusy.value = true;
   finishError.value = null;
   try {
-    await store.commitChanges(s.id, finishHandoff.value);
+    await store.commitChanges(s.id, finishAsks.value);
     finishOpen.value = false; // agent commits + pushes to the open PR in the background — watch it in chat
     store.selectSession(s.id);
     store.notify(t('agents.notify.committing', { name: s.name }), 'info');
@@ -2574,7 +2591,7 @@ async function submitDocs(): Promise<void> {
   docsBusy.value = true;
   finishError.value = null;
   try {
-    const res = await store.completeDocs(s.id, finishHandoff.value);
+    const res = await store.completeDocs(s.id, finishAsks.value);
     finishOpen.value = false;
     store.selectSession(s.id);
     store.notify(t(res.sent ? 'agents.notify.docsCompleting' : 'agents.notify.docsComplete', { name: s.name }), 'info');
@@ -3259,6 +3276,14 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-accent);
 }
 .agents__conflict-head { list-style: none; margin-left: -18px; }
+
+// The finish sheet's documentation boxes, one per line.
+.agents__asks {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
 
 .agents__file-list {
   margin: 0;

@@ -1,7 +1,7 @@
 // apps/api/test/supervisor.project.spec.ts
 import { describe, expect, it, vi } from "vitest";
 import type { CloudProject } from "@kermanych/cloud";
-import type { ServerEvent } from "@kermanych/core";
+import { DEFAULT_DOCS_POLICY, type ServerEvent } from "@kermanych/core";
 import { RegistryService } from "../src/registry/registry.service";
 import { offlineAuth } from "./offline-auth";
 import { stubSkills } from "./skills-stub";
@@ -39,7 +39,7 @@ function make() {
 
 function cloudProject(id: string, over: Partial<CloudProject> = {}): CloudProject {
   return {
-    id, name: `cloud ${id}`, carryFiles: [".env"], envKeys: [], docFolders: [], docsRequired: false,
+    id, name: `cloud ${id}`, carryFiles: [".env"], envKeys: [], docFolders: [], docsRequired: false, docsPolicy: DEFAULT_DOCS_POLICY,
     workspaceId: "00000000-0000-4000-8000-000000000ws1",
     createdAt: "2026-08-21T00:00:00.000Z", ...over,
   };
@@ -77,7 +77,7 @@ describe("syncProjects", () => {
     registry.upsertProject({ id: "p1", name: "Old", localRepoPath: "/tmp/bound" });
 
     const after = await sup.syncProjects([
-      cloudProject("p1", { name: "New", conventions: "rule", defaultBranch: "dev", carryFiles: [".env", ".env.local"], docsRequired: true }),
+      cloudProject("p1", { name: "New", conventions: "rule", defaultBranch: "dev", carryFiles: [".env", ".env.local"], docsRequired: true, docsPolicy: { ...DEFAULT_DOCS_POLICY, apiRequest: "ask" } }),
     ]);
 
     const p = after.find((x) => x.id === "p1")!;
@@ -87,6 +87,7 @@ describe("syncProjects", () => {
     expect(p.defaultBranch).toBe("dev");
     expect(p.carryFiles).toEqual([".env", ".env.local"]);
     expect(p.docsRequired).toBe(true);
+    expect(p.docsPolicy).toEqual({ ...DEFAULT_DOCS_POLICY, apiRequest: "ask" });
   });
 
   it("creates an unbound row for a cloud project this machine has never seen", async () => {

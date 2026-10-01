@@ -1,6 +1,9 @@
 # Kermanych — Mandatory Documentation (Design)
 
 - **Status:** Implemented (`e38feae`, branch `feature/docs-main-pattern`)
+- **Superseded in part:** the single switch now has per-kind rules (spec, plan, schemas,
+  handoff, API request) and `DocsGate.required` became `enabled` + `asks` — see
+  `docs/specs/2026-09-30-documentation-settings.md`. §3.3–§3.7 describe the default rules.
 - **Date:** 2026-09-28
 - **Scope:** `supabase/migrations` (one column), `packages/core` (documentation
   policy, gate, two default skills, librarian fix), `packages/cloud` (project

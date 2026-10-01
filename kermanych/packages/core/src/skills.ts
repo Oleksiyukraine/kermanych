@@ -194,6 +194,25 @@ export const DEFAULT_SKILLS: readonly SkillDef[] = [
     ].join("\n"),
   },
   {
+    name: "task-plan",
+    description:
+      "Use when a task needs an implementation plan in docs/plans/: the ordered steps, the files each touches, and how each is verified, written before implementing.",
+    body: [
+      "# Writing the implementation plan",
+      "",
+      "Path: `docs/plans/YYYY-MM-DD-<topic>.md`, written before implementing; link the task",
+      "document in `docs/specs/` when there is one. The reader is whoever picks the work up",
+      "next, human or agent.",
+      "",
+      "- **Steps** — ordered, each small enough to finish and check on its own.",
+      "- **Files** — for every step, the files it creates or changes.",
+      "- **Verification** — for every step, the command or check that proves it.",
+      "- **Risks and order** — migrations, flags, what must ship first.",
+      "",
+      "Tick steps off as they land; when the plan changes, change the document.",
+    ].join("\n"),
+  },
+  {
     name: "frontend-handoff",
     description:
       "Use when asked for a frontend handoff after a task: a document in docs/handoffs/ that tells a frontend developer who did not see the work what changed for the client.",
@@ -210,8 +229,32 @@ export const DEFAULT_SKILLS: readonly SkillDef[] = [
       "- **Env / config** — new keys and flags.",
       "- **Migration order** — what must ship first.",
       "- **How to try it** — steps or requests that show it working.",
+      "- **API requests answered** — when this work implements a request from",
+      "  `docs/api-requests/`, link it and say which parts of it are covered.",
       "",
       "Skip empty sections. When nothing changed for the frontend, say so in one line.",
+    ].join("\n"),
+  },
+  {
+    name: "api-request",
+    description:
+      "Use when the work needs something the API does not provide yet — an endpoint, a field, a filter, an event: write the request in docs/api-requests/ instead of inventing or faking the backend side.",
+    body: [
+      "# Writing an API request",
+      "",
+      "Path: `docs/api-requests/YYYY-MM-DD-<topic>.md`. The reader is the backend developer who",
+      "will build it and did not see this work. Never implement the backend side from the",
+      "client's repository, and never fake it silently.",
+      "",
+      "- **What is needed** — the endpoint, field, filter or event, in a few lines.",
+      "- **Why** — the user-facing flow that needs it.",
+      "- **Proposed contract** — method, path, request and response shape, errors, events;",
+      "  mark it as a proposal the backend may change.",
+      "- **Until it ships** — what the client does now: a mock, a feature flag, a hidden",
+      "  control — and where in the code, so it can be removed.",
+      "- **Existing API checked** — what was looked at and why it does not fit.",
+      "",
+      "Name the request in the pull request and in the handoff, if there is one.",
     ].join("\n"),
   },
 ];

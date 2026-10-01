@@ -92,18 +92,55 @@
             :disabled="cloudLocked"
           />
 
-          <!-- MANDATORY DOCUMENTATION. Off by default: switching it on makes the api refuse
-               «Створити ПР», «Закоміти» and «Завершити» for EVERY session of the project until
-               the task document (and, when code changed, the living docs) are in place — the
-               operator's choice, never a migration's. -->
-          <div class="set__group">
-            <KCheckbox
-              v-model="draft.docsRequired"
-              :label="t('settings.docs.required')"
-              :disabled="cloudLocked"
-            />
-            <p class="set__note">{{ t('settings.docs.requiredHint') }}</p>
-          </div>
+          <!-- DOCUMENTATION POLICY. A framed subsection of its own: the master switch
+               (`docsRequired`, off by default — the operator's choice, never a migration's)
+               and, while it is on, one rule per document kind in three groups. Each kind
+               offers exactly DOCS_RULES[key]; the note under it explains the selected rule.
+               The rules keep their values while the switch is off, so turning it back on
+               restores them. `required` makes the api refuse «Створити ПР», «Закоміти» and
+               «Завершити»; `ask` puts a checkbox into the finish sheet. -->
+          <section class="set__docs">
+            <div class="set__docs-head">
+              <span class="set__docs-title">{{ t('settings.docs.policyTitle') }}</span>
+              <p class="set__note">{{ t('settings.docs.policyLead') }}</p>
+            </div>
+            <div class="set__group">
+              <KCheckbox
+                v-model="draft.docsRequired"
+                :label="t('settings.docs.enabled')"
+                :disabled="cloudLocked"
+              />
+              <p class="set__note">{{ t('settings.docs.enabledHint') }}</p>
+            </div>
+            <template v-if="draft.docsRequired">
+              <div v-for="g in DOCS_GROUPS" :key="g.key" class="set__docs-group">
+                <span class="set__docs-group-title">{{ t(`settings.docs.group.${g.key}`) }}</span>
+                <div v-for="k in g.kinds" :key="k" class="set__group">
+                  <span class="set__label">
+                    {{ t(`settings.docs.kind.${k}`) }}
+                    <code class="set__docs-path">{{ DOCS_KIND_PATH[k] }}</code>
+                  </span>
+                  <div class="set__seg">
+                    <button
+                      v-for="r in DOCS_RULES[k]"
+                      :key="r"
+                      type="button"
+                      class="set__seg-btn"
+                      :class="{ 'set__seg-btn--on': draft[DOCS_DRAFT_FIELD[k]] === r }"
+                      :aria-pressed="draft[DOCS_DRAFT_FIELD[k]] === r"
+                      :disabled="cloudLocked"
+                      @click="draft[DOCS_DRAFT_FIELD[k]] = r"
+                    >{{ t(`settings.docs.rule.${r}`) }}</button>
+                  </div>
+                  <p class="set__note">{{ t(`settings.docs.hint.${k}.${draft[DOCS_DRAFT_FIELD[k]]}`) }}</p>
+                </div>
+              </div>
+            </template>
+            <p class="set__note">
+              {{ t('settings.docs.templatesBefore') }}
+              <router-link class="set__docs-link" :to="{ name: 'ai-team', params: { section: 'skills' } }">{{ t('settings.docs.templatesLink') }}</router-link>{{ t('settings.docs.templatesAfter') }}
+            </p>
+          </section>
 
           <div class="set__rule"></div>
 
@@ -638,8 +675,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import type { EnvFileView, ThinkingLevel, AgentLanguage } from '@kermanych/core';
-import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS } from '@kermanych/core';
+import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule } from '@kermanych/core';
+import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, DEFAULT_DOCS_POLICY, DOCS_LAYOUT, DOCS_RULES } from '@kermanych/core';
 import type { AssignableRole, WorkspaceMember, WorkspaceRole } from '@kermanych/cloud';
 import type { KTheme } from '@kermanych/tokens';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -814,7 +851,36 @@ interface ProjectDraft {
   carryFiles: string[];
   docFolders: string[];
   docsRequired: boolean;
+  // The documentation policy, flat so changedFields compares it field by field.
+  docsSpec: DocsRule;
+  docsPlan: DocsRule;
+  docsSchemas: DocsRule;
+  docsHandoff: DocsRule;
+  docsApiRequest: DocsRule;
 }
+
+// The policy rows of the «Документація» subsection: three groups, the draft field each
+// kind edits, and the folder shown beside its label.
+type DocsDraftField = 'docsSpec' | 'docsPlan' | 'docsSchemas' | 'docsHandoff' | 'docsApiRequest';
+const DOCS_DRAFT_FIELD: Record<DocsPolicyKey, DocsDraftField> = {
+  spec: 'docsSpec',
+  plan: 'docsPlan',
+  schemas: 'docsSchemas',
+  handoff: 'docsHandoff',
+  apiRequest: 'docsApiRequest',
+};
+const DOCS_KIND_PATH: Record<DocsPolicyKey, string> = {
+  spec: `${DOCS_LAYOUT.specs}/`,
+  plan: `${DOCS_LAYOUT.plans}/`,
+  schemas: `${DOCS_LAYOUT.schemas}/`,
+  handoff: `${DOCS_LAYOUT.handoffs}/`,
+  apiRequest: `${DOCS_LAYOUT.apiRequests}/`,
+};
+const DOCS_GROUPS: { key: 'task' | 'living' | 'frontBack'; kinds: DocsPolicyKey[] }[] = [
+  { key: 'task', kinds: ['spec', 'plan'] },
+  { key: 'living', kinds: ['schemas'] },
+  { key: 'frontBack', kinds: ['handoff', 'apiRequest'] },
+];
 
 const draft = ref<ProjectDraft | null>(null);
 const base = ref<ProjectDraft | null>(null);
@@ -830,6 +896,7 @@ function seedProject(): void {
     base.value = null;
     return;
   }
+  const policy = c?.docsPolicy ?? row?.docsPolicy ?? DEFAULT_DOCS_POLICY;
   const next: ProjectDraft = {
     name: c?.name ?? row?.name ?? '',
     color: c?.color ?? row?.color ?? '',
@@ -844,6 +911,11 @@ function seedProject(): void {
     carryFiles: [...(c?.carryFiles ?? row?.carryFiles ?? ['.env'])],
     docFolders: [...(c?.docFolders ?? row?.docFolders ?? [])],
     docsRequired: c?.docsRequired ?? row?.docsRequired ?? false,
+    docsSpec: policy.spec,
+    docsPlan: policy.plan,
+    docsSchemas: policy.schemas,
+    docsHandoff: policy.handoff,
+    docsApiRequest: policy.apiRequest,
   };
   draft.value = { ...next, carryFiles: [...next.carryFiles], docFolders: [...next.docFolders] };
   base.value = next;
@@ -1152,6 +1224,13 @@ async function saveProject(): Promise<void> {
       carryFiles: d.carryFiles.length ? d.carryFiles : ['.env'],
       docFolders: d.docFolders,
       docsRequired: d.docsRequired,
+      docsPolicy: {
+        spec: d.docsSpec,
+        plan: d.docsPlan,
+        schemas: d.docsSchemas,
+        handoff: d.docsHandoff,
+        apiRequest: d.docsApiRequest,
+      },
       ...(envKeys ? { envKeys } : {}),
       ...(moved ? { workspaceId: d.workspaceId } : {}),
     });
@@ -1984,6 +2063,65 @@ const badges = computed<Record<string, number | undefined>>(() => ({
   color: var(--k-text);
   background: var(--k-surface2);
   font-weight: var(--k-fw-semibold);
+}
+
+// ── DOCUMENTATION POLICY ────────────────────────────────────────────────────
+.set__docs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-4);
+  border: var(--k-rule-thin) solid var(--k-line);
+  border-radius: var(--k-r);
+  padding: var(--k-sp-4);
+}
+
+.set__docs-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.set__docs-title {
+  font-size: var(--k-fs-base);
+  font-weight: var(--k-fw-semibold);
+  color: var(--k-text);
+}
+
+.set__docs-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-3);
+  padding-top: var(--k-sp-3);
+  border-top: var(--k-rule-thin) solid var(--k-line);
+}
+
+.set__docs-group-title {
+  font-size: var(--k-fs-sm);
+  font-weight: var(--k-fw-semibold);
+  color: var(--k-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.set__docs-path {
+  margin-left: var(--k-sp-2);
+  font-family: var(--k-font-mono);
+  font-size: var(--k-fs-sm);
+  color: var(--k-faint);
+}
+
+.set__docs-link {
+  color: var(--k-accent);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.set__seg-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 // ── DANGER ROWS ─────────────────────────────────────────────────────────────

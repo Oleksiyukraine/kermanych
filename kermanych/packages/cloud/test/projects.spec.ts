@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { DEFAULT_DOCS_POLICY } from "@kermanych/core";
 import { createProject, deleteProject, listProjects, patchProject, toCloudProject, toProjectRow } from "../src/projects";
 
 type Op = [string, ...unknown[]];
@@ -58,6 +59,7 @@ const projectRow = {
   color: "#ff563c",
   doc_folders: ["docs"],
   docs_required: true,
+  docs_policy: { plan: "required" },
   workspace_id: "w1",
   created_at: "2026-08-21T00:00:00.000Z",
 };
@@ -89,6 +91,7 @@ describe("listProjects", () => {
       color: "#ff563c",
       docFolders: ["docs"],
       docsRequired: true,
+      docsPolicy: { ...DEFAULT_DOCS_POLICY, plan: "required" },
       workspaceId: "w1",
       createdAt: "2026-08-21T00:00:00.000Z",
     });
@@ -103,7 +106,7 @@ describe("listProjects", () => {
     await listProjects(client);
     expect(queries[0]!.ops[0]).toEqual([
       "select",
-      "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, default_effort, carry_files, env_keys, color, doc_folders, docs_required, created_at",
+      "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, default_effort, carry_files, env_keys, color, doc_folders, docs_required, docs_policy, created_at",
     ]);
   });
 
@@ -238,7 +241,7 @@ describe("doc_folders mapping", () => {
       conventions: null, preview_command: null, api_command: null,
       default_branch: null, default_model: null, default_effort: null,
       carry_files: [".env"], env_keys: [], color: null,
-      doc_folders: ["docs", "packages/core/docs"], docs_required: false, created_at: "t",
+      doc_folders: ["docs", "packages/core/docs"], docs_required: false, docs_policy: {}, created_at: "t",
     });
     expect(p.docFolders).toEqual(["docs", "packages/core/docs"]);
   });
@@ -249,7 +252,7 @@ describe("doc_folders mapping", () => {
       conventions: null, preview_command: null, api_command: null,
       default_branch: null, default_model: null, default_effort: null,
       carry_files: null, env_keys: null, color: null,
-      doc_folders: null, docs_required: null, created_at: "t",
+      doc_folders: null, docs_required: null, docs_policy: null, created_at: "t",
     });
     expect(p.docFolders).toEqual([]);
   });
@@ -261,7 +264,7 @@ describe("doc_folders mapping", () => {
   });
 });
 
-describe("docs_required mapping", () => {
+describe("documentation policy mapping", () => {
   it("round-trips docs_required and reads a missing value as off", () => {
     expect(toCloudProject(projectRow).docsRequired).toBe(true);
     expect(toCloudProject({ ...projectRow, docs_required: false }).docsRequired).toBe(false);
@@ -272,5 +275,16 @@ describe("docs_required mapping", () => {
     expect(toProjectRow({})).not.toHaveProperty("docs_required");
     expect(toProjectRow({ docsRequired: true }).docs_required).toBe(true);
     expect(toProjectRow({ docsRequired: false }).docs_required).toBe(false);
+  });
+
+  // `{}` is what every row that predates per-kind rules holds; it must mean the old bundle.
+  it("reads docs_policy through core normalisation, an empty object as the defaults", () => {
+    expect(toCloudProject({ ...projectRow, docs_policy: {} }).docsPolicy).toEqual(DEFAULT_DOCS_POLICY);
+    expect(toCloudProject({ ...projectRow, docs_policy: { apiRequest: "required", handoff: "off" } }).docsPolicy).toEqual({ ...DEFAULT_DOCS_POLICY, handoff: "off" });
+  });
+
+  it("sends docs_policy only when present in the patch, normalised", () => {
+    expect(toProjectRow({})).not.toHaveProperty("docs_policy");
+    expect(toProjectRow({ docsPolicy: { ...DEFAULT_DOCS_POLICY, apiRequest: "ask" } }).docs_policy).toEqual({ ...DEFAULT_DOCS_POLICY, apiRequest: "ask" });
   });
 });

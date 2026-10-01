@@ -1,5 +1,6 @@
 // apps/api/test/registry.spec.ts
 import { expect, test } from "vitest";
+import { DEFAULT_DOCS_POLICY } from "@kermanych/core";
 import { RegistryService } from "../src/registry/registry.service";
 
 test("project + session round trip", () => {
@@ -111,6 +112,22 @@ test("project docsRequired defaults to false, round-trips, and survives an unrel
 
   r.upsertProject({ id: "p1", name: "Q", docsRequired: false });
   expect(r.listProjects().find((p) => p.id === "p1")!.docsRequired).toBe(false);
+});
+
+// The per-kind rules default to the old bundle, survive an unrelated patch, and a stored value
+// the kind does not support reads back as that kind's default.
+test("project docsPolicy defaults, round-trips, and normalises what it stores", () => {
+  const r = new RegistryService(":memory:");
+  expect(r.upsertProject({ id: "p1", name: "P" }).docsPolicy).toEqual(DEFAULT_DOCS_POLICY);
+
+  const strict = { ...DEFAULT_DOCS_POLICY, plan: "required" as const, apiRequest: "ask" as const };
+  expect(r.patchProject("p1", { docsPolicy: strict }).docsPolicy).toEqual(strict);
+  r.patchProject("p1", { name: "Q" });
+  expect(r.listProjects().find((p) => p.id === "p1")!.docsPolicy).toEqual(strict);
+
+  // A body the api never validated (PATCH /projects/:id) cannot store an unsupported rule.
+  r.patchProject("p1", { docsPolicy: { ...strict, apiRequest: "required" } });
+  expect(r.listProjects().find((p) => p.id === "p1")!.docsPolicy!.apiRequest).toBe("off");
 });
 
 test("patchProject renames the project and round-trips", () => {

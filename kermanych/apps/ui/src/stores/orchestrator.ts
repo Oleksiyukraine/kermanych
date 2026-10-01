@@ -12,6 +12,7 @@ import type {
   ServerEvent,
   RpcExtensionUIResponse,
   ModelOption,
+  DocsRequested,
 } from '@kermanych/core';
 // Import from core's status module directly (not the barrel): @kermanych/core is a CJS
 // workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
@@ -347,8 +348,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.saveEnv(id, patch);
   }
 
-  function finishInfo(id: string, handoff = false) {
-    return api.finishInfo(id, handoff);
+  function finishInfo(id: string, requested: DocsRequested = {}) {
+    return api.finishInfo(id, requested);
   }
 
   function fileDiff(id: string, path: string) {
@@ -371,8 +372,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.projectFile(id, path);
   }
 
-  async function finishSession(id: string, handoff = false) {
-    const res = await api.finish(id, { handoff });
+  async function finishSession(id: string, requested: DocsRequested = {}) {
+    const res = await api.finish(id, requested);
     // preview is stopped server-side on finish; drop its local url too.
     if (previews.value[id]) {
       const next = { ...previews.value };
@@ -382,16 +383,16 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return res;
   }
 
-  function createPr(id: string, handoff = false) {
-    return api.createPr(id, { handoff });
+  function createPr(id: string, requested: DocsRequested = {}) {
+    return api.createPr(id, requested);
   }
 
-  function commitChanges(id: string, handoff = false) {
-    return api.commitChanges(id, { handoff });
+  function commitChanges(id: string, requested: DocsRequested = {}) {
+    return api.commitChanges(id, requested);
   }
 
-  function completeDocs(id: string, handoff: boolean) {
-    return api.completeDocs(id, handoff);
+  function completeDocs(id: string, requested: DocsRequested) {
+    return api.completeDocs(id, requested);
   }
 
   // Minimal transient notifications. notify() pushes a toast that auto-dismisses;

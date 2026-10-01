@@ -1,27 +1,32 @@
-// «Обовʼязкова документація» — the project setting that makes documenting every task a
-// property of the harness instead of the model's goodwill. Pure data and a pure gate: no fs,
-// no git, no cloud. The api feeds the gate the branch's changed paths (WorktreeService
-// .changedFiles) and the bodies of the changed task documents; the ui reuses docsLayoutKind
-// to badge the «Документація» tab. See docs/specs/2026-09-28-mandatory-documentation-design.md.
+// The project's documentation policy — the setting that makes documenting every task a
+// property of the harness instead of the model's goodwill. `Project.docsRequired` is the
+// master switch; `Project.docsPolicy` says, per document kind, how hard the policy asks for
+// it. Pure data and a pure gate: no fs, no git, no cloud. The api feeds the gate the branch's
+// changed paths (WorktreeService.changedFiles) and the bodies of the changed task documents;
+// the ui reuses docsLayoutKind to badge the «Документація» tab. See
+// docs/specs/2026-09-28-mandatory-documentation-design.md and
+// docs/specs/2026-09-30-documentation-settings.md.
 
 import { isDocPath, isMarkupPath } from "./docs";
 
-// Repository-relative homes of the four document kinds. They deliberately override the
+// Repository-relative homes of the document kinds. They deliberately override the
 // superpowers plugin's `docs/superpowers/specs|plans` defaults (the policy append says so).
 export const DOCS_LAYOUT = {
   specs: "docs/specs",
   plans: "docs/plans",
   schemas: "docs/schemas",
   handoffs: "docs/handoffs",
+  apiRequests: "docs/api-requests",
 } as const;
 
-export type DocsLayoutKind = "spec" | "plan" | "schema" | "handoff";
+export type DocsLayoutKind = "spec" | "plan" | "schema" | "handoff" | "api-request";
 
 const LAYOUT_KINDS: readonly [string, DocsLayoutKind][] = [
   [`${DOCS_LAYOUT.specs}/`, "spec"],
   [`${DOCS_LAYOUT.plans}/`, "plan"],
   [`${DOCS_LAYOUT.schemas}/`, "schema"],
   [`${DOCS_LAYOUT.handoffs}/`, "handoff"],
+  [`${DOCS_LAYOUT.apiRequests}/`, "api-request"],
 ];
 
 // Which layout folder a repo-relative path sits in, judged by its repo-root prefix only — a
@@ -30,23 +35,89 @@ export function docsLayoutKind(path: string): DocsLayoutKind | undefined {
   return LAYOUT_KINDS.find(([prefix]) => path.startsWith(prefix))?.[1];
 }
 
-export type DocsGateFailure = "task-spec" | "docs-impact" | "handoff";
+// How hard the policy asks for one kind of document:
+//   off      — never mentioned, never checked;
+//   optional — the agent is told to write it where it applies; nothing blocks;
+//   ask      — the finish sheet offers a checkbox; ticked, the gate requires the document;
+//   required — the gate refuses PR / commit / finish without it.
+export type DocsRule = "off" | "optional" | "ask" | "required";
+
+export interface DocsPolicy {
+  spec: DocsRule; // docs/specs — the task document
+  plan: DocsRule; // docs/plans — the implementation plan
+  schemas: DocsRule; // docs/schemas — living docs; `required` is the docs-impact rule
+  handoff: DocsRule; // docs/handoffs — backend → frontend
+  apiRequest: DocsRule; // docs/api-requests — frontend → backend: an API that is missing
+}
+
+export type DocsPolicyKey = keyof DocsPolicy;
+
+export const DOCS_POLICY_KEYS: readonly DocsPolicyKey[] = ["spec", "plan", "schemas", "handoff", "apiRequest"];
+
+// The rules each kind supports, in the order the settings screen offers them. `ask` exists
+// only where the operator knows better than a rule — whether this branch owes the frontend a
+// handoff, whether it hit a missing API. An API request has no `required`: one exists only
+// when something is missing, so demanding it on every branch would force fake documents.
+export const DOCS_RULES: { readonly [K in DocsPolicyKey]: readonly DocsRule[] } = {
+  spec: ["off", "optional", "required"],
+  plan: ["off", "optional", "required"],
+  schemas: ["off", "optional", "required"],
+  handoff: ["off", "optional", "ask", "required"],
+  apiRequest: ["off", "optional", "ask"],
+};
+
+// Exactly the bundle the single «Обовʼязкова документація» switch turned on before the rules
+// existed, so a project stored with an empty policy behaves as it always did.
+export const DEFAULT_DOCS_POLICY: Readonly<DocsPolicy> = {
+  spec: "required",
+  plan: "optional",
+  schemas: "required",
+  handoff: "ask",
+  apiRequest: "off",
+};
+
+// The stored policy (cloud jsonb, registry JSON text) is read through this: a missing key,
+// an unknown value or a rule the kind does not support falls back to that kind's default.
+export function docsPolicy(raw: unknown): DocsPolicy {
+  const src = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const out: DocsPolicy = { ...DEFAULT_DOCS_POLICY };
+  for (const key of DOCS_POLICY_KEYS) {
+    const v = src[key];
+    if (typeof v === "string" && (DOCS_RULES[key] as readonly string[]).includes(v)) out[key] = v as DocsRule;
+  }
+  return out;
+}
+
+// The kinds the finish sheet offers as checkboxes, and the state each box opens in: the
+// handoff is the usual ask (on), a missing API the exception (off).
+export type DocsAsk = "handoff" | "apiRequest";
+export const DOCS_ASK_DEFAULTS: Readonly<Record<DocsAsk, boolean>> = { handoff: true, apiRequest: false };
+export type DocsRequested = Partial<Record<DocsAsk, boolean>>;
+
+export function docsAsks(policy: DocsPolicy): DocsAsk[] {
+  return (Object.keys(DOCS_ASK_DEFAULTS) as DocsAsk[]).filter((k) => policy[k] === "ask");
+}
+
+export type DocsGateFailure = "task-spec" | "plan" | "docs-impact" | "handoff" | "api-request";
 
 // Display order — the gate returns its failures in this order, and the ui lists them so.
-export const DOCS_GATE_FAILURES: readonly DocsGateFailure[] = ["task-spec", "docs-impact", "handoff"];
+export const DOCS_GATE_FAILURES: readonly DocsGateFailure[] = ["task-spec", "plan", "docs-impact", "handoff", "api-request"];
 
 export interface DocsGateInput {
+  policy: DocsPolicy;
   // The branch's changed paths, repo-relative (the changedFiles listing).
   paths: readonly string[];
   // The text of the changed task documents (markup files under docs/specs/).
   specBodies: readonly string[];
-  // Whether the operator asked for a frontend handoff in the finish sheet.
-  handoff: boolean;
+  // The finish sheet's ticked boxes; only kinds in `ask` mode read them.
+  requested: DocsRequested;
 }
 
 export interface DocsGate {
-  // False when the project setting is off: the gate then never fails.
-  required: boolean;
+  // False when the project's documentation switch is off: the gate then never fails.
+  enabled: boolean;
+  // Kinds in `ask` mode — the checkboxes the finish sheet draws.
+  asks: DocsAsk[];
   failures: DocsGateFailure[];
 }
 
@@ -68,62 +139,126 @@ function declaresNoImpact(body: string): boolean {
   return /^none(?![a-z0-9])/i.test(first.trim().replace(/^[\s>\-*+_]+/, ""));
 }
 
-// The gate's rules (spec §3.4). A machine cannot tell whether a change alters behaviour, so
-// silence is what fails: either the living documentation moves, or the task document says
-// in writing why it did not have to. An EMPTY change set fails nothing — the policy covers
-// "every task that changes the repository", and a session that changed nothing has no task
-// to document (finishing it must stay possible).
+// The gate's rules (spec §3.4, per kind since 2026-09-30). A machine cannot tell whether a
+// change alters behaviour, so silence is what fails: either the living documentation moves,
+// or the task document says in writing why it did not have to. An EMPTY change set fails
+// nothing — the policy covers "every task that changes the repository", and a session that
+// changed nothing has no task to document (finishing it must stay possible).
 export function docsGateFailures(input: DocsGateInput): DocsGateFailure[] {
-  const { paths, specBodies, handoff } = input;
+  const { policy, paths, specBodies, requested } = input;
   if (paths.length === 0) return [];
+  // Whether the gate demands a kind on this branch: always when `required`, when ticked in
+  // the finish sheet when `ask`, never otherwise.
+  const need = (key: DocsPolicyKey) =>
+    policy[key] === "required" || (policy[key] === "ask" && (key === "handoff" || key === "apiRequest") && requested[key] === true);
   // Pushed in DOCS_GATE_FAILURES order.
   const failures: DocsGateFailure[] = [];
   const docSide = (p: string) => isDocPath(p) || DOC_DIR_RE.test(p);
   const markupIn = (kind: DocsLayoutKind) => paths.some((p) => docsLayoutKind(p) === kind && isMarkupPath(p));
 
-  if (!markupIn("spec")) failures.push("task-spec");
+  if (need("spec") && !markupIn("spec")) failures.push("task-spec");
+  if (need("plan") && !markupIn("plan")) failures.push("plan");
 
-  const codeChanged = paths.some((p) => !docSide(p));
-  const livingDocChanged = paths.some((p) => {
-    if (!docSide(p)) return false;
-    const kind = docsLayoutKind(p);
-    return kind !== "spec" && kind !== "plan" && kind !== "handoff";
-  });
-  if (codeChanged && !livingDocChanged && !specBodies.some(declaresNoImpact)) failures.push("docs-impact");
+  if (need("schemas")) {
+    const codeChanged = paths.some((p) => !docSide(p));
+    // Task documents, plans, handoffs and API requests describe the work, not the service.
+    const livingDocChanged = paths.some((p) => {
+      if (!docSide(p)) return false;
+      const kind = docsLayoutKind(p);
+      return kind === undefined || kind === "schema";
+    });
+    if (codeChanged && !livingDocChanged && !specBodies.some(declaresNoImpact)) failures.push("docs-impact");
+  }
 
-  if (handoff && !markupIn("handoff")) failures.push("handoff");
+  if (need("handoff") && !markupIn("handoff")) failures.push("handoff");
+  if (need("apiRequest") && !markupIn("api-request")) failures.push("api-request");
 
   return failures;
 }
 
+const DATED = "YYYY-MM-DD-<topic>.md";
+
+// One line per kind and rule for the system-prompt append. `off` has none.
+function policyLine(key: DocsPolicyKey, rule: DocsRule, policy: DocsPolicy): string | undefined {
+  if (rule === "off") return undefined;
+  switch (key) {
+    case "spec": {
+      const impact = policy.schemas === "required" ? ` It carries a \`${IMPACT_HEADING}\` section.` : "";
+      return rule === "required"
+        ? `- \`${DOCS_LAYOUT.specs}/${DATED}\` — the task document. Required for every task that changes the repository: create it before implementing and keep it current as the work evolves.${impact}`
+        : `- \`${DOCS_LAYOUT.specs}/${DATED}\` — the task document, for work that is more than a trivial fix: create it before implementing and keep it current as the work evolves.${impact}`;
+    }
+    case "plan":
+      return rule === "required"
+        ? `- \`${DOCS_LAYOUT.plans}/${DATED}\` — the implementation plan. Required for every task that changes the repository: write it before implementing.`
+        : `- \`${DOCS_LAYOUT.plans}/${DATED}\` — an implementation plan, when the work needs one.`;
+    case "schemas": {
+      const base = `- \`${DOCS_LAYOUT.schemas}/\` — living documentation of how the service works: architecture, flows, data models, API contracts. When a change alters how the service behaves, update it (or the project's other existing documentation) in the same branch.`;
+      return rule === "required"
+        ? `${base} When it does not, a task document in \`${DOCS_LAYOUT.specs}/\` must carry a \`${IMPACT_HEADING}\` section that begins with \`None\` followed by the reason.`
+        : base;
+    }
+    case "handoff":
+      if (rule === "required")
+        return `- \`${DOCS_LAYOUT.handoffs}/${DATED}\` — a frontend handoff, required for every task that changes the repository, written for a frontend developer who did not see the work (one line when nothing changed for the frontend).`;
+      if (rule === "ask") return `- \`${DOCS_LAYOUT.handoffs}/${DATED}\` — a frontend handoff, when the operator asks for one at finish.`;
+      return `- \`${DOCS_LAYOUT.handoffs}/${DATED}\` — a frontend handoff, whenever the change affects the frontend: endpoints, events, config, breaking changes.`;
+    case "apiRequest": {
+      const base = `- \`${DOCS_LAYOUT.apiRequests}/${DATED}\` — an API request. When this work needs something the API does not provide yet (an endpoint, a field, a filter, an event), do not invent the backend side and do not fake it silently: write the request — what is needed and why, the proposed contract, and what the client does until it ships — and name it in the handoff or pull request.`;
+      return rule === "ask" ? `${base} The operator may also require one at finish.` : base;
+    }
+  }
+}
+
 // Joined to the language append (appendSystemPrompt) for EVERY session of a project with the
-// setting on — chat, agent, discussion, review, resume, on both runtimes. Worded for "every
+// switch on — chat, agent, discussion, review, resume, on both runtimes. Worded for "every
 // task that changes the repository", so a read-only session learns only where the docs live.
-export const DOCS_POLICY_APPEND = [
-  "## Mandatory documentation (this project)",
-  "",
-  "This project requires every task to be documented. Documents live at these repository-relative paths:",
-  `- \`${DOCS_LAYOUT.specs}/YYYY-MM-DD-<topic>.md\` — the task document (required for every task that changes the repository).`,
-  `- \`${DOCS_LAYOUT.plans}/YYYY-MM-DD-<topic>.md\` — an implementation plan, when the work needs one (optional).`,
-  `- \`${DOCS_LAYOUT.schemas}/\` — living documentation of how the service works: architecture, flows, data models, API contracts.`,
-  `- \`${DOCS_LAYOUT.handoffs}/YYYY-MM-DD-<topic>.md\` — a frontend handoff, when the operator asks for one.`,
-  "",
-  "Rules for every task that changes the repository:",
-  `1. Create the task document in \`${DOCS_LAYOUT.specs}/\` before implementing, and keep it current as the work evolves. It must contain a \`${IMPACT_HEADING}\` section.`,
-  `2. When the change alters how the service behaves, update \`${DOCS_LAYOUT.schemas}/\` (or the project's other existing documentation) in the same branch. When it does not, the \`${IMPACT_HEADING}\` section must begin with \`None\` followed by the reason.`,
-  `3. These locations override any skill or plugin default — in particular superpowers' \`docs/superpowers/specs\` and \`docs/superpowers/plans\`: write specs and plans to \`${DOCS_LAYOUT.specs}/\` and \`${DOCS_LAYOUT.plans}/\` instead.`,
-  "4. Commit the documents on the session branch with the code. Kermanych refuses to open a pull request, commit to it, or finish the session until the documentation is in place.",
-].join("\n");
+// Empty when every kind is off: there is nothing to tell the agent.
+export function docsPolicyAppend(policy: DocsPolicy): string {
+  const lines = DOCS_POLICY_KEYS.map((k) => policyLine(k, policy[k], policy)).filter((l): l is string => l !== undefined);
+  if (!lines.length) return "";
+  const blocks = DOCS_POLICY_KEYS.some((k) => policy[k] === "required" || policy[k] === "ask");
+  return [
+    "## Documentation policy (this project)",
+    "",
+    "This project keeps its task documentation in the repository, at these repository-relative paths:",
+    ...lines,
+    "",
+    "These locations override any skill or plugin default — in particular superpowers' `docs/superpowers/specs` and `docs/superpowers/plans`: write specs and plans to the paths above instead.",
+    blocks
+      ? "Commit the documents on the session branch with the code. Kermanych refuses to open a pull request, commit to it, or finish the session until the required documentation is in place."
+      : "Commit the documents on the session branch with the code.",
+  ].join("\n");
+}
 
 // Default skills that carry the how-to; resolved by name, so a project or repository
 // override wins (SkillsService.assignedForNames).
 export const TASK_SPEC_SKILL = "task-spec";
+export const TASK_PLAN_SKILL = "task-plan";
 export const FRONTEND_HANDOFF_SKILL = "frontend-handoff";
+export const API_REQUEST_SKILL = "api-request";
+
+const FAILURE_SKILLS: Partial<Record<DocsGateFailure, string>> = {
+  "task-spec": TASK_SPEC_SKILL,
+  plan: TASK_PLAN_SKILL,
+  handoff: FRONTEND_HANDOFF_SKILL,
+  "api-request": API_REQUEST_SKILL,
+};
+
+// The skills «Доповнити документацію» inlines for a set of failures, in display order.
+// `docs-impact` has none: the living docs are the project's own, in its own format.
+export function docsFailureSkills(failures: readonly DocsGateFailure[]): string[] {
+  return DOCS_GATE_FAILURES.filter((f) => failures.includes(f))
+    .map((f) => FAILURE_SKILLS[f])
+    .filter((s): s is string => s !== undefined);
+}
 
 const FAILURE_ASKS: Record<DocsGateFailure, string> = {
-  "task-spec": `- Write the task document in \`${DOCS_LAYOUT.specs}/YYYY-MM-DD-<topic>.md\` for this branch's work, including a \`${IMPACT_HEADING}\` section.`,
+  "task-spec": `- Write the task document in \`${DOCS_LAYOUT.specs}/${DATED}\` for this branch's work, including a \`${IMPACT_HEADING}\` section.`,
+  plan: `- Write the implementation plan in \`${DOCS_LAYOUT.plans}/${DATED}\` for this branch's work.`,
   "docs-impact": `- The code changed but no living documentation did. Update \`${DOCS_LAYOUT.schemas}/\` (or the project's other existing docs) to match the new behaviour — or, if behaviour did not change, make the task document's \`${IMPACT_HEADING}\` section begin with \`None\` followed by the reason.`,
-  handoff: `- Write a frontend handoff in \`${DOCS_LAYOUT.handoffs}/YYYY-MM-DD-<topic>.md\` for a frontend developer who did not see this work.`,
+  handoff: `- Write a frontend handoff in \`${DOCS_LAYOUT.handoffs}/${DATED}\` for a frontend developer who did not see this work.`,
+  "api-request": `- Write the API request in \`${DOCS_LAYOUT.apiRequests}/${DATED}\`: what this work needs from the API that it does not provide yet, the proposed contract, and what the client does until it ships.`,
 };
 
 // The one Kermanych prompt «Доповнити документацію» sends: exactly the failing items, then
