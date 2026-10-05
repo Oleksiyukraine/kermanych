@@ -280,6 +280,11 @@ Setting up the Slack app, once per workspace:
   search returns, citing the files it used. When the documentation does not describe
   what was asked, the reply says «We do not have such feature built yet.» A workspace
   with no indexed project gets a reply saying so instead of a guess.
+- **Answers are in plain words.** The reply is written for someone who is not technical:
+  it says what a feature does and how to use it — the screens, buttons and steps — not how
+  it is built, and leaves out code, file names, endpoints and settings keys unless the
+  question asks for them. The documentation questions in **Менеджмент → Project
+  Documentation** are answered the same way.
 - **Long answers arrive in parts.** Slack refuses to edit a message to more than 4,000
   characters, so an answer longer than about 3,500 continues as further replies in the same
   thread, in order. Parts break between paragraphs where possible, and a code block cut in

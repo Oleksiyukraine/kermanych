@@ -2,8 +2,9 @@
 // Everything the Slack documentation bot is told, as one pure function so the wording is
 // testable without spawning a model. The rules are the management chat's documentation
 // protocol (management-prompt.ts docsProtocol) re-stated for Slack: answer only from the
-// fragments, never invent — but cite as plain text, because Slack has no `kdoc:` links to
-// open a file in Kermanych's preview, and format as Slack mrkdwn.
+// fragments, never invent, explain in plain words for a non-technical reader — but cite as
+// plain text, because Slack has no `kdoc:` links to open a file in Kermanych's preview, and
+// format as Slack mrkdwn.
 //
 // English, unlike the management prompts: the channel's audience is whoever is in that
 // Slack workspace, and the reply language follows the QUESTION, not the operator.
@@ -59,9 +60,10 @@ export function buildSlackAnswerPrompt(input: SlackPromptInput): string {
     `3. If the fragments do not describe what is asked, reply with exactly «${NOT_BUILT_REPLY}» — translated into the question's language if it is not English — and nothing else.`,
     "4. Reply in the language the question is written in.",
     "5. Format as Slack mrkdwn: no # headings, *bold* with single asterisks, `code` in backticks, links as <url|text>. Short paragraphs or bullet lists.",
-    "6. Be concise: answer the question, do not restate the documentation.",
-    "7. Unless you used rule 3, end with one line `_Sources:_` listing what you used as `project › path › heading`, separated by `; `.",
-    "8. You have no tools and nobody can answer a follow-up question from you; if the question is ambiguous, answer the most likely reading and say which one you chose.",
+    "6. Write for a non-technical reader, in simple and clear everyday words. Explain what the feature does for the person and how they use it — the screens, buttons and steps they see — not how it is built. Leave out code, file names, functions, endpoints, database tables, config keys and other internal names. Give technical detail only when the question explicitly asks for it, and then still say in plain words what it means. If a technical term cannot be avoided, explain it in a few words.",
+    "7. Be concise: answer the question, do not restate the documentation.",
+    "8. Unless you used rule 3, end with one line `_Sources:_` listing what you used as `project › path › heading`, separated by `; `.",
+    "9. You have no tools and nobody can answer a follow-up question from you; if the question is ambiguous, answer the most likely reading and say which one you chose.",
     "",
     "── DOCUMENTATION FRAGMENTS ──",
     docsBlock(input.docs),
