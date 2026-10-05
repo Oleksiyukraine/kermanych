@@ -56,6 +56,13 @@ export type Session = {
   worktreePath: string; branch: string;
   worktree: boolean; baseBranch?: string;
   model?: string; prefix?: BranchPrefix; platform?: Platform; runtime?: AgentRuntime;
+  // A native session (docs/specs/2026-10-05-native-sessions.md): the harness `runtime` names
+  // runs as its own interactive TUI in a pty, with nothing of Kermanych's in its context.
+  // Kermanych only watches it — status from per-launch hooks, usage and history from the
+  // harness's session file. Absent means the managed (headless) session every other one is.
+  native?: boolean;
+  // Live-only: the pty (`TerminalInfo.id`) a native session's harness runs in, while it runs.
+  terminalId?: string;
   // "task" is no longer produced: a task is a cloud card and `from-task` is the only way an
   // agent is born. Rows with this kind are pre-cutover backlog leftovers whose project is
   // not in the cloud, so lib/publish-backlog.ts could not move them; AgentsPage lists them
@@ -309,6 +316,9 @@ export type TerminalInfo = {
   shell: string;
   pid: number;
   createdAt: string;
+  // Set when the pty runs a native session's harness rather than a shell. Such a terminal
+  // belongs to its session's panel, never to the project's terminal panel.
+  sessionId?: string;
 };
 
 // Why an `open` or `attach` was refused. The ui translates these (i18n `terminal.errors`).

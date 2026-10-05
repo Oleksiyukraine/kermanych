@@ -53,27 +53,56 @@ export class TerminalService implements OnModuleDestroy {
     if (!isDirectory(cwd)) throw new TerminalRefusal("cwd_missing", `${cwd} does not exist`);
 
     const { file, args } = loginShell();
+    const proc = this.spawnPty(file, args, cwd, cols, rows, shellEnv());
+    return this.register(proc, { projectId, cwd, shell: basename(file) });
+  }
+
+  // A native session's harness (docs/specs/2026-10-05-native-sessions.md): `file args…` run
+  // by the user's LOGIN shell — the Finder-launched app's PATH lacks brew/nvm otherwise —
+  // through `exec "$@"`, so the harness replaces the shell (its exit is the pty's exit) and no
+  // argument is ever re-quoted by a shell. The caller resolved `cwd` (the session's worktree).
+  openSession(opts: {
+    sessionId: string;
+    projectId: string;
+    cwd: string;
+    file: string;
+    args: string[];
+    env?: Record<string, string>;
+    cols?: number;
+    rows?: number;
+  }): TerminalInfo {
+    if (process.platform === "win32") throw new TerminalRefusal("spawn_failed", "native sessions are not supported on Windows");
+    if (!isDirectory(opts.cwd)) throw new TerminalRefusal("cwd_missing", `${opts.cwd} does not exist`);
+    const shell = loginShell().file;
+    const argv = ["-l", "-c", 'exec "$@"', "kermanych", opts.file, ...opts.args];
+    const proc = this.spawnPty(shell, argv, opts.cwd, opts.cols ?? 0, opts.rows ?? 0, { ...shellEnv(), ...opts.env });
+    return this.register(proc, { projectId: opts.projectId, cwd: opts.cwd, shell: basename(opts.file), sessionId: opts.sessionId });
+  }
+
+  private spawnPty(file: string, args: string[], cwd: string, cols: number, rows: number, env: Record<string, string>): IPty {
     ensureSpawnHelperExecutable();
-    let proc: IPty;
     try {
-      proc = spawn(file, args, {
+      return spawn(file, args, {
         name: "xterm-256color",
         cols: dimension(cols, 80),
         rows: dimension(rows, 24),
         cwd,
-        env: shellEnv(),
+        env,
       });
     } catch (err) {
       throw new TerminalRefusal("spawn_failed", err instanceof Error ? err.message : String(err));
     }
+  }
 
+  private register(proc: IPty, base: Pick<TerminalInfo, "projectId" | "cwd" | "shell" | "sessionId">): TerminalInfo {
     const info: TerminalInfo = {
       id: randomUUID(),
-      projectId,
-      cwd,
-      shell: basename(file),
+      projectId: base.projectId,
+      cwd: base.cwd,
+      shell: base.shell,
       pid: proc.pid,
       createdAt: new Date().toISOString(),
+      ...(base.sessionId ? { sessionId: base.sessionId } : {}),
     };
     const term: Running = { info, pty: proc, replay: "" };
     this.terms.set(info.id, term);
@@ -113,8 +142,9 @@ export class TerminalService implements OnModuleDestroy {
 
   // SIGHUP, as a closed terminal window sends: the shell passes it on to its jobs. The
   // map entry goes when the exit event arrives, so the client learns of it the usual way.
-  kill(id: string): void {
-    this.terms.get(id)?.pty.kill();
+  // `signal` escalates for a native harness that ignored the hangup.
+  kill(id: string, signal?: string): void {
+    this.terms.get(id)?.pty.kill(signal);
   }
 
   onModuleDestroy(): void {

@@ -11,6 +11,7 @@ import { getAuthToken } from '../lib/api';
 import { SOCKET_ORIGIN } from '../lib/socket';
 import { globalTr } from '../boot/i18n';
 import { useOrchestrator } from './orchestrator';
+import { panelTerminals } from '../lib/native-session';
 
 // What an attached view hands the store: `reset` repaints from the replay (on attach, and
 // again after a reconnect, whose room join replays the same history), `data` is the stream.
@@ -52,7 +53,9 @@ export const useTerminal = defineStore('terminal', () => {
     if (!gone) return;
     terminals.value = terminals.value.filter((t) => t.id !== id);
     sinks.delete(id);
-    const siblings = terminals.value.filter((t) => t.projectId === gone.projectId);
+    // A native session's pty lives in its Лог tab, not the panel: the panel stays as it is.
+    if (gone.sessionId) return;
+    const siblings = projectTerminals(gone.projectId);
     if (activeByProject.value[gone.projectId] === id) {
       const next = { ...activeByProject.value };
       if (siblings.length) next[gone.projectId] = siblings[siblings.length - 1]!.id;
@@ -102,7 +105,7 @@ export const useTerminal = defineStore('terminal', () => {
   }
 
   function projectTerminals(projectId: string | undefined): TerminalInfo[] {
-    return projectId ? terminals.value.filter((t) => t.projectId === projectId) : [];
+    return panelTerminals(terminals.value, projectId);
   }
 
   function activeFor(projectId: string | undefined): string | undefined {

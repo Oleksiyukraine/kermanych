@@ -339,6 +339,16 @@ export const en: MessageSchema = {
       done: 'done',
       in_review: 'in review — PR opened',
     },
+    // Native session: omp/claude in its own TUI in a terminal; Kermanych only observes.
+    native: {
+      modeLabel: 'Mode',
+      modeManaged: 'Kermanych',
+      modeHint: 'omp / claude — the harness’s own TUI in a terminal, without Kermanych’s wrapper',
+      label: '{harness} · native',
+      idle: 'The harness is not running. Resume the session to open its TUI here.',
+      resume: 'Resume',
+      engineIdHintOmp: 'The omp session file. To continue it without Kermanych: cd into the session’s worktree and run omp --resume <this file>.',
+    },
     launcher: {
       esc: 'Esc — close',
       taskLabel: 'Task',
@@ -2449,6 +2459,8 @@ export const en: MessageSchema = {
     oauth_no_url: 'Supabase did not return an authorization URL',
     attachments_too_many: 'too many files: {count} (max {max})',
     attachment_too_large: 'file “{name}” is too large (max 20 MiB)',
+    native_busy: 'The agent is working or waiting for you in the terminal — try again once it finishes its turn',
+    native_unsupported: 'In a native session, do this in the harness itself',
     image: {
       unsupported: 'unsupported type: {mime} (need PNG/JPEG/GIF/WebP)',
       unknownMime: 'unknown',

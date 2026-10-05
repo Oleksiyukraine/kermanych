@@ -550,6 +550,37 @@ edge to resize (the height and whether it is open are remembered).
   the same bearer token the REST API accepts (`auth: { token }`) — a socket there can run
   commands, so no other page on the machine may connect to it.
 
+## Native sessions
+
+A task can also run in the harness's **own** interface instead of Kermanych's wrapper. In
+«Нова задача», set **Режим** to `omp` or `claude` and press «Запустити»: Kermanych creates
+the worktree and branch as usual, then starts that harness's TUI there with the task text
+as its first prompt. The session's «Лог» tab is that terminal — type into it as you would
+in your own terminal. (Spec: `docs/specs/2026-10-05-native-sessions.md`.)
+
+- **Nothing of Kermanych enters the agent's context**: no project skills, triggers,
+  language or documentation directives, co-author trailer, model or effort flags. Your own
+  `~/.claude` / `~/.omp` configuration applies unchanged; switch model with the harness's
+  own `/model`. Model, effort and images are hidden in the launcher for this mode.
+- **What Kermanych still tracks.** Status on the board (working, tool, waiting for you,
+  ready, on review, stopped) comes from hooks passed **on that launch only** —
+  `claude --settings <file>` and `omp --hook <file>`, posting to the local API with a
+  per-launch secret. Nothing is installed into your harness configuration. After every turn
+  it reads the harness's own session file for token usage (claude's file has no cost, so
+  none is shown), the model, a PR link opened by «Створити ПР», and the history that the
+  «Сесія» and «Документація» tabs use.
+- **Lifecycle.** Exiting the harness (`/exit`, <kbd>Ctrl</kbd>+<kbd>D</kbd>), «Зупинити», or
+  quitting the app stops it; «Продовжити» in the «Лог» tab resumes the same conversation
+  (`claude --resume <id>` / `omp launch --resume <file>`). A brand-new folder may show
+  claude's trust dialog first — answer it in the terminal.
+- **Helpers** (create PR, commit, resolve conflict, documentation) paste their prompt into
+  the terminal only while the agent is idle; otherwise they are refused with «Агент зараз
+  працює…» and you retry after the turn. On a stopped session they resume it with that
+  prompt.
+- **Not available** for native sessions: changing model or effort from Kermanych, harness
+  commands from a composer, answering prompts outside the terminal, discussion branches,
+  review, images and the subagent map. Launches from «Дошка» and «В беклог» stay managed.
+
 ## Monorepo layout
 
 pnpm workspaces (`packages/*`, `apps/*`):
