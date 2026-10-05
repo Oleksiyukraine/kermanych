@@ -31,7 +31,14 @@ import { DOCS_MODEL } from "../management/management-chat.service";
 import { CodedError } from "../management/coded-error";
 import { SlackClient, type SlackChannel, type SlackIdentity } from "./slack-client";
 import { SlackSocket } from "./slack-socket";
-import { classifyMessage, threadTranscript, toSlackMrkdwn, type SlackAsk, type TranscriptLine } from "./slack-map";
+import {
+  classifyMessage,
+  splitForSlack,
+  threadTranscript,
+  toSlackMrkdwn,
+  type SlackAsk,
+  type TranscriptLine,
+} from "./slack-map";
 import { buildSlackAnswerPrompt, type SlackPromptDocs } from "./slack-prompt";
 
 // Posted the moment a question is accepted and edited into the answer: an LLM answer takes
@@ -222,6 +229,9 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
 
   private async answer(row: SlackTokenRow, ask: SlackAsk, client: SlackClient, placeholderTs: string): Promise<void> {
     const startedAt = Date.now();
+    // Once the placeholder holds the start of the answer, a failure further on must not
+    // overwrite it: the apology goes after it instead.
+    let started = false;
     try {
       let transcript: TranscriptLine[] = [];
       let query = ask.text;
@@ -266,13 +276,20 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
         model: DOCS_MODEL,
         startedAt,
       });
-      await client.update(ask.channel, placeholderTs, toSlackMrkdwn(text));
+      // The placeholder becomes the first part; a longer answer continues in the thread,
+      // one message per part, in order.
+      const [first, ...rest] = splitForSlack(toSlackMrkdwn(text));
+      await client.update(ask.channel, placeholderTs, first!);
+      started = true;
+      for (const part of rest) await client.postMessage(ask.channel, ask.threadTs, part);
     } catch (err) {
       const reason = err instanceof CodedError ? err.code : (err as Error).message;
       this.log.warn(`slack: answering in ${ask.channel} failed — ${reason}`);
-      await client
-        .update(ask.channel, placeholderTs, `_Sorry, I could not answer this one (${reason})._`)
-        .catch((e: Error) => this.log.warn(`slack: posting the apology failed — ${e.message}`));
+      const apology = `_Sorry, I could not answer this one (${reason})._`;
+      await (started
+        ? client.postMessage(ask.channel, ask.threadTs, apology)
+        : client.update(ask.channel, placeholderTs, apology)
+      ).catch((e: Error) => this.log.warn(`slack: posting the apology failed — ${e.message}`));
     }
   }
 }

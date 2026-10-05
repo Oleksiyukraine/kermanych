@@ -280,6 +280,11 @@ Setting up the Slack app, once per workspace:
   search returns, citing the files it used. When the documentation does not describe
   what was asked, the reply says «We do not have such feature built yet.» A workspace
   with no indexed project gets a reply saying so instead of a guess.
+- **Long answers arrive in parts.** Slack refuses to edit a message to more than 4,000
+  characters, so an answer longer than about 3,500 continues as further replies in the same
+  thread, in order. Parts break between paragraphs where possible, and a code block cut in
+  two is closed and reopened so both halves still render as code. There is no upper limit
+  on the answer's length.
 - **Follow-ups need a mention.** Inside a thread, Kermanych answers only messages that
   @-mention it, and reads the whole thread — the question, its earlier answers and the
   discussion — as the context for the new answer. Thread replies without a mention are

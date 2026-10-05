@@ -112,3 +112,117 @@ export function toSlackMrkdwn(markdown: string): string {
     })
     .join("\n");
 }
+
+// What one Slack message may carry. `chat.update` — which turns the placeholder into the
+// answer — rejects `text` over 4,000 characters with `msg_too_long`, and `chat.postMessage`
+// starts truncating soon after. The margin covers Slack counting differently from
+// `String.length` (entities, emoji).
+export const SLACK_TEXT_LIMIT = 3_500;
+
+const FENCE = /^\s*```/;
+
+// A long answer as consecutive Slack messages, each within `limit`, so the whole answer
+// arrives instead of an error. Breaks fall between paragraphs where they can, then between
+// lines, and only a line longer than half a message is cut mid-line. A code block cut in
+// two is closed at the end of one message and reopened at the start of the next, so both
+// halves still render as code.
+export function splitForSlack(text: string, limit = SLACK_TEXT_LIMIT): string[] {
+  const chunks: string[] = [];
+  let current = "";
+  for (const block of paragraphs(text)) {
+    if (block.length > limit) {
+      // Its pieces are each near a whole message: they go out on their own.
+      if (current) chunks.push(current);
+      const pieces = splitLines(block, limit);
+      chunks.push(...pieces.slice(0, -1));
+      current = pieces[pieces.length - 1]!;
+      continue;
+    }
+    const joined = current ? `${current}\n\n${block}` : block;
+    if (joined.length <= limit) {
+      current = joined;
+    } else {
+      chunks.push(current);
+      current = block;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.length > 0 ? chunks : [text];
+}
+
+// Blank-line separated blocks; a blank line inside a code fence belongs to the code.
+function paragraphs(text: string): string[] {
+  const out: string[] = [];
+  let lines: string[] = [];
+  let inFence = false;
+  for (const line of text.split("\n")) {
+    if (FENCE.test(line)) inFence = !inFence;
+    if (!inFence && line.trim() === "") {
+      if (lines.length > 0) out.push(lines.join("\n"));
+      lines = [];
+    } else {
+      lines.push(line);
+    }
+  }
+  if (lines.length > 0) out.push(lines.join("\n"));
+  return out;
+}
+
+// One oversized block, packed line by line. The pieces of a cut line continue each other
+// without a newline while they share a message. The reopening fence is a bare ``` — Slack
+// shows a language tag as the first line of code, and a bare one keeps the reopen short.
+function splitLines(block: string, limit: number): string[] {
+  const out: string[] = [];
+  const close = "\n```";
+  let lines: string[] = [];
+  let size = 0;
+  let inFence = false;
+  const add = (piece: string, join: boolean): void => {
+    if (join) {
+      lines[lines.length - 1] += piece;
+      size += piece.length;
+    } else {
+      size += (lines.length > 0 ? 1 : 0) + piece.length;
+      lines.push(piece);
+    }
+  };
+  for (const whole of block.split("\n")) {
+    const isFence = FENCE.test(whole);
+    const pieces = isFence ? [whole] : cutLine(whole, Math.floor(limit / 2));
+    const fenceAfter: boolean = isFence ? !inFence : inFence;
+    pieces.forEach((piece, i) => {
+      let join = i > 0;
+      const glue = join || lines.length === 0 ? 0 : 1;
+      if (lines.length > 0 && size + glue + piece.length + (fenceAfter ? close.length : 0) > limit) {
+        out.push(inFence ? lines.join("\n") + close : lines.join("\n"));
+        lines = [];
+        size = 0;
+        join = false;
+        if (inFence) add("```", false);
+      }
+      add(piece, join);
+    });
+    inFence = fenceAfter;
+  }
+  if (lines.length > 0) out.push(lines.join("\n"));
+  return out;
+}
+
+// A line no longer than `max` per piece: cut after the last space in the back half, else at
+// `max`; never inside a `<url|label>` link or between the halves of a surrogate pair.
+function cutLine(line: string, max: number): string[] {
+  const out: string[] = [];
+  let rest = line;
+  while (rest.length > max) {
+    let cut = rest.lastIndexOf(" ", max - 1) + 1;
+    if (cut < max / 2) cut = max;
+    const open = rest.lastIndexOf("<", cut - 1);
+    if (open > 0 && open > rest.lastIndexOf(">", cut - 1)) cut = open;
+    const code = rest.charCodeAt(cut - 1);
+    if (code >= 0xd800 && code <= 0xdbff) cut--;
+    out.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  out.push(rest);
+  return out;
+}

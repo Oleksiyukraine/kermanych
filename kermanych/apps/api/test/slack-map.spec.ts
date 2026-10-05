@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { classifyMessage, threadTranscript, toSlackMrkdwn } from "../src/slack/slack-map";
+import { classifyMessage, splitForSlack, threadTranscript, toSlackMrkdwn } from "../src/slack/slack-map";
 import { SlackSocket, type SocketLike } from "../src/slack/slack-socket";
 
 const BOT = "UBOT";
@@ -82,6 +82,44 @@ describe("toSlackMrkdwn", () => {
   it("leaves code spans and fenced blocks untouched", () => {
     const md = "Run `a **b**` now\n```\n# not a heading\n**raw**\n```\n# Done";
     expect(toSlackMrkdwn(md)).toBe("Run `a **b**` now\n```\n# not a heading\n**raw**\n```\n*Done*");
+  });
+});
+
+describe("splitForSlack", () => {
+  const fences = (s: string): number => s.split("\n").filter((l) => l.trimStart().startsWith("```")).length;
+
+  it("keeps an answer that fits as one message", () => {
+    expect(splitForSlack("Short.\n\nAnswer.", 100)).toEqual(["Short.\n\nAnswer."]);
+  });
+
+  it("breaks between paragraphs, losing nothing", () => {
+    const paras = Array.from({ length: 12 }, (_, i) => `Paragraph ${i} ${"word ".repeat(10).trim()}`);
+    const parts = splitForSlack(paras.join("\n\n"), 200);
+    expect(parts.length).toBeGreaterThan(1);
+    for (const p of parts) expect(p.length).toBeLessThanOrEqual(200);
+    expect(parts.join("\n\n")).toBe(paras.join("\n\n"));
+  });
+
+  it("closes a code block it cuts and reopens it in the next message", () => {
+    const code = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n");
+    const parts = splitForSlack(`Intro\n\n\`\`\`ts\n${code}\n\`\`\`\n\nOutro`, 120);
+    expect(parts.length).toBeGreaterThan(2);
+    for (const p of parts) {
+      expect(p.length).toBeLessThanOrEqual(120);
+      expect(fences(p) % 2).toBe(0);
+    }
+    const body = parts.join("\n").split("\n").filter((l) => /^line \d+$/.test(l));
+    expect(body).toEqual(code.split("\n"));
+  });
+
+  it("cuts an overlong line at a space, never inside a link", () => {
+    const line = `${"alpha ".repeat(15)}<https://example.com/a/very/long/path|the guide> ${"beta ".repeat(15)}`.trim();
+    const parts = splitForSlack(line, 200);
+    for (const p of parts) {
+      expect(p.length).toBeLessThanOrEqual(200);
+      expect(p.split("<").length).toBe(p.split(">").length);
+    }
+    expect(parts.join("")).toBe(line);
   });
 });
 
