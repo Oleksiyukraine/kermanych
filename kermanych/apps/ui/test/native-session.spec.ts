@@ -1,12 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import type { TerminalInfo } from '@kermanych/core';
-import { nativeRuntimeFor, panelTerminals, sessionCostKnown } from '../src/lib/native-session';
+import { nativeRuntimeFor, panelTerminals, sessionCostKnown, sessionLaunchMode } from '../src/lib/native-session';
 
 describe('nativeRuntimeFor', () => {
   it('maps the launcher mode to from-task `native`', () => {
     expect(nativeRuntimeFor('managed')).toBeUndefined();
     expect(nativeRuntimeFor('omp')).toBe('omp');
     expect(nativeRuntimeFor('claude')).toBe('claude-code');
+  });
+});
+
+describe('sessionLaunchMode', () => {
+  it('names the harness that runs the session', () => {
+    expect(sessionLaunchMode({ native: true, runtime: 'claude-code' })).toBe('claude');
+    expect(sessionLaunchMode({ native: true, runtime: 'omp' })).toBe('omp');
+    // A native row written before `runtime` was stamped ran the default harness.
+    expect(sessionLaunchMode({ native: true })).toBe('omp');
+  });
+
+  it('is Kermanych for a managed session, whatever runtime it drives', () => {
+    expect(sessionLaunchMode({ runtime: 'claude-code' })).toBe('managed');
+    expect(sessionLaunchMode({ native: false, runtime: 'omp' })).toBe('managed');
   });
 });
 

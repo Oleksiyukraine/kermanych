@@ -355,7 +355,7 @@
           v-for="(c, i) in sessionCards" :key="c.branch"
           :branch="c.branch" :time="c.time"
           :status="c.status" :status-line="c.statusLine" :selected="i === 0"
-          :model="c.model" :usage="c.usage"
+          :model="c.model" :usage="c.usage" :harness="c.harness"
         />
       </div>
 
@@ -495,6 +495,7 @@ import KSubNav from 'components/kit/KSubNav.vue';
 import KComposer from 'components/kit/KComposer.vue';
 import KDiffView from 'components/kit/KDiffView.vue';
 import type { FileDiff } from '../lib/api';
+import type { LaunchMode } from '../lib/native-session';
 
 const { t } = useI18n();
 
@@ -552,12 +553,13 @@ const diffSample: FileDiff = {
   truncated: false,
 };
 const thoughtOpen = ref(false);
-// The last row deliberately carries neither model nor usage: an agent whose turns were
-// never counted drops the accounting line rather than printing a zero.
-const sessionCards: { branch: string; title: string; time: string; status: SessionStatus; statusLine: string; model?: string; usage?: Usage }[] = [
-  { branch: 'feature/rate-limit', title: t('kit.gallery.sessionCard.s1Title'), time: t('kit.gallery.sessionCard.s1Time'), status: 'thinking', statusLine: t('kit.gallery.sessionCard.s1Status'), model: 'opus-5', usage: { input: 18_400, output: 9_200, cacheRead: 1_240_000, cacheWrite: 62_000, cost: 3.18 } },
-  { branch: 'refactoring/session-store', title: t('kit.gallery.sessionCard.s2Title'), time: t('kit.gallery.sessionCard.s2Time'), status: 'waiting_input', statusLine: t('kit.gallery.sessionCard.s2Status'), model: 'sonnet-4.5', usage: { input: 2_100, output: 640, cacheRead: 31_000, cacheWrite: 4_800, cost: 0.004 } },
-  { branch: 'fix/remove-button', title: 'remove + button', time: t('kit.gallery.sessionCard.s3Time'), status: 'merged', statusLine: t('kit.gallery.sessionCard.s3Status'), model: 'haiku', usage: { input: 900, output: 310, cacheRead: 0, cacheWrite: 0, cost: 0.02 } },
+// One row per harness mark, then the last row, which deliberately carries neither harness,
+// model nor usage: an agent whose turns were never counted drops the accounting line rather
+// than printing a zero.
+const sessionCards: { branch: string; title: string; time: string; status: SessionStatus; statusLine: string; model?: string; usage?: Usage; harness?: LaunchMode }[] = [
+  { branch: 'feature/rate-limit', title: t('kit.gallery.sessionCard.s1Title'), time: t('kit.gallery.sessionCard.s1Time'), status: 'thinking', statusLine: t('kit.gallery.sessionCard.s1Status'), model: 'opus-5', usage: { input: 18_400, output: 9_200, cacheRead: 1_240_000, cacheWrite: 62_000, cost: 3.18 }, harness: 'managed' },
+  { branch: 'refactoring/session-store', title: t('kit.gallery.sessionCard.s2Title'), time: t('kit.gallery.sessionCard.s2Time'), status: 'waiting_input', statusLine: t('kit.gallery.sessionCard.s2Status'), model: 'sonnet-4.5', usage: { input: 2_100, output: 640, cacheRead: 31_000, cacheWrite: 4_800, cost: 0.004 }, harness: 'omp' },
+  { branch: 'fix/remove-button', title: 'remove + button', time: t('kit.gallery.sessionCard.s3Time'), status: 'merged', statusLine: t('kit.gallery.sessionCard.s3Status'), model: 'haiku', usage: { input: 900, output: 310, cacheRead: 0, cacheWrite: 0, cost: 0.02 }, harness: 'claude' },
   { branch: 'chore/ci-node-22', title: t('kit.gallery.sessionCard.s4Title'), time: t('kit.gallery.sessionCard.s4Time'), status: 'done', statusLine: t('kit.gallery.sessionCard.s4Status') },
 ];
 

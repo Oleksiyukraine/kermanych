@@ -27,8 +27,9 @@
         <KStatusDot :status="status" />
         <span v-if="statusLine" class="k-session-card__status-line">{{ statusLine }}</span>
       </div>
-      <!-- what is running and what it has cost — absent whenever we know neither -->
-      <div v-if="model || spend" class="k-session-card__meta mono">
+      <!-- who is running it, on what, and what it has cost — absent whenever we know none -->
+      <div v-if="harness || model || spend" class="k-session-card__meta mono">
+        <KHarnessMark v-if="harness" :harness="harness" />
         <span v-if="model" class="k-session-card__model">{{ model }}</span>
         <span v-if="model && spend">·</span>
         <span v-if="spend" class="k-session-card__spend">{{ spend }}</span>
@@ -55,11 +56,13 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SessionStatus, Usage } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
+import KHarnessMark from './KHarnessMark.vue';
 import { tokens, usageTokens, usd } from '../../lib/format';
+import type { LaunchMode } from '../../lib/native-session';
 
 // Session summary card: branch + time header, a status row pairing the status dot with a
-// short status line, and the accounting line — which model is running and what it has
-// consumed. Selected / hover lift the card with a subtle surface fill.
+// short status line, and the accounting line — which harness and model are running and what
+// they have consumed. Selected / hover lift the card with a subtle surface fill.
 //
 // `fork` marks the card as a BRANCH of the card above it — a discussion or review session
 // forked off a parent agent's conversation. It is not decoration: the fork is a child in a
@@ -85,6 +88,8 @@ const props = withDefaults(
     // counted, and absent it stays: the line disappears rather than claim `0 ток · $0.00`.
     usage?: Usage | undefined;
     model?: string | undefined;
+    // The harness running the session (KHarnessMark). Absent for a card nothing runs yet.
+    harness?: LaunchMode | undefined;
     selected?: boolean;
     fork?: boolean;
     removable?: boolean;
