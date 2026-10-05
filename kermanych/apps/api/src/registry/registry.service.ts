@@ -181,6 +181,10 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Data migration (2026-10-05): the `ask` rule — a finish-sheet checkbox — is gone; a kind
+    // stored with it is written where it applies (`optional`), like the cloud migration
+    // 20261005100000. Policy values are the only strings that can read `"ask"`.
+    this.db.exec(`UPDATE projects SET docs_policy = replace(docs_policy, '"ask"', '"optional"') WHERE docs_policy LIKE '%"ask"%'`);
     // Additive migration: backlog tasks persist their launch config (branch prefix + model)
     // so "Start" can spawn them later with the same settings the operator chose.
     for (const col of ["model", "prefix", "platform"]) {

@@ -120,7 +120,7 @@ test("project docsPolicy defaults, round-trips, and normalises what it stores", 
   const r = new RegistryService(":memory:");
   expect(r.upsertProject({ id: "p1", name: "P" }).docsPolicy).toEqual(DEFAULT_DOCS_POLICY);
 
-  const strict = { ...DEFAULT_DOCS_POLICY, plan: "required" as const, apiRequest: "ask" as const };
+  const strict = { ...DEFAULT_DOCS_POLICY, plan: "required" as const, apiRequest: "optional" as const };
   expect(r.patchProject("p1", { docsPolicy: strict }).docsPolicy).toEqual(strict);
   r.patchProject("p1", { name: "Q" });
   expect(r.listProjects().find((p) => p.id === "p1")!.docsPolicy).toEqual(strict);

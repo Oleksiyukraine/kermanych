@@ -19,12 +19,11 @@ import {
   PR_CONVENTIONS_FALLBACK,
   COAUTHOR_DIRECTIVE,
   DOC_MAINTAIN_DIRECTIVE,
-  docsAsks,
   docsCompletionPrompt,
   docsFailureSkills,
   docsWritePrompt,
-  DOCS_ASK_FAILURE,
-  type DocsAsk,
+  DOCS_WRITE_FAILURE,
+  type DocsWriteKind,
   docsGateFailures,
   docsLayoutKind,
   docsPolicy,
@@ -33,7 +32,6 @@ import {
   type DocsGate,
   type DocsGateFailure,
   type DocsPolicy,
-  type DocsRequested,
   QA_CHECKLIST_DIRECTIVE,
   buildQaChecklist,
   parseTaskActions,
@@ -1644,11 +1642,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // session so that, once a PR URL surfaces in its output, its next `agent_end` settles it at
   // `in_review` instead of `done` (onRpcEvent). The flag survives across turns, so a PR flow
   // that stops to ask the operator for a token still lands on review when it finally opens.
-  async createPullRequest(id: string, requested: DocsRequested = {}): Promise<{ ok: true }> {
+  async createPullRequest(id: string): Promise<{ ok: true }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     if (s.kind !== "agent") throw new Error(`only agent sessions can open a pull request (this is a ${s.kind})`);
-    await this.assertDocsGate(id, requested);
+    await this.assertDocsGate(id);
     const g = this.project(s.projectId);
 
     const baseHint = (s.baseBranch || g.defaultBranch || "").trim();
@@ -1708,11 +1706,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // session's feed, the branch/worktree stay intact. Unlike it, this arms `reviewPending` so
   // the turn settles back at `in_review` (the PR is still the outcome), and there is no PR URL
   // to wait for.
-  async commitChanges(id: string, requested: DocsRequested = {}): Promise<{ ok: true }> {
+  async commitChanges(id: string): Promise<{ ok: true }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     if (s.kind !== "agent") throw new Error(`only agent sessions can commit and push (this is a ${s.kind})`);
-    await this.assertDocsGate(id, requested);
+    await this.assertDocsGate(id);
     const g = this.project(s.projectId);
 
     const { template, block } = await this.agentPrompt(s.projectId, "commit", s.worktreePath || g.localRepoPath);
@@ -1838,9 +1836,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // Preview of what "finish" will do: the base the branch will be PR'd against, how many
   // commits the branch carries, whether the worktree has uncommitted work that would be
-  // auto-committed before it is retired, and the documentation gate over the same file list
-  // (`requested` = the finish sheet's ticked «Хендоф для фронта» / «Запит на розширення API»).
-  async finishInfo(id: string, requested: DocsRequested = {}): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[]; files: ChangedFile[]; docsGate: DocsGate }> {
+  // auto-committed before it is retired, and the documentation gate over the same file list.
+  async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[]; files: ChangedFile[]; docsGate: DocsGate }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
@@ -1854,7 +1851,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const dirty = await this.worktree.hasUncommitted(dir);
     const conflicts = await this.worktree.unmergedFiles(dir);
     const files = await this.worktree.changedFiles(dir, target);
-    const docsGate = await this.evaluateDocsGate(g, dir, files, requested);
+    const docsGate = await this.evaluateDocsGate(g, dir, files);
     return { branch: s.branch, target, ahead, dirty, conflicts, files, docsGate };
   }
 
@@ -1862,22 +1859,22 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // whether this session's branch carries the documentation its project requires. Same
   // directory and fork point as finishInfo, so the sheet's file list and its gate agree.
   // With the project's documentation switch off nothing is read and the gate is `enabled: false`.
-  async docsGate(id: string, requested: DocsRequested = {}): Promise<DocsGate> {
+  async docsGate(id: string): Promise<DocsGate> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
-    if (!this.project(s.projectId).docsRequired) return { enabled: false, asks: [], failures: [] };
+    if (!this.project(s.projectId).docsRequired) return { enabled: false, failures: [] };
     const g = this.boundProject(s.projectId);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
     const dir = s.worktreePath || g.localRepoPath;
     const target = s.baseBranch || (s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : "");
-    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, target), requested);
+    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, target));
   }
 
   // The pure gate (core docsGateFailures) over an already-listed change set. Only the changed
   // task documents are read — for their `## Documentation impact` declaration; a deleted or
   // unreadable one reads as empty, so it can never declare `None`.
-  private async evaluateDocsGate(project: Project, dir: string, files: readonly ChangedFile[], requested: DocsRequested): Promise<DocsGate> {
-    if (!project.docsRequired) return { enabled: false, asks: [], failures: [] };
+  private async evaluateDocsGate(project: Project, dir: string, files: readonly ChangedFile[]): Promise<DocsGate> {
+    if (!project.docsRequired) return { enabled: false, failures: [] };
     const policy = docsPolicy(project.docsPolicy);
     const paths = files.map((f) => f.path);
     const specBodies = await Promise.all(
@@ -1885,13 +1882,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         .filter((p) => docsLayoutKind(p) === "spec" && isMarkupPath(p))
         .map((p) => this.worktree.readFileContent(dir, p).then((f) => f.content, () => "")),
     );
-    return { enabled: true, asks: docsAsks(policy), failures: docsGateFailures({ policy, paths, specBodies, requested }) };
+    return { enabled: true, failures: docsGateFailures({ policy, paths, specBodies }) };
   }
 
   // PR, commit-to-PR and finish refuse while the gate fails — right after each action's own
   // kind checks, before any side effect. The message prefix is the contract the ui matches.
-  private async assertDocsGate(id: string, requested: DocsRequested): Promise<void> {
-    const { failures } = await this.docsGate(id, requested);
+  private async assertDocsGate(id: string): Promise<void> {
+    const { failures } = await this.docsGate(id);
     if (failures.length) throw new Error(`documentation required: ${failures.join(", ")} — use «Доповнити документацію»`);
   }
 
@@ -1900,11 +1897,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // task-spec, task-plan, frontend-handoff, api-request) inlined, so a project or repository
   // override wins. sendAsKermanych revives a dormant
   // session. `sent: false` means nothing was missing and no prompt went out.
-  async completeDocs(id: string, requested: DocsRequested = {}): Promise<{ sent: boolean; failures: DocsGateFailure[] }> {
+  async completeDocs(id: string): Promise<{ sent: boolean; failures: DocsGateFailure[] }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     if (s.kind !== "agent") throw new Error(`only agent sessions can complete documentation (this is a ${s.kind})`);
-    const { failures } = await this.docsGate(id, requested);
+    const { failures } = await this.docsGate(id);
     if (!failures.length) return { sent: false, failures: [] };
     const names = docsFailureSkills(failures);
     let block = "";
@@ -1923,13 +1920,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // «Написати запит на API» / «Написати хендоф» (Документація tab): one Kermanych prompt for
   // that one document, mid-task, with its resolved skill inlined like completeDocs. Not gated
   // on the project's rules — the operator asked for it by name.
-  async writeDoc(id: string, kind: DocsAsk): Promise<{ sent: true }> {
+  async writeDoc(id: string, kind: DocsWriteKind): Promise<{ sent: true }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     if (s.kind !== "agent") throw new Error(`only agent sessions can write documentation (this is a ${s.kind})`);
     let block = "";
     try {
-      block = (await this.skills.assignedForNames(this.aiScope(s.projectId), docsFailureSkills([DOCS_ASK_FAILURE[kind]]), s.worktreePath || this.project(s.projectId).localRepoPath)).block;
+      block = (await this.skills.assignedForNames(this.aiScope(s.projectId), docsFailureSkills([DOCS_WRITE_FAILURE[kind]]), s.worktreePath || this.project(s.projectId).localRepoPath)).block;
     } catch (err) {
       console.warn(`[supervisor] no documentation skill for ${id}: ${(err as Error).message}`);
     }
@@ -1984,14 +1981,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // merged anywhere — code leaves Kermanych through a pull request only, so the BRANCH is
   // kept: it is what the PR points at, and reopening the session continues on it. The row
   // stays as `merged` history.
-  async finishSession(id: string, requested: DocsRequested = {}): Promise<{ finished: true; branch: string }> {
+  async finishSession(id: string): Promise<{ finished: true; branch: string }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
     if (s.kind !== "agent")
       throw new Error(`${s.kind} branches can't be finished — merge or discard instead`);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree");
-    await this.assertDocsGate(id, requested);
+    await this.assertDocsGate(id);
 
     const dir = s.worktreePath || g.localRepoPath;
     const base = s.worktree ? "" : (s.baseBranch ?? "");

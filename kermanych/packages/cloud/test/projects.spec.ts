@@ -285,6 +285,6 @@ describe("documentation policy mapping", () => {
 
   it("sends docs_policy only when present in the patch, normalised", () => {
     expect(toProjectRow({})).not.toHaveProperty("docs_policy");
-    expect(toProjectRow({ docsPolicy: { ...DEFAULT_DOCS_POLICY, apiRequest: "ask" } }).docs_policy).toEqual({ ...DEFAULT_DOCS_POLICY, apiRequest: "ask" });
+    expect(toProjectRow({ docsPolicy: { ...DEFAULT_DOCS_POLICY, apiRequest: "optional" } }).docs_policy).toEqual({ ...DEFAULT_DOCS_POLICY, apiRequest: "optional" });
   });
 });

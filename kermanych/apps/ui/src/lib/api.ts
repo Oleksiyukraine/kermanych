@@ -25,11 +25,10 @@ import type {
   ApiErrorParams,
   AgentRuntimeKind,
   AgentLanguage,
-  DocsAsk,
+  DocsWriteKind,
   DocsGate,
   DocsGateFailure,
   DocsPolicy,
-  DocsRequested,
 } from '@kermanych/core';
 import type { CloudProject, JiraIntegration, JiraIssue, LinearIntegration, LinearIssue, SlackIntegration } from '@kermanych/cloud';
 import { globalTr } from '../boot/i18n';
@@ -584,12 +583,8 @@ export const api = {
 
   stopPreview: (id: string): Promise<void> => del(`/sessions/${id}/preview`),
 
-  // `requested` is the finish sheet's ticked boxes («Хендоф для фронта», «Запит на розширення
-  // API»): they only change `docsGate`, which then also demands those documents. Only true
-  // flags go on the query. The Зміни tab reads without them.
   finishInfo: (
     id: string,
-    requested: DocsRequested = {},
   ): Promise<{
     branch: string;
     target: string;
@@ -598,10 +593,7 @@ export const api = {
     conflicts: string[];
     files: { path: string; added: number; removed: number }[];
     docsGate: DocsGate;
-  }> => {
-    const q = (Object.keys(requested) as (keyof DocsRequested)[]).filter((k) => requested[k] === true).map((k) => `${k}=1`);
-    return get(`/sessions/${id}/finish${q.length ? `?${q.join('&')}` : ''}`);
-  },
+  }> => get(`/sessions/${id}/finish`),
 
   fileDiff: (id: string, path: string): Promise<FileDiff> =>
     get<FileDiff>(`/sessions/${id}/diff?path=${encodeURIComponent(path)}`),
@@ -640,24 +632,23 @@ export const api = {
   ): Promise<{ indexedFiles: number; deletedFiles: number; unchangedFiles: number; chunkCount: number; embeddingModel: string }> =>
     post(`/projects/${id}/docs/reindex`, {}),
 
-  // The three finish-sheet actions carry the ticked boxes so the api's documentation gate checks
-  // the same thing the sheet showed; a project without mandatory documentation ignores them.
-  finish: (id: string, body: DocsRequested = {}): Promise<{ finished: boolean; branch: string }> =>
-    post(`/sessions/${id}/finish`, body),
+  // The three finish-sheet actions; the api refuses them while the documentation gate fails.
+  finish: (id: string): Promise<{ finished: boolean; branch: string }> =>
+    post(`/sessions/${id}/finish`, {}),
 
-  createPr: (id: string, body: DocsRequested = {}): Promise<{ ok: boolean }> =>
-    post<{ ok: boolean }>(`/sessions/${id}/pr`, body),
+  createPr: (id: string): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>(`/sessions/${id}/pr`, {}),
 
-  commitChanges: (id: string, body: DocsRequested = {}): Promise<{ ok: boolean }> =>
-    post<{ ok: boolean }>(`/sessions/${id}/commit`, body),
+  commitChanges: (id: string): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>(`/sessions/${id}/commit`, {}),
 
   // «Доповнити документацію»: one Kermanych prompt asking the agent for exactly the missing
   // documents. `sent: false` means the gate already passed and nothing was sent.
-  completeDocs: (id: string, requested: DocsRequested): Promise<{ sent: boolean; failures: DocsGateFailure[] }> =>
-    post(`/sessions/${id}/docs`, requested),
+  completeDocs: (id: string): Promise<{ sent: boolean; failures: DocsGateFailure[] }> =>
+    post(`/sessions/${id}/docs`, {}),
 
   // «Написати запит на API» / «Написати хендоф»: the agent writes that one document now, mid-task.
-  writeDoc: (id: string, kind: DocsAsk): Promise<{ sent: true }> => post(`/sessions/${id}/docs/write`, { kind }),
+  writeDoc: (id: string, kind: DocsWriteKind): Promise<{ sent: true }> => post(`/sessions/${id}/docs/write`, { kind }),
 
   archiveSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/archive`, {}),
