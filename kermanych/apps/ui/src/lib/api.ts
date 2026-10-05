@@ -30,7 +30,7 @@ import type {
   DocsPolicy,
   DocsRequested,
 } from '@kermanych/core';
-import type { CloudProject, JiraIntegration, JiraIssue, LinearIntegration, LinearIssue } from '@kermanych/cloud';
+import type { CloudProject, JiraIntegration, JiraIssue, LinearIntegration, LinearIssue, SlackIntegration } from '@kermanych/cloud';
 import { globalTr } from '../boot/i18n';
 import { localizeError } from './i18n-coded';
 
@@ -275,6 +275,14 @@ export type LinearEditorOptions = {
 };
 export type LinearAssignableUser = { id: string; name: string; avatar?: string };
 
+// ── Slack (the documentation Q&A bot; its bot and app-level tokens live in this machine's
+// registry, keyed by the Kermanych workspace, and never reach the browser or the cloud) ────
+// `listening` = this machine holds an open Socket Mode connection answering for the
+// workspace — the only machine-local fact that says whether the bot is actually up.
+export type SlackTokenStatus = { present: boolean; listening: boolean };
+export type SlackTokenResult = { teamId: string; teamName: string; botUserId: string };
+export type SlackChannelOption = { id: string; name: string; isPrivate: boolean };
+
 export const api = {
   // LOCAL project rows. Creation and deletion live in the cloud (see stores/projects.ts);
   // these routes cache cloud config and own this machine's binding.
@@ -462,6 +470,21 @@ export const api = {
       `/linear/issues/${workspaceId}/${encodeURIComponent(key)}/launch`,
       { projectId, transitionId, images },
     ),
+
+  // ── Slack. Tokens are per workspace (one Slack app per Kermanych workspace), so every
+  // route is addressed by the workspace id rather than by a Slack team.
+  slackTokenStatus: (workspaceId: string): Promise<SlackTokenStatus> =>
+    get<SlackTokenStatus>(`/slack/token?workspace=${encodeURIComponent(workspaceId)}`),
+  slackSetToken: (workspaceId: string, botToken: string, appToken: string): Promise<SlackTokenResult> =>
+    put<SlackTokenResult>('/slack/token', { workspaceId, botToken, appToken }),
+  slackDeleteToken: (workspaceId: string): Promise<void> =>
+    del(`/slack/token?workspace=${encodeURIComponent(workspaceId)}`),
+
+  slackChannels: (workspaceId: string): Promise<SlackChannelOption[]> =>
+    get<SlackChannelOption[]>(`/slack/channels?workspace=${encodeURIComponent(workspaceId)}`),
+  slackConnect: (workspaceId: string, channelId: string): Promise<SlackIntegration> =>
+    post<SlackIntegration>('/slack/integrations', { workspaceId, channelId }),
+  slackDisconnect: (workspaceId: string): Promise<void> => del(`/slack/integrations/${workspaceId}`),
 
   // How many status pushes THIS machine still owes the cloud. Only the local process can
   // see that, so the board polls it (see the api controller for why it is not an event).

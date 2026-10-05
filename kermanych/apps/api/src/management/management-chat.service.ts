@@ -67,7 +67,8 @@ const MCP_SERVER_NAME = "kermanych";
 // The full id rather than omp's fuzzy `sonnet`: the model behind an answer must not drift
 // with whatever omp decides a short name means this week.
 const DOCS_SECTION = "management-docs";
-const DOCS_MODEL = "claude-sonnet-5";
+// Exported for the Slack documentation bot, which answers from retrieved fragments too.
+export const DOCS_MODEL = "claude-sonnet-5";
 
 // Documentation runs on its own child, inside the SAME conversation id the browser sent —
 // the split is the api's business, not the ui's. `attachDir` sanitises every character

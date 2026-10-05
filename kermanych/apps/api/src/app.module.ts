@@ -29,6 +29,8 @@ import { JiraController } from "./http/jira.controller";
 import { JiraService } from "./jira/jira.service";
 import { LinearController } from "./http/linear.controller";
 import { LinearService } from "./linear/linear.service";
+import { SlackController } from "./http/slack.controller";
+import { SlackService } from "./slack/slack.service";
 import { DocIndexService } from "./docs/doc-index.service";
 import { DocsController } from "./http/docs.controller";
 import { ManagementMcpController } from "./http/management-mcp.controller";
@@ -38,7 +40,7 @@ import { TerminalService } from "./terminal/terminal.service";
 import { TerminalGateway } from "./ws/terminal.gateway";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, AccountController, DocsController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -77,6 +79,12 @@ import { TerminalGateway } from "./ws/terminal.gateway";
     // (RegistryService), Linear HTTP under the acting user, mirror writes under their JWT,
     // and the same SupervisorService.createSessionFromTask launch path.
     LinearService,
+    // The Slack documentation bot: per-user Slack tokens (RegistryService), Socket Mode
+    // connections dialled OUT from this machine (the api binds 127.0.0.1, so Slack cannot
+    // call in), retrieval and the integration row under the operator's JWT
+    // (AuthService.cloudClient), and a tool-less one-shot child per answer. Opens and
+    // closes its sockets on AuthService's token/clear events.
+    SlackService,
     // Documentation RAG indexing: walks the bound checkout's published doc folders
     // (SupervisorService.resolveDocsDir guards), hashes and chunks changed files
     // (@kermanych/core), and hands them to the docs-rag Edge Function under the operator's

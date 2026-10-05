@@ -153,14 +153,16 @@ export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
     limitation:
       "розділ лише читає оцінки й ворклоги Jira — навантаження змінюється редагуванням тікетів у Jira, не з чату",
   },
+  // Readable, not writable: Linear, Jira and Slack connect on the screen (tokens are pasted
+  // there and stay on the machine), so the assistant describes the section and refuses to
+  // connect anything from the chat with this sentence.
   {
     name: "management-integrations",
     path: "integrations",
     label: "Integrations",
     hint: "Linear, Jira, Slack",
     capability: "read",
-    limitation:
-      "розділ лише показує список провайдерів (Linear, Jira, Slack) — жодне підключення не зроблено і стан ніде не зберігається",
+    limitation: "підключення (Linear, Jira, Slack) налаштовуються на екрані, не з чату",
   },
 ];
 

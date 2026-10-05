@@ -58,6 +58,8 @@ export type {
   LinearIssue,
   LinearComment,
   LinearAttachment,
+  SlackIntegration,
+  SlackIntegrationInsert,
   WorkspacePassword,
   WorkspacePasswordField,
   WorkspacePasswordSecret,
@@ -252,3 +254,5 @@ export {
   replaceLinearIssueChildren,
   subscribeLinearIssues,
 } from "./linear";
+
+export { toSlackIntegration, getSlackIntegration, upsertSlackIntegration, deleteSlackIntegration } from "./slack";

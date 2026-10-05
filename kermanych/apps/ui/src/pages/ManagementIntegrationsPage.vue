@@ -20,7 +20,7 @@
         <h3 class="int__name">{{ brand.name }}</h3>
         <p class="int__blurb">{{ t(brand.blurb) }}</p>
 
-        <!-- Jira and Linear are live; Slack keeps the original presentation-only foot. -->
+        <!-- Each tile is live: its own state line and its own connect/settings modals. -->
         <div v-if="brand.id === 'jira'" class="int__foot">
           <span class="int__state mono">
             <i class="int__state-dot" :class="{ 'int__state-dot--on': jira.integrations.length > 0 }" aria-hidden="true"></i>
@@ -66,11 +66,26 @@
             @click="openLinearConnect"
           >{{ t('management.integrations.connect') }}</button>
         </div>
-        <div v-else v-tip="t('management.integrations.devTip')" class="int__foot">
+        <div v-else-if="brand.id === 'slack'" class="int__foot">
           <span class="int__state mono">
-            <i class="int__state-dot" aria-hidden="true"></i>{{ t('management.integrations.notConnected') }}
+            <i class="int__state-dot" :class="{ 'int__state-dot--on': !!slackIntegration }" aria-hidden="true"></i>
+            <template v-if="slackIntegration">{{ t('slack.connect.stateConnected', { channel: `#${slackIntegration.channelName}` }) }}</template>
+            <template v-else>{{ t('management.integrations.notConnected') }}</template>
           </span>
-          <button class="int__cta" type="button" disabled>{{ t('management.integrations.connect') }}</button>
+          <button
+            v-if="slackIntegration"
+            class="int__cta"
+            type="button"
+            @click="openSlackSettings"
+          >{{ t('slack.connect.configure') }}</button>
+          <button
+            v-else
+            v-tip="canConnect ? '' : t('slack.connect.ownerOnly')"
+            class="int__cta"
+            type="button"
+            :disabled="!canConnect"
+            @click="openSlackConnect"
+          >{{ t('management.integrations.connect') }}</button>
         </div>
       </article>
     </div>
@@ -263,23 +278,144 @@
         <KBtn variant="primary" @click="linearSettingsOpen = false">{{ t('linear.connect.done') }}</KBtn>
       </template>
     </KModal>
+
+    <!-- SLACK CONNECT — the owner's two steps: the app and its tokens → the channel. -->
+    <KModal v-model="slackConnectOpen" :title="t('slack.connect.title')" width="520px">
+      <div class="int__flow">
+        <template v-if="slackConnectStep === 'app'">
+          <ol class="int__hint int__steps">
+            <li>
+              {{ t('slack.connect.stepCreateBefore') }}
+              <a class="int__link" href="https://api.slack.com/apps?new_app=1" target="_blank" rel="noopener noreferrer">api.slack.com/apps</a>
+              {{ t('slack.connect.stepCreateAfter') }}
+            </li>
+            <li>{{ t('slack.connect.stepInstall') }}</li>
+            <li>{{ t('slack.connect.stepBotToken') }} <span class="mono">xoxb-…</span></li>
+            <li>{{ t('slack.connect.stepAppToken') }} <span class="mono">connections:write</span> → <span class="mono">xapp-…</span></li>
+          </ol>
+          <div class="int__row">
+            <KBtn variant="secondary" @click="copySlackManifest">{{ t('slack.connect.copyManifest') }}</KBtn>
+          </div>
+          <KField v-model="slackBotTokenInput" :label="t('slack.connect.botTokenLabel')" type="password" placeholder="xoxb-…" />
+          <KField v-model="slackAppTokenInput" :label="t('slack.connect.appTokenLabel')" type="password" placeholder="xapp-…" @keydown.enter="slackTokenNext" />
+          <p class="int__hint">{{ t('slack.connect.tokenHint') }}</p>
+        </template>
+
+        <template v-else>
+          <KSelect
+            v-if="slackChannelOptions.length"
+            v-model="slackChannelPick"
+            :label="t('slack.connect.channelLabel')"
+            :options="slackChannelOptions"
+            :placeholder="t('slack.connect.channelPlaceholder')"
+            searchable
+          />
+          <p v-else class="int__token-state">{{ t('slack.connect.noChannels') }}</p>
+          <p class="int__hint">
+            {{ t('slack.connect.inviteBefore') }} <span class="mono">/invite @Kermanych</span>{{ t('slack.connect.inviteAfter') }}
+          </p>
+          <div class="int__row">
+            <KBtn variant="ghost" :loading="slackLoadingChannels" @click="refreshSlackChannels">{{ t('slack.connect.refresh') }}</KBtn>
+          </div>
+          <p v-if="slackChannelOptions.length" class="int__hint">{{ t('slack.connect.channelHint') }}</p>
+        </template>
+
+        <p v-if="slackFlowError" class="int__error mono">{{ slackFlowError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="slackConnectOpen = false">{{ t('slack.connect.cancel') }}</KBtn>
+        <KBtn v-if="slackConnectStep === 'channel'" variant="ghost" @click="slackConnectStep = 'app'">{{ t('slack.connect.otherTokens') }}</KBtn>
+        <KBtn
+          v-if="slackConnectStep === 'app'"
+          variant="primary"
+          :disabled="!slackBotTokenInput.trim() || !slackAppTokenInput.trim() || slackBusy"
+          @click="slackTokenNext"
+        >
+          {{ slackBusy ? t('slack.connect.checking') : t('slack.connect.next') }}
+        </KBtn>
+        <KBtn v-else variant="primary" :disabled="!slackChannelPick || slackBusy" @click="slackConnectFinish">
+          {{ slackBusy ? t('slack.connect.connecting') : t('management.integrations.connect') }}
+        </KBtn>
+      </template>
+    </KModal>
+
+    <!-- SLACK SETTINGS — facts, this machine's tokens and whether the bot is up here, owner actions. -->
+    <KModal v-model="slackSettingsOpen" title="Slack" width="520px">
+      <div v-if="slackIntegration" class="int__flow">
+        <dl class="int__facts">
+          <div><dt>{{ t('slack.connect.teamFact') }}</dt><dd>{{ slackIntegration.teamName }}</dd></div>
+          <div><dt>{{ t('slack.connect.channelLabel') }}</dt><dd class="mono">#{{ slackIntegration.channelName }}</dd></div>
+        </dl>
+
+        <div class="int__token">
+          <p class="int__token-state">
+            <template v-if="slackTokenPresent">
+              {{ t('slack.connect.tokenOnMachine') }}
+              <span class="int__state mono">
+                <i class="int__state-dot" :class="{ 'int__state-dot--on': slackListening }" aria-hidden="true"></i>
+                {{ slackListening ? t('slack.connect.listening') : t('slack.connect.notListening') }}
+              </span>
+            </template>
+            <template v-else>
+              {{ t('slack.connect.noToken') }}
+            </template>
+          </p>
+          <template v-if="slackTokenEditing || !slackTokenPresent">
+            <KField v-model="slackBotTokenInput" :label="t('slack.connect.botTokenLabel')" type="password" placeholder="xoxb-…" />
+            <KField v-model="slackAppTokenInput" :label="t('slack.connect.appTokenLabel')" type="password" placeholder="xapp-…" />
+            <p class="int__hint">
+              {{ t('slack.connect.tokenWhere') }}
+              <a class="int__link" href="https://api.slack.com/apps" target="_blank" rel="noopener noreferrer">api.slack.com/apps</a>
+            </p>
+            <div class="int__row">
+              <KBtn
+                variant="secondary"
+                :disabled="!slackBotTokenInput.trim() || !slackAppTokenInput.trim() || slackBusy"
+                @click="saveSlackToken"
+              >
+                {{ slackBusy ? t('slack.connect.checking') : t('slack.connect.saveToken') }}
+              </KBtn>
+              <KBtn v-if="slackTokenEditing" variant="ghost" @click="slackTokenEditing = false">{{ t('slack.connect.cancel') }}</KBtn>
+            </div>
+          </template>
+          <div v-else class="int__row">
+            <KBtn variant="ghost" @click="startSlackTokenEdit">{{ t('slack.connect.replaceToken') }}</KBtn>
+            <KBtn variant="ghost" :loading="removingSlackToken" @click="removeSlackToken">{{ t('slack.connect.removeToken') }}</KBtn>
+          </div>
+        </div>
+
+        <p v-if="slackFlowError" class="int__error mono">{{ slackFlowError }}</p>
+
+        <div v-if="isOwner" class="int__danger">
+          <KBtn variant="ghost" @click="changeSlackChannel">{{ t('slack.connect.changeChannel') }}</KBtn>
+          <KBtn variant="ghost" :loading="disconnectingSlack" @click="disconnectSlack">{{ t('slack.connect.disconnect') }}</KBtn>
+        </div>
+      </div>
+      <template #controls>
+        <KBtn variant="primary" @click="slackSettingsOpen = false">{{ t('slack.connect.done') }}</KBtn>
+      </template>
+    </KModal>
   </section>
 </template>
 
 <script setup lang="ts">
-// Integrations — Jira and Linear are the LIVE tiles: the workspace-level connection
-// (owner) and this member's personal token (everyone) both live here, one independent set
-// of controls each so a workspace may connect both. Slack stays the presentation-only tile.
+// Integrations — Jira, Linear and Slack are all LIVE tiles: the workspace-level connection
+// (owner) and this member's personal tokens (everyone) both live here, one independent set
+// of controls each so a workspace may connect all three.
 //
 // It takes the same props every section gets from ManagementPage, so the workspace it
 // connects is already named for it.
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
-import { api, type JiraBoardOption, type LinearTeamOption } from '../lib/api';
+import type { SlackIntegration } from '@kermanych/cloud';
+import { getSlackIntegration } from '@kermanych/cloud';
+import { api, type JiraBoardOption, type LinearTeamOption, type SlackChannelOption } from '../lib/api';
+import { IS_PREVIEW } from '../lib/preview';
+import { useAuth } from 'stores/auth';
 import { useJira } from 'stores/jira';
 import { useLinear } from 'stores/linear';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -291,6 +427,7 @@ const jira = useJira();
 const cloud = useProjects();
 const local = useOrchestrator();
 const linear = useLinear();
+const auth = useAuth();
 
 const isOwner = computed(() => cloud.isWorkspaceOwner(props.workspaceId));
 const canConnect = computed(() => isOwner.value);
@@ -656,17 +793,273 @@ async function disconnectLinear(): Promise<void> {
   }
 }
 
+// ── Slack ──────────────────────────────────────────────────────────────────────
+// Page-local state, not a store: unlike Jira/Linear there is no board elsewhere in the app
+// that reads the row — the bot answers in Slack, and this tile is its only screen.
+//
+// Tokens are keyed by the Kermanych workspace (one Slack app per workspace), so their
+// status is asked with or without a row: an owner who already stored tokens skips straight
+// to the channel step, and a member sees whether the bot is up on THIS machine.
+const slackIntegration = ref<SlackIntegration | null | undefined>(undefined);
+const slackTokenPresent = ref(false);
+const slackListening = ref(false);
+
+const slackConnectOpen = ref(false);
+const slackConnectStep = ref<'app' | 'channel'>('app');
+const slackBotTokenInput = ref('');
+const slackAppTokenInput = ref('');
+const slackChannels = ref<SlackChannelOption[]>([]);
+const slackChannelPick = ref('');
+const slackLoadingChannels = ref(false);
+const slackBusy = ref(false);
+const slackFlowError = ref('');
+
+const slackSettingsOpen = ref(false);
+const slackTokenEditing = ref(false);
+const removingSlackToken = ref(false);
+const disconnectingSlack = ref(false);
+
+// The stale-completion guard (the stores' `generation` idiom): a probe for a workspace the
+// user already switched away from must not install its row here.
+let slackGeneration = 0;
+let slackRecheck: ReturnType<typeof setTimeout> | undefined;
+
+// The app the user creates from. Matches the api's expectations exactly: message events for
+// public and private channels, and nothing beyond reading/writing the channels it is in.
+const SLACK_MANIFEST = {
+  display_information: { name: 'Kermanych', description: 'Answers questions about your project documentation' },
+  features: { bot_user: { display_name: 'Kermanych', always_online: false } },
+  oauth_config: {
+    scopes: { bot: ['channels:history', 'groups:history', 'channels:read', 'groups:read', 'chat:write'] },
+  },
+  settings: {
+    event_subscriptions: { bot_events: ['message.channels', 'message.groups'] },
+    socket_mode_enabled: true,
+    org_deploy_enabled: false,
+    token_rotation_enabled: false,
+  },
+};
+
+// KSelect options carry only a label, so «private» is spelled out in it — the one fact
+// worth knowing before binding the bot to a channel not everyone can read.
+const slackChannelOptions = computed<KSelectOption[]>(() =>
+  slackChannels.value.map((c) => ({
+    value: c.id,
+    label: c.isPrivate ? `#${c.name} · ${t('slack.connect.private')}` : `#${c.name}`,
+  })),
+);
+
+async function probeSlack(workspaceId: string): Promise<void> {
+  if (IS_PREVIEW || !auth.user) {
+    slackIntegration.value = null;
+    slackTokenPresent.value = false;
+    slackListening.value = false;
+    return;
+  }
+  const mine = ++slackGeneration;
+  try {
+    const row = await getSlackIntegration(auth.client, workspaceId);
+    if (mine !== slackGeneration) return;
+    slackIntegration.value = row ?? null;
+  } catch {
+    // An unreachable cloud reads as «not connected», the Linear store's rule.
+    if (mine === slackGeneration) slackIntegration.value = null;
+  }
+  await refreshSlackTokenState(workspaceId, mine);
+}
+
+// A local sqlite read through the api, never a Slack call — cheap enough for every probe.
+async function refreshSlackTokenState(workspaceId = props.workspaceId, mine = slackGeneration): Promise<void> {
+  try {
+    const status = await api.slackTokenStatus(workspaceId);
+    if (mine !== slackGeneration) return;
+    slackTokenPresent.value = status.present;
+    slackListening.value = status.listening;
+  } catch {
+    if (mine !== slackGeneration) return;
+    slackTokenPresent.value = false;
+    slackListening.value = false;
+  }
+}
+
+// Saving tokens or connecting kicks the api's socket refresh without waiting for Slack's
+// `hello`, so an immediate status still says «not listening». One re-read a moment later
+// shows the state the user actually has, instead of a false «check the tokens».
+function recheckSlackSoon(): void {
+  clearTimeout(slackRecheck);
+  const workspaceId = props.workspaceId;
+  slackRecheck = setTimeout(() => {
+    if (workspaceId === props.workspaceId) void refreshSlackTokenState(workspaceId);
+  }, 2000);
+}
+
+// Tokens already on this machine skip the app step — the same shortcut as Jira's site step.
+// «Use other tokens» on the channel step goes back for an owner whose stored pair is stale.
+function openSlackConnect(): void {
+  slackBotTokenInput.value = '';
+  slackAppTokenInput.value = '';
+  slackChannels.value = [];
+  slackChannelPick.value = '';
+  slackFlowError.value = '';
+  slackConnectStep.value = slackTokenPresent.value ? 'channel' : 'app';
+  slackConnectOpen.value = true;
+  if (slackConnectStep.value === 'channel') void refreshSlackChannels();
+}
+
+function openSlackSettings(): void {
+  slackFlowError.value = '';
+  slackTokenEditing.value = false;
+  slackBotTokenInput.value = '';
+  slackAppTokenInput.value = '';
+  slackSettingsOpen.value = true;
+  // Listening is live machine state — it may have dropped since the tile was probed.
+  void refreshSlackTokenState();
+}
+
+async function copySlackManifest(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(SLACK_MANIFEST, null, 2));
+    local.notify(t('slack.notify.copied'), 'info');
+  } catch (e) {
+    local.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+async function slackTokenNext(): Promise<void> {
+  const botToken = slackBotTokenInput.value.trim();
+  const appToken = slackAppTokenInput.value.trim();
+  if (!botToken || !appToken) return;
+  slackFlowError.value = '';
+  slackBusy.value = true;
+  try {
+    await api.slackSetToken(props.workspaceId, botToken, appToken);
+    slackBotTokenInput.value = '';
+    slackAppTokenInput.value = '';
+    slackTokenPresent.value = true;
+    await loadSlackChannels();
+    slackConnectStep.value = 'channel';
+  } catch (e) {
+    slackFlowError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    slackBusy.value = false;
+  }
+}
+
+// Only channels the bot is a MEMBER of come back (it cannot read the others), so the list
+// grows by inviting it in Slack and pressing Refresh — the pick survives the reload.
+async function loadSlackChannels(): Promise<void> {
+  slackChannels.value = await api.slackChannels(props.workspaceId);
+  const ids = new Set(slackChannels.value.map((c) => c.id));
+  const keep = [slackChannelPick.value, slackIntegration.value?.channelId ?? ''].find((id) => ids.has(id));
+  slackChannelPick.value = keep ?? slackChannelOptions.value[0]?.value ?? '';
+}
+
+async function refreshSlackChannels(): Promise<void> {
+  if (slackLoadingChannels.value) return;
+  slackFlowError.value = '';
+  slackLoadingChannels.value = true;
+  try {
+    await loadSlackChannels();
+  } catch (e) {
+    slackFlowError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    slackLoadingChannels.value = false;
+  }
+}
+
+async function slackConnectFinish(): Promise<void> {
+  if (!slackChannelPick.value) return;
+  slackFlowError.value = '';
+  slackBusy.value = true;
+  try {
+    const row = await api.slackConnect(props.workspaceId, slackChannelPick.value);
+    await probeSlack(props.workspaceId);
+    slackConnectOpen.value = false;
+    local.notify(t('slack.notify.connected', { channel: `#${row.channelName}` }), 'info');
+    recheckSlackSoon();
+  } catch (e) {
+    slackFlowError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    slackBusy.value = false;
+  }
+}
+
+// ── Slack settings actions ──────────────────────────────────────────────────────
+function startSlackTokenEdit(): void {
+  slackTokenEditing.value = true;
+  slackBotTokenInput.value = '';
+  slackAppTokenInput.value = '';
+}
+
+// Any member may save the pair to host the bot from their machine too; the api refuses a
+// pair from another Slack workspace than the connected one.
+async function saveSlackToken(): Promise<void> {
+  const botToken = slackBotTokenInput.value.trim();
+  const appToken = slackAppTokenInput.value.trim();
+  if (!botToken || !appToken) return;
+  slackFlowError.value = '';
+  slackBusy.value = true;
+  try {
+    await api.slackSetToken(props.workspaceId, botToken, appToken);
+    slackBotTokenInput.value = '';
+    slackAppTokenInput.value = '';
+    slackTokenEditing.value = false;
+    await refreshSlackTokenState();
+    local.notify(t('slack.notify.tokenSaved'), 'info');
+    recheckSlackSoon();
+  } catch (e) {
+    slackFlowError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    slackBusy.value = false;
+  }
+}
+
+async function removeSlackToken(): Promise<void> {
+  if (removingSlackToken.value) return;
+  removingSlackToken.value = true;
+  try {
+    await api.slackDeleteToken(props.workspaceId);
+    await refreshSlackTokenState();
+  } finally {
+    removingSlackToken.value = false;
+  }
+}
+
+function changeSlackChannel(): void {
+  slackSettingsOpen.value = false;
+  openSlackConnect();
+}
+
+async function disconnectSlack(): Promise<void> {
+  if (disconnectingSlack.value) return;
+  slackFlowError.value = '';
+  disconnectingSlack.value = true;
+  try {
+    await api.slackDisconnect(props.workspaceId);
+    slackSettingsOpen.value = false;
+    await probeSlack(props.workspaceId);
+    local.notify(t('slack.notify.disconnected'), 'info');
+  } catch (e) {
+    slackFlowError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    disconnectingSlack.value = false;
+  }
+}
+
 onMounted(() => {
   void jira.probe(props.workspaceId);
   void linear.probe(props.workspaceId);
+  void probeSlack(props.workspaceId);
 });
 watch(
   () => props.workspaceId,
   (id) => {
     void jira.probe(id);
     void linear.probe(id);
+    void probeSlack(id);
   },
 );
+onBeforeUnmount(() => clearTimeout(slackRecheck));
 
 const { t } = useI18n();
 
@@ -862,6 +1255,14 @@ const BRANDS: readonly Brand[] = [
   font-size: var(--k-fs-sm);
   line-height: 1.4;
   color: var(--k-muted);
+}
+
+// The Slack app's numbered setup: hint type, only the list indent pulled in to the modal's.
+.int__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: var(--k-sp-4);
 }
 
 .int__link {

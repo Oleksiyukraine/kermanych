@@ -64,12 +64,6 @@ describe('refusalText', () => {
     expect(line).not.toContain('додай людину');
   });
 
-  it('quotes the limitation of a section that exists but stores nothing', () => {
-    const line = refusalText({ kind: 'unsupported', section: 'management-integrations', request: 'підключи Slack' });
-    expect(line).toContain('«Integrations»');
-    expect(line).toContain('жодне підключення не зроблено');
-  });
-
   it('resolves a section by its url segment as well as its route name', () => {
     expect(refusalText({ kind: 'unsupported', section: 'integrations', request: '' })).toContain('«Integrations»');
   });

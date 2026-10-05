@@ -697,6 +697,35 @@ export type LinearAttachment = {
   createdAt: string;
 };
 
+// ── Slack integration ─────────────────────────────────────────────────────────
+// One Slack channel bound per workspace; its top-level messages are questions answered
+// from the workspace's indexed documentation. The camelCase shape of
+// workspace_slack_integrations; slack.ts owns the snake_case boundary. Addresses only —
+// the bot/app tokens never leave each machine's registry SQLite.
+export type SlackIntegration = {
+  id: string;
+  workspaceId: string;
+  // Slack ids are opaque strings (T…, C…/G…, U…).
+  teamId: string;
+  teamName: string;
+  channelId: string;
+  channelName: string;
+  // The bot's own user id: recognises a follow-up's @-mention and the bot's own messages.
+  botUserId: string;
+  connectedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SlackIntegrationInsert = {
+  workspaceId: string;
+  teamId: string;
+  teamName: string;
+  channelId: string;
+  channelName: string;
+  botUserId: string;
+};
+
 // ── Password vault ────────────────────────────────────────────────────────────
 // The workspace "Storage" section. A password is split across two rows in Postgres — the
 // TITLE every member may read (`workspace_passwords`) and the SECRET only a manager/owner or
