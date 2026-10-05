@@ -21,71 +21,63 @@
         <p class="int__blurb">{{ t(brand.blurb) }}</p>
 
         <!-- Each tile is live: its own state line and its own connect/settings modals. -->
-        <div v-if="brand.id === 'jira'" class="int__foot">
-          <span class="int__state mono">
-            <i class="int__state-dot" :class="{ 'int__state-dot--on': jira.integrations.length > 0 }" aria-hidden="true"></i>
-            <template v-if="jira.integrations.length">{{ t('jira.connect.stateConnectedN', jira.integrations.length) }}</template>
-            <template v-else>{{ t('management.integrations.notConnected') }}</template>
+        <div class="int__foot">
+          <!-- One line whatever the name's length: it truncates, and the tip carries it whole. -->
+          <span class="int__state mono" v-tip="tileState[brand.id].on ? tileState[brand.id].label : ''">
+            <i class="int__state-dot" :class="{ 'int__state-dot--on': tileState[brand.id].on }" aria-hidden="true"></i>
+            <span class="int__state-text">{{ tileState[brand.id].label }}</span>
           </span>
-          <template v-if="jira.integrations.length">
-            <button class="int__cta" type="button" @click="openSettings">{{ t('jira.connect.configure') }}</button>
+          <template v-if="brand.id === 'jira'">
+            <template v-if="jira.integrations.length">
+              <button class="int__cta" type="button" @click="openSettings">{{ t('jira.connect.configure') }}</button>
+              <button
+                v-if="canConnect && jira.integrations.length < 10"
+                class="int__cta"
+                type="button"
+                @click="openConnect"
+              >{{ t('jira.connect.addBoard') }}</button>
+            </template>
             <button
-              v-if="canConnect && jira.integrations.length < 10"
+              v-else
+              v-tip="canConnect ? '' : t('jira.connect.ownerOnly')"
               class="int__cta"
               type="button"
+              :disabled="!canConnect"
               @click="openConnect"
-            >{{ t('jira.connect.addBoard') }}</button>
+            >{{ t('management.integrations.connect') }}</button>
           </template>
-          <button
-            v-else
-            v-tip="canConnect ? '' : t('jira.connect.ownerOnly')"
-            class="int__cta"
-            type="button"
-            :disabled="!canConnect"
-            @click="openConnect"
-          >{{ t('management.integrations.connect') }}</button>
-        </div>
-        <div v-else-if="brand.id === 'linear'" class="int__foot">
-          <span class="int__state mono">
-            <i class="int__state-dot" :class="{ 'int__state-dot--on': !!linear.integration }" aria-hidden="true"></i>
-            <template v-if="linear.integration">{{ t('linear.connect.stateConnected', { board: linear.integration.teamName }) }}</template>
-            <template v-else>{{ t('management.integrations.notConnected') }}</template>
-          </span>
-          <button
-            v-if="linear.integration"
-            class="int__cta"
-            type="button"
-            @click="openLinearSettings"
-          >{{ t('linear.connect.configure') }}</button>
-          <button
-            v-else
-            v-tip="canConnect ? '' : t('linear.connect.ownerOnly')"
-            class="int__cta"
-            type="button"
-            :disabled="!canConnect"
-            @click="openLinearConnect"
-          >{{ t('management.integrations.connect') }}</button>
-        </div>
-        <div v-else-if="brand.id === 'slack'" class="int__foot">
-          <span class="int__state mono">
-            <i class="int__state-dot" :class="{ 'int__state-dot--on': !!slackIntegration }" aria-hidden="true"></i>
-            <template v-if="slackIntegration">{{ t('slack.connect.stateConnected', { channel: `#${slackIntegration.channelName}` }) }}</template>
-            <template v-else>{{ t('management.integrations.notConnected') }}</template>
-          </span>
-          <button
-            v-if="slackIntegration"
-            class="int__cta"
-            type="button"
-            @click="openSlackSettings"
-          >{{ t('slack.connect.configure') }}</button>
-          <button
-            v-else
-            v-tip="canConnect ? '' : t('slack.connect.ownerOnly')"
-            class="int__cta"
-            type="button"
-            :disabled="!canConnect"
-            @click="openSlackConnect"
-          >{{ t('management.integrations.connect') }}</button>
+          <template v-else-if="brand.id === 'linear'">
+            <button
+              v-if="linear.integration"
+              class="int__cta"
+              type="button"
+              @click="openLinearSettings"
+            >{{ t('linear.connect.configure') }}</button>
+            <button
+              v-else
+              v-tip="canConnect ? '' : t('linear.connect.ownerOnly')"
+              class="int__cta"
+              type="button"
+              :disabled="!canConnect"
+              @click="openLinearConnect"
+            >{{ t('management.integrations.connect') }}</button>
+          </template>
+          <template v-else-if="brand.id === 'slack'">
+            <button
+              v-if="slackIntegration"
+              class="int__cta"
+              type="button"
+              @click="openSlackSettings"
+            >{{ t('slack.connect.configure') }}</button>
+            <button
+              v-else
+              v-tip="canConnect ? '' : t('slack.connect.ownerOnly')"
+              class="int__cta"
+              type="button"
+              :disabled="!canConnect"
+              @click="openSlackConnect"
+            >{{ t('management.integrations.connect') }}</button>
+          </template>
         </div>
       </article>
     </div>
@@ -1063,8 +1055,10 @@ onBeforeUnmount(() => clearTimeout(slackRecheck));
 
 const { t } = useI18n();
 
+type BrandId = 'jira' | 'linear' | 'slack';
+
 type Brand = {
-  id: string;
+  id: BrandId;
   name: string;
   blurb: string;
   // Display colour, NOT the raw brand hex. Each is mixed toward `--k-text` in the
@@ -1076,6 +1070,22 @@ type Brand = {
   // than five inline <svg> blocks so a fourth service is one row.
   path: string;
 };
+
+// The tile's state line. A connected label carries a user-chosen name (board, team,
+// channel) of any length — the template truncates it to the tile and tips it whole.
+const tileState = computed<Record<BrandId, { on: boolean; label: string }>>(() => {
+  const off = t('management.integrations.notConnected');
+  const boards = jira.integrations.length;
+  return {
+    jira: { on: boards > 0, label: boards ? t('jira.connect.stateConnectedN', boards) : off },
+    linear: linear.integration
+      ? { on: true, label: t('linear.connect.stateConnected', { board: linear.integration.teamName }) }
+      : { on: false, label: off },
+    slack: slackIntegration.value
+      ? { on: true, label: t('slack.connect.stateConnected', { channel: `#${slackIntegration.value.channelName}` }) }
+      : { on: false, label: off },
+  };
+});
 
 const BRANDS: readonly Brand[] = [
   {
@@ -1134,6 +1144,9 @@ const BRANDS: readonly Brand[] = [
   flex-direction: column;
   gap: var(--k-sp-2);
   padding: var(--k-sp-4);
+  // A grid item's min-width is its content's by default, so a long label would push
+  // the tile past its track instead of truncating inside it.
+  min-width: 0;
   background: color-mix(in srgb, var(--k-surface2) 40%, transparent);
   border: var(--k-rule-thin) solid var(--k-line);
   border-radius: var(--k-r-lg);
@@ -1200,15 +1213,25 @@ const BRANDS: readonly Brand[] = [
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  max-width: 100%;
+  min-width: 0;
   font-size: 10px;
   letter-spacing: 0.04em;
   white-space: nowrap;
   color: var(--k-faint);
 }
 
+.int__state-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 // Hollow while nothing is live behind it; the connected dot fills — a live link is a
 // running thing, the same vocabulary as a session dot.
 .int__state-dot {
+  // A flex item shrinks by default: an overlong label squeezed the dot to a sliver.
+  flex: none;
   width: 6px;
   height: 6px;
   border-radius: var(--k-r-pill);
