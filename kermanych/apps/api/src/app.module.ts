@@ -40,9 +40,11 @@ import { TerminalService } from "./terminal/terminal.service";
 import { TerminalGateway } from "./ws/terminal.gateway";
 import { NativeSessionService } from "./native/native-session.service";
 import { NativeController } from "./http/native.controller";
+import { BrowserMcpController } from "./http/browser-mcp.controller";
+import { BrowserMcpService } from "./browser/browser-mcp.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -100,6 +102,10 @@ import { NativeController } from "./http/native.controller";
     // per-launch hooks (NativeController) and the harness's session file. SupervisorService
     // routes native rows here and subscribes to its events; it never depends back.
     NativeSessionService,
+    // The session browser's tools (docs/specs/2026-10-05-embedded-browser.md) as MCP, one
+    // bearer per session; the supervisor and NativeSessionService hand its binding to each
+    // launch. The browser itself is the desktop app's (`bootstrap({ browser })`).
+    BrowserMcpService,
     // Global by design: the api binds 127.0.0.1 but was previously drivable by
     // anything on the machine, including GET /fs/list (arbitrary local directory
     // enumeration). Opt out per route with @Public(), never per module.

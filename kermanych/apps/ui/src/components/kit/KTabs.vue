@@ -13,6 +13,7 @@
       >
         {{ tab.label }}
         <span v-if="tab.count != null && tab.count > 0" class="k-tabs__count mono">{{ tab.count }}</span>
+        <span v-if="tab.live" class="k-tabs__live" aria-hidden="true"></span>
       </button>
     </div>
     <!-- Trailing controls (e.g. the log's expand/collapse pair), right-aligned on the tab
@@ -26,11 +27,12 @@
 <script setup lang="ts">
 // Underline tabs. Active tab carries the vermilion 2px underline and full-text
 // color; inactive tabs are muted and brighten on hover. A tab MAY carry a `count`
-// badge (the changed-file / worktree-file tallies), and the row MAY host trailing
-// controls through the `end` slot.
+// badge (the changed-file / worktree-file tallies), a pulsing `live` dot (something is acting
+// in that tab right now — the agent driving the session browser), and the row MAY host
+// trailing controls through the `end` slot.
 defineProps<{
   modelValue: string;
-  tabs: { value: string; label: string; count?: number }[];
+  tabs: { value: string; label: string; count?: number; live?: boolean }[];
 }>();
 
 const emit = defineEmits<{
@@ -91,6 +93,19 @@ const emit = defineEmits<{
   font-size: var(--k-fs-xs);
   font-weight: var(--k-fw-regular);
   color: var(--k-faint);
+}
+
+.k-tabs__live {
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--k-accent);
+  animation: k-tabs-live 1.2s ease-in-out infinite;
+}
+
+@keyframes k-tabs-live {
+  50% { opacity: 0.3; }
 }
 
 .k-tabs__end {

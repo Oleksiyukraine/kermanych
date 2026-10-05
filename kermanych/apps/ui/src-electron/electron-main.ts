@@ -7,11 +7,15 @@ import type { INestApplication } from '@nestjs/common';
 import { closeLoopback, startLoopbackOAuth } from './oauth-loopback';
 import { routeLinksToDefaultBrowser } from './external-links';
 import { htmlToPdf } from './print-pdf';
+import { SessionBrowsers } from './session-browser';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
 let mainWindow: BrowserWindow | undefined;
 let nest: INestApplication | undefined;
+// The session browser: its IPC is registered now, its views live in the window once attached,
+// and the api reaches it as the BrowserHost behind the agents' browser_* MCP tools.
+const browsers = new SessionBrowsers();
 
 // Prefer 4317; fall back to an OS-assigned free port if it is taken.
 function freePort(preferred: number): Promise<number> {
@@ -32,7 +36,7 @@ function freePort(preferred: number): Promise<number> {
 
 async function startBackend(): Promise<string> {
   const port = await freePort(4317);
-  const res = await bootstrap({ port });
+  const res = await bootstrap({ port, browser: browsers });
   nest = res.app;
   return `${res.url}/api`;
 }
@@ -55,6 +59,7 @@ async function createWindow(apiBase: string) {
     },
   });
   routeLinksToDefaultBrowser(mainWindow, (url) => shell.openExternal(url));
+  browsers.attach(mainWindow);
 
   if (process.env.DEV) {
     // Vite serves optimized deps as `immutable` under a `?v=<browserHash>` query that does NOT

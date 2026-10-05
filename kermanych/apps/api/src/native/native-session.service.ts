@@ -20,7 +20,9 @@ import { CodedError } from "../management/coded-error";
 import { claudeHistoryToOmp } from "../runtime/claude-history";
 import { messagesToTranscript, type OmpMessage, type Rehydrated } from "../supervisor/messages-to-transcript";
 import { PR_URL_RE } from "../supervisor/pr-url";
-import { claudeSettingsPath, NATIVE_TOKEN_ENV, NATIVE_URL_ENV, ompExtensionPath } from "./native-hooks";
+import { claudeMcpConfigPath, claudeSettingsPath, NATIVE_TOKEN_ENV, NATIVE_URL_ENV, ompExtensionPath } from "./native-hooks";
+import { BrowserMcpService } from "../browser/browser-mcp.service";
+import { MCP_TOKEN_ENV, MCP_URL_ENV, ompMcpBridgePath } from "../runtime/omp-mcp-bridge";
 
 export type NativeEvent =
   | { type: "changed"; sessionId: string }
@@ -160,6 +162,9 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     private registry: RegistryService,
     private terminal: TerminalService,
     @Optional() private http?: HttpAdapterHost,
+    // The session browser's tools — a deliberate exception to «nothing of Kermanych enters a
+    // native session» (docs/specs/2026-10-05-embedded-browser.md → Who gets the tools).
+    @Optional() private browser?: BrowserMcpService,
   ) {
     this.sub = this.terminal.events$.subscribe((e) => {
       if (e.type !== "exit") return;
@@ -212,7 +217,8 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     if (!port) throw new Error("the api is not listening yet");
     const token = randomBytes(24).toString("hex");
     const prompt = opts.prompt?.trim() ? opts.prompt : undefined;
-    const { file, args } = await this.command(session, opts.resume, prompt);
+    const mcp = this.browser?.bindingFor(session.id);
+    const { file, args } = await this.command(session, opts.resume, prompt, mcp);
 
     const run = { token, status: prompt ? "queued" : this.settled(session.id) } as Run;
     run.exited = new Promise<void>((resolve) => (run.onExit = resolve));
@@ -224,7 +230,12 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
         cwd,
         file,
         args,
-        env: { [NATIVE_URL_ENV]: `http://127.0.0.1:${port}/api/native/${session.id}`, [NATIVE_TOKEN_ENV]: token },
+        env: {
+          [NATIVE_URL_ENV]: `http://127.0.0.1:${port}/api/native/${session.id}`,
+          [NATIVE_TOKEN_ENV]: token,
+          // omp's bridge reads the browser server from here; claude has it in its --mcp-config.
+          ...(mcp && session.runtime !== "claude-code" ? { [MCP_URL_ENV]: mcp.url, [MCP_TOKEN_ENV]: mcp.token } : {}),
+        },
       });
       run.terminalId = info.id;
     } catch (err) {
@@ -237,19 +248,30 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
 
   // The harness argv (docs/specs/2026-10-05-native-sessions.md → Commands). `--` keeps a prompt
   // that opens with a dash, or with an omp subcommand's name, from being read as an option.
-  private async command(session: Session, resume: boolean, prompt?: string): Promise<{ file: string; args: string[] }> {
+  // With the session browser bound, claude also gets `--mcp-config <file>` — variadic, so it
+  // stays right before the `--` tail (or last) and never swallows a following argument — and
+  // omp a second `--hook`: the MCP bridge, which reads its server from the pty env.
+  private async command(
+    session: Session,
+    resume: boolean,
+    prompt?: string,
+    mcp?: { name: string; url: string; token: string },
+  ): Promise<{ file: string; args: string[] }> {
     const tail = prompt ? ["--", prompt] : [];
     if (session.runtime === "claude-code") {
       const settings = await claudeSettingsPath();
-      if (resume && session.ompSessionId) return { file: "claude", args: ["--resume", session.ompSessionId, "--settings", settings, ...tail] };
+      const mcpArgs = mcp ? ["--mcp-config", await claudeMcpConfigPath(session.id, mcp)] : [];
+      if (resume && session.ompSessionId)
+        return { file: "claude", args: ["--resume", session.ompSessionId, "--settings", settings, ...mcpArgs, ...tail] };
       // Kermanych names the transcript, so history and usage are findable before any hook.
       const uuid = randomUUID();
       this.registry.updateSession(session.id, { ompSessionId: uuid });
-      return { file: "claude", args: ["--session-id", uuid, "--settings", settings, ...tail] };
+      return { file: "claude", args: ["--session-id", uuid, "--settings", settings, ...mcpArgs, ...tail] };
     }
     const hook = await ompExtensionPath();
     const from = resume && session.ompSessionFile ? ["--resume", session.ompSessionFile] : [];
-    return { file: "omp", args: ["launch", ...from, "--hook", hook, ...tail] };
+    const bridge = mcp ? ["--hook", await ompMcpBridgePath()] : [];
+    return { file: "omp", args: ["launch", ...from, "--hook", hook, ...bridge, ...tail] };
   }
 
   // Kill the harness (SIGHUP, then SIGKILL past a grace period) and resolve once it exited.

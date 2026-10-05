@@ -5,8 +5,9 @@
 // never written. Neither file holds a secret: the per-launch URL and bearer arrive in the
 // harness's environment (KERMANYCH_NATIVE_URL / KERMANYCH_NATIVE_TOKEN), so every native
 // session on this machine shares the same two files. Written once per api process to a fixed
-// temp path, like runtime/omp-mcp-bridge.ts.
-import { mkdir, writeFile } from "node:fs/promises";
+// temp path, like runtime/omp-mcp-bridge.ts. The one per-session, secret-holding file — claude's
+// session-browser `--mcp-config` — is at the bottom.
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -105,11 +106,13 @@ export default function (pi) {
 
 // Rewritten on every launch rather than memoized: the content is tiny and fixed, and a temp
 // directory the OS swept while the api ran must not leave a launch pointing at a missing file.
-async function writeHookFile(name: string, content: string): Promise<string> {
+// `mode` is for a file that holds a secret: set at creation and re-applied to an older file.
+async function writeHookFile(name: string, content: string, mode?: number): Promise<string> {
   const dir = join(tmpdir(), "kermanych-native");
   await mkdir(dir, { recursive: true });
   const path = join(dir, name);
-  await writeFile(path, content, "utf8");
+  await writeFile(path, content, { encoding: "utf8", ...(mode === undefined ? {} : { mode }) });
+  if (mode !== undefined) await chmod(path, mode);
   return path;
 }
 
@@ -119,4 +122,13 @@ export function claudeSettingsPath(): Promise<string> {
 
 export function ompExtensionPath(): Promise<string> {
   return writeHookFile("omp-native.js", OMP_EXTENSION_SOURCE);
+}
+
+// The session browser's MCP server for a native claude (`--mcp-config`,
+// docs/specs/2026-10-05-embedded-browser.md). Unlike the two files above it holds the
+// session's bearer — claude reads MCP headers only from config, not from its environment — so
+// it is one file per session, readable by the operator alone.
+export function claudeMcpConfigPath(sessionId: string, server: { name: string; url: string; token: string }): Promise<string> {
+  const config = { mcpServers: { [server.name]: { type: "http", url: server.url, headers: { Authorization: `Bearer ${server.token}` } } } };
+  return writeHookFile(`mcp-${sessionId}.json`, JSON.stringify(config, null, 2), 0o600);
 }

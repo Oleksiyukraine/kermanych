@@ -54,12 +54,16 @@ export default async function (pi) {
       description: t.description,
       parameters: t.inputSchema,
       loadMode: "essential",
-      // omp's extension signature: (toolCallId, params, signal, onUpdate, ctx).
+      // omp's extension signature: (toolCallId, params, signal, onUpdate, ctx). Text items are
+      // joined into one; image items (the session browser's screenshot) pass through as omp
+      // image content after it.
       async execute(_id, params, signal) {
         const r = await rpc("tools/call", { name: t.name, arguments: params ?? {} }, signal);
-        const text = (r.content ?? []).map((c) => c.text ?? "").join("\\n");
+        const items = r.content ?? [];
+        const text = items.filter((c) => c.type !== "image").map((c) => c.text ?? "").join("\\n");
         if (r.isError) throw new Error(text);
-        return { content: [{ type: "text", text }] };
+        const images = items.filter((c) => c.type === "image" && c.data).map((c) => ({ type: "image", data: c.data, mimeType: c.mimeType }));
+        return { content: [...(text || !images.length ? [{ type: "text", text }] : []), ...images] };
       },
     });
   }

@@ -5,10 +5,16 @@ import type { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "./app.module";
 import { RegistryService } from "./registry/registry.service";
 import { seedDemo } from "./preview/seed";
+import { setBrowserHost, type BrowserHost } from "./browser/browser-host";
+
+export type { BrowserConsoleEntry, BrowserHost, BrowserPageInfo, BrowserTarget } from "./browser/browser-host";
 
 // Build + start the Kermanych API. Exported so the Electron main process can host
 // it in-process; still self-runs for standalone `node dist/main.js` / `pnpm dev:api`.
-export async function bootstrap(opts: { port?: number } = {}): Promise<{ app: INestApplication; url: string }> {
+// `browser` is the desktop app's session browser (browser/browser-host.ts); without it no
+// session gets the browser tools.
+export async function bootstrap(opts: { port?: number; browser?: BrowserHost } = {}): Promise<{ app: INestApplication; url: string }> {
+  setBrowserHost(opts.browser);
   // Images ride message/create payloads as base64 (omp caps each at 20 MiB),
   // so lift the body limit well past Express's 100 KB default.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });

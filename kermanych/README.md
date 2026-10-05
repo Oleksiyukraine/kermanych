@@ -494,10 +494,11 @@ pnpm build:app    # build a macOS .dmg (unsigned)
 ```
 
 Links never open inside the desktop window: every `http(s)`/`mailto` link — Jira
-and Linear tickets, attachments, storage downloads, markdown links, and the session
-live preview — opens in your default browser (Chrome, Arc, Safari, …).
+and Linear tickets, attachments, storage downloads and markdown links — opens in your
+default browser (Chrome, Arc, Safari, …). The session live preview opens in the session's
+own browser instead (see [Session browser](#session-browser)).
 
-The one deliberate exception is **Менеджмент → Project Documentation → Посилання**.
+The other deliberate exception is **Менеджмент → Project Documentation → Посилання**.
 The screen splits documentation into two tabs, always both present, on two levels:
 **Репозиторій** is per project (pick the project, then browse the bound checkout's doc
 folders) and **Посилання** is per *workspace* (pages outside any repository, shared by
@@ -561,7 +562,9 @@ in your own terminal. (Spec: `docs/specs/2026-10-05-native-sessions.md`.)
 - **Nothing of Kermanych enters the agent's context**: no project skills, triggers,
   language or documentation directives, co-author trailer, model or effort flags. Your own
   `~/.claude` / `~/.omp` configuration applies unchanged; switch model with the harness's
-  own `/model`. Model, effort and images are hidden in the launcher for this mode.
+  own `/model`. Model, effort and images are hidden in the launcher for this mode. The one
+  exception is the [session browser](#session-browser)'s tools, passed on the launch in the
+  desktop app.
 - **What Kermanych still tracks.** Status on the board (working, tool, waiting for you,
   ready, on review, stopped) comes from hooks passed **on that launch only** —
   `claude --settings <file>` and `omp --hook <file>`, posting to the local API with a
@@ -580,6 +583,41 @@ in your own terminal. (Spec: `docs/specs/2026-10-05-native-sessions.md`.)
 - **Not available** for native sessions: changing model or effort from Kermanych, harness
   commands from a composer, answering prompts outside the terminal, discussion branches,
   review, images and the subagent map. Launches from «Дошка» and «В беклог» stay managed.
+
+## Session browser
+
+In the desktop app every session has its own browser: the **Браузер** tab of the session
+(spec: `docs/specs/2026-10-05-embedded-browser.md`). It is a real Chromium page — address
+bar, back/forward/reload, devtools (⚙), «open in system browser» (⤤). The agent of that
+session drives the same page, and you watch it live; the tab's dot pulses while the agent
+is using it. The web build has no Браузер tab.
+
+- **Preview.** ▶ starts the session's live preview and opens it in this tab instead of the
+  system browser.
+- **Point at a problem.** Press **◎ Вказати** and click an element on the page (the click
+  does not reach the page; <kbd>Esc</kbd> cancels). It lands in a tray under the toolbar
+  with a cropped screenshot, its selector and — on a Vue, React ≤18 or Svelte dev build —
+  the component file. Add a comment to each, then **Надіслати агенту**: one message with the
+  comment, page URL, selector, text, trimmed HTML and computed styles. A managed session gets
+  the crops as images; a native session gets their file paths (under
+  `$TMPDIR/kermanych-browser/`) and, like any helper, accepts the message only while idle —
+  a refusal keeps the tray.
+- **Agent tools.** Agent and chat sessions (managed and native, not discussion/review
+  branches) get an MCP server `kermanych` with `browser_navigate` (no URL → the running
+  preview), `browser_snapshot` (page outline with `e1`, `e2`… refs), `browser_click`,
+  `browser_type`, `browser_press`, `browser_screenshot`, `browser_console` (console messages
+  and failed / 4xx / 5xx requests) and `browser_evaluate`. claude shows them as
+  `mcp__kermanych__browser_*`. Managed sessions get them on launch and resume; native ones
+  via `claude --mcp-config <file>` (a per-session `0600` file) or a second `omp --hook`.
+  The endpoint is `POST /api/browser/mcp` on the local API with a per-session bearer; a
+  session's calls run one at a time. An API started without the desktop app offers no
+  browser tools.
+- **Cookies** are kept per project (Electron partition `persist:kermanych-browser-<projectId>`):
+  sessions of one project share logins, projects do not. Pages may not open other schemes,
+  popups load in the same page, and permission prompts (camera, location, …) are refused.
+- **The browser sits above the app's own UI**, so it is hidden while a menu, dialog or error
+  toast is open, or when another tab is selected. A hidden session browser keeps running —
+  the agent can work in it while you look elsewhere. It is closed with its session.
 
 ## Monorepo layout
 
