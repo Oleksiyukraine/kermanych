@@ -8,6 +8,8 @@ import { RegistryService } from "../registry/registry.service";
 import { WorktreeService, type ChangedFile } from "../worktree/worktree.service";
 import type { SplitDiff } from "../worktree/split-diff";
 import { createRuntime, type AgentRuntime } from "../runtime/agent-runtime";
+import { BrowserMcpService } from "../browser/browser-mcp.service";
+import { browserHost } from "../browser/browser-host";
 import { resolveRuntime } from "../runtime/resolve-runtime";
 import { languageAppendFor } from "../runtime/resolve-language";
 import { messagesToTranscript } from "./messages-to-transcript";
@@ -172,6 +174,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Native sessions (docs/specs/2026-10-05-native-sessions.md) are driven there; this
     // service routes native rows to it and relays its changes as ServerEvents.
     @Optional() private native?: NativeSessionService,
+    // The session browser's tools (docs/specs/2026-10-05-embedded-browser.md): agent and chat
+    // launches and resumes get its MCP binding; discussion/review forks do not. Optional so
+    // specs construct the supervisor without it — then no session gets the tools.
+    @Optional() private browser?: BrowserMcpService,
   ) {
     this.native?.events$.subscribe((e) => {
       if (e.type === "changed") return this.pushUpdate(e.sessionId);
@@ -577,6 +583,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     try {
       return await this.launch(session, project, { images });
     } catch (err) {
+      this.browser?.revoke(session.id);
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
       // A launch that never started must not leave the card pinned to whoever failed to
@@ -605,7 +612,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     });
     const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
     const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
-    const rpc = createRuntime(session.runtime ?? "omp", { cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(project.id) });
+    const browserMcp = this.browser?.bindingFor(session.id);
+    const rpc = createRuntime(session.runtime ?? "omp", { cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await rpc.start();
@@ -621,6 +629,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.map.delete(session.id);
       this.toolDetails.dropSession(session.id);
       this.skillLabels.delete(session.id);
+      this.browser?.revoke(session.id);
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
       throw err;
@@ -798,7 +807,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const cwd = worktree ? wtDir : project.localRepoPath;
     const configPath = await this.ompSkills(project.id, cwd, id);
     const extensionPath = await this.ompTriggers(project.id, cwd, id);
-    const rpc = createRuntime(session.runtime ?? "omp", { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(project.id) });
+    const browserMcp = this.browser?.bindingFor(id);
+    const rpc = createRuntime(session.runtime ?? "omp", { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await rpc.start();
@@ -1805,6 +1815,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         if (s.branch) await this.worktree.removeBranch(g.localRepoPath, s.branch);
       }
     }
+    // The session's browser view and its bearer go with it (no-ops when it never had either).
+    browserHost()?.close(id);
+    this.browser?.revoke(id);
     this.registry.removeSession(id);
     this.events.next({ type: "session_removed", sessionId: id });
   }
@@ -2258,7 +2271,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // read per backend, so both re-render their prior transcript on wake.
     const runtimeKind = s.runtime ?? "omp";
     const resumeHandle = runtimeKind === "claude-code" ? s.ompSessionId : s.ompSessionFile;
-    const rpc = createRuntime(runtimeKind, { cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
+    // Forks (discussion/review) never get the session browser; agents and chats do.
+    const browserMcp = s.kind === "discussion" || s.kind === "review" ? undefined : this.browser?.bindingFor(id);
+    const rpc = createRuntime(runtimeKind, { cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(s.projectId) });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await rpc.start();

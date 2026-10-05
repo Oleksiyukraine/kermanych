@@ -2,7 +2,7 @@
 // Native sessions (docs/specs/2026-10-05-native-sessions.md): the harness argv, the hook →
 // status mapping for both harnesses, the per-launch bearer, helper delivery by bracketed paste,
 // the session-file readers, and the api-start reset. The pty is a fake TerminalService.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HttpException } from "@nestjs/common";
@@ -15,6 +15,7 @@ import type { TerminalEvent, TerminalService } from "../src/terminal/terminal.se
 import { claudeFileUsage, NativeSessionService, ompFileUsage, type NativeEvent } from "../src/native/native-session.service";
 import { NativeController } from "../src/http/native.controller";
 import { CodedError } from "../src/management/coded-error";
+import type { BrowserMcpService } from "../src/browser/browser-mcp.service";
 
 type OpenOpts = Parameters<TerminalService["openSession"]>[0];
 
@@ -46,11 +47,13 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function make() {
+function make(browser?: { name: string; url: string; token: string }) {
   const registry = new RegistryService(":memory:");
   registry.upsertProject({ id: "p1", name: "p", localRepoPath: dir });
   const { terminal, opened } = fakeTerminal();
-  const native = new NativeSessionService(registry, terminal as unknown as TerminalService, http);
+  // Only bindingFor is read at launch; undefined = no session browser (a standalone api).
+  const mcp = browser ? ({ bindingFor: () => browser } as unknown as BrowserMcpService) : undefined;
+  const native = new NativeSessionService(registry, terminal as unknown as TerminalService, http, mcp);
   native.readClaudeHistory = async () => [];
   const events: NativeEvent[] = [];
   native.events$.subscribe((e) => events.push(e));
@@ -100,6 +103,28 @@ describe("harness argv", () => {
     terminal.events$.next({ type: "exit", id: "t1", exitCode: 0 });
     await native.start(row(s.id), { resume: true });
     expect(opened[1].args).toEqual(["launch", "--resume", "/x/s.jsonl", "--hook", hook]);
+  });
+
+  it("with the session browser bound: claude gets a 0600 --mcp-config before the tail, omp the bridge hook and env", async () => {
+    const binding = { name: "kermanych", url: "http://127.0.0.1:4317/api/browser/mcp", token: "tok" };
+    const { native, opened, create, row } = make(binding);
+    const c = create("claude-code");
+    await native.start(c, { prompt: "go", resume: false });
+    const settings = join(tmpdir(), "kermanych-native", "claude-settings.json");
+    const config = join(tmpdir(), "kermanych-native", `mcp-${c.id}.json`);
+    expect(opened[0].args).toEqual(["--session-id", row(c.id).ompSessionId, "--settings", settings, "--mcp-config", config, "--", "go"]);
+    expect(JSON.parse(readFileSync(config, "utf8"))).toEqual({
+      mcpServers: { kermanych: { type: "http", url: binding.url, headers: { Authorization: "Bearer tok" } } },
+    });
+    expect(statSync(config).mode & 0o777).toBe(0o600);
+    expect(opened[0].env).not.toHaveProperty("KERMANYCH_MCP_TOKEN");
+
+    const o = create("omp");
+    await native.start(o, { resume: false });
+    const hook = join(tmpdir(), "kermanych-native", "omp-native.js");
+    const bridge = join(tmpdir(), "kermanych-omp-mcp", "bridge.js");
+    expect(opened[1].args).toEqual(["launch", "--hook", hook, "--hook", bridge]);
+    expect(opened[1].env).toMatchObject({ KERMANYCH_MCP_URL: binding.url, KERMANYCH_MCP_TOKEN: "tok", KERMANYCH_NATIVE_TOKEN: expect.any(String) });
   });
 });
 

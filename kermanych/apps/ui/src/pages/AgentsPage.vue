@@ -335,6 +335,16 @@
             <div v-else class="agents__log-empty mono">{{ t('agents.detail.logEmpty') }}</div>
           </KPanel>
         </div>
+        <!-- Desktop only. Mounted only while this tab is open: the pane parks the native view
+             when it unmounts, so every other tab, a deselect and leaving Агенти hide the page. -->
+        <div v-if="detailTab === 'browser' && sessionBrowser.available" class="agents__tabpane">
+          <KBrowserPane
+            :key="selectedSession.id"
+            :session="selectedSession"
+            :sending="sendingPicks"
+            @send="onSendPicks(selectedSession)"
+          />
+        </div>
         <div v-if="detailTab === 'changes'" class="agents__tabpane agents__changes">
           <div v-if="worktreeGone" class="agents__pane-blank">
             <span class="agents__pane-blank-eyebrow mono">{{ t('agents.changes.historyEyebrow') }}</span>
@@ -1037,6 +1047,9 @@ import { useResizablePanel } from '../composables/useResizablePanel';
 import { useVirtualList } from '../composables/useVirtualList';
 import { nativeHarnessName, nativeRuntimeFor, sessionCostKnown, LAUNCH_MODES, type LaunchMode } from '../lib/native-session';
 import KTerminalView from 'components/kit/KTerminalView.vue';
+import KBrowserPane from 'components/kit/KBrowserPane.vue';
+import { useSessionBrowser } from 'stores/browser';
+import { composePicksMessage, picksImages } from '../lib/browser-picks';
 
 // The Агенти screen (design-system section 07): the board of session cards for whatever is
 // in scope — one project, or every project of a workspace — plus the full panel for the
@@ -1639,12 +1652,13 @@ function onQaToggle(itemId: string, checked: boolean): void {
   if (task) void board.setQaItemChecked(task.id, itemId, checked);
 }
 
-// ── Detail tabs (Лог / Зміни / Сесія / Документація / QA) ────────────────────
-// The right panel splits the session into four views. The choice is persisted
+// ── Detail tabs (Лог / Зміни / Сесія / Документація / QA / Браузер) ─────────
+// The right panel splits the session into these views. The choice is persisted
 // per session (localStorage `kermanych.agents.tab.<id>`) so reopening an agent lands where the
 // operator left it; a fresh session defaults to the log.
+const sessionBrowser = useSessionBrowser();
 const detailTabs = computed(() => {
-  const tabs: { value: string; label: string; count?: number }[] = [
+  const tabs: { value: string; label: string; count?: number; live?: boolean }[] = [
     { value: 'log', label: t('agents.tabs.log') },
     { value: 'changes', label: t('agents.tabs.changes'), count: changesInfo.value?.files.length ?? 0 },
     { value: 'session', label: t('agents.tabs.session') },
@@ -1654,6 +1668,12 @@ const detailTabs = computed(() => {
   // checklist for a task-linked session and an empty state otherwise (it fills after «Створити
   // ПР»); the count is 0 until then.
   tabs.push({ value: 'qa', label: t('agents.tabs.qa'), count: qaChecklist.value?.items.length ?? 0 });
+  // The session browser exists only in the desktop app. Its dot pulses while the agent is
+  // driving the page (a browser tool call in the last few seconds).
+  if (sessionBrowser.available) {
+    const id = store.selectedSessionId;
+    tabs.push({ value: 'browser', label: t('agents.tabs.browser'), live: !!id && sessionBrowser.agentLive.has(id) });
+  }
   return tabs;
 });
 const detailTab = ref('log');
@@ -1662,7 +1682,8 @@ watch(
   (id) => {
     const saved = id ? localStorage.getItem(`kermanych.agents.tab.${id}`) : null;
     detailTab.value =
-      saved === 'changes' || saved === 'session' || saved === 'docs' || saved === 'qa'
+      saved === 'changes' || saved === 'session' || saved === 'docs' || saved === 'qa' ||
+      (saved === 'browser' && sessionBrowser.available)
         ? saved
         : 'log';
   },
@@ -2328,6 +2349,27 @@ async function onSend(text: string, images: ImageInput[]): Promise<void> {
   }
 }
 
+// Браузер → «Надіслати агенту»: the picks tray as ONE message, through the same send the Лог
+// composer uses. A managed session gets the crops as images; a native one their file paths in
+// the text (it takes text only — lib/browser-picks.ts). A refusal (`native_busy`, a dead child)
+// keeps the tray so nothing the operator wrote is lost.
+const sendingPicks = ref(false);
+async function onSendPicks(s: Session): Promise<void> {
+  const picks = sessionBrowser.picks[s.id];
+  if (!picks?.length || sendingPicks.value) return;
+  const native = !!s.native;
+  sendingPicks.value = true;
+  try {
+    await store.sendMessage(s.id, composePicksMessage(picks, { native }), nextMode(s), picksImages(picks, { native }));
+    sessionBrowser.clearPicks(s.id);
+    if (store.selectedSessionId === s.id) detailTab.value = 'log';
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    sendingPicks.value = false;
+  }
+}
+
 // Composer ↻ — wake a dormant session so its history comes back. After an app restart the
 // api has no omp child for the session, so the transcript endpoint can only serve a "dormant"
 // notice and every chat reads empty; this respawns the child and reloads its transcript
@@ -2823,12 +2865,17 @@ async function launchInto(win: Window | null, s: Session): Promise<void> {
       openPreviewConfig(s);
       return;
     }
-    // In a browser the placeholder tab (opened inside the click, before any await, so no
-    // popup blocker bites) is pointed at the preview. The desktop app denies that
-    // placeholder — every link goes to the default browser — so `win` is null there and
-    // the ready URL is opened directly; main hands it to the OS.
+    // Desktop app: the preview opens in the session's own browser and the detail switches to
+    // its tab (no placeholder window was opened — `win` is null). In a browser the placeholder
+    // tab (opened inside the click, before any await, so no popup blocker bites) is pointed at
+    // the preview.
     if (!res.url) win?.close();
-    else if (win) win.location.href = res.url;
+    else if (window.kermanych?.browser) {
+      if (store.selectedSessionId === s.id) detailTab.value = 'browser';
+      window.kermanych.browser.navigate(s.id, s.projectId, res.url).catch((e: unknown) =>
+        store.notify(e instanceof Error ? e.message : String(e), 'error'),
+      );
+    } else if (win) win.location.href = res.url;
     else window.open(res.url, '_blank');
   } catch (e) {
     win?.close();
@@ -2855,9 +2902,18 @@ async function togglePreview(s: Session): Promise<void> {
     openPreviewConfig(s);
     return;
   }
+  const win = previewPlaceholder();
+  await launchInto(win, s);
+}
+
+// The browser build's «loading…» tab for a preview, opened synchronously inside the click so
+// the popup blocker lets it through. None in the desktop app: the preview goes to the session
+// browser there.
+function previewPlaceholder(): Window | null {
+  if (window.kermanych?.browser) return null;
   const win = window.open('', '_blank');
   win?.document.write(loadingHtml.value);
-  await launchInto(win, s);
+  return win;
 }
 
 function openPreviewConfig(s: Session, forceDefaults = false): void {
@@ -2893,8 +2949,7 @@ async function submitPreviewConfig(): Promise<void> {
     );
     return;
   }
-  const win = window.open('', '_blank');
-  win?.document.write(loadingHtml.value);
+  const win = previewPlaceholder();
   previewCfgOpen.value = false;
   try {
     const patch: { previewCommand: string; apiCommand?: string } = {
