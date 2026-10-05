@@ -98,7 +98,7 @@
                offers exactly DOCS_RULES[key]; the note under it explains the selected rule.
                The rules keep their values while the switch is off, so turning it back on
                restores them. `required` makes the api refuse «Створити ПР», «Закоміти» and
-               «Завершити»; `ask` puts a checkbox into the finish sheet. -->
+               «Завершити». -->
           <section class="set__docs">
             <div class="set__docs-head">
               <span class="set__docs-title">{{ t('settings.docs.policyTitle') }}</span>

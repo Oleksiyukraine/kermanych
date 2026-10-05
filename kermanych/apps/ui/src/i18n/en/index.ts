@@ -414,8 +414,6 @@ export const en: MessageSchema = {
       createPr: 'Create PR',
       commit: 'Commit',
       action: 'Finish',
-      handoff: 'Frontend handoff',
-      apiRequest: 'API extension request',
       docsMissing: 'This project requires documentation, and some is missing:',
       docsFailure: {
         taskSpec: 'no task document in docs/specs',
@@ -949,7 +947,6 @@ export const en: MessageSchema = {
       rule: {
         off: 'Off',
         optional: 'When needed',
-        ask: 'Ask',
         required: 'Required',
       },
       hint: {
@@ -970,14 +967,12 @@ export const en: MessageSchema = {
         },
         handoff: {
           off: 'The agent does not know about handoffs; nothing is checked.',
-          optional: 'The agent writes a frontend handoff when it changes what the frontend uses. Nothing is blocked.',
-          ask: 'The «Finish» sheet shows a «Frontend handoff» checkbox, on by default. Ticked — the handoff is required.',
+          optional: 'The agent writes a frontend handoff when it changes what the frontend uses. Nothing is blocked. To ask for one explicitly, use «Write a handoff» in the session’s «Documentation» tab.',
           required: 'Every task has a handoff in docs/handoffs. «Create PR», «Commit» and «Finish» are blocked until it exists.',
         },
         apiRequest: {
           off: 'The agent does not know about API requests; nothing is checked.',
-          optional: 'When the frontend lacks an endpoint, field or event, the agent does not invent or fake the backend but writes a request with a proposed contract. Nothing is blocked.',
-          ask: 'Same as «When needed», and the «Finish» sheet also shows an «API extension request» checkbox, off by default. Ticked — the request is required.',
+          optional: 'When the frontend lacks an endpoint, field or event, the agent does not invent or fake the backend but writes a request with a proposed contract. Nothing is blocked. To ask for one explicitly, use «Write an API request» in the session’s «Documentation» tab.',
         },
       },
       templatesBefore: 'The templates of these documents are the skills task-spec, task-plan, frontend-handoff and api-request; override them in',

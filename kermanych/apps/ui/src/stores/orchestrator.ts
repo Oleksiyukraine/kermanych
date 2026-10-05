@@ -12,8 +12,7 @@ import type {
   ServerEvent,
   RpcExtensionUIResponse,
   ModelOption,
-  DocsRequested,
-  DocsAsk,
+  DocsWriteKind,
 } from '@kermanych/core';
 // Import from core's status module directly (not the barrel): @kermanych/core is a CJS
 // workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
@@ -349,8 +348,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.saveEnv(id, patch);
   }
 
-  function finishInfo(id: string, requested: DocsRequested = {}) {
-    return api.finishInfo(id, requested);
+  function finishInfo(id: string) {
+    return api.finishInfo(id);
   }
 
   function fileDiff(id: string, path: string) {
@@ -373,8 +372,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.projectFile(id, path);
   }
 
-  async function finishSession(id: string, requested: DocsRequested = {}) {
-    const res = await api.finish(id, requested);
+  async function finishSession(id: string) {
+    const res = await api.finish(id);
     // preview is stopped server-side on finish; drop its local url too.
     if (previews.value[id]) {
       const next = { ...previews.value };
@@ -384,19 +383,19 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return res;
   }
 
-  function createPr(id: string, requested: DocsRequested = {}) {
-    return api.createPr(id, requested);
+  function createPr(id: string) {
+    return api.createPr(id);
   }
 
-  function commitChanges(id: string, requested: DocsRequested = {}) {
-    return api.commitChanges(id, requested);
+  function commitChanges(id: string) {
+    return api.commitChanges(id);
   }
 
-  function completeDocs(id: string, requested: DocsRequested) {
-    return api.completeDocs(id, requested);
+  function completeDocs(id: string) {
+    return api.completeDocs(id);
   }
 
-  function writeDoc(id: string, kind: DocsAsk) {
+  function writeDoc(id: string, kind: DocsWriteKind) {
     return api.writeDoc(id, kind);
   }
 

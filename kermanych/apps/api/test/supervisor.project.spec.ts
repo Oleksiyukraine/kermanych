@@ -77,7 +77,7 @@ describe("syncProjects", () => {
     registry.upsertProject({ id: "p1", name: "Old", localRepoPath: "/tmp/bound" });
 
     const after = await sup.syncProjects([
-      cloudProject("p1", { name: "New", conventions: "rule", defaultBranch: "dev", carryFiles: [".env", ".env.local"], docsRequired: true, docsPolicy: { ...DEFAULT_DOCS_POLICY, apiRequest: "ask" } }),
+      cloudProject("p1", { name: "New", conventions: "rule", defaultBranch: "dev", carryFiles: [".env", ".env.local"], docsRequired: true, docsPolicy: { ...DEFAULT_DOCS_POLICY, apiRequest: "optional" } }),
     ]);
 
     const p = after.find((x) => x.id === "p1")!;
@@ -87,7 +87,7 @@ describe("syncProjects", () => {
     expect(p.defaultBranch).toBe("dev");
     expect(p.carryFiles).toEqual([".env", ".env.local"]);
     expect(p.docsRequired).toBe(true);
-    expect(p.docsPolicy).toEqual({ ...DEFAULT_DOCS_POLICY, apiRequest: "ask" });
+    expect(p.docsPolicy).toEqual({ ...DEFAULT_DOCS_POLICY, apiRequest: "optional" });
   });
 
   it("creates an unbound row for a cloud project this machine has never seen", async () => {
