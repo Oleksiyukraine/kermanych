@@ -2183,7 +2183,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // A wake settles transient in-flight states (a run that crashed mid-turn must not stay
     // «thinking» forever), but a session that came to rest on review keeps that: resuming to
     // read its transcript or hand it a follow-up must not demote a pushed PR back to `done`.
+    // The reducer state rests too, not just the displayed status: onRpcEvent copies
+    // `state.status` over `live.status` on every frame, and omp sends one (a `setWidget` UI
+    // request) while shutting down. Left at wireLive's INITIAL `queued`, a reaped resumed child
+    // would flip to `queued` mid-stop and onExit would mark the finished session `error`.
     const rested: Session["status"] = s.status === "in_review" ? "in_review" : "done";
+    live.state = { status: rested };
     live.live.status = rested;
     this.registry.updateSession(id, { status: rested });
     this.events.next({ type: "transcript_reset", sessionId: id, entries: live.transcript });
