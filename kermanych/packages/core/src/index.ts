@@ -97,6 +97,8 @@ export {
   docsGateFailures,
   docsFailureSkills,
   docsCompletionPrompt,
+  docsWritePrompt,
+  DOCS_ASK_FAILURE,
   type DocsRule,
   type DocsPolicy,
   type DocsPolicyKey,

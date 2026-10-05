@@ -22,6 +22,9 @@ import {
   docsAsks,
   docsCompletionPrompt,
   docsFailureSkills,
+  docsWritePrompt,
+  DOCS_ASK_FAILURE,
+  type DocsAsk,
   docsGateFailures,
   docsLayoutKind,
   docsPolicy,
@@ -1838,6 +1841,23 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
     await this.sendAsKermanych(id, docsCompletionPrompt(failures) + block, "prompt");
     return { sent: true, failures };
+  }
+
+  // «Написати запит на API» / «Написати хендоф» (Документація tab): one Kermanych prompt for
+  // that one document, mid-task, with its resolved skill inlined like completeDocs. Not gated
+  // on the project's rules — the operator asked for it by name.
+  async writeDoc(id: string, kind: DocsAsk): Promise<{ sent: true }> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    if (s.kind !== "agent") throw new Error(`only agent sessions can write documentation (this is a ${s.kind})`);
+    let block = "";
+    try {
+      block = (await this.skills.assignedForNames(this.aiScope(s.projectId), docsFailureSkills([DOCS_ASK_FAILURE[kind]]), s.worktreePath || this.project(s.projectId).localRepoPath)).block;
+    } catch (err) {
+      console.warn(`[supervisor] no documentation skill for ${id}: ${(err as Error).message}`);
+    }
+    await this.sendAsKermanych(id, docsWritePrompt(kind) + block, "prompt");
+    return { sent: true };
   }
 
   // The Зміни tab opens one of the files `finishInfo` listed. Same worktree and same fork

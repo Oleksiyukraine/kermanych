@@ -25,6 +25,7 @@ import type {
   ApiErrorParams,
   AgentRuntimeKind,
   AgentLanguage,
+  DocsAsk,
   DocsGate,
   DocsGateFailure,
   DocsPolicy,
@@ -653,6 +654,9 @@ export const api = {
   // documents. `sent: false` means the gate already passed and nothing was sent.
   completeDocs: (id: string, requested: DocsRequested): Promise<{ sent: boolean; failures: DocsGateFailure[] }> =>
     post(`/sessions/${id}/docs`, requested),
+
+  // «Написати запит на API» / «Написати хендоф»: the agent writes that one document now, mid-task.
+  writeDoc: (id: string, kind: DocsAsk): Promise<{ sent: true }> => post(`/sessions/${id}/docs/write`, { kind }),
 
   archiveSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/archive`, {}),

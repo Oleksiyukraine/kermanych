@@ -209,6 +209,33 @@ describe("completeDocs", () => {
   });
 });
 
+describe("writeDoc", () => {
+  it("asks for the one document mid-task, with its resolved skill, whatever the project's rules", async () => {
+    library = [{ owner: { scope: "project", id: P }, id: "r1", name: "api-request", description: "d", body: "PROJECT API REQUEST RULES", enabled: true, updatedAt: "t" }];
+    const { id } = await seed(codeOnly, false);
+
+    expect(await sup.writeDoc(id, "apiRequest")).toEqual({ sent: true });
+    const p = prompts.at(-1)!;
+    expect(p).toContain("docs/api-requests/");
+    expect(p).not.toContain("docs/specs/");
+    expect(p).toMatch(/do not change code in this turn/);
+    expect(p).toContain("PROJECT API REQUEST RULES");
+    expect(p).not.toContain(DEFAULT_SKILLS.find((d) => d.name === "api-request")!.body.trim());
+
+    await sup.writeDoc(id, "handoff");
+    expect(prompts.at(-1)).toContain("docs/handoffs/");
+    expect(prompts.at(-1)).toContain(DEFAULT_SKILLS.find((d) => d.name === "frontend-handoff")!.body.trim());
+  });
+
+  it("refuses a session that is not an agent", async () => {
+    reg.upsertProject({ id: P, name: "g", localRepoPath: repo, docsRequired: true });
+    const chat = await sup.createChat(P);
+
+    await expect(sup.writeDoc(chat.id, "apiRequest")).rejects.toThrow(/only agent sessions/);
+    expect(prompts).toHaveLength(0);
+  });
+});
+
 describe("the documentation policy", () => {
   it("reaches the system prompt of a new chat only for a project with the switch on, built from its rules", async () => {
     reg.upsertProject({ id: P, name: "g", localRepoPath: repo, docsRequired: true });

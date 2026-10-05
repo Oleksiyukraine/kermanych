@@ -13,6 +13,7 @@ import type {
   RpcExtensionUIResponse,
   ModelOption,
   DocsRequested,
+  DocsAsk,
 } from '@kermanych/core';
 // Import from core's status module directly (not the barrel): @kermanych/core is a CJS
 // workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
@@ -395,6 +396,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.completeDocs(id, requested);
   }
 
+  function writeDoc(id: string, kind: DocsAsk) {
+    return api.writeDoc(id, kind);
+  }
+
   // Minimal transient notifications. notify() pushes a toast that auto-dismisses;
   // components read `toasts` and may dismiss one early.
   function notify(message: string, kind: Toast['kind'] = 'info', ms = 4000) {
@@ -487,6 +492,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     createPr,
     commitChanges,
     completeDocs,
+    writeDoc,
     archiveSession,
     unarchiveSession,
     renameSession,

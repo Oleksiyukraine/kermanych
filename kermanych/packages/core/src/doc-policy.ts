@@ -273,3 +273,19 @@ export function docsCompletionPrompt(failures: readonly DocsGateFailure[]): stri
     "Commit these documents; if this branch already has an open pull request, push it; do not change code in this turn.",
   ].join("\n");
 }
+
+// The finish sheet's two kinds as the gate names their missing document.
+export const DOCS_ASK_FAILURE: Readonly<Record<DocsAsk, DocsGateFailure>> = { handoff: "handoff", apiRequest: "api-request" };
+
+// The prompt «Написати запит на API» / «Написати хендоф» sends mid-session: one document, now,
+// whatever the project's rule — the operator asked for it, and the task goes on afterwards.
+// The caller appends the resolved skill block (docsFailureSkills of DOCS_ASK_FAILURE[kind]).
+export function docsWritePrompt(kind: DocsAsk): string {
+  return [
+    "The operator asks for this document now, while the task is still in progress:",
+    "",
+    FAILURE_ASKS[DOCS_ASK_FAILURE[kind]],
+    "",
+    "Base it on what this branch has done and found so far. Commit it on this branch; do not change code in this turn. The task continues after this document.",
+  ].join("\n");
+}
