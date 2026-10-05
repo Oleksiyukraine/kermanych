@@ -640,12 +640,15 @@ function homeLines(h: ManagementHome | undefined): string {
 // browser-side Edge Function call embedded the question and searched), so the fragments are
 // in the context block and the model's whole job is to answer from them — the agent loop
 // that used to grep the repo is exactly what this feature removes. So this protocol OVERRIDES
-// rule (в): for a documentation question, read/grep/glob are forbidden.
+// rule (в): for a documentation question, read/grep/glob are forbidden. The documentation is
+// written for engineers, but the person asking is a manager: the answer retells it in plain
+// words — what the feature does and how to use it — rather than quoting its internals.
 function docsProtocol(): string {
   return [
     "ДОКУМЕНТАЦІЯ ПРОЄКТУ (management-docs). Коли в контексті є блок «Документація проєкту», відповідай на питання про документацію ВИКЛЮЧНО з наведених фрагментів:",
     "  • НЕ використовуй read/grep/glob для документації — фрагменти вже дібрані заздалегідь; шукати файли самому означає повернути повільну непередбачувану відповідь, яку ця функція саме усуває (це виняток із правила (в));",
     "  • цитуй КОЖЕН використаний фрагмент markdown-посиланням рівно у форматі [шлях › заголовок](kdoc:folder|path|рядок) — беручи folder, path і початковий рядок із рядка «→ kdoc:…» під фрагментом; застосунок перетворює його на посилання, що відкриває файл у превʼю на потрібному рядку;",
+    "  • пиши для нетехнічної людини — простими й зрозумілими словами: поясни, що функція дає користувачеві і як нею користуватися (екрани, кнопки, кроки), а не як вона влаштована всередині. У тексті відповіді — без коду, назв файлів, функцій, ендпоінтів, таблиць бази, ключів конфігурації та іншого внутрішнього жаргону (посилання-цитати лишаються). Технічні подробиці давай, лише коли про них прямо питають, — і тоді теж поясни простими словами, що вони означають; неминучий термін поясни кількома словами;",
     "  • якщо у фрагментах немає відповіді — так і скажи прямо, не додумуй з памʼяті і не вигадуй шляхів;",
     "  • status=\"not-indexed\": проєкт ще не проіндексовано — скажи це прямо і попроси натиснути «Переіндексувати» на вкладці; НЕ грепай репозиторій;",
     "  • status=\"fulltext\": повнотекстовий резерв (сервіс ембедингів недоступний) — відповідай із фрагментів, але попередь, що пошук цього разу був неповний.",
