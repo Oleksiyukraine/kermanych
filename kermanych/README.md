@@ -643,18 +643,17 @@ default, superpowers' `docs/superpowers/specs|plans` included. Each kind has its
 | Документація задачі | task document | `docs/specs/YYYY-MM-DD-<topic>.md` | off · optional · required | required |
 | | plan | `docs/plans/YYYY-MM-DD-<topic>.md` | off · optional · required | optional |
 | Жива документація | how the service works | `docs/schemas/` (or the project's own docs) | off · optional · required | required |
-| Фронтенд ↔ бекенд | frontend handoff | `docs/handoffs/YYYY-MM-DD-<topic>.md` | off · optional · ask · required | ask |
-| | API extension request | `docs/api-requests/YYYY-MM-DD-<topic>.md` | off · optional · ask | off |
+| Фронтенд ↔ бекенд | frontend handoff | `docs/handoffs/YYYY-MM-DD-<topic>.md` | off · optional · required | optional |
+| | API extension request | `docs/api-requests/YYYY-MM-DD-<topic>.md` | off · optional | off |
 
 - **off** — the agent is not told about the kind; nothing is checked.
 - **optional** («За потреби») — the agent writes it where it applies; nothing blocks.
-- **ask** («Питати») — the finish sheet shows a checkbox for it: «Хендоф для фронта» (on
-  each time the sheet opens) or «Запит на розширення API» (off). Ticked, the document is
-  required.
 - **required** — the document is required on every branch that changes the repository.
 
-The defaults are exactly what the single «Обовʼязкова документація» switch meant before the
-rules existed, so a project that had it on behaves the same until someone changes a rule.
+The defaults are what the single «Обовʼязкова документація» switch meant before the rules
+existed, except the handoff: it used to be a checkbox in the finish sheet and is now written
+where it applies. A handoff or an API request for one particular branch is asked for by name
+from the session's «Документація» tab (see below), whatever the rule.
 
 **API extension requests** are the answer to "the frontend needs something the API does not
 have yet". With the kind on, the agent does not invent the backend side or fake it silently:
@@ -665,15 +664,14 @@ a request links it from its handoff.
 «Створити ПР», «Закоміти» and «Завершити» are refused (by the API, not just the UI) until
 every required document is on the branch:
 
-- task document / plan / handoff / API request: the branch changes a markup file in that
-  folder;
+- task document / plan / handoff: the branch changes a markup file in that folder;
 - living documentation: if code changed, the living documentation changed too
   (`docs/schemas/` or the project's other docs). The one escape hatch is explicit: a task
   document has a `## Documentation impact` section whose first line starts with `None`,
   followed by the reason. The reviewer sees that reason in the diff.
 
-The finish sheet shows the checkboxes of the kinds set to «Питати» and lists whatever is
-still missing in plain language. «Доповнити документацію» sends the agent one prompt naming
+The finish sheet («Завершити сесію») lists whatever is still missing in plain language; it has
+no documentation checkboxes. «Доповнити документацію» sends the agent one prompt naming
 exactly the missing documents and closes the sheet. You watch the agent write and commit them
 in the transcript, and it pushes them if the PR is already open. Changed documents appear in
 the session's «Документація» tab tagged специфікація / план / схема / хендоф / запит API.
@@ -698,14 +696,14 @@ The instructions for each document are the default skills `task-spec`, `task-pla
 repository can override them by name («ШІ-команда → Навички»; the settings subsection links
 there).
 
-The API takes the finish sheet's boxes as `{ handoff?: boolean; apiRequest?: boolean }` on
-`POST /sessions/:id/pr|commit|finish|docs` and as `?handoff=1&apiRequest=1` on
-`GET /sessions/:id/finish`; the mid-task prompt is `POST /sessions/:id/docs/write { kind:
-"apiRequest" | "handoff" }` (agent sessions only). The finish answer's `docsGate` is
-`{ enabled, asks, failures }`. The rules
+`POST /sessions/:id/pr|commit|finish|docs` take no documentation flags, and `GET
+/sessions/:id/finish` no query: the gate reads only the project's rules. The mid-task prompt is
+`POST /sessions/:id/docs/write { kind: "apiRequest" | "handoff" }` (agent sessions only). The
+finish answer's `docsGate` is `{ enabled, failures }`. The rules
 are stored in `projects.docs_policy` (migration `20260930090000_project_docs_policy.sql`, to be
 applied before deploying the API, which selects the column); `projects.docs_required` stays
-the switch.
+the switch. Migration `20261005100000_docs_policy_drop_ask.sql` rewrites the retired `ask` rule
+to `optional` in the cloud, and the API does the same to its local SQLite rows on start.
 
 **Superpowers and other plugins.** Kermanych does not depend on them: the policy, the skills
 and the gate work with no plugin installed. When superpowers is present, its
@@ -719,13 +717,14 @@ no `settingSources`.
 
 **Limits.** A session that was already running when the switch or a rule changed gets the new
 policy in its system prompt on its next spawn (resume, restart). The gate applies to it
-immediately. A pull request opened by a trigger ticks no finish-sheet box, so only the
-`required` rules apply to it.
+immediately, and the same way to a pull request opened by a trigger.
 
 Design, decisions and rationale:
 [`docs/specs/2026-09-28-mandatory-documentation-design.md`](../docs/specs/2026-09-28-mandatory-documentation-design.md),
 per-kind rules:
-[`docs/specs/2026-09-30-documentation-settings.md`](../docs/specs/2026-09-30-documentation-settings.md).
+[`docs/specs/2026-09-30-documentation-settings.md`](../docs/specs/2026-09-30-documentation-settings.md),
+the finish sheet without documentation checkboxes:
+[`docs/specs/2026-10-05-finish-sheet-without-doc-checkboxes.md`](../docs/specs/2026-10-05-finish-sheet-without-doc-checkboxes.md).
 
 ### Offline behaviour
 

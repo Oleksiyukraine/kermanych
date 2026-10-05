@@ -1,15 +1,11 @@
 // apps/api/src/http/sessions.controller.ts
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from "@nestjs/common";
 import { isThinkingLevel } from "@kermanych/core";
-import type { BranchPrefix, DocsAsk, DocsRequested, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft, ThinkingLevel } from "@kermanych/core";
+import type { BranchPrefix, DocsWriteKind, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft, ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { sessionFailure } from "./session-failure";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
-
-// The finish sheet's ticked documentation boxes. Only a literal `true` counts, so an absent
-// or malformed body asks for nothing (a trigger-run PR sends none).
-const requestedDocs = (b?: DocsRequested): DocsRequested => ({ handoff: b?.handoff === true, apiRequest: b?.apiRequest === true });
 
 @Controller("sessions")
 export class SessionsController {
@@ -179,13 +175,10 @@ export class SessionsController {
     return { ok: true };
   }
 
-  // `?handoff=1&apiRequest=1` evaluate the documentation gate with the finish sheet's
-  // «Хендоф для фронта» / «Запит на розширення API» ticked; any other value (or none) means
-  // that document was not asked for.
   @Get(":id/finish")
-  async finishInfo(@Param("id") id: string, @Query("handoff") handoff?: string, @Query("apiRequest") apiRequest?: string) {
+  async finishInfo(@Param("id") id: string) {
     try {
-      return await this.sup.finishInfo(id, { handoff: handoff === "1" || handoff === "true", apiRequest: apiRequest === "1" || apiRequest === "true" });
+      return await this.sup.finishInfo(id);
     } catch (err) {
       throw sessionFailure(err);
     }
@@ -221,31 +214,30 @@ export class SessionsController {
     }
   }
 
-  // PR / commit / finish carry `{ handoff?, apiRequest? }` from the finish sheet; absent = false.
   // A failing documentation gate is a plain 400 starting `documentation required:`.
   @Post(":id/finish")
-  async finish(@Param("id") id: string, @Body() b?: DocsRequested) {
+  async finish(@Param("id") id: string) {
     try {
       this.preview.stop(id);
-      return await this.sup.finishSession(id, requestedDocs(b));
+      return await this.sup.finishSession(id);
     } catch (err) {
       throw sessionFailure(err);
     }
   }
 
   @Post(":id/pr")
-  async pr(@Param("id") id: string, @Body() b?: DocsRequested) {
+  async pr(@Param("id") id: string) {
     try {
-      return await this.sup.createPullRequest(id, requestedDocs(b));
+      return await this.sup.createPullRequest(id);
     } catch (err) {
       throw sessionFailure(err);
     }
   }
 
   @Post(":id/commit")
-  async commit(@Param("id") id: string, @Body() b?: DocsRequested) {
+  async commit(@Param("id") id: string) {
     try {
-      return await this.sup.commitChanges(id, requestedDocs(b));
+      return await this.sup.commitChanges(id);
     } catch (err) {
       throw sessionFailure(err);
     }
@@ -254,9 +246,9 @@ export class SessionsController {
   // «Доповнити документацію»: one Kermanych prompt for exactly the missing documents.
   // `{ sent: false }` when nothing was missing.
   @Post(":id/docs")
-  async completeDocs(@Param("id") id: string, @Body() b?: DocsRequested) {
+  async completeDocs(@Param("id") id: string) {
     try {
-      return await this.sup.completeDocs(id, requestedDocs(b));
+      return await this.sup.completeDocs(id);
     } catch (err) {
       throw sessionFailure(err);
     }
@@ -269,7 +261,7 @@ export class SessionsController {
     const kind = b?.kind;
     if (kind !== "apiRequest" && kind !== "handoff") throw new BadRequestException(`unknown document kind ${JSON.stringify(kind)}`);
     try {
-      return await this.sup.writeDoc(id, kind satisfies DocsAsk);
+      return await this.sup.writeDoc(id, kind satisfies DocsWriteKind);
     } catch (err) {
       throw sessionFailure(err);
     }

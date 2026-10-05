@@ -107,7 +107,7 @@ describe("the documentation gate", () => {
     expect(prompts).toHaveLength(0); // the agent was never asked
     expect(existsSync(wtDir)).toBe(true); // finish retired nothing
     expect(git(wtDir, "status", "--porcelain")).toMatch(/src\/app\.ts/); // nor auto-committed
-    expect((await sup.finishInfo(id)).docsGate).toEqual({ enabled: true, asks: ["handoff"], failures: ["task-spec", "docs-impact"] });
+    expect((await sup.finishInfo(id)).docsGate).toEqual({ enabled: true, failures: ["task-spec", "docs-impact"] });
   });
 
   it("lets the PR through once the task document declares no documentation impact", async () => {
@@ -121,7 +121,7 @@ describe("the documentation gate", () => {
     expect(prompts.at(-1)).toMatch(/gh pr create/);
   });
 
-  it("accepts a living-doc change instead of the declaration, and demands a requested handoff", async () => {
+  it("accepts a living-doc change instead of the declaration, and demands a handoff only when required", async () => {
     const { id, wtDir } = await seed((d) => {
       codeOnly(d);
       write(d, "docs/specs/2026-09-28-x.md", "# Task\n\n## Documentation impact\n\nUpdated the flow.\n");
@@ -129,11 +129,12 @@ describe("the documentation gate", () => {
     });
 
     expect((await sup.finishInfo(id)).docsGate.failures).toEqual([]);
-    expect((await sup.finishInfo(id, { handoff: true })).docsGate.failures).toEqual(["handoff"]);
-    await expect(sup.finishSession(id, { handoff: true })).rejects.toThrow(/^documentation required: handoff/);
+    reg.patchProject(P, { docsPolicy: { ...DEFAULT_DOCS_POLICY, handoff: "required" } });
+    expect((await sup.finishInfo(id)).docsGate.failures).toEqual(["handoff"]);
+    await expect(sup.finishSession(id)).rejects.toThrow(/^documentation required: handoff/);
 
     write(wtDir, "docs/handoffs/2026-09-28-x.md", "# Handoff\n\nNothing changed for the frontend.\n");
-    expect(await sup.finishSession(id, { handoff: true })).toEqual({ finished: true, branch: "kermanych/s1" });
+    expect(await sup.finishSession(id)).toEqual({ finished: true, branch: "kermanych/s1" });
     // The documents were committed with the work onto the kept branch.
     expect(git(repo, "show", "kermanych/s1:docs/handoffs/2026-09-28-x.md")).toMatch(/Handoff/);
   });
@@ -141,25 +142,23 @@ describe("the documentation gate", () => {
   it("changes nothing with the project setting off", async () => {
     const { id } = await seed(codeOnly, false);
 
-    expect((await sup.finishInfo(id, { handoff: true })).docsGate).toEqual({ enabled: false, asks: [], failures: [] });
-    expect(await sup.completeDocs(id, { handoff: true })).toEqual({ sent: false, failures: [] });
-    await sup.createPullRequest(id, { handoff: true });
+    expect((await sup.finishInfo(id)).docsGate).toEqual({ enabled: false, failures: [] });
+    expect(await sup.completeDocs(id)).toEqual({ sent: false, failures: [] });
+    await sup.createPullRequest(id);
     expect(prompts).toHaveLength(1);
     expect(started.at(-1)).not.toMatchObject({ appendSystemPrompt: expect.stringContaining(POLICY) });
     expect(await sup.finishSession(id)).toEqual({ finished: true, branch: "kermanych/s1" });
   });
 
-  // Per-kind rules: a relaxed spec/schemas no longer block, a required plan does, and the API
-  // request is a finish-sheet ask that only binds once ticked.
+  // Per-kind rules: a relaxed spec/schemas no longer block, a required plan does, and an
+  // optional API request never does.
   it("applies the project's per-kind rules", async () => {
-    const policy: DocsPolicy = { spec: "optional", plan: "required", schemas: "off", handoff: "off", apiRequest: "ask" };
+    const policy: DocsPolicy = { spec: "optional", plan: "required", schemas: "off", handoff: "off", apiRequest: "optional" };
     const { id, wtDir } = await seed(codeOnly, true, policy);
 
-    expect((await sup.finishInfo(id)).docsGate).toEqual({ enabled: true, asks: ["apiRequest"], failures: ["plan"] });
-    expect((await sup.finishInfo(id, { handoff: true, apiRequest: true })).docsGate.failures).toEqual(["plan", "api-request"]);
+    expect((await sup.finishInfo(id)).docsGate).toEqual({ enabled: true, failures: ["plan"] });
 
     write(wtDir, "docs/plans/2026-09-30-x.md", "# Plan\n");
-    await expect(sup.createPullRequest(id, { apiRequest: true })).rejects.toThrow(/^documentation required: api-request/);
     await sup.createPullRequest(id);
     expect(prompts.at(-1)).toMatch(/gh pr create/);
   });
@@ -168,9 +167,10 @@ describe("the documentation gate", () => {
 describe("completeDocs", () => {
   it("asks for exactly the missing items with the resolved skill bodies, a project override winning", async () => {
     library = [{ owner: { scope: "project", id: P }, id: "r1", name: "frontend-handoff", description: "d", body: "PROJECT HANDOFF RULES", enabled: true, updatedAt: "t" }];
-    const { id } = await seed(codeOnly);
+    const policy: DocsPolicy = { ...DEFAULT_DOCS_POLICY, handoff: "required" };
+    const { id } = await seed(codeOnly, true, policy);
 
-    const res = await sup.completeDocs(id, { handoff: true });
+    const res = await sup.completeDocs(id);
 
     expect(res).toEqual({ sent: true, failures: ["task-spec", "docs-impact", "handoff"] });
     const p = prompts.at(-1)!;
@@ -179,16 +179,16 @@ describe("completeDocs", () => {
     expect(p).toContain("PROJECT HANDOFF RULES");
     expect(p).not.toContain(DEFAULT_SKILLS.find((d) => d.name === "frontend-handoff")!.body.trim());
     // The spawn that carried the prompt runs under the documentation policy.
-    expect(started.at(-1)).toMatchObject({ appendSystemPrompt: expect.stringContaining(POLICY) });
+    expect(started.at(-1)).toMatchObject({ appendSystemPrompt: expect.stringContaining(docsPolicyAppend(policy)) });
   });
 
-  it("inlines the plan and API-request skills for their failures", async () => {
-    const { id } = await seed(codeOnly, true, { ...DEFAULT_DOCS_POLICY, plan: "required", apiRequest: "ask" });
+  it("inlines the plan skill for its failure", async () => {
+    const { id } = await seed(codeOnly, true, { ...DEFAULT_DOCS_POLICY, plan: "required" });
 
-    expect(await sup.completeDocs(id, { apiRequest: true })).toEqual({ sent: true, failures: ["task-spec", "plan", "docs-impact", "api-request"] });
+    expect(await sup.completeDocs(id)).toEqual({ sent: true, failures: ["task-spec", "plan", "docs-impact"] });
     const p = prompts.at(-1)!;
-    for (const name of ["task-spec", "task-plan", "api-request"]) expect(p).toContain(DEFAULT_SKILLS.find((d) => d.name === name)!.body.trim());
-    expect(p).not.toContain(DEFAULT_SKILLS.find((d) => d.name === "frontend-handoff")!.body.trim());
+    for (const name of ["task-spec", "task-plan"]) expect(p).toContain(DEFAULT_SKILLS.find((d) => d.name === name)!.body.trim());
+    for (const name of ["frontend-handoff", "api-request"]) expect(p).not.toContain(DEFAULT_SKILLS.find((d) => d.name === name)!.body.trim());
   });
 
   it("inlines no skill for a docs-impact-only gap, and sends nothing when nothing is missing", async () => {

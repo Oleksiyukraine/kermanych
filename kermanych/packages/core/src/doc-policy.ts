@@ -38,9 +38,10 @@ export function docsLayoutKind(path: string): DocsLayoutKind | undefined {
 // How hard the policy asks for one kind of document:
 //   off      — never mentioned, never checked;
 //   optional — the agent is told to write it where it applies; nothing blocks;
-//   ask      — the finish sheet offers a checkbox; ticked, the gate requires the document;
 //   required — the gate refuses PR / commit / finish without it.
-export type DocsRule = "off" | "optional" | "ask" | "required";
+// A handoff or an API request the operator wants on a particular branch is asked for by name
+// from the session's «Документація» tab (docsWritePrompt), whatever the rule.
+export type DocsRule = "off" | "optional" | "required";
 
 export interface DocsPolicy {
   spec: DocsRule; // docs/specs — the task document
@@ -54,25 +55,25 @@ export type DocsPolicyKey = keyof DocsPolicy;
 
 export const DOCS_POLICY_KEYS: readonly DocsPolicyKey[] = ["spec", "plan", "schemas", "handoff", "apiRequest"];
 
-// The rules each kind supports, in the order the settings screen offers them. `ask` exists
-// only where the operator knows better than a rule — whether this branch owes the frontend a
-// handoff, whether it hit a missing API. An API request has no `required`: one exists only
-// when something is missing, so demanding it on every branch would force fake documents.
+// The rules each kind supports, in the order the settings screen offers them. An API request
+// has no `required`: one exists only when something is missing, so demanding it on every
+// branch would force fake documents.
 export const DOCS_RULES: { readonly [K in DocsPolicyKey]: readonly DocsRule[] } = {
   spec: ["off", "optional", "required"],
   plan: ["off", "optional", "required"],
   schemas: ["off", "optional", "required"],
-  handoff: ["off", "optional", "ask", "required"],
-  apiRequest: ["off", "optional", "ask"],
+  handoff: ["off", "optional", "required"],
+  apiRequest: ["off", "optional"],
 };
 
-// Exactly the bundle the single «Обовʼязкова документація» switch turned on before the rules
-// existed, so a project stored with an empty policy behaves as it always did.
+// What a project stored with an empty policy gets: the bundle the single «Обовʼязкова
+// документація» switch turned on before the rules existed, with the handoff the agent writes
+// where it applies (it was a finish-sheet checkbox until 2026-10-05).
 export const DEFAULT_DOCS_POLICY: Readonly<DocsPolicy> = {
   spec: "required",
   plan: "optional",
   schemas: "required",
-  handoff: "ask",
+  handoff: "optional",
   apiRequest: "off",
 };
 
@@ -88,15 +89,8 @@ export function docsPolicy(raw: unknown): DocsPolicy {
   return out;
 }
 
-// The kinds the finish sheet offers as checkboxes, and the state each box opens in: the
-// handoff is the usual ask (on), a missing API the exception (off).
-export type DocsAsk = "handoff" | "apiRequest";
-export const DOCS_ASK_DEFAULTS: Readonly<Record<DocsAsk, boolean>> = { handoff: true, apiRequest: false };
-export type DocsRequested = Partial<Record<DocsAsk, boolean>>;
-
-export function docsAsks(policy: DocsPolicy): DocsAsk[] {
-  return (Object.keys(DOCS_ASK_DEFAULTS) as DocsAsk[]).filter((k) => policy[k] === "ask");
-}
+// The documents the «Документація» tab asks the agent for mid-session.
+export type DocsWriteKind = "handoff" | "apiRequest";
 
 export type DocsGateFailure = "task-spec" | "plan" | "docs-impact" | "handoff" | "api-request";
 
@@ -109,15 +103,11 @@ export interface DocsGateInput {
   paths: readonly string[];
   // The text of the changed task documents (markup files under docs/specs/).
   specBodies: readonly string[];
-  // The finish sheet's ticked boxes; only kinds in `ask` mode read them.
-  requested: DocsRequested;
 }
 
 export interface DocsGate {
   // False when the project's documentation switch is off: the gate then never fails.
   enabled: boolean;
-  // Kinds in `ask` mode — the checkboxes the finish sheet draws.
-  asks: DocsAsk[];
   failures: DocsGateFailure[];
 }
 
@@ -145,12 +135,9 @@ function declaresNoImpact(body: string): boolean {
 // nothing — the policy covers "every task that changes the repository", and a session that
 // changed nothing has no task to document (finishing it must stay possible).
 export function docsGateFailures(input: DocsGateInput): DocsGateFailure[] {
-  const { policy, paths, specBodies, requested } = input;
+  const { policy, paths, specBodies } = input;
   if (paths.length === 0) return [];
-  // Whether the gate demands a kind on this branch: always when `required`, when ticked in
-  // the finish sheet when `ask`, never otherwise.
-  const need = (key: DocsPolicyKey) =>
-    policy[key] === "required" || (policy[key] === "ask" && (key === "handoff" || key === "apiRequest") && requested[key] === true);
+  const need = (key: DocsPolicyKey) => policy[key] === "required";
   // Pushed in DOCS_GATE_FAILURES order.
   const failures: DocsGateFailure[] = [];
   const docSide = (p: string) => isDocPath(p) || DOC_DIR_RE.test(p);
@@ -199,14 +186,11 @@ function policyLine(key: DocsPolicyKey, rule: DocsRule, policy: DocsPolicy): str
         : base;
     }
     case "handoff":
-      if (rule === "required")
-        return `- \`${DOCS_LAYOUT.handoffs}/${DATED}\` — a frontend handoff, required for every task that changes the repository, written for a frontend developer who did not see the work (one line when nothing changed for the frontend).`;
-      if (rule === "ask") return `- \`${DOCS_LAYOUT.handoffs}/${DATED}\` — a frontend handoff, when the operator asks for one at finish.`;
-      return `- \`${DOCS_LAYOUT.handoffs}/${DATED}\` — a frontend handoff, whenever the change affects the frontend: endpoints, events, config, breaking changes.`;
-    case "apiRequest": {
-      const base = `- \`${DOCS_LAYOUT.apiRequests}/${DATED}\` — an API request. When this work needs something the API does not provide yet (an endpoint, a field, a filter, an event), do not invent the backend side and do not fake it silently: write the request — what is needed and why, the proposed contract, and what the client does until it ships — and name it in the handoff or pull request.`;
-      return rule === "ask" ? `${base} The operator may also require one at finish.` : base;
-    }
+      return rule === "required"
+        ? `- \`${DOCS_LAYOUT.handoffs}/${DATED}\` — a frontend handoff, required for every task that changes the repository, written for a frontend developer who did not see the work (one line when nothing changed for the frontend).`
+        : `- \`${DOCS_LAYOUT.handoffs}/${DATED}\` — a frontend handoff, whenever the change affects the frontend: endpoints, events, config, breaking changes.`;
+    case "apiRequest":
+      return `- \`${DOCS_LAYOUT.apiRequests}/${DATED}\` — an API request. When this work needs something the API does not provide yet (an endpoint, a field, a filter, an event), do not invent the backend side and do not fake it silently: write the request — what is needed and why, the proposed contract, and what the client does until it ships — and name it in the handoff or pull request.`;
   }
 }
 
@@ -217,7 +201,7 @@ function policyLine(key: DocsPolicyKey, rule: DocsRule, policy: DocsPolicy): str
 export function docsPolicyAppend(policy: DocsPolicy): string {
   const lines = DOCS_POLICY_KEYS.map((k) => policyLine(k, policy[k], policy)).filter((l): l is string => l !== undefined);
   if (!lines.length) return "";
-  const blocks = DOCS_POLICY_KEYS.some((k) => policy[k] === "required" || policy[k] === "ask");
+  const blocks = DOCS_POLICY_KEYS.some((k) => policy[k] === "required");
   return [
     "## Documentation policy (this project)",
     "",
@@ -274,17 +258,17 @@ export function docsCompletionPrompt(failures: readonly DocsGateFailure[]): stri
   ].join("\n");
 }
 
-// The finish sheet's two kinds as the gate names their missing document.
-export const DOCS_ASK_FAILURE: Readonly<Record<DocsAsk, DocsGateFailure>> = { handoff: "handoff", apiRequest: "api-request" };
+// The «Документація» tab's two kinds as the gate names their missing document.
+export const DOCS_WRITE_FAILURE: Readonly<Record<DocsWriteKind, DocsGateFailure>> = { handoff: "handoff", apiRequest: "api-request" };
 
 // The prompt «Написати запит на API» / «Написати хендоф» sends mid-session: one document, now,
 // whatever the project's rule — the operator asked for it, and the task goes on afterwards.
-// The caller appends the resolved skill block (docsFailureSkills of DOCS_ASK_FAILURE[kind]).
-export function docsWritePrompt(kind: DocsAsk): string {
+// The caller appends the resolved skill block (docsFailureSkills of DOCS_WRITE_FAILURE[kind]).
+export function docsWritePrompt(kind: DocsWriteKind): string {
   return [
     "The operator asks for this document now, while the task is still in progress:",
     "",
-    FAILURE_ASKS[DOCS_ASK_FAILURE[kind]],
+    FAILURE_ASKS[DOCS_WRITE_FAILURE[kind]],
     "",
     "Base it on what this branch has done and found so far. Commit it on this branch; do not change code in this turn. The task continues after this document.",
   ].join("\n");
