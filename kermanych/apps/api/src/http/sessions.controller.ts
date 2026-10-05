@@ -1,7 +1,7 @@
 // apps/api/src/http/sessions.controller.ts
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from "@nestjs/common";
 import { isThinkingLevel } from "@kermanych/core";
-import type { BranchPrefix, DocsRequested, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft, ThinkingLevel } from "@kermanych/core";
+import type { BranchPrefix, DocsAsk, DocsRequested, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft, ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { sessionFailure } from "./session-failure";
 import { RegistryService } from "../registry/registry.service";
@@ -257,6 +257,19 @@ export class SessionsController {
   async completeDocs(@Param("id") id: string, @Body() b?: DocsRequested) {
     try {
       return await this.sup.completeDocs(id, requestedDocs(b));
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // «Написати запит на API» / «Написати хендоф»: the agent writes that one document now,
+  // mid-task, whatever the project's documentation rules.
+  @Post(":id/docs/write")
+  async writeDoc(@Param("id") id: string, @Body() b?: { kind?: string }) {
+    const kind = b?.kind;
+    if (kind !== "apiRequest" && kind !== "handoff") throw new BadRequestException(`unknown document kind ${JSON.stringify(kind)}`);
+    try {
+      return await this.sup.writeDoc(id, kind satisfies DocsAsk);
     } catch (err) {
       throw sessionFailure(err);
     }

@@ -450,6 +450,19 @@
           </dl>
         </div>
         <div v-if="detailTab === 'docs'" class="agents__tabpane agents__docs">
+          <!-- Mid-task documents: the agent writes the request / handoff now, without the
+               finish sheet. Agent sessions only — a chat has no branch to put it on. -->
+          <div v-if="selectedSession.kind === 'agent' && !worktreeGone" class="agents__docs-actions">
+            <KBtn
+              v-for="k in DOCS_WRITE_KINDS"
+              :key="k"
+              variant="secondary"
+              :loading="docWriting === k"
+              :disabled="!!docWriting"
+              :title="t(`agents.docs.write.${k}Hint`)"
+              @click="writeDoc(k)"
+            >{{ t(`agents.docs.write.${k}`) }}</KBtn>
+          </div>
           <template v-if="usedDocs.length || changedDocs.length">
             <section v-if="usedDocs.length" class="agents__docs-group">
               <h3 v-tip="docsUsedHint" class="agents__docs-title">{{ t('agents.docs.usedTitle') }}</h3>
@@ -463,22 +476,31 @@
               <h3 class="agents__docs-title">{{ t('agents.docs.changedTitle') }}</h3>
               <ul class="agents__file-list">
                 <li v-for="d in changedDocs" :key="d.path" class="agents__file-item">
-                  <button
-                    type="button"
-                    class="agents__file-row"
-                    :class="{ 'agents__file-row--open': openFile === d.path }"
-                    :aria-expanded="openFile === d.path"
-                    @click="toggleFile(d.path)"
-                  >
-                    <span class="agents__file-path mono">{{ d.path }}</span>
-                    <KTag v-if="docsLayoutKind(d.path)" class="agents__docs-kind">
-                      {{ t(`agents.docs.kind.${docsLayoutKind(d.path)}`) }}
-                    </KTag>
-                    <span class="agents__file-stat mono">
-                      <span class="agents__diff-add">+{{ d.added }}</span>
-                      <span class="agents__diff-del">−{{ d.removed }}</span>
-                    </span>
-                  </button>
+                  <div class="agents__docs-row">
+                    <button
+                      type="button"
+                      class="agents__file-row"
+                      :class="{ 'agents__file-row--open': openFile === d.path }"
+                      :aria-expanded="openFile === d.path"
+                      @click="toggleFile(d.path)"
+                    >
+                      <span class="agents__file-path mono">{{ d.path }}</span>
+                      <KTag v-if="docsLayoutKind(d.path)" class="agents__docs-kind">
+                        {{ t(`agents.docs.kind.${docsLayoutKind(d.path)}`) }}
+                      </KTag>
+                      <span class="agents__file-stat mono">
+                        <span class="agents__diff-add">+{{ d.added }}</span>
+                        <span class="agents__diff-del">−{{ d.removed }}</span>
+                      </span>
+                    </button>
+                    <button
+                      v-if="docsLayoutKind(d.path) === 'api-request' || docsLayoutKind(d.path) === 'handoff'"
+                      v-tip="t('agents.docs.toTaskHint')"
+                      type="button"
+                      class="agents__docs-handover mono"
+                      @click="openDocTask(d.path)"
+                    >{{ t('agents.docs.toTask') }}</button>
+                  </div>
                   <KDiffView
                     v-if="openFile === d.path"
                     class="agents__file-diff"
@@ -855,6 +877,39 @@
       </template>
     </KModal>
 
+    <!-- DOCUMENT → CARD — an API request (or handoff) becomes a task on another project's board
+         mid-task: the other side's agent starts from the card, this session keeps working. -->
+    <KModal v-model="docTaskOpen" :title="t('agents.docTask.title')" width="720px">
+      <div class="agents__form">
+        <p class="agents__hint mono">{{ t('agents.docTask.source', { path: docTaskPath }) }}</p>
+        <KSelect
+          v-model="docTaskProject"
+          :label="t('agents.docTask.project')"
+          :options="docTaskProjectOptions"
+          :placeholder="t('agents.docTask.projectPlaceholder')"
+        />
+        <KField v-model="docTaskTitle" :label="t('agents.docTask.taskTitle')" />
+        <KSelect
+          v-model="docTaskAssignee"
+          :label="t('agents.docTask.assignee')"
+          :options="docTaskAssigneeOptions"
+          :placeholder="t('agents.docTask.unassigned')"
+        />
+        <KField v-model="docTaskDescription" :label="t('agents.docTask.description')" multiline :rows="12" />
+        <p v-if="docTaskError" class="agents__error" role="alert">{{ docTaskError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" @click="docTaskOpen = false">{{ t('agents.finish.close') }}</KBtn>
+        <KBtn variant="secondary" :disabled="!docTaskDescription.trim()" @click="copyDocTask">{{ t('agents.docTask.copy') }}</KBtn>
+        <KBtn
+          variant="primary"
+          :loading="docTaskBusy"
+          :disabled="!docTaskTitle.trim() || !projects.byId.has(docTaskProject)"
+          @click="submitDocTask"
+        >{{ t('agents.docTask.create') }}</KBtn>
+      </template>
+    </KModal>
+
     <!-- AGENT MAP — the subagents this session spawned; drill into one's transcript -->
     <KModal v-model="mapOpen" :title="t('agents.map.title')" width="760px">
       <div v-if="mapDetailId" class="agents__map">
@@ -944,7 +999,8 @@ import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KField from 'components/kit/KField.vue';
-import KSelect from 'components/kit/KSelect.vue';
+import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
+import { handleOf } from '../lib/members';
 import { BRANCH_PREFIXES, PLATFORMS, type BranchPrefix, type Platform } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useNow } from '../composables/useNow';
@@ -2602,6 +2658,120 @@ async function submitDocs(): Promise<void> {
   }
 }
 
+// ── Mid-task documents (Документація tab) ─────────────────────────────────
+// «Написати запит на API» / «Написати хендоф»: one Kermanych prompt for that document, sent
+// whatever the project's rules say — the finish sheet is not the only moment one is needed.
+const DOCS_WRITE_KINDS: readonly DocsAsk[] = ['apiRequest', 'handoff'];
+const docWriting = ref<DocsAsk | null>(null);
+
+async function writeDoc(kind: DocsAsk): Promise<void> {
+  const s = selectedSession.value;
+  if (!s || docWriting.value) return;
+  docWriting.value = kind;
+  try {
+    await store.writeDoc(s.id, kind);
+    store.notify(t(`agents.notify.docWriting.${kind}`, { name: s.name }), 'info');
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    docWriting.value = null;
+  }
+}
+
+// «Задача з документа»: an API request (or a handoff) becomes a card on another project of the
+// same workspace, so the other side's agent starts from it while this session keeps working.
+// The text is read from the worktree, so an uncommitted document can go too.
+const docTaskOpen = ref(false);
+const docTaskSession = ref<Session | null>(null);
+const docTaskPath = ref('');
+const docTaskProject = ref('');
+const docTaskTitle = ref('');
+const docTaskAssignee = ref('');
+const docTaskDescription = ref('');
+const docTaskError = ref<string | null>(null);
+const docTaskBusy = ref(false);
+const docTaskWorkspace = computed(() => projects.byId.get(docTaskSession.value?.projectId ?? '')?.workspaceId);
+const docTaskProjectOptions = computed<KSelectOption[]>(() =>
+  projects.projects
+    .filter((p) => p.workspaceId === docTaskWorkspace.value && p.id !== docTaskSession.value?.projectId)
+    .map((p) => ({ value: p.id, label: p.name })),
+);
+const docTaskAssigneeOptions = computed<KSelectOption[]>(() =>
+  (projects.members[docTaskWorkspace.value ?? ''] ?? []).map((m) => ({ value: m.userId, label: handleOf(m) })),
+);
+
+async function openDocTask(path: string): Promise<void> {
+  const s = selectedSession.value;
+  const home = projects.byId.get(s?.projectId ?? '');
+  if (!s || !home) {
+    store.notify(t('agents.docTask.notCloud'), 'error');
+    return;
+  }
+  docTaskSession.value = s;
+  docTaskPath.value = path;
+  docTaskProject.value = docTaskProjectOptions.value[0]?.value ?? '';
+  docTaskTitle.value = '';
+  docTaskAssignee.value = '';
+  docTaskDescription.value = '';
+  docTaskError.value = null;
+  docTaskBusy.value = false;
+  docTaskOpen.value = true;
+  if (!projects.members[home.workspaceId]) void projects.loadMembers(home.workspaceId).catch(() => undefined);
+  try {
+    const file = await api.sessionFile(s.id, path);
+    // The operator may have closed this dialog and opened it on another document meanwhile.
+    if (docTaskSession.value?.id !== s.id || docTaskPath.value !== path) return;
+    if (file.binary || file.truncated) {
+      docTaskError.value = t('agents.docTask.unreadable');
+      return;
+    }
+    // The document's first heading, else its file name without the date prefix.
+    docTaskTitle.value =
+      /^#\s+(.+)$/m.exec(file.content)?.[1]?.trim() ||
+      (path.split('/').pop() ?? path).replace(/\.[^.]+$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '');
+    docTaskDescription.value = `${t('agents.docTask.origin', { project: home.name, branch: s.branch, path })}\n\n${file.content.trim()}\n`;
+  } catch (e) {
+    if (docTaskPath.value === path) docTaskError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+async function copyDocTask(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(docTaskDescription.value);
+    store.notify(t('agents.docTask.copied'), 'info');
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+// A card like the board's own «Нова задача»: the target project's default model and effort,
+// unassigned unless picked. An API request is backend work by definition.
+async function submitDocTask(): Promise<void> {
+  const target = projects.byId.get(docTaskProject.value);
+  const title = docTaskTitle.value.trim();
+  if (!target || !title || docTaskBusy.value) return;
+  docTaskBusy.value = true;
+  docTaskError.value = null;
+  try {
+    const card = await board.createTask({
+      projectId: target.id,
+      title,
+      description: docTaskDescription.value,
+      prefix: 'feature',
+      worktree: true,
+      ...(docsLayoutKind(docTaskPath.value) === 'api-request' ? { platform: 'backend' } : {}),
+      ...(target.defaultModel ? { model: target.defaultModel } : {}),
+      ...(target.defaultEffort ? { effort: target.defaultEffort } : {}),
+      ...(docTaskAssignee.value ? { assigneeId: docTaskAssignee.value } : {}),
+    });
+    if (!card) return; // the store has already said why
+    docTaskOpen.value = false;
+    store.notify(t('agents.docTask.created', { title, project: target.name }), 'info');
+  } finally {
+    docTaskBusy.value = false;
+  }
+}
+
 // ── Live preview (per-session worktree app on a free port) ─────────────────
 const loadingHtml = computed(
   () => `<p style="font:14px system-ui;padding:24px;color:#888">${t('agents.preview.loadingText')}</p>`,
@@ -3348,6 +3518,27 @@ async function submitPreviewConfig(): Promise<void> {
 // The layout badge (специфікація/план/схема/хендоф) sits right before the +/− stat: the row is
 // space-between, so the auto margin keeps it off the middle of a short path.
 .agents__docs-kind { flex: none; margin-left: auto; }
+// «Написати запит на API» / «Написати хендоф» above the lists.
+.agents__docs-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+// A changed document's row and its «Задача →» side by side; the row keeps the width.
+.agents__docs-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.agents__docs-row .agents__file-row { flex: 1; min-width: 0; }
+.agents__docs-handover {
+  flex: none;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  color: var(--k-accent);
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover { text-decoration: underline; }
+}
 .agents__docs-read-item {
   padding: 6px 0;
   border-bottom: 1px solid var(--k-line);

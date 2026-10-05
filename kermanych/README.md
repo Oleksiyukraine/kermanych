@@ -620,6 +620,21 @@ exactly the missing documents and closes the sheet. You watch the agent write an
 in the transcript, and it pushes them if the PR is already open. Changed documents appear in
 the session's «Документація» tab tagged специфікація / план / схема / хендоф / запит API.
 
+**Mid-task: request and handoff without finishing.** An API request is usually needed while
+the frontend work is still going, not at the end of it. The session's «Документація» tab has
+«Написати запит на API» and «Написати хендоф» for that: each sends the agent one prompt for
+that document, with its skill inlined. The prompt goes out whatever the project's rule for the
+kind is, because the operator asked by name. The agent writes and commits the document,
+changes no code in that turn, and the task goes on. Every changed `docs/api-requests/` or
+`docs/handoffs/` document in that tab has «Задача →». It opens a dialog that creates a card in
+another project of the same workspace: by default the first one, and you pick the backend for
+a request or the frontend for a handoff. The card's title is the document's first heading. Its
+description is the document text, read from the worktree so an uncommitted document works too,
+headed by the project, branch and path it came from. The assignee is optional, as on the
+board, and model and effort are the target project's defaults. A request card gets platform
+`backend`. That side's agent starts from the card while this session keeps working.
+«Копіювати текст» copies the same text for pasting into a session that is already running.
+
 The instructions for each document are the default skills `task-spec`, `task-plan`,
 `frontend-handoff` and `api-request`. Like any default skill, a project, workspace or
 repository can override them by name («ШІ-команда → Навички»; the settings subsection links
@@ -627,7 +642,9 @@ there).
 
 The API takes the finish sheet's boxes as `{ handoff?: boolean; apiRequest?: boolean }` on
 `POST /sessions/:id/pr|commit|finish|docs` and as `?handoff=1&apiRequest=1` on
-`GET /sessions/:id/finish`; the answer's `docsGate` is `{ enabled, asks, failures }`. The rules
+`GET /sessions/:id/finish`; the mid-task prompt is `POST /sessions/:id/docs/write { kind:
+"apiRequest" | "handoff" }` (agent sessions only). The finish answer's `docsGate` is
+`{ enabled, asks, failures }`. The rules
 are stored in `projects.docs_policy` (migration `20260930090000_project_docs_policy.sql`, to be
 applied before deploying the API, which selects the column); `projects.docs_required` stays
 the switch.
