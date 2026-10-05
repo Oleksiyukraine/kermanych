@@ -101,6 +101,7 @@
               :status="item.session.status"
               :status-line="activityOf(item.session) || statusWord(item.session)"
               :model="item.session.model"
+              :harness="item.session.kind === 'task' ? undefined : sessionLaunchMode(item.session)"
               :usage="item.session.usage"
               :selected="store.selectedSessionId === item.session.id"
               :removable="item.session.kind === 'task'"
@@ -1035,7 +1036,7 @@ import { EFFORT_OPTIONS } from '../lib/effort';
 import { modelOptions, effortOptions } from '../lib/models';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { useVirtualList } from '../composables/useVirtualList';
-import { nativeHarnessName, nativeRuntimeFor, sessionCostKnown, LAUNCH_MODES, type LaunchMode } from '../lib/native-session';
+import { nativeHarnessName, nativeRuntimeFor, sessionCostKnown, sessionLaunchMode, LAUNCH_MODES, type LaunchMode } from '../lib/native-session';
 import KTerminalView from 'components/kit/KTerminalView.vue';
 
 // The Агенти screen (design-system section 07): the board of session cards for whatever is

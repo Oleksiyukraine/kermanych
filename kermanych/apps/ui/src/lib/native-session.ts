@@ -18,6 +18,13 @@ export function nativeHarnessName(runtime: AgentRuntimeKind): string {
   return runtime === 'claude-code' ? 'claude' : runtime;
 }
 
+// The harness a session runs under, in the launcher's own terms: a managed session is
+// Kermanych's whatever its `runtime`, a native one is the harness `runtime` names.
+export function sessionLaunchMode(s: Pick<Session, 'native' | 'runtime'>): LaunchMode {
+  if (!s.native) return 'managed';
+  return s.runtime === 'claude-code' ? 'claude' : 'omp';
+}
+
 // A session's pty belongs to its Лог tab; the project panel shows only the project's shells.
 export function panelTerminals(list: readonly TerminalInfo[], projectId: string | undefined): TerminalInfo[] {
   return projectId ? list.filter((t) => t.projectId === projectId && !t.sessionId) : [];
