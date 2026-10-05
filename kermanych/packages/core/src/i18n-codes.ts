@@ -94,7 +94,10 @@ export type ApiErrorCode =
   | "runtime_claude_not_authenticated" // claude-code-runtime.ts start() — claude CLI signed out (params: none)
   | "runtime_claude_binary_missing" // claude-code-runtime.ts start() — SDK platform binary absent (params: none)
   | "runtime_omp_not_authenticated" // rpc-session.ts start() — omp CLI signed out (params: none)
-  | "runtime_omp_binary_missing"; // rpc-session.ts start() — omp not on PATH (params: none)
+  | "runtime_omp_binary_missing" // rpc-session.ts start() — omp not on PATH (params: none)
+  // native/native-session.service.ts via supervisor.service.ts — a native session refusing:
+  | "native_busy" // a helper prompt while the native harness is mid-turn or waiting on the operator (params: none)
+  | "native_unsupported"; // an action only a managed session supports (model, effort, branch, review, images…) (params: none)
 
 // Runtime mirrors of the unions above. MUST list every member of their type exactly once;
 // the exhaustiveness test in test/i18n-codes.spec.ts fails on a drift or a duplicate.
@@ -161,6 +164,8 @@ export const API_ERROR_CODES = [
   "runtime_claude_binary_missing",
   "runtime_omp_not_authenticated",
   "runtime_omp_binary_missing",
+  "native_busy",
+  "native_unsupported",
 ] as const satisfies readonly ApiErrorCode[];
 
 // Compile-time exhaustiveness (checked by `tsc` at build; test/ is not compiled). The

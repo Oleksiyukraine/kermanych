@@ -243,6 +243,13 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: a native session (docs/specs/2026-10-05-native-sessions.md) runs its
+    // harness as its own TUI in a pty and Kermanych only observes it. Fixed at creation.
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN native INTEGER NOT NULL DEFAULT 0`);
+    } catch {
+      /* column already exists */
+    }
     // The first index in this schema: listSessions(projectId) filters on project_id on
     // every board render and every supervisor lookup.
     this.db.exec(`CREATE INDEX IF NOT EXISTS sessions_project_idx ON sessions (project_id)`);
@@ -477,17 +484,18 @@ export class RegistryService {
   }
 
   listSessions(projectId?: string): Session[] {
-    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, runtime, effort, status, pr_opened as prOpened, archived, usage, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
+    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, runtime, native, effort, status, pr_opened as prOpened, archived, usage, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
     const rows = (
       projectId
         ? this.db.prepare(sql + ` WHERE project_id = ? ORDER BY created_at`).all(projectId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number })[];
+    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "native"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; native: number })[];
     // SQLite stores the flag as 0/1; hand callers a real boolean. `effort` is validated rather
     // than cast: a row written by an older build (or by hand) must degrade to "not known" —
     // typing an unknown word as a ThinkingLevel would send it straight back into omp's argv.
     // Same for `runtime`: guard with isAgentRuntime so invalid values degrade to undefined.
-    return rows.map((r) => ({ ...r, archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isAgentRuntime(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) }));
+    // `native` is a 0/1 flag too, surfaced only when set so a managed row stays as it was.
+    return rows.map(({ native, ...r }) => ({ ...r, ...(native ? { native: true } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isAgentRuntime(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) }));
   }
 
   createSession(
@@ -510,7 +518,7 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, platform, runtime, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, platform, runtime, native, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id,
@@ -530,6 +538,7 @@ export class RegistryService {
         row.prefix ?? null,
         row.platform ?? null,
         row.runtime ?? null,
+        row.native ? 1 : 0,
         row.effort ?? null,
         row.status,
         row.createdAt,
@@ -595,6 +604,15 @@ export class RegistryService {
     };
     this.db.prepare(`UPDATE sessions SET usage = ? WHERE id = ?`).run(JSON.stringify(next), id);
     return next;
+  }
+
+  // A native session's lifetime total, read whole from the harness's own session file after
+  // every turn. Absolute, not a delta: the file is the source of truth, so re-reading it
+  // never double counts. The second writer of `usage`, and like addUsage a targeted write.
+  setUsage(id: string, u: Usage): Usage {
+    const res = this.db.prepare(`UPDATE sessions SET usage = ? WHERE id = ?`).run(JSON.stringify(u), id);
+    if (!res.changes) throw new Error("session not found");
+    return u;
   }
 
   removeSession(id: string): void {

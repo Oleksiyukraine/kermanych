@@ -1,6 +1,6 @@
 // apps/api/src/http/sessions.controller.ts
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from "@nestjs/common";
-import { isThinkingLevel } from "@kermanych/core";
+import { isAgentRuntime, isThinkingLevel } from "@kermanych/core";
 import type { BranchPrefix, DocsAsk, DocsRequested, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft, ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { sessionFailure } from "./session-failure";
@@ -38,11 +38,13 @@ export class SessionsController {
   // `@Post("chat")` sits above `@Post(":id/promote")`).
   // The task id is the ONLY identity input: who may run it comes from the guard's cached
   // token, never from the request body. `images` are the first prompt's attachments; they
-  // stay on this machine and never reach the cloud.
+  // stay on this machine and never reach the cloud. `native` launches the task as a native
+  // session of that harness (docs/specs/2026-10-05-native-sessions.md).
   @Post("from-task")
-  async createFromTask(@Body() b: { taskId: string; images?: ImageInput[] }, @Req() req: { user: { id: string } }) {
+  async createFromTask(@Body() b: { taskId: string; images?: ImageInput[]; native?: string }, @Req() req: { user: { id: string } }) {
+    if (b.native !== undefined && !isAgentRuntime(b.native)) throw new BadRequestException(`unknown native harness ${JSON.stringify(b.native)}`);
     try {
-      return await this.sup.createSessionFromTask(b.taskId, req.user.id, b.images);
+      return await this.sup.createSessionFromTask(b.taskId, req.user.id, b.images, b.native);
     } catch (err) {
       throw sessionFailure(err);
     }
@@ -141,7 +143,7 @@ export class SessionsController {
 
   @Get(":id/transcript")
   transcript(@Param("id") id: string) {
-    return this.sup.getTranscript(id);
+    return this.sup.sessionTranscript(id);
   }
 
   // Deliberately unwrapped: the `try/catch → BadRequestException` the @Post siblings use would

@@ -6,7 +6,8 @@
 // A signed-out CLI and a provider outage arrived as the same anonymous 400, so the operator was
 // told a session failed but never that `claude /login` would fix it.
 import { BadRequestException } from "@nestjs/common";
-import type { ApiErrorBody, ApiErrorCode } from "@kermanych/core";
+import { API_ERROR_CODES, type ApiErrorBody, type ApiErrorCode } from "@kermanych/core";
+import { badRequest, CodedError } from "../management/coded-error";
 
 // A runtime's launch-failure cause → the ApiErrorCode the UI localizes. The runtime names the
 // FAULT (`claude_not_authenticated`); the endpoint names the CONSEQUENCE (the launch was
@@ -19,14 +20,19 @@ const LAUNCH_CODES: Record<string, ApiErrorCode> = {
   omp_binary_missing: "runtime_omp_binary_missing",
 };
 
-// A supervisor failure as a 400. A runtime launch failure becomes a coded `ApiErrorBody`; every
-// other failure keeps the exact plain-message shape these endpoints have always returned, so no
-// existing client sees a changed body. The child's own prose is always the `message` fallback —
-// a UI that does not know the code still shows something actionable.
+// A supervisor failure as a 400. A `CodedError` (e.g. a native session's `native_busy`) and a
+// runtime launch failure become a coded `ApiErrorBody`; every other failure keeps the exact
+// plain-message shape these endpoints have always returned, so no existing client sees a
+// changed body. The prose is always the `message` fallback — a UI that does not know the code
+// still shows something actionable.
 export function sessionFailure(err: unknown): BadRequestException {
+  if (err instanceof CodedError) return badRequest(err.code, err.message, err.params);
   const message = (err as Error)?.message ?? "session failed";
-  const cause = (err as { code?: unknown })?.code;
-  const code = typeof cause === "string" ? LAUNCH_CODES[cause] : undefined;
+  const cause = err && typeof err === "object" && "code" in err ? err.code : undefined;
+  const code =
+    typeof cause !== "string"
+      ? undefined
+      : (LAUNCH_CODES[cause] ?? ((API_ERROR_CODES as readonly string[]).includes(cause) ? (cause as ApiErrorCode) : undefined));
   if (!code) return new BadRequestException(message);
   const body: ApiErrorBody = { code, message };
   return new BadRequestException(body);

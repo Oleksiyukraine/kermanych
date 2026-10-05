@@ -179,6 +179,31 @@ describe("the /terminal namespace", () => {
     expect(await ask(s, "open", { projectId: "nope", cols: 80, rows: 24 })).toMatchObject({ error: "project_not_found" });
     expect(service.list()).toEqual([]);
   });
+
+  it("runs a native session's program through the login shell with its argv intact", async () => {
+    const { promise, resolve } = Promise.withResolvers<{ out: string; exitCode: number }>();
+    let out = "";
+    let id = "";
+    const sub = service.events$.subscribe((e) => {
+      if (e.type === "data" && e.id === id) out += e.data;
+      if (e.type === "exit" && e.id === id) resolve({ out, exitCode: e.exitCode });
+    });
+    const info = service.openSession({
+      sessionId: "s-1",
+      projectId: "bound",
+      cwd: checkout,
+      file: "/usr/bin/printf",
+      args: ["<%s>|<%s>|<%s>\\n", "two words", `say "hi" it's $HOME`, "-- --flag"],
+      env: { KERMANYCH_NATIVE_URL: "http://127.0.0.1:1/api/native/s-1" },
+    });
+    id = info.id;
+    expect(info).toMatchObject({ sessionId: "s-1", projectId: "bound", cwd: checkout, shell: "printf" });
+    const { out: printed, exitCode } = await promise;
+    sub.unsubscribe();
+    expect(exitCode).toBe(0);
+    expect(printed).toContain(`<two words>|<say "hi" it's $HOME>|<-- --flag>`);
+    expect(service.list().some((t) => t.id === info.id)).toBe(false);
+  });
 });
 
 describe("appendReplay", () => {

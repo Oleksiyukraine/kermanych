@@ -343,6 +343,16 @@ export const uk = {
       done: 'завершено',
       in_review: 'на ревʼю — ПР відкрито',
     },
+    // Нативна сесія: omp/claude у власному TUI в терміналі, Керманич лише спостерігає.
+    native: {
+      modeLabel: 'Режим',
+      modeManaged: 'Керманич',
+      modeHint: 'omp / claude — власний TUI харнесу в терміналі, без обгортки Керманича',
+      label: '{harness} · нативно',
+      idle: 'Харнес зараз не запущений. Продовжте сесію, щоб відкрити його TUI тут.',
+      resume: 'Продовжити',
+      engineIdHintOmp: 'Файл сесії omp. Щоб продовжити її без Керманича: перейдіть у робочу теку сесії й виконайте omp --resume <цей файл>.',
+    },
     launcher: {
       esc: 'Esc — закрити',
       taskLabel: 'Завдання',
@@ -2459,6 +2469,8 @@ export const uk = {
     oauth_no_url: 'Supabase не повернув URL авторизації',
     attachments_too_many: 'забагато файлів: {count} (максимум {max})',
     attachment_too_large: 'файл «{name}» завеликий (максимум 20 МіБ)',
+    native_busy: 'Агент зараз працює або чекає на вас у терміналі — спробуйте, коли він завершить хід',
+    native_unsupported: 'У нативній сесії це робиться в самому харнесі',
     image: {
       unsupported: 'непідтримуваний тип: {mime} (треба PNG/JPEG/GIF/WebP)',
       unknownMime: 'невідомо',

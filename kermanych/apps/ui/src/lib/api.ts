@@ -316,8 +316,9 @@ export const api = {
 
   // The user is NOT sent: the api takes it from the guard's cached token, so a board
   // client cannot launch a task on somebody else's behalf.
-  createSessionFromTask: (taskId: string, images?: ImageInput[]): Promise<Session> =>
-    post<Session>('/sessions/from-task', { taskId, images }),
+  // `native` launches the harness's own TUI in a pty instead of a managed session.
+  createSessionFromTask: (taskId: string, images?: ImageInput[], native?: AgentRuntimeKind): Promise<Session> =>
+    post<Session>('/sessions/from-task', native ? { taskId, images, native } : { taskId, images }),
 
   // ── Jira. The acting user comes from the guard's token; their Jira token from the
   // machine's registry. Every write returns the refreshed mirror issue so the caller can

@@ -225,12 +225,12 @@
                   </button>
                 </template>
                 <template v-else-if="!selectedSession.archived">
-                  <button v-if="canReview(selectedSession)" type="button" class="agents__menu-item" role="menuitem" @click="menuReview">
+                  <button v-if="canReview(selectedSession) && !selectedSession.native" type="button" class="agents__menu-item" role="menuitem" @click="menuReview">
                     <span class="agents__menu-mark" aria-hidden="true">⚖</span>
                     <span class="agents__menu-label">{{ t('agents.detail.menu.review') }}</span>
                     <KKbd tone="muted" class="agents__menu-kbd">⌘D</KKbd>
                   </button>
-                  <button v-if="selectedSession.kind === 'agent'" type="button" class="agents__menu-item" role="menuitem" @click="menuBranch">
+                  <button v-if="selectedSession.kind === 'agent' && !selectedSession.native" type="button" class="agents__menu-item" role="menuitem" @click="menuBranch">
                     <span class="agents__menu-mark" aria-hidden="true">⑂</span>
                     <span class="agents__menu-label">{{ t('agents.detail.menu.branch') }}</span>
                   </button>
@@ -275,14 +275,35 @@
         <p v-if="previewBlocked" class="agents__detail-note">{{ previewBindHint }}</p>
         <KTabs v-model="detailTab" :tabs="detailTabs" class="agents__detail-tabs">
           <template #end>
-            <template v-if="detailTab === 'log'">
+            <template v-if="detailTab === 'log' && !selectedSession.native">
               <button type="button" class="agents__log-ctl" @click="onExpandAll(true)">{{ t('agents.detail.expandAll') }}</button>
               <button type="button" class="agents__log-ctl" @click="onExpandAll(false)">{{ t('agents.detail.collapseAll') }}</button>
             </template>
           </template>
         </KTabs>
         <div v-show="detailTab === 'log'" class="agents__tabpane agents__tabpane--log">
+          <!-- A native session's Лог is the harness's own TUI; Kermanych only hosts its pty. -->
+          <template v-if="selectedSession.native">
+            <KTerminalView
+              v-if="selectedSession.terminalId"
+              :key="selectedSession.terminalId"
+              class="agents__native-term"
+              :terminal-id="selectedSession.terminalId"
+              :active="detailTab === 'log'"
+            />
+            <div v-else class="agents__pane-blank agents__native-idle">
+              <span class="agents__pane-blank-eyebrow mono">{{ harnessLabel }} · {{ statusWord(selectedSession) }}</span>
+              <p class="agents__pane-blank-text">{{ t('agents.native.idle') }}</p>
+              <KBtn
+                v-if="selectedSession.status !== 'merged' && !selectedSession.archived"
+                variant="primary"
+                :loading="actionBusy"
+                @click="onResumeNative(selectedSession)"
+              >{{ t('agents.native.resume') }}</KBtn>
+            </div>
+          </template>
           <KPanel
+            v-else
             class="agents__panel"
             :bare="true"
             :session="selectedSession"
@@ -429,7 +450,8 @@
               <dt class="agents__meta-label">{{ t('agents.session.tokens') }}</dt>
               <dd class="agents__meta-value mono">{{ tokenTotal ?? '—' }}</dd>
             </div>
-            <div class="agents__meta-row">
+            <!-- claude writes no cost into its transcript, so a native claude session has none. -->
+            <div v-if="sessionCostKnown(selectedSession)" class="agents__meta-row">
               <dt class="agents__meta-label">{{ t('agents.session.cost') }}</dt>
               <dd class="agents__meta-value mono">{{ costLabel || '—' }}</dd>
             </div>
@@ -567,13 +589,13 @@
               class="agents-launcher__task"
               rows="9"
               :placeholder="t('agents.launcher.taskPlaceholder')"
-              @paste="onLaunchPaste"
-              @drop.prevent="onLaunchDrop"
+              @paste="!launchNative && onLaunchPaste($event)"
+              @drop.prevent="!launchNative && onLaunchDrop($event)"
               @dragover.prevent
             />
           </div>
 
-          <div class="agents-launcher__attach">
+          <div v-if="!launchNative" class="agents-launcher__attach">
             <button type="button" class="agents-launcher__attach-btn mono" @click="launchFileInput?.click()">
               {{ t('agents.launcher.image') }}
             </button>
@@ -587,7 +609,7 @@
             />
             <span class="agents-launcher__attach-note mono">{{ t('agents.launcher.dragHint') }}</span>
           </div>
-          <KAttachStrip v-if="launchImages.length" :images="launchImages" @remove="removeLaunchImage" />
+          <KAttachStrip v-if="launchImages.length && !launchNative" :images="launchImages" @remove="removeLaunchImage" />
           <p v-if="launchError" class="agents__error" role="alert">{{ launchError }}</p>
 
           <div class="agents-launcher__name">
@@ -607,7 +629,7 @@
           <!-- «Модель» and «Рівень роздумів» — how the agent runs, not where it lands, so
                they sit under the ask rather than in the right column. Paired on one row: two
                narrow selects read as a couple and keep the modal from growing a scrollbar. -->
-          <div class="agents-launcher__run">
+          <div v-if="!launchNative" class="agents-launcher__run">
             <div class="agents-launcher__duo">
               <div>
                 <div class="agents-launcher__label">{{ t('agents.session.model') }}</div>
@@ -634,6 +656,22 @@
             <div class="agents-launcher__label">{{ t('agents.session.branch') }}</div>
             <div class="agents-launcher__branch mono">{{ branchPreview }}</div>
             <div class="agents-launcher__hint mono">{{ branchHint }}</div>
+          </div>
+
+          <!-- «Режим» — Kermanych's managed session, or the harness's own TUI in a terminal. -->
+          <div>
+            <div class="agents-launcher__label">{{ t('agents.native.modeLabel') }}</div>
+            <div class="agents-launcher__seg">
+              <button
+                v-for="opt in LAUNCH_MODES"
+                :key="opt"
+                type="button"
+                class="agents-launcher__seg-btn mono"
+                :class="{ 'agents-launcher__seg-btn--active': opt === draftMode }"
+                @click="draftMode = opt"
+              >{{ opt === 'managed' ? t('agents.native.modeManaged') : opt }}</button>
+            </div>
+            <div class="agents-launcher__hint mono">{{ t('agents.native.modeHint') }}</div>
           </div>
 
           <div>
@@ -1010,6 +1048,8 @@ import { EFFORT_OPTIONS } from '../lib/effort';
 import { modelOptions, effortOptions } from '../lib/models';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { useVirtualList } from '../composables/useVirtualList';
+import { nativeHarnessName, nativeRuntimeFor, sessionCostKnown, LAUNCH_MODES, type LaunchMode } from '../lib/native-session';
+import KTerminalView from 'components/kit/KTerminalView.vue';
 
 // The Агенти screen (design-system section 07): the board of session cards for whatever is
 // in scope — one project, or every project of a workspace — plus the full panel for the
@@ -1402,14 +1442,21 @@ const skillsHint = computed(() => t('agents.session.skillsHint'));
 // The id is the same string the worktree folder under ~/.kermanych/worktrees is named after,
 // so the bubble says where to spend it rather than leaving an opaque uuid on screen.
 const sessionIdHint = computed(() => t('agents.session.idHint'));
-// The engine's own handle, which is what `claude --resume` takes — our id names the folder, not
-// the conversation. Shown for claude-code only: an omp agent reports a sessionId too, but omp
-// resumes from a session FILE (`ompSessionFile`), so printing its id would promise a `--resume`
-// that does not exist. Read from the session row, so a dormant agent still states it.
-const engineSessionId = computed(() =>
-  selectedSession.value?.runtime === 'claude-code' ? selectedSession.value.ompSessionId : undefined,
+// The engine's own handle, which is what `--resume` takes — our id names the folder, not the
+// conversation. A claude session keeps its uuid in `ompSessionId`. A managed omp agent reports
+// a sessionId too, but its resume goes through Kermanych, so printing it would promise a
+// `--resume` that does not exist; a native omp session prints its session FILE, which
+// `omp --resume` takes. Read from the session row, so a dormant agent still states it.
+const engineSessionId = computed(() => {
+  const s = selectedSession.value;
+  if (s?.runtime === 'claude-code') return s.ompSessionId;
+  return s?.native ? s.ompSessionFile ?? s.ompSessionId : undefined;
+});
+const engineSessionIdHint = computed(() =>
+  selectedSession.value?.native && selectedSession.value.runtime !== 'claude-code'
+    ? t('agents.native.engineIdHintOmp')
+    : t('agents.session.engineIdHint'),
 );
-const engineSessionIdHint = computed(() => t('agents.session.engineIdHint'));
 const isBound = computed(() => !!launchProject.value?.localRepoPath);
 
 // Row-level check: the board can show sessions of an orphan project whose row is still here
@@ -1642,7 +1689,11 @@ watch(detailTab, (t) => {
 // ── Consolidated header: overflow menu + keyboard shortcuts ─────────────────
 // The chat column carries ONE header (the embedded KPanel runs `bare`): the session's
 // harness and live status, the primary session actions, and — behind ⋯ — the rest.
-const harnessLabel = computed(() => selectedSession.value?.runtime || 'omp');
+const harnessLabel = computed(() => {
+  const s = selectedSession.value;
+  const harness = s?.runtime || 'omp';
+  return s?.native ? t('agents.native.label', { harness: nativeHarnessName(harness) }) : harness;
+});
 const runningSelected = computed(
   () => selectedSession.value?.status === 'thinking' || selectedSession.value?.status === 'tool',
 );
@@ -1689,13 +1740,13 @@ function onDetailShortcut(e: KeyboardEvent): void {
   const branchKind = s.kind === 'discussion' || s.kind === 'review';
   switch (e.key.toLowerCase()) {
     case 'd':
-      if (!branchKind && !s.archived && canReview(s)) { e.preventDefault(); menuOpen.value = false; void onReview(s); }
+      if (!branchKind && !s.archived && !s.native && canReview(s)) { e.preventDefault(); menuOpen.value = false; void onReview(s); }
       break;
     case 'e':
       if (!s.archived) { e.preventDefault(); menuOpen.value = false; onEditor(); }
       break;
     case '.':
-      if (runningSelected.value) { e.preventDefault(); menuOpen.value = false; onStop(); }
+      if (runningSelected.value || (s.native && s.terminalId)) { e.preventDefault(); menuOpen.value = false; onStop(); }
       break;
     case 'backspace':
       e.preventDefault();
@@ -1912,6 +1963,9 @@ const draftWorktree = ref(true);
 const draftHidden = ref(false);
 const nameEdited = ref(false);
 const draftBaseBranch = ref('');
+// «Режим»: a launch choice, not a card field — «В беклог» and board launches stay managed.
+const draftMode = ref<LaunchMode>('managed');
+const launchNative = computed(() => draftMode.value !== 'managed');
 const launchBranches = ref<string[]>([]);
 const editingTaskId = ref<string | null>(null);
 // The card `editingTaskId` points at, resolved from the store rather than snapshotted, so a
@@ -2026,6 +2080,7 @@ function openLauncher(card?: Task): void {
   nameEdited.value = !!card;
   launcherError.value = null;
   clearLaunchImages();
+  draftMode.value = 'managed';
   launcherOpen.value = true;
   void nextTick(() => taskInput.value?.focus());
 }
@@ -2056,6 +2111,7 @@ function openTaskFromText(text: string): void {
   nameEdited.value = true;
   launcherError.value = null;
   clearLaunchImages();
+  draftMode.value = 'managed';
   launcherOpen.value = true;
   void nextTick(() => nameField.value?.focus());
 }
@@ -2124,7 +2180,8 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     // The launch can still fail (omp down, project unbound, network), and its error belongs
     // in the launcher the operator is looking at — so the modal closes only after from-task
     // resolves. The card is already saved either way.
-    const session = await api.createSessionFromTask(cardId, images);
+    const native = nativeRuntimeFor(draftMode.value);
+    const session = await api.createSessionFromTask(cardId, native ? undefined : images, native);
     launcherOpen.value = false;
     clearLaunchImages();
     store.setBucket('active');
@@ -2385,6 +2442,19 @@ async function onReopen(s: Session): Promise<void> {
     store.setBucket('active');
     if (session?.id) store.selectSession(session.id);
     store.notify(t('agents.notify.reopened', { name: s.name }));
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    actionBusy.value = false;
+  }
+}
+
+// A native session whose harness is not running: start it again (resume) in a new pty.
+async function onResumeNative(s: Session): Promise<void> {
+  if (actionBusy.value) return;
+  actionBusy.value = true;
+  try {
+    await store.resumeSession(s.id);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   } finally {
@@ -3416,6 +3486,12 @@ async function submitPreviewConfig(): Promise<void> {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+// A native session's TUI fills the Лог pane; KTerminalView sizes itself to 100% of it.
+.agents__native-term {
+  flex: 1;
+  min-height: 0;
 }
 
 .agents__changes,

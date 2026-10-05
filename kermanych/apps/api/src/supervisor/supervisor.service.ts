@@ -1,5 +1,5 @@
 // apps/api/src/supervisor/supervisor.service.ts
-import { GoneException, Injectable, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
+import { GoneException, Injectable, Optional, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -76,6 +76,8 @@ import {
 import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type AiTrigger, type TaskPatch } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
+import { NativeSessionService, nativeUnsupported } from "../native/native-session.service";
+import { PR_URL_RE } from "./pr-url";
 
 type Live = {
   rpc: AgentRuntime;
@@ -134,11 +136,6 @@ const CHAT_TOOLS = ["read", "grep", "glob"];
 // same reasoning as CONFIG_MAX_BYTES in skills.service.ts.
 const MATCH_MAX_CHARS = 1 << 14;
 
-// A pull-request URL — the signal that a «Створити ПР» flow actually opened one: GitHub
-// `/pull/N`, GitLab `/-/merge_requests/N`, Bitbucket `/pull-requests/N`. Non-global so
-// `.test` stays stateless across the many messages one turn streams.
-const PR_URL_RE = /https?:\/\/\S+\/(?:pull|pull-requests|merge_requests)\/\d+/i;
-
 @Injectable()
 export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private map = new Map<string, Live>();
@@ -174,7 +171,21 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     private auth: AuthService,
     private skills: SkillsService,
     private models: ModelsService,
-  ) {}
+    // Native sessions (docs/specs/2026-10-05-native-sessions.md) are driven there; this
+    // service routes native rows to it and relays its changes as ServerEvents.
+    @Optional() private native?: NativeSessionService,
+  ) {
+    this.native?.events$.subscribe((e) => {
+      if (e.type === "changed") return this.pushUpdate(e.sessionId);
+      for (const [callId, lines] of e.transcript.full) this.toolDetails.put(e.sessionId, callId, lines);
+      this.events.next({ type: "transcript_reset", sessionId: e.sessionId, entries: e.transcript.entries });
+    });
+  }
+
+  private requireNative(): NativeSessionService {
+    if (!this.native) throw new Error("native sessions are unavailable");
+    return this.native;
+  }
 
   // Lay out the project's skill library for one child and remember how to label its rows.
   // Never throws: a library failure must degrade to "no library", never to a failed launch.
@@ -306,6 +317,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
   private merge(s: Session): Session {
+    // A native row's live state (status, current tool, its pty) comes from its harness's hooks.
+    if (s.native) return { ...s, ...this.native?.live(s.id) };
     const l: Partial<Session> = this.map.get(s.id)?.live ?? {};
     return { ...s, ...l, status: l.status ?? s.status };
   }
@@ -462,7 +475,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // atomic claim) and owns the project config; SQLite owns where the repo lives locally.
   // From `registry.createSession` onward this is byte-for-byte the ordinary launch path, so
   // a task-born session behaves exactly like a locally created one — including offline.
-  async createSessionFromTask(taskId: string, userId: string, images?: ImageInput[]): Promise<Session> {
+  // `native` launches the card as a native session of that harness: the task text alone is its
+  // first prompt, and model, effort and images stay with the harness's own UI.
+  async createSessionFromTask(taskId: string, userId: string, images?: ImageInput[], native?: AgentRuntimeKind): Promise<Session> {
+    if (native && images?.length) throw nativeUnsupported();
+    if (native) this.requireNative();
     const client = this.auth.cloudClient();
 
     const task = await getTask(client, taskId);
@@ -534,11 +551,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       undefined,
       task.branch ?? project.defaultBranch,
     );
-    const runtime = this.runtimeFor();
+    const runtime = native ?? this.runtimeFor();
     // A model chosen under a different runtime (e.g. a claude model left selected after the
     // operator switches to omp) is dropped so the spawned backend uses its own default rather
     // than running the wrong provider's model; an unreadable catalog keeps the id untouched.
-    const model = await this.models.validModel(runtime, task.model);
+    // A native session carries neither model nor effort: the harness's own `/model` owns them.
+    const model = native ? undefined : await this.models.validModel(runtime, task.model);
     const session = this.registry.createSession({
       projectId: project.id,
       taskId: task.id,
@@ -552,10 +570,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // Unvalidated free-text, exactly like `effort`: omp clamps what it accepts. The only
       // clamp here is cross-runtime (validModel above), so an omp task never inherits a claude
       // model left selected from a previous session.
-      effort: task.effort,
+      effort: native ? undefined : task.effort,
       prefix,
       platform,
       runtime,
+      ...(native ? { native: true } : {}),
     });
     try {
       return await this.launch(session, project, { images });
@@ -765,6 +784,19 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
     const saved = worktree ? this.registry.updateSession(id, { worktreePath: wtDir }) : session;
 
+    // A native session gets nothing of Kermanych's: no skills, triggers, system append or
+    // directives — its harness starts in the worktree with the task text as its first prompt.
+    if (session.native) {
+      try {
+        await this.requireNative().start(saved, { prompt: firstPrompt, resume: false });
+      } catch (err) {
+        await this.rollbackLaunchGit(project, saved, wtDir);
+        throw err;
+      }
+      this.pushUpdate(id);
+      return this.merge(this.registry.listSessions().find((x) => x.id === id) ?? saved);
+    }
+
     const cwd = worktree ? wtDir : project.localRepoPath;
     const configPath = await this.ompSkills(project.id, cwd, id);
     const extensionPath = await this.ompTriggers(project.id, cwd, id);
@@ -794,12 +826,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     } catch (err) {
       this.stopPoll(live);
       await rpc.stop().catch(() => {});
-      if (worktree) {
-        await this.worktree.removeWorktree(project.localRepoPath, wtDir).catch(() => {});
-      } else if (baseBranch) {
-        await this.worktree.checkout(project.localRepoPath, baseBranch, { force: true }).catch(() => {});
-      }
-      await this.worktree.removeBranch(project.localRepoPath, branch).catch(() => {});
+      await this.rollbackLaunchGit(project, session, wtDir);
       this.map.delete(id);
       this.toolDetails.dropSession(id);
       this.skillLabels.delete(id);
@@ -807,6 +834,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
     this.pushUpdate(id);
     return this.merge(saved);
+  }
+
+  // Undo launch's git side effects: the worktree (or the in-place checkout) and the branch.
+  private async rollbackLaunchGit(project: Project, session: Session, wtDir: string): Promise<void> {
+    if (session.worktree) {
+      await this.worktree.removeWorktree(project.localRepoPath, wtDir).catch(() => {});
+    } else if (session.baseBranch) {
+      await this.worktree.checkout(project.localRepoPath, session.baseBranch, { force: true }).catch(() => {});
+    }
+    await this.worktree.removeBranch(project.localRepoPath, session.branch).catch(() => {});
   }
 
   // Fork a discussion child off a parent's omp conversation (tip-level). The child
@@ -817,6 +854,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
     if (s.kind !== "agent") throw new Error("can only branch an agent session");
+    if (s.native) throw nativeUnsupported();
 
     // A fork can only continue on the parent's backend (R1/R2): omp resumes from the parent's
     // session FILE, claude resumes from the parent's session UUID (stored in ompSessionId).
@@ -882,6 +920,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
     if (s.kind !== "agent") throw new Error("only agent sessions can be reviewed");
+    if (s.native) throw nativeUnsupported();
 
     const live = this.map.get(parentId);
     if (live && (live.state.status === "thinking" || live.state.status === "tool"))
@@ -1281,6 +1320,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // chat reads empty until something rehydrates it. Deliberately NOT restartSession: this must
   // never kill a live child, so pressing it mid-turn cannot destroy the running turn.
   async resume(id: string): Promise<{ ok: true }> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (s?.native) {
+      // Starts the harness on its saved conversation; a running one is left alone.
+      await this.requireNative().start(s, { resume: true });
+      return { ok: true };
+    }
     await this.liveOrResume(id);
     return { ok: true };
   }
@@ -1310,6 +1355,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     images: ImageInput[] | undefined,
     fromOperator: boolean,
   ) {
+    const row = this.registry.listSessions().find((x) => x.id === id);
+    if (row?.native) return this.deliverNative(id, text, images, fromOperator);
     const l = await this.liveOrResume(id);
     try {
       this.registry.touchSession(id);
@@ -1352,6 +1399,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (mode === "steer") l.rpc.steer(body, images);
     else if (mode === "follow_up") l.rpc.followUp(body, images);
     else l.rpc.prompt(body, images);
+  }
+
+  // A native session takes text only, pasted into its TUI as-is (or resumed with it): images
+  // and harness commands belong in the terminal, and nothing of Kermanych's is added.
+  private async deliverNative(id: string, text: string, images: ImageInput[] | undefined, fromOperator: boolean) {
+    if (images?.length || (fromOperator && parseCommand(text))) throw nativeUnsupported();
+    await this.requireNative().send(id, text);
+    try {
+      this.registry.touchSession(id);
+    } catch {
+      /* never let a bookkeeping write break message delivery */
+    }
   }
 
   // Dispatch an operator's harness command against the live child and report the outcome as a
@@ -1522,6 +1581,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   async setEffort(id: string, level: ThinkingLevel): Promise<Session> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
+    if (s.native) throw nativeUnsupported();
     const l = this.map.get(id);
     if (l?.rpc.isAlive()) await l.rpc.setThinkingLevel(level);
     const saved = this.registry.updateSession(id, { effort: level });
@@ -1537,6 +1597,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   async setSessionModel(id: string, patch: { model?: string; provider?: string; effort?: ThinkingLevel }): Promise<Session> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
+    if (s.native) throw nativeUnsupported();
     const l = this.map.get(id);
     if (l?.rpc.isAlive()) {
       if (patch.model) {
@@ -1600,7 +1661,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // the cloud card, so a locally-created session with no `taskId` has nowhere to put it and is
     // not asked to produce one. The pull-request agent is the same running child that did the
     // work, so it knows what to test. onRpcEvent captures whichever block it emits.
-    const artifacts = s.taskId ? `\n\n${QA_CHECKLIST_DIRECTIVE}` : "";
+    // A native session has no event stream to capture the block from, so it is not asked.
+    const artifacts = s.taskId && !s.native ? `\n\n${QA_CHECKLIST_DIRECTIVE}` : "";
     const prompt =
       renderInstruction(
         agentById("pull-request")!,
@@ -1617,6 +1679,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // and `deliver` awaits a respawn for a dormant session — a stale `agent_end` arriving
     // during that await must not consume it. `deliver` ends in a synchronous `rpc.prompt`,
     // so no event can be processed between it and this line.
+    if (s.native) await this.requireNative().arm(id, "pr");
     const l = this.map.get(id);
     if (l) l.prRequested = true;
     return { ok: true };
@@ -1667,14 +1730,22 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // After the send, for the same reason createPullRequest arms its flag there: the flag must
     // belong to the turn this call just started, and a stale `agent_end` arriving during a
     // dormant-session respawn must not consume it.
+    if (s.native) await this.requireNative().arm(id, "review");
     const l = this.map.get(id);
     if (l) l.reviewPending = true;
     return { ok: true };
   }
   answerUi(id: string, res: RpcExtensionUIResponse) {
+    if (this.registry.listSessions().find((x) => x.id === id)?.native) throw nativeUnsupported();
     this.map.get(id)?.rpc.answerUi(res);
   }
   async stopSession(id: string) {
+    if (this.registry.listSessions().find((x) => x.id === id)?.native) {
+      // Resolves once the harness exited; its exit already wrote `stopped`.
+      await this.requireNative().stop(id);
+      this.pushUpdate(id);
+      return;
+    }
     const l = this.map.get(id);
     if (!l) return;
     l.live.status = "stopped";
@@ -1687,6 +1758,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // Recover a wedged/stuck agent: kill the (possibly unresponsive) omp child and respawn it,
   // rehydrating the conversation from its saved session file. No prompt — a continuation.
   async restartSession(id: string): Promise<{ ok: true }> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (s?.native) {
+      await this.requireNative().restart(s);
+      return { ok: true };
+    }
     const l = this.map.get(id);
     if (l) {
       this.stopPoll(l);
@@ -1704,6 +1780,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       await this.deleteSession(child.id);
 
     const s = this.registry.listSessions().find((x) => x.id === id);
+    if (s?.native) await this.native?.stop(id);
     const l = this.map.get(id);
     if (l) {
       l.live.status = "stopped";
@@ -1931,6 +2008,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (await this.worktree.hasUncommitted(dir))
       await this.worktree.commitAll(dir, `session work: ${s.name}`);
 
+    if (s.native) await this.native?.stop(id);
     const l = this.map.get(id);
     if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); this.toolDetails.dropSession(id); this.skillLabels.delete(id); }
     if (s.worktree) {
@@ -1988,6 +2066,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     child.unref();
     return { ok: true };
   }
+  // GET /sessions/:id/transcript. A native session's history is read from its harness's own
+  // session file on demand; every other session serves getTranscript.
+  async sessionTranscript(id: string): Promise<TranscriptEntry[]> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s?.native || !this.native) return this.getTranscript(id);
+    const { entries, full } = await this.native.transcript(s);
+    for (const [callId, lines] of full) this.toolDetails.put(id, callId, lines);
+    return entries;
+  }
+
   getTranscript(id: string): TranscriptEntry[] {
     const l = this.map.get(id);
     if (l) return l.transcript;
