@@ -9,10 +9,18 @@
 // Slack answers HTTP 200 with `{ ok: false, error: "<code>" }` for almost every failure, so
 // the code string — not the status — is what callers branch on (`invalid_auth`,
 // `not_authed`, `channel_not_found`, …).
+import { setTimeout as sleep } from "node:timers/promises";
+
 const API_URL = "https://slack.com/api";
 
-// conversations.list/replies page size. 200 is Slack's documented recommended maximum.
+// users.conversations/conversations.replies page size. 200 is Slack's documented recommended maximum.
 const PAGE = 200;
+
+// Slack answers a rate-limited call with HTTP 429 and `Retry-After` (seconds). Waits up to
+// this long are taken and the call retried; a longer one is reported, because these calls
+// sit behind a UI request (or an answer) that would otherwise look hung.
+const MAX_RETRY_AFTER_S = 30;
+const RATE_LIMIT_RETRIES = 2;
 
 // A hard stop on paging a runaway thread. What reaches the prompt is trimmed further by the
 // service (root + the newest replies), so this only bounds the requests, not the context.
@@ -59,19 +67,29 @@ export class SlackClient {
   private async call<T>(method: string, params: Record<string, string | number | boolean | undefined>): Promise<T & Envelope> {
     const body = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) if (v !== undefined) body.set(k, String(v));
-    const res = await fetch(`${this.baseUrl}/${method}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
-      },
-      body,
-    });
-    // A non-JSON body (an HTML 5xx from an edge) still has to become an error a toast can
-    // show, so the status stands in for Slack's missing code.
-    const json = (await res.json().catch(() => ({ ok: false, error: `http_${res.status}` }))) as T & Envelope;
-    if (!json.ok) throw new SlackApiError(method, json.error ?? `http_${res.status}`);
-    return json;
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(`${this.baseUrl}/${method}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+        },
+        body,
+      });
+      if (res.status === 429 && attempt < RATE_LIMIT_RETRIES) {
+        const wait = Number(res.headers.get("retry-after") ?? 1);
+        if (Number.isFinite(wait) && wait >= 0 && wait <= MAX_RETRY_AFTER_S) {
+          await res.body?.cancel();
+          await sleep(wait * 1000);
+          continue;
+        }
+      }
+      // A non-JSON body (an HTML 5xx from an edge) still has to become an error a toast can
+      // show, so the status stands in for Slack's missing code.
+      const json = (await res.json().catch(() => ({ ok: false, error: `http_${res.status}` }))) as T & Envelope;
+      if (!json.ok) throw new SlackApiError(method, json.error ?? `http_${res.status}`);
+      return json;
+    }
   }
 
   // Validates a BOT token and reports which Slack workspace and bot user it belongs to.
@@ -89,20 +107,37 @@ export class SlackClient {
 
   // The channels the bot can actually hear: Slack delivers message events only for
   // conversations the bot is a member of, so offering any other one would bind the
-  // integration to silence.
+  // integration to silence. `users.conversations` returns exactly those — unlike
+  // `conversations.list`, which pages every channel of the Slack workspace on a Tier 2
+  // budget and runs a large workspace into `ratelimited`.
   async memberChannels(): Promise<SlackChannel[]> {
     const out: SlackChannel[] = [];
     let cursor: string | undefined;
     do {
-      const r = await this.call<{ channels?: Array<{ id: string; name?: string; is_private?: boolean; is_member?: boolean }> }>(
-        "conversations.list",
+      const r = await this.call<{ channels?: Array<{ id: string; name?: string; is_private?: boolean }> }>(
+        "users.conversations",
         { types: "public_channel,private_channel", exclude_archived: true, limit: PAGE, cursor },
       );
-      for (const c of r.channels ?? [])
-        if (c.is_member) out.push({ id: c.id, name: c.name ?? c.id, isPrivate: c.is_private === true });
+      for (const c of r.channels ?? []) out.push({ id: c.id, name: c.name ?? c.id, isPrivate: c.is_private === true });
       cursor = r.response_metadata?.next_cursor || undefined;
     } while (cursor);
     return out.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // One channel, if the bot can hear it; `null` otherwise. A private channel the bot is not
+  // in is invisible to it, so Slack answers `channel_not_found` — the same «not a member».
+  async memberChannel(id: string): Promise<SlackChannel | null> {
+    try {
+      const r = await this.call<{
+        channel?: { id: string; name?: string; is_private?: boolean; is_member?: boolean; is_archived?: boolean };
+      }>("conversations.info", { channel: id });
+      const c = r.channel;
+      if (!c?.is_member || c.is_archived) return null;
+      return { id: c.id, name: c.name ?? c.id, isPrivate: c.is_private === true };
+    } catch (err) {
+      if (err instanceof SlackApiError && err.error === "channel_not_found") return null;
+      throw err;
+    }
   }
 
   // The whole thread, root first, in Slack's own chronological order.
