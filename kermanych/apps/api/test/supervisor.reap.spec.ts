@@ -4,7 +4,9 @@ import type { RpcEvent } from "@kermanych/core";
 
 // Every spawned child, its stop flag, its liveness, and the supervisor's event callback so a
 // test can drive it to a running status. Mirrors the FakeRpc idiom of supervisor.restart /
-// supervisor.effort — stop() also flips `alive`, which is what a real stopped child reports.
+// supervisor.effort — stop() also flips `alive`, which is what a real stopped child reports,
+// and replays what a real omp does on stdin EOF: one non-interactive `setWidget` UI request,
+// then a clean exit (code 0).
 type FakeChild = { stopped: boolean; alive: boolean; emit: (e: RpcEvent) => void };
 const instances: FakeChild[] = [];
 
@@ -13,13 +15,16 @@ vi.mock("../src/rpc/rpc-session", () => {
     stopped = false;
     alive = true;
     emit: (e: RpcEvent) => void = () => {};
+    exit: (code: number | null, reason: string) => void = () => {};
     constructor(_opts: unknown) {
       instances.push(this as unknown as FakeChild);
     }
     onEvent(cb: (e: RpcEvent) => void) {
       this.emit = cb;
     }
-    onExit() {}
+    onExit(cb: (code: number | null, reason: string) => void) {
+      this.exit = cb;
+    }
     async start() {}
     async getState() {
       return { sessionId: "omp-1", sessionFile: "/tmp/s.jsonl" };
@@ -31,6 +36,8 @@ vi.mock("../src/rpc/rpc-session", () => {
     async stop() {
       this.stopped = true;
       this.alive = false;
+      this.emit({ type: "extension_ui_request", id: "w1", method: "setWidget", widgetKey: "autoresearch" } as unknown as RpcEvent);
+      this.exit(0, "omp child exited (code 0) before completing request");
     }
     isAlive() {
       return this.alive;
@@ -138,5 +145,20 @@ describe("reapIdleChildren", () => {
     reap(sup, Date.now() + TTL_MS + 1_000);
 
     expect(instances[0].stopped).toBe(false);
+  });
+
+  it("leaves a reaped resumed session at done when omp sends a frame while shutting down", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    registry.updateSession(s.id, { ompSessionFile: "/tmp/s.jsonl", status: "done" });
+    // Opening a dormant session's history wakes it without a send.
+    await sup.resume(s.id);
+
+    reap(sup, Date.now() + TTL_MS + 1_000);
+
+    expect(instances[0].stopped).toBe(true);
+    expect(registry.listSessions().find((x) => x.id === s.id)?.status).toBe("done");
+    expect(sup.snapshot().sessions.find((x) => x.id === s.id)?.status).toBe("done");
   });
 });
