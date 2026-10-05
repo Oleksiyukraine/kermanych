@@ -171,7 +171,7 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
   // an integration that silently never answers.
   async connect(workspaceId: string, channelId: string, userId: string): Promise<SlackIntegration> {
     const row = this.tokenRow(workspaceId, userId);
-    const channel = (await this.clientFactory(row.botToken).memberChannels()).find((c) => c.id === channelId);
+    const channel = await this.clientFactory(row.botToken).memberChannel(channelId);
     if (!channel) throw new Error("the bot is not a member of that channel — invite it to the channel first");
     const integration = await upsertSlackIntegration(this.auth.cloudClient(), {
       workspaceId,
