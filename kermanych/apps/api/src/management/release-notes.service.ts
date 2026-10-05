@@ -14,22 +14,15 @@
 // same division of labour the risk register uses — the api has no cloud credentials and
 // must not grow any.
 import { Injectable, Logger } from "@nestjs/common";
-import type { ReleaseNotesAsk, ReleaseNotesReply, RpcEvent, AgentRuntimeKind } from "@kermanych/core";
-import { createRuntime } from "../runtime/agent-runtime";
+import type { ReleaseNotesAsk, ReleaseNotesReply, AgentRuntimeKind } from "@kermanych/core";
+import { runOneShot } from "../runtime/one-shot";
 import { resolveRuntime } from "../runtime/resolve-runtime";
 import { languageAppendFor } from "../runtime/resolve-language";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
-import { reduceRpcEvents, sumTurnUsage, type TurnSpend } from "../supervisor/transcript-reducer";
-import { limit, MANAGEMENT_TOOLS } from "./management-chat.service";
+import { MANAGEMENT_TOOLS } from "./management-chat.service";
 import { CodedError } from "./coded-error";
 import { buildReleaseNotesPrompt } from "./release-notes-prompt";
-
-// Same bounds as the management chat, for the same reasons: a start slower than thirty
-// seconds is a missing omp, not a slow laptop; and a generation that reads code before it
-// writes is honest work for minutes, so only the four-minute mark means «stuck».
-const START_TIMEOUT_MS = 30_000;
-const TURN_TIMEOUT_MS = 240_000;
 
 // The document's title, read from its first `# ` heading — the prompt requires one, but a
 // model that ignored the rule must not sink the whole generation, so the fallback restates
@@ -94,7 +87,16 @@ export class ReleaseNotesService {
       locale: ask.locale,
     });
 
-    const generated = await this.oneShot(project.localRepoPath, prompt, startedAt);
+    const append = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
+    const generated = await runOneShot({
+      kind: this.runtimeFor(),
+      cwd: project.localRepoPath,
+      prompt,
+      tools: [...MANAGEMENT_TOOLS],
+      ...(append ? { appendSystemPrompt: append } : {}),
+      startedAt,
+    });
+    this.log.debug(`release notes: згенеровано ${generated.text.length} символів у ${project.localRepoPath}`);
     const { usage, model } = generated.spend;
 
     return {
@@ -106,68 +108,5 @@ export class ReleaseNotesService {
       // Wall time as the operator experienced it, spawn included.
       ms: Date.now() - startedAt,
     };
-  }
-
-  // One prompt, one answer, one dead child. The event handling is the management chat's
-  // `drive` minus everything conversational: no interactive-UI answering is needed because
-  // read-only tools ask no questions the prompt has not already forbidden — but a child
-  // that tries anyway is simply dropped by the timeout, never left hanging a request.
-  private async oneShot(cwd: string, prompt: string, startedAt: number): Promise<{ text: string; spend: TurnSpend }> {
-    const append = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
-    const rpc = createRuntime(this.runtimeFor(), { cwd, tools: [...MANAGEMENT_TOOLS], ...(append ? { appendSystemPrompt: append } : {}) });
-    const events: RpcEvent[] = [];
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    rpc.onEvent((e) => {
-      events.push(e);
-      if (e.type === "agent_end") {
-        // `isTerminal: false` marks a sub-agent's end, not the answer's.
-        const isTerminal = "isTerminal" in e ? e.isTerminal : undefined;
-        if (isTerminal !== false) resolve();
-      }
-    });
-    rpc.onExit((_code, reason) =>
-      reject(new CodedError("omp_exited_during_generation", `omp завершився під час генерації: ${reason}`, { reason })),
-    );
-
-    try {
-      const startSeconds = Math.round(START_TIMEOUT_MS / 1000);
-      await limit(
-        rpc.start(),
-        START_TIMEOUT_MS,
-        new CodedError(
-          "omp_launch_timeout",
-          `не вдалося запустити omp за ${startSeconds} с — перевірте, що команда omp доступна в PATH`,
-          { seconds: startSeconds },
-        ),
-      );
-      rpc.prompt(prompt);
-      const genSeconds = Math.round(TURN_TIMEOUT_MS / 1000);
-      await limit(
-        promise,
-        TURN_TIMEOUT_MS,
-        new CodedError(
-          "generation_timeout",
-          `генерація не завершилась за ${genSeconds} с — спробуйте вужчий період або меншу гілку`,
-          { seconds: genSeconds },
-        ),
-      );
-    } finally {
-      // Success or failure, the child dies here: a leaked omp outlives the request and
-      // keeps a provider seat. `limit` abandons promises, it does not kill processes.
-      await rpc.stop().catch(() => {});
-    }
-
-    // The reduction is the supervisor's, exactly as the chat's: the same frames that build
-    // a session transcript build this document, so a frame that changes meaning changes
-    // meaning in one place.
-    const { entries } = reduceRpcEvents(events);
-    const text = entries
-      .filter((e) => e.kind === "assistant_text")
-      .map((e) => e.text)
-      .join("\n\n")
-      .trim();
-    if (!text) throw new CodedError("model_no_text", "модель не повернула тексту — спробуйте ще раз");
-    this.log.debug(`release notes: згенеровано ${text.length} символів у ${cwd}`);
-    return { text, spend: sumTurnUsage(events, startedAt) };
   }
 }

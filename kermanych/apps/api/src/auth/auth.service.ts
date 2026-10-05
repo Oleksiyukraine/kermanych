@@ -30,6 +30,7 @@ export class AuthService {
   private cached: AuthSessionRow | undefined;
   private client: SupabaseClient | undefined;
   private tokenListeners: TokenListener[] = [];
+  private clearListeners: Array<() => void> = [];
 
   // The factory parameter is @Optional() so tests can construct the service
   // directly with a stub, the same way RegistryService takes ":memory:".
@@ -43,6 +44,12 @@ export class AuthService {
 
   onToken(cb: TokenListener): void {
     this.tokenListeners.push(cb);
+  }
+
+  // Sign-out's counterpart to onToken: whatever a listener opened on the user's behalf
+  // (the Slack sockets answer with their documentation) must close with the session.
+  onClear(cb: () => void): void {
+    this.clearListeners.push(cb);
   }
 
   // Validate ONCE, then cache. `getClaims` verifies the JWT locally against the
@@ -118,6 +125,8 @@ export class AuthService {
     this.registry.clearAuthSession();
     this.cached = undefined;
     this.client = undefined;
+    // Fired last, so a listener already sees the signed-out state (current() undefined).
+    for (const cb of this.clearListeners) cb();
   }
 
   current(): AuthSessionRow | undefined {

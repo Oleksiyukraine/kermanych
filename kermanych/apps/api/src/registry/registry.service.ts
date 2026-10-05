@@ -24,6 +24,20 @@ export type AuthSessionRow = {
 // worth sending, and the cloud board has no use for the intermediate ones.
 export type OutboxRow = { taskId: string; status: SessionStatus; updatedAt: string; attempts: number; lastError?: string };
 
+// One stored Slack bot (for a Kermanych workspace, for the user who owns the row). Both
+// tokens are secrets that never leave this machine; team and bot identity are what
+// `auth.test` reported when the bot token was validated.
+export type SlackTokenRow = {
+  workspaceId: string;
+  botToken: string;
+  appToken: string;
+  teamId: string;
+  teamName: string;
+  botUserId: string;
+};
+const SLACK_TOKEN_COLUMNS =
+  "workspace_id as workspaceId, bot_token as botToken, app_token as appToken, team_id as teamId, team_name as teamName, bot_user_id as botUserId";
+
 // The `usage` column, back into a shape. Tolerant on purpose: a row written before the
 // column existed reads `null`, and a hand-edited or half-written blob must degrade to
 // "no figure" rather than crash the board. Absent stays absent — zeros would be a claim.
@@ -258,6 +272,13 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS linear_tokens (org_url_key TEXT NOT NULL, user_id TEXT NOT NULL, api_key TEXT NOT NULL, account_id TEXT, PRIMARY KEY (org_url_key, user_id))`,
     );
+    // Per-user Slack bot + app-level tokens, THIS machine only — the Jira/Linear custody
+    // rule. Keyed by the KERMANYCH workspace (not the Slack team) because one Slack app is
+    // bound to exactly one workspace; the team/bot identity rides along, learned from
+    // `auth.test` on validation, so event routing never needs a Slack round trip.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS slack_tokens (workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, bot_token TEXT NOT NULL, app_token TEXT NOT NULL, team_id TEXT NOT NULL, team_name TEXT NOT NULL, bot_user_id TEXT NOT NULL, PRIMARY KEY (workspace_id, user_id))`,
+    );
   }
 
   // v1 (2026-08-21, team cloud): `groups` becomes `projects`, its id becomes the CLOUD
@@ -418,6 +439,36 @@ export class RegistryService {
 
   deleteLinearToken(orgUrlKey: string, userId: string): void {
     this.db.prepare(`DELETE FROM linear_tokens WHERE org_url_key = ? AND user_id = ?`).run(orgUrlKey, userId);
+  }
+
+  // ── Slack tokens ──────────────────────────────────────────────────────────────
+
+  getSlackToken(workspaceId: string, userId: string): SlackTokenRow | undefined {
+    return this.db
+      .prepare(`SELECT ${SLACK_TOKEN_COLUMNS} FROM slack_tokens WHERE workspace_id = ? AND user_id = ?`)
+      .get(workspaceId, userId) as SlackTokenRow | undefined;
+  }
+
+  setSlackToken(userId: string, row: SlackTokenRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO slack_tokens (workspace_id, user_id, bot_token, app_token, team_id, team_name, bot_user_id) VALUES (?,?,?,?,?,?,?)
+         ON CONFLICT(workspace_id, user_id) DO UPDATE SET bot_token = excluded.bot_token, app_token = excluded.app_token,
+           team_id = excluded.team_id, team_name = excluded.team_name, bot_user_id = excluded.bot_user_id`,
+      )
+      .run(row.workspaceId, userId, row.botToken, row.appToken, row.teamId, row.teamName, row.botUserId);
+  }
+
+  deleteSlackToken(workspaceId: string, userId: string): void {
+    this.db.prepare(`DELETE FROM slack_tokens WHERE workspace_id = ? AND user_id = ?`).run(workspaceId, userId);
+  }
+
+  // Every workspace this user hosts the bot for on this machine — SlackService opens one
+  // Socket Mode connection per distinct app token among them.
+  listSlackTokens(userId: string): SlackTokenRow[] {
+    return this.db
+      .prepare(`SELECT ${SLACK_TOKEN_COLUMNS} FROM slack_tokens WHERE user_id = ? ORDER BY workspace_id`)
+      .all(userId) as SlackTokenRow[];
   }
 
   removeProject(id: string): void {

@@ -252,6 +252,54 @@ launches are independent, and its mirror is removed on its own «Відключ�
   Kermanych asks where the ticket should go next and applies that transition in
   Jira.
 
+### Slack
+
+A workspace can bind **one Slack channel** to a Slack app that answers questions about
+the workspace's project documentation. The owner connects it in **Менеджмент →
+Integrations** (create the Slack app → paste its two tokens → pick the channel); after
+that, every top-level message in the channel is a question, and Kermanych replies in a
+thread under it.
+
+Setting up the Slack app, once per workspace:
+
+1. On the Slack tile press «Connect», then «Copy manifest», and create an app **from a
+   manifest** at <https://api.slack.com/apps?new_app=1> in your Slack workspace. The
+   manifest enables Socket Mode, the bot scopes `channels:history`, `groups:history`,
+   `channels:read`, `groups:read`, `chat:write`, and the `message.channels` /
+   `message.groups` events.
+2. **Install to Workspace**, then copy the **Bot User OAuth Token** (`xoxb-…`) from
+   *OAuth & Permissions*.
+3. In *Basic Information → App-Level Tokens* generate a token with the
+   `connections:write` scope (`xapp-…`).
+4. Invite the bot into the channel (`/invite @Kermanych`), paste both tokens on the tile,
+   and pick the channel. Only channels the bot is a member of are offered.
+
+- **Questions are answered from the documentation, nothing else.** The question is
+  searched across every project of the workspace that has a documentation index (the
+  same search as Project Documentation), and the reply is written only from what that
+  search returns, citing the files it used. When the documentation does not describe
+  what was asked, the reply says «We do not have such feature built yet.» A workspace
+  with no indexed project gets a reply saying so instead of a guess.
+- **Follow-ups need a mention.** Inside a thread, Kermanych answers only messages that
+  @-mention it, and reads the whole thread — the question, its earlier answers and the
+  discussion — as the context for the new answer. Thread replies without a mention are
+  left alone, as are messages in any other channel the bot was invited to.
+- **It answers while someone is online.** Slack delivers events over Socket Mode to
+  the Kermanych app itself, because the local API is not reachable from the internet.
+  The bot therefore answers only while a member whose machine holds the tokens has
+  Kermanych open and signed in; the settings card shows whether this machine is
+  connected to Slack. Any member can paste the same two tokens there to host the bot
+  too — Slack hands each message to one connection, so nobody is answered twice. The
+  documentation search runs under that member's own login, and the answer is generated
+  by their agent runtime (omp or Claude Code) on their plan.
+- **Tokens are local.** Both tokens are stored in this machine's registry SQLite and
+  never reach the cloud; the cloud row (`workspace_slack_integrations`, created by the
+  additive `20261005090000_slack_integration.sql` — push it before shipping this UI)
+  holds only the Slack workspace and channel ids, readable by members and written by the
+  owner. «Disconnect» removes the row and this machine's tokens.
+- **One Slack app per Kermanych workspace.** Two workspaces sharing one app would split
+  its messages between machines that cannot see each other's workspace.
+
 ### Why the backend is in the repository
 
 The project URL and the publishable key are **public application configuration**,
