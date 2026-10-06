@@ -52,7 +52,7 @@ function userMessage(text: string, images?: ImageInput[]): SDKUserMessage {
 // directly means that tool.
 const CLAUDE_TOOL_NAMES: Record<string, string> = { read: "Read", grep: "Grep", glob: "Glob", bash: "Bash", edit: "Edit", write: "Write" };
 
-function claudeToolName(name: string): string {
+export function claudeToolName(name: string): string {
   return CLAUDE_TOOL_NAMES[name] ?? name;
 }
 

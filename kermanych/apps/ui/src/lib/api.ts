@@ -306,8 +306,9 @@ export const api = {
   syncProjects: (projects: CloudProject[], prune = false): Promise<Project[]> =>
     post<Project[]>('/projects/sync', { projects, prune }),
 
-  createChat: (projectId: string): Promise<Session> =>
-    post<Session>('/sessions/chat', { projectId }),
+  // `native` opens the chat as the harness's own TUI in a pty (docs/specs/2026-10-06-native-chats.md).
+  createChat: (projectId: string, native?: AgentRuntimeKind): Promise<Session> =>
+    post<Session>('/sessions/chat', native ? { projectId, native } : { projectId }),
 
   // The user is NOT sent: the api takes it from the guard's cached token, so a board
   // client cannot launch a task on somebody else's behalf.

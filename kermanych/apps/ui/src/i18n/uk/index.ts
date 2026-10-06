@@ -2427,6 +2427,7 @@ export const uk = {
       bindHint: 'Прив’яжіть локальну теку репозиторію',
       historyTitle: 'Чати',
       newChat: '+ Новий',
+      modeTitle: 'Режим нового чату: Керманич або власний TUI omp / claude',
       historyEmpty: 'Ще немає чатів.',
       detailBlank: 'Виберіть чат зі списку.',
       archiveThread: 'Відкласти чат «{title}»',

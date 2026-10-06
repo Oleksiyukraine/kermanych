@@ -78,6 +78,7 @@ import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
 import { NativeSessionService, nativeUnsupported } from "../native/native-session.service";
 import { PR_URL_RE } from "./pr-url";
+import { CHAT_TOOLS } from "./chat-tools";
 
 type Live = {
   rpc: AgentRuntime;
@@ -122,10 +123,6 @@ type Live = {
   subagentsSig?: string;
   poll?: NodeJS.Timeout;
 };
-
-// Chat sessions run omp with a read-only tool subset: they explore and plan in the project
-// dir without ever mutating it (git-free). Promotion to an agent later grants the full toolset.
-const CHAT_TOOLS = ["read", "grep", "glob"];
 
 // The longest message an operator trigger's pattern is run against. Operator patterns arrive
 // from the CLOUD, so a project owner's regex executes synchronously on a MEMBER's api event
@@ -602,10 +599,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // A quick chat: an instant, git-free omp conversation in the project dir with a read-only
   // tool subset. No branch, no worktree, no opening prompt — it spawns ready and the operator
   // sends the first message. It can later be promoted (forked) into a real agent, so a throwaway
-  // exploration becomes real work without losing context.
-  async createChat(projectId: string): Promise<Session> {
+  // exploration becomes real work without losing context. `native` opens it as that harness's
+  // own TUI instead (docs/specs/2026-10-06-native-chats.md).
+  async createChat(projectId: string, native?: AgentRuntimeKind): Promise<Session> {
     const project = this.boundProject(projectId);
     const n = this.registry.listSessions(projectId).filter((s) => s.kind === "chat").length + 1;
+    if (native) return this.createNativeChat(projectId, `чат ${n}`, native);
     const session = this.registry.createSession({
       projectId, name: `чат ${n}`, task: "", worktreePath: "", branch: "",
       worktree: false, kind: "chat", status: "queued", runtime: this.runtimeFor(),
@@ -638,6 +637,28 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return this.merge(session);
   }
 
+  // A native chat: the harness's TUI in the project dir, started without a prompt — the
+  // operator types the first message into it, and the harness settles idle (`done`). No skills,
+  // triggers or system append; the chat's read-only tool set rides on the launch argv
+  // (NativeSessionService.command). A harness that cannot start leaves no row behind.
+  private async createNativeChat(projectId: string, name: string, runtime: AgentRuntimeKind): Promise<Session> {
+    const native = this.requireNative();
+    const session = this.registry.createSession({
+      projectId, name, task: "", worktreePath: "", branch: "",
+      worktree: false, kind: "chat", status: "queued", runtime, native: true,
+    });
+    try {
+      await native.start(session, { resume: false });
+    } catch (err) {
+      this.browser?.revoke(session.id);
+      this.registry.removeSession(session.id);
+      this.events.next({ type: "session_removed", sessionId: session.id });
+      throw err;
+    }
+    this.pushUpdate(session.id);
+    return this.merge(this.registry.listSessions().find((x) => x.id === session.id) ?? session);
+  }
+
   // Mature a chat into a real agent IN PLACE: the same row — same id, same conversation, same
   // board entry — grows a branch and a worktree, forks its omp conversation into that worktree
   // with the full toolset, and is immediately told to build what was just discussed. One thing
@@ -647,6 +668,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const chat = this.registry.listSessions().find((x) => x.id === chatId);
     if (!chat) throw new Error("session not found");
     if (chat.kind !== "chat") throw new Error("not a chat session");
+    // Promotion forks the conversation into a new worktree; a native harness has no fork.
+    if (chat.native) throw nativeUnsupported();
     const project = this.boundProject(chat.projectId);
 
     let chatFile = chat.ompSessionFile;
@@ -1823,13 +1846,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Archive/unarchive is a pure hide flag: it never touches the worktree or the omp
-  // process. Archiving an active agent is refused (the UI also pre-checks and toasts).
-  setArchived(id: string, archived: boolean): void {
+  // process. Archiving an active agent is refused (the UI also pre-checks and toasts). The one
+  // exception is a native chat's harness: an archived thread leaves the «Чат» page, so its TUI
+  // would keep running with no terminal anywhere — it is stopped (and resumed on demand later).
+  async setArchived(id: string, archived: boolean): Promise<void> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     if (archived && ACTIVE_STATUSES.includes(this.merge(s).status)) {
       throw new Error("cannot archive an active agent");
     }
+    if (archived && s.native && s.kind === "chat") await this.native?.stop(id);
     this.registry.updateSession(id, { archived });
     this.pushUpdate(id);
   }

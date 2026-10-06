@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type { Socket } from 'socket.io-client';
 import type {
+  AgentRuntimeKind,
   ImageInput,
   Project,
   Session,
@@ -233,8 +234,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.syncProjects(cloud, prune);
   }
 
-  function createChat(projectId: string) {
-    return api.createChat(projectId);
+  function createChat(projectId: string, native?: AgentRuntimeKind) {
+    return api.createChat(projectId, native);
   }
 
   function promoteChat(id: string, taskId: string) {
