@@ -584,6 +584,25 @@ in your own terminal. (Spec: `docs/specs/2026-10-05-native-sessions.md`.)
   commands from a composer, answering prompts outside the terminal, discussion branches,
   review, images and the subagent map. Launches from «Дошка» and «В беклог» stay managed.
 
+### Native chats
+
+The «Чат» page offers the same choice per thread (spec:
+`docs/specs/2026-10-06-native-chats.md`). The chip next to «+ Новий» picks the **Режим** of
+the next chat — `Керманич`, `omp` or `claude` — and is remembered on this machine; a thread
+keeps the mode it was created with, and its card shows that harness's mark. A native chat
+opens the harness's TUI idle in the project folder; type the first message into it. After
+each turn the first message becomes the thread's name, as for a managed chat.
+
+- **Read-only, like every chat.** A chat runs in your own checkout, not a worktree, so the
+  harness is started with the chat's read-only built-ins only — `claude --tools
+  Read,Grep,Glob` / `omp launch --tools read,grep,glob` — on every start and resume. MCP and
+  extension tools are unaffected. Nothing else of Kermanych's is added.
+- **Opening a thread does not start its harness.** A stopped native chat shows
+  «Продовжити» instead; ■ stops a running one. Archiving a thread (✕) stops its harness.
+- **Not available** for native chats: «Почати імплементацію» (▶) — promotion forks the
+  conversation into a worktree, and a native conversation cannot be forked. «В беклог» (⊕)
+  works.
+
 ## Session browser
 
 In the desktop app every session has its own browser: the **Браузер** tab of the session

@@ -199,3 +199,51 @@ describe("native lifecycle through the supervisor", () => {
     expect(sup.snapshot().sessions[0].terminalId).toBeUndefined();
   });
 });
+
+describe("a native chat (docs/specs/2026-10-06-native-chats.md)", () => {
+  it("opens the harness idle in the project folder, read-only, with no managed runtime", async () => {
+    const { sup, terminal } = make();
+    const s = await sup.createChat(PROJECT, "claude-code");
+
+    expect(runtimes).toEqual([]);
+    expect(s).toMatchObject({ kind: "chat", native: true, runtime: "claude-code", status: "done", terminalId: "t1", task: "" });
+    const opts = terminal.openSession.mock.calls[0][0] as { cwd: string; file: string; args: string[] };
+    expect(opts.cwd).toBe("/tmp/proj");
+    expect(opts.args).toEqual(["--session-id", s.ompSessionId, "--tools", "Read,Grep,Glob", "--settings", join(tmpdir(), "kermanych-native", "claude-settings.json")]);
+
+    await sup.createChat(PROJECT, "omp");
+    const omp = terminal.openSession.mock.calls[1][0] as { args: string[] };
+    expect(omp.args).toEqual(["launch", "--tools", "read,grep,glob", "--hook", join(tmpdir(), "kermanych-native", "omp-native.js")]);
+  });
+
+  it("a harness that cannot start leaves no row", async () => {
+    const { sup, registry, terminal } = make();
+    terminal.openSession.mockImplementationOnce(() => {
+      throw new Error("spawn failed");
+    });
+    await expect(sup.createChat(PROJECT, "omp")).rejects.toThrow("spawn failed");
+    expect(registry.listSessions()).toEqual([]);
+  });
+
+  it("cannot be promoted: there is no fork of a native conversation", async () => {
+    const { sup, registry } = make();
+    const s = await sup.createChat(PROJECT, "omp");
+    const err = await sup.promoteChatToAgent(s.id, "task-1").catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "native_unsupported" });
+    expect(registry.listSessions()[0]).toMatchObject({ kind: "chat", taskId: undefined });
+  });
+
+  it("archiving stops its harness; a native agent's archive leaves its harness running", async () => {
+    const { sup, registry, terminal } = make();
+    const chat = await sup.createChat(PROJECT, "omp");
+    await sup.setArchived(chat.id, true);
+    expect(terminal.kill).toHaveBeenCalledWith("t1");
+    expect(sup.snapshot().sessions.find((x) => x.id === chat.id)).toMatchObject({ archived: true, status: "stopped" });
+
+    terminal.kill.mockClear();
+    const agent = registry.createSession({ projectId: PROJECT, name: "n", task: "t", worktreePath: "/tmp/wt", branch: "b", runtime: "omp", native: true, status: "stopped" });
+    await sup.resume(agent.id);
+    await sup.setArchived(agent.id, true);
+    expect(terminal.kill).not.toHaveBeenCalled();
+  });
+});

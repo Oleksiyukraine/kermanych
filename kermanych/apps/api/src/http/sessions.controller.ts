@@ -20,10 +20,12 @@ export class SessionsController {
     return this.reg.listSessions(projectId);
   }
 
+  // `native` opens the chat as that harness's own TUI (docs/specs/2026-10-06-native-chats.md).
   @Post("chat")
-  async createChat(@Body() b: { projectId: string }) {
+  async createChat(@Body() b: { projectId: string; native?: string }) {
+    if (b.native !== undefined && !isAgentRuntime(b.native)) throw new BadRequestException(`unknown native harness ${JSON.stringify(b.native)}`);
     try {
-      return await this.sup.createChat(b.projectId);
+      return await this.sup.createChat(b.projectId, b.native);
     } catch (err) {
       throw sessionFailure(err);
     }
@@ -270,9 +272,9 @@ export class SessionsController {
   }
 
   @Post(":id/archive")
-  archive(@Param("id") id: string) {
+  async archive(@Param("id") id: string) {
     try {
-      this.sup.setArchived(id, true);
+      await this.sup.setArchived(id, true);
     } catch (err) {
       throw sessionFailure(err);
     }
@@ -280,9 +282,9 @@ export class SessionsController {
   }
 
   @Post(":id/unarchive")
-  unarchive(@Param("id") id: string) {
+  async unarchive(@Param("id") id: string) {
     try {
-      this.sup.setArchived(id, false);
+      await this.sup.setArchived(id, false);
     } catch (err) {
       throw sessionFailure(err);
     }

@@ -22,7 +22,17 @@
             <span class="chat__history-label">{{ t('chat.page.historyTitle') }}</span>
             <span class="chat__history-count mono">{{ threads.length }}</span>
           </div>
-          <KBtn variant="primary" @click="newChat">{{ t('chat.page.newChat') }}</KBtn>
+          <!-- «Режим» of the NEXT chat «+ Новий» opens (docs/specs/2026-10-06-native-chats.md):
+               Kermanych's managed chat, or the harness's own TUI. Existing threads keep theirs. -->
+          <div class="chat__history-actions">
+            <KChipSelect
+              v-model="chatMode"
+              :options="modeOptions"
+              :title="t('chat.page.modeTitle')"
+              placement="down"
+            />
+            <KBtn variant="primary" @click="newChat">{{ t('chat.page.newChat') }}</KBtn>
+          </div>
         </header>
 
         <div v-if="threads.length" class="chat__threads">
@@ -36,6 +46,7 @@
             :time="renderTime(t, relativeTime(s.lastActivityAt, now))"
             :status="s.status"
             :model="s.model"
+            :harness="sessionLaunchMode(s)"
             :usage="s.usage"
             :selected="s.id === chatId"
             removable
@@ -89,8 +100,10 @@
               <span class="chat__detail-status mono">{{ harnessLabel }} · {{ statusWord(chatSession) }}</span>
               <div class="chat__actions">
                 <!-- `title` names the action even while disabled; the reason a disabled ▶ can't
-                     act is the visible note strip under this bar. -->
+                     act is the visible note strip under this bar. A native chat has no fork to
+                     promote with, so it has no ▶. -->
                 <KIconButton
+                  v-if="!chatSession.native"
                   :disabled="promoting"
                   :title="promoting ? t('kit.panel.promoting') : t('kit.panel.promoteAgent')"
                   @click="promote"
@@ -101,7 +114,7 @@
                   @click="toBacklog"
                 >⊕</KIconButton>
                 <KIconButton
-                  v-if="running"
+                  v-if="running || nativeLive"
                   :title="t('kit.panel.stop')"
                   @click="onStop"
                 >■</KIconButton>
@@ -127,14 +140,30 @@
                edge, so the two screens read as one system instead of a mono strip here and a
                tab row there. -->
           <KTabs v-model="detailTab" :tabs="detailTabs" class="chat__detail-tabs">
-            <template #end>
+            <template v-if="!chatSession.native" #end>
               <button type="button" class="chat__log-ctl" @click="onExpandAll(true)">{{ t('agents.detail.expandAll') }}</button>
               <button type="button" class="chat__log-ctl" @click="onExpandAll(false)">{{ t('agents.detail.collapseAll') }}</button>
             </template>
           </KTabs>
 
           <div class="chat__tabpane">
+            <!-- A native chat's Лог is the harness's own TUI; Kermanych only hosts its pty. -->
+            <template v-if="chatSession.native">
+              <KTerminalView
+                v-if="chatSession.terminalId"
+                :key="chatSession.terminalId"
+                class="chat__native-term"
+                :terminal-id="chatSession.terminalId"
+                :active="true"
+              />
+              <div v-else class="chat__native-idle">
+                <span class="chat__native-idle-eyebrow mono">{{ harnessLabel }} · {{ statusWord(chatSession) }}</span>
+                <p class="chat__native-idle-text">{{ t('agents.native.idle') }}</p>
+                <KBtn variant="primary" :loading="refreshing" @click="onRefresh">{{ t('agents.native.resume') }}</KBtn>
+              </div>
+            </template>
             <KPanel
+              v-else
               class="chat__panel"
               :bare="true"
               :session="chatSession"
@@ -179,6 +208,8 @@
 // consolidated identity/action bar over the SAME KPanel + KRequestBlock stack the Агенти
 // detail renders `bare`. Log grouping, decision block, stall banner, live status, todo lane,
 // my-message navigation and the composer's model/effort/rehydrate chips all come for free.
+// A native thread (omp / claude in its own TUI) shows its harness's terminal there instead,
+// exactly as a native agent's Лог tab does (docs/specs/2026-10-06-native-chats.md).
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -194,6 +225,7 @@ import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/ex
 import { relativeTime, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useResizablePanel } from '../composables/useResizablePanel';
+import { LAUNCH_MODES, nativeHarnessName, nativeRuntimeFor, sessionLaunchMode, type LaunchMode } from '../lib/native-session';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
@@ -201,6 +233,8 @@ import KStatusDot from 'components/kit/KStatusDot.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KTabs from 'components/kit/KTabs.vue';
+import KChipSelect from 'components/kit/KChipSelect.vue';
+import KTerminalView from 'components/kit/KTerminalView.vue';
 
 const store = useOrchestrator();
 const board = useBoard();
@@ -234,10 +268,27 @@ const selectedProject = computed(() => store.projects.find((p) => p.id === store
 const isBound = computed(() => !!selectedProject.value?.localRepoPath);
 const chatSession = computed(() => store.sessions.find((s) => s.id === chatId.value));
 // Promotion grows a worktree, so it is refused without a local binding; the strip states why.
-const promoteBlocked = computed(() => !!chatSession.value && !isBound.value);
-const harnessLabel = computed(() => chatSession.value?.runtime || 'omp');
+// A native chat has no ▶ at all, so there is nothing for the strip to explain.
+const promoteBlocked = computed(() => !!chatSession.value && !chatSession.value.native && !isBound.value);
+const harnessLabel = computed(() => {
+  const s = chatSession.value;
+  const harness = s?.runtime || 'omp';
+  return s?.native ? t('agents.native.label', { harness: nativeHarnessName(harness) }) : harness;
+});
 const running = computed(
   () => chatSession.value?.status === 'thinking' || chatSession.value?.status === 'tool',
+);
+// A native chat's harness is up (its TUI has a pty): ■ stops it whatever the turn is doing.
+const nativeLive = computed(() => !!chatSession.value?.native && !!chatSession.value.terminalId);
+
+// «Режим» of the next chat (docs/specs/2026-10-06-native-chats.md), remembered on this
+// machine — the page has no form to reset it with, unlike the agents launcher. An unknown
+// stored value (nothing yet, another build's mode) is Kermanych's managed chat.
+const CHAT_MODE_KEY = 'kermanych.chat.mode';
+const chatMode = ref<LaunchMode>(LAUNCH_MODES.find((m) => m === localStorage.getItem(CHAT_MODE_KEY)) ?? 'managed');
+watch(chatMode, (m) => localStorage.setItem(CHAT_MODE_KEY, m));
+const modeOptions = computed(() =>
+  LAUNCH_MODES.map((m) => ({ value: m, label: m === 'managed' ? t('agents.native.modeManaged') : m })),
 );
 // Guard against a double-create if the project changes mid-flight while a create is pending.
 let ensuring = false;
@@ -492,11 +543,15 @@ async function onNewTask(text: string): Promise<void> {
 // is safe for a live child (the server's liveOrResume never respawns a running turn) and is
 // de-duplicated per id, and it reloads the transcript, so no separate load is needed. Kept off
 // the `refreshing` gate on purpose: that gate is the composer ↻'s, and sharing it made a second
-// switch mid-resume silently skip.
+// switch mid-resume silently skip. A NATIVE thread is not started on a click: its harness is a
+// TUI process no reaper stops, so browsing threads would leave one running per thread looked
+// at — the detail shows «Продовжити» instead. Its history is still loaded (from the harness's
+// own session file) for «В беклог».
 async function selectThread(id: string): Promise<void> {
   chatId.value = id;
   try {
-    await store.resumeSession(id);
+    if (store.sessions.find((s) => s.id === id)?.native) await store.loadTranscript(id);
+    else await store.resumeSession(id);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
@@ -517,7 +572,7 @@ async function ensureChat(): Promise<void> {
     if (existing) {
       await selectThread(existing.id);
     } else {
-      const chat = await store.createChat(pid);
+      const chat = await store.createChat(pid, nativeRuntimeFor(chatMode.value));
       chatId.value = chat?.id;
       if (chat && store.transcripts[chat.id] === undefined) void store.loadTranscript(chat.id);
     }
@@ -528,20 +583,21 @@ async function ensureChat(): Promise<void> {
   }
 }
 
-// «+ Новий» — open a fresh thread. A blank thread is reused rather than duplicated, so the
-// rail does not fill with empty `чат N` rows nobody typed in. A brand-new chat is live and
-// has no history, so it is not resumed — its (empty) transcript is loaded instead.
+// «+ Новий» — open a fresh thread in the chosen «Режим». A blank thread of that mode is reused
+// rather than duplicated, so the rail does not fill with empty `чат N` rows nobody typed in. A
+// brand-new chat is live and has no history, so it is not resumed — its (empty) transcript is
+// loaded instead.
 async function newChat(): Promise<void> {
   const pid = store.selectedProjectId;
   if (!pid || ensuring) return;
-  const blank = threads.value.find(isEmptyThread);
+  const blank = threads.value.find((s) => sessionLaunchMode(s) === chatMode.value && isEmptyThread(s));
   if (blank) {
     await selectThread(blank.id);
     return;
   }
   ensuring = true;
   try {
-    const chat = await store.createChat(pid);
+    const chat = await store.createChat(pid, nativeRuntimeFor(chatMode.value));
     if (chat) {
       chatId.value = chat.id;
       if (store.transcripts[chat.id] === undefined) void store.loadTranscript(chat.id);
@@ -736,17 +792,28 @@ watch(chatId, () => {
   padding: var(--k-sp-4);
 }
 
+// Wraps: at the rail's minimum width the «Режим» chip + «+ Новий» pair drops under the title
+// instead of overflowing the rail.
 .chat__history-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--k-sp-3);
+  gap: var(--k-sp-2) var(--k-sp-3);
   margin-bottom: var(--k-sp-3);
 }
 
 .chat__history-title {
   display: flex;
   align-items: baseline;
+}
+
+// The «Режим» chip and «+ Новий» travel together: the chip says what the button will open.
+.chat__history-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+  flex: none;
 }
 
 .chat__history-label {
@@ -952,6 +1019,39 @@ watch(chatId, () => {
   border: none;
   border-radius: 0;
   background: transparent;
+}
+
+// A native chat's TUI fills the pane; KTerminalView sizes itself to 100% of it.
+.chat__native-term {
+  flex: 1;
+  min-height: 0;
+}
+
+// A native chat whose harness is not running: the agents Лог tab's placeholder, same geometry.
+.chat__native-idle {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--k-sp-2);
+  padding: 24px 12px;
+  text-align: center;
+}
+
+.chat__native-idle-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--k-muted);
+}
+
+.chat__native-idle-text {
+  margin: 0;
+  max-width: 44ch;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-sm);
+  line-height: 1.55;
+  color: var(--k-faint);
 }
 
 .chat__detail-blank {

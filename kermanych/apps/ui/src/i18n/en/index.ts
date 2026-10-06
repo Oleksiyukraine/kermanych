@@ -2422,6 +2422,7 @@ export const en: MessageSchema = {
       bindHint: 'Bind the local repository folder',
       historyTitle: 'Chats',
       newChat: '+ New',
+      modeTitle: 'New chat mode: Kermanych, or the omp / claude TUI itself',
       historyEmpty: 'No chats yet.',
       detailBlank: 'Pick a chat from the list.',
       archiveThread: 'Archive chat “{title}”',

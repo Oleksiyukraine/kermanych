@@ -6,7 +6,8 @@ import type { AgentRuntimeKind, Session, TerminalInfo } from '@kermanych/core';
 export type LaunchMode = 'managed' | 'omp' | 'claude';
 export const LAUNCH_MODES: readonly LaunchMode[] = ['managed', 'omp', 'claude'];
 
-// The `native` field of `POST /sessions/from-task`; undefined launches a managed session.
+// The `native` field of `POST /sessions/from-task` and `POST /sessions/chat`; undefined
+// launches a managed session.
 export function nativeRuntimeFor(mode: LaunchMode): AgentRuntimeKind | undefined {
   if (mode === 'omp') return 'omp';
   if (mode === 'claude') return 'claude-code';
