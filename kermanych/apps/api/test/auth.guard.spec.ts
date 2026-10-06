@@ -170,6 +170,42 @@ test("after DELETE /api/auth/session the same bearer is refused", async () => {
   expect(after.req.user).toBeUndefined();
 });
 
+// A refresh hands the ui a new token while its earlier requests are still in flight with the
+// old one, and setToken switches the cache before it answers. Refusing the old token there
+// 401'd the ui's own requests and signed the operator out on every refresh.
+test("a token refresh keeps the replaced token of the same user valid until sign-out", async () => {
+  const ROTATED = jwt({ sub: "u-1", exp: Math.floor(Date.now() / 1000) + 7200 });
+  const reg = new RegistryService(":memory:");
+  const auth = new AuthService(reg, factory({ [FRESH]: "u-1", [ROTATED]: "u-1" }));
+  const guard = new SupabaseAuthGuard(auth, new Reflector());
+  await auth.setToken(FRESH);
+  await auth.setToken(ROTATED);
+
+  const old = ctx({ authorization: `Bearer ${FRESH}` });
+  await expect(guard.canActivate(old.context)).resolves.toBe(true);
+  expect(old.req.user).toEqual({ id: "u-1" });
+  // A retried handoff of the current token is no rotation: the replaced one stays honoured.
+  await auth.setToken(ROTATED);
+  await expect(guard.canActivate(ctx({ authorization: `Bearer ${FRESH}` }).context)).resolves.toBe(true);
+
+  // DELETE /api/auth/session still ends BOTH.
+  auth.clear();
+  await expect(guard.canActivate(ctx({ authorization: `Bearer ${FRESH}` }).context)).rejects.toThrow("invalid access token");
+  await expect(guard.canActivate(ctx({ authorization: `Bearer ${ROTATED}` }).context)).rejects.toThrow(
+    "invalid access token",
+  );
+});
+
+test("a different user signing in does not inherit the previous user's token", async () => {
+  const OTHER = jwt({ sub: "u-2", exp: Math.floor(Date.now() / 1000) + 3600 });
+  const reg = new RegistryService(":memory:");
+  const auth = new AuthService(reg, factory({ [FRESH]: "u-1", [OTHER]: "u-2" }));
+  const guard = new SupabaseAuthGuard(auth, new Reflector());
+  await auth.setToken(FRESH);
+  await auth.setToken(OTHER);
+  await expect(guard.canActivate(ctx({ authorization: `Bearer ${FRESH}` }).context)).rejects.toThrow("invalid access token");
+});
+
 test("a @Public() handler bypasses the guard entirely", async () => {
   const reg = new RegistryService(":memory:");
   const auth = new AuthService(reg, factory({}));

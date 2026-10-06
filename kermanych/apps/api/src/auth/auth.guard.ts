@@ -42,10 +42,12 @@ export class SupabaseAuthGuard implements CanActivate {
     const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : undefined;
     if (!token) throw new UnauthorizedException("missing bearer token");
 
-    // ONLY the cached token is accepted — expiry included (AuthService.userForToken). The
-    // machine's owner is unambiguous, and refusing local session control because a JWT
-    // aged out (or because Supabase is unreachable) would break Requirement 7. Cloud
-    // freshness only gates cloud pushes, which queue in the outbox instead.
+    // ONLY the cached token — or the same user's token it just replaced, while the ui's
+    // handoff of the new one is in flight — is accepted, expiry included
+    // (AuthService.userForToken). The machine's owner is unambiguous, and refusing local
+    // session control because a JWT aged out (or because Supabase is unreachable) would
+    // break Requirement 7. Cloud freshness only gates cloud pushes, which queue in the
+    // outbox instead.
     //
     // An unknown bearer is refused even when the cloud would happily verify it:
     // adopting it here silently undid DELETE /api/auth/session, because the same

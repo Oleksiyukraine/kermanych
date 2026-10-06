@@ -3,8 +3,9 @@
 // acting user always comes from the guard (`req.user.id`), never the body — the Jira/Linear
 // rule: it decides WHOSE stored tokens a call reads, and whose machine hosts the bot.
 //
-// Slack's `invalid_auth`/`not_authed` surface as 401 so the UI can ask for fresh tokens;
-// every other failure is a BadRequest carrying the message for the toast.
+// Slack's `invalid_auth`/`not_authed` surface as 403 so the UI can ask for fresh tokens;
+// every other failure is a BadRequest carrying the message for the toast. Never 401: from
+// the local api that status means «your Kermanych session is gone» (see jira.controller.ts).
 import {
   BadRequestException,
   Body,
@@ -16,7 +17,7 @@ import {
   Put,
   Query,
   Req,
-  UnauthorizedException,
+  ForbiddenException,
 } from "@nestjs/common";
 import { SlackService } from "../slack/slack.service";
 import { isSlackAuthError } from "../slack/slack-client";
@@ -24,7 +25,7 @@ import { isSlackAuthError } from "../slack/slack-client";
 type Authed = { user: { id: string } };
 
 function rethrow(err: unknown): never {
-  if (isSlackAuthError(err)) throw new UnauthorizedException("slack token invalid");
+  if (isSlackAuthError(err)) throw new ForbiddenException("slack token invalid");
   throw new BadRequestException((err as Error).message);
 }
 

@@ -4,9 +4,10 @@
 // rule POST /sessions/from-task states: a board client cannot act on somebody else's
 // behalf, and here it additionally decides WHOSE Jira token signs the call.
 //
-// JiraHttpError keeps its Jira status where it matters: a 401 surfaces as 401 so the UI
-// can drop that user to read-only, everything else is a BadRequest carrying Jira's own
-// flattened refusal text for the toast.
+// JiraHttpError keeps its Jira status where it matters: a rejected Jira token surfaces as
+// 403 so the UI can drop that user to read-only, everything else is a BadRequest carrying
+// Jira's own flattened refusal text for the toast. Never 401: from the local api that
+// status means «your Kermanych session is gone», and the UI signs the operator out on it.
 import {
   BadRequestException,
   Body,
@@ -19,7 +20,7 @@ import {
   Query,
   Req,
   Res,
-  UnauthorizedException,
+  ForbiddenException,
 } from "@nestjs/common";
 import { Buffer } from "node:buffer";
 import type { ImageInput } from "@kermanych/core";
@@ -37,7 +38,7 @@ type Authed = { user: { id: string } };
 
 function rethrow(err: unknown): never {
   if (err instanceof JiraHttpError && err.status === 401)
-    throw new UnauthorizedException("jira token invalid");
+    throw new ForbiddenException("jira token invalid");
   throw new BadRequestException((err as Error).message);
 }
 

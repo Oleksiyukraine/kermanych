@@ -60,10 +60,33 @@ export function setUnauthorizedHandler(fn: () => void): void {
   onUnauthorized = fn;
 }
 
-function authHeaders(json: boolean): Record<string, string> {
+function authHeaders(json: boolean, token: string | undefined): Record<string, string> {
   const h: Record<string, string> = json ? { 'content-type': 'application/json' } : {};
-  if (authToken) h.authorization = `Bearer ${authToken}`;
+  if (token) h.authorization = `Bearer ${token}`;
   return h;
+}
+
+// Every helper below funnels through here, so the bearer and the 401 rule cannot be
+// forgotten at a new call site. The bearer is captured PER REQUEST: a 401 for a token
+// the ui has since replaced — a refresh handed over while the request was in flight, or
+// a sign-out followed by a new sign-in — says nothing about the CURRENT session and must
+// not end it. Only the guard answers 401 (integration-token refusals are 403), so the
+// handler never ran and re-sending once with the current token is safe for any method.
+async function send(method: string, path: string, body?: { json: unknown }): Promise<Response> {
+  const attempt = (token: string | undefined) =>
+    fetch(BASE + path, {
+      method,
+      headers: authHeaders(body !== undefined, token),
+      ...(body !== undefined ? { body: JSON.stringify(body.json) } : {}),
+    });
+  let used = authToken;
+  let r = await attempt(used);
+  if (r.status === 401 && used !== authToken && authToken) {
+    used = authToken;
+    r = await attempt(used);
+  }
+  if (!r.ok) throw await toError(r, used);
+  return r;
 }
 
 export type MessageMode = 'prompt' | 'follow_up' | 'steer';
@@ -89,11 +112,11 @@ export class ApiError extends Error {
 // Turn a non-2xx Response into an ApiError. Nest error bodies look like
 // { statusCode, message, error } — or, from a coded refusal, { code, message, params };
 // message may be a string or an array of validation strings. Fall back to statusText.
-async function toError(r: Response): Promise<Error> {
-  // 401 means the cached token on the api no longer matches ours (expired
-  // refresh, another machine signed out, api restarted with a cleared cache).
-  // One hook, one place: every helper below funnels its failures through here.
-  if (r.status === 401) onUnauthorized?.();
+async function toError(r: Response, used: string | undefined): Promise<Error> {
+  // 401 means the api no longer trusts the token we are STILL holding (another
+  // machine signed out, api restarted with a cleared cache). A refusal of a token we
+  // have already replaced is stale news — see send().
+  if (r.status === 401 && used === authToken) onUnauthorized?.();
   const text = await r.text();
   let serverMessage = r.statusText || `HTTP ${r.status}`;
   let code: ApiErrorCode | undefined;
@@ -118,64 +141,37 @@ async function toError(r: Response): Promise<Error> {
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const r = await fetch(BASE + path, {
-    method: 'POST',
-    headers: authHeaders(true),
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw await toError(r);
+  const r = await send('POST', path, { json: body });
   // NestJS message/answer endpoints return an empty body; tolerate no-JSON.
   const text = await r.text();
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
 async function get<T>(path: string): Promise<T> {
-  const r = await fetch(BASE + path, { headers: authHeaders(false) });
-  if (!r.ok) throw await toError(r);
-  return (await r.json()) as T;
+  return (await (await send('GET', path)).json()) as T;
 }
 
 async function getBlob(path: string): Promise<Blob> {
-  const r = await fetch(BASE + path, { headers: authHeaders(false) });
-  if (!r.ok) throw await toError(r);
-  return await r.blob();
+  return await (await send('GET', path)).blob();
 }
 
 async function put<T>(path: string, body: unknown): Promise<T> {
-  const r = await fetch(BASE + path, {
-    method: 'PUT',
-    headers: authHeaders(true),
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw await toError(r);
-  return (await r.json()) as T;
+  return (await (await send('PUT', path, { json: body })).json()) as T;
 }
 
-// DELETE and PATCH used to be hand-rolled at five call sites, two of which never
-// checked r.ok. Two helpers instead, so the Authorization header and the 401 hook
-// cannot be forgotten at a new call site.
 async function del(path: string): Promise<void> {
-  const r = await fetch(BASE + path, { method: 'DELETE', headers: authHeaders(false) });
-  if (!r.ok) throw await toError(r);
+  await send('DELETE', path);
 }
 
 // A DELETE whose answer matters: the Jira worklog route replies with the refreshed issue,
 // the same way every other Jira write does, so the caller can upsert the moved time
 // counters without a second round trip.
 async function delJson<T>(path: string): Promise<T> {
-  const r = await fetch(BASE + path, { method: 'DELETE', headers: authHeaders(false) });
-  if (!r.ok) throw await toError(r);
-  return (await r.json()) as T;
+  return (await (await send('DELETE', path)).json()) as T;
 }
 
 async function patchJson<T>(path: string, body: unknown): Promise<T> {
-  const r = await fetch(BASE + path, {
-    method: 'PATCH',
-    headers: authHeaders(true),
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw await toError(r);
-  return (await r.json()) as T;
+  return (await (await send('PATCH', path, { json: body })).json()) as T;
 }
 
 // One changed file, already paired into side-by-side rows by the api (see
@@ -401,13 +397,8 @@ export const api = {
   // A fetch, not an <a href>: the proxy route is behind the same bearer guard as
   // everything else, so the bytes come back as a Blob the caller turns into an object
   // URL for the actual save.
-  jiraDownloadAttachment: async (integrationId: string, attachmentId: string): Promise<Blob> => {
-    const r = await fetch(`${BASE}/jira/attachments/${integrationId}/${attachmentId}`, {
-      headers: authHeaders(false),
-    });
-    if (!r.ok) throw await toError(r);
-    return r.blob();
-  },
+  jiraDownloadAttachment: (integrationId: string, attachmentId: string): Promise<Blob> =>
+    getBlob(`/jira/attachments/${integrationId}/${attachmentId}`),
 
   jiraLaunch: (
     integrationId: string,
