@@ -49,12 +49,36 @@ export const useAuth = defineStore('auth', () => {
   // still booting. That retry matters: the guard no longer adopts an unknown
   // bearer, so a dropped handoff would leave every later call 401.
   let handedOff: string | undefined;
+  // Bumped by every apply(): a handoff that resolves after a NEWER auth event (a sign-out,
+  // a fresher token) must not commit its now-stale session over that event's outcome.
+  let applied = 0;
+  // One sign-out at a time: a page firing several requests that all 401 must not start
+  // several, the last of which could land after the operator has already signed back in.
+  let signingOut: Promise<void> | undefined;
 
   // Mirror the Supabase session into this store AND into the local api. Called
   // on init and on every onAuthStateChange event (SIGNED_IN, TOKEN_REFRESHED,
   // SIGNED_OUT, USER_UPDATED).
   async function apply(session: SupabaseSession | null): Promise<void> {
+    const mine = ++applied;
     if (session) {
+      // Hand the token to the local api BEFORE adopting it. Setting `user` is what lets
+      // the router into the app, and installing the token is what every request then
+      // presents; doing either first sent the page's opening requests with a bearer the
+      // api had not been told about yet — a 401, read as «session ended», and the
+      // operator was bounced to /login right after signing in. Until the handoff lands,
+      // requests keep the previous token, which the api still honours.
+      const fresh = handedOff !== session.access_token;
+      if (fresh) {
+        try {
+          await api.authSession(session.access_token);
+          handedOff = session.access_token;
+        } catch {
+          // The local api may still be booting (Electron starts it in-process).
+          // `handedOff` stays behind, so the next auth event retries.
+        }
+        if (mine !== applied) return;
+      }
       const meta = (session.user.user_metadata ?? {}) as {
         user_name?: string;
         full_name?: string;
@@ -71,14 +95,7 @@ export const useAuth = defineStore('auth', () => {
       };
       accessToken.value = session.access_token;
       setAuthToken(session.access_token);
-      if (handedOff === session.access_token) return;
-      try {
-        await api.authSession(session.access_token);
-        handedOff = session.access_token;
-      } catch {
-        // The local api may still be booting (Electron starts it in-process).
-        // `handedOff` stays behind, so the next auth event retries.
-      }
+      if (!fresh) return;
       // Best-effort runtime load: never block the UI for a stale cloud read.
       try {
         runtime.value = await getMyAgentRuntime(client);
@@ -107,6 +124,8 @@ export const useAuth = defineStore('auth', () => {
       } catch {
         // Already signed out locally, or the api is down. Nothing to undo.
       }
+      // A sign-in that started while the DELETE was out owns the token now.
+      if (mine !== applied) return;
     }
     handedOff = undefined;
     setAuthToken(undefined);
@@ -201,8 +220,15 @@ export const useAuth = defineStore('auth', () => {
   }
 
   async function signOut(): Promise<void> {
-    await client.auth.signOut();
-    await apply(null);
+    signingOut ??= (async () => {
+      try {
+        await client.auth.signOut();
+        await apply(null);
+      } finally {
+        signingOut = undefined;
+      }
+    })();
+    return signingOut;
   }
 
   async function chooseRuntime(kind: AgentRuntimeKind): Promise<void> {

@@ -28,6 +28,12 @@ function jwtExpiry(token: string): string | undefined {
 @Injectable()
 export class AuthService {
   private cached: AuthSessionRow | undefined;
+  // The token the latest setToken replaced, same user only. The ui keeps presenting it
+  // until its handoff of the new one answers — and this method switches `cached` well
+  // before it answers (the runtime/language hydration below are cloud round trips) — so
+  // refusing it would 401 the ui's own in-flight requests and sign the operator out on
+  // every token refresh. Never persisted, dropped by the next rotation and by clear().
+  private superseded: { userId: string; accessToken: string } | undefined;
   private client: SupabaseClient | undefined;
   private tokenListeners: TokenListener[] = [];
   private clearListeners: Array<() => void> = [];
@@ -91,6 +97,12 @@ export class AuthService {
     }
 
     this.registry.setAuthSession(row);
+    const prior = this.cached;
+    // Re-presenting the cached token (a retried handoff) is no rotation: keep what it replaced.
+    if (prior?.accessToken !== accessToken) {
+      this.superseded =
+        prior && prior.userId === row.userId ? { userId: prior.userId, accessToken: prior.accessToken } : undefined;
+    }
     this.cached = row;
     this.client = client;
     // Fired last, so a listener that immediately drains the outbox already sees
@@ -124,6 +136,7 @@ export class AuthService {
   clear(): void {
     this.registry.clearAuthSession();
     this.cached = undefined;
+    this.superseded = undefined;
     this.client = undefined;
     // Fired last, so a listener already sees the signed-out state (current() undefined).
     for (const cb of this.clearListeners) cb();
@@ -134,11 +147,15 @@ export class AuthService {
   }
 
   // The one rule every local entry point applies to a presented bearer — the REST guard
-  // and the terminal socket handshake: ONLY the cached token is accepted, expiry
-  // included. Returns the signed-in user's id, or undefined for anything else.
+  // and the terminal socket handshake: ONLY the cached token (or the one it just
+  // replaced, see `superseded`) is accepted, expiry included. Returns the signed-in
+  // user's id, or undefined for anything else.
   userForToken(token: string | undefined): string | undefined {
+    if (!token) return undefined;
     const cur = this.cached;
-    return token && cur && cur.accessToken === token ? cur.userId : undefined;
+    if (cur && cur.accessToken === token) return cur.userId;
+    const old = this.superseded;
+    return old && old.accessToken === token ? old.userId : undefined;
   }
 
   // A Supabase client pinned to the user's JWT. RLS is the authorization surface;

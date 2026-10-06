@@ -5,8 +5,9 @@
 // it additionally decides WHOSE Linear key signs the call.
 //
 // LinearHttpError keeps its status where it matters: a 401 (Linear's authentication error)
-// surfaces as 401 so the UI can drop that user to read-only, everything else is a
-// BadRequest carrying Linear's own userPresentableMessage for the toast.
+// surfaces as 403 so the UI can drop that user to read-only, everything else is a
+// BadRequest carrying Linear's own userPresentableMessage for the toast. Never 401: from
+// the local api that status means «your Kermanych session is gone» (see jira.controller.ts).
 import {
   BadRequestException,
   Body,
@@ -18,7 +19,7 @@ import {
   Put,
   Query,
   Req,
-  UnauthorizedException,
+  ForbiddenException,
 } from "@nestjs/common";
 import type { ImageInput } from "@kermanych/core";
 import { LinearService, type LinearIssueDraft } from "../linear/linear.service";
@@ -28,7 +29,7 @@ type Authed = { user: { id: string } };
 
 function rethrow(err: unknown): never {
   if (err instanceof LinearHttpError && err.status === 401)
-    throw new UnauthorizedException("linear token invalid");
+    throw new ForbiddenException("linear token invalid");
   throw new BadRequestException((err as Error).message);
 }
 
