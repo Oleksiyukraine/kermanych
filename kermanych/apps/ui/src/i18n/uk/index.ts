@@ -28,6 +28,8 @@ export const uk = {
       langEn: 'Англійська',
       pullTip: 'git pull (--ff-only) поточної гілки репозиторію проєкту',
       pullIncoming: 'Комітів для pull: {count}',
+      branchTip: 'Поточна гілка репозиторію проєкту',
+      branchDetached: 'detached HEAD',
       changeInSettings: '{label} — змінити в налаштуваннях',
       changeFolder: 'Змінити теку',
       bindFolder: 'Прив’язати теку',

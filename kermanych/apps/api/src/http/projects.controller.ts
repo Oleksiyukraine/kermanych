@@ -85,9 +85,9 @@ export class ProjectsController {
     }
   }
 
-  // The footer Pull badge: commits waiting upstream for the project's current branch.
-  // `?fetch=1` asks the remote first; without it the count is against the last fetch
-  // (what the UI wants right after a pull, which fetched on its own).
+  // The footer git read-out: the project's current branch and the Pull badge — commits
+  // waiting upstream for that branch. `?fetch=1` asks the remote first; without it the count
+  // is against the last fetch (what the UI wants right after a pull, which fetched on its own).
   @Get(":id/incoming")
   async incoming(@Param("id") id: string, @Query("fetch") fetch?: string) {
     try {
