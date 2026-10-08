@@ -6,6 +6,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { TERMINAL_SCROLLBACK } from '@kermanych/core';
 import { useTerminal } from 'stores/terminal';
 import { theme } from '../../lib/theme';
 
@@ -43,7 +44,7 @@ onMounted(() => {
     fontFamily: getComputedStyle(el).getPropertyValue('--k-font-mono').trim() || 'monospace',
     fontSize: 12,
     cursorBlink: true,
-    scrollback: 5000,
+    scrollback: TERMINAL_SCROLLBACK,
     minimumContrastRatio: 4.5,
     theme: tokenTheme(el),
   });

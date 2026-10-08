@@ -33,6 +33,10 @@ export const useTerminal = defineStore('terminal', () => {
 
   let socket: Socket | undefined;
   const sinks = new Map<string, TerminalSink>();
+  // Output streamed while an attach is in flight. The api joins this socket to the stream
+  // at the very point its replay ends, so these chunks follow the replay — yet they can
+  // arrive before the attach's reply does.
+  const early = new Map<string, string[]>();
 
   function setPanel(visible: boolean): void {
     panelVisible.value = visible;
@@ -77,9 +81,19 @@ export const useTerminal = defineStore('terminal', () => {
   }
 
   async function join(s: Socket, id: string): Promise<void> {
-    const reply = (await s.timeout(ACK_MS).emitWithAck('attach', { id })) as TerminalAttachReply;
-    if ('error' in reply) return remove(id);
-    sinks.get(id)?.reset(reply.replay);
+    const held: string[] = [];
+    early.set(id, held);
+    try {
+      const reply = (await s.timeout(ACK_MS).emitWithAck('attach', { id })) as TerminalAttachReply;
+      // A later attach of the same terminal (a reconnect mid-attach) supersedes this one.
+      if (early.get(id) !== held) return;
+      if ('error' in reply) return remove(id);
+      const sink = sinks.get(id);
+      sink?.reset(reply.replay);
+      for (const chunk of held) sink?.data(chunk);
+    } finally {
+      if (early.get(id) === held) early.delete(id);
+    }
   }
 
   // Idempotent. The handshake reads the token on every attempt, so a token refreshed since
@@ -99,7 +113,11 @@ export const useTerminal = defineStore('terminal', () => {
     s.on('connect', () => void sync(s).catch(() => notifyError('unreachable')));
     s.on('opened', (t: TerminalInfo) => add(t));
     s.on('exit', (m: { id: string }) => remove(m.id));
-    s.on('data', (m: { id: string; data: string }) => sinks.get(m.id)?.data(m.data));
+    s.on('data', (m: { id: string; data: string }) => {
+      const held = early.get(m.id);
+      if (held) held.push(m.data);
+      else sinks.get(m.id)?.data(m.data);
+    });
     socket = s;
     return s;
   }

@@ -4,8 +4,10 @@ import { randomUUID } from "node:crypto";
 import { accessSync, chmodSync, constants, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { spawn, type IPty } from "node-pty";
+import { Terminal } from "@xterm/headless";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import { Subject } from "rxjs";
-import type { TerminalErrorCode, TerminalInfo } from "@kermanych/core";
+import { TERMINAL_SCROLLBACK, type TerminalErrorCode, type TerminalInfo } from "@kermanych/core";
 import { RegistryService } from "../registry/registry.service";
 
 export type TerminalEvent =
@@ -23,12 +25,25 @@ export class TerminalRefusal extends Error {
   }
 }
 
-// How much recent output a terminal keeps for whoever attaches next (a reloaded UI, a
-// project switched back to). Enough for a few screens of a build log; bounded because a
-// `tail -f` left running for a day must not grow the api without limit.
-export const REPLAY_MAX = 256 * 1024;
+// Output the screen copy has been handed but not yet parsed. Past HIGH the pty is paused
+// until the parser is back under LOW: xterm throws away a write once 50 MB are pending, and
+// a `cat` of a huge file outruns the parser.
+const PENDING_HIGH = 1024 * 1024;
+const PENDING_LOW = 128 * 1024;
 
-type Running = { info: TerminalInfo; pty: IPty; replay: string };
+// `screen` is a headless xterm fed every byte the pty prints — the terminal as a view would
+// show it, scrollback included. A re-attaching view is repainted from it: a raw tail of
+// the output would not do, because a TUI (omp, claude) redraws in place several MB a
+// minute, and any bounded tail of that holds the last few seconds and none of the history.
+type Running = {
+  info: TerminalInfo;
+  pty: IPty;
+  screen: Terminal;
+  serializer: SerializeAddon;
+  pending: number;
+  paused: boolean;
+  exited: boolean;
+};
 
 // The integrated terminal's shells (docs/specs/2026-09-29-project-terminal.md). A shell
 // belongs to the api, not to a socket: it outlives a UI reload and a project switch, and
@@ -104,24 +119,49 @@ export class TerminalService implements OnModuleDestroy {
       createdAt: new Date().toISOString(),
       ...(base.sessionId ? { sessionId: base.sessionId } : {}),
     };
-    const term: Running = { info, pty: proc, replay: "" };
+    const screen = new Terminal({ cols: proc.cols, rows: proc.rows, scrollback: TERMINAL_SCROLLBACK, allowProposedApi: true });
+    const serializer = new SerializeAddon();
+    screen.loadAddon(serializer);
+    const term: Running = { info, pty: proc, screen, serializer, pending: 0, paused: false, exited: false };
     this.terms.set(info.id, term);
     proc.onData((data) => {
-      term.replay = appendReplay(term.replay, data, REPLAY_MAX);
       this.events$.next({ type: "data", id: info.id, data });
+      // Output after the exit would land behind the screen's disposal below.
+      if (term.exited) return;
+      term.pending += data.length;
+      if (!term.paused && term.pending > PENDING_HIGH) {
+        term.paused = true;
+        proc.pause();
+      }
+      screen.write(data, () => {
+        term.pending -= data.length;
+        if (term.paused && term.pending < PENDING_LOW) {
+          term.paused = false;
+          proc.resume();
+        }
+      });
     });
     proc.onExit(({ exitCode, signal }) => {
       this.terms.delete(info.id);
+      term.exited = true;
+      // Behind any attach still waiting for its snapshot.
+      screen.write("", () => screen.dispose());
       this.events$.next({ type: "exit", id: info.id, exitCode, signal: signal || undefined });
     });
     this.events$.next({ type: "opened", terminal: info });
     return info;
   }
 
-  attach(id: string): { terminal: TerminalInfo; replay: string } {
+  // The replay is the screen serialized — scrollback, the alternate screen, cursor and
+  // modes (mouse tracking, bracketed paste) — once it has parsed everything the pty printed
+  // before this call, and nothing printed after. The caller joins the stream in the same
+  // tick, so the stream picks up exactly where the replay ends. Throws for an unknown id.
+  attach(id: string): Promise<{ terminal: TerminalInfo; replay: string }> {
     const t = this.terms.get(id);
     if (!t) throw new TerminalRefusal("terminal_not_found", "terminal not found");
-    return { terminal: t.info, replay: t.replay };
+    const { promise, resolve } = Promise.withResolvers<{ terminal: TerminalInfo; replay: string }>();
+    t.screen.write("", () => resolve({ terminal: t.info, replay: t.serializer.serialize({ scrollback: TERMINAL_SCROLLBACK }) }));
+    return promise;
   }
 
   // Input and resize for a terminal that has just exited are dropped, not refused: the
@@ -133,11 +173,16 @@ export class TerminalService implements OnModuleDestroy {
   resize(id: string, cols: number, rows: number): void {
     const t = this.terms.get(id);
     if (!t) return;
+    const c = dimension(cols, t.pty.cols);
+    const r = dimension(rows, t.pty.rows);
     try {
-      t.pty.resize(dimension(cols, t.pty.cols), dimension(rows, t.pty.rows));
+      t.pty.resize(c, r);
     } catch {
       // The pty closed between the lookup and the ioctl; its exit event follows.
+      return;
     }
+    // Behind the output already read: that was printed for the old size.
+    t.screen.write("", () => t.screen.resize(c, r));
   }
 
   // SIGHUP, as a closed terminal window sends: the shell passes it on to its jobs. The
@@ -151,16 +196,6 @@ export class TerminalService implements OnModuleDestroy {
     for (const t of this.terms.values()) t.pty.kill();
     this.terms.clear();
   }
-}
-
-// Append a chunk to a bounded replay. The cut lands on a line start when one is near, so
-// the replay does not open on half an escape sequence that would paint garbage.
-export function appendReplay(buf: string, chunk: string, max: number): string {
-  const next = buf + chunk;
-  if (next.length <= max) return next;
-  const cut = next.length - max;
-  const nl = next.indexOf("\n", cut);
-  return nl !== -1 && nl - cut < 4096 ? next.slice(nl + 1) : next.slice(cut);
 }
 
 function dimension(n: number, fallback: number): number {

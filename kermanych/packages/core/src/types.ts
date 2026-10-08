@@ -331,5 +331,6 @@ export type TerminalErrorCode =
 
 export type TerminalError = { error: TerminalErrorCode; message: string };
 export type TerminalOpenReply = { terminal: TerminalInfo } | TerminalError;
-// `replay` is the terminal's recent output (bounded), written before live data flows.
+// `replay` repaints the terminal as it stands — its scrollback, the alternate screen and
+// modes included — written before live data flows.
 export type TerminalAttachReply = { terminal: TerminalInfo; replay: string } | TerminalError;

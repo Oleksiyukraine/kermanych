@@ -76,12 +76,16 @@ export class TerminalGateway implements OnGatewayInit, OnModuleInit, OnModuleDes
 
   @SubscribeMessage("attach")
   async attach(@ConnectedSocket() client: Socket, @MessageBody() body: { id?: unknown }): Promise<TerminalAttachReply> {
-    if (typeof body?.id !== "string") return refusal(new TerminalRefusal("terminal_not_found", "id missing"));
+    const id = body?.id;
+    if (typeof id !== "string") return refusal(new TerminalRefusal("terminal_not_found", "id missing"));
     try {
-      const reply = this.terminals.attach(body.id);
-      // Joined before the reply leaves, so no chunk falls between the replay and the stream.
-      await client.join(body.id);
-      return reply;
+      const snapshot = this.terminals.attach(id);
+      // The same tick as the snapshot point: what the pty prints from here on is streamed,
+      // everything before is in the replay. (The in-memory adapter joins synchronously.)
+      // Streamed chunks can reach the client ahead of this reply; the ui holds them until
+      // the replay is painted (apps/ui/src/stores/terminal.ts).
+      void client.join(id);
+      return await snapshot;
     } catch (err) {
       return refusal(err);
     }
