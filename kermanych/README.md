@@ -67,6 +67,30 @@ config, subscription-plan spend, and the plan/todo chip are `omp`-only; on the
 agent map (the subagents a session spawned, opened with ◈ on a session) works on
 both backends. Per-session token spend is tracked on both.
 
+### Agent communication language
+
+The language the agent talks back in is a per-user choice too: «Мова спілкування агента» in
+Settings → Застосунок → «ШІ-провайдер». It is stored on the cloud profile
+(`profiles.agent_language`) and cached by the local API; `KERMANYCH_LANGUAGE` (any of the
+codes, e.g. `uk` or `en-ste-80`) is a dev override. Unset means no preference: the agent keeps
+its own default. The choice reaches every managed spawn — agents, chats, discussions, reviews,
+resumes, the «Менеджмент» chat and release notes — as a system-prompt append
+(`--append-system-prompt` for `omp`, `systemPrompt.append` for `claude-code`), read fresh on
+each spawn. Native sessions get nothing.
+
+Three entries are levels of [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/),
+the controlled English of aircraft maintenance manuals, rather than plain languages:
+«English — ASD-STE100» (the full standard, dictionary included), «English — ASD-STE100 (80%)»
+and «English — ASD-STE100 (60%)». The agent then replies in English with short sentences, one
+instruction per sentence, the active voice and one meaning per term. What each level keeps,
+softens or drops is one matrix, `STE_RULES` in `packages/core/src/ste.ts`: it builds the
+directive and the table shown under the picker, so the two cannot disagree. The rules apply
+only to the agent's messages to you — files, commits, PRs, code comments, tickets and release
+notes follow the project's conventions — and no level may drop a fact or restyle code, paths
+or commands. The codes (`en-ste`, `en-ste-80`, `en-ste-60`) need no migration; an older build
+shows its picker empty for them and keeps the language it had cached. Spec:
+`docs/specs/2026-10-08-agent-language-ste.md`.
+
 ## The shared board (cloud)
 
 Kermanych's task board is shared through Supabase (auth, workspaces, projects,
