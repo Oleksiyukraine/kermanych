@@ -30,6 +30,7 @@ export const uk = {
       pullIncoming: 'Комітів для pull: {count}',
       branchTip: 'Поточна гілка репозиторію проєкту',
       branchDetached: 'detached HEAD',
+      refreshTip: 'Оновити git status репозиторію проєкту',
       changeInSettings: '{label} — змінити в налаштуваннях',
       changeFolder: 'Змінити теку',
       bindFolder: 'Прив’язати теку',

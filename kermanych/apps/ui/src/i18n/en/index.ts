@@ -26,6 +26,7 @@ export const en: MessageSchema = {
       pullIncoming: 'Commits to pull: {count}',
       branchTip: 'Current branch of the project repository',
       branchDetached: 'detached HEAD',
+      refreshTip: 'Refresh git status of the project repository',
       changeInSettings: '{label} — change in settings',
       changeFolder: 'Change folder',
       bindFolder: 'Bind folder',
