@@ -123,8 +123,8 @@ const ICONS: Record<KIconName, readonly string[]> = {
     'M18 9a9 9 0 0 1-9 9',
   ],
 
-  // The «Нова задача» split button's menu, where each way of starting a task is a row with a
-  // mark in a disc. `plus` is the plain «create» the main button already says in words.
+  // The «Нова задача» split button: its main half leads with `plus`, and its menu marks each
+  // way of starting a task with a mark in a disc — `plus` there is the plain «create».
   plus: ['M12 5v14', 'M5 12h14'],
   // «Глибокий аналіз» — a magnifier: «look closely first». Also the mark a deep-analysis card
   // carries (KAnalysisMark), so the menu row and the card it produces share one shape.

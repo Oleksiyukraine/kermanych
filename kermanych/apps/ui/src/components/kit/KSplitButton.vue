@@ -2,6 +2,7 @@
   <div ref="rootEl" class="k-split-btn" :class="{ 'k-split-btn--open': open }">
     <!-- The default action: exactly what a plain primary button here would do. -->
     <KBtn variant="primary" class="k-split-btn__main" :disabled="!!disabled" @click="emit('click')">
+      <KIcon v-if="icon" :name="icon" class="k-split-btn__icon" />
       {{ label }}
     </KBtn>
     <!-- The other ways to do it. A separate control rather than a long-press or a hover, so
@@ -67,6 +68,8 @@ import { isAnchorOffscreen, placeMenu } from '../../lib/menu';
 // readable, and picking it is the same as clicking the main half.
 const props = defineProps<{
   label: string;
+  // A mark before the label, for a main action that has a conventional one («+» for create).
+  icon?: KIconName | undefined;
   items: { value: T; label: string; caption?: string; icon?: KIconName }[];
   // Names the ▾ part — its tooltip, its accessible name and the menu's. The part shows only
   // a caret, so without this it is an unlabelled control.
@@ -198,6 +201,14 @@ watch(
 .k-split-btn .k-split-btn__main {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
+}
+
+// One icon step above the 13px label, so the mark reads as part of the label rather than as a
+// separate badge; a heavier stroke than KIcon's 1.75, which reads hairline beside weight 800.
+.k-split-btn__icon {
+  --k-icon-size: var(--k-icon-sm);
+  stroke-width: 2.5;
+  margin-right: 6px;
 }
 
 .k-split-btn .k-split-btn__toggle {

@@ -25,6 +25,7 @@
                  ways to start one — today «Глибокий аналіз». -->
             <KSplitButton
               :label="t('agents.board.newTask')"
+              icon="plus"
               :menu-label="t('agents.board.newTaskMenu')"
               :items="newTaskModes"
               :disabled="!store.selectedProjectId"

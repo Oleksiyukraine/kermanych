@@ -58,8 +58,8 @@
       <!-- SPLIT — the default action on the main half, the alternatives under ▾, each with a
            caption (the «Нова задача» button on «Агенти»). -->
       <div class="kit__row" style="margin-top: var(--k-sp-3)">
-        <KSplitButton :label="t('agents.board.newTask')" :menu-label="t('agents.board.newTaskMenu')" :items="splitItems" />
-        <KSplitButton :label="t('agents.board.newTask')" :menu-label="t('agents.board.newTaskMenu')" :items="splitItems" disabled />
+        <KSplitButton :label="t('agents.board.newTask')" icon="plus" :menu-label="t('agents.board.newTaskMenu')" :items="splitItems" />
+        <KSplitButton :label="t('agents.board.newTask')" icon="plus" :menu-label="t('agents.board.newTaskMenu')" :items="splitItems" disabled />
       </div>
       <div class="kit__caption mono">{{ t('kit.gallery.cap.splitButton') }}</div>
     </section>
