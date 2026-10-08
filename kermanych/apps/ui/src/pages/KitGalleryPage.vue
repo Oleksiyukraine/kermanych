@@ -740,12 +740,13 @@ const logSamples: TranscriptEntry[] = [
   // `turn` is ledger data for block summaries — it renders nothing, by design.
   { kind: 'turn', id: '10', at: nowMs, model: 'claude-opus-5', ms: 21_300 },
 ];
-// One row per attention level, top priority first, so every mark the sidebar can wear shows.
+// One row per attention level, top priority first, so every mark the sidebar can wear shows —
+// plus a running pill that also carries the error flag.
 const railProjects: { project: RailProject; active: boolean; attention: Attention; workspaceId: string }[] = [
   { project: { id: 'p1', name: 'api-gateway', state: 'bound' }, active: true, attention: { ...NO_ATTENTION, input: 1, running: 3 }, workspaceId: 'w1' },
   { project: { id: 'p2', name: 'web client', state: 'unbound' }, active: false, attention: NO_ATTENTION, workspaceId: 'w1' },
-  { project: { id: 'p3', name: 'billing', state: 'orphan' }, active: false, attention: { ...NO_ATTENTION, error: 1, running: 1 }, workspaceId: 'w2' },
-  { project: { id: 'p4', name: 'docs site', state: 'bound' }, active: false, attention: { ...NO_ATTENTION, running: 12 }, workspaceId: 'w2' },
+  { project: { id: 'p3', name: 'billing', state: 'orphan' }, active: false, attention: { ...NO_ATTENTION, running: 12, error: 1 }, workspaceId: 'w2' },
+  { project: { id: 'p4', name: 'docs site', state: 'bound' }, active: false, attention: { ...NO_ATTENTION, error: 1, result: 1 }, workspaceId: 'w2' },
   { project: { id: 'p5', name: 'mobile', state: 'bound' }, active: false, attention: { ...NO_ATTENTION, result: 2 }, workspaceId: 'w2' },
 ];
 

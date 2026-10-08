@@ -167,10 +167,13 @@ most urgent state shows, and hovering the row lists all of them:
 | Mark | Meaning |
 | --- | --- |
 | pulsing orange pill with a number | agents waiting for your answer to a question |
-| red dot | an agent failed or hit a merge conflict |
 | green pill with a number | agents running |
+| red dot | an agent failed or hit a merge conflict |
 | orange ring | an agent finished (`done` or a PR in review) and you have not opened it since |
 | nothing | nothing going on — no live agents, nothing unread |
+
+A failed agent never hides live ones: when a pill is the mark and something also failed,
+the red dot sits on the pill's corner instead.
 
 A workspace row wears the same mark summed over its projects, so a folded workspace still
 shows that something inside it is waiting. Chats, archived and merged agents, and agents

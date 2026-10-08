@@ -1,25 +1,28 @@
 <template>
-  <span v-if="level !== 'idle'" class="k-att" :class="`k-att--${level}`" aria-hidden="true">{{ digits }}</span>
+  <span v-if="level !== 'idle'" class="k-att" :class="`k-att--${level}`" aria-hidden="true"
+    >{{ digits }}<span v-if="flagged" class="k-att__flag"></span
+  ></span>
 </template>
 
 <script setup lang="ts">
 // The sidebar's «does this need me» mark, shared by the project rows (KRailItem) and the
 // workspace rows (KWorkspaceRow) so the two speak one language. It shows the TOP state of
-// the tally only (lib/attention.ts orders them); the row's tooltip lists the rest.
+// the tally (lib/attention.ts orders them); the row's tooltip lists the rest.
 //
 //   input    warning pill with the count, pulsing — an agent is blocked on a question
-//   error    danger dot — crashed or conflicted
 //   running  success pill with the count — agents at work
+//   error    danger dot — crashed or conflicted; on a pill's corner when a pill is the mark
 //   result   warning ring, no fill — a finished result nobody has opened yet
 //   idle     nothing at all, so colour only appears where something is happening
 //
 // aria-hidden: a bare digit reads as noise; the row's label carries the full breakdown.
 import { computed } from 'vue';
-import { levelOf, type Attention } from '../../lib/attention';
+import { flagsError, levelOf, type Attention } from '../../lib/attention';
 
 const props = defineProps<{ attention: Attention }>();
 
 const level = computed(() => levelOf(props.attention));
+const flagged = computed(() => flagsError(props.attention));
 // Only the pills carry a number. The dot and the ring are presence marks: «something is
 // broken» and «something to read» are what the operator acts on, not how many.
 const digits = computed(() =>
@@ -33,6 +36,7 @@ const digits = computed(() =>
 // and flips with the theme, so the digits read on the bright dark-theme fills and the dark
 // light-theme ones alike.
 .k-att {
+  position: relative;
   display: inline-flex;
   flex: none;
   align-items: center;
@@ -70,6 +74,20 @@ const digits = computed(() =>
 
 .k-att--error {
   background: var(--k-danger);
+}
+
+// The error dot riding a pill: the same danger fill as `--error`, pinned to the top-right
+// corner so the pill keeps its width and the row's 28px slot. The ring in the sidebar's
+// background cuts it out of the pill's fill so red never bleeds into green or orange.
+.k-att__flag {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--k-danger);
+  box-shadow: 0 0 0 1.5px var(--k-bg);
 }
 
 // Framed, not filled — the same «settled, a human owes it something» shape KStatusDot gives

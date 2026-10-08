@@ -17,13 +17,23 @@ export type AttentionLevel = keyof Attention | 'idle';
 
 // Priority order, highest first. «Needs an answer» outranks «running»: next to a working
 // agent the blocked one is what needs the operator, and a green count must not hide it.
-// The error sits above running for the same reason — nothing will fix it on its own.
-export const ATTENTION_ORDER: readonly (keyof Attention)[] = ['input', 'error', 'running', 'result'];
+// Live agents (the two pills) outrank the error dot: an old crash nobody archived must not
+// hide that a project has agents at work right now. The error is not lost under a pill —
+// `flagsError` puts the dot on the pill's corner — and it outranks the unread ring, because
+// nothing will fix it on its own.
+export const ATTENTION_ORDER: readonly (keyof Attention)[] = ['input', 'running', 'error', 'result'];
 
 export const NO_ATTENTION: Readonly<Attention> = Object.freeze({ input: 0, error: 0, running: 0, result: 0 });
 
 export function levelOf(a: Attention): AttentionLevel {
   return ATTENTION_ORDER.find((k) => a[k] > 0) ?? 'idle';
+}
+
+// A pill (input / running) is the mark, yet something also failed: the pill carries the
+// error dot on its corner, so neither live agents nor a crash disappear behind the other.
+export function flagsError(a: Attention): boolean {
+  const level = levelOf(a);
+  return (level === 'input' || level === 'running') && a.error > 0;
 }
 
 export function sumAttention(list: Iterable<Attention>): Attention {
