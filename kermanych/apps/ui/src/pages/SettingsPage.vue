@@ -527,6 +527,12 @@
             />
             <p class="set__note">{{ t('settings.language.note') }}</p>
           </div>
+
+          <div class="set__rule"></div>
+
+          <!-- What the «English — ASD-STE100» entries mean. Always visible: the table is needed
+               BEFORE a level is picked, not only after. -->
+          <SteGuide />
         </div>
 
         <!-- ── APP · АКАУНТ ─────────────────────────────────────────────────── -->
@@ -719,6 +725,7 @@ import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KTag from 'components/kit/KTag.vue';
 import KLangToggle from 'components/kit/KLangToggle.vue';
+import SteGuide from 'components/settings/SteGuide.vue';
 
 const store = useOrchestrator();
 const projects = useProjects();

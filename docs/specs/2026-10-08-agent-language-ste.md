@@ -54,8 +54,8 @@ standard is and what each level enforces.
   «ASD-STE60». "100" is the specification's number, not a percentage, and no STE80 or STE60
   exists. A teammate would search for a standard that does not exist, and the model cannot know
   one. The percentage is Karpathy's own phrasing.
-- **Codes:** `en-ste`, `en-ste-80`, `en-ste-60`, appended to `AGENT_LANGUAGES` after `en`. They
-  are internal identifiers. Nothing reads them as BCP 47 tags.
+- **Codes:** `en-ste`, `en-ste-80`, `en-ste-60`, placed in `AGENT_LANGUAGES` right after `en`.
+  They are internal identifiers. Nothing reads them as BCP 47 tags.
 - **The levels are defined explicitly, not left to the model.** The directive applies to every
   reply in every managed session, so its behaviour must be the same across models and runtimes,
   and "60%" has no established meaning. Rejected: a bare "write 80% of the way to ASD-STE100".
@@ -70,15 +70,17 @@ standard is and what each level enforces.
   | `active`: active voice, an action as a verb and not a noun | on | on | on |
   | `terms`: one term for one thing, no synonyms in the same text | on | on | on |
   | `phrasing`: no phrasal verbs, at most three nouns in a row, no semicolons | on | on | — |
-  | `paragraphs`: one topic, at most six sentences, the main point first | on | on | soft: one topic, no sentence limit |
+  | `paragraphs`: one topic, at most six sentences, the main point first | on | on | soft: one topic, no limit on sentences |
   | `safety`: WARNING or CAUTION and the risk before a step that can lose data or cause damage | on | on | — |
 
 - **One matrix in core drives both the directive and the page.** A new module
-  `packages/core/src/ste.ts` holds the rules. Each rule has an id, its English instruction, an
-  optional softened instruction, and a mode per level (`on`, `soft` or `off`). The settings page
-  renders its table from the same matrix, so the explanation cannot drift from what the agent
-  receives. The page's rule labels live in i18n, keyed by a `Record<SteRuleId, …>`, so a missing
-  label fails the typecheck.
+  `packages/core/src/ste.ts` holds the rules. Each rule has an id, its English instruction, and a
+  cell per level: `"on"`, `"off"`, or `{ soft: "…" }` carrying the softened instruction, so a
+  level cannot be marked soft without saying how. The settings page renders its table from the
+  same matrix, so the explanation cannot drift from what the agent receives. The page's wording
+  lives in i18n: one label per rule id and one per rule that softens. The i18n completeness test
+  fails when the matrix has a rule or a softened cell without a label in either locale, which
+  would otherwise show a raw key on the page.
 - **Guard rails at every level, stated above every rule:**
   - keep every fact, number, condition, exception and scope limit;
   - keep the confidence of the source;
@@ -161,9 +163,9 @@ Ukrainian copy (English mirrors it), under the select in the «ШІ-провай
   створений для документації з обслуговування літаків. Його веде асоціація ASD, чинна редакція —
   Issue 9 (січень 2025). Короткі речення, одна дія в реченні й одне значення для кожного терміна
   роблять текст швидким для читання. Стандарт існує лише для англійської, тому з цим вибором
-  агент відповідає англійською. Повний стандарт суворий, тож є м'якші рівні — 80% і 60%.»
+  агент відповідає англійською. Повний стандарт суворий, тож є м’якші рівні — 80% і 60%.»
 - **Table** (`KTable`): «Правило · 100 · 80% · 60%». A cell shows ✓, — or the softened wording
-  («орієнтир», «одна тема, без ліміту»).
+  («орієнтир», «без ліміту речень»).
 - **Guard rails:** «На всіх рівнях агент не губить фактів, чисел, умов і винятків, не змінює
   ступінь упевненості й не додає фактів від себе. Код, шляхи, команди, тексти помилок і підписи
   інтерфейсу він наводить дослівно.»
@@ -175,39 +177,65 @@ Ukrainian copy (English mirrors it), under the select in the «ШІ-провай
 ## Changes
 
 - **Core:**
-  - new `ste.ts` with the rule matrix, the level per code, and the STE directive builder;
-  - `language.ts`: the three codes, their labels and English names; `agentLanguageDirective()`
-    routes the STE codes to the builder;
-  - exports added in `index.ts`.
+  - new `ste.ts`: the rule matrix (`STE_LEVELS`, `STE_RULES`), the scope line, the guard rails
+    and the directive builder `steDirective(level)`;
+  - `language.ts`: the three codes and their labels, the level per code, and
+    `agentLanguageDirective()` routing the STE codes to the builder;
+  - `index.ts` exports `STE_LEVELS`, `STE_RULES` and their types for the UI.
 - **UI:**
-  - a new `components/settings/SteGuide.vue` (text, `KTable`, guard rails, scope, link), mounted
-    under the language select in `SettingsPage.vue` after a `set__rule`;
+  - a new `components/settings/SteGuide.vue` (text, a `KTable` whose rows are built from
+    `STE_RULES`, guard rails, scope, link), mounted under the language select in
+    `SettingsPage.vue` after a `set__rule`;
   - `settings.language.ste.*` keys in `i18n/uk` and `i18n/en`.
 - **API, cloud, Supabase:** no code change. `isAgentLanguage`, `languageAppendFor`, the account
   controller, the registry and the cloud helpers already go through core.
-- **Tests:** in `packages/core`, cases for the matrix → directive invariant:
-  - for each level, every `on` rule's instruction appears, every `soft` rule's softened
-    instruction appears, and no `off` rule appears;
-  - every level carries the scope line and the guard rails;
-  - the STE codes pass the guard.
+- **Tests:**
+  - `packages/core/test/ste.spec.ts`: for each code, a rule's full instruction is in the directive
+    exactly where its level marks it `on`, the softened instruction is there where it is soft,
+    and every level carries the scope line and the guard rails. The STE codes pass the existing
+    guard test, which loops over `AGENT_LANGUAGES`.
+  - `apps/ui/test/i18n-completeness.spec.ts`: every STE rule and softened cell has a label in
+    `uk` and `en`.
 
 ## Verification
 
-To run after implementation:
-
-- `pnpm --filter @kermanych/core test`, `pnpm --filter @kermanych/api test`,
-  `pnpm --filter @kermanych/ui test` (including i18n completeness); typecheck `ui` and `api`.
-- Smoke, UI: the app from this worktree, Settings → «ШІ-провайдер».
-  - The select lists the three entries after «English».
-  - The block shows its text, the table and the link.
-  - Switching the app locale switches the block's language.
-- Smoke, behaviour: a managed chat from this worktree's API with `KERMANYCH_LANGUAGE` set to
-  `en-ste`, then `en-ste-80`, then `en-ste-60`, answers the same question. Each reply is checked
-  against its level's rules.
+- `pnpm --filter @kermanych/core test`: 19 files, 190 passed, including `ste.spec.ts` (6).
+- `pnpm --filter @kermanych/ui test`: 52 files, 576 passed, including the new i18n case.
+- `pnpm --filter @kermanych/api test`: 856 passed, 2 failed, 4 skipped. Both failures are in
+  `test/rpc-session.compact.spec.ts`: it expects a `compact` frame first and receives
+  `set_subagent_subscription`. This change touches nothing on that path, and the same two
+  failures are recorded for the previous merge in `2026-10-08-deep-analysis-task.md`.
+- Typecheck: `@kermanych/ui` reports only `test/runtime-messages.spec.ts` TS2352, and
+  `@kermanych/api` only `src/http/jira.controller.ts` TS2504. Both errors are recorded in the
+  same earlier spec, and neither is in a changed file.
+- Smoke, UI: a preview API (`KERMANYCH_PREVIEW=1`, seeded temp DB) and `quasar dev` from this
+  worktree, Settings → Застосунок → «ШІ-провайдер».
+  - The picker lists the three entries right after «English».
+  - The block shows the text, the 9 × 3 table (✓, —, «орієнтир», «без ліміту речень»), the
+    guard rails, the scope line and the link.
+  - Switching the app to EN switches the block. The console shows no i18n warnings.
+  - Not exercised: saving a pick. The preview has no signed-in cloud profile, and
+    `auth.chooseLanguage` writes to Supabase first.
+- Smoke, behaviour: the preview API from this worktree, started with `KERMANYCH_LANGUAGE` set to
+  `en-ste`, then `en-ste-80`, then `en-ste-60`. Each run bound a project to a scratch git repo
+  and opened a managed chat.
+  - The chat's `omp` child received `--append-system-prompt` with exactly its level's rules:
+    - the dictionary rule only at 100;
+    - the strict length rule at 100 and 80, the softened one at 60;
+    - WARNING/CAUTION and the six-sentence limit dropped at 60;
+    - the scope line at every level.
+  - All three levels answered the same question ("explain a git worktree and walk me through
+    cleaning it up, including uncommitted changes and the branch") in English, with commands
+    quoted verbatim.
+  - Levels 100 and 80 used numbered steps and put WARNING or CAUTION before `--force` and
+    `git branch -D`. Level 100 had no contractions.
+  - Level 60 kept short sentences and numbered steps but used no WARNING labels.
+  - Deviation: phrasal verbs still slipped through at 100 and 80 ("look for", "clean it up",
+    "write down"). The model follows the rules closely, not perfectly.
 
 ## Documentation impact
 
 - `kermanych/README.md`: a new subsection «Agent communication language» after «Runtime
   preference». It covers the per-user preference, its cloud and local storage,
-  `KERMANYCH_LANGUAGE`, its reach (managed spawns only), and the three STE levels with their
-  scope. It points to this spec.
+  `KERMANYCH_LANGUAGE`, its reach (managed spawns only, native sessions excluded), the three STE
+  levels with their scope, and the migration-free codes. It points to this spec.

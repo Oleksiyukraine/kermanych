@@ -1176,6 +1176,29 @@ export const en: MessageSchema = {
     language: {
       label: 'Agent communication language',
       note: 'New sessions reply in this language. Existing sessions are unchanged.',
+      ste: {
+        title: 'ASD-STE100 — Simplified Technical English',
+        lead: 'ASD-STE100 Simplified Technical English is a controlled English standard made for aircraft maintenance documentation. ASD maintains it, and the current edition is Issue 9 (January 2025). Short sentences, one action per sentence and one meaning per term make the text fast to read. The standard exists for English only, so with this choice the agent replies in English. The full standard is strict, so there are softer levels: 80% and 60%.',
+        colRule: 'Rule',
+        rules: {
+          dictionary: 'Only STE dictionary words, each in one meaning (technical terms and identifiers allowed)',
+          grammar: 'STE grammar: simple tenses only, -ing only inside terms, no contractions (don’t) or Latin abbreviations (e.g.)',
+          length: 'Up to 20 words in an instruction, 25 in a description',
+          instructions: 'One instruction per sentence, imperative, condition first, steps as a numbered list',
+          active: 'Active voice, an action as a verb and not a noun',
+          terms: 'One term, one meaning, no synonyms mid-text',
+          phrasing: 'No phrasal verbs, no more than three nouns in a row, no semicolons',
+          paragraphs: 'Paragraph: one topic, up to six sentences, main point first',
+          safety: 'WARNING / CAUTION and the risk before a step that can destroy data or break something',
+        },
+        soft: {
+          length: 'a guide',
+          paragraphs: 'no sentence limit',
+        },
+        guard: 'At every level the agent keeps every fact, number, condition and exception, keeps the confidence of the source and adds no facts of its own. It quotes code, paths, commands, error messages and interface labels exactly.',
+        scope: 'The rules apply only to the agent’s messages to you. Files, commits, PRs, code comments, tickets and release notes follow the project’s conventions.',
+        source: 'Standard:',
+      },
     },
     account: {
       loggedInAs: 'You are signed in as',

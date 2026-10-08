@@ -67,6 +67,7 @@ export {
   agentLanguageDirective,
   type AgentLanguage,
 } from "./language";
+export { STE_LEVELS, STE_RULES, type SteCell, type SteLevel, type SteRule, type SteRuleId } from "./ste";
 export {
   ASSIGNED_BLOCK_HEADER,
   DEFAULT_SKILLS,
