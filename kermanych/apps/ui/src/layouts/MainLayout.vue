@@ -269,6 +269,16 @@
         v-tip="t('common.nav.branchTip')"
         :aria-label="`${t('common.nav.branchTip')}: ${branchLabel}`"
       ><KIcon name="worktree" class="shell__foot-branch-icon" /><span class="shell__foot-branch-name">{{ branchLabel }}</span></span>
+      <!-- Re-reads the git status above (branch, Pull badge) on demand — local reads only,
+           like `git status`; the remote is still fetched by the slow poll and on Pull. -->
+      <button
+        type="button"
+        class="shell__foot-btn"
+        :disabled="!isBound || refreshing"
+        v-tip="t('common.nav.refreshTip')"
+        :aria-label="t('common.nav.refreshTip')"
+        @click="refreshGitNow"
+      ><span class="k-glyph" aria-hidden="true">↻</span></button>
       <span class="shell__foot-spacer"></span>
       <!-- The path is a STATUS read-out that doubles as the way to change it. It
            used to open the directory picker straight from here, which put the
@@ -1470,6 +1480,19 @@ onUnmounted(() => {
   stopIncomingPoll?.();
   stopBranchPoll?.();
 });
+
+// Footer refresh: the same local read the branch poll does, on demand. `refreshing` gates
+// the button against piling up requests on a double-click.
+const refreshing = ref(false);
+async function refreshGitNow(): Promise<void> {
+  if (refreshing.value) return;
+  refreshing.value = true;
+  try {
+    await refreshGitStatus(false);
+  } finally {
+    refreshing.value = false;
+  }
+}
 
 const pullHint = computed(() => {
   if (!isBound.value) return BIND_HINT.value;
