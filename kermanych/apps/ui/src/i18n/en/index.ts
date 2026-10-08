@@ -24,6 +24,8 @@ export const en: MessageSchema = {
       langEn: 'English',
       pullTip: 'git pull (--ff-only) for the current branch of the project repository',
       pullIncoming: 'Commits to pull: {count}',
+      branchTip: 'Current branch of the project repository',
+      branchDetached: 'detached HEAD',
       changeInSettings: '{label} — change in settings',
       changeFolder: 'Change folder',
       bindFolder: 'Bind folder',

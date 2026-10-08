@@ -223,8 +223,8 @@
       </div>
     </q-page-container>
 
-    <!-- STATUS BAR — a VS Code-style footer; for now just git pull for the selected repo.
-         There is deliberately no Push: work leaves the machine through the PR flow only,
+    <!-- STATUS BAR — a VS Code-style footer: git pull and the current branch for the selected
+         repo. There is deliberately no Push: work leaves the machine through the PR flow only,
          never as a blind push of whatever branch the project repo sits on. -->
     <q-footer class="shell__footer">
       <!-- File-manager dock, left: shows the selected session's files between the sidebar and
@@ -260,6 +260,15 @@
         class="shell__foot-badge"
         aria-hidden="true"
       >{{ incoming }} ↓</span></button>
+      <!-- The branch the project repo is checked out on — a read-out, not a control: switching
+           it here would race the in-place agents that own the checkout. Hidden until the first
+           answer, so a slow api never flashes a wrong name. -->
+      <span
+        v-if="isBound && branch !== null"
+        class="shell__foot-branch"
+        v-tip="t('common.nav.branchTip')"
+        :aria-label="`${t('common.nav.branchTip')}: ${branchLabel}`"
+      ><KIcon name="worktree" class="shell__foot-branch-icon" /><span class="shell__foot-branch-name">{{ branchLabel }}</span></span>
       <span class="shell__foot-spacer"></span>
       <!-- The path is a STATUS read-out that doubles as the way to change it. It
            used to open the directory picker straight from here, which put the
@@ -448,6 +457,7 @@ import KIconButton from 'components/kit/KIconButton.vue';
 import KUserButton from 'components/kit/KUserButton.vue';
 import KFileManager from 'components/kit/KFileManager.vue';
 import KTerminalPanel from 'components/kit/KTerminalPanel.vue';
+import KIcon from 'components/kit/KIcon.vue';
 import { useTerminal } from 'stores/terminal';
 import JiraMergePrompt from 'components/jira/JiraMergePrompt.vue';
 import LinearMergePrompt from 'components/linear/LinearMergePrompt.vue';
@@ -1400,41 +1410,66 @@ async function gitPull(): Promise<void> {
     syncing.value = false;
   }
   // The pull fetched on its own, so a local recount is enough to clear (or keep) the badge.
-  void refreshIncoming(false);
+  void refreshGitStatus(false);
 }
 
-// Footer Pull badge: commits waiting upstream for the selected project's current branch,
-// GitHub Desktop-style. The api fetches the remote on the project switch and on a slow
-// visible-only poll; a hidden window costs nothing and catches up when it returns.
+// Footer git read-out for the selected project: its current branch, and the Pull badge —
+// commits waiting upstream for that branch, GitHub Desktop-style. The api fetches the remote
+// on the project switch and on a slow visible-only poll; a hidden window costs nothing and
+// catches up when it returns. The branch also moves under us — an in-place agent checks its
+// branch out in the project repo, a `git checkout` in the terminal — so a fast fetch-less poll
+// (two local git reads) and any in-place session change re-read it.
 const INCOMING_POLL_MS = 5 * 60_000;
+const BRANCH_POLL_MS = 10_000;
 const incoming = ref(0);
-async function refreshIncoming(fetch: boolean): Promise<void> {
+// `null` until the api answers for this project; `''` is a detached HEAD.
+const branch = ref<string | null>(null);
+const branchLabel = computed(() => branch.value || t('common.nav.branchDetached'));
+async function refreshGitStatus(fetch: boolean): Promise<void> {
   const id = store.selectedProjectId;
   if (!id || !isBound.value) return;
   try {
-    const { behind } = await api.projectIncoming(id, fetch);
+    const r = await api.projectIncoming(id, fetch);
     // A fetch can take seconds; the operator may have switched project meanwhile.
-    if (store.selectedProjectId === id) incoming.value = behind;
+    if (store.selectedProjectId !== id) return;
+    incoming.value = r.behind;
+    branch.value = r.branch;
   } catch {
-    // Local API unreachable or the binding just went away: keep the last known count.
+    // Local API unreachable or the binding just went away: keep the last known values.
   }
 }
 watch(
   () => [store.selectedProjectId, selectedProject.value?.localRepoPath] as const,
   () => {
     incoming.value = 0;
-    void refreshIncoming(true);
+    branch.value = null;
+    void refreshGitStatus(true);
   },
   { immediate: true },
 );
+// An in-place agent starting, finishing or going away is what switches the project repo's
+// branch from inside Kermanych; re-read on it instead of waiting for the poll.
+watch(
+  () =>
+    store.sessions
+      .filter((s) => s.projectId === store.selectedProjectId && s.kind === 'agent' && !s.worktree)
+      .map((s) => `${s.id}:${s.status}`)
+      .join(','),
+  () => void refreshGitStatus(false),
+);
 let stopIncomingPoll: (() => void) | undefined;
+let stopBranchPoll: (() => void) | undefined;
 onMounted(() => {
-  stopIncomingPoll = installReconcile(() => void refreshIncoming(true), {
+  stopIncomingPoll = installReconcile(() => void refreshGitStatus(true), {
     intervalMs: INCOMING_POLL_MS,
     staleHideMs: 60_000,
   });
+  stopBranchPoll = installReconcile(() => void refreshGitStatus(false), { intervalMs: BRANCH_POLL_MS });
 });
-onUnmounted(() => stopIncomingPoll?.());
+onUnmounted(() => {
+  stopIncomingPoll?.();
+  stopBranchPoll?.();
+});
 
 const pullHint = computed(() => {
   if (!isBound.value) return BIND_HINT.value;
@@ -1998,6 +2033,29 @@ const pullHint = computed(() => {
   color: var(--k-text);
   font-weight: var(--k-fw-medium);
   line-height: 1;
+}
+
+// The current-branch read-out beside Pull: mono like the buttons, but not one — no hover, no
+// pointer. A long branch name ellipsises from its tail (the prefix is what identifies it), so
+// it never pushes the folder path off the bar.
+.shell__foot-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 40ch;
+  padding: 0 var(--k-sp-2);
+  color: var(--k-muted);
+  font-family: var(--k-font-mono);
+  font-size: var(--k-fs-xs);
+}
+.shell__foot-branch-icon {
+  --k-icon-size: var(--k-icon-xs);
+}
+.shell__foot-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 // Dock toggles are glyph-only controls, so they take the icon-button look of the ШІ-session
