@@ -605,38 +605,68 @@ each turn the first message becomes the thread's name, as for a managed chat.
 
 ## Session browser
 
-In the desktop app every session has its own browser: the **Браузер** tab of the session
-(spec: `docs/specs/2026-10-05-embedded-browser.md`). It is a real Chromium page — address
-bar, back/forward/reload, devtools (⚙), «open in system browser» (⤤). The agent of that
-session drives the same page, and you watch it live; the tab's dot pulses while the agent
-is using it. The web build has no Браузер tab.
+In the desktop app every session has its own browser (specs:
+`docs/specs/2026-10-05-embedded-browser.md`, `docs/specs/2026-10-08-session-browser-rework.md`).
+It is a real Chromium page. The agent of that session drives the same page, and you watch it
+live. The web build has no session browser.
 
-- **Preview.** ▶ starts the session's live preview and opens it in this tab instead of the
-  system browser.
-- **Point at a problem.** Press **◎ Вказати** and click an element on the page (the click
-  does not reach the page; <kbd>Esc</kbd> cancels). It lands in a tray under the toolbar
-  with a cropped screenshot, its selector and — on a Vue, React ≤18 or Svelte dev build —
-  the component file. Add a comment to each, then **Надіслати агенту**: one message with the
-  comment, page URL, selector, text, trimmed HTML and computed styles. A managed session gets
-  the crops as images; a native session gets their file paths (under
-  `$TMPDIR/kermanych-browser/`) and, like any helper, accepts the message only while idle —
-  a refusal keeps the tray.
+- **Where it is.** The **Браузер** tab of the session, or — with ◫ **Поруч із логом** in its
+  toolbar — beside the Лог behind a draggable seam (the Браузер tab then disappears; ◫ again
+  puts it back). While the agent is using the browser, a dot pulses on the tab and ◎ on the
+  session's card on the board.
+- **Toolbar.** ← → ↻ (✕ while loading), the address (a URL, `localhost:5173`, or words to
+  search), the viewport (**За розміром панелі**, or a fixed width — 390 / 768 / 1280 / 1440;
+  wider than the pane, the page is laid out at that width and drawn scaled, with the
+  percentage shown), **◎ Вказати**, **Агент** (pause the agent's control), ⤤ open in the
+  system browser, `</>` devtools. A narrow pane wraps it into two rows and drops the labels.
+  Keys: <kbd>⌘L</kbd> address, <kbd>⌘F</kbd> find in page, <kbd>⌘R</kbd> reload (the page,
+  not the app), <kbd>⌘[</kbd> / <kbd>⌘]</kbd> back / forward; <kbd>⌘W</kbd> and zoom keys do
+  nothing in the page.
+- **Preview.** ▶ starts the session's live preview and opens it here instead of the system
+  browser.
+- **Point at a problem.** Press **◎ Вказати** and click an element (the click does not reach
+  the page; <kbd>Shift</kbd>+click keeps picking; <kbd>Esc</kbd> cancels). Same-origin iframes
+  work too. Each pick lands in a tray above the page with a cropped screenshot, its selector
+  and — on a Vue, React ≤18 or Svelte dev build — the component file. Comment each, optionally
+  add a general comment, then **Надіслати агенту** (or <kbd>⌘↵</kbd>): one message with the
+  comments, page URL, frame, viewport and scroll, element position, selector, text, trimmed
+  HTML and computed styles. A managed session gets the crops as images; a native session gets
+  their file paths (under `$TMPDIR/kermanych-browser/`) and, like any helper, accepts the
+  message only while idle — a refusal keeps the tray. The tray survives an app reload.
+- **Who drives.** Click **Агент** to pause the agent: its browser tools refuse until you click
+  **Повернути**. The agent's page loads never take the keyboard from whatever you are typing
+  in.
+- **Page dialogs.** `alert` / `confirm` show as a bar above the page; you or the agent answer
+  it (the agent's action reports the dialog). «Leave site?» is always allowed; `prompt()` is
+  not supported by Electron.
 - **Agent tools.** Agent and chat sessions (managed and native, not discussion/review
-  branches) get an MCP server `kermanych` with `browser_navigate` (no URL → the running
-  preview), `browser_snapshot` (page outline with `e1`, `e2`… refs), `browser_click`,
-  `browser_type`, `browser_press`, `browser_screenshot`, `browser_console` (console messages
-  and failed / 4xx / 5xx requests) and `browser_evaluate`. claude shows them as
-  `mcp__kermanych__browser_*`. Managed sessions get them on launch and resume; native ones
-  via `claude --mcp-config <file>` (a per-session `0600` file) or a second `omp --hook`.
-  The endpoint is `POST /api/browser/mcp` on the local API with a per-session bearer; a
-  session's calls run one at a time. An API started without the desktop app offers no
-  browser tools.
+  branches) get an MCP server `kermanych`: `browser_navigate` (no URL → the running preview),
+  `browser_snapshot` (page outline with `e1`, `e2`… refs, same-origin iframes included),
+  `browser_click` (refuses, naming the cover, when another element covers the target),
+  `browser_type`, `browser_press`, `browser_hover`, `browser_select` (native `<select>`),
+  `browser_history` (back / forward / reload), `browser_wait_for`, `browser_resize`,
+  `browser_screenshot` (viewport, full page or one element), `browser_upload`,
+  `browser_dialog`, `browser_console` (console, failed / 4xx / 5xx requests, downloads,
+  popups, blocked links), `browser_network` (the request log) and `browser_evaluate`.
+  claude shows them as `mcp__kermanych__browser_*`. Managed sessions get them on launch and
+  resume; native ones via `claude --mcp-config <file>` (a per-session `0600` file) or a
+  second `omp --hook`. The endpoint is `POST /api/browser/mcp` on the local API with a
+  per-session bearer; a session's calls run one at a time (dialog, console and network
+  answer at once). An API started without the desktop app offers no browser tools.
 - **Cookies** are kept per project (Electron partition `persist:kermanych-browser-<projectId>`):
-  sessions of one project share logins, projects do not. Pages may not open other schemes,
-  popups load in the same page, and permission prompts (camera, location, …) are refused.
-- **The browser sits above the app's own UI**, so it is hidden while a menu, dialog or error
-  toast is open, or when another tab is selected. A hidden session browser keeps running —
-  the agent can work in it while you look elsewhere. It is closed with its session.
+  sessions of one project share logins, projects do not. The page's user agent carries no
+  `Electron/` token. `target=_blank` links load in the same page; a `window.open` popup (an
+  OAuth sign-in) opens as a small window of its own that keeps `window.opener` — yours to
+  complete, the agent cannot drive it. `mailto:` / `tel:` open in the OS only from your own
+  click. HTTP sign-in (basic auth) asks you in a dialog; a self-signed certificate is accepted
+  for local hosts only; downloads go to your Downloads folder. Permission prompts (camera,
+  location, …) are refused.
+- **The browser sits above the app's own UI**, so while a menu or dialog is open it is
+  replaced by a still frame of the page, and toasts move beside it. A failed load or a crashed
+  page shows a panel with **Спробувати ще**. A hidden session browser keeps running — the
+  agent can work in it while you look elsewhere. At most 6 stay alive (and none idle for 20
+  minutes); a closed one remembers its last address, and the empty tab offers
+  **Відкрити знову**. It is deleted with its session.
 
 ## Monorepo layout
 

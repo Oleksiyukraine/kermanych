@@ -13,9 +13,16 @@
 import { Injectable, Optional } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { randomBytes } from "node:crypto";
+import { isAbsolute } from "node:path";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
-import { browserHost, type BrowserPageInfo, type BrowserTarget } from "./browser-host";
+import {
+  browserHost,
+  type BrowserActionResult,
+  type BrowserNetworkEntry,
+  type BrowserPageInfo,
+  type BrowserTarget,
+} from "./browser-host";
 
 type JsonRpcRequest = { jsonrpc?: string; id?: string | number | null; method?: unknown; params?: unknown };
 type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -30,12 +37,15 @@ const PROTOCOL_VERSION = "2025-06-18";
 const SHARED =
   "This is the operator's visible browser pane in Kermanych, belonging to THIS session only and shared live with the operator: they see every page you open and may be using it themselves.";
 
+const REF = { type: "string", description: "A ref from the latest browser_snapshot (e.g. e12), or a CSS selector." };
+
 const TOOLS = [
   {
     name: "browser_navigate",
     description:
       `${SHARED} Load a URL in it and wait for the page to settle. Without \`url\` it opens this session's running live preview (the app built from this session's worktree). ` +
-      "Answers with where the page ended up; follow with browser_snapshot to read it.",
+      "Answers with where the page ended up; follow with browser_snapshot to read it. A page that asks for HTTP sign-in (a browser login prompt) or opens a popup window " +
+      "(e.g. an OAuth sign-in) needs the operator: ask them to complete it in the pane.",
     inputSchema: {
       type: "object",
       properties: { url: { type: "string", description: "An http(s) URL or about:blank. Omit to open the session's live preview." } },
@@ -45,27 +55,24 @@ const TOOLS = [
   {
     name: "browser_snapshot",
     description:
-      `${SHARED} A text outline of the visible page. Interactive elements carry refs (e1, e2, …) that browser_click and browser_type accept; ` +
+      `${SHARED} A text outline of the whole page document, including same-origin iframes (cross-origin ones are named only). Interactive elements carry refs (e1, e2, …) that the element tools accept; ` +
       "every snapshot reassigns them, so take a fresh one after the page changes. Prefer this to find elements and read content; use browser_screenshot to check visuals.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     name: "browser_click",
-    description: `${SHARED} Click an element with a real mouse event. Answers with the page's URL and title afterwards, so you can tell whether it navigated.`,
-    inputSchema: {
-      type: "object",
-      properties: { ref: { type: "string", description: "A ref from the latest browser_snapshot (e.g. e12), or a CSS selector." } },
-      required: ["ref"],
-      additionalProperties: false,
-    },
+    description:
+      `${SHARED} Click an element with a real mouse event at its visible point. Refuses when another element covers that point and names the covering element, ` +
+      "so a click never silently lands on an overlay. Answers with the page's URL and title afterwards, so you can tell whether it navigated.",
+    inputSchema: { type: "object", properties: { ref: REF }, required: ["ref"], additionalProperties: false },
   },
   {
     name: "browser_type",
-    description: `${SHARED} Focus an input or editable element and type text into it as real keyboard input.`,
+    description: `${SHARED} Focus an input or editable element and type text into it as real keyboard input. For a <select> use browser_select instead.`,
     inputSchema: {
       type: "object",
       properties: {
-        ref: { type: "string", description: "A ref from the latest browser_snapshot (e.g. e12), or a CSS selector." },
+        ref: REF,
         text: { type: "string", description: "The text to type." },
         clear: { type: "boolean", description: "Replace the field's current value (default true); false appends.", default: true },
         submit: { type: "boolean", description: "Press Enter after typing (default false).", default: false },
@@ -85,9 +92,105 @@ const TOOLS = [
     },
   },
   {
+    name: "browser_hover",
+    description: `${SHARED} Move the mouse over an element, e.g. to open a hover-only menu or a tooltip; take a snapshot afterwards to see what appeared.`,
+    inputSchema: { type: "object", properties: { ref: REF }, required: ["ref"], additionalProperties: false },
+  },
+  {
+    name: "browser_select",
+    description:
+      `${SHARED} Choose options of a <select> element, each by its option value or visible label. Native selects cannot be operated by clicks or keys — use this. ` +
+      "Answers with the labels selected.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ref: REF,
+        values: { type: "array", items: { type: "string" }, minItems: 1, description: "Option values or visible labels; more than one only for a multiple select." },
+      },
+      required: ["ref", "values"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_history",
+    description: `${SHARED} Go back, go forward or reload the page, and wait for it to settle.`,
+    inputSchema: {
+      type: "object",
+      properties: { action: { type: "string", enum: ["back", "forward", "reload"] } },
+      required: ["action"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_wait_for",
+    description:
+      `${SHARED} Wait until a text appears in the page or a CSS selector matches (with \`gone\`, until it no longer does). Give exactly one of \`text\` and \`selector\`. ` +
+      "Use it instead of sleeping after an action that loads content.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Text to look for in the page." },
+        selector: { type: "string", description: "A CSS selector to look for." },
+        gone: { type: "boolean", description: "Wait for it to disappear instead (default false).", default: false },
+        timeout: { type: "number", description: "Seconds to wait (default 10, max 60).", default: 10, minimum: 0, maximum: 60 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_resize",
+    description:
+      `${SHARED} Lay the page out at a given viewport width (e.g. to check a mobile layout), and height while the operator is not looking at the pane; ` +
+      "the operator sees the same viewport (scaled to fit their pane), and while they are looking the height follows their pane. " +
+      "`{reset: true}` goes back to following the operator's pane.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        width: { type: "integer", minimum: 320, maximum: 3840, description: "Viewport width in CSS pixels." },
+        height: { type: "integer", minimum: 240, maximum: 2400, description: "Viewport height in CSS pixels." },
+        reset: { type: "boolean", description: "Follow the operator's pane again; not combined with width/height." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "browser_screenshot",
-    description: `${SHARED} A PNG of the visible viewport. Use it to check layout and visuals; to find elements or read text, browser_snapshot is cheaper and gives refs.`,
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    description:
+      `${SHARED} A PNG of the visible viewport, the whole page (\`full_page\`) or one element (\`ref\`). Use it to check layout and visuals; ` +
+      "to find elements or read text, browser_snapshot is cheaper and gives refs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        full_page: { type: "boolean", description: "Capture the whole scrollable page (default false).", default: false },
+        ref: { ...REF, description: "Capture only this element: a ref from the latest browser_snapshot, or a CSS selector." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_upload",
+    description: `${SHARED} Set the files of an <input type=file> element without the native file dialog.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        ref: REF,
+        paths: { type: "array", items: { type: "string" }, minItems: 1, description: "Absolute paths of files on this machine." },
+      },
+      required: ["ref", "paths"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_dialog",
+    description: `${SHARED} Answer the JavaScript dialog (alert or confirm) the page is blocked on. The operator sees it too and may answer it first.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        accept: { type: "boolean", description: "OK (true) or Cancel (false)." },
+      },
+      required: ["accept"],
+      additionalProperties: false,
+    },
   },
   {
     name: "browser_console",
@@ -95,6 +198,18 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: { clear: { type: "boolean", description: "Clear the collected entries after reading them (default false).", default: false } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_network",
+    description: `${SHARED} Requests the page made (method, status, type, duration, URL) since the browser opened or was last cleared, oldest first.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        clear: { type: "boolean", description: "Clear the collected requests after reading them (default false).", default: false },
+        filter: { type: "string", description: "Keep only requests whose URL contains this text." },
+      },
       additionalProperties: false,
     },
   },
@@ -110,6 +225,17 @@ const TOOLS = [
   },
 ];
 
+// Tools that skip the session's queue. browser_dialog must reach a page whose queued action is
+// itself blocked on that very dialog (actions return early when they open one, but a dialog the
+// page opens on its own — a timer, a late handler — can still catch an action mid-flight), and
+// browser_console / browser_network only read buffers the main process collects, which is how
+// the agent finds out why an action hangs.
+const UNQUEUED = new Set(["browser_dialog", "browser_console", "browser_network"]);
+
+// browser_network's answer is capped so a chatty page cannot flood the agent's context; the
+// newest requests are the interesting ones, so the oldest are dropped.
+export const NETWORK_OUTPUT_LIMIT = 20_000;
+
 function text(t: string): ToolResult {
   return { content: [{ type: "text", text: t }] };
 }
@@ -118,14 +244,71 @@ function at(p: BrowserPageInfo): string {
   return `now at ${p.url} (${p.title})`;
 }
 
+// An input action's answer: where the page is, and what the action set off that the agent
+// must act on (a blocking dialog) or leave to the operator (a popup window).
+function acted(r: BrowserActionResult, extra = ""): string {
+  const lines = [at(r) + extra];
+  if (r.dialog) {
+    lines.push(`A JavaScript ${r.dialog.type} dialog is open: «${r.dialog.message}» — the page is blocked until you answer it with browser_dialog.`);
+  }
+  if (r.popup) lines.push(`A popup window opened at ${r.popup}; it belongs to the operator (agent tools cannot drive it).`);
+  return lines.join("\n");
+}
+
+function networkLine(e: BrowserNetworkEntry): string {
+  const outcome = e.failed ? `failed(${e.failed})` : e.status !== undefined ? String(e.status) : "…";
+  const parts = [e.method, outcome];
+  if (e.type) parts.push(e.type);
+  if (e.ms !== undefined) parts.push(`${Math.round(e.ms)}ms`);
+  parts.push(e.url);
+  if (e.ms === undefined && !e.failed) parts.push("(pending)");
+  return parts.join(" ");
+}
+
+export function formatNetwork(entries: BrowserNetworkEntry[]): string {
+  if (!entries.length) return "(no requests)";
+  const kept: string[] = [];
+  let size = 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const line = networkLine(entries[i]);
+    if (kept.length && size + line.length + 1 > NETWORK_OUTPUT_LIMIT) break;
+    kept.push(line);
+    size += line.length + 1;
+  }
+  kept.reverse();
+  const dropped = entries.length - kept.length;
+  return (dropped ? `(${dropped} older requests dropped)\n` : "") + kept.join("\n");
+}
+
 function str(args: Record<string, unknown>, key: string): string {
   const v = args[key];
   if (typeof v !== "string" || !v) throw new Error(`\`${key}\` is required`);
   return v;
 }
 
+function optStr(args: Record<string, unknown>, key: string): string | undefined {
+  const v = args[key];
+  if (v === undefined || v === null || v === "") return undefined;
+  if (typeof v !== "string") throw new Error(`\`${key}\` must be a string`);
+  return v;
+}
+
 function bool(args: Record<string, unknown>, key: string, fallback: boolean): boolean {
   return typeof args[key] === "boolean" ? (args[key] as boolean) : fallback;
+}
+
+function strings(args: Record<string, unknown>, key: string): string[] {
+  const v = args[key];
+  if (!Array.isArray(v) || !v.length || v.some((x) => typeof x !== "string" || !x))
+    throw new Error(`\`${key}\` must be a non-empty array of non-empty strings`);
+  return v as string[];
+}
+
+function int(args: Record<string, unknown>, key: string, min: number, max: number): number | undefined {
+  const v = args[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) throw new Error(`\`${key}\` must be an integer from ${min} to ${max}`);
+  return v;
 }
 
 @Injectable()
@@ -203,12 +386,16 @@ export class BrowserMcpService {
       case "tools/call": {
         const name = typeof params.name === "string" ? params.name : "";
         const args = (params.arguments && typeof params.arguments === "object" ? params.arguments : {}) as Record<string, unknown>;
-        const run = (this.queues.get(sessionId) ?? Promise.resolve()).then(() => this.call(sessionId, name, args));
-        const tail = run.catch(() => undefined);
-        this.queues.set(sessionId, tail);
-        void tail.then(() => {
-          if (this.queues.get(sessionId) === tail) this.queues.delete(sessionId);
-        });
+        let run: Promise<ToolResult>;
+        if (UNQUEUED.has(name)) run = this.call(sessionId, name, args);
+        else {
+          run = (this.queues.get(sessionId) ?? Promise.resolve()).then(() => this.call(sessionId, name, args));
+          const tail = run.catch(() => undefined);
+          this.queues.set(sessionId, tail);
+          void tail.then(() => {
+            if (this.queues.get(sessionId) === tail) this.queues.delete(sessionId);
+          });
+        }
         try {
           return result(await run);
         } catch (err) {
@@ -241,21 +428,69 @@ export class BrowserMcpService {
         return text(`Page: ${page.title} — ${page.url}\n\n${page.text}`);
       }
       case "browser_click":
-        return text(at(await host.click(target, str(args, "ref"))));
+        return text(acted(await host.click(target, str(args, "ref"))));
       case "browser_type": {
         const typed = typeof args.text === "string" ? args.text : undefined;
         if (typed === undefined) throw new Error("`text` is required");
-        return text(at(await host.type(target, str(args, "ref"), typed, { clear: bool(args, "clear", true), submit: bool(args, "submit", false) })));
+        return text(acted(await host.type(target, str(args, "ref"), typed, { clear: bool(args, "clear", true), submit: bool(args, "submit", false) })));
       }
       case "browser_press":
-        return text(at(await host.press(target, str(args, "key"))));
+        return text(acted(await host.press(target, str(args, "key"))));
+      case "browser_hover":
+        return text(acted(await host.hover(target, str(args, "ref"))));
+      case "browser_select": {
+        const ref = str(args, "ref");
+        const r = await host.select(target, ref, strings(args, "values"));
+        return text(acted(r, `\nselected: ${r.selected.join(", ")}`));
+      }
+      case "browser_history": {
+        const action = args.action;
+        if (action !== "back" && action !== "forward" && action !== "reload") throw new Error("`action` must be back, forward or reload");
+        return text(acted(await host.history(target, action)));
+      }
+      case "browser_wait_for": {
+        const waitText = optStr(args, "text");
+        const selector = optStr(args, "selector");
+        if (!waitText === !selector) throw new Error("Give exactly one of `text` and `selector`.");
+        const timeout = args.timeout === undefined || args.timeout === null ? 10 : args.timeout;
+        if (typeof timeout !== "number" || !(timeout >= 0 && timeout <= 60)) throw new Error("`timeout` must be a number of seconds from 0 to 60");
+        const r = await host.waitFor(target, { text: waitText, selector, gone: bool(args, "gone", false), timeoutMs: Math.round(timeout * 1000) });
+        return text(`found after ${r.waitedMs} ms; ${at(r)}`);
+      }
+      case "browser_resize": {
+        const width = int(args, "width", 320, 3840);
+        const height = int(args, "height", 240, 2400);
+        const reset = bool(args, "reset", false);
+        if (reset && (width !== undefined || height !== undefined)) throw new Error("`reset` cannot be combined with `width`/`height`.");
+        if (!reset && width === undefined) throw new Error("Give `width` (and optionally `height`), or `reset: true`.");
+        const r = await host.resize(target, reset ? null : height === undefined ? { width: width! } : { width: width!, height });
+        return text(`viewport ${r.viewport.width}×${r.viewport.height}; ${at(r)}`);
+      }
       case "browser_screenshot": {
-        const shot = await host.screenshot(target);
+        const fullPage = bool(args, "full_page", false);
+        const ref = optStr(args, "ref");
+        if (fullPage && ref) throw new Error("`full_page` and `ref` cannot be combined.");
+        const shot = await host.screenshot(target, ref ? { fullPage, ref } : { fullPage });
         return { content: [{ type: "image", data: shot.data, mimeType: shot.mimeType }] };
+      }
+      case "browser_upload": {
+        const ref = str(args, "ref");
+        const paths = strings(args, "paths");
+        const relative = paths.find((p) => !isAbsolute(p));
+        if (relative) throw new Error(`Paths must be absolute: ${relative}`);
+        return text(acted(await host.upload(target, ref, paths)));
+      }
+      case "browser_dialog": {
+        if (typeof args.accept !== "boolean") throw new Error("`accept` is required (true for OK, false for Cancel)");
+        return text(acted(await host.dialog(target, { accept: args.accept })));
       }
       case "browser_console": {
         const entries = await host.console(target, { clear: bool(args, "clear", false) });
         return text(entries.length ? entries.map((e) => `[${e.level}] ${e.text}${e.source ? ` (${e.source})` : ""}`).join("\n") : "(no entries)");
+      }
+      case "browser_network": {
+        const filter = optStr(args, "filter");
+        return text(formatNetwork(await host.network(target, filter ? { clear: bool(args, "clear", false), filter } : { clear: bool(args, "clear", false) })));
       }
       case "browser_evaluate":
         return text(await host.evaluate(target, str(args, "expression")));

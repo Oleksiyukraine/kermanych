@@ -2,16 +2,18 @@ import { onMounted, onUnmounted, ref, type Ref } from 'vue';
 
 // Whether any floating layer of the app is on screen right now. The session browser's native
 // view is painted by Electron above the whole DOM, so nothing the renderer draws can cover it;
-// the pane parks the view while this reads true (docs/specs/2026-10-05-embedded-browser.md).
+// the pane parks the view while this reads true and shows a still frame of the page in its
+// place (docs/specs/2026-10-05-embedded-browser.md).
 //
 // One structural signal instead of a list of dialogs: every floating layer here already
 // declares an ARIA role — QDialog (KModal) renders `role="dialog"`, QMenu / KChipSelect / the
-// Агенти ⋯ menu `role="menu"`, KSelect's list `role="listbox"`, KDateField's grid `role="dialog"`
-// — and an error toast is `role="alert"`, so a failure stays readable instead of sitting under
-// the page. An element counts only while rendered: a v-show-hidden picker in another tab (the
-// Лог composer's emoji grid) has no client rects. Info toasts and v-tip bubbles do not count:
-// parking the view for every hover or status line would make it flicker.
-const OVERLAY = '[role="dialog"], [aria-modal="true"], [role="menu"], [role="listbox"], .k-toast[role="alert"]';
+// Агенти ⋯ menu `role="menu"`, KSelect's list `role="listbox"`, KDateField's grid `role="dialog"`.
+// An element counts only while rendered: a v-show-hidden picker in another tab (the Лог
+// composer's emoji grid) has no client rects. Toasts do not count: KToast moves its stack
+// beside the shown view (stores/browser.ts `shownRect`), so an error stays readable without
+// parking the page. Neither do v-tip bubbles: parking the view for every hover would make it
+// flicker.
+const OVERLAY = '[role="dialog"], [aria-modal="true"], [role="menu"], [role="listbox"]';
 
 export function overlayOnScreen(root: ParentNode = document): boolean {
   for (const el of root.querySelectorAll(OVERLAY)) if (el.getClientRects().length > 0) return true;
