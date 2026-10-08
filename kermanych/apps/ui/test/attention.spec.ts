@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Session } from '@kermanych/core';
-import { attentionByProject, isUnseen, levelOf, sumAttention, NO_ATTENTION } from '../src/lib/attention';
+import { attentionByProject, flagsError, isUnseen, levelOf, sumAttention, NO_ATTENTION } from '../src/lib/attention';
 
 function session(over: Partial<Session> & { id: string }): Session {
   return {
@@ -22,12 +22,24 @@ const allUnseen = (): boolean => true;
 const noneUnseen = (): boolean => false;
 
 describe('levelOf', () => {
-  it('ranks a question to the operator above a running agent and an error', () => {
+  it('ranks a question first, live agents above an error, an error above an unread result', () => {
     expect(levelOf({ input: 1, error: 1, running: 3, result: 2 })).toBe('input');
-    expect(levelOf({ input: 0, error: 1, running: 3, result: 2 })).toBe('error');
-    expect(levelOf({ input: 0, error: 0, running: 3, result: 2 })).toBe('running');
+    expect(levelOf({ input: 0, error: 1, running: 3, result: 2 })).toBe('running');
+    expect(levelOf({ input: 0, error: 1, running: 0, result: 2 })).toBe('error');
     expect(levelOf({ input: 0, error: 0, running: 0, result: 2 })).toBe('result');
     expect(levelOf(NO_ATTENTION)).toBe('idle');
+  });
+});
+
+describe('flagsError', () => {
+  it('keeps an error visible on the pill that outranks it', () => {
+    expect(flagsError({ ...NO_ATTENTION, error: 1, running: 1 })).toBe(true);
+    expect(flagsError({ ...NO_ATTENTION, error: 1, input: 1 })).toBe(true);
+  });
+
+  it('does not flag when the error is the mark itself or there is none', () => {
+    expect(flagsError({ ...NO_ATTENTION, error: 1, result: 2 })).toBe(false);
+    expect(flagsError({ ...NO_ATTENTION, running: 3 })).toBe(false);
   });
 });
 
