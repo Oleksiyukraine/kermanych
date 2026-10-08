@@ -4,7 +4,7 @@ import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AuthService } from "../src/auth/auth.service";
 import type { ModelsService } from "../src/models/models.service";
 import type { CloudProject, Task } from "@kermanych/cloud";
-import { DEFAULT_DOCS_POLICY, docsPolicyAppend } from "@kermanych/core";
+import { DEFAULT_DOCS_POLICY, docsPolicyAppend, deepAnalysisPrompt } from "@kermanych/core";
 
 // The runtime-aware model guard (ModelsService.validModel) is not under test here; an identity
 // stub returns the wanted model unchanged so createSessionFromTask keeps task.model as before.
@@ -94,7 +94,10 @@ function make() {
     current: () => ({ userId: USER, accessToken: "token" }),
     cloudClient: () => ({}),
   } as unknown as AuthService;
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, stubSkills(), stubModels());
+  // The deep-analysis launch resolves its skill by name; none resolves here, so the wrapper
+  // goes out with an empty block (stubSkills leaves the name resolver out on purpose).
+  const skills = Object.assign(stubSkills(), { assignedForNames: async () => ({ block: "", view: [], missing: [] }) });
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, skills, stubModels());
   return { sup, registry, worktree };
 }
 
@@ -361,6 +364,36 @@ describe("createSessionFromTask", () => {
     expect(text).toMatch(/^wire GitHub OAuth\n\n/);
     expect(text).toMatch(/Co-Authored-By: Kermanych </);
     expect(images).toEqual([{ data: "aGk=", mimeType: "image/png" }]);
+  });
+
+  // «Глибокий аналіз» (docs/specs/2026-10-08-deep-analysis-task.md): the same launch, but the
+  // model's opening turn is the task wrapped in the deep-analysis instruction. The operator's
+  // transcript still shows the raw task, and the flag is stamped on the row for good.
+  it("opens a deep-analysis card with the wrapped prompt", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, createdBy: USER, deepAnalysis: true });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    expect(registry.listSessions().find((s) => s.id === session.id)?.deepAnalysis).toBe(true);
+    const [text] = prompts.at(-1) as [string];
+    expect(text.startsWith(deepAnalysisPrompt("wire GitHub OAuth"))).toBe(true);
+    expect(text).toContain("## Task\n\nwire GitHub OAuth");
+    expect(text).toMatch(/Co-Authored-By: Kermanych </);
+    const first = sup.getTranscript(session.id).find((e) => e.kind === "user_text");
+    expect(first).toMatchObject({ kind: "user_text", text: "wire GitHub OAuth" });
+  });
+
+  it("leaves a plain card's session unflagged", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, createdBy: USER });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    expect("deepAnalysis" in registry.listSessions().find((s) => s.id === session.id)!).toBe(false);
+    expect((prompts.at(-1) as [string])[0]).toMatch(/^wire GitHub OAuth\n\n/);
   });
 
   // The from-task refresh is how a teammate's documentation policy reaches this machine

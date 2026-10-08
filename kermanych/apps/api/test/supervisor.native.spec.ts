@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { Subject } from "rxjs";
 import type { HttpAdapterHost } from "@nestjs/core";
 import type { CloudProject, Task } from "@kermanych/cloud";
-import type { ApiErrorBody, ServerEvent, TerminalInfo } from "@kermanych/core";
+import { deepAnalysisPrompt, type ApiErrorBody, type ServerEvent, type TerminalInfo } from "@kermanych/core";
 import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AuthService } from "../src/auth/auth.service";
 import type { ModelsService } from "../src/models/models.service";
@@ -72,7 +72,9 @@ function make() {
   };
   const http = { httpAdapter: { getHttpServer: () => ({ address: () => ({ port: 4317 }) }) } } as unknown as HttpAdapterHost;
   const native = new NativeSessionService(registry, terminal as unknown as TerminalService, http);
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, stubSkills(), models, native);
+  // The deep-analysis launch resolves its skill by name; none resolves here (empty block).
+  const skills = Object.assign(stubSkills(), { assignedForNames: async () => ({ block: "", view: [], missing: [] }) });
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, skills, models, native);
   const out: ServerEvent[] = [];
   sup.events$.subscribe((e) => out.push(e));
   return { sup, registry, terminal, worktree, out };
@@ -129,6 +131,18 @@ describe("a native launch", () => {
     const opts = terminal.openSession.mock.calls[0][0] as { file: string; args: string[] };
     expect(opts.file).toBe("omp");
     expect(opts.args).toEqual(["launch", "--hook", join(tmpdir(), "kermanych-native", "omp-native.js"), "--", "wire GitHub OAuth"]);
+  });
+
+  // The one thing of Kermanych's a native harness receives: a deep-analysis card's wrapped
+  // prompt, because it is part of the task the operator chose (the stub skill block is empty).
+  it("a deep-analysis card opens the harness with the wrapped prompt", async () => {
+    const { sup, terminal } = make();
+    card({ deepAnalysis: true });
+    const s = await sup.createSessionFromTask("task-1", USER, undefined, "omp");
+    expect(s.deepAnalysis).toBe(true);
+    const opts = terminal.openSession.mock.calls[0][0] as { args: string[] };
+    expect(opts.args.at(-2)).toBe("--");
+    expect(opts.args.at(-1)).toBe(deepAnalysisPrompt("wire GitHub OAuth"));
   });
 
   it("refuses images before touching the card", async () => {

@@ -20,6 +20,7 @@ function task(over: Partial<Task> & { id: string }): Task {
     status: 'backlog',
     worktree: true,
     hidden: false,
+    deepAnalysis: false,
     createdAt: '2026-08-30T10:00:00.000Z',
     updatedAt: '2026-08-30T10:00:00.000Z',
     ...over,
@@ -35,6 +36,7 @@ const draft: LauncherDraft = {
   platform: 'backend',
   worktree: true,
   hidden: false,
+  deepAnalysis: false,
   baseBranch: 'develop',
 };
 
@@ -53,6 +55,7 @@ describe('taskInsertFromDraft', () => {
       platform: 'backend',
       worktree: true,
       hidden: false,
+      deepAnalysis: false,
       branch: 'develop',
       assigneeId: ME,
     });
@@ -68,12 +71,12 @@ describe('taskInsertFromDraft', () => {
 
   it('omits absent optional params instead of sending undefined keys', () => {
     const insert = taskInsertFromDraft(
-      { name: 'T', task: 'body', prefix: 'fix', worktree: true, hidden: false },
+      { name: 'T', task: 'body', prefix: 'fix', worktree: true, hidden: false, deepAnalysis: false },
       'p1',
       ME,
     );
     expect(Object.keys(insert).sort()).toEqual(
-      ['assigneeId', 'description', 'hidden', 'prefix', 'projectId', 'title', 'worktree'].sort(),
+      ['assigneeId', 'deepAnalysis', 'description', 'hidden', 'prefix', 'projectId', 'title', 'worktree'].sort(),
     );
   });
 });
@@ -89,6 +92,7 @@ describe('taskPatchFromDraft', () => {
       platform: '',
       worktree: true,
       hidden: false,
+      deepAnalysis: false,
       branch: 'develop',
     });
   });
@@ -105,6 +109,19 @@ describe('hidden on a launcher draft', () => {
   it('sends hidden on every patch, in both directions', () => {
     expect(taskPatchFromDraft({ ...draft, hidden: true }).hidden).toBe(true);
     expect(taskPatchFromDraft({ ...draft, hidden: false }).hidden).toBe(false);
+  });
+});
+
+// «Глибокий аналіз» is a card field the launch reads, and the launcher is the only place it is
+// edited: it travels on both writes, so a backlog card can be switched either way.
+describe('deepAnalysis on a launcher draft', () => {
+  it('sends deepAnalysis:true on create, so whoever launches the card gets the interview', () => {
+    expect(taskInsertFromDraft({ ...draft, deepAnalysis: true }, 'p1', ME).deepAnalysis).toBe(true);
+  });
+
+  it('sends deepAnalysis on every patch, in both directions', () => {
+    expect(taskPatchFromDraft({ ...draft, deepAnalysis: true }).deepAnalysis).toBe(true);
+    expect(taskPatchFromDraft({ ...draft, deepAnalysis: false }).deepAnalysis).toBe(false);
   });
 });
 

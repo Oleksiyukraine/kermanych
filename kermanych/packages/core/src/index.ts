@@ -137,6 +137,7 @@ export {
   type AgentDef,
   type AgentKind,
 } from "./agents";
+export { DEEP_ANALYSIS_SKILL, deepAnalysisPrompt } from "./deep-analysis";
 export {
   buildChatBlocks,
   THINK_MIN_MS,

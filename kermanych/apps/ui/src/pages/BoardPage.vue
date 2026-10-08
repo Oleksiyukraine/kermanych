@@ -129,6 +129,7 @@
           :time="renderTime(t, relativeTime(task.updatedAt, now))"
           :status="task.status"
           :assignee="resolveAssignee(task.assigneeId, membersOf(task.projectId))"
+          :deep-analysis="task.deepAnalysis"
           @click="openEdit(task)"
         />
 

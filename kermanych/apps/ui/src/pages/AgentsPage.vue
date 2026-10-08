@@ -20,10 +20,17 @@
                  the visible line below and NOT a `title`: KBtn routes `title` into v-tip,
                  which binds mouseenter/focusin on the element, and Chromium dispatches
                  neither on a disabled button — nor can one take focus. A tooltip on a
-                 disabled control is unreachable by construction. -->
-            <KBtn variant="primary" :disabled="!store.selectedProjectId" @click="openLauncher()">
-              {{ t('agents.board.newTask') }}
-            </KBtn>
+                 disabled control is unreachable by construction.
+                 A split button: the main half is the plain «Нова задача», ▾ offers the other
+                 ways to start one — today «Глибокий аналіз». -->
+            <KSplitButton
+              :label="t('agents.board.newTask')"
+              :menu-label="t('agents.board.newTaskMenu')"
+              :items="newTaskModes"
+              :disabled="!store.selectedProjectId"
+              @click="openLauncher()"
+              @select="onNewTaskMode"
+            />
           </div>
         </header>
 
@@ -87,6 +94,7 @@
               :status="item.card.status"
               :status-line="item.card.description ?? ''"
               :model="item.card.model"
+              :deep-analysis="item.card.deepAnalysis"
               :selected="false"
               removable
               :remove-title="t('agents.board.removeTask', { title: item.card.title })"
@@ -102,6 +110,7 @@
               :status-line="activityOf(item.session) || statusWord(item.session)"
               :model="item.session.model"
               :harness="item.session.kind === 'task' ? undefined : sessionLaunchMode(item.session)"
+              :deep-analysis="item.session.deepAnalysis"
               :usage="item.session.usage"
               :selected="store.selectedSessionId === item.session.id"
               :removable="item.session.kind === 'task'"
@@ -153,6 +162,7 @@
             <KStatusDot :status="selectedSession.status" />
             <span class="agents__detail-name">{{ selectedSession.name }}</span>
             <KTag v-if="selectedSession.branch" class="agents__detail-branch">⑂ {{ selectedSession.branch }}</KTag>
+            <KAnalysisMark v-if="selectedSession.deepAnalysis" />
           </div>
 
           <div class="agents__detail-controls">
@@ -694,6 +704,20 @@
               </div>
             </div>
           </div>
+
+          <!-- «Глибокий аналіз» — HOW the agent takes the task on, so it sits with the ask and
+               the model rather than with where the branch lands. A card field: seeded from the
+               «Нова задача» menu or from the card being edited, and switchable here either way,
+               so a mis-picked menu item or a backlog card's mode is one click to change. Not
+               conditional on «Режим»: a native harness gets the same opening prompt. -->
+          <div class="agents-launcher__block">
+            <div class="agents-launcher__check">
+              <KCheckbox v-model="draftDeep" :label="t('agents.launcher.deepLabel')" />
+              <p class="agents-launcher__check-desc">
+                {{ t('agents.launcher.deepDesc') }}
+              </p>
+            </div>
+          </div>
         </div>
 
         <!-- RIGHT — where it lands -->
@@ -1061,6 +1085,9 @@ import KLogBlock from 'components/kit/KLogBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KTag from 'components/kit/KTag.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
+import KAnalysisMark from 'components/kit/KAnalysisMark.vue';
+import KSplitButton from 'components/kit/KSplitButton.vue';
+import { type KIconName } from 'components/kit/KIcon.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KDiffView from 'components/kit/KDiffView.vue';
 import KBtn from 'components/kit/KBtn.vue';
@@ -2049,6 +2076,9 @@ const draftWorktree = ref(true);
 // «Приховати з дошки». Off by default: a card is team work unless its author says
 // otherwise, and a default-hidden launcher would quietly empty the board.
 const draftHidden = ref(false);
+// «Глибокий аналіз»: the card's agent interviews, documents and only then codes. Seeded from
+// the «Нова задача» menu (a new card) or from the card being edited.
+const draftDeep = ref(false);
 const nameEdited = ref(false);
 const draftBaseBranch = ref('');
 // «Режим»: a launch choice, not a card field — «В беклог» and board launches stay managed.
@@ -2101,7 +2131,29 @@ const canLaunch = computed(
   () => !!launchProjectId.value && draftName.value.trim() !== '' && draftTask.value.trim() !== '',
 );
 
-const launcherTitle = computed(() => (editingTaskId.value ? t('agents.launcher.editTitle') : t('agents.board.newTask')));
+// A NEW deep-analysis card says so in the title too: the checkbox alone is easy to miss in a
+// form the operator opened through a different menu item than they think.
+const launcherTitle = computed(() => {
+  if (editingTaskId.value) return t('agents.launcher.editTitle');
+  return draftDeep.value ? t('agents.launcher.deepTitle') : t('agents.board.newTask');
+});
+
+// The «Нова задача» split button's menu: the ways a task can start, each with a caption that
+// says how it differs. Picking «Нова задача» there is the main half's own click.
+type NewTaskMode = 'task' | 'deepAnalysis';
+const newTaskModes = computed<{ value: NewTaskMode; label: string; caption: string; icon: KIconName }[]>(() => [
+  { value: 'task', label: t('agents.board.newTaskModes.task'), caption: t('agents.board.newTaskModes.taskCaption'), icon: 'plus' },
+  {
+    value: 'deepAnalysis',
+    label: t('agents.board.newTaskModes.deepAnalysis'),
+    caption: t('agents.board.newTaskModes.deepAnalysisCaption'),
+    icon: 'analysis',
+  },
+]);
+function onNewTaskMode(mode: NewTaskMode): void {
+  openLauncher(undefined, mode === 'deepAnalysis');
+}
+
 // Footer status: the binding first (it blocks launching outright), then the form nudge,
 // then silence once launchable.
 const footHint = computed(() => {
@@ -2139,7 +2191,8 @@ async function loadLaunchBranches(preferred: string | undefined): Promise<void> 
   }
 }
 
-function openLauncher(card?: Task): void {
+// `deepAnalysis` seeds «Глибокий аналіз» for a NEW card; a card being edited keeps its own.
+function openLauncher(card?: Task, deepAnalysis = false): void {
   // Before loadLaunchBranches(), which reads it. A card being edited stays in its own
   // project; a new one lands in the selected project, and the «Нова задача» button is
   // disabled unless there is one.
@@ -2163,6 +2216,7 @@ function openLauncher(card?: Task): void {
     : undefined;
   draftWorktree.value = card?.worktree ?? true;
   draftHidden.value = card?.hidden ?? false;
+  draftDeep.value = card?.deepAnalysis ?? deepAnalysis;
   // `tasks.branch` IS the base branch (the board labels it «Базова гілка»).
   void loadLaunchBranches(card?.branch);
   nameEdited.value = !!card;
@@ -2195,6 +2249,7 @@ function openTaskFromText(text: string): void {
   draftPlatform.value = undefined;
   draftWorktree.value = true;
   draftHidden.value = false;
+  draftDeep.value = false;
   void loadLaunchBranches(undefined);
   nameEdited.value = true;
   launcherError.value = null;
@@ -2239,6 +2294,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     platform: draftPlatform.value,
     worktree: draftWorktree.value,
     hidden: draftHidden.value,
+    deepAnalysis: draftDeep.value,
     baseBranch: draftBaseBranch.value || undefined,
   };
   const images = launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));

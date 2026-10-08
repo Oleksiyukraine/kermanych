@@ -15,7 +15,11 @@
       />
     </div>
     <div class="k-kanban-card__branch">{{ branch }}</div>
-    <div class="k-kanban-card__meta">{{ project }} · {{ time }}</div>
+    <div class="k-kanban-card__meta">
+      <!-- A teammate's ▶ on this card launches the deep analysis too, so the board says so. -->
+      <KAnalysisMark v-if="deepAnalysis" />
+      <span class="k-kanban-card__where">{{ project }} · {{ time }}</span>
+    </div>
   </div>
 </template>
 
@@ -27,6 +31,7 @@ import { useI18n } from 'vue-i18n';
 import type { SessionStatus } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KAvatar from './KAvatar.vue';
+import KAnalysisMark from './KAnalysisMark.vue';
 
 // `assignee` is the resolved person, not an id: the card cannot look one up, and the board
 // already owns that resolution for its filter and its editor. `null` is «не призначено».
@@ -37,6 +42,8 @@ const props = defineProps<{
   time: string;
   status: SessionStatus;
   assignee?: { name: string; avatarUrl?: string | undefined } | null;
+  // A «Глибокий аналіз» card (KAnalysisMark): whoever launches it gets the interview first.
+  deepAnalysis?: boolean | undefined;
 }>();
 
 const { t } = useI18n();
@@ -98,6 +105,10 @@ const emit = defineEmits<{ click: [] }>();
 }
 
 .k-kanban-card__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+  min-width: 0;
   font-size: var(--k-fs-xs);
   color: var(--k-faint);
 }

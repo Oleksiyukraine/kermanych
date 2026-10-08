@@ -61,6 +61,10 @@ export type Session = {
   // Kermanych only watches it — status from per-launch hooks, usage and history from the
   // harness's session file. Absent means the managed (headless) session every other one is.
   native?: boolean;
+  // Launched from a «Глибокий аналіз» card (docs/specs/2026-10-08-deep-analysis-task.md): the
+  // opening turn asked for the interview and the task document before any code. Stamped from
+  // the card when the session is created and never changed. Absent means an ordinary task.
+  deepAnalysis?: boolean;
   // Live-only: the pty (`TerminalInfo.id`) a native session's harness runs in, while it runs.
   terminalId?: string;
   // "task" is no longer produced: a task is a cloud card and `from-task` is the only way an

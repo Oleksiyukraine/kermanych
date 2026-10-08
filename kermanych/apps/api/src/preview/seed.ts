@@ -23,6 +23,8 @@ type Demo = {
   // Lifetime accounting, as the supervisor would have counted it. Omitted on purpose for
   // one row: an agent whose turns were never counted must render no figure at all.
   usage?: Usage;
+  // A «Глибокий аналіз» agent, so the preview shows the mark its card and header carry.
+  deepAnalysis?: boolean;
   // Branches forked off this agent's conversation, as branchSession/reviewSession make
   // them: no worktree, no branch of their own, and a name carrying the parent's. Seeded so
   // the board's one-level tree — the fork cards and their elbow — has something to draw.
@@ -55,6 +57,7 @@ export function seedDemo(registry: RegistryService): void {
       worktree: d.worktree ?? true,
       baseBranch: d.baseBranch,
       model: d.model,
+      ...(d.deepAnalysis ? { deepAnalysis: true } : {}),
     });
     if (d.archived) registry.updateSession(s.id, { archived: true });
     if (d.usage) registry.addUsage(s.id, d.usage);
@@ -88,7 +91,7 @@ export function seedDemo(registry: RegistryService): void {
     { name: "Оновити залежності", branch: "chore/deps", status: "queued", model: "haiku" },
     { name: "Додати онбординг", branch: "feature/onboarding", status: "thinking", model: "opus-5", usage: { input: 18_400, output: 9_200, cacheRead: 1_240_000, cacheWrite: 62_000, cost: 3.18 } },
     { name: "Виправити CSP на iframe", branch: "fix/csp-iframe", status: "tool", model: "sonnet-4.5", usage: { input: 6_100, output: 3_400, cacheRead: 214_000, cacheWrite: 18_000, cost: 0.62 } },
-    { name: "Рефактор стора", branch: "refactoring/store", status: "waiting_input", model: "opus-5", usage: { input: 9_800, output: 4_100, cacheRead: 480_000, cacheWrite: 27_000, cost: 1.41 }, forks: [{ kind: "discussion", status: "done", model: "opus-5", usage: { input: 2_100, output: 1_300, cacheRead: 88_000, cacheWrite: 0, cost: 0.21 } }] },
+    { name: "Рефактор стора", branch: "refactoring/store", status: "waiting_input", model: "opus-5", deepAnalysis: true, usage: { input: 9_800, output: 4_100, cacheRead: 480_000, cacheWrite: 27_000, cost: 1.41 }, forks: [{ kind: "discussion", status: "done", model: "opus-5", usage: { input: 2_100, output: 1_300, cacheRead: 88_000, cacheWrite: 0, cost: 0.21 } }] },
     { name: "Темна тема", branch: "feature/dark-theme", status: "done", model: "sonnet-4.5", usage: { input: 3_200, output: 1_900, cacheRead: 96_000, cacheWrite: 8_400, cost: 0.28 }, forks: [{ kind: "discussion", status: "thinking", model: "haiku", usage: { input: 410, output: 180, cacheRead: 6_200, cacheWrite: 0, cost: 0.004 } }, { kind: "review", status: "done", model: "opus-5", usage: { input: 7_400, output: 2_900, cacheRead: 132_000, cacheWrite: 9_600, cost: 0.88 } }] },
     { name: "Пагінація списку", branch: "feature/pagination", status: "in_review", model: "sonnet-4.5", usage: { input: 4_700, output: 2_200, cacheRead: 118_000, cacheWrite: 6_900, cost: 0.34 } },
     { name: "Кеш API", branch: "feature/api-cache", status: "error", model: "haiku", usage: { input: 740, output: 210, cacheRead: 12_000, cacheWrite: 0, cost: 0.003 } },

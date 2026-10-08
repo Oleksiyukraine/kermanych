@@ -7,7 +7,7 @@ import type { Task, TaskInsert, TaskPatch, TaskStatus } from "./types";
 import type { QaChecklist } from "@kermanych/core";
 
 const TASK_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, image_paths, jira_key, linear_key, qa_checklist, created_at, updated_at";
+  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, deep_analysis, image_paths, jira_key, linear_key, qa_checklist, created_at, updated_at";
 
 type TaskRow = {
   id: string;
@@ -24,6 +24,7 @@ type TaskRow = {
   platform: string | null;
   worktree: boolean;
   hidden: boolean;
+  deep_analysis: boolean;
   kind: string | null;
   branch: string | null;
   image_paths: string[] | null;
@@ -44,6 +45,7 @@ export function toTask(row: TaskRow): Task {
     updatedAt: row.updated_at,
     worktree: row.worktree,
     hidden: row.hidden,
+    deepAnalysis: row.deep_analysis,
   };
   // Optional keys are omitted rather than set to undefined, so a mapped task deep-equals a
   // hand-written literal in tests and carries no null noise into Vue's reactivity.
@@ -89,6 +91,7 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   // A boolean, so no trim/blank-to-null step: `false` is a value, not an empty field.
   if (patch.worktree !== undefined) row.worktree = patch.worktree;
   if (patch.hidden !== undefined) row.hidden = patch.hidden;
+  if (patch.deepAnalysis !== undefined) row.deep_analysis = patch.deepAnalysis;
   if (patch.kind !== undefined) row.kind = patch.kind.trim() || null;
   if (patch.branch !== undefined) row.branch = patch.branch.trim() || null;
   if (patch.jiraKey !== undefined) row.jira_key = patch.jiraKey.trim() || null;
@@ -149,6 +152,7 @@ export async function createTask(
       branch: input.branch,
       worktree: input.worktree,
       hidden: input.hidden,
+      deepAnalysis: input.deepAnalysis,
       imagePaths: input.imagePaths,
       jiraKey: input.jiraKey,
       linearKey: input.linearKey,
