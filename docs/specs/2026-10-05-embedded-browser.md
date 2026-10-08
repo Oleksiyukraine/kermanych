@@ -1,5 +1,8 @@
 # Session browser: an embedded browser the operator and the agent share
 
+> Reworked by `docs/specs/2026-10-08-session-browser-rework.md` (dialogs, popups, viewport,
+> layout, new agent tools, lifecycle); where the two differ, that one holds.
+
 ## Goal
 
 Competitors (Orca, BridgeMind) embed a browser next to the agents. Two problems it solves,

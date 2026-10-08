@@ -4,6 +4,13 @@ import { contextBridge, ipcRenderer } from 'electron';
 const arg = process.argv.find((a) => a.startsWith('--api-base='));
 const apiBase = arg ? arg.slice('--api-base='.length) : 'http://localhost:4317/api';
 
+// Subscribe to one of main's `kermanych:browser:*` events; returns the unsubscribe.
+function subscribe<A extends unknown[]>(channel: string, cb: (...args: A) => void): () => void {
+  const listener = (_event: Electron.IpcRendererEvent, ...args: unknown[]) => cb(...(args as A));
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+}
+
 contextBridge.exposeInMainWorld('kermanych', {
   apiBase,
   focus: () => ipcRenderer.send('kermanych:focus'),
@@ -17,19 +24,26 @@ contextBridge.exposeInMainWorld('kermanych', {
   // placeholder whose bounds the Браузер tab reports.
   browser: {
     show: (sessionId, projectId, bounds) => ipcRenderer.send('kermanych:browser:show', sessionId, projectId, bounds),
-    hide: () => ipcRenderer.send('kermanych:browser:hide'),
+    hide: (opts) => ipcRenderer.invoke('kermanych:browser:hide', opts ?? {}),
     navigate: (sessionId, projectId, url) => ipcRenderer.invoke('kermanych:browser:navigate', sessionId, projectId, url),
     back: (sessionId) => ipcRenderer.send('kermanych:browser:back', sessionId),
     forward: (sessionId) => ipcRenderer.send('kermanych:browser:forward', sessionId),
     reload: (sessionId) => ipcRenderer.send('kermanych:browser:reload', sessionId),
+    stop: (sessionId) => ipcRenderer.send('kermanych:browser:stop', sessionId),
     openDevTools: (sessionId) => ipcRenderer.send('kermanych:browser:devtools', sessionId),
     pick: (sessionId) => ipcRenderer.invoke('kermanych:browser:pick', sessionId),
     cancelPick: (sessionId) => ipcRenderer.send('kermanych:browser:cancel-pick', sessionId),
+    answerDialog: (sessionId, accept) => ipcRenderer.invoke('kermanych:browser:answer-dialog', sessionId, accept),
+    answerAuth: (sessionId, id, credentials) => ipcRenderer.send('kermanych:browser:answer-auth', sessionId, id, credentials),
+    setAgentPaused: (sessionId, paused) => ipcRenderer.send('kermanych:browser:set-agent-paused', sessionId, paused),
+    setViewport: (sessionId, projectId, viewport) => ipcRenderer.send('kermanych:browser:set-viewport', sessionId, projectId, viewport),
+    find: (sessionId, query, forward) => ipcRenderer.send('kermanych:browser:find', sessionId, query, forward),
+    stopFind: (sessionId) => ipcRenderer.send('kermanych:browser:stop-find', sessionId),
     state: (sessionId) => ipcRenderer.invoke('kermanych:browser:state', sessionId),
-    onState: (cb) => {
-      const listener = (_event: Electron.IpcRendererEvent, state: KermanychBrowserState) => cb(state);
-      ipcRenderer.on('kermanych:browser:state-changed', listener);
-      return () => ipcRenderer.removeListener('kermanych:browser:state-changed', listener);
-    },
+    lastUrl: (sessionId) => ipcRenderer.invoke('kermanych:browser:last-url', sessionId),
+    onState: (cb) => subscribe<[KermanychBrowserState]>('kermanych:browser:state-changed', cb),
+    onClosed: (cb) => subscribe<[string]>('kermanych:browser:closed', cb),
+    onShortcut: (cb) => subscribe<[string, KermanychBrowserShortcut]>('kermanych:browser:shortcut', cb),
+    onDownload: (cb) => subscribe<[string, { name: string; path: string }]>('kermanych:browser:download', cb),
   } satisfies KermanychBrowserBridge,
 });

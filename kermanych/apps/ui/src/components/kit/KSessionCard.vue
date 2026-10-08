@@ -21,6 +21,12 @@
           class="k-session-card__label"
           :class="branch ? 'k-session-card__label--branch' : 'k-session-card__label--title'"
         >{{ branch || title }}</span>
+        <span
+          v-if="browsing"
+          class="k-session-card__browsing"
+          v-tip="t('kit.sessionCard.browsing')"
+          :aria-label="t('kit.sessionCard.browsing')"
+        >◎</span>
         <span class="k-session-card__time">{{ time }}</span>
       </div>
       <div class="k-session-card__status">
@@ -77,6 +83,10 @@ import type { LaunchMode } from '../../lib/native-session';
 // top row rather than laid over it: it neither hides the time nor shifts the row when the
 // pointer arrives. `removeTitle` names the action for the tooltip and the accessible name —
 // pass the row's subject ("Видалити задачу «…»"), since a bare ✕ has no name of its own.
+//
+// `browsing` pulses a ◎ before the time while the session's agent is driving its session
+// browser (a browser tool call in the last few seconds) — the board's view of the Браузер
+// tab's live dot, so the operator sees which agent is clicking without opening it.
 const props = withDefaults(
   defineProps<{
     branch: string;
@@ -94,8 +104,9 @@ const props = withDefaults(
     fork?: boolean;
     removable?: boolean;
     removeTitle?: string;
+    browsing?: boolean;
   }>(),
-  { selected: false, fork: false, removable: false },
+  { selected: false, fork: false, removable: false, browsing: false },
 );
 
 defineEmits<{ click: []; remove: [] }>();
@@ -138,6 +149,20 @@ const spend = computed(() => {
 
 .k-session-card--selected {
   background: var(--k-surface2);
+}
+
+// ── Browsing (the agent drives the session browser) ───────────────────────────────────
+.k-session-card__browsing {
+  flex: none;
+  margin-left: auto;
+  color: var(--k-accent);
+  font-size: var(--k-icon-xs);
+  line-height: 1;
+  animation: k-session-card-browsing 1.2s ease-in-out infinite;
+}
+
+@keyframes k-session-card-browsing {
+  50% { opacity: 0.3; }
 }
 
 // ── Remove (✕ on hover) ───────────────────────────────────────────────────────────────

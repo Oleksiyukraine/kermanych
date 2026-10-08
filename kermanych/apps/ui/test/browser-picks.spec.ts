@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { composePicksMessage, picksImages, type TrayPick } from '../src/lib/browser-picks';
+import {
+  composePicksMessage,
+  loadPicksTray,
+  picksImages,
+  PICKS_STORAGE_KEY,
+  savePicksTray,
+  type TrayPick,
+} from '../src/lib/browser-picks';
 
 function pick(over: Partial<KermanychBrowserPick> = {}, comment = ''): TrayPick {
   return {
@@ -13,6 +20,9 @@ function pick(over: Partial<KermanychBrowserPick> = {}, comment = ''): TrayPick 
       html: '',
       styles: {},
       rect: { x: 0, y: 0, width: 10, height: 10 },
+      viewport: { width: 1280, height: 800 },
+      scroll: { x: 0, y: 0 },
+      more: false,
       ...over,
     },
   };
@@ -72,11 +82,44 @@ describe('composePicksMessage', () => {
 
   it('omits the lines of fields a pick does not have', () => {
     const msg = composePicksMessage([pick()], { native: true });
-    for (const label of ['Коментар:', 'Компонент:', 'Текст:', 'Стилі:', 'HTML:', 'Скриншот:']) {
+    for (const label of ['Загальний коментар:', 'Коментар:', 'Фрейм:', 'Компонент:', 'Текст:', 'Стилі:', 'HTML:', 'Скриншот:']) {
       expect(msg).not.toContain(label);
     }
     expect(msg).toContain('Сторінка:');
     expect(msg).toContain('Селектор:');
+  });
+
+  it('states the window, scroll offset and element box the operator saw, and the frame when there is one', () => {
+    const msg = composePicksMessage(
+      [
+        pick({
+          frame: 'http://localhost:5173/embed',
+          viewport: { width: 390, height: 844 },
+          scroll: { x: 0, y: 1200 },
+          rect: { x: 12.4, y: 300.6, width: 366, height: 48 },
+        }),
+      ],
+      { native: false },
+    );
+    expect(msg).toMatch(/^Фрейм: http:\/\/localhost:5173\/embed$/m);
+    expect(msg).toMatch(/^Вікно: 390×844, прокрутка 0,1200$/m);
+    expect(msg).toMatch(/^Розташування: 12,301 366×48$/m);
+  });
+
+  it('puts the general comment first, before the element list, and ignores a blank one', () => {
+    const msg = composePicksMessage([pick()], { native: false, comment: '  весь хедер з’їхав  ' });
+    expect(msg.split('\n\n')[0]).toBe('Загальний коментар: весь хедер з’їхав');
+    expect(msg.split('\n\n')[1]).toMatch(/^Елементи, вказані/);
+    expect(composePicksMessage([pick()], { native: false, comment: '   ' })).not.toContain('Загальний коментар');
+  });
+
+  it('names a crop that lost its image bytes by its file path, even for a managed session', () => {
+    const picks = [pick({ screenshot: { ...shot, data: '' } }), pick({ screenshot: shot })];
+    const msg = composePicksMessage(picks, { native: false });
+    const sections = msg.split(/\n(?=## Елемент )/).slice(1);
+    expect(sections[0]).toContain(`Скриншот: ${shot.path}`);
+    expect(sections[1]).toContain('Скриншот: зображення 1 у вкладенні');
+    expect(picksImages(picks, { native: false })).toEqual([{ data: shot.data, mimeType: 'image/png' }]);
   });
 
   it('names a component source without a line or component name by its file alone', () => {
@@ -88,5 +131,62 @@ describe('composePicksMessage', () => {
     const html = '<pre>```js\nlet a = 1;\n```</pre><code>````</code>';
     const msg = composePicksMessage([pick({ html })], { native: false });
     expect(msg).toContain(`HTML:\n\`\`\`\`\`html\n${html}\n\`\`\`\`\``);
+  });
+});
+
+// A Storage double whose setItem refuses values past `limit` characters, like a full quota.
+function storage(limit = Number.POSITIVE_INFINITY): Storage & { data: Map<string, string> } {
+  const data = new Map<string, string>();
+  return {
+    data,
+    get length() {
+      return data.size;
+    },
+    clear: () => data.clear(),
+    key: (i: number) => [...data.keys()][i] ?? null,
+    getItem: (k: string) => data.get(k) ?? null,
+    removeItem: (k: string) => void data.delete(k),
+    setItem: (k: string, v: string) => {
+      if (v.length > limit) throw new DOMException('quota', 'QuotaExceededError');
+      data.set(k, v);
+    },
+  };
+}
+
+describe('picks tray persistence', () => {
+  it('round-trips picks and general comments', () => {
+    const s = storage();
+    const tray = { picks: { s1: [pick({ screenshot: shot }, 'зламано')] }, notes: { s1: 'загальне' } };
+    savePicksTray(s, tray);
+    expect(loadPicksTray(s)).toEqual(tray);
+  });
+
+  it('drops the image bytes but keeps the file path when the full tray does not fit', () => {
+    const big = { ...shot, data: 'A'.repeat(10_000) };
+    const s = storage(5_000);
+    savePicksTray(s, { picks: { s1: [pick({ screenshot: big })] }, notes: {} });
+    const restored = loadPicksTray(s).picks.s1![0]!.pick.screenshot;
+    expect(restored).toEqual({ ...big, data: '' });
+  });
+
+  it('never throws: a tray that fits in no form leaves nothing stale behind', () => {
+    const s = storage(10);
+    s.data.set(PICKS_STORAGE_KEY, 'stale');
+    expect(() => savePicksTray(s, { picks: { s1: [pick()] }, notes: {} })).not.toThrow();
+    expect(s.data.has(PICKS_STORAGE_KEY)).toBe(false);
+  });
+
+  it('clears the key once every tray is empty', () => {
+    const s = storage();
+    savePicksTray(s, { picks: { s1: [pick()] }, notes: {} });
+    savePicksTray(s, { picks: {}, notes: {} });
+    expect(s.data.has(PICKS_STORAGE_KEY)).toBe(false);
+  });
+
+  it('reads a missing or corrupt value as an empty tray', () => {
+    const s = storage();
+    expect(loadPicksTray(s)).toEqual({ picks: {}, notes: {} });
+    s.data.set(PICKS_STORAGE_KEY, '{not json');
+    expect(loadPicksTray(s)).toEqual({ picks: {}, notes: {} });
   });
 });

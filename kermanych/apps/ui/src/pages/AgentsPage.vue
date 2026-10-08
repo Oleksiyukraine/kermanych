@@ -6,7 +6,7 @@
       <p class="agents__blank-text">{{ t('agents.blank.text') }}</p>
     </div>
 
-    <div v-else class="agents__content" ref="contentEl" :class="{ 'agents__content--resizing': resizing }">
+    <div v-else class="agents__content" ref="contentEl" :class="{ 'agents__content--resizing': resizing || splitResizing }">
       <!-- BOARD — one card per session in scope: one project, or every project of a workspace -->
       <section ref="boardEl" class="agents__board" :style="{ width: detailWidth + 'px' }">
         <header class="agents__board-head">
@@ -105,6 +105,7 @@
               :usage="item.session.usage"
               :selected="store.selectedSessionId === item.session.id"
               :removable="item.session.kind === 'task'"
+              :browsing="sessionBrowser.agentLive.has(item.session.id)"
               :remove-title="t('agents.board.removeStranded', { name: item.session.name })"
               @click="onRowClick(item.session)"
               @remove="onDeleteStranded(item.session)"
@@ -282,67 +283,101 @@
             </template>
           </template>
         </KTabs>
-        <div v-show="detailTab === 'log'" class="agents__tabpane agents__tabpane--log">
-          <!-- A native session's Лог is the harness's own TUI; Kermanych only hosts its pty. -->
-          <template v-if="selectedSession.native">
-            <KTerminalView
-              v-if="selectedSession.terminalId"
-              :key="selectedSession.terminalId"
-              class="agents__native-term"
-              :terminal-id="selectedSession.terminalId"
-              :active="detailTab === 'log'"
-            />
-            <div v-else class="agents__pane-blank agents__native-idle">
-              <span class="agents__pane-blank-eyebrow mono">{{ harnessLabel }} · {{ statusWord(selectedSession) }}</span>
-              <p class="agents__pane-blank-text">{{ t('agents.native.idle') }}</p>
-              <KBtn
-                v-if="selectedSession.status !== 'merged' && !selectedSession.archived"
-                variant="primary"
-                :loading="actionBusy"
-                @click="onResumeNative(selectedSession)"
-              >{{ t('agents.native.resume') }}</KBtn>
+        <!-- Лог, and — with «Поруч із логом» on (stores/browser.ts `split`) — the session browser
+             beside it, behind its own seam. The browser half is mounted only while this tab is
+             open, for the same parking reason as the Браузер tab below. -->
+        <div
+          v-show="detailTab === 'log'"
+          ref="splitEl"
+          class="agents__tabpane agents__tabpane--log"
+          :class="{ 'agents__tabpane--split': browserSplit }"
+        >
+          <div class="agents__log-main">
+            <!-- A native session's Лог is the harness's own TUI; Kermanych only hosts its pty. -->
+            <template v-if="selectedSession.native">
+              <KTerminalView
+                v-if="selectedSession.terminalId"
+                :key="selectedSession.terminalId"
+                class="agents__native-term"
+                :terminal-id="selectedSession.terminalId"
+                :active="detailTab === 'log'"
+              />
+              <div v-else class="agents__pane-blank agents__native-idle">
+                <span class="agents__pane-blank-eyebrow mono">{{ harnessLabel }} · {{ statusWord(selectedSession) }}</span>
+                <p class="agents__pane-blank-text">{{ t('agents.native.idle') }}</p>
+                <KBtn
+                  v-if="selectedSession.status !== 'merged' && !selectedSession.archived"
+                  variant="primary"
+                  :loading="actionBusy"
+                  @click="onResumeNative(selectedSession)"
+                >{{ t('agents.native.resume') }}</KBtn>
+              </div>
+            </template>
+            <KPanel
+              v-else
+              class="agents__panel"
+              :bare="true"
+              :session="selectedSession"
+              :refreshing="refreshingId === selectedSession.id"
+              :models="store.models"
+              @stop="onStop"
+              @send="onSend"
+              @answer="onAnswer"
+              @editor="onEditor"
+              @branch="onBranch"
+              @restart="onRestart"
+              @refresh="onRefreshChat"
+              @summary="onSummary"
+              @newTask="openTaskFromText"
+              @expand-all="onExpandAll"
+              @effort="onEffort"
+              @set-model="onSetModel"
+            >
+              <template v-if="blocks.length">
+                <KRequestBlock
+                  v-for="(block, i) in blocks"
+                  :key="selectedSession.id + ':' + block.id"
+                  :block="block"
+                  :session-id="selectedSession.id"
+                  :open="i === blocks.length - 1"
+                  :expand-all="expandAll"
+                />
+              </template>
+              <div v-else class="agents__log-empty mono">{{ t('agents.detail.logEmpty') }}</div>
+            </KPanel>
+          </div>
+          <template v-if="browserSplit && detailTab === 'log'">
+            <div
+              class="agents__resizer"
+              role="separator"
+              aria-orientation="vertical"
+              :aria-label="t('agents.browser.splitResizeAria')"
+              :aria-valuenow="Math.round(splitWidth)"
+              :aria-valuemin="MIN_SPLIT_BROWSER"
+              tabindex="0"
+              v-tip="t('agents.browser.splitResizeTip')"
+              @pointerdown="startSplitResize"
+              @keydown="onSplitResizeKeydown"
+            ></div>
+            <div class="agents__split-browser" :style="{ width: splitWidth + 'px' }">
+              <KBrowserPane
+                :key="selectedSession.id"
+                :session="selectedSession"
+                :sending="sendingPicks"
+                :hold="resizing || splitResizing"
+                @send="onSendPicks(selectedSession)"
+              />
             </div>
           </template>
-          <KPanel
-            v-else
-            class="agents__panel"
-            :bare="true"
-            :session="selectedSession"
-            :refreshing="refreshingId === selectedSession.id"
-            :models="store.models"
-            @stop="onStop"
-            @send="onSend"
-            @answer="onAnswer"
-            @editor="onEditor"
-            @branch="onBranch"
-            @restart="onRestart"
-            @refresh="onRefreshChat"
-            @summary="onSummary"
-            @newTask="openTaskFromText"
-            @expand-all="onExpandAll"
-            @effort="onEffort"
-            @set-model="onSetModel"
-          >
-            <template v-if="blocks.length">
-              <KRequestBlock
-                v-for="(block, i) in blocks"
-                :key="selectedSession.id + ':' + block.id"
-                :block="block"
-                :session-id="selectedSession.id"
-                :open="i === blocks.length - 1"
-                :expand-all="expandAll"
-              />
-            </template>
-            <div v-else class="agents__log-empty mono">{{ t('agents.detail.logEmpty') }}</div>
-          </KPanel>
         </div>
         <!-- Desktop only. Mounted only while this tab is open: the pane parks the native view
              when it unmounts, so every other tab, a deselect and leaving Агенти hide the page. -->
-        <div v-if="detailTab === 'browser' && sessionBrowser.available" class="agents__tabpane">
+        <div v-if="detailTab === 'browser' && sessionBrowser.available && !browserSplit" class="agents__tabpane">
           <KBrowserPane
             :key="selectedSession.id"
             :session="selectedSession"
             :sending="sendingPicks"
+            :hold="resizing"
             @send="onSendPicks(selectedSession)"
           />
         </div>
@@ -1658,6 +1693,8 @@ function onQaToggle(itemId: string, checked: boolean): void {
 // per session (localStorage `kermanych.agents.tab.<id>`) so reopening an agent lands where the
 // operator left it; a fresh session defaults to the log.
 const sessionBrowser = useSessionBrowser();
+// Beside the Лог instead of its own tab — see «Session browser beside the Лог» below.
+const browserSplit = computed(() => sessionBrowser.available && sessionBrowser.split);
 const detailTabs = computed(() => {
   const tabs: { value: string; label: string; count?: number; live?: boolean }[] = [
     { value: 'log', label: t('agents.tabs.log') },
@@ -1670,10 +1707,13 @@ const detailTabs = computed(() => {
   // ПР»); the count is 0 until then.
   tabs.push({ value: 'qa', label: t('agents.tabs.qa'), count: qaChecklist.value?.items.length ?? 0 });
   // The session browser exists only in the desktop app. Its dot pulses while the agent is
-  // driving the page (a browser tool call in the last few seconds).
+  // driving the page (a browser tool call in the last few seconds). Beside the Лог («Поруч із
+  // логом») it has no tab of its own, and the dot moves to Лог, where the page now is.
   if (sessionBrowser.available) {
     const id = store.selectedSessionId;
-    tabs.push({ value: 'browser', label: t('agents.tabs.browser'), live: !!id && sessionBrowser.agentLive.has(id) });
+    const live = !!id && sessionBrowser.agentLive.has(id);
+    if (browserSplit.value) tabs[0]!.live = live;
+    else tabs.push({ value: 'browser', label: t('agents.tabs.browser'), live });
   }
   return tabs;
 });
@@ -1684,7 +1724,7 @@ watch(
     const saved = id ? localStorage.getItem(`kermanych.agents.tab.${id}`) : null;
     detailTab.value =
       saved === 'changes' || saved === 'session' || saved === 'docs' || saved === 'qa' ||
-      (saved === 'browser' && sessionBrowser.available)
+      (saved === 'browser' && sessionBrowser.available && !browserSplit.value)
         ? saved
         : 'log';
   },
@@ -1694,6 +1734,45 @@ watch(detailTab, (t) => {
   const id = store.selectedSessionId;
   if (id) localStorage.setItem(`kermanych.agents.tab.${id}`, t);
 });
+
+// ── Session browser beside the Лог («Поруч із логом») ────────────────────────
+// One app-wide preference, toggled from the browser's own toolbar — so the operator is looking
+// at the browser when it flips, and the detail follows it: on, the Браузер tab folds into Лог;
+// off, the page gets its tab back and stays on screen. The seam between log and browser works
+// like the board's (drag or arrow keys), and both halves keep a usable minimum.
+watch(browserSplit, (on) => {
+  if (on && detailTab.value === 'browser') detailTab.value = 'log';
+  else if (!on && detailTab.value === 'log' && sessionBrowser.available) detailTab.value = 'browser';
+});
+const MIN_SPLIT_LOG = 360;
+const MIN_SPLIT_BROWSER = 320;
+// The seam's own width (.agents__resizer).
+const SPLIT_SEAM = 7;
+const splitEl = ref<HTMLElement | null>(null);
+const {
+  size: splitWidth,
+  resizing: splitResizing,
+  startResize: startSplitResize,
+  onKeydown: onSplitResizeKeydown,
+  refresh: refreshSplitWidth,
+} = useResizablePanel({
+  storageKey: 'kermanych.agents.browser-split-width',
+  defaultSize: 480,
+  min: MIN_SPLIT_BROWSER,
+  edge: 'left',
+  // A hidden Лог pane (v-show) measures 0: no bound yet, rather than clamping the stored width
+  // down to the minimum and persisting that.
+  max: () =>
+    splitEl.value?.clientWidth ? splitEl.value.clientWidth - MIN_SPLIT_LOG - SPLIT_SEAM : Number.POSITIVE_INFINITY,
+});
+// Re-clamp whenever the split becomes measurable or its container changes width: the board
+// seam narrows the detail column without a window resize.
+watch(
+  [browserSplit, () => detailTab.value === 'log', () => !!selectedSession.value, detailWidth],
+  () => {
+    if (browserSplit.value) void nextTick(refreshSplitWidth);
+  },
+);
 
 // ── Consolidated header: overflow menu + keyboard shortcuts ─────────────────
 // The chat column carries ONE header (the embedded KPanel runs `bare`): the session's
@@ -2361,9 +2440,15 @@ async function onSendPicks(s: Session): Promise<void> {
   const native = !!s.native;
   sendingPicks.value = true;
   try {
-    await store.sendMessage(s.id, composePicksMessage(picks, { native }), nextMode(s), picksImages(picks, { native }));
+    await store.sendMessage(
+      s.id,
+      composePicksMessage(picks, { native, comment: sessionBrowser.notes[s.id] }),
+      nextMode(s),
+      picksImages(picks, { native }),
+    );
     sessionBrowser.clearPicks(s.id);
-    if (store.selectedSessionId === s.id) detailTab.value = 'log';
+    // Beside the Лог the operator already sees where the message went.
+    if (store.selectedSessionId === s.id && !browserSplit.value) detailTab.value = 'log';
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   } finally {
@@ -2872,10 +2957,9 @@ async function launchInto(win: Window | null, s: Session): Promise<void> {
     // the preview.
     if (!res.url) win?.close();
     else if (window.kermanych?.browser) {
-      if (store.selectedSessionId === s.id) detailTab.value = 'browser';
-      window.kermanych.browser.navigate(s.id, s.projectId, res.url).catch((e: unknown) =>
-        store.notify(e instanceof Error ? e.message : String(e), 'error'),
-      );
+      // Beside the Лог the browser is on screen already; otherwise its tab opens.
+      if (store.selectedSessionId === s.id) detailTab.value = browserSplit.value ? 'log' : 'browser';
+      sessionBrowser.navigate(s.id, s.projectId, res.url);
     } else if (win) win.location.href = res.url;
     else window.open(res.url, '_blank');
   } catch (e) {
@@ -3493,6 +3577,30 @@ async function submitPreviewConfig(): Promise<void> {
 
 .agents__tabpane {
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+// The Лог's own content (KPanel or the native TUI) sits in this column whether or not the
+// browser is beside it, so the split adds a sibling instead of reshaping the log.
+.agents__log-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+// «Поруч із логом»: log | seam | browser. The browser keeps its dragged width; the log takes
+// the rest (the seam's max keeps it at MIN_SPLIT_LOG or more).
+.agents__tabpane--split {
+  flex-direction: row;
+}
+
+.agents__split-browser {
+  flex: none;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;

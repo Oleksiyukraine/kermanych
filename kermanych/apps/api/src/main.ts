@@ -7,7 +7,16 @@ import { RegistryService } from "./registry/registry.service";
 import { seedDemo } from "./preview/seed";
 import { setBrowserHost, type BrowserHost } from "./browser/browser-host";
 
-export type { BrowserConsoleEntry, BrowserHost, BrowserPageInfo, BrowserTarget } from "./browser/browser-host";
+export type {
+  BrowserActionResult,
+  BrowserConsoleEntry,
+  BrowserDialogInfo,
+  BrowserHost,
+  BrowserNetworkEntry,
+  BrowserPageInfo,
+  BrowserTarget,
+  BrowserViewport,
+} from "./browser/browser-host";
 
 // Build + start the Kermanych API. Exported so the Electron main process can host
 // it in-process; still self-runs for standalone `node dist/main.js` / `pnpm dev:api`.
