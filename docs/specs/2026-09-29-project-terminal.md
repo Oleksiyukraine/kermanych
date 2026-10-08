@@ -30,8 +30,16 @@ project's checkout, still alive when the operator switches project or reloads th
   1.2.0-beta (fixes the bit, but a beta).
 - **Terminals live in the API, not in the socket.** A terminal survives a UI reload,
   a socket reconnect and a project switch; it ends when its shell exits, when the
-  operator kills it, or when the API stops (`onModuleDestroy`). Each keeps the last
-  256 KiB of output, replayed to whoever attaches, so a reloaded UI redraws the screen.
+  operator kills it, or when the API stops (`onModuleDestroy`). Each feeds its output into
+  a headless xterm (`@xterm/headless`, scrollback `TERMINAL_SCROLLBACK` = 5000 lines, the
+  same as the view's); whoever attaches gets that screen serialized (`@xterm/addon-serialize`:
+  scrollback, alternate screen, cursor, modes), so a reloaded UI — or a native session's
+  Лог opened again — redraws the screen *and* the history above it. The socket joins the
+  stream in the same tick as the snapshot point; chunks that reach the UI before the
+  attach reply are held until the replay is painted (`stores/terminal.ts`).
+  Rejected (the first version): a raw 256 KiB tail of the output. A TUI (omp, claude)
+  redraws in place several MB a minute — any bounded tail holds the last seconds and no
+  history, so a re-opened native session could not be scrolled up.
 - **Transport: a `/terminal` socket.io namespace** (`ws/terminal.gateway.ts`). Output is
   streamed only to sockets attached to that terminal (a room per id); open/exit are
   broadcast so every window's tab list agrees. **The handshake must carry the same

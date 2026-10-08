@@ -9,7 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import type { TerminalAttachReply, TerminalInfo, TerminalOpenReply } from "@kermanych/core";
 import { AuthService } from "../src/auth/auth.service";
 import { RegistryService } from "../src/registry/registry.service";
-import { appendReplay, TerminalService } from "../src/terminal/terminal.service";
+import { TerminalService } from "../src/terminal/terminal.service";
 import { TerminalGateway } from "../src/ws/terminal.gateway";
 
 // esbuild (vitest's transformer) emits no design:paramtypes, so declare the gateway's
@@ -160,6 +160,33 @@ describe("the /terminal namespace", () => {
     expect((await ask<TerminalInfo[]>(second, "list")).map((x) => x.id)).not.toContain(t.id);
   });
 
+  // A TUI (omp, claude) redraws in place far more than it scrolls: megabytes of output for
+  // a screenful of text. What scrolled up before the redraws must come back on a re-attach.
+  it("repaints a re-attaching view with the history from before a long in-place redraw", async () => {
+    const first = socket(TOKEN);
+    await connected(first);
+    const t = await openTerminal(first);
+    await ask(first, "attach", { id: t.id });
+    const drawn = output(first, t.id, "DRAWN-5");
+    first.emit("input", {
+      id: t.id,
+      // A frame narrower than the 100 columns, so it never wraps and the screen never scrolls.
+      data: "echo HISTORY-$((40+1)); i=0; while [ $i -lt 6000 ]; do printf '\\r\\033[2Kframe %090d' $i; i=$((i+1)); done; echo; echo DRAWN-$((2+3))\r",
+    });
+    // Precondition: far past what a bounded raw tail of the output would hold.
+    expect((await drawn).length).toBeGreaterThan(512 * 1024);
+
+    const second = socket(TOKEN);
+    await connected(second);
+    const reply = await ask<TerminalAttachReply>(second, "attach", { id: t.id });
+    expect("replay" in reply && reply.replay).toContain("HISTORY-41");
+    expect("replay" in reply && reply.replay).toContain("DRAWN-5");
+
+    const exited = new Promise((resolve) => second.once("exit", resolve));
+    second.emit("kill", { id: t.id });
+    await exited;
+  });
+
   it("the shell exiting on its own ends the terminal", async () => {
     const s = socket(TOKEN);
     await connected(s);
@@ -203,21 +230,5 @@ describe("the /terminal namespace", () => {
     expect(exitCode).toBe(0);
     expect(printed).toContain(`<two words>|<say "hi" it's $HOME>|<-- --flag>`);
     expect(service.list().some((t) => t.id === info.id)).toBe(false);
-  });
-});
-
-describe("appendReplay", () => {
-  it("keeps everything under the bound", () => {
-    expect(appendReplay("ab", "cd", 10)).toBe("abcd");
-  });
-
-  it("drops the oldest output past the bound, starting at a line when one is near", () => {
-    const kept = appendReplay("old line\nnewer line\n", "tail", 16);
-    expect(kept).toBe("newer line\ntail");
-  });
-
-  it("cuts mid-line when no line start is within reach", () => {
-    const long = "x".repeat(10_000);
-    expect(appendReplay(long, "y", 5_000)).toBe(`${"x".repeat(4_999)}y`);
   });
 });
