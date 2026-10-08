@@ -172,6 +172,13 @@ export const en: MessageSchema = {
     },
     board: {
       newTask: 'New task',
+      newTaskMenu: 'Other ways to start a task',
+      newTaskModes: {
+        task: 'New task',
+        taskCaption: 'The agent gets straight to work',
+        deepAnalysis: 'Deep analysis',
+        deepAnalysisCaption: 'It asks you first and documents the decisions; code comes once you approve',
+      },
       searchPlaceholder: 'Search: name, branch, model, brief',
       searchCount: '{n} of {total} matched',
       searchEmpty: 'Nothing matched “{q}”',
@@ -369,6 +376,9 @@ export const en: MessageSchema = {
       worktreeDesc: 'A separate folder, a separate checkout. The agent won’t touch your working state.',
       hiddenLabel: 'Hide from the board',
       hiddenDesc: 'The task stays in Tasks and launches like any other — it just won’t take a column slot on the team board.',
+      deepLabel: 'Deep analysis',
+      deepDesc: 'The agent first studies the code and asks you about every decision, writes them into the task document, and starts coding only once you approve.',
+      deepTitle: 'Deep analysis',
       from: 'from',
       defaultOption: 'default',
       effortLabel: 'Reasoning effort',
@@ -2213,6 +2223,10 @@ export const en: MessageSchema = {
       tokens: '{count} tok',
       browsing: 'The agent is working in the browser',
     },
+    analysisMark: {
+      label: 'analysis',
+      tip: 'Deep analysis: discussion and documentation first, then code',
+    },
     railItem: {
       unbound: ' · not linked',
       orphan: ' · outside the cloud',
@@ -2351,6 +2365,8 @@ export const en: MessageSchema = {
         diff: 'Clicking a file in the «Changes» section opens this block: original on the left, the agent version on the right. Paired rows (mod) sit opposite each other; a one-sided edit leaves the opposite column dimmed.',
         sessionFork: 'fork: a branch and a review under the parent agent',
         sessionRemove: 'removed in place: ✕ on card hover',
+        sessionDeep: 'deep analysis: the «analysis» mark — the agent asks and documents first, and codes once approved',
+        splitButton: 'split: a click runs the default action, ▾ lists the other ways, each with a caption',
       },
       userTitle: '@oleksii-motornyi · sign out',
       subNavAria: 'Section demo',
@@ -2451,6 +2467,9 @@ export const en: MessageSchema = {
         removeTime: '2 h',
         removeStatus: 'in backlog',
         removeTip: 'Delete task «move tokens to 8pt»',
+        deepTitle: 'rebuild billing',
+        deepTime: '3 min',
+        deepStatus: 'waiting · question 2: what happens to yearly plans?',
       },
       kanbanCard: {
         keychainTitle: 'key rotation in Keychain',

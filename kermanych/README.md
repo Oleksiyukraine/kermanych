@@ -206,6 +206,25 @@ permission. Un-hiding is the same checkbox: open the card from «Задачі»,
 «Зберегти». That is the only way back, because a hidden card has no card on the
 board to click.
 
+**«Глибокий аналіз» starts a task with a conversation instead of code.** «Нова задача» in
+«Агенти» is a split button: its main half opens the launcher exactly as before, and ▾ lists
+«Нова задача» and «Глибокий аналіз». A deep-analysis task runs the same agent, but its opening
+prompt makes it study the code first, then interview you one question at a time (each with
+the options it sees and its recommended answer) until every decision is settled, write the
+task document (`docs/specs/YYYY-MM-DD-<topic>.md`, or wherever the project's documentation
+policy says), commit it, and wait for your explicit go-ahead before it writes any code. The
+choice is the launcher's «Глибокий аналіз» checkbox, and it is stored on the card
+(`tasks.deep_analysis`), so it survives «В беклог»: launching the card later from «Задачі»,
+from «Дошка»'s ▶ or by a teammate still starts with the interview. Such cards and agents carry
+an «аналіз» mark (a magnifier) on «Агенти», on «Дошка» and in the agent's header. «Лог» shows
+your task text as you wrote it; the method behind the prompt is the default skill
+`deep-analysis`, which a project, workspace or repository can override by name («ШІ-команда →
+Навички»). The board's own create/edit form does not change the mode — editing a card there
+keeps it. Migration `20261008100000_task_deep_analysis.sql` adds the column; every task read
+selects it, so apply it before shipping a client that knows it
+([Applying a migration](#applying-a-migration-to-the-teams-project)). Spec:
+`docs/specs/2026-10-08-deep-analysis-task.md`.
+
 ### Jira
 
 A workspace can mirror **up to ten Jira Cloud boards** onto «Дошка». The owner connects
@@ -565,9 +584,10 @@ in your own terminal. (Spec: `docs/specs/2026-10-05-native-sessions.md`.)
 - **Nothing of Kermanych enters the agent's context**: no project skills, triggers,
   language or documentation directives, co-author trailer, model or effort flags. Your own
   `~/.claude` / `~/.omp` configuration applies unchanged; switch model with the harness's
-  own `/model`. Model, effort and images are hidden in the launcher for this mode. The one
-  exception is the [session browser](#session-browser)'s tools, passed on the launch in the
-  desktop app.
+  own `/model`. Model, effort and images are hidden in the launcher for this mode. The
+  exceptions are the [session browser](#session-browser)'s tools, passed on the launch in the
+  desktop app, and a «Глибокий аналіз» card's opening prompt: the TUI receives the task
+  wrapped in the deep-analysis instructions, because that is the task you chose.
 - **What Kermanych still tracks.** Status on the board (working, tool, waiting for you,
   ready, on review, stopped) comes from hooks passed **on that launch only** —
   `claude --settings <file>` and `omp --hook <file>`, posting to the local API with a

@@ -55,6 +55,13 @@
       <div class="kit__caption mono">
         primary · secondary · ghost · disabled · loading · icon
       </div>
+      <!-- SPLIT — the default action on the main half, the alternatives under ▾, each with a
+           caption (the «Нова задача» button on «Агенти»). -->
+      <div class="kit__row" style="margin-top: var(--k-sp-3)">
+        <KSplitButton :label="t('agents.board.newTask')" :menu-label="t('agents.board.newTaskMenu')" :items="splitItems" />
+        <KSplitButton :label="t('agents.board.newTask')" :menu-label="t('agents.board.newTaskMenu')" :items="splitItems" disabled />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.splitButton') }}</div>
     </section>
 
     <!-- 04 — action icon buttons (dense, for icon clusters) -->
@@ -393,6 +400,17 @@
         />
       </div>
       <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionRemove') }}</div>
+
+      <!-- DEEP ANALYSIS — a «Глибокий аналіз» task: the mark sits in the accounting line, right
+           after the harness, so it never clips. -->
+      <div class="kit__cards">
+        <KSessionCard
+          branch="feature/rebuild-billing" :title="t('kit.gallery.sessionCard.deepTitle')" :time="t('kit.gallery.sessionCard.deepTime')"
+          status="waiting_input" :status-line="t('kit.gallery.sessionCard.deepStatus')" model="opus-5" harness="managed" deep-analysis
+          :usage="{ input: 5200, output: 1900, cacheRead: 88000, cacheWrite: 7400, cost: 0.31 }"
+        />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionDeep') }}</div>
     </section>
 
     <!-- kanban -->
@@ -404,7 +422,7 @@
           <KKanbanCard :title="t('kit.gallery.kanbanCard.pathTitle')" branch="chore/path-ellipsis" project="FE-kit" :time="t('kit.gallery.kanbanCard.pathTime')" status="backlog" />
         </KKanbanColumn>
         <KKanbanColumn :label="t('kit.gallery.kanbanCol.inProgress')" :count="1">
-          <KKanbanCard :title="t('kit.gallery.kanbanCard.rateTitle')" branch="feature/rate-limit" project="Backend-core" :time="t('kit.gallery.kanbanCard.rateTime')" status="thinking" :assignee="{ name: t('kit.gallery.kanbanCard.assignee'), avatarUrl: sampleAvatar }" />
+          <KKanbanCard :title="t('kit.gallery.kanbanCard.rateTitle')" branch="feature/rate-limit" project="Backend-core" :time="t('kit.gallery.kanbanCard.rateTime')" status="thinking" :assignee="{ name: t('kit.gallery.kanbanCard.assignee'), avatarUrl: sampleAvatar }" deep-analysis />
         </KKanbanColumn>
       </div>
       <div class="kit__caption mono">
@@ -488,6 +506,7 @@ import KNavItem from 'components/kit/KNavItem.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import KKanbanCard from 'components/kit/KKanbanCard.vue';
+import KSplitButton from 'components/kit/KSplitButton.vue';
 import KChatMessage from 'components/kit/KChatMessage.vue';
 import KThoughtToggle from 'components/kit/KThoughtToggle.vue';
 import KTabs from 'components/kit/KTabs.vue';
@@ -797,6 +816,12 @@ const galleryModel = ref('');
 // shows neither the selected day nor the today ring.
 const galleryDate = ref('2026-09-20');
 const lastAction = ref('');
+// The split button's sample menu: the real «Нова задача» options, so the gallery shows the
+// captions the operator actually reads.
+const splitItems = [
+  { value: 'task', label: t('agents.board.newTaskModes.task'), caption: t('agents.board.newTaskModes.taskCaption'), icon: 'plus' as const },
+  { value: 'deepAnalysis', label: t('agents.board.newTaskModes.deepAnalysis'), caption: t('agents.board.newTaskModes.deepAnalysisCaption'), icon: 'analysis' as const },
+];
 // The gallery panels carry the real detail toolbar, so it drives a real command here too
 // — a showcase with a dead button showcases the wrong thing.
 const galleryExpandAll = ref<ExpandAllCommand>(EXPAND_ALL_NONE);

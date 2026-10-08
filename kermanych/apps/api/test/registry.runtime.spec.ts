@@ -90,6 +90,24 @@ test("session runtime defaults to undefined", () => {
   expect(r.listSessions(proj.id)[0].runtime).toBeUndefined();
 });
 
+// «Глибокий аналіз»: fixed at creation, surfaced only when set (like `native`), and never
+// rewritten by updateSession.
+test("session round-trips deepAnalysis", () => {
+  const r = new RegistryService(":memory:");
+  const proj = r.upsertProject({ id: "p-1", name: "test" });
+  const base = { projectId: proj.id, name: "task", task: "do it", worktreePath: "/tmp/wt", branch: "feature/test" };
+  const deep = r.createSession({ ...base, deepAnalysis: true });
+  const plain = r.createSession({ ...base, deepAnalysis: false });
+  const absent = r.createSession(base);
+
+  r.updateSession(deep.id, { status: "done" });
+  r.updateSession(plain.id, { status: "done", deepAnalysis: true });
+  const byId = new Map(r.listSessions(proj.id).map((s) => [s.id, s]));
+  expect(byId.get(deep.id)?.deepAnalysis).toBe(true);
+  expect("deepAnalysis" in byId.get(plain.id)!).toBe(false);
+  expect("deepAnalysis" in byId.get(absent.id)!).toBe(false);
+});
+
 test("session guards runtime with isAgentRuntime", () => {
   const r = new RegistryService(":memory:");
   const proj = r.upsertProject({ id: "p-1", name: "test" });

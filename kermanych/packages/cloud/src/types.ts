@@ -101,6 +101,10 @@ export type Task = {
   // full task — its assignee sees it in «Задачі», it launches and pushes status like any
   // other — but the kanban columns skip it. Visibility only, never permission.
   hidden: boolean;
+  // `tasks.deep_analysis` is `not null default false`, so like `hidden` this key is always
+  // present. `true` means the card was filed as «Глибокий аналіз»: whoever launches it, the
+  // agent interviews the operator and writes the task document before any code.
+  deepAnalysis: boolean;
   kind?: string;
   branch?: string;
   // Storage object paths in the `task-images` bucket (private). The board mints signed
@@ -135,6 +139,7 @@ export type TaskInsert = {
   id?: string;
   worktree?: boolean;
   hidden?: boolean;
+  deepAnalysis?: boolean;
   kind?: string;
   branch?: string;
   imagePaths?: string[];
@@ -152,6 +157,7 @@ export type TaskPatch = {
   platform?: string;
   worktree?: boolean;
   hidden?: boolean;
+  deepAnalysis?: boolean;
   kind?: string;
   branch?: string;
   imagePaths?: string[];

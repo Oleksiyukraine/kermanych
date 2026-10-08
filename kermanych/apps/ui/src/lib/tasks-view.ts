@@ -17,6 +17,9 @@ export type LauncherDraft = {
   platform?: Platform | undefined;
   worktree: boolean;
   hidden: boolean;
+  // «Глибокий аналіз»: the card runs its agent through the interview and the task document
+  // before any code. A card field, not a launch choice, so a later launch keeps it.
+  deepAnalysis: boolean;
   baseBranch?: string | undefined;
 };
 
@@ -39,6 +42,7 @@ export function taskInsertFromDraft(
     ...(draft.platform ? { platform: draft.platform } : {}),
     worktree: draft.worktree,
     hidden: draft.hidden,
+    deepAnalysis: draft.deepAnalysis,
     ...(base ? { branch: base } : {}),
     assigneeId,
   };
@@ -57,6 +61,7 @@ export function taskPatchFromDraft(draft: LauncherDraft): TaskPatch {
     platform: draft.platform ?? '',
     worktree: draft.worktree,
     hidden: draft.hidden,
+    deepAnalysis: draft.deepAnalysis,
     branch: (draft.worktree ? draft.baseBranch?.trim() : '') ?? '',
   };
 }

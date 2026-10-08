@@ -53,6 +53,8 @@ import {
   branchName,
   uniqueSlug,
   worktreeDir,
+  deepAnalysisPrompt,
+  DEEP_ANALYSIS_SKILL,
   BRANCH_PREFIXES,
   PLATFORMS,
   type BranchPrefix,
@@ -579,6 +581,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       platform,
       runtime,
       ...(native ? { native: true } : {}),
+      // A «Глибокий аналіз» card opens with the wrapped prompt (launch → openingPrompt).
+      ...(task.deepAnalysis ? { deepAnalysis: true } : {}),
     });
     try {
       return await this.launch(session, project, { images });
@@ -819,9 +823,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     // A native session gets nothing of Kermanych's: no skills, triggers, system append or
     // directives — its harness starts in the worktree with the task text as its first prompt.
+    // The one exception is a deep-analysis card's wrapped prompt: it is part of the task the
+    // operator chose, not Kermanych's scaffolding.
     if (session.native) {
       try {
-        await this.requireNative().start(saved, { prompt: firstPrompt, resume: false });
+        const prompt = await this.openingPrompt(session, firstPrompt, saved.worktreePath || project.localRepoPath);
+        await this.requireNative().start(saved, { prompt, resume: false });
       } catch (err) {
         await this.rollbackLaunchGit(project, saved, wtDir);
         throw err;
@@ -851,7 +858,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         // skill. A locally-created session with no card carries the trailer alone.
         this.appendEntry(id, this.userEntry(firstPrompt, images));
         const directives = session.taskId ? `${COAUTHOR_DIRECTIVE}\n\n${DOC_MAINTAIN_DIRECTIVE}` : COAUTHOR_DIRECTIVE;
-        rpc.prompt(`${firstPrompt}\n\n${directives}`, images);
+        const modelPrompt = await this.openingPrompt(session, firstPrompt, cwd);
+        rpc.prompt(`${modelPrompt}\n\n${directives}`, images);
       } else {
         // No opening message (a forked agent continuing the chat) — sit idle, ready for input.
         live.live.status = "done";
@@ -868,6 +876,21 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
     this.pushUpdate(id);
     return this.merge(saved);
+  }
+
+  // The opening text the MODEL receives (docs/specs/2026-10-08-deep-analysis-task.md). An
+  // ordinary session gets `firstPrompt` unchanged; a deep-analysis one gets it wrapped in the
+  // deep-analysis instruction plus the resolved `deep-analysis` skill, so a project, workspace
+  // or repository override wins. Degrades like completeDocs: the wrapper alone is a complete ask.
+  private async openingPrompt(session: Session, firstPrompt: string, cwd: string): Promise<string> {
+    if (!session.deepAnalysis || !firstPrompt.trim()) return firstPrompt;
+    let block = "";
+    try {
+      block = (await this.skills.assignedForNames(this.aiScope(session.projectId), [DEEP_ANALYSIS_SKILL], cwd)).block;
+    } catch (err) {
+      console.warn(`[supervisor] no deep-analysis skill for ${session.id}: ${(err as Error).message}`);
+    }
+    return deepAnalysisPrompt(firstPrompt) + block;
   }
 
   // Undo launch's git side effects: the worktree (or the in-place checkout) and the branch.

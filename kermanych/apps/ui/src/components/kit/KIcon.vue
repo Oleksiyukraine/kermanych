@@ -33,7 +33,9 @@ export type KIconName =
   | 'releases'
   | 'capacity'
   | 'integrations'
-  | 'worktree';
+  | 'worktree'
+  | 'plus'
+  | 'analysis';
 </script>
 
 <script setup lang="ts">
@@ -120,6 +122,13 @@ const ICONS: Record<KIconName, readonly string[]> = {
     'M3 18a3 3 0 1 0 6 0a3 3 0 1 0-6 0',
     'M18 9a9 9 0 0 1-9 9',
   ],
+
+  // The «Нова задача» split button's menu, where each way of starting a task is a row with a
+  // mark in a disc. `plus` is the plain «create» the main button already says in words.
+  plus: ['M12 5v14', 'M5 12h14'],
+  // «Глибокий аналіз» — a magnifier: «look closely first». Also the mark a deep-analysis card
+  // carries (KAnalysisMark), so the menu row and the card it produces share one shape.
+  analysis: ['M3 11a8 8 0 1 0 16 0a8 8 0 1 0-16 0', 'm21 21-4.3-4.3'],
 };
 
 const props = defineProps<{ name: KIconName }>();

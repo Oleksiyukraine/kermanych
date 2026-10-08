@@ -33,9 +33,10 @@
         <KStatusDot :status="status" />
         <span v-if="statusLine" class="k-session-card__status-line">{{ statusLine }}</span>
       </div>
-      <!-- who is running it, on what, and what it has cost — absent whenever we know none -->
-      <div v-if="harness || model || spend" class="k-session-card__meta mono">
+      <!-- who is running it, how, on what, and what it has cost — absent whenever we know none -->
+      <div v-if="harness || deepAnalysis || model || spend" class="k-session-card__meta mono">
         <KHarnessMark v-if="harness" :harness="harness" />
+        <KAnalysisMark v-if="deepAnalysis" />
         <span v-if="model" class="k-session-card__model">{{ model }}</span>
         <span v-if="model && spend">·</span>
         <span v-if="spend" class="k-session-card__spend">{{ spend }}</span>
@@ -63,6 +64,7 @@ import { useI18n } from 'vue-i18n';
 import type { SessionStatus, Usage } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KHarnessMark from './KHarnessMark.vue';
+import KAnalysisMark from './KAnalysisMark.vue';
 import { tokens, usageTokens, usd } from '../../lib/format';
 import type { LaunchMode } from '../../lib/native-session';
 
@@ -87,6 +89,9 @@ import type { LaunchMode } from '../../lib/native-session';
 // `browsing` pulses a ◎ before the time while the session's agent is driving its session
 // browser (a browser tool call in the last few seconds) — the board's view of the Браузер
 // tab's live dot, so the operator sees which agent is clicking without opening it.
+//
+// `deepAnalysis` marks a «Глибокий аналіз» card (KAnalysisMark) in the accounting line, right
+// after the harness: it is HOW this agent works, and it must not be the field that clips.
 const props = withDefaults(
   defineProps<{
     branch: string;
@@ -100,6 +105,8 @@ const props = withDefaults(
     model?: string | undefined;
     // The harness running the session (KHarnessMark). Absent for a card nothing runs yet.
     harness?: LaunchMode | undefined;
+    // A «Глибокий аналіз» task or session: the agent interviews before it codes.
+    deepAnalysis?: boolean | undefined;
     selected?: boolean;
     fork?: boolean;
     removable?: boolean;

@@ -257,6 +257,28 @@ export const DEFAULT_SKILLS: readonly SkillDef[] = [
       "Name the request in the pull request and in the handoff, if there is one.",
     ].join("\n"),
   },
+  // Kept terse on purpose: every default's body together must stay under the settings pane's
+  // assigned-skills byte warning (ASSIGNED_BYTES_WARN, apps/ui test/assignments.spec.ts), and
+  // deepAnalysisPrompt already states the four steps — this is the method behind them.
+  {
+    name: "deep-analysis",
+    description:
+      "Use when a task was filed as «Глибокий аналіз» (deep analysis), or the operator asks to think a task through before coding: study the code, interview the operator until every decision is settled, write the task document, and implement only after explicit approval.",
+    body: [
+      "# Deep analysis: discuss, document, then code",
+      "",
+      "No code changes until the operator approves the written decisions.",
+      "",
+      "1. Study the code, docs and history the task touches; never ask what the repository answers.",
+      "2. Interview: walk the decision tree (scope, behaviour, edge cases, data, API, migrations,",
+      "   verification), settling what others depend on first. One question per message, with",
+      "   options and your recommended answer. Push back on risky answers; stop when nothing",
+      "   material is open.",
+      "3. Write the task document (`docs/specs/YYYY-MM-DD-<topic>.md` unless the docs policy says",
+      "   otherwise): decisions and rejected alternatives. Commit it, ask for an explicit go-ahead.",
+      "4. Implement only after approval; if a decision changes, update the document too.",
+    ].join("\n"),
+  },
 ];
 
 // Which skills a session actually pulled in, in order of first use. Derived from the

@@ -32,6 +32,7 @@ function card(over: Partial<Task> & { id: string }): Task {
     status: 'backlog',
     worktree: true,
     hidden: false,
+    deepAnalysis: false,
     createdAt: '2026-08-30T10:00:00.000Z',
     updatedAt: '2026-08-30T10:00:00.000Z',
     ...over,

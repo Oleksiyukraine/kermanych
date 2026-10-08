@@ -58,6 +58,7 @@ const taskRow = {
   branch: "main",
   worktree: true,
   hidden: false,
+  deep_analysis: false,
   created_at: "2026-08-21T00:00:00.000Z",
   updated_at: "2026-08-21T00:10:00.000Z",
 };
@@ -79,6 +80,7 @@ describe("listTasks", () => {
       branch: "main",
       worktree: true,
       hidden: false,
+      deepAnalysis: false,
       createdAt: "2026-08-21T00:00:00.000Z",
       updatedAt: "2026-08-21T00:10:00.000Z",
     });
@@ -234,6 +236,40 @@ describe("hidden on a task", () => {
     const { client, queries } = fakeClient({ data: taskRow, error: null });
     await patchTask(client, "t1", { hidden: false });
     expect(queries[0]!.ops[0]).toEqual(["update", { hidden: false }]);
+  });
+});
+
+// «Глибокий аналіз»: a NOT NULL boolean like `hidden`, read when a card is launched. A flag
+// that arrives as `undefined` would launch the card as an ordinary task.
+describe("deepAnalysis on a task", () => {
+  it("is selected", async () => {
+    const { client, queries } = fakeClient({ data: [taskRow], error: null });
+    await listTasks(client, ["p1"]);
+    const [, columns] = queries[0]!.ops[0] as [string, string];
+    expect(columns.split(", ")).toContain("deep_analysis");
+  });
+
+  it("maps the column when true", async () => {
+    const { client } = fakeClient({ data: { ...taskRow, deep_analysis: true }, error: null });
+    const t = await getTask(client, "t1");
+    expect(t!.deepAnalysis).toBe(true);
+  });
+
+  it("sends deep_analysis:true on create", async () => {
+    const { client, queries } = fakeClient({ data: { ...taskRow, deep_analysis: true }, error: null });
+
+    await createTask(client, { projectId: "p1", title: "T", deepAnalysis: true, createdBy: "u1" });
+
+    expect(queries[0]!.ops[0]).toEqual([
+      "insert",
+      { project_id: "p1", created_by: "u1", title: "T", deep_analysis: true },
+    ]);
+  });
+
+  it("patches deep_analysis without touching anything else", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null });
+    await patchTask(client, "t1", { deepAnalysis: true });
+    expect(queries[0]!.ops[0]).toEqual(["update", { deep_analysis: true }]);
   });
 });
 
