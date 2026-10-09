@@ -31,6 +31,7 @@ import { LinearController } from "./http/linear.controller";
 import { LinearService } from "./linear/linear.service";
 import { SlackController } from "./http/slack.controller";
 import { SlackService } from "./slack/slack.service";
+import { SlackReleaseNotesService } from "./slack/slack-release-notes.service";
 import { DocIndexService } from "./docs/doc-index.service";
 import { DocsController } from "./http/docs.controller";
 import { ManagementMcpController } from "./http/management-mcp.controller";
@@ -89,6 +90,9 @@ import { BrowserMcpService } from "./browser/browser-mcp.service";
     // (AuthService.cloudClient), and a tool-less one-shot child per answer. Opens and
     // closes its sockets on AuthService's token/clear events.
     SlackService,
+    // Release notes → Slack under the sender's own name: each member's user token
+    // (RegistryService, obtained by OAuth with PKCE) and the channel row under their JWT.
+    SlackReleaseNotesService,
     // Documentation RAG indexing: walks the bound checkout's published doc folders
     // (SupervisorService.resolveDocsDir guards), hashes and chunks changed files
     // (@kermanych/core), and hands them to the docs-rag Edge Function under the operator's

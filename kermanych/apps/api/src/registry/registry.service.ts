@@ -38,6 +38,22 @@ export type SlackTokenRow = {
 const SLACK_TOKEN_COLUMNS =
   "workspace_id as workspaceId, bot_token as botToken, app_token as appToken, team_id as teamId, team_name as teamName, bot_user_id as botUserId";
 
+// One member's Slack USER token (`xoxp-`) for a Kermanych workspace: what posts that
+// workspace's release notes under the member's own name. A secret that never leaves this
+// machine. `clientId` is the Slack app the token was granted by; the identity is what
+// `auth.test` reported when the token was obtained.
+export type SlackUserTokenRow = {
+  workspaceId: string;
+  accessToken: string;
+  clientId: string;
+  teamId: string;
+  teamName: string;
+  slackUserId: string;
+  slackUserName: string;
+};
+const SLACK_USER_TOKEN_COLUMNS =
+  "workspace_id as workspaceId, access_token as accessToken, client_id as clientId, team_id as teamId, team_name as teamName, slack_user_id as slackUserId, slack_user_name as slackUserName";
+
 // The `usage` column, back into a shape. Tolerant on purpose: a row written before the
 // column existed reads `null`, and a hand-edited or half-written blob must degrade to
 // "no figure" rather than crash the board. Absent stays absent — zeros would be a claim.
@@ -297,6 +313,11 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS slack_tokens (workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, bot_token TEXT NOT NULL, app_token TEXT NOT NULL, team_id TEXT NOT NULL, team_name TEXT NOT NULL, bot_user_id TEXT NOT NULL, PRIMARY KEY (workspace_id, user_id))`,
     );
+    // Per-user Slack USER tokens (release notes posted as the member), THIS machine only —
+    // the same custody rule, keyed the same way: one Slack app per Kermanych workspace.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS slack_user_tokens (workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, access_token TEXT NOT NULL, client_id TEXT NOT NULL, team_id TEXT NOT NULL, team_name TEXT NOT NULL, slack_user_id TEXT NOT NULL, slack_user_name TEXT NOT NULL, PRIMARY KEY (workspace_id, user_id))`,
+    );
   }
 
   // v1 (2026-08-21, team cloud): `groups` becomes `projects`, its id becomes the CLOUD
@@ -487,6 +508,27 @@ export class RegistryService {
     return this.db
       .prepare(`SELECT ${SLACK_TOKEN_COLUMNS} FROM slack_tokens WHERE user_id = ? ORDER BY workspace_id`)
       .all(userId) as SlackTokenRow[];
+  }
+
+  getSlackUserToken(workspaceId: string, userId: string): SlackUserTokenRow | undefined {
+    return this.db
+      .prepare(`SELECT ${SLACK_USER_TOKEN_COLUMNS} FROM slack_user_tokens WHERE workspace_id = ? AND user_id = ?`)
+      .get(workspaceId, userId) as SlackUserTokenRow | undefined;
+  }
+
+  setSlackUserToken(userId: string, row: SlackUserTokenRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO slack_user_tokens (workspace_id, user_id, access_token, client_id, team_id, team_name, slack_user_id, slack_user_name) VALUES (?,?,?,?,?,?,?,?)
+         ON CONFLICT(workspace_id, user_id) DO UPDATE SET access_token = excluded.access_token, client_id = excluded.client_id,
+           team_id = excluded.team_id, team_name = excluded.team_name, slack_user_id = excluded.slack_user_id,
+           slack_user_name = excluded.slack_user_name`,
+      )
+      .run(row.workspaceId, userId, row.accessToken, row.clientId, row.teamId, row.teamName, row.slackUserId, row.slackUserName);
+  }
+
+  deleteSlackUserToken(workspaceId: string, userId: string): void {
+    this.db.prepare(`DELETE FROM slack_user_tokens WHERE workspace_id = ? AND user_id = ?`).run(workspaceId, userId);
   }
 
   removeProject(id: string): void {

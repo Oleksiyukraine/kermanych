@@ -1,10 +1,12 @@
 // apps/api/src/slack/slack-client.ts
 // The one place that speaks HTTP to Slack's Web API. No SDK on purpose (the Jira/Linear
-// precedent): the bot needs seven methods, and each is one form-encoded POST.
+// precedent): every method is one form-encoded POST.
 //
 // A client is built per TOKEN: the bot token (`xoxb-`) signs everything the bot reads and
 // writes; the app-level token (`xapp-`) is good for exactly one call here,
-// `apps.connections.open`, which mints the Socket Mode URL.
+// `apps.connections.open`, which mints the Socket Mode URL; a member's user token (`xoxp-`)
+// posts release notes under that member's own name. An EMPTY token sends no Authorization
+// header — the one call that needs none is the PKCE code exchange, `oauth.v2.access`.
 //
 // Slack answers HTTP 200 with `{ ok: false, error: "<code>" }` for almost every failure, so
 // the code string — not the status — is what callers branch on (`invalid_auth`,
@@ -35,15 +37,29 @@ export class SlackApiError extends Error {
   }
 }
 
-// The two codes that mean «this token is not a token» — the controller maps them to 401
-// like a Linear authentication error.
+// The codes that mean «this token is not (or no longer) a token» — the controller maps them
+// to 403 so the UI asks for fresh tokens. A user token revoked in Slack, or of a deactivated
+// account, answers with the last three.
+const AUTH_ERRORS: Record<string, true> = {
+  invalid_auth: true,
+  not_authed: true,
+  token_revoked: true,
+  token_expired: true,
+  account_inactive: true,
+};
 export function isSlackAuthError(err: unknown): boolean {
-  return err instanceof SlackApiError && (err.error === "invalid_auth" || err.error === "not_authed");
+  return err instanceof SlackApiError && AUTH_ERRORS[err.error] === true;
 }
 
 export type SlackIdentity = { teamId: string; teamName: string; botUserId: string };
 
 export type SlackChannel = { id: string; name: string; isPrivate: boolean };
+
+// Who a USER token speaks as: what `auth.test` reports for an `xoxp-` token.
+export type SlackUserIdentity = { teamId: string; teamName: string; userId: string; userName: string };
+
+// What the PKCE code exchange hands back for a user-scopes-only authorization.
+export type SlackUserGrant = { accessToken: string; scope: string; userId: string; teamId: string; teamName: string };
 
 // A message as conversations.replies (and the Events API) carry it. Typed loosely on
 // purpose — slack-map.ts is the tolerant boundary that decides what a message means.
@@ -71,7 +87,7 @@ export class SlackClient {
       const res = await fetch(`${this.baseUrl}/${method}`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${this.token}`,
+          ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
           "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
         },
         body,
@@ -98,6 +114,36 @@ export class SlackClient {
     return { teamId: r.team_id ?? "", teamName: r.team ?? "", botUserId: r.user_id ?? "" };
   }
 
+  // Validates a USER token and reports which Slack workspace and person it speaks as.
+  async userIdentity(): Promise<SlackUserIdentity> {
+    const r = await this.call<{ team_id?: string; team?: string; user_id?: string; user?: string }>("auth.test", {});
+    return { teamId: r.team_id ?? "", teamName: r.team ?? "", userId: r.user_id ?? "", userName: r.user ?? "" };
+  }
+
+  // The PKCE half of OAuth v2 (docs.slack.dev/authentication/using-pkce): the verifier
+  // stands in for the client secret, so a client built with an empty token calls it. Only
+  // user scopes are ever requested, so the token is `authed_user`'s.
+  async oauthUserAccess(input: { clientId: string; code: string; codeVerifier: string; redirectUri: string }): Promise<SlackUserGrant> {
+    const r = await this.call<{
+      authed_user?: { id?: string; access_token?: string; scope?: string };
+      team?: { id?: string; name?: string };
+    }>("oauth.v2.access", {
+      client_id: input.clientId,
+      code: input.code,
+      code_verifier: input.codeVerifier,
+      redirect_uri: input.redirectUri,
+    });
+    const user = r.authed_user;
+    if (!user?.access_token) throw new SlackApiError("oauth.v2.access", "no_user_token");
+    return {
+      accessToken: user.access_token,
+      scope: user.scope ?? "",
+      userId: user.id ?? "",
+      teamId: r.team?.id ?? "",
+      teamName: r.team?.name ?? "",
+    };
+  }
+
   // APP-level token only: the single-use wss:// URL of a fresh Socket Mode connection.
   async openConnection(): Promise<string> {
     const r = await this.call<{ url?: string }>("apps.connections.open", {});
@@ -105,11 +151,11 @@ export class SlackClient {
     return r.url;
   }
 
-  // The channels the bot can actually hear: Slack delivers message events only for
-  // conversations the bot is a member of, so offering any other one would bind the
-  // integration to silence. `users.conversations` returns exactly those — unlike
-  // `conversations.list`, which pages every channel of the Slack workspace on a Tier 2
-  // budget and runs a large workspace into `ratelimited`.
+  // The channels the token's holder is a member of: for the bot, the only ones Slack
+  // delivers message events for, so offering any other one would bind the integration to
+  // silence; for a member, the only ones they can post into. `users.conversations` returns
+  // exactly those — unlike `conversations.list`, which pages every channel of the Slack
+  // workspace on a Tier 2 budget and runs a large workspace into `ratelimited`.
   async memberChannels(): Promise<SlackChannel[]> {
     const out: SlackChannel[] = [];
     let cursor: string | undefined;
@@ -157,7 +203,8 @@ export class SlackClient {
     return out.slice(0, MAX_THREAD_MESSAGES);
   }
 
-  async postMessage(channel: string, threadTs: string, text: string): Promise<{ ts: string }> {
+  // `threadTs` undefined posts a top-level channel message.
+  async postMessage(channel: string, threadTs: string | undefined, text: string): Promise<{ ts: string }> {
     const r = await this.call<{ ts?: string }>("chat.postMessage", { channel, thread_ts: threadTs, text });
     return { ts: r.ts ?? "" };
   }

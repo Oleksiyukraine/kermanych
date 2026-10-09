@@ -60,6 +60,8 @@ export type {
   LinearAttachment,
   SlackIntegration,
   SlackIntegrationInsert,
+  ReleaseNotesSlack,
+  ReleaseNotesSlackInsert,
   WorkspacePassword,
   WorkspacePasswordField,
   WorkspacePasswordSecret,
@@ -181,6 +183,7 @@ export {
 export {
   toWorkspaceReleaseNote,
   listWorkspaceReleaseNotes,
+  getWorkspaceReleaseNote,
   createWorkspaceReleaseNote,
   patchWorkspaceReleaseNote,
 } from "./release-notes";
@@ -255,4 +258,13 @@ export {
   subscribeLinearIssues,
 } from "./linear";
 
-export { toSlackIntegration, getSlackIntegration, upsertSlackIntegration, deleteSlackIntegration } from "./slack";
+export {
+  toSlackIntegration,
+  getSlackIntegration,
+  upsertSlackIntegration,
+  deleteSlackIntegration,
+  toReleaseNotesSlack,
+  getReleaseNotesSlack,
+  upsertReleaseNotesSlack,
+  deleteReleaseNotesSlack,
+} from "./slack";

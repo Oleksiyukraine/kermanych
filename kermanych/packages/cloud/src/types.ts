@@ -732,6 +732,34 @@ export type SlackIntegrationInsert = {
   botUserId: string;
 };
 
+// ── Release notes → Slack ─────────────────────────────────────────────────────
+// The channel a workspace's release notes are sent to, and the Slack app every member
+// authorizes to post there under their own name. The camelCase shape of
+// workspace_release_notes_slack; slack.ts owns the snake_case boundary. Addresses only —
+// each member's user token never leaves their machine's registry SQLite.
+export type ReleaseNotesSlack = {
+  id: string;
+  workspaceId: string;
+  // The Slack app's Client ID — public, part of every authorize URL.
+  clientId: string;
+  teamId: string;
+  teamName: string;
+  channelId: string;
+  channelName: string;
+  configuredBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ReleaseNotesSlackInsert = {
+  workspaceId: string;
+  clientId: string;
+  teamId: string;
+  teamName: string;
+  channelId: string;
+  channelName: string;
+};
+
 // ── Password vault ────────────────────────────────────────────────────────────
 // The workspace "Storage" section. A password is split across two rows in Postgres — the
 // TITLE every member may read (`workspace_passwords`) and the SECRET only a manager/owner or
