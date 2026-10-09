@@ -69,6 +69,56 @@ describe("buildReleaseNotesPrompt", () => {
   });
 });
 
+describe("buildReleaseNotesPrompt — per person", () => {
+  const ask = {
+    workspaceName: "Acme",
+    projectName: "мобільний-застосунок",
+    branch: "main",
+    rangeFrom: "2026-08-01",
+    rangeTo: "2026-08-31",
+  };
+  // Newest first and interleaved, as git hands them out.
+  const commits = [
+    commit({ author: "Петро", subject: "п-1" }),
+    commit({ author: "Оля", subject: "о-1" }),
+    commit({ author: "Петро", subject: "п-2" }),
+    commit({ author: "Андрій", subject: "а-1" }),
+  ];
+
+  // The default must stay the document it always was: grouped by meaning, nobody listed.
+  it("keeps the by-topic note when no grouping, or topic, is asked for", () => {
+    const plain = buildReleaseNotesPrompt({ ...ask, commits });
+    expect(buildReleaseNotesPrompt({ ...ask, commits, groupBy: "topic" })).toBe(plain);
+    expect(plain).toContain("«New», «Improvements», «Fixes»");
+    expect(plain).not.toContain("Учасники");
+  });
+
+  it("lists every author with a count and prints each author's commits together, busiest first", () => {
+    const prompt = buildReleaseNotesPrompt({ ...ask, commits, groupBy: "person" });
+    expect(prompt).not.toContain("«New», «Improvements», «Fixes»");
+    expect(prompt).toContain("- Петро — 2\n- Андрій — 1\n- Оля — 1");
+    const order = ["п-1", "п-2", "а-1", "о-1"].map((s) => prompt.indexOf(`: ${s}`));
+    expect(order.every((at, i) => at > 0 && (i === 0 || at > order[i - 1]!))).toBe(true);
+  });
+
+  // A person whose commits fell past the cap is still in the roster — a report about people
+  // must not silently drop one because somebody else wrote long commit bodies.
+  it("names an author whose commits were cut by the cap", () => {
+    const prompt = buildReleaseNotesPrompt({
+      ...ask,
+      groupBy: "person",
+      commits: [
+        commit({ author: "Оля", body: "x".repeat(MAX_COMMITS_CHARS) }),
+        commit({ author: "Оля", subject: "друге" }),
+        commit({ author: "Петро", subject: "за межею" }),
+      ],
+    });
+    expect(prompt).toContain("- Петро — 1");
+    expect(prompt).not.toContain("за межею");
+    expect(prompt).toContain("не вигадуй, які саме");
+  });
+});
+
 describe("commitsBlock", () => {
   it("keeps every commit when the block fits", () => {
     const { block, included, truncated } = commitsBlock([commit(), commit({ subject: "друге" })]);
@@ -164,4 +214,12 @@ test("logRange carries the commit body and survives newlines inside it", async (
 test("logRange answers an empty list for an unknown branch rather than throwing", async () => {
   commitOn("2026-08-10", "on dev", "a.txt");
   expect(await wt.logRange(repo, "no-such-branch", "2026-08-01", "2026-08-31")).toEqual([]);
+});
+
+// The per-person note groups by this name, so one person's two spellings must arrive as one.
+test("logRange names authors through the repository's .mailmap", async () => {
+  writeFileSync(join(repo, ".mailmap"), "Тарас Шевченко <t@t>\n");
+  commitOn("2026-08-10", "mapped", "a.txt");
+  const commits = await wt.logRange(repo, "dev", "2026-08-01", "2026-08-31");
+  expect(commits[0]!.author).toBe("Тарас Шевченко");
 });

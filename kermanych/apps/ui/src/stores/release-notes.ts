@@ -37,6 +37,7 @@ import {
   listWorkspaceReleaseNotes as cloudListNotes,
   patchWorkspaceReleaseNote as cloudPatchNote,
 } from '@kermanych/cloud';
+import type { ReleaseGrouping } from '@kermanych/core';
 import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { api } from '../lib/api';
@@ -56,6 +57,8 @@ export type ReleaseNotesJob = {
   branch: string;
   rangeFrom: string;
   rangeTo: string;
+  // `topic` — the original by-meaning note; `person` — one section per commit author.
+  groupBy: ReleaseGrouping;
   startedAt: number;
   // A failed run KEEPS its row with the reason attached. The toast that announced the
   // failure is gone four seconds later, and the person it was meant for was on another
@@ -149,6 +152,7 @@ export const useReleaseNotes = defineStore('release-notes', () => {
         // The note is written in the operator's active locale; the api's prompt body stays
         // a Ukrainian template and only the language directive varies.
         locale: locale.value,
+        groupBy: job.groupBy,
       });
       await create(job.workspaceId, {
         projectId: job.projectId,
@@ -182,7 +186,8 @@ export const useReleaseNotes = defineStore('release-notes', () => {
         j.projectId === input.projectId &&
         j.branch === input.branch &&
         j.rangeFrom === input.rangeFrom &&
-        j.rangeTo === input.rangeTo,
+        j.rangeTo === input.rangeTo &&
+        j.groupBy === input.groupBy,
     );
     if (already) return;
 

@@ -85,6 +85,7 @@ export class ReleaseNotesService {
       rangeTo: ask.rangeTo,
       commits,
       locale: ask.locale,
+      groupBy: ask.groupBy,
     });
 
     const append = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);

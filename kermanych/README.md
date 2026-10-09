@@ -977,6 +977,13 @@ That field is a real assistant, and it is deliberately narrow:
   clue the range or the branch was not the one you meant. A failed run keeps a row on the
   section screen with its reason and a retry. Editing, copying and deleting a stored note
   stay on the screen; the assistant has no verb for them and the prompt says so.
+  By default the note groups changes by meaning («New», «Improvements», «Fixes») and names
+  nobody. Tick «Звіт по людях» in the form — or ask the chat to split the note by person
+  («хто що зробив»), which adds `"groupBy": "person"` to the action — and the note gets one
+  section per commit author in the period, headed by their name, saying in the same plain
+  language what that person completed. Authors are read as git's `%aN`, so a repository's
+  `.mailmap` folds one person's aliases into one section; bots get a closing sentence, not a
+  section of their own.
 - **It reads the team's capacity.** Team Capacity is the one section marked `read`: the
   screen adds up the Jira board's remaining estimates (spread over business days up to
   each ticket's due date) and its worklogs against 8 h per person per business day, for a

@@ -35,6 +35,7 @@ const ask = {
   branch: 'main',
   rangeFrom: '2026-08-01',
   rangeTo: '2026-08-31',
+  groupBy: 'topic' as const,
 };
 
 // The cloud echoes an insert back as a stored row; only the columns the screen reads matter.
@@ -97,9 +98,15 @@ describe('release notes generation', () => {
     void store.generate(ask);
     void store.generate(ask);
     void store.generate({ ...ask, branch: 'release/2' });
+    // Same branch and period, other layout: a different document, so a different run.
+    void store.generate({ ...ask, groupBy: 'person' });
 
-    expect(generateReleaseNotes).toHaveBeenCalledTimes(2);
-    expect(store.jobs.map((j) => j.branch)).toEqual(['main', 'release/2']);
+    expect(generateReleaseNotes).toHaveBeenCalledTimes(3);
+    expect(store.jobs.map((j) => [j.branch, j.groupBy])).toEqual([
+      ['main', 'topic'],
+      ['release/2', 'topic'],
+      ['main', 'person'],
+    ]);
   });
 
   it('keeps the failed job on the list with the reason attached', async () => {
@@ -148,6 +155,7 @@ describe('release notes generation', () => {
       rangeFrom: '2026-08-01',
       rangeTo: '2026-08-31',
       locale: 'uk',
+      groupBy: 'topic',
     });
     expect(store.jobs).toHaveLength(0);
     expect((store.byWorkspace.w1 ?? []).map((n) => n.title)).toEqual(['Реліз 12']);

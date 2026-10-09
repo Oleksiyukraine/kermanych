@@ -35,6 +35,21 @@ export function isReleaseDate(v: string): boolean {
   return RELEASE_DATE_RE.test(v);
 }
 
+// How the note is laid out. `topic` is the original document — changes grouped by meaning
+// («New», «Improvements», «Fixes») with nobody named. `person` is a report per contributor:
+// one section per commit author in the period, each saying in the same plain language what
+// that person completed. Optional on the wire and defaulting to `topic`, so every caller that
+// predates the choice still gets exactly the document it always got.
+//
+// Shared for the reason `isReleaseDate` is: the action validator, the endpoint and the form
+// must agree on the set, and a third copy would drift.
+export const RELEASE_GROUPINGS = ["topic", "person"] as const;
+export type ReleaseGrouping = (typeof RELEASE_GROUPINGS)[number];
+
+export function isReleaseGrouping(v: unknown): v is ReleaseGrouping {
+  return (RELEASE_GROUPINGS as readonly unknown[]).includes(v);
+}
+
 // What the browser sends to POST /management/release-notes. The split mirrors the
 // management chat's: the browser names the project by id and says what only the cloud
 // knows (the workspace's name); the api resolves the id against ITS local registry for
@@ -52,6 +67,8 @@ export type ReleaseNotesAsk = {
   // written in it (release-notes-prompt.ts). Optional and defaulting to English — the
   // section's documented product default — when a caller omits it.
   locale?: Locale;
+  // How the note is laid out (see `ReleaseGrouping`). Absent means `topic`.
+  groupBy?: ReleaseGrouping;
 };
 
 // The generated document, NOT a stored row: the api has no cloud credentials, so the

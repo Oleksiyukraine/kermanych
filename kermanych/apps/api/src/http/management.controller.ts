@@ -2,6 +2,8 @@
 import { BadRequestException, Body, Controller, Post, Req } from "@nestjs/common";
 import {
   isReleaseDate,
+  isReleaseGrouping,
+  RELEASE_GROUPINGS,
   isRiskCategory,
   isRiskKind,
   isRiskResponse,
@@ -411,8 +413,23 @@ export class ManagementController {
     // Lexicographic IS chronological for YYYY-MM-DD — no Date parsing to disagree with git.
     if (rangeFrom > rangeTo) throw badRequest("period_start_after_end", "початок періоду пізніший за його кінець");
     const workspaceName = typeof b?.workspaceName === "string" ? b.workspaceName.trim() : "";
+    // Absent is the original by-topic note; anything present must be a layout this build
+    // writes — a typo silently falling back to «topic» would hand back the wrong document.
+    const groupBy = b?.groupBy ?? "topic";
+    if (!isReleaseGrouping(groupBy))
+      throw badRequest("group_by_invalid", `невідоме групування реліз-нот (${RELEASE_GROUPINGS.join(" | ")})`, {
+        allowed: RELEASE_GROUPINGS.join(" | "),
+      });
     try {
-      return await this.releases.generate({ projectId, workspaceName, branch, rangeFrom, rangeTo, locale: b?.locale });
+      return await this.releases.generate({
+        projectId,
+        workspaceName,
+        branch,
+        rangeFrom,
+        rangeTo,
+        locale: b?.locale,
+        groupBy,
+      });
     } catch (err) {
       // Unbound project, unknown branch, an empty range and a dead omp are all
       // operator-actionable sentences; a 500 would bury every one of them. A `CodedError`
