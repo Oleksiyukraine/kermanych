@@ -4,9 +4,11 @@
 // so a loopback redirect is the only wired-up-able path.
 //
 // The port is FIXED, not probed. It is baked into Supabase's redirect allow-list
-// (supabase/config.toml additional_redirect_urls) and into LOOPBACK_REDIRECT in
-// src/stores/auth.ts; a drifting port would produce a redirect URL Supabase
-// refuses. If 53170 is taken we fail loudly with EADDRINUSE instead.
+// (supabase/config.toml additional_redirect_urls), into LOOPBACK_REDIRECT in
+// src/stores/auth.ts, and into the Slack app's redirect (SLACK_OAUTH_REDIRECT in
+// apps/api/src/slack/slack-oauth.ts, `redirect_urls` in src/lib/slack-manifest.ts); a
+// drifting port would produce a redirect URL they refuse. If 53170 is taken we fail
+// loudly with EADDRINUSE instead.
 import { createServer, type Server } from 'node:http';
 
 export const OAUTH_PORT = 53170;

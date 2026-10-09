@@ -30,7 +30,15 @@ import type {
   DocsGateFailure,
   DocsPolicy,
 } from '@kermanych/core';
-import type { CloudProject, JiraIntegration, JiraIssue, LinearIntegration, LinearIssue, SlackIntegration } from '@kermanych/cloud';
+import type {
+  CloudProject,
+  JiraIntegration,
+  JiraIssue,
+  LinearIntegration,
+  LinearIssue,
+  ReleaseNotesSlack,
+  SlackIntegration,
+} from '@kermanych/cloud';
 import { globalTr } from '../boot/i18n';
 import { localizeError } from './i18n-coded';
 
@@ -279,6 +287,14 @@ export type SlackTokenStatus = { present: boolean; listening: boolean };
 export type SlackTokenResult = { teamId: string; teamName: string; botUserId: string };
 export type SlackChannelOption = { id: string; name: string; isPrivate: boolean };
 
+// ── Release notes → Slack, posted under the member's own name. The member's Slack user
+// token lives in this machine's registry like the bot's; the browser only ever sees whether
+// it exists and whose it is.
+export type SlackAccountStatus =
+  | { connected: false }
+  | { connected: true; teamName: string; userName: string; clientId: string };
+export type ReleaseNoteSent = { channelName: string; ts: string };
+
 export const api = {
   // LOCAL project rows. Creation and deletion live in the cloud (see stores/projects.ts);
   // these routes cache cloud config and own this machine's binding.
@@ -478,6 +494,26 @@ export const api = {
   slackConnect: (workspaceId: string, channelId: string): Promise<SlackIntegration> =>
     post<SlackIntegration>('/slack/integrations', { workspaceId, channelId }),
   slackDisconnect: (workspaceId: string): Promise<void> => del(`/slack/integrations/${workspaceId}`),
+
+  // This member's Slack account. Connecting is two calls around the desktop app's loopback:
+  // `slackAccountAuthorize` hands back the URL to open (the PKCE verifier stays in the api),
+  // and the code the loopback caught goes to `slackAccountComplete`.
+  slackAccount: (workspaceId: string): Promise<SlackAccountStatus> =>
+    get<SlackAccountStatus>(`/slack/account?workspace=${encodeURIComponent(workspaceId)}`),
+  slackAccountAuthorize: (workspaceId: string, clientId?: string): Promise<{ url: string }> =>
+    post<{ url: string }>('/slack/account/authorize', { workspaceId, clientId }),
+  slackAccountComplete: (workspaceId: string, code: string): Promise<SlackAccountStatus> =>
+    put<SlackAccountStatus>('/slack/account', { workspaceId, code }),
+  slackAccountDisconnect: (workspaceId: string): Promise<void> =>
+    del(`/slack/account?workspace=${encodeURIComponent(workspaceId)}`),
+  slackAccountChannels: (workspaceId: string): Promise<SlackChannelOption[]> =>
+    get<SlackChannelOption[]>(`/slack/account/channels?workspace=${encodeURIComponent(workspaceId)}`),
+  // The workspace's release-notes channel (owner), and sending one note to it (any member).
+  slackSetReleaseNotesChannel: (workspaceId: string, channelId: string): Promise<ReleaseNotesSlack> =>
+    put<ReleaseNotesSlack>('/slack/release-notes', { workspaceId, channelId }),
+  slackRemoveReleaseNotesChannel: (workspaceId: string): Promise<void> => del(`/slack/release-notes/${workspaceId}`),
+  slackSendReleaseNote: (workspaceId: string, noteId: string): Promise<ReleaseNoteSent> =>
+    post<ReleaseNoteSent>('/slack/release-notes/send', { workspaceId, noteId }),
 
   // How many status pushes THIS machine still owes the cloud. Only the local process can
   // see that, so the board polls it (see the api controller for why it is not an event).

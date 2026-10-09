@@ -312,7 +312,9 @@ Setting up the Slack app, once per workspace:
    manifest** at <https://api.slack.com/apps?new_app=1> in your Slack workspace. The
    manifest enables Socket Mode, the bot scopes `channels:history`, `groups:history`,
    `channels:read`, `groups:read`, `chat:write`, and the `message.channels` /
-   `message.groups` events.
+   `message.groups` events. It also carries what release notes need (below): the user
+   scopes `chat:write`, `channels:read`, `groups:read`, the redirect
+   `http://localhost:53170/callback` and PKCE.
 2. **Install to Workspace**, then copy the **Bot User OAuth Token** (`xoxb-…`) from
    *OAuth & Permissions*.
 3. In *Basic Information → App-Level Tokens* generate a token with the
@@ -355,6 +357,36 @@ Setting up the Slack app, once per workspace:
   owner. «Disconnect» removes the row and this machine's tokens.
 - **One Slack app per Kermanych workspace.** Two workspaces sharing one app would split
   its messages between machines that cannot see each other's workspace.
+
+#### Sending release notes to Slack
+
+A release note opened on the **Release Notes** screen has a **«Send to Slack»** button. It
+posts the note to the workspace's release-notes channel **under the Slack name of the
+member who pressed it** — a real message from that person, not from the bot. This works
+without the Q&A bot above; it only needs the same Slack app.
+
+- **The channel is set by the owner**, in the **Slack** button of the Release Notes toolbar:
+  paste the Slack app's **Client ID** (*Basic Information → App Credentials*), connect your
+  own Slack account, and pick the channel. Only channels you are a member of are listed. The
+  setting lives in the cloud row `workspace_release_notes_slack` (created by the additive
+  `20261009090000_release_notes_slack.sql` — push it before shipping this UI): the Client
+  ID, the Slack workspace and the channel, readable by members and written by the owner.
+- **An app created before this feature needs the new manifest.** Copy it (Integrations →
+  Slack, or the Release Notes Slack settings) and paste it into the app's *App Manifest*
+  page. Enabling PKCE marks the app as a public client, which Slack does not let you undo.
+- **Each member connects their own Slack account once**, on the first «Send to Slack» or in
+  the same settings. Kermanych opens Slack's consent page in your browser (OAuth with PKCE,
+  user scopes only, no client secret anywhere); the redirect comes back to the desktop app's
+  loopback listener on port 53170. Desktop app only — the browser build cannot connect.
+- **Your Slack token is local.** The user token (`xoxp-…`) is stored in this machine's
+  registry SQLite (`slack_user_tokens`), never in the cloud. «Disconnect» forgets it. A
+  token Slack stops accepting is forgotten on the next send, and the next press connects
+  again.
+- **You must be in the channel.** Slack posts a member's message only where they are a
+  member; otherwise the send says to join the channel first.
+- **Formatting.** Headings become bold lines, `**bold**` and links are converted to Slack's
+  markup. A note longer than about 3,500 characters is one channel message continued as
+  replies in its thread, in order.
 
 ### Why the backend is in the repository
 

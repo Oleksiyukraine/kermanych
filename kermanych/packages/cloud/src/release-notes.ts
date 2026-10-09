@@ -67,6 +67,16 @@ export async function listWorkspaceReleaseNotes(
   return (data as NoteRow[]).map(toWorkspaceReleaseNote);
 }
 
+// One note by id; `undefined` when it does not exist or the caller cannot read it.
+export async function getWorkspaceReleaseNote(
+  client: SupabaseClient,
+  id: string,
+): Promise<WorkspaceReleaseNote | undefined> {
+  const { data, error } = await client.from("workspace_release_notes").select(NOTE_COLUMNS).eq("id", id).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? toWorkspaceReleaseNote(data as NoteRow) : undefined;
+}
+
 export async function createWorkspaceReleaseNote(
   client: SupabaseClient,
   input: WorkspaceReleaseNoteInsert,

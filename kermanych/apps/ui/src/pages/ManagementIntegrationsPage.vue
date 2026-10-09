@@ -407,6 +407,7 @@ import type { SlackIntegration } from '@kermanych/cloud';
 import { getSlackIntegration } from '@kermanych/cloud';
 import { api, type JiraBoardOption, type LinearTeamOption, type SlackChannelOption } from '../lib/api';
 import { IS_PREVIEW } from '../lib/preview';
+import { SLACK_MANIFEST } from '../lib/slack-manifest';
 import { useAuth } from 'stores/auth';
 import { useJira } from 'stores/jira';
 import { useLinear } from 'stores/linear';
@@ -815,22 +816,6 @@ const disconnectingSlack = ref(false);
 // user already switched away from must not install its row here.
 let slackGeneration = 0;
 let slackRecheck: ReturnType<typeof setTimeout> | undefined;
-
-// The app the user creates from. Matches the api's expectations exactly: message events for
-// public and private channels, and nothing beyond reading/writing the channels it is in.
-const SLACK_MANIFEST = {
-  display_information: { name: 'Kermanych', description: 'Answers questions about your project documentation' },
-  features: { bot_user: { display_name: 'Kermanych', always_online: false } },
-  oauth_config: {
-    scopes: { bot: ['channels:history', 'groups:history', 'channels:read', 'groups:read', 'chat:write'] },
-  },
-  settings: {
-    event_subscriptions: { bot_events: ['message.channels', 'message.groups'] },
-    socket_mode_enabled: true,
-    org_deploy_enabled: false,
-    token_rotation_enabled: false,
-  },
-};
 
 // KSelect options carry only a label, so «private» is spelled out in it — the one fact
 // worth knowing before binding the bot to a channel not everyone can read.

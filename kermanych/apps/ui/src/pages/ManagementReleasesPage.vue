@@ -8,6 +8,11 @@
 
     <div class="rel__toolbar">
       <span class="rel__count mono">{{ notes.length ? t('management.releases.count', { count: notes.length }) : '' }}</span>
+      <!-- The section's Slack settings: the channel notes are sent to, and the member's
+           Slack account they are sent as. The label names the channel once it is set. -->
+      <KBtn variant="secondary" @click="slackOpen = true">
+        {{ slackRow ? t('releaseSlack.toolbarSet', { channel: slackRow.channelName }) : t('releaseSlack.toolbarUnset') }}
+      </KBtn>
       <KBtn variant="primary" @click="openGenerate">{{ t('management.releases.generate') }}</KBtn>
     </div>
 
@@ -166,6 +171,16 @@
       <template #controls>
         <template v-if="!editing">
           <KBtn variant="secondary" @click="startEdit">{{ t('management.releases.edit') }}</KBtn>
+          <!-- Posted under the pressing member's own Slack name. Without a channel it opens
+               the Slack settings, which say who sets one. -->
+          <KBtn
+            v-tip="slackRow ? t('releaseSlack.sendTip', { channel: slackRow.channelName }) : ''"
+            variant="secondary"
+            :loading="sending"
+            @click="sendToSlack"
+          >
+            {{ sent ? t('releaseSlack.sent') : t('releaseSlack.send') }}
+          </KBtn>
           <KBtn variant="primary" @click="copy">{{ copied ? t('management.releases.copied') : t('management.releases.copy') }}</KBtn>
         </template>
         <template v-else>
@@ -176,6 +191,8 @@
         </template>
       </template>
     </KModal>
+
+    <ReleaseSlackModal v-model="slackOpen" :workspace-id="workspaceId" />
   </section>
 </template>
 
@@ -202,6 +219,8 @@ import KCheckbox from 'components/kit/KCheckbox.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KTag from 'components/kit/KTag.vue';
 import { useReleaseNotes, type ReleaseNotesJob } from 'stores/release-notes';
+import { useReleaseSlack } from 'stores/release-slack';
+import ReleaseSlackModal from 'components/releases/ReleaseSlackModal.vue';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
 import { renderMarkdown } from '../lib/markdown';
@@ -211,6 +230,7 @@ import { useNow } from '../composables/useNow';
 const props = defineProps<{ workspaceId: string; workspaceName: string }>();
 
 const store = useReleaseNotes();
+const slack = useReleaseSlack();
 const projects = useProjects();
 const local = useOrchestrator();
 const now = useNow(60_000);
@@ -222,7 +242,10 @@ const { t } = useI18n();
 watch(
   () => props.workspaceId,
   (id) => {
-    if (id) void store.load(id);
+    if (id) {
+      void store.load(id);
+      void slack.load(id);
+    }
   },
   { immediate: true },
 );
@@ -406,6 +429,36 @@ async function copy(): Promise<void> {
   }
 }
 
+// ── Slack ─────────────────────────────────────────────────────────────────────
+
+const slackOpen = ref(false);
+const slackRow = computed(() => slack.settings[props.workspaceId] ?? null);
+const sending = ref(false);
+const sent = ref(false);
+
+// The store connects the member's Slack account first when there is none on this machine,
+// so this is one press whoever presses it. Feedback on the button, like Copy, plus a toast
+// naming the channel — the post is public and under the member's name.
+async function sendToSlack(): Promise<void> {
+  const note = current.value;
+  if (!note || sending.value) return;
+  if (!slackRow.value) {
+    slackOpen.value = true;
+    return;
+  }
+  sending.value = true;
+  try {
+    const res = await slack.send(props.workspaceId, note.id);
+    sent.value = true;
+    setTimeout(() => (sent.value = false), 2000);
+    local.notify(t('releaseSlack.notify.sent', { title: note.title, channel: `#${res.channelName}` }), 'info');
+  } catch (e) {
+    local.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    sending.value = false;
+  }
+}
+
 function startEdit(): void {
   if (!current.value) return;
   draftTitle.value = current.value.title;
@@ -470,7 +523,9 @@ async function saveEdit(): Promise<void> {
   gap: var(--k-sp-3);
 }
 
+// `margin-right: auto` keeps the count left and both buttons together on the right.
 .rel__count {
+  margin-right: auto;
   font-size: var(--k-fs-xs);
   color: var(--k-faint);
 }
