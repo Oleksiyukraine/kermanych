@@ -17,7 +17,6 @@ import { Injectable, Logger } from "@nestjs/common";
 import type { ReleaseNotesAsk, ReleaseNotesReply, AgentRuntimeKind } from "@kermanych/core";
 import { runOneShot } from "../runtime/one-shot";
 import { resolveRuntime } from "../runtime/resolve-runtime";
-import { languageAppendFor } from "../runtime/resolve-language";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { MANAGEMENT_TOOLS } from "./management-chat.service";
@@ -84,24 +83,24 @@ export class ReleaseNotesService {
       rangeFrom: ask.rangeFrom,
       rangeTo: ask.rangeTo,
       commits,
-      locale: ask.locale,
       groupBy: ask.groupBy,
     });
 
-    const append = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
+    // Deliberately no agent-language append: it tells the model to write every reply in the
+    // operator's chosen language, and this child's one reply IS the note, which is always
+    // English (release-notes-prompt.ts).
     const generated = await runOneShot({
       kind: this.runtimeFor(),
       cwd: project.localRepoPath,
       prompt,
       tools: [...MANAGEMENT_TOOLS],
-      ...(append ? { appendSystemPrompt: append } : {}),
       startedAt,
     });
     this.log.debug(`release notes: згенеровано ${generated.text.length} символів у ${project.localRepoPath}`);
     const { usage, model } = generated.spend;
 
     return {
-      title: titleOf(generated.text, `Реліз-ноти ${project.name} · ${ask.rangeFrom} — ${ask.rangeTo}`),
+      title: titleOf(generated.text, `Release notes: ${project.name} · ${ask.rangeFrom} — ${ask.rangeTo}`),
       markdown: generated.text,
       commitCount: commits.length,
       ...(usage === undefined ? {} : { usage }),

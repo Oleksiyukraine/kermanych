@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ManagementChatAsk, ReleaseCommit, ReleaseNotesAsk, RpcEvent } from "@kermanych/core";
 
-const calls: { kind: string; opts: { cwd: string; tools?: string[] } }[] = [];
+const calls: { kind: string; opts: { cwd: string; tools?: string[]; appendSystemPrompt?: string } }[] = [];
 // The events the mocked child "emits" the moment it is written to — one terminal turn.
 let script: RpcEvent[] = [];
 
@@ -136,5 +136,15 @@ describe("ReleaseNotesService runtime", () => {
     await svc.generate(notesAsk());
     expect(calls).toHaveLength(1);
     expect(calls[0]?.kind).toBe("claude-code");
+  });
+
+  // The child's one reply IS the note, and the note is always English: the operator's
+  // agent-language directive («write every reply in Ukrainian») must not reach it.
+  it("does not hand the child the operator's agent-language directive", async () => {
+    const r = registry();
+    r.setAuthSession({ userId: "u1", accessToken: "t", agentLanguage: "uk" });
+    await new ReleaseNotesService(r, fakeWorktree).generate(notesAsk());
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.opts.appendSystemPrompt).toBeUndefined();
   });
 });

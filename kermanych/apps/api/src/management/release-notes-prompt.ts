@@ -7,8 +7,7 @@
 // INTO the prompt rather than left for the model to dig out, because the child's tools are
 // read-only (no bash, so no `git log`) — but the tools still matter: a commit subject that
 // says nothing («fix», «wip») can be resolved by reading the code it touched.
-import type { Locale, ReleaseCommit, ReleaseGrouping } from "@kermanych/core";
-import { LANGUAGE_NAME } from "./management-prompt";
+import type { ReleaseCommit, ReleaseGrouping } from "@kermanych/core";
 
 // Upper bound on the commit block, in characters. A quarter's worth of a busy repo can be
 // megabytes of commit bodies; past this the tail is dropped and the prompt says so, which
@@ -53,6 +52,9 @@ export function commitsByAuthor(commits: ReleaseCommit[]): Map<string, ReleaseCo
   return new Map([...groups].sort(([a, ga], [b, gb]) => gb.length - ga.length || a.localeCompare(b)));
 }
 
+// No language input: every note is written in English, whatever the operator's UI locale,
+// agent language or the commits' own language. A note is read by the whole team and by
+// people outside it, and the workspace keeps one list of them.
 export function buildReleaseNotesPrompt(input: {
   workspaceName: string;
   projectName: string;
@@ -60,10 +62,6 @@ export function buildReleaseNotesPrompt(input: {
   rangeFrom: string;
   rangeTo: string;
   commits: ReleaseCommit[];
-  // The operator's active UI locale. The note is WRITTEN in it; the prompt body stays a
-  // Ukrainian template and only the language word below varies. Defaults to English — this
-  // section's documented product default — when a caller omits it.
-  locale?: Locale;
   // `topic` (default) groups changes by meaning; `person` writes one section per author.
   groupBy?: ReleaseGrouping;
 }): string {
@@ -73,7 +71,12 @@ export function buildReleaseNotesPrompt(input: {
   // still named, with a count, rather than silently missing from a report about people.
   const authors = input.groupBy === "person" ? commitsByAuthor(input.commits) : undefined;
   const { block, included, truncated } = commitsBlock(authors ? [...authors.values()].flat() : input.commits);
-  const language = LANGUAGE_NAME[input.locale ?? "en"];
+  const language = [
+    // Stated as its own rule, ahead of the readability rule, because the commits printed
+    // below are routinely Ukrainian and a model left alone mirrors the language it reads.
+    `- МОВА ДОКУМЕНТА — АНГЛІЙСЬКА, завжди: заголовки, пункти, речення й заголовок першого рівня. Мова комітів, репозиторію чи цього завдання на неї не впливає — коміти іншою мовою перекладай англійською, не цитуй.`,
+    `- Власні назви не перекладай: назву продукту, імена людей і підписи інтерфейсу пиши так, як вони існують, усередині англійського речення.`,
+  ];
   const layout = authors
     ? [
         `- Розділи документ за людьми. Для кожної людини зі списку «Учасники» нижче — заголовок другого рівня, який є РІВНО її імʼям, як воно записане у списку (без нумерації, ролей і підписів), у тому самому порядку.`,
@@ -97,11 +100,10 @@ export function buildReleaseNotesPrompt(input: {
     `Репозиторій: ${input.projectName}. Гілка: ${input.branch}. Період: ${input.rangeFrom} — ${input.rangeTo} включно.`,
     ``,
     `Вимоги до документа:`,
-    // The requirement the user set for this feature, stated first: the reader is NOT an
-    // engineer, and every rule below serves that one. The note's LANGUAGE is the operator's
-    // locale (default English — this section's product default); the group headings below
-    // stay English example labels, which the model adapts to the chosen language.
-    `- Пиши ${language}, простою мовою, зрозумілою людині без технічної освіти. Пояснюй, що змінилося ДЛЯ КОРИСТУВАЧА і чим це корисно — не як воно реалізоване.`,
+    ...language,
+    // The requirement the user set for this feature: the reader is NOT an engineer, and
+    // every rule below serves that one.
+    `- Пиши простою мовою, зрозумілою людині без технічної освіти. Пояснюй, що змінилося ДЛЯ КОРИСТУВАЧА і чим це корисно — не як воно реалізоване.`,
     `- Жодних хешів комітів, назв файлів, назв гілок, імен функцій і технічного жаргону в тексті.`,
     ...layout,
     `- Якщо з коміта незрозуміло, що саме він змінює для користувача — відкрий код репозиторію (read/grep/glob) і розберися, перш ніж писати.`,

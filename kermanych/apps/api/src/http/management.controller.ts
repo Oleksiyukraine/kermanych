@@ -427,7 +427,6 @@ export class ManagementController {
         branch,
         rangeFrom,
         rangeTo,
-        locale: b?.locale,
         groupBy,
       });
     } catch (err) {
