@@ -74,9 +74,10 @@ Settings → Застосунок → «ШІ-провайдер». It is stored 
 (`profiles.agent_language`) and cached by the local API; `KERMANYCH_LANGUAGE` (any of the
 codes, e.g. `uk` or `en-ste-80`) is a dev override. Unset means no preference: the agent keeps
 its own default. The choice reaches every managed spawn — agents, chats, discussions, reviews,
-resumes, the «Менеджмент» chat and release notes — as a system-prompt append
+resumes and the «Менеджмент» chat — as a system-prompt append
 (`--append-system-prompt` for `omp`, `systemPrompt.append` for `claude-code`), read fresh on
-each spawn. Native sessions get nothing.
+each spawn. Native sessions get nothing, and neither does the release-notes generator: its one
+reply is the note, and a note is always written in English.
 
 Three entries are levels of [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/),
 the controlled English of aircraft maintenance manuals, rather than plain languages:
@@ -984,6 +985,10 @@ That field is a real assistant, and it is deliberately narrow:
   language what that person completed. Authors are read as git's `%aN`, so a repository's
   `.mailmap` folds one person's aliases into one section; bots get a closing sentence, not a
   section of their own.
+  Every note is written in English — from the form and from the chat alike, whatever the
+  interface language, the agent communication language or the language the commits are
+  written in. Commits in another language are translated; names of people, the product and
+  interface labels stay as they are.
 - **It reads the team's capacity.** Team Capacity is the one section marked `read`: the
   screen adds up the Jira board's remaining estimates (spread over business days up to
   each ticket's due date) and its worklogs against 8 h per person per business day, for a

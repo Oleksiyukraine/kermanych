@@ -81,11 +81,9 @@ const UNBOUND = "не привʼязаний на цій машині";
 
 // The one line that varies with the operator's locale. The prompt bodies stay Ukrainian
 // templates on purpose — they are the tested contract — so only the "answer in X" directive
-// is parameterised. Shared with the release-notes generator, which names the same language.
-// `localeDirective` defaults to uk (rule ґ: «за замовчуванням українською»), so a client
-// that sends no locale keeps the previous behaviour; the release-notes generator passes
-// its own default (en, its documented product default) explicitly.
-export const LANGUAGE_NAME: Record<Locale, string> = { uk: "українською", en: "англійською" };
+// is parameterised. `localeDirective` defaults to uk (rule ґ: «за замовчуванням
+// українською»), so a client that sends no locale keeps the previous behaviour.
+const LANGUAGE_NAME: Record<Locale, string> = { uk: "українською", en: "англійською" };
 
 export function localeDirective(locale: Locale = "uk"): string {
   return `Відповідай ${LANGUAGE_NAME[locale]} мовою (${locale}).`;

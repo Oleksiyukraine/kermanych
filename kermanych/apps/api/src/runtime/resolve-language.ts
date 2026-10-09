@@ -13,8 +13,9 @@ export function resolveLanguage(
 }
 
 // The system-prompt append for a launch, or undefined when no language is chosen. Shared by
-// every createRuntime() call site (supervisor, management chat, release notes) so the
-// directive text and its resolution precedence live in exactly one place.
+// every createRuntime() call site that takes one (supervisor, management chat) so the
+// directive text and its resolution precedence live in exactly one place. The release-notes
+// generator does not: its one reply is the note, and the note is always English.
 export function languageAppendFor(
   cached: AgentLanguage | undefined,
   env: string | undefined = process.env.KERMANYCH_LANGUAGE,

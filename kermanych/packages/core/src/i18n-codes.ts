@@ -177,9 +177,10 @@ type AssertNever<T extends never> = T;
 type _NoticeExhaustive = AssertNever<Exclude<NoticeCode, (typeof NOTICE_CODES)[number]>>;
 type _ApiErrorExhaustive = AssertNever<Exclude<ApiErrorCode, (typeof API_ERROR_CODES)[number]>>;
 
-// The locales the UI ships. The api threads the operator's active locale into the model
-// prompts (management-prompt.ts / release-notes-prompt.ts) so the answer is written in it;
-// the prompt bodies stay Ukrainian templates and only the "answer in X" directive varies.
+// The locales the UI ships. The api threads the operator's active locale into the management
+// chat prompt (management-prompt.ts) so the answer is written in it; the prompt body stays a
+// Ukrainian template and only the "answer in X" directive varies. Release notes do not take
+// it: they are always English (release-notes-prompt.ts).
 export type Locale = "uk" | "en";
 
 // Interpolation values a localized message reads. Numbers (seconds, count) travel unquoted

@@ -154,7 +154,6 @@ describe('release notes generation', () => {
       branch: 'main',
       rangeFrom: '2026-08-01',
       rangeTo: '2026-08-31',
-      locale: 'uk',
       groupBy: 'topic',
     });
     expect(store.jobs).toHaveLength(0);

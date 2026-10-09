@@ -36,27 +36,17 @@ describe("buildReleaseNotesPrompt", () => {
     expect(prompt).not.toContain("Платформа");
   });
 
-  // The whole feature request in one assertion: the reader is not an engineer, and the
-  // document is written in English by default.
-  it("demands plain language for a non-technical reader, in English", () => {
+  // The whole feature request in one assertion: the reader is not an engineer.
+  it("demands plain language for a non-technical reader", () => {
     expect(prompt).toContain("без технічної освіти");
-    expect(prompt).toContain("Пиши англійською");
   });
 
-  // The operator's locale drives the note's language; the prompt body stays a Ukrainian
-  // template and only the language word varies. Absent locale keeps the English default.
-  it("writes the note in the operator's locale when one is given", () => {
-    const uk = buildReleaseNotesPrompt({
-      workspaceName: "Acme",
-      projectName: "мобільний-застосунок",
-      branch: "main",
-      rangeFrom: "2026-08-01",
-      rangeTo: "2026-08-31",
-      commits: [commit()],
-      locale: "uk",
-    });
-    expect(uk).toContain("Пиши українською");
-    expect(uk).not.toContain("Пиши англійською");
+  // Every note is English, whatever language the commits (here Ukrainian) are written in:
+  // the rule names English and tells the model to translate rather than quote.
+  it("always writes the note in English, translating commits in another language", () => {
+    expect(prompt).toContain("МОВА ДОКУМЕНТА — АНГЛІЙСЬКА, завжди");
+    expect(prompt).toContain("коміти іншою мовою перекладай англійською");
+    expect(prompt).not.toContain("українською");
   });
 
   it("carries each commit's subject and its indented body", () => {
