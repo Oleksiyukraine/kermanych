@@ -54,6 +54,9 @@ export { PLATFORMS, type Platform } from "./platform";
 export { TERMINAL_SCROLLBACK } from "./terminal";
 export {
   isReleaseDate,
+  isReleaseGrouping,
+  RELEASE_GROUPINGS,
+  type ReleaseGrouping,
   type ReleaseCommit,
   type ReleaseNotesAsk,
   type ReleaseNotesReply,

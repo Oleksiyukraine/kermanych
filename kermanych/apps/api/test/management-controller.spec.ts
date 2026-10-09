@@ -94,6 +94,11 @@ describe("ManagementController — release-notes validations", () => {
     const body = await refusal(() => make().releaseNotes(relAsk({ rangeFrom: "2026-08-31", rangeTo: "2026-08-01" })));
     expect(body.code).toBe("period_start_after_end");
   });
+  // A misspelt layout must not quietly fall back to the by-topic document.
+  it("codes an unknown grouping", async () => {
+    const body = await refusal(() => make().releaseNotes(relAsk({ groupBy: "team" as never })));
+    expect(body).toMatchObject({ code: "group_by_invalid", params: { allowed: "topic | person" } });
+  });
 });
 
 describe("ManagementController — CodedError relay", () => {

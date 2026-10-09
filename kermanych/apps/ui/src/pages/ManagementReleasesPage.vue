@@ -41,6 +41,7 @@
           <span class="rel__row-meta">
             <KTag>{{ j.projectName }}</KTag>
             <KTag>{{ j.branch }}</KTag>
+            <KTag v-if="j.groupBy === 'person'">{{ t('management.releases.byPersonTag') }}</KTag>
             <span class="rel__row-range mono">{{ j.rangeFrom }} — {{ j.rangeTo }}</span>
           </span>
           <span v-if="j.error" class="rel__row-error">{{ j.error }}</span>
@@ -96,6 +97,10 @@
             <KDateField v-model="gen.rangeTo" :label="t('management.releases.rangeToLabel')" />
           </div>
         </div>
+
+        <!-- Off by default: the note is the by-topic document it always was. On, it is one
+             section per commit author in the period, each in the same plain language. -->
+        <KCheckbox v-model="gen.byPerson" :label="t('management.releases.byPersonLabel')" />
 
         <!-- Where the material comes from and what pressing the button costs, said before
              it is pressed: the commits are read from THIS machine's clone, the writing
@@ -193,6 +198,7 @@ import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KDateField from 'components/kit/KDateField.vue';
 import KField from 'components/kit/KField.vue';
+import KCheckbox from 'components/kit/KCheckbox.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KTag from 'components/kit/KTag.vue';
 import { useReleaseNotes, type ReleaseNotesJob } from 'stores/release-notes';
@@ -251,6 +257,7 @@ const gen = reactive({
   branch: '',
   rangeFrom: '',
   rangeTo: '',
+  byPerson: false,
 });
 
 // The workspace's projects, with the binding state said IN the picker: an unbound project
@@ -323,6 +330,7 @@ function submitGenerate(): void {
     branch: gen.branch,
     rangeFrom: gen.rangeFrom,
     rangeTo: gen.rangeTo,
+    groupBy: gen.byPerson ? 'person' : 'topic',
   });
   genOpen.value = false;
 }

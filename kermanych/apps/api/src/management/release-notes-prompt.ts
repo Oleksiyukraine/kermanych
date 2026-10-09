@@ -7,7 +7,7 @@
 // INTO the prompt rather than left for the model to dig out, because the child's tools are
 // read-only (no bash, so no `git log`) — but the tools still matter: a commit subject that
 // says nothing («fix», «wip») can be resolved by reading the code it touched.
-import type { Locale, ReleaseCommit } from "@kermanych/core";
+import type { Locale, ReleaseCommit, ReleaseGrouping } from "@kermanych/core";
 import { LANGUAGE_NAME } from "./management-prompt";
 
 // Upper bound on the commit block, in characters. A quarter's worth of a busy repo can be
@@ -39,6 +39,20 @@ export function commitsBlock(commits: ReleaseCommit[]): { block: string; include
   return { block: lines.join("\n"), included: lines.length, truncated: false };
 }
 
+// The period's commits per author, in the order the per-person note writes its sections:
+// most commits first, ties by name so the same history always yields the same order. Each
+// author's commits keep git's newest-first order. Keyed by the author name exactly as git
+// printed it (`%aN`, so a repository's .mailmap already folds one person's aliases).
+export function commitsByAuthor(commits: ReleaseCommit[]): Map<string, ReleaseCommit[]> {
+  const groups = new Map<string, ReleaseCommit[]>();
+  for (const c of commits) {
+    const group = groups.get(c.author);
+    if (group) group.push(c);
+    else groups.set(c.author, [c]);
+  }
+  return new Map([...groups].sort(([a, ga], [b, gb]) => gb.length - ga.length || a.localeCompare(b)));
+}
+
 export function buildReleaseNotesPrompt(input: {
   workspaceName: string;
   projectName: string;
@@ -50,9 +64,33 @@ export function buildReleaseNotesPrompt(input: {
   // Ukrainian template and only the language word below varies. Defaults to English — this
   // section's documented product default — when a caller omits it.
   locale?: Locale;
+  // `topic` (default) groups changes by meaning; `person` writes one section per author.
+  groupBy?: ReleaseGrouping;
 }): string {
-  const { block, included, truncated } = commitsBlock(input.commits);
+  // Per person, each author's commits are printed together and in section order, so the
+  // model attributes from one contiguous run instead of re-sorting a mixed list. The roster
+  // is counted over ALL commits, before the cap: a person whose commits fell past it is
+  // still named, with a count, rather than silently missing from a report about people.
+  const authors = input.groupBy === "person" ? commitsByAuthor(input.commits) : undefined;
+  const { block, included, truncated } = commitsBlock(authors ? [...authors.values()].flat() : input.commits);
   const language = LANGUAGE_NAME[input.locale ?? "en"];
+  const layout = authors
+    ? [
+        `- Розділи документ за людьми. Для кожної людини зі списку «Учасники» нижче — заголовок другого рівня, який є РІВНО її імʼям, як воно записане у списку (без нумерації, ролей і підписів), у тому самому порядку.`,
+        `- Під іменем — що ця людина завершила за період: пункти простою мовою про те, що змінилося для користувача і чим це корисно. Споріднені коміти однієї людини обʼєднуй в один пункт.`,
+        `- Пункт у розділі людини пишеться ЛИШЕ з її власних комітів: не приписуй їй чужої роботи й не перенось її роботу іншим.`,
+        `- Якщо вся робота людини — дрібниці, яких користувач не помітить (рефакторинг, залежності, CI), напиши в її розділі одне речення про це, але людину не пропускай.`,
+        `- Автоматичні облікові записи (боти, наприклад «dependabot[bot]») окремого розділу не отримують: їхню роботу згадай одним реченням наприкінці або пропусти.`,
+        ...(truncated
+          ? [
+              `- Список комітів нижче обрізано за обсягом. Якщо комітів людини в ньому немає, напиши в її розділі одним реченням, скільки змін вона зробила, — не вигадуй, які саме.`,
+            ]
+          : []),
+      ]
+    : [
+        `- Згрупуй зміни за смислом: «New», «Improvements», «Fixes» (заголовки другого рівня; порожні групи пропусти). Споріднені коміти об'єднуй в один пункт.`,
+        `- Дрібниці, які користувач не помітить (рефакторинг, залежності, CI), збери одним реченням наприкінці або пропусти.`,
+      ];
   return [
     `Ти пишеш реліз-ноти для продукту «${input.workspaceName}».`,
     ``,
@@ -65,13 +103,15 @@ export function buildReleaseNotesPrompt(input: {
     // stay English example labels, which the model adapts to the chosen language.
     `- Пиши ${language}, простою мовою, зрозумілою людині без технічної освіти. Пояснюй, що змінилося ДЛЯ КОРИСТУВАЧА і чим це корисно — не як воно реалізоване.`,
     `- Жодних хешів комітів, назв файлів, назв гілок, імен функцій і технічного жаргону в тексті.`,
-    `- Згрупуй зміни за смислом: «New», «Improvements», «Fixes» (заголовки другого рівня; порожні групи пропусти). Споріднені коміти об'єднуй в один пункт.`,
-    `- Дрібниці, які користувач не помітить (рефакторинг, залежності, CI), збери одним реченням наприкінці або пропусти.`,
+    ...layout,
     `- Якщо з коміта незрозуміло, що саме він змінює для користувача — відкрий код репозиторію (read/grep/glob) і розберися, перш ніж писати.`,
     `- Перший рядок — заголовок першого рівня \`#\`, що називає продукт і період.`,
     `- У відповіді — ЛИШЕ готовий markdown-документ. Без преамбули, без коментарів поза документом, без запитань.`,
     ``,
-    `Коміти за період (${included}${truncated ? ` з ${input.commits.length} — список обрізано за обсягом, узагальни решту обережно` : ""}):`,
+    ...(authors
+      ? [`Учасники (імʼя — кількість комітів за період):`, ...[...authors].map(([name, own]) => `- ${name} — ${own.length}`), ``]
+      : []),
+    `Коміти за період${authors ? `, згруповані за автором` : ""} (${included}${truncated ? ` з ${input.commits.length} — список обрізано за обсягом, узагальни решту обережно` : ""}):`,
     ``,
     block,
   ].join("\n");

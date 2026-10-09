@@ -235,6 +235,7 @@ export const useManagementChat = defineStore('management-chat', () => {
       branch: action.branch,
       rangeFrom: action.rangeFrom,
       rangeTo: action.rangeTo,
+      groupBy: action.groupBy ?? 'topic',
     });
     result(
       workspaceId,
