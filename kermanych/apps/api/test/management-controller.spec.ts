@@ -36,7 +36,7 @@ const chatAsk = (over: Partial<ManagementChatAsk> = {}): ManagementChatAsk =>
 const REQ = { user: { id: "u1" } };
 
 const relAsk = (over: Partial<ReleaseNotesAsk> = {}): ReleaseNotesAsk =>
-  ({ projectId: "p1", workspaceName: "A", branch: "main", rangeFrom: "2026-08-01", rangeTo: "2026-08-31", ...over }) as ReleaseNotesAsk;
+  ({ sources: [{ projectId: "p1", branch: "main" }], workspaceName: "A", rangeFrom: "2026-08-01", rangeTo: "2026-08-31", ...over }) as ReleaseNotesAsk;
 
 describe("ManagementController — chat validations", () => {
   it("codes a missing conversationId", async () => {
@@ -82,10 +82,39 @@ describe("ManagementController — chat validations", () => {
 
 describe("ManagementController — release-notes validations", () => {
   it("codes a missing project", async () => {
-    expect((await refusal(() => make().releaseNotes(relAsk({ projectId: "" })))).code).toBe("project_missing");
+    expect((await refusal(() => make().releaseNotes(relAsk({ sources: [] })))).code).toBe("project_missing");
+    expect((await refusal(() => make().releaseNotes(relAsk({ sources: [{ projectId: " ", branch: "main" }] })))).code).toBe(
+      "project_missing",
+    );
   });
-  it("codes a missing branch", async () => {
-    expect((await refusal(() => make().releaseNotes(relAsk({ branch: "" })))).code).toBe("branch_missing");
+  // Every source is checked: a second project without a branch refuses the whole note
+  // rather than generating one about the first project alone.
+  it("codes a missing branch on any source", async () => {
+    const sources = [
+      { projectId: "p1", branch: "dev" },
+      { projectId: "p2", branch: "" },
+    ];
+    expect((await refusal(() => make().releaseNotes(relAsk({ sources })))).code).toBe("branch_missing");
+  });
+  it("codes a project named twice", async () => {
+    const sources = [
+      { projectId: "p1", branch: "dev" },
+      { projectId: "p1", branch: "main" },
+    ];
+    expect((await refusal(() => make().releaseNotes(relAsk({ sources })))).code).toBe("project_duplicate");
+  });
+  it("hands the service every source, trimmed, in the order given", async () => {
+    let seen: ReleaseNotesAsk | undefined;
+    const ctl = make({ releases: { generate: async (a: ReleaseNotesAsk) => ((seen = a), {}) } as never });
+    const sources = [
+      { projectId: " p2 ", branch: " main " },
+      { projectId: "p1", branch: "dev" },
+    ];
+    await ctl.releaseNotes(relAsk({ sources }));
+    expect(seen?.sources).toEqual([
+      { projectId: "p2", branch: "main" },
+      { projectId: "p1", branch: "dev" },
+    ]);
   });
   it("codes a malformed period", async () => {
     expect((await refusal(() => make().releaseNotes(relAsk({ rangeFrom: "nope" })))).code).toBe("period_format_invalid");

@@ -58,6 +58,7 @@ export {
   RELEASE_GROUPINGS,
   type ReleaseGrouping,
   type ReleaseCommit,
+  type ReleaseSource,
   type ReleaseNotesAsk,
   type ReleaseNotesReply,
 } from "./release-notes";

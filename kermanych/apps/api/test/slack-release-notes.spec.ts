@@ -58,6 +58,7 @@ const settings = (over: Partial<ReleaseNotesSlack> = {}): ReleaseNotesSlack => (
 const note = (over: Partial<WorkspaceReleaseNote> = {}): WorkspaceReleaseNote => ({
   id: "n1",
   workspaceId: "w1",
+  sources: [{ projectName: "app", branch: "main" }],
   projectName: "app",
   branch: "main",
   rangeFrom: "2026-09-01",

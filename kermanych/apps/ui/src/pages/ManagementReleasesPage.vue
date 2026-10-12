@@ -44,8 +44,7 @@
             {{ j.error ? t('management.releases.jobFailed') : t('management.releases.jobRunning') }}
           </span>
           <span class="rel__row-meta">
-            <KTag>{{ j.projectName }}</KTag>
-            <KTag>{{ j.branch }}</KTag>
+            <KTag v-for="s in j.sources" :key="s.projectId">{{ sourceLabel(s) }}</KTag>
             <KTag v-if="j.groupBy === 'person'">{{ t('management.releases.byPersonTag') }}</KTag>
             <span class="rel__row-range mono">{{ j.rangeFrom }} — {{ j.rangeTo }}</span>
           </span>
@@ -62,8 +61,7 @@
         <div class="rel__row-main">
           <span class="rel__row-title">{{ n.title }}</span>
           <span class="rel__row-meta">
-            <KTag>{{ n.projectName }}</KTag>
-            <KTag>{{ n.branch }}</KTag>
+            <KTag v-for="(s, i) in n.sources" :key="i">{{ sourceLabel(s) }}</KTag>
             <span class="rel__row-range mono">{{ n.rangeFrom }} — {{ n.rangeTo }}</span>
           </span>
         </div>
@@ -76,31 +74,41 @@
          so the form holds nothing anybody is waiting on. -->
     <KModal v-model="genOpen" :title="t('management.releases.genTitle')" width="600px">
       <div class="rel__form">
-        <!-- One picker, full width: the project IS the release's shape — its repository is
-             the front-end, the back-end or an app — so naming it is the whole answer to
-             «which product does this note cover?». -->
+        <!-- One or more projects. Each project IS a shipping shape — its repository is the
+             front-end, the back-end or an app — so picking two writes one note with one
+             section per project, in the order they were picked. -->
         <KSelect
-          v-model="gen.projectId"
+          multiple
+          :values="pickedProjects.map((p) => p.id)"
           :label="t('management.releases.projectLabel')"
           :options="projectOptions"
-          :placeholder="t('management.releases.projectPlaceholder')"
+          :summary="projectSummary"
+          @update:values="pickProjects"
         />
-        <div class="rel__form-row">
-          <!-- `searchable`: the options are the bound repo's whole `refs/heads`, and a
-               release is written off a release branch whose name the operator knows — so
-               the way to it is to type it, not to scroll the repo's history of branches. -->
+        <!-- One branch per picked project, in section order: the back-end may ship from
+             `dev` while the front-end ships from `main`. `searchable`: the options are the
+             bound repo's whole `refs/heads`, and a release is written off a release branch
+             whose name the operator knows — so the way to it is to type it. -->
+        <div v-if="pickedProjects.length" class="rel__form-branches">
           <KSelect
-            v-model="gen.branch"
-            :label="t('management.releases.branchLabel')"
-            :options="branches"
-            :placeholder="branchPlaceholder"
-            :disabled="!branches.length"
+            v-for="p in pickedProjects"
+            :key="p.id"
+            :model-value="gen.branches[p.id] ?? ''"
+            :label="t('management.releases.branchFor', { project: p.name })"
+            :options="branchLists[p.id]?.branches ?? []"
+            :placeholder="branchPlaceholder(p.id)"
+            :disabled="!branchLists[p.id]?.branches.length"
             searchable
+            @update:model-value="(v: string) => (gen.branches[p.id] = v)"
           />
-          <div class="rel__form-range">
-            <KDateField v-model="gen.rangeFrom" :label="t('management.releases.rangeFromLabel')" />
-            <KDateField v-model="gen.rangeTo" :label="t('management.releases.rangeToLabel')" />
-          </div>
+        </div>
+        <p v-if="pickedProjects.length > 1" class="rel__form-hint">
+          {{ t('management.releases.multiHint') }}
+        </p>
+
+        <div class="rel__form-range">
+          <KDateField v-model="gen.rangeFrom" :label="t('management.releases.rangeFromLabel')" />
+          <KDateField v-model="gen.rangeTo" :label="t('management.releases.rangeToLabel')" />
         </div>
 
         <!-- Off by default: the note is the by-topic document it always was. On, it is one
@@ -136,8 +144,7 @@
     >
       <template #head-meta>
         <span v-if="current" class="rel__doc-meta">
-          <KTag>{{ current.projectName }}</KTag>
-          <KTag>{{ current.branch }}</KTag>
+          <KTag v-for="(s, i) in current.sources" :key="i">{{ sourceLabel(s) }}</KTag>
           <KTag>{{ current.rangeFrom }} — {{ current.rangeTo }}</KTag>
         </span>
       </template>
@@ -276,8 +283,11 @@ function isoDaysAgo(days: number): string {
 
 const genOpen = ref(false);
 const gen = reactive({
-  projectId: '',
-  branch: '',
+  // The picked projects, in the order they were picked — the order of the note's sections.
+  projectIds: [] as string[],
+  // The branch picked for each project, kept while the form lives so unticking a project
+  // and ticking it again does not lose the branch the operator chose.
+  branches: {} as Record<string, string>,
   rangeFrom: '',
   rangeTo: '',
   byPerson: false,
@@ -286,44 +296,60 @@ const gen = reactive({
 // The workspace's projects, with the binding state said IN the picker: an unbound project
 // is still choosable (the error will name the machine), but the operator should not have
 // to press «Згенерувати» to learn why nothing can come back.
+const workspaceProjects = computed(() => projects.projects.filter((p) => p.workspaceId === props.workspaceId));
 const projectOptions = computed<KSelectOption[]>(() =>
-  projects.projects
-    .filter((p) => p.workspaceId === props.workspaceId)
-    .map((p) => {
-      const bound = !!local.projects.find((lp) => lp.id === p.id)?.localRepoPath;
-      return { value: p.id, label: bound ? p.name : t('management.releases.projectUnbound', { name: p.name }) };
-    }),
+  workspaceProjects.value.map((p) => {
+    const bound = !!local.projects.find((lp) => lp.id === p.id)?.localRepoPath;
+    return { value: p.id, label: bound ? p.name : t('management.releases.projectUnbound', { name: p.name }) };
+  }),
 );
 
-// Branches of the chosen project's local clone. The DEFAULT selection is the project's
+// The picked projects of THIS workspace in pick order: an id left over from the workspace
+// the sidebar showed before is not a project this note can cover.
+const pickedProjects = computed(() =>
+  gen.projectIds.flatMap((id) => workspaceProjects.value.find((p) => p.id === id) ?? []),
+);
+
+const projectSummary = computed(() =>
+  pickedProjects.value.length
+    ? pickedProjects.value.map((p) => p.name).join(', ')
+    : t('management.releases.projectPlaceholder'),
+);
+
+// Branches of each picked project's local clone. The DEFAULT selection is the project's
 // default branch from its settings — the user's requirement — falling back to the repo's
-// current HEAD; the picker then lets the operator switch to any local branch.
-const branches = ref<string[]>([]);
-const branchesFailed = ref(false);
+// current HEAD; each picker then lets the operator switch to any local branch.
+const branchLists = ref<Record<string, { branches: string[]; failed: boolean }>>({});
 
-const branchPlaceholder = computed(() => {
-  if (!gen.projectId) return t('management.releases.branchPlaceholderNoProject');
-  return branchesFailed.value ? t('management.releases.branchPlaceholderFailed') : t('management.releases.branchPlaceholderEmpty');
-});
+function branchPlaceholder(projectId: string): string {
+  return branchLists.value[projectId]?.failed
+    ? t('management.releases.branchPlaceholderFailed')
+    : t('management.releases.branchPlaceholderEmpty');
+}
 
-watch(
-  () => gen.projectId,
-  async (id) => {
-    branches.value = [];
-    branchesFailed.value = false;
-    gen.branch = '';
-    if (!id) return;
-    try {
-      const info = await local.listBranches(id);
-      branches.value = info.branches;
-      gen.branch = info.default ?? info.current ?? info.branches[0] ?? '';
-    } catch {
-      // GET /projects/:id/branches answers `project not bound` without a binding — the
-      // placeholder says so, and the generate button stays disabled without a branch.
-      branchesFailed.value = true;
-    }
-  },
-);
+// A newly picked project reads its branches fresh — the clone may have grown a release
+// branch since the form was last open — and keeps the branch already chosen for it if that
+// branch still exists.
+async function loadBranches(projectId: string): Promise<void> {
+  try {
+    const info = await local.listBranches(projectId);
+    branchLists.value = { ...branchLists.value, [projectId]: { branches: info.branches, failed: false } };
+    const kept = gen.branches[projectId];
+    gen.branches[projectId] =
+      kept && info.branches.includes(kept) ? kept : (info.default ?? info.current ?? info.branches[0] ?? '');
+  } catch {
+    // GET /projects/:id/branches answers `project not bound` without a binding — the
+    // placeholder says so, and the generate button stays disabled without a branch.
+    branchLists.value = { ...branchLists.value, [projectId]: { branches: [], failed: true } };
+    gen.branches[projectId] = '';
+  }
+}
+
+function pickProjects(ids: string[]): void {
+  const added = ids.filter((id) => !gen.projectIds.includes(id));
+  gen.projectIds = ids;
+  for (const id of added) void loadBranches(id);
+}
 
 function openGenerate(): void {
   gen.rangeFrom = gen.rangeFrom || isoDaysAgo(30);
@@ -333,8 +359,8 @@ function openGenerate(): void {
 
 const canGenerate = computed(
   () =>
-    gen.projectId !== '' &&
-    gen.branch !== '' &&
+    pickedProjects.value.length > 0 &&
+    pickedProjects.value.every((p) => !!gen.branches[p.id]) &&
     gen.rangeFrom !== '' &&
     gen.rangeTo !== '',
 );
@@ -348,14 +374,22 @@ function submitGenerate(): void {
   void store.generate({
     workspaceId: props.workspaceId,
     workspaceName: props.workspaceName,
-    projectId: gen.projectId,
-    projectName: projects.projects.find((p) => p.id === gen.projectId)?.name ?? gen.projectId,
-    branch: gen.branch,
+    sources: pickedProjects.value.map((p) => ({
+      projectId: p.id,
+      projectName: p.name,
+      branch: gen.branches[p.id] ?? '',
+    })),
     rangeFrom: gen.rangeFrom,
     rangeTo: gen.rangeTo,
     groupBy: gen.byPerson ? 'person' : 'topic',
   });
   genOpen.value = false;
+}
+
+// A project and the branch it was read from, as one tag: with two projects on the row, two
+// loose branch tags would not say which branch belongs to which project.
+function sourceLabel(s: { projectName: string; branch: string }): string {
+  return `${s.projectName} · ${s.branch}`;
 }
 
 // The running jobs of THIS workspace, rendered above its history.
@@ -680,7 +714,9 @@ async function saveEdit(): Promise<void> {
   gap: var(--k-sp-3);
 }
 
-.rel__form-row {
+// One branch picker per picked project, two to a row: «Backend» and «Frontend» side by side
+// read as the pair the note is about.
+.rel__form-branches {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--k-sp-3);
