@@ -307,8 +307,9 @@ export const en: MessageSchema = {
     },
     docs: {
       usedTitle: 'Documentation used',
-      usedHint: 'Documentation files the agent read while working — collected from its read calls in the transcript. The path is shown for reference only and cannot be opened from here.',
+      usedHint: 'Documentation files the agent read while working — collected from its read calls in the transcript and kept on the task card, so the list survives a restart. The path is shown for reference only and cannot be opened from here.',
       changedTitle: 'Created or updated',
+      finishedHint: 'This session’s worktree was removed — the list is kept on the task card. To open a diff or create a task from a document, press ↻ “Reopen” at the top.',
       kind: {
         spec: 'spec',
         plan: 'plan',

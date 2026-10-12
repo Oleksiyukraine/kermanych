@@ -175,10 +175,13 @@ same holds for the «Сесія» tab.
     - Task images are the log's; failing that, the card's `imagePaths` through
       `signedTaskImageUrls`.
     - The rest of «Сесія» keeps reading the local row.
-11. **Launcher images go on the card.** On create, `board.createTask(input, files)`. On an edit
-    (a backlog card launched from «Задачі»), they are uploaded and appended to `imagePaths`.
-    Each image is uploaded once, so a retry after a failed launch does not upload again. Only
-    images the launch actually sends are uploaded (a native launch sends none).
+11. **Launcher images go on the card.** Once a managed launch from the «Агенти» launcher has
+    created its session, the images it sent are uploaded to the card and appended to
+    `imagePaths` (board store `addTaskImages`), best effort: a failed upload is reported, but it
+    never fails the launch, and a retry after a failed launch uploads only after the retry
+    succeeds, so each image goes once. A native launch sends no images and uploads none, and
+    «В беклог» uploads none. Rejected: uploading inside card creation
+    (`board.createTask(input, files)`), because a storage failure would then fail the launch.
 
 ## Changes
 
@@ -200,38 +203,75 @@ same holds for the «Сесія» tab.
 - **UI:**
   - AgentsPage: the «Документація» lists and the list-only finished state with its hint line;
     «Скіли» and task images on «Сесія»;
-  - the launcher uploads its images; board store `addTaskImages`;
+  - the launcher uploads the images a launch sent once the session exists; board store
+    `addTaskImages`;
   - i18n uk/en: the finished hint, and `agents.docs.usedHint` now says the list is kept on the
     task card.
-- **README:** «Project documentation».
+- **README:** «Cloud tasks and local sessions» (a new step «Reports flow back»: what leaves the
+  machine) and «Project documentation».
 
 ## Verification
 
-To be filled in after implementation. Planned:
+Tests (`pnpm --filter <package> exec vitest run`):
 
-- `pnpm --filter @kermanych/core test`: the merge rules (union, replace, another session newer
-  or older, missing parts of a write).
-- `pnpm --filter @kermanych/cloud test`: the two columns in `toTask` / `toTaskRow`.
-- `pnpm --filter @kermanych/api test`:
-  - a write on `agent_end`, on a native turn, and in «Завершити» before the worktree is gone;
-  - a dormant «Завершити» keeps the card's reads;
-  - the outbox drain merges, drops a missing card's row, and never overwrites a newer session;
-  - a session without a card writes nothing.
-- `pnpm --filter @kermanych/ui test`: the launcher uploads each image once.
-- Smoke on a local Supabase stack (`supabase start` with this migration), with the API and UI
-  from this worktree:
-  1. A session reads one document and writes another.
-  2. Both columns are set on the card (`psql`).
-  3. Restart the API: «Документація» and «Скіли» still show both.
-  4. «Завершити»: the list-only state and the hint line appear.
-  5. Restart again: the tab still shows everything.
+- `@kermanych/core`: 20 files, 201 passed. `test/task-reports.spec.ts` covers the merge rules:
+  union order, a write with no lists keeps the card's lists, an older report of another session
+  is replaced, a stale write is dropped, coalescing two queued writes, and reading malformed
+  stored values.
+- `@kermanych/cloud`: 158 passed, 65 skipped (the live-stack RLS suites). It covers selecting
+  both columns, mapping the `{}` default to an absent key, and patching only the two columns.
+- `@kermanych/api`: 891 tests, 885 passed, 4 skipped, 2 failed. Both failures are in
+  `test/rpc-session.compact.spec.ts`, and they fail identically on the untouched base commit
+  `5911efd` (checked in a throwaway worktree). New tests:
+  - `supervisor.task-reports.spec.ts`: a terminal `agent_end` queues reads, doc changes and
+    skills; a session without a card queues nothing; a listing failure still queues the rest;
+    a native turn queues a write; a dormant «Завершити» queues the worktree's listing (loose
+    work included) with no reads or skills;
+  - `registry.outbox.spec.ts`: coalescing, replacement by a newer session, a version-scoped
+    drop, attempts;
+  - `cloud-sync.spec.ts`: a merge onto the card's current value, a missing card, a newer
+    relaunch never overwritten, a failed patch retried, a write held while signed out.
+- `@kermanych/ui`: 54 files, 587 passed. `session-reports.spec.ts` covers the tab's precedence
+  rules; `board-task-images.spec.ts` checks that `addTaskImages` appends, cleans up after a
+  refused patch, and never throws.
+- Typecheck: `@kermanych/api` `tsc --noEmit` reports only the known
+  `src/http/jira.controller.ts` TS2504. `@kermanych/ui` `vue-tsc --noEmit` reports only the
+  known `test/runtime-messages.spec.ts` TS2352, once the API package is built.
+
+Smoke on a local Supabase stack (`supabase start`, then `supabase migration up --local`
+applied `20261012090000_task_reports.sql`). The API and UI were built from this worktree: the
+API ran on port 4399 with its own temporary registry (`KERMANYCH_DB`), and `quasar dev` ran
+with `VITE_API_BASE` pointing at it. The seed was an owner and a teammate in one workspace, a
+project bound to a scratch repository, and a card (`claude-haiku-5-5`, effort low).
+
+1. «Задачі» → the card → launcher with a PNG attached → ⌘↵. The agent read `README.md` and
+   `docs/guide.md` and wrote `docs/notes.md`. On the card, `docs_report` had both reads and
+   `docs/notes.md +1 −0`. `session_report` had the model, effort, branch, base, usage and
+   provider session id, and no local paths. `image_paths` held the uploaded PNG, and the
+   outbox was empty.
+2. The teammate's token read both columns through PostgREST (RLS).
+3. A follow-up turn loaded `skill://task-plan`. `session_report.skills` became `["task-plan"]`
+   and the reads stayed.
+4. Restart the API and reload the UI. «Лог» showed only the dormant notice. «Документація»
+   still listed both reads (from the card) and the change (live listing). «Сесія» showed
+   «Скіли: task-plan» and the image, served by a signed storage URL.
+5. «Завершити» while dormant. The card kept its reads and skills, `changed` came from the
+   worktree before removal (loose work auto-committed), and the worktree was gone. The tab
+   showed the change list-only under the hint line, with no expandable row and no «Задача →».
+6. Restart the API and reload again. The finished session's tab and «Сесія» were unchanged:
+   2 reads, 1 change, `task-plan`, the image. This is the scenario from the report, which used
+   to show «Ця сесія не читала й не змінювала документацію.»
 
 ## Documentation impact
 
-`kermanych/README.md` «Project documentation»: the tabs survive a restart. It says where the
-data lives (`tasks.docs_report`, `tasks.session_report`), when it is written, that sessions
-from before the change are not backfilled, and that the migration must be applied before the
-client ships.
+`kermanych/README.md`:
+- «Cloud tasks and local sessions» has a new step, «Reports flow back», listing what now leaves
+  the machine (document paths with counts, the session summary including tokens and cost, and
+  the launcher's images), what never does (paths on disk), and that a local queue delivers it.
+- «Project documentation» says the tab survives a restart and where the data lives
+  (`tasks.docs_report`, `tasks.session_report`). It also says that a finished session's
+  documents are a plain list, that older sessions are not backfilled, and that the migration
+  must be applied before the client ships.
 
 ## Out of scope
 

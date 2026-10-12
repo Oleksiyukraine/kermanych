@@ -199,6 +199,12 @@ export const useBoard = defineStore('board', () => {
       if (patch.effort) next.effort = patch.effort;
       else delete next.effort;
     }
+    // toTask maps an empty array to an absent key, so an emptied list drops it the same way.
+    // Without this the optimistic row of an image append would still show the old list.
+    if (patch.imagePaths !== undefined) {
+      if (patch.imagePaths.length) next.imagePaths = patch.imagePaths;
+      else delete next.imagePaths;
+    }
     if (patch.qaChecklist !== undefined) next.qaChecklist = patch.qaChecklist;
     return next;
   }
@@ -267,6 +273,30 @@ export const useBoard = defineStore('board', () => {
   // the rollback rather than duplicating them.
   function assignTask(id: string, assigneeId: string | null): Promise<boolean> {
     return updateTaskFields(id, { assigneeId });
+  }
+
+  // Append images to an EXISTING card: the «Агенти» launcher puts the images its launch sent on
+  // the card, after the session started. Appended, never replaced — the card may already hold
+  // images uploaded from «Дошка». Best-effort by design: the caller has already done the work the
+  // images were for, so every failure is a toast here and a `false`, never a throw.
+  async function addTaskImages(id: string, files: File[]): Promise<boolean> {
+    const card = tasks.value.find((t) => t.id === id);
+    if (!card || !files.length) return false;
+    let added: string[];
+    try {
+      added = await cloudUploadTaskImages(auth.client, card.projectId, files);
+    } catch (e) {
+      fail(e);
+      return false;
+    }
+    // Re-read after the upload: a Realtime echo may have changed the card's images meanwhile,
+    // and the append has to land on what the card holds now.
+    const current = tasks.value.find((t) => t.id === id) ?? card;
+    const ok = await updateTaskFields(id, { imagePaths: [...(current.imagePaths ?? []), ...added] });
+    // The patch never landed (updateTaskFields has already said why), so the objects it would
+    // have named are orphans — the same cleanup createTask does.
+    if (!ok) await auth.client.storage.from(TASK_IMAGE_BUCKET).remove(added).catch(() => {});
+    return ok;
   }
 
   async function deleteTask(id: string): Promise<boolean> {
@@ -367,6 +397,7 @@ export const useBoard = defineStore('board', () => {
     subscribe,
     unsubscribe,
     createTask,
+    addTaskImages,
     updateTaskFields,
     assignTask,
     deleteTask,

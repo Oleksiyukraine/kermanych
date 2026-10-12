@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { AgentLanguage, AgentRuntime, DocsPolicy, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionStatus, ThinkingLevel } from "@kermanych/core";
+import type { AgentLanguage, AgentRuntime, DocsPolicy, DocsReport, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionReport, SessionStatus, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same eleven labels.
@@ -120,6 +120,11 @@ export type Task = {
   // the board. Absent until a «Створити ПР» run produced one; survives the session's archive
   // because it lives on the card, not the session. See @kermanych/core's QaChecklist.
   qaChecklist?: QaChecklist;
+  // What the card's latest session left for its «Документація» and «Сесія» tabs, written by
+  // the api after every turn and on «Завершити» (docs/specs/2026-10-12-docs-tab-survives-restart.md).
+  // Absent until a session of this card ran a turn. Each names the session it describes.
+  docsReport?: DocsReport;
+  sessionReport?: SessionReport;
   createdAt: string;
   updatedAt: string;
 };
@@ -164,6 +169,8 @@ export type TaskPatch = {
   jiraKey?: string;
   linearKey?: string;
   qaChecklist?: QaChecklist;
+  docsReport?: DocsReport;
+  sessionReport?: SessionReport;
 };
 
 // ── «ШІ-команда» ────────────────────────────────────────────────────────────

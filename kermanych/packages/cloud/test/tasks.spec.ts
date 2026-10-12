@@ -273,6 +273,36 @@ describe("deepAnalysis on a task", () => {
   });
 });
 
+// The reports the api leaves on the card for the «Документація» and «Сесія» tabs. jsonb with a
+// `{}` default: a card no session has reported on yet must read as «no report», not as an empty
+// one, and a write must touch nothing but the two columns.
+describe("session reports on a task", () => {
+  const docs = { sessionId: "s1", generatedAt: "2026-10-12T10:00:00.000Z", read: ["README.md"], changed: [{ path: "docs/a.md", added: 3, removed: 1 }] };
+  const session = { sessionId: "s1", generatedAt: "2026-10-12T10:00:00.000Z", runtime: "omp", native: false, branch: "feature/x", worktree: true, skills: ["task-spec"] };
+
+  it("is selected", async () => {
+    const { client, queries } = fakeClient({ data: [taskRow], error: null });
+    await listTasks(client, ["p1"]);
+    const [, columns] = queries[0]!.ops[0] as [string, string];
+    expect(columns.split(", ")).toEqual(expect.arrayContaining(["docs_report", "session_report"]));
+  });
+
+  it("maps stored reports and leaves the empty default absent", async () => {
+    const { client } = fakeClient({ data: [{ ...taskRow, docs_report: docs, session_report: session }, { ...taskRow, id: "t2", docs_report: {}, session_report: {} }], error: null });
+    const [t, t2] = await listTasks(client, ["p1"]);
+    expect(t!.docsReport).toEqual(docs);
+    expect(t!.sessionReport).toEqual(session);
+    expect(t2).not.toHaveProperty("docsReport");
+    expect(t2).not.toHaveProperty("sessionReport");
+  });
+
+  it("patches the two columns without touching anything else", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null });
+    await patchTask(client, "t1", { docsReport: docs, sessionReport: { ...session, runtime: "omp" } });
+    expect(queries[0]!.ops[0]).toEqual(["update", { docs_report: docs, session_report: session }]);
+  });
+});
+
 describe("createTask with an explicit id", () => {
   // The one-time publication of local backlog rows reuses the local session id, so a second
   // pass collides on the primary key instead of minting a duplicate card.
