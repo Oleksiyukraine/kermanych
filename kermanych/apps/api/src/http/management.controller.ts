@@ -28,6 +28,7 @@ import {
   type ManagementRiskRow,
   type ReleaseNotesAsk,
   type ReleaseNotesReply,
+  type ReleaseSource,
 } from "@kermanych/core";
 import { ManagementChatService } from "../management/management-chat.service";
 import { ReleaseNotesService } from "../management/release-notes.service";
@@ -402,10 +403,24 @@ export class ManagementController {
   // still refuses it if anything else asks.
   @Post("release-notes")
   async releaseNotes(@Body() b: ReleaseNotesAsk): Promise<ReleaseNotesReply> {
-    const projectId = typeof b?.projectId === "string" ? b.projectId.trim() : "";
-    if (!projectId) throw badRequest("project_missing", "не вказано проєкт");
-    const branch = typeof b?.branch === "string" ? b.branch.trim() : "";
-    if (!branch) throw badRequest("branch_missing", "не вказано гілку");
+    // One or more projects, each with its own branch. Every source is checked before any git
+    // work starts, so a half-filled form is refused as a whole and never generates a note
+    // about only the projects that happened to be complete.
+    const raw: unknown[] = Array.isArray(b?.sources) ? b.sources : [];
+    if (raw.length === 0) throw badRequest("project_missing", "не вказано проєкт");
+    const sources: ReleaseSource[] = [];
+    for (const s of raw) {
+      const src = (s ?? {}) as Partial<ReleaseSource>;
+      const projectId = typeof src.projectId === "string" ? src.projectId.trim() : "";
+      if (!projectId) throw badRequest("project_missing", "не вказано проєкт");
+      const branch = typeof src.branch === "string" ? src.branch.trim() : "";
+      if (!branch) throw badRequest("branch_missing", "не вказано гілку");
+      // One project twice would print its commits twice under two identical headings — the
+      // form cannot produce it, so anything that does is a bug worth refusing.
+      if (sources.some((x) => x.projectId === projectId))
+        throw badRequest("project_duplicate", "проєкт вказано двічі");
+      sources.push({ projectId, branch });
+    }
     const rangeFrom = typeof b?.rangeFrom === "string" ? b.rangeFrom.trim() : "";
     const rangeTo = typeof b?.rangeTo === "string" ? b.rangeTo.trim() : "";
     if (!isReleaseDate(rangeFrom) || !isReleaseDate(rangeTo))
@@ -422,9 +437,8 @@ export class ManagementController {
       });
     try {
       return await this.releases.generate({
-        projectId,
+        sources,
         workspaceName,
-        branch,
         rangeFrom,
         rangeTo,
         groupBy,

@@ -1017,6 +1017,23 @@ That field is a real assistant, and it is deliberately narrow:
   language what that person completed. Authors are read as git's `%aN`, so a repository's
   `.mailmap` folds one person's aliases into one section; bots get a closing sentence, not a
   section of their own.
+  The form can also write one note over several projects of the workspace — the back-end
+  and the front-end, say. Pick more than one project in its «Projects» picker and each
+  picked project gets its own branch picker, preselected with that project's default branch,
+  so the back-end can be read from `dev` while the front-end is read from `main`. The note
+  then has one section per project, headed by the project's name, in the order you picked
+  them; the «New» / «Improvements» / «Fixes» groups (or the per-person sections) sit inside
+  each project's section, and each section is written only from that project's commits. One
+  child writes the whole note: it starts in the first project's repository and is told
+  where every other picked repository is on this machine, and the commit budget is split
+  evenly between the projects. Every picked project must be bound on this machine and have
+  commits on its branch in the period — a project with none refuses the whole generation and
+  names the project, because an empty range is usually the wrong branch. The chat's
+  `release.notes` action still names one project. The note row and the note header show one
+  tag per project with its branch; the cloud stores the list in
+  `workspace_release_notes.sources` (additive migration
+  `20261012090000_release_notes_sources.sql` — push it before shipping this UI), and the old
+  `project_name` / `branch` columns keep a « + »-joined summary for builds that predate it.
   Every note is written in English — from the form and from the chat alike, whatever the
   interface language, the agent communication language or the language the commits are
   written in. Commits in another language are translated; names of people, the product and

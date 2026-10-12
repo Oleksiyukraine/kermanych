@@ -2,10 +2,10 @@
 // same reason management-actions.ts is: the browser builds the ask, the api validates and
 // answers it, and two copies of the shape would drift into a 400 nobody can explain.
 //
-// There is deliberately NO platform here: a note is generated for ONE project, and a
-// project IS the shipping shape — its repository is the front-end, the back-end or an app,
-// never two at once. Naming the project already answers «what does this note cover?», so a
-// second picker could only contradict the first.
+// There is deliberately NO platform here: a note is generated from one or more projects, and
+// a project IS the shipping shape — its repository is the front-end, the back-end or an app,
+// never two at once. Naming the projects already answers «what does this note cover?», and a
+// note over several projects has one section per project, headed by its name.
 import type { Usage } from "./types";
 
 // One commit as the generator is shown it, parsed out of `git log` by the api. `body` is
@@ -49,17 +49,25 @@ export function isReleaseGrouping(v: unknown): v is ReleaseGrouping {
   return (RELEASE_GROUPINGS as readonly unknown[]).includes(v);
 }
 
+// One project the note is generated from, and the branch whose log is read for it. Each
+// project carries its own branch: the back-end may ship from `dev` while the front-end
+// ships from `main`. The branch defaults in the UI to the project's default branch, but any
+// local branch of the bound repo is legal.
+export type ReleaseSource = {
+  projectId: string;
+  branch: string;
+};
+
 // What the browser sends to POST /management/release-notes. The split mirrors the
-// management chat's: the browser names the project by id and says what only the cloud
-// knows (the workspace's name); the api resolves the id against ITS local registry for
+// management chat's: the browser names each project by id and says what only the cloud
+// knows (the workspace's name); the api resolves each id against ITS local registry for
 // the repository path and the project's name. Paths never travel from a client.
 export type ReleaseNotesAsk = {
-  projectId: string;
+  // One or more projects, each at most once, in the order the note writes its sections.
+  // One source is the single-project note; two or more get one section per project.
+  sources: ReleaseSource[];
   workspaceName: string;
-  // The branch whose log is read. Picked by the operator; defaults in the UI to the
-  // project's default branch, but any local branch of the bound repo is legal.
-  branch: string;
-  // Inclusive date range, YYYY-MM-DD both ends.
+  // Inclusive date range, YYYY-MM-DD both ends, shared by every source.
   rangeFrom: string;
   rangeTo: string;
   // How the note is laid out (see `ReleaseGrouping`). Absent means `topic`.

@@ -8,6 +8,7 @@
 // a note that came out wrong is edited, not destroyed.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
+  ReleaseNoteSource,
   WorkspaceReleaseNote,
   WorkspaceReleaseNoteInsert,
   WorkspaceReleaseNotePatch,
@@ -16,7 +17,10 @@ import type {
 // One string literal, not a concatenation: postgrest-js parses this at the TYPE level to
 // shape the response, and a `+`-joined value degrades to GenericStringError.
 const NOTE_COLUMNS =
-  "id, workspace_id, project_id, project_name, branch, range_from, range_to, title, body_md, created_at, created_by, updated_at, updated_by";
+  "id, workspace_id, project_id, project_name, branch, sources, range_from, range_to, title, body_md, created_at, created_by, updated_at, updated_by";
+
+// One element of the `sources` jsonb column, snake_case like every column.
+type SourceRow = { project_id: string | null; project_name: string; branch: string };
 
 type NoteRow = {
   id: string;
@@ -24,6 +28,8 @@ type NoteRow = {
   project_id: string | null;
   project_name: string;
   branch: string;
+  // Null on rows stored before the column existed (20261012090000_release_notes_sources.sql).
+  sources: SourceRow[] | null;
   range_from: string;
   range_to: string;
   title: string;
@@ -35,9 +41,24 @@ type NoteRow = {
 };
 
 export function toWorkspaceReleaseNote(row: NoteRow): WorkspaceReleaseNote {
+  const sources: ReleaseNoteSource[] = row.sources?.length
+    ? row.sources.map((s) => ({
+        ...(s.project_id === null ? {} : { projectId: s.project_id }),
+        projectName: s.project_name,
+        branch: s.branch,
+      }))
+    : // A note from before the list: its single-project columns ARE its one source.
+      [
+        {
+          ...(row.project_id === null ? {} : { projectId: row.project_id }),
+          projectName: row.project_name,
+          branch: row.branch,
+        },
+      ];
   return {
     id: row.id,
     workspaceId: row.workspace_id,
+    sources,
     ...(row.project_id === null ? {} : { projectId: row.project_id }),
     projectName: row.project_name,
     branch: row.branch,
@@ -77,17 +98,24 @@ export async function getWorkspaceReleaseNote(
   return data ? toWorkspaceReleaseNote(data as NoteRow) : undefined;
 }
 
+// The summary columns are written from the list here, never by a caller: `project_id` only
+// for a single project (a note over several is not about any one of them), names and
+// branches joined in section order.
 export async function createWorkspaceReleaseNote(
   client: SupabaseClient,
   input: WorkspaceReleaseNoteInsert,
 ): Promise<WorkspaceReleaseNote> {
+  const only = input.sources.length === 1 ? input.sources[0] : undefined;
   const { data, error } = await client
     .from("workspace_release_notes")
     .insert({
       workspace_id: input.workspaceId,
-      ...(input.projectId === undefined ? {} : { project_id: input.projectId }),
-      project_name: input.projectName,
-      branch: input.branch,
+      ...(only?.projectId === undefined ? {} : { project_id: only.projectId }),
+      project_name: input.sources.map((s) => s.projectName).join(" + "),
+      branch: input.sources.map((s) => s.branch).join(" + "),
+      sources: input.sources.map(
+        (s): SourceRow => ({ project_id: s.projectId ?? null, project_name: s.projectName, branch: s.branch }),
+      ),
       range_from: input.rangeFrom,
       range_to: input.rangeTo,
       title: input.title,
