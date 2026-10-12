@@ -8,9 +8,20 @@
     "dev:api": "pnpm --filter @kermanych/api start:dev",
     "dev:ui": "pnpm --filter @kermanych/ui dev",
     "dev:app": "pnpm --filter @kermanych/ui dev -m electron",
-    "build:app": "pnpm --filter @kermanych/ui build -m electron"
+    "build:app": "pnpm --filter @kermanych/ui build -m electron",
+    "release:prepare": "tsx scripts/release.ts prepare",
+    "release:notes": "tsx scripts/release.ts notes"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["@nestjs/core", "better-sqlite3", "esbuild", "electron", "node-pty"]
+    "onlyBuiltDependencies": [
+      "@nestjs/core",
+      "better-sqlite3",
+      "esbuild",
+      "electron",
+      "node-pty"
+    ]
+  },
+  "devDependencies": {
+    "tsx": "^4.23.10"
   }
 }

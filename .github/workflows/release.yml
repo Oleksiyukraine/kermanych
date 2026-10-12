@@ -1,0 +1,128 @@
+# Desktop releases. Spec: docs/specs/2026-10-12-desktop-releases-and-updates.md.
+#
+# A `v*` tag builds macOS (signed, notarized, Apple Silicon) and Linux (AppImage, x64) and
+# publishes ONE GitHub Release with both, its notes taken from kermanych/CHANGELOG.md. Installed
+# apps pick it up on their next update check. The release is created only when both builds
+# succeed.
+#
+# Run by hand (Actions → Release → Run workflow), it builds both platforms and attaches them to
+# the run as artifacts WITHOUT creating a release: that is how a build is tried before tagging.
+#
+# Secrets: CSC_LINK (Developer ID Application certificate, base64 .p12), CSC_KEY_PASSWORD,
+# APPLE_API_KEY (contents of the App Store Connect .p8), APPLE_API_KEY_ID, APPLE_API_ISSUER.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: kermanych
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14
+            platform: mac
+          # The oldest supported Ubuntu runner: an AppImage built against an older glibc runs
+          # on more distributions.
+          - os: ubuntu-22.04
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: kermanych/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: kermanych/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      # A tag must equal apps/ui/package.json's version and have notes in CHANGELOG.md.
+      - name: Release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: pnpm -s release:notes "${GITHUB_REF_NAME}" > "${RUNNER_TEMP}/release-notes.md"
+
+      # electron-builder signs when CSC_LINK is set and notarizes when the APPLE_API_* trio is;
+      # APPLE_API_KEY is a PATH, so the key is written to a file and exported only when present.
+      - name: Signing credentials
+        if: matrix.platform == 'mac'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          if [ -n "$APPLE_API_KEY_P8" ]; then
+            printf '%s' "$APPLE_API_KEY_P8" > "${RUNNER_TEMP}/apple-api-key.p8"
+            echo "APPLE_API_KEY=${RUNNER_TEMP}/apple-api-key.p8" >> "$GITHUB_ENV"
+          fi
+          # An unsigned macOS build would be published to every client and Squirrel.Mac would
+          # refuse to install it, so a tag never builds without credentials.
+          if [[ "$GITHUB_REF" == refs/tags/v* ]] && { [ -z "$CSC_LINK" ] || [ -z "$APPLE_API_KEY_P8" ]; }; then
+            echo "::error::A release tag needs the CSC_LINK and APPLE_API_KEY secrets"
+            exit 1
+          fi
+
+      # --publish never: this job only builds; the release job below publishes.
+      - name: Build
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: pnpm build:app --publish never
+
+      - name: Copy release notes next to the artifacts
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'mac'
+        run: cp "${RUNNER_TEMP}/release-notes.md" apps/ui/dist/electron/Packaged/release-notes.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kermanych-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            kermanych/apps/ui/dist/electron/Packaged/*.dmg
+            kermanych/apps/ui/dist/electron/Packaged/*.zip
+            kermanych/apps/ui/dist/electron/Packaged/*.AppImage
+            kermanych/apps/ui/dist/electron/Packaged/*.blockmap
+            kermanych/apps/ui/dist/electron/Packaged/latest-*.yml
+            kermanych/apps/ui/dist/electron/Packaged/release-notes.md
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/artifacts
+          merge-multiple: true
+
+      - name: Publish the GitHub Release
+        working-directory: ${{ runner.temp }}/artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Kermanych ${GITHUB_REF_NAME#v}" \
+            --notes-file release-notes.md \
+            --latest \
+            $(ls | grep -v '^release-notes\.md$')

@@ -438,6 +438,21 @@ shipped client still selects needs a window and an announcement:
 `20260827100000_workspaces.sql` is one of those, and
 [`docs/cutover-workspaces.md`](./docs/cutover-workspaces.md) is its runbook.
 
+Installed desktop apps update on their own schedule (see [Updates and «What's
+new»](#updates-and-whats-new)), so some users run older versions for days. **A migration that
+breaks older clients** — it renames or drops a table or column they read, or tightens a policy
+they rely on — **must raise the minimum app version in the same file**, to the first release
+that works with the new schema:
+
+```sql
+update public.app_release_policy set min_app_version = '0.4.0', updated_at = now();
+```
+
+Older apps then show «Потрібне оновлення» instead of failing screen by screen. Push such a
+migration only after that release is published. The table itself comes from
+`20261012120000_app_release_policy.sql` (one row, readable without signing in, written only
+by migrations); push it before the first release.
+
 ### Running against a local stack or your own project
 
 Everything below is for pointing Kermanych somewhere OTHER than the team's
@@ -562,15 +577,10 @@ Run the two dev commands in separate terminals, then open
 > **Note:** `better-sqlite3` v13 and `node-pty` 1.1 ship N-API prebuilt binaries, so
 > switching Node versions (≥22.12) needs no rebuild.
 
-## Desktop app (macOS)
+## Desktop app (macOS, Linux)
 
 Kermanych also runs as a desktop app (Electron via Quasar): one window that
 starts the API in-process — no browser, no separate dev servers.
-
-```bash
-pnpm dev:app      # run the desktop app in dev
-pnpm build:app    # build a macOS .dmg (unsigned)
-```
 
 Links never open inside the desktop window: every `http(s)`/`mailto` link — Jira
 and Linear tickets, attachments, storage downloads and markdown links — opens in your
@@ -597,19 +607,94 @@ a page that refuses — GitHub, or a private Google Doc that redirects to Google
 which the app's window is not signed in to — gets **Відкрити в браузері** instead of a
 blank frame. That button always opens the stored URL in your default browser.
 
-The build is **unsigned**, so on first open macOS Gatekeeper blocks it. Open it
-with **right-click → Open** (once), or clear the quarantine flag:
+### Installing a release
+
+People who only use Kermanych install it from
+[the latest release](https://github.com/Oleksiyukraine/kermanych/releases/latest):
+
+- **macOS** — `Kermanych-<version>-arm64.dmg`, a signed and notarized build. It needs a Mac
+  with **Apple Silicon**; there is no Intel build. Open the dmg and drag Kermanych into
+  Applications.
+- **Linux (x64)** — `Kermanych-<version>.AppImage`: `chmod +x` it and run it. AppImages need
+  FUSE 2, which recent Ubuntu does not install by default (`sudo apt install libfuse2t64` on
+  24.04, `libfuse2` on 22.04). Ubuntu 24.04's AppArmor also blocks the Chromium sandbox of
+  AppImages; if the app exits with a sandbox error, run it with `--no-sandbox` or give it an
+  AppArmor profile that allows `userns`.
+
+`omp` or `claude`, `git` and the rest of the toolchain are still the user's own installs. The
+app takes `PATH` from the user's login shell when it starts (`src-electron/login-shell-path.ts`),
+so whatever the terminal finds — Homebrew, bun, nvm, `~/.local/bin` — agents find too, also
+when the app is opened from Finder, the Dock or the application menu.
+
+### Updates and «What's new»
+
+An installed app updates itself from GitHub Releases (`electron-updater`,
+`src-electron/updater.ts`). It checks at launch and every 4 hours and downloads a new version
+in the background. A banner then says «Версія X готова» with **Що нового** (the notes of every
+version between the running one and the new one) and **Перезапустити**. A normal quit installs
+the update too. The app never restarts on its own; «Перезапустити» while agents are working
+asks first, because the restart stops them (their conversations can be continued afterwards).
+On the first launch of a new version a «Що нового у X» dialog shows the notes once, and
+Settings → Застосунок → «Загальне» shows the version and opens the whole changelog. On Linux
+only the AppImage updates itself. A dev run (`pnpm dev:app`) and the browser build never check.
+
+The cloud names the oldest version it still serves (`app_release_policy.min_app_version`, see
+[Applying a migration to the team's project](#applying-a-migration-to-the-teams-project)). An
+older packaged app shows a blocking «Потрібне оновлення» screen whose button installs the
+update as soon as it is downloaded. When the policy cannot be read (offline, cloud down), the
+app is not blocked.
+
+### Releasing a version
+
+Spec: `docs/specs/2026-10-12-desktop-releases-and-updates.md`. Versions are semver
+(`apps/ui/package.json`), tags are `v<version>`, notes live in [`CHANGELOG.md`](./CHANGELOG.md),
+in English.
+
+1. `pnpm release:prepare 0.2.0` — refuses a version that is not higher than the current one,
+   writes it into `apps/ui/package.json` and adds an empty `## 0.2.0 — <date>` section to
+   `CHANGELOG.md`. Write the notes there (Менеджмент → «Реліз-ноти» can draft them), open a
+   PR, merge it.
+2. `git tag v0.2.0 && git push origin v0.2.0`.
+3. `.github/workflows/release.yml` checks that the tag equals the package version and that the
+   section has notes (`pnpm release:notes 0.2.0`), builds the signed, notarized macOS dmg + zip
+   and the Linux AppImage, and publishes one GitHub Release with both and the notes. There is
+   no draft step: installed apps see it on their next check. If either build fails, nothing is
+   published.
+
+Running the workflow by hand (Actions → Release → Run workflow) builds both platforms and
+attaches them to the run without publishing — use it to try a build before tagging.
+
+The workflow signs with repository secrets: `CSC_LINK` (the Developer ID Application
+certificate as base64 `.p12`), `CSC_KEY_PASSWORD`, and for notarization an App Store Connect
+API key — `APPLE_API_KEY` (the `.p8` contents), `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`. A tag
+refuses to build without them: an unsigned build would reach every client and could not be
+installed by the updater.
+
+### Building locally
+
+```bash
+pnpm dev:app      # run the desktop app in dev
+pnpm build:app    # build the dmg + zip (macOS) or AppImage (Linux) under apps/ui/dist/electron/Packaged
+```
+
+Without the signing secrets of the release workflow, a local build is **unsigned** and not
+notarized, so on first open macOS Gatekeeper blocks it. Open it with **right-click → Open**
+(once), or clear the quarantine flag:
 
 ```bash
 xattr -cr /Applications/Kermanych.app
 ```
+
+An unsigned build cannot update itself (Squirrel.Mac refuses it); it only logs the failed check.
 
 Native module note: `better-sqlite3` is pinned to v13 (N-API) and `node-pty` to 1.1
 (N-API prebuilds for macOS and Windows); one prebuilt binary works under both the Node
 (≥22.12) and Electron ABIs, so no rebuild. Both are unpacked from the asar. `node-pty`
 1.1's tarball ships `spawn-helper` without the exec bit, which makes every terminal fail
 with `posix_spawnp failed`; the API restores it before the first shell and the app build
-sets it in the bundle.
+sets it in the bundle. There is no Linux prebuild of `node-pty`: on Linux the app build
+compiles it in the packaged tree (`node-gyp`, so it needs `python3`, `make` and a C++
+compiler) unless pnpm already left a build there.
 
 ## Integrated terminal
 

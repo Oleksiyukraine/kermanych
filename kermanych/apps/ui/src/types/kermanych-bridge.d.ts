@@ -106,6 +106,22 @@ declare global {
     // A download the page started finished saving.
     onDownload: (cb: (sessionId: string, file: { name: string; path: string }) => void) => () => void;
   }
+  // Automatic updates (docs/specs/2026-10-12-desktop-releases-and-updates.md). `ready` means
+  // downloaded: the next quit installs it, or install() restarts into it now.
+  type KermanychUpdateState =
+    | { phase: 'idle' }
+    | { phase: 'downloading'; version: string }
+    | { phase: 'ready'; version: string };
+  interface KermanychUpdatesBridge {
+    // A packaged build: the only kind that updates and that the cloud's minimum version gates.
+    packaged: boolean;
+    state: () => Promise<KermanychUpdateState>;
+    check: () => Promise<void>;
+    install: () => void;
+    // CHANGELOG.md as of tag v<version>; null when it cannot be fetched.
+    changelog: (version: string) => Promise<string | null>;
+    onState: (cb: (state: KermanychUpdateState) => void) => () => void;
+  }
   interface Window {
     kermanych?: {
       apiBase: string;
@@ -122,6 +138,8 @@ declare global {
       // Electron only. Optional for the same stale-preload reason; the Браузер tab is hidden
       // without it.
       browser?: KermanychBrowserBridge;
+      // Electron only; absent in the browser, where nothing updates.
+      updates?: KermanychUpdatesBridge;
     };
   }
 }

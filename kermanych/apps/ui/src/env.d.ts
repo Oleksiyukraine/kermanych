@@ -3,6 +3,8 @@ declare namespace NodeJS {
     NODE_ENV: string;
     VUE_ROUTER_MODE: 'hash' | 'history' | 'abstract' | undefined;
     VUE_ROUTER_BASE: string | undefined;
+    // apps/ui/package.json's version, stamped by quasar.config.ts build.env.
+    APP_VERSION: string;
   }
 }
 
@@ -28,4 +30,11 @@ interface ImportMetaEnv {
 
 interface ImportMeta {
   readonly env: ImportMetaEnv;
+}
+
+// Vite's `?raw` import (stores/app-update.ts bundles CHANGELOG.md). vite/client would declare it,
+// but vite is not a direct dependency here, so its types do not resolve.
+declare module '*.md?raw' {
+  const content: string;
+  export default content;
 }

@@ -485,6 +485,13 @@
                  account settings, and both apply on click with no save bar. -->
             <KLangToggle />
           </div>
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.appGeneral.version') }}</span>
+            <div class="set__row set__row--center">
+              <KTag>{{ APP_VERSION }}</KTag>
+              <KBtn variant="ghost" @click="appUpdate.openAllNotes()">{{ t('settings.appGeneral.whatsNew') }}</KBtn>
+            </div>
+          </div>
         </div>
 
         <!-- ── APP · ГАРЯЧІ КЛАВІШІ ─────────────────────────────────────────── -->
@@ -726,11 +733,13 @@ import KModal from 'components/kit/KModal.vue';
 import KTag from 'components/kit/KTag.vue';
 import KLangToggle from 'components/kit/KLangToggle.vue';
 import SteGuide from 'components/settings/SteGuide.vue';
+import { APP_VERSION, useAppUpdate } from 'stores/app-update';
 
 const store = useOrchestrator();
 const projects = useProjects();
 const { t, te } = useI18n();
 const auth = useAuth();
+const appUpdate = useAppUpdate();
 const route = useRoute();
 const router = useRouter();
 
@@ -1827,6 +1836,11 @@ const badges = computed<Record<string, number | undefined>>(() => ({
   display: flex;
   align-items: flex-end;
   gap: var(--k-sp-2);
+}
+
+// A tag beside a button (Загальне → Версія): centred, not bottom-aligned like field rows.
+.set__row--center {
+  align-items: center;
 }
 
 .set__grow {

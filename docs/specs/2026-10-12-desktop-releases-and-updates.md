@@ -1,6 +1,7 @@
 # Signed desktop releases with automatic updates and release notes
 
-- **Status:** Decisions agreed with the operator; implementation pending approval.
+- **Status:** Approved by the operator and implemented. The first signed release and an update
+  between two real releases are still to be run (see Verification).
 - **Date:** 2026-10-12
 
 ## Goal
@@ -57,8 +58,12 @@ that tell them what changed.
    <YYYY-MM-DD>` section per version. The release workflow puts the section into the body of
    the GitHub Release, and the file is bundled into the app. The user sees notes twice:
    - **before installing**: the update banner's «What's new» shows the notes of every version
-     between the running one and the downloaded one (`fullChangelog: true`, from
-     `UpdateInfo.releaseNotes`);
+     between the running one and the downloaded one. Main fetches `CHANGELOG.md` as of the
+     downloaded tag (`raw.githubusercontent.com/…/v<version>/kermanych/CHANGELOG.md`) and the
+     renderer cuts out those versions (`changelogBetween`). Changed during implementation from
+     `UpdateInfo.releaseNotes` with `fullChangelog: true`: that field carries the HTML GitHub
+     rendered for the release page, which would go into `v-html` from a remote source, while
+     the changelog file is the same markdown the app already renders with `html: false`;
    - **after updating**: on the first launch of a new version a «What's new in X» dialog shows
      that version's section from the bundled file (it works offline). Settings → «Загальне»
      shows the running version and a «What's new» entry that opens the bundled changelog.
@@ -120,10 +125,12 @@ that tell them what changed.
 8. **The cloud names a minimum supported app version.** A migration adds a one-row table
    `public.app_release_policy (min_app_version text not null)`, seeded with `0.0.0`, readable by
    `anon` and `authenticated`, with no write policy (it changes only through migrations). The
-   renderer reads it on launch and with every update check. A packaged app whose version is
-   lower shows a blocking screen «This version is no longer supported»: its button installs the
-   downloaded update (or waits for the download), and a link opens `releases/latest`. When the
-   policy cannot be read (offline, cloud down), nothing is blocked, in line with «Local work never
+   renderer reads it at launch and every 4 hours; an app that finds itself below the minimum
+   asks main for an update check at once instead of waiting for the next one. A packaged app
+   whose version is lower shows a blocking screen «This version is no longer supported»: its
+   button installs the downloaded update (or waits for the download), and a link opens
+   `releases/latest`. When the policy cannot be read (offline, cloud down), nothing is blocked,
+   in line with «Local work never
    waits for the cloud». A migration that breaks older clients must raise `min_app_version` in
    the same SQL file; the README states this rule next to the migration procedure. Rejected:
    migration discipline alone (nobody knows when everyone has updated, and one mistake breaks
@@ -141,6 +148,9 @@ that tell them what changed.
    mode that boots the API, opens SQLite and spawns a shell through `node-pty`). Without them, a
    build that fails at launch or breaks the updater reaches every client, and such a build cannot
    repair itself through an update: each client then has to reinstall the `.dmg` by hand.
+   One configuration check stays, and it is not a test of the build: a tag build refuses to
+   start without the signing secrets (`CSC_LINK`, `APPLE_API_KEY`), because an unsigned macOS
+   build would be published to everyone and Squirrel.Mac would refuse to install it.
 
 10. **Release notes are written in English.** The in-app release-notes generator writes English
     (`2026-10-09-release-notes-english.md`), so its draft is usable as is, and the GitHub Release
@@ -175,54 +185,78 @@ Every release:
 
 ## Changes
 
-- **Build config** `apps/ui/quasar.config.ts`: drop `identity: null`; mac targets `dmg` and
-  `zip` for `arm64`, `hardenedRuntime: true`, `entitlements` /
-  `entitlementsInherit` from a new `src-electron/entitlements.mac.plist`
-  (`com.apple.security.cs.allow-jit`, `com.apple.security.cs.allow-unsigned-executable-memory`;
-  `disable-library-validation` only if the signed build shows it is needed), `notarize: true`;
-  `linux: { target: 'AppImage', category: 'Development' }`;
-  `publish: { provider: 'github', owner: 'Oleksiyukraine', repo: 'kermanych' }` (writes
-  `app-update.yml` into the app). `appId` stays `com.kermanych.app`: changing it would break
-  updates. On Linux, `beforePackaging` compiles `node-pty` in the deployed tree, because there
-  is no prebuild. Without signing credentials, a local `pnpm build:app` still produces an
-  unsigned build: `electron-builder` skips signing when there is no identity and skips
-  notarization when there are no `APPLE_*` variables.
-- **Electron main** `src-electron/`: a new login-shell `PATH` module (decision 5); a new updater
-  module that owns `electron-updater` (check schedule, events to the renderer, `quitAndInstall`);
-  `electron-preload.ts` exposes `appVersion`, `isPackaged` and an `updates` bridge (state, «What's
-  new» notes, restart) on `window.kermanych`.
-- **Dependencies** `apps/ui/package.json`: `electron-updater` as a runtime dependency; version
-  `0.1.0`.
-- **UI** `layouts/MainLayout.vue`: the update banner and the unsupported-version screen; the
-  «What's new» dialog (bundled `CHANGELOG.md` rendered with the existing `markdown-it`);
-  `pages/SettingsPage.vue`, section `app-general`: the version and «What's new»; the last seen
-  version in `localStorage`; `i18n` en/uk; the restart confirmation counts `ACTIVE_STATUSES`.
-- **Cloud** a migration `supabase/migrations/<timestamp>_app_release_policy.sql`; a read of the
-  policy in `packages/cloud`.
-- **Release tooling** `scripts/release-prepare.ts` and a root script `release:prepare`;
-  `kermanych/CHANGELOG.md` with the `0.1.0` section; `.github/workflows/release.yml` at the
-  repository root (`working-directory: kermanych`): jobs `mac` (`macos-14`), `linux`
-  (`ubuntu-22.04`, the older glibc runs on more distributions), and `release` (tag only, needs
-  both, creates the release from the changelog section with all assets).
+- **Build config** `apps/ui/quasar.config.ts`: `identity: null` is gone; mac targets `dmg` and
+  `zip` for `arm64`, `hardenedRuntime: true`, `entitlements` / `entitlementsInherit` from the new
+  `src-electron/entitlements.mac.plist` (`allow-jit`, `allow-unsigned-executable-memory`),
+  `notarize: true`; `linux` targets an x64 AppImage; `publish` names the GitHub repository
+  (writes `app-update.yml` into the bundle and `latest-*.yml` next to the artifacts). `appId`
+  stays `com.kermanych.app`. `build.env.APP_VERSION` hands the package version to the renderer.
+  On Linux, `beforePackaging` runs `node-gyp rebuild` for `node-pty` when the deployed tree has
+  neither a prebuild nor a build.
+- **Electron main** `src-electron/login-shell-path.ts` (decision 5), `src-electron/updater.ts`
+  (`electron-updater`, IPC `kermanych:update:*`, `quitAndInstall(true, true)` so an AppImage
+  relaunches too), `electron-main.ts` wires both before the api boots;
+  `electron-preload.ts` exposes `window.kermanych.updates` (`packaged`, `state`, `check`,
+  `install`, `changelog`, `onState`); main passes `--app-packaged` to the preload.
+- **Core** `packages/core/src/app-release.ts`: `compareAppVersions`, `isBelowMinimumVersion`,
+  `changelogEntries` / `changelogSection` / `changelogBetween` (shared by the app and the
+  release script).
+- **Cloud** `supabase/migrations/20261012120000_app_release_policy.sql`;
+  `packages/cloud/src/app-release.ts` `getMinAppVersion` (null on any failure).
+- **UI** `stores/app-update.ts` (state, policy, last seen version in `localStorage`, bundled
+  `CHANGELOG.md?raw`); `components/AppUpdateBanner.vue` in `MainLayout.vue` (restart
+  confirmation counts `ACTIVE_STATUSES`); `components/AppUnsupported.vue` and
+  `components/AppWhatsNew.vue` in `App.vue`, so the gate covers the sign-in screen too;
+  `lib/markdown.ts` `renderReleaseNotes` (`breaks: false`, as on the release page); Settings →
+  «Загальне» shows the version and «Що нового»; the header shows the real version instead of a
+  fixed `v1.0`; `i18n` en/uk `appUpdate.*`.
+- **Release tooling** `scripts/release.ts` (`prepare`, `notes`) with root scripts
+  `release:prepare` / `release:notes` and `tsx` as a root dev dependency;
+  `kermanych/CHANGELOG.md`; `.github/workflows/release.yml` (matrix `macos-14` + `ubuntu-22.04`,
+  then `release` on tags only).
+- **API build fix** `apps/api/src/http/jira.controller.ts`: the attachment download reads the
+  web stream with a reader instead of `for await`. The `ReadableStream` type the build resolves
+  has no async iterator, so `nest build` — and with it `pnpm build:app`, the release build —
+  failed on `main`.
 
 ## Verification
 
-- **Tests**: changelog section extraction (the version's section only, missing or empty
-  section, last section in the file) and the minimum-version comparison (lower, equal, higher,
-  unreadable policy does not block), because these decide what users see and whether they are
-  locked out.
-- **Release tooling**: `pnpm release:prepare` with a lower, equal and invalid version refuses;
-  the workflow refuses a tag that differs from the package version and a version without notes.
-- **macOS, real rollout**: tag `v0.1.0`. Download the `.dmg` on a Mac, open it from Finder:
-  Gatekeeper raises only the standard «downloaded from the internet» prompt.
-  `spctl -a -vv` reports «Notarized Developer ID». Start a session: `omp` is found (decision 5).
-  Tag `v0.1.1`: the running 0.1.0 shows the banner and «What's new». «Restart» with a running
-  agent asks first. After the restart the app is 0.1.1 and shows «What's new in 0.1.1» once.
-  Also check that a quit with a downloaded update installs it.
-- **Linux**: before `v0.1.0`, the contributor runs the AppImage from a `workflow_dispatch` build
-  (session, terminal, launch from the desktop menu); after `v0.1.1`, the AppImage updates.
-- **Minimum version**: against a local Supabase stack, `min_app_version = '9.9.9'` gives the
-  blocking screen; with the cloud unreachable the app starts normally.
+- `packages/core` `test/app-release.spec.ts` (version order and refusals, the minimum-version
+  gate never locking out on an unreadable policy, section extraction with a heading-like line
+  inside a code block, empty and missing sections, `changelogBetween` bounds and its fallback).
+  Suites: `packages/core` 200 passed; `packages/cloud` 155 passed, 65 skipped (local-stack
+  suite); `apps/ui` 576 passed; `apps/api` 880 passed and 2 failed in
+  `test/rpc-session.compact.spec.ts`, already recorded as failing in earlier specs.
+- `vue-tsc --noEmit` in `apps/ui`: only the known `test/runtime-messages.spec.ts` error remains.
+- `pnpm release:notes` / `release:prepare`: notes printed for 0.1.0; a tag differing from the
+  package version, a malformed version, an equal or lower version and an empty new section all
+  refused; `prepare 0.2.0` wrote the version and the section (reverted afterwards).
+- `pnpm build:app --publish never` on this Mac (no signing identity): `Kermanych-0.1.0-arm64.dmg`,
+  `…-arm64-mac.zip`, both blockmaps and `latest-mac.yml`; signing skipped, notarization skipped;
+  `app-update.yml` in the bundle names `Oleksiyukraine/kermanych`; `CFBundleShortVersionString`
+  0.1.0.
+- The packaged app started from a launchd-like environment (`PATH=/usr/bin:/bin:/usr/sbin:/sbin`,
+  temporary DB and userData): its main process had the login shell's `PATH`, and `omp --version`
+  answered `omp/18.8.4` (`omp` lives in `~/.local/bin`). The updater checked GitHub and logged
+  «No published versions on GitHub»; the app kept running.
+- The UI against a preview api with a stand-in `window.kermanych.updates`: «Що нового у 0.1.0»
+  once after moving from 0.0.9; the banner on `ready` 0.2.0 with notes for 0.2.0 and 0.1.1 only
+  (raw `<script>` shown as text); «Перезапустити» with 7 active seeded sessions asked
+  («Зараз працюють агенти: 7…») and installed on confirm, with none it installed at once; a
+  policy of 9.9.9 showed «Потрібне оновлення», triggered a check, kept the button disabled until
+  `ready`, and did not close on `Escape`; Settings → «Загальне» showed 0.1.0 and the changelog.
+- `getMinAppVersion` against the team's hosted project (table not pushed yet): `null`, so
+  nothing is blocked.
+- The migration in a throwaway Postgres 17 with `anon`/`authenticated` roles: `anon` reads
+  `0.0.0`; `anon` update and `authenticated` insert are denied; a second row and a malformed
+  version are rejected; a migration-style update to 0.4.0 is read back by `anon`.
+- Not verified, needs the operator's credentials or a second release: signing and notarization,
+  the workflow on GitHub, the Linux AppImage build, and a real update 0.1.0 → 0.1.1 (Squirrel.Mac
+  installing after `before-quit` has closed the api). Plan: the contributor tries a
+  `workflow_dispatch` AppImage; then tag `v0.1.0`, install from the dmg, check
+  `spctl -a -vv` («Notarized Developer ID»), start a session from a Finder launch; then tag
+  `v0.1.1` and check the banner, «Що нового», the restart confirmation, the restart into 0.1.1
+  with its «Що нового» once, and that a plain quit also installs.
 
 ## Documentation impact
 

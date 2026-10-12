@@ -161,7 +161,7 @@
           <rect x="636" y="726" width="300" height="84" fill="#f3f2f2" />
         </svg>
         <span class="shell__logo">{{ t('common.nav.logo') }}</span>
-        <span class="shell__ver mono">v1.0</span>
+        <span class="shell__ver mono">v{{ APP_VERSION }}</span>
       </div>
       <KTopNav
         class="shell__nav"
@@ -206,6 +206,8 @@
            the page, toggled from the footer, and persists across views. Under both sits the
            integrated terminal panel, as in an IDE: it takes its height from the work area. -->
       <div class="shell__main">
+        <!-- A downloaded app update: «What's new» and «Restart». Empty otherwise. -->
+        <AppUpdateBanner />
         <div class="shell__workarea">
           <KFileManager
             v-if="store.fileManagerVisible && store.fileManagerSide === 'left'"
@@ -463,6 +465,8 @@ import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KToast from 'components/kit/KToast.vue';
+import AppUpdateBanner from 'components/AppUpdateBanner.vue';
+import { APP_VERSION } from 'stores/app-update';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KUserButton from 'components/kit/KUserButton.vue';
 import KFileManager from 'components/kit/KFileManager.vue';

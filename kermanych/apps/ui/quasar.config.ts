@@ -5,6 +5,17 @@ import { defineConfig } from '#q-app/wrappers';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// The one version of the app: electron-builder stamps it into the bundle (app.getVersion(),
+// the update feed) and the renderer reads it as process.env.APP_VERSION.
+const appDir = fileURLToPath(new URL('.', import.meta.url));
+const pkg: unknown = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8'));
+if (!pkg || typeof pkg !== 'object' || !('version' in pkg) || typeof pkg.version !== 'string') {
+  throw new Error('apps/ui/package.json has no version');
+}
+const APP_VERSION = pkg.version;
+const ENTITLEMENTS = join(appDir, 'src-electron', 'entitlements.mac.plist');
 
 export default defineConfig((ctx) => {
   return {
@@ -24,6 +35,8 @@ export default defineConfig((ctx) => {
       },
 
       vueRouterMode: 'hash', // 'hash' | 'history'
+
+      env: { APP_VERSION },
 
       // @kermanych/core is a CJS workspace dep consumed via its built dist. Vite prebundles it
       // (optimizeDeps) and converts its CJS named exports (commonjsOptions). Two hazards handled:
@@ -80,9 +93,34 @@ export default defineConfig((ctx) => {
       unPackagedInstallParams: ['-v'],
 
       builder: {
-        appId: 'com.kermanych.app',
+        appId: 'com.kermanych.app', // never change: the updater matches installs by it
         productName: 'Kermanych',
-        mac: { target: 'dmg', identity: null }, // identity:null → unsigned
+        // Signed, notarized releases (docs/specs/2026-10-12-desktop-releases-and-updates.md).
+        // The release workflow hands electron-builder the Developer ID certificate (CSC_LINK,
+        // CSC_KEY_PASSWORD) and an App Store Connect API key (APPLE_API_KEY*); without them a
+        // local `pnpm build:app` skips both steps and comes out unsigned, as it always did.
+        // The zip is what Squirrel.Mac installs on update; the dmg is for the first install.
+        // Apple Silicon only (decision 6).
+        mac: {
+          target: [
+            { target: 'dmg', arch: ['arm64'] },
+            { target: 'zip', arch: ['arm64'] },
+          ],
+          category: 'public.app-category.developer-tools',
+          hardenedRuntime: true,
+          entitlements: ENTITLEMENTS,
+          entitlementsInherit: ENTITLEMENTS,
+          notarize: true,
+        },
+        // AppImage is the Linux format electron-updater can replace in place.
+        linux: {
+          target: [{ target: 'AppImage', arch: ['x64'] }],
+          category: 'Development',
+        },
+        // Writes app-update.yml into the bundle (the feed electron-updater polls) and
+        // latest-mac.yml / latest-linux.yml next to the artifacts. The workflow builds with
+        // `--publish never` and creates the GitHub Release itself.
+        publish: [{ provider: 'github', owner: 'Oleksiyukraine', repo: 'kermanych' }],
         // better-sqlite3's and node-pty's native .node files must live OUTSIDE the asar —
         // Electron cannot dlopen from an archive, and node-pty also execs its spawn-helper
         // from disk (it rewrites the path to app.asar.unpacked itself). Both ship N-API
@@ -135,6 +173,17 @@ export default defineConfig((ctx) => {
             const helper = join(ptyPrebuilds, platform, 'spawn-helper');
             if (existsSync(helper)) chmodSync(helper, 0o755);
           }
+        }
+
+        // node-pty 1.1 ships no Linux prebuild, and the deploy above ran no install scripts.
+        // Compile it in place unless the tree already carries a build (pnpm can restore one
+        // from its side-effects cache). N-API, so headers of the build machine's Node suffice
+        // for Electron too.
+        const ptyDir = join(dest, 'node-pty');
+        const ptyPrebuilt = join(ptyPrebuilds, `${process.platform}-${process.arch}`, 'pty.node');
+        const ptyBuilt = join(ptyDir, 'build', 'Release', 'pty.node');
+        if (existsSync(ptyDir) && !existsSync(ptyPrebuilt) && !existsSync(ptyBuilt)) {
+          execFileSync('npx', ['--yes', 'node-gyp', 'rebuild'], { cwd: ptyDir, stdio: 'inherit' });
         }
 
         // Quasar keeps `workspace:*` specifiers in the generated manifest; rewrite them to

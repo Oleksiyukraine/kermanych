@@ -8,6 +8,8 @@ import { closeLoopback, startLoopbackOAuth } from './oauth-loopback';
 import { routeLinksToDefaultBrowser } from './external-links';
 import { htmlToPdf } from './print-pdf';
 import { SessionBrowsers } from './session-browser';
+import { adoptLoginShellPath } from './login-shell-path';
+import { attachUpdaterWindow, startUpdater } from './updater';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -55,11 +57,12 @@ async function createWindow(apiBase: string) {
         currentDir,
         path.join(process.env.QUASAR_ELECTRON_PRELOAD_FOLDER, 'electron-preload' + process.env.QUASAR_ELECTRON_PRELOAD_EXTENSION)
       ),
-      additionalArguments: [`--api-base=${apiBase}`],
+      additionalArguments: [`--api-base=${apiBase}`, ...(app.isPackaged ? ['--app-packaged'] : [])],
     },
   });
   routeLinksToDefaultBrowser(mainWindow, (url) => shell.openExternal(url));
   browsers.attach(mainWindow);
+  attachUpdaterWindow(mainWindow);
 
   if (process.env.DEV) {
     // Vite serves optimized deps as `immutable` under a `?v=<browserHash>` query that does NOT
@@ -119,6 +122,9 @@ void app.whenReady().then(async () => {
       );
       if (!devIcon.isEmpty()) app.dock?.setIcon(devIcon);
     }
+    // Before the api boots: every spawn it makes (omp, claude, git) resolves through PATH.
+    if (app.isPackaged) await adoptLoginShellPath();
+    startUpdater();
     const apiBase = await startBackend();
     await createWindow(apiBase);
   } catch (err) {

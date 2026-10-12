@@ -16,6 +16,15 @@ export function renderMarkdown(src: string): string {
   return md.render(src ?? '');
 }
 
+// Release notes (CHANGELOG.md sections, «What's new»): read the way GitHub shows them on the
+// release page — breaks:false, so a list item wrapped over two source lines stays one line.
+// html:false like every renderer here.
+const notesMd = new MarkdownIt({ html: false, linkify: true, breaks: false, typographer: false });
+
+export function renderReleaseNotes(src: string): string {
+  return notesMd.render(src);
+}
+
 // Resolve a relative link/image target against `dir` (the current file's folder, relative to
 // the doc-folder root). Returns a folder-relative POSIX path, or null when the target is
 // absolute, external, a bare anchor, or escapes above the folder root — those are left for

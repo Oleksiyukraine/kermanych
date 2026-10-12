@@ -231,3 +231,12 @@ export {
   type QaChecklistItem,
   type TaskAction,
 } from "./task-actions";
+export {
+  isAppVersion,
+  compareAppVersions,
+  isBelowMinimumVersion,
+  changelogEntries,
+  changelogSection,
+  changelogBetween,
+  type ChangelogEntry,
+} from "./app-release";
