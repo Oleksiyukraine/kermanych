@@ -135,6 +135,8 @@ export class WorktreeService {
   // merges excluded (a merge restates the commits it carries). Newest first, as git hands
   // them out. NUL-framed records with unit-separator fields, because a commit body is free
   // text that can contain any line-based delimiter this method could otherwise pick.
+  // `%aN`, not `%an`: the author as the repository's .mailmap names them, so one person who
+  // committed under two spellings is one person in a per-person note.
   //
   // `gitStdout`, not `git`: the output is CONTENT — a stray stderr warning merged into the
   // stream would be parsed as part of somebody's commit message.
@@ -146,7 +148,7 @@ export class WorktreeService {
       "--date=short",
       `--since=${from} 00:00:00`,
       `--until=${to} 23:59:59`,
-      "--pretty=format:%x00%ad%x1f%an%x1f%s%x1f%b",
+      "--pretty=format:%x00%ad%x1f%aN%x1f%s%x1f%b",
     ]);
     if (!r.ok) return [];
     return r.out

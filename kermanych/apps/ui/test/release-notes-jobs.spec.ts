@@ -30,11 +30,10 @@ vi.mock('@kermanych/cloud', () => ({
 const ask = {
   workspaceId: 'w1',
   workspaceName: 'Acme',
-  projectId: 'p1',
-  projectName: 'Web',
-  branch: 'main',
+  sources: [{ projectId: 'p1', projectName: 'Web', branch: 'main' }],
   rangeFrom: '2026-08-01',
   rangeTo: '2026-08-31',
+  groupBy: 'topic' as const,
 };
 
 // The cloud echoes an insert back as a stored row; only the columns the screen reads matter.
@@ -71,8 +70,7 @@ describe('release notes generation', () => {
     expect(store.jobs).toHaveLength(1);
     expect(store.jobs[0]).toMatchObject({
       workspaceId: 'w1',
-      projectName: 'Web',
-      branch: 'main',
+      sources: [{ projectId: 'p1', projectName: 'Web', branch: 'main' }],
       rangeFrom: '2026-08-01',
       rangeTo: '2026-08-31',
       error: null,
@@ -81,6 +79,11 @@ describe('release notes generation', () => {
 
     gate.resolve({ title: 'Реліз 12', markdown: '# Реліз 12', commitCount: 7 });
     await run;
+    // The note is stored with the projects and branches it was generated from.
+    expect(createWorkspaceReleaseNote).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ sources: [{ projectId: 'p1', projectName: 'Web', branch: 'main' }] }),
+    );
 
     // The note landed in the workspace with nothing on screen to receive it, and the
     // placeholder is gone because the real row replaced it.
@@ -96,10 +99,21 @@ describe('release notes generation', () => {
     const store = useReleaseNotes();
     void store.generate(ask);
     void store.generate(ask);
-    void store.generate({ ...ask, branch: 'release/2' });
+    void store.generate({ ...ask, sources: [{ projectId: 'p1', projectName: 'Web', branch: 'release/2' }] });
+    // Same branch and period, other layout: a different document, so a different run.
+    void store.generate({ ...ask, groupBy: 'person' });
+    // A second project is a different document too.
+    const both = [...ask.sources, { projectId: 'p2', projectName: 'Api', branch: 'dev' }];
+    void store.generate({ ...ask, sources: both });
+    void store.generate({ ...ask, sources: both });
 
-    expect(generateReleaseNotes).toHaveBeenCalledTimes(2);
-    expect(store.jobs.map((j) => j.branch)).toEqual(['main', 'release/2']);
+    expect(generateReleaseNotes).toHaveBeenCalledTimes(4);
+    expect(store.jobs.map((j) => [j.sources.map((s) => `${s.projectId}@${s.branch}`).join('+'), j.groupBy])).toEqual([
+      ['p1@main', 'topic'],
+      ['p1@release/2', 'topic'],
+      ['p1@main', 'person'],
+      ['p1@main+p2@dev', 'topic'],
+    ]);
   });
 
   it('keeps the failed job on the list with the reason attached', async () => {
@@ -142,12 +156,11 @@ describe('release notes generation', () => {
     await store.retry(failed);
 
     expect(generateReleaseNotes).toHaveBeenLastCalledWith({
-      projectId: 'p1',
+      sources: [{ projectId: 'p1', branch: 'main' }],
       workspaceName: 'Acme',
-      branch: 'main',
       rangeFrom: '2026-08-01',
       rangeTo: '2026-08-31',
-      locale: 'uk',
+      groupBy: 'topic',
     });
     expect(store.jobs).toHaveLength(0);
     expect((store.byWorkspace.w1 ?? []).map((n) => n.title)).toEqual(['Реліз 12']);

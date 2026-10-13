@@ -44,7 +44,7 @@ import {
   type RiskResponse,
   type RiskStatus,
 } from "./risks";
-import { isReleaseDate } from "./release-notes";
+import { isReleaseDate, RELEASE_GROUPINGS, type ReleaseGrouping } from "./release-notes";
 import type { Usage } from "./types";
 import type { Locale, ManagementRejection, Notice } from "./i18n-codes";
 import { PLATFORMS, type Platform } from "./platform";
@@ -211,8 +211,16 @@ export type ManagementAction =
   // the reason `risk.update` names a register code: a uuid is something the model has no
   // honest way to know and every way to invent, and the browser holds the list to resolve
   // it against. The branch and the inclusive range are the operator's own words, so this
-  // action carries nothing the chat could not have been told.
-  | { kind: "release.notes"; project: string; branch: string; rangeFrom: string; rangeTo: string }
+  // action carries nothing the chat could not have been told. `groupBy` is present only when
+  // the operator asked for a per-person report; absent is the original by-topic document.
+  | {
+      kind: "release.notes";
+      project: string;
+      branch: string;
+      rangeFrom: string;
+      rangeTo: string;
+      groupBy?: ReleaseGrouping;
+    }
   // File one card on the workspace's own board — «Дошка» → «Задачі», which is `tasks` rows
   // and therefore the DEFAULT board: it is the one that always exists, needs no integration
   // and no personal token, and every member of the workspace can already see it. A request
@@ -1140,7 +1148,25 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
           params: { from: rangeFrom, to: rangeTo },
         },
       };
-    return { kind: "release.notes", project, branch, rangeFrom, rangeTo };
+    if (!has(o, "groupBy")) return { kind: "release.notes", project, branch, rangeFrom, rangeTo };
+    // Folded like risk.export's format: «Person» is the same request as «person».
+    const rawGroupBy = str(o.groupBy);
+    const groupBy = RELEASE_GROUPINGS.find((g) => g === rawGroupBy?.toLowerCase());
+    if (groupBy === undefined) {
+      const allowed = RELEASE_GROUPINGS.join(" | ");
+      return {
+        error: {
+          text: `release.notes: невідоме групування ${JSON.stringify(o.groupBy)} (${allowed})`,
+          code: "release_group_by_unknown",
+          params: { value: JSON.stringify(o.groupBy), allowed },
+        },
+      };
+    }
+    // `topic` is the default spelled out; it is dropped so a by-topic action looks the same
+    // whether or not the model wrote the field.
+    return groupBy === "topic"
+      ? { kind: "release.notes", project, branch, rangeFrom, rangeTo }
+      : { kind: "release.notes", project, branch, rangeFrom, rangeTo, groupBy };
   }
   if (kind === "ticket.create") {
     const ticket = validateNewTicket(o.ticket);

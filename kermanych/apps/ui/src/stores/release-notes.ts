@@ -37,25 +37,35 @@ import {
   listWorkspaceReleaseNotes as cloudListNotes,
   patchWorkspaceReleaseNote as cloudPatchNote,
 } from '@kermanych/cloud';
+import type { ReleaseGrouping } from '@kermanych/core';
 import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { api } from '../lib/api';
 import { IS_PREVIEW } from '../lib/preview';
-import { locale } from '../lib/locale';
 import { globalTr } from '../boot/i18n';
+
+// One project of a job: the id the api resolves, the name the row and the stored note show,
+// and the branch read for it.
+export type ReleaseJobSource = {
+  projectId: string;
+  projectName: string;
+  branch: string;
+};
 
 // One generation in flight, or one that failed and still owes the operator a reason. Held
 // as plain data rather than a promise because the screen renders it: a row in the history
-// that says which project, which branch, which period and how long it has been running.
+// that says which projects, which branches, which period and how long it has been running.
 export type ReleaseNotesJob = {
   id: string;
   workspaceId: string;
   workspaceName: string;
-  projectId: string;
-  projectName: string;
-  branch: string;
+  // One or more projects, each with its own branch, in the order the note writes its
+  // sections. The form sends as many as were ticked; the chat sends one.
+  sources: ReleaseJobSource[];
   rangeFrom: string;
   rangeTo: string;
+  // `topic` — the original by-meaning note; `person` — one section per commit author.
+  groupBy: ReleaseGrouping;
   startedAt: number;
   // A failed run KEEPS its row with the reason attached. The toast that announced the
   // failure is gone four seconds later, and the person it was meant for was on another
@@ -141,19 +151,14 @@ export const useReleaseNotes = defineStore('release-notes', () => {
     if (!job) return;
     try {
       const reply = await api.generateReleaseNotes({
-        projectId: job.projectId,
+        sources: job.sources.map((s) => ({ projectId: s.projectId, branch: s.branch })),
         workspaceName: job.workspaceName,
-        branch: job.branch,
         rangeFrom: job.rangeFrom,
         rangeTo: job.rangeTo,
-        // The note is written in the operator's active locale; the api's prompt body stays
-        // a Ukrainian template and only the language directive varies.
-        locale: locale.value,
+        groupBy: job.groupBy,
       });
       await create(job.workspaceId, {
-        projectId: job.projectId,
-        projectName: job.projectName,
-        branch: job.branch,
+        sources: job.sources,
         rangeFrom: job.rangeFrom,
         rangeTo: job.rangeTo,
         title: reply.title,
@@ -179,10 +184,13 @@ export const useReleaseNotes = defineStore('release-notes', () => {
       (j) =>
         !j.error &&
         j.workspaceId === input.workspaceId &&
-        j.projectId === input.projectId &&
-        j.branch === input.branch &&
+        // The same projects on the same branches in the same order — the same document.
+        // Order counts: it is the order of the note's sections.
+        j.sources.length === input.sources.length &&
+        j.sources.every((s, i) => s.projectId === input.sources[i]?.projectId && s.branch === input.sources[i]?.branch) &&
         j.rangeFrom === input.rangeFrom &&
-        j.rangeTo === input.rangeTo,
+        j.rangeTo === input.rangeTo &&
+        j.groupBy === input.groupBy,
     );
     if (already) return;
 

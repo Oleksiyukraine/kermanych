@@ -394,8 +394,17 @@ export type WorkspaceRiskEvent = {
   toValue: string;
 };
 
-// No `platform` column beside these: a release note covers one project, and a project is
-// already one shipping shape (core/release-notes.ts says why).
+// No `platform` column beside these: a release note covers one or more projects, and a
+// project is already one shipping shape (core/release-notes.ts says why).
+
+// One project a note was generated from, and the branch that was read for it. A snapshot
+// taken at generation: `projectId` is absent for a note stored before the list existed
+// whose project row has since been deleted, and `projectName` keeps the label readable then.
+export type ReleaseNoteSource = {
+  projectId?: string;
+  projectName: string;
+  branch: string;
+};
 
 // One generated release note. Everything except `title` and `bodyMd` is fixed at
 // generation time — the trigger workspace_release_notes_touch() freezes the provenance
@@ -403,8 +412,14 @@ export type WorkspaceRiskEvent = {
 export type WorkspaceReleaseNote = {
   id: string;
   workspaceId: string;
-  // Absent when the project row was deleted after the note was generated; `projectName`
-  // is the snapshot that keeps the header readable then.
+  // The projects and their branches, in the order the note writes its sections — what a
+  // screen shows as the note's provenance. Always at least one: a note stored before the
+  // list existed is read as the one project its summary columns below name.
+  sources: ReleaseNoteSource[];
+  // A SUMMARY of `sources`, kept for readers that only need a label (and for builds that
+  // predate the list). `projectId` is set only for a single-project note — and absent when
+  // that project row was deleted after the note was generated; `projectName` and `branch`
+  // are the names and the branches joined with « + ».
   projectId?: string;
   projectName: string;
   branch: string;
@@ -419,11 +434,11 @@ export type WorkspaceReleaseNote = {
   updatedBy?: string;
 };
 
+// The summary columns are derived from `sources` by createWorkspaceReleaseNote, so a caller
+// cannot store a label that disagrees with the list.
 export type WorkspaceReleaseNoteInsert = {
   workspaceId: string;
-  projectId?: string;
-  projectName: string;
-  branch: string;
+  sources: ReleaseNoteSource[];
   rangeFrom: string;
   rangeTo: string;
   title: string;
@@ -730,6 +745,34 @@ export type SlackIntegrationInsert = {
   channelId: string;
   channelName: string;
   botUserId: string;
+};
+
+// ── Release notes → Slack ─────────────────────────────────────────────────────
+// The channel a workspace's release notes are sent to, and the Slack app every member
+// authorizes to post there under their own name. The camelCase shape of
+// workspace_release_notes_slack; slack.ts owns the snake_case boundary. Addresses only —
+// each member's user token never leaves their machine's registry SQLite.
+export type ReleaseNotesSlack = {
+  id: string;
+  workspaceId: string;
+  // The Slack app's Client ID — public, part of every authorize URL.
+  clientId: string;
+  teamId: string;
+  teamName: string;
+  channelId: string;
+  channelName: string;
+  configuredBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ReleaseNotesSlackInsert = {
+  workspaceId: string;
+  clientId: string;
+  teamId: string;
+  teamName: string;
+  channelId: string;
+  channelName: string;
 };
 
 // ── Password vault ────────────────────────────────────────────────────────────

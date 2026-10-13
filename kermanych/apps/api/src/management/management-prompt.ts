@@ -81,11 +81,9 @@ const UNBOUND = "не привʼязаний на цій машині";
 
 // The one line that varies with the operator's locale. The prompt bodies stay Ukrainian
 // templates on purpose — they are the tested contract — so only the "answer in X" directive
-// is parameterised. Shared with the release-notes generator, which names the same language.
-// `localeDirective` defaults to uk (rule ґ: «за замовчуванням українською»), so a client
-// that sends no locale keeps the previous behaviour; the release-notes generator passes
-// its own default (en, its documented product default) explicitly.
-export const LANGUAGE_NAME: Record<Locale, string> = { uk: "українською", en: "англійською" };
+// is parameterised. `localeDirective` defaults to uk (rule ґ: «за замовчуванням
+// українською»), so a client that sends no locale keeps the previous behaviour.
+const LANGUAGE_NAME: Record<Locale, string> = { uk: "українською", en: "англійською" };
 
 export function localeDirective(locale: Locale = "uk"): string {
   return `Відповідай ${LANGUAGE_NAME[locale]} мовою (${locale}).`;
@@ -244,6 +242,9 @@ function releaseProtocol(): string {
     "  rangeFrom, rangeTo — включний період, обидві дати РРРР-ММ-ДД, rangeFrom не пізніше rangeTo.",
     "    Відносний період («за останній тиждень», «за серпень», «з минулого релізу») перекладай у конкретні дати сам,",
     "    відлічуючи від дати «Сьогодні» з контексту. Слова замість дати відкидаються без виконання.",
+    "  groupBy — необовʼязкове поле, єдине значення \"person\": звіт по людях — окремий розділ на кожного автора комітів",
+    "    за період і що він завершив. Додавай \"groupBy\": \"person\" ЛИШЕ коли користувач просить розбити нотатку по людях,",
+    "    авторах чи «хто що зробив». Без такого прохання поля не пиши — звичайна нотатка групує зміни за смислом і нікого не називає.",
     "Далі застосунок сам: читає коміти цієї гілки за цей період на ЦІЙ машині, пише документ окремим викликом моделі",
     "й зберігає його у воркспейсі. Це триває десятки секунд. У прозі скажи, для якого проєкту, гілки й періоду ти це",
     "запускаєш — і не переказуй змісту нотатки, якого ти ще не бачив.",

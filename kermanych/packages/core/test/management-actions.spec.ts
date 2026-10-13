@@ -261,6 +261,24 @@ test("a release.notes carries a project, a branch and an inclusive range", () =>
   expect(r.text).toBe("Готую реліз-ноти за серпень.");
 });
 
+// The per-person report is opt-in: `person` survives, `topic` (the default spelled out) is
+// dropped so both spellings of the default are one action, and anything else is refused
+// rather than silently written as the by-topic note.
+test("a release.notes groupBy is person, the default, or refused", () => {
+  expect(validateManagementAction({ kind: "release.notes", ...RANGE, groupBy: "Person" })).toEqual({
+    kind: "release.notes",
+    ...RANGE,
+    groupBy: "person",
+  });
+  expect(validateManagementAction({ kind: "release.notes", ...RANGE, groupBy: "topic" })).toEqual({
+    kind: "release.notes",
+    ...RANGE,
+  });
+  const bad = validateManagementAction({ kind: "release.notes", ...RANGE, groupBy: "team" });
+  if (!("error" in bad)) throw new Error("expected a refusal");
+  expect(bad.error).toMatchObject({ code: "release_group_by_unknown", params: { value: '"team"', allowed: "topic | person" } });
+});
+
 // The project is named the way the model was SHOWN it — by name, never by id — so a missing
 // name is the one field that cannot be recovered from anywhere else.
 test("a release.notes without a project or a branch is refused, not guessed", () => {

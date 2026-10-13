@@ -230,11 +230,11 @@ export const useManagementChat = defineStore('management-chat', () => {
       // What only the cloud knows travels from here; the api resolves the project id against
       // its own registry for the path. Paths never leave a client.
       workspaceName: projects.workspaceById.get(workspaceId)?.name ?? '',
-      projectId: project.id,
-      projectName: project.name,
-      branch: action.branch,
+      // The chat names one project; the form is where several are picked.
+      sources: [{ projectId: project.id, projectName: project.name, branch: action.branch }],
       rangeFrom: action.rangeFrom,
       rangeTo: action.rangeTo,
+      groupBy: action.groupBy ?? 'topic',
     });
     result(
       workspaceId,

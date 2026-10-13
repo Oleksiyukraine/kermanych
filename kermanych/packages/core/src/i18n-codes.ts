@@ -69,10 +69,12 @@ export type ApiErrorCode =
   | "message_empty" // management.controller.ts:65 — blank message (params: none)
   | "workspace_missing" // management.controller.ts:74 — workspaceId absent (params: none)
   | "section_context_missing" // management.controller.ts:83 — section context absent (params: none)
-  | "project_missing" // management.controller.ts:124 — projectId absent (params: none)
-  | "branch_missing" // management.controller.ts:126 — branch absent (params: none)
+  | "project_missing" // management.controller.ts — no release-notes source, or one without a projectId (params: none)
+  | "project_duplicate" // management.controller.ts — one project named twice in the release-notes sources (params: none)
+  | "branch_missing" // management.controller.ts — a release-notes source without a branch (params: none)
   | "period_format_invalid" // management.controller.ts:130 — range is not a YYYY-MM-DD pair (params: none)
   | "period_start_after_end" // management.controller.ts:132 — range start is after its end (params: none)
+  | "group_by_invalid" // management.controller.ts — release-notes groupBy is not a known layout (params: { allowed })
   | "attachments_too_many" // management.controller.ts — more attachments than one turn accepts (params: { count, max })
   | "attachment_too_large" // management.controller.ts — one attachment over the 20 MiB cap (params: { name })
   // management-chat.service.ts — a management turn that fails is thrown to the controller:
@@ -81,9 +83,9 @@ export type ApiErrorCode =
   | "assistant_no_reply_timeout" // management-chat.service.ts:277 — no reply within the turn budget (params: { seconds })
   // release-notes.service.ts — generation refusals and dead-child guards:
   | "project_not_in_registry" // release-notes.service.ts:55 — project not in the local registry (params: none)
-  | "project_not_bound" // release-notes.service.ts:57 — project not bound on this machine (params: none)
-  | "branch_not_in_repo" // release-notes.service.ts:63 — branch absent from the local repo (params: { branch })
-  | "no_commits_in_range" // release-notes.service.ts:67 — no commits in the requested range (params: { branch, from, to })
+  | "project_not_bound" // release-notes.service.ts — project not bound on this machine (params: { project })
+  | "branch_not_in_repo" // release-notes.service.ts — branch absent from the project's local repo (params: { project, branch })
+  | "no_commits_in_range" // release-notes.service.ts — a project has no commits in the requested range (params: { project, branch, from, to })
   | "omp_exited_during_generation" // release-notes.service.ts:110 — the omp child died mid-generation (params: { reason })
   | "generation_timeout" // release-notes.service.ts:122 — generation did not finish in time (params: { seconds })
   | "model_no_text" // release-notes.service.ts:139 — the model returned no text (params: none)
@@ -145,9 +147,11 @@ export const API_ERROR_CODES = [
   "workspace_missing",
   "section_context_missing",
   "project_missing",
+  "project_duplicate",
   "branch_missing",
   "period_format_invalid",
   "period_start_after_end",
+  "group_by_invalid",
   "attachments_too_many",
   "attachment_too_large",
   "omp_launch_timeout",
@@ -175,9 +179,10 @@ type AssertNever<T extends never> = T;
 type _NoticeExhaustive = AssertNever<Exclude<NoticeCode, (typeof NOTICE_CODES)[number]>>;
 type _ApiErrorExhaustive = AssertNever<Exclude<ApiErrorCode, (typeof API_ERROR_CODES)[number]>>;
 
-// The locales the UI ships. The api threads the operator's active locale into the model
-// prompts (management-prompt.ts / release-notes-prompt.ts) so the answer is written in it;
-// the prompt bodies stay Ukrainian templates and only the "answer in X" directive varies.
+// The locales the UI ships. The api threads the operator's active locale into the management
+// chat prompt (management-prompt.ts) so the answer is written in it; the prompt body stays a
+// Ukrainian template and only the "answer in X" directive varies. Release notes do not take
+// it: they are always English (release-notes-prompt.ts).
 export type Locale = "uk" | "en";
 
 // Interpolation values a localized message reads. Numbers (seconds, count) travel unquoted
@@ -234,6 +239,7 @@ export type ManagementRejectionCode =
   | "release_no_range" // a release.notes without an inclusive range (params: { project })
   | "release_date_format" // a release.notes range bound that is not a date (params: { field, value })
   | "release_range_reversed" // a release.notes range whose start is after its end (params: { from, to })
+  | "release_group_by_unknown" // a release.notes groupBy that is not a known layout (params: { value, allowed })
   | "action_kind_unknown" // a block whose kind nobody implemented (params: { value })
   // validateNewTicket / strList / ticketName — one field or shape of a ticket block (also
   // produced by the api's jira_create_issue tool, which gates on validateNewTicket):
@@ -297,6 +303,7 @@ export const MANAGEMENT_REJECTION_CODES = [
   "release_no_range",
   "release_date_format",
   "release_range_reversed",
+  "release_group_by_unknown",
   "action_kind_unknown",
   "field_not_string_list",
   "field_list_not_all_strings",

@@ -74,9 +74,10 @@ Settings → Застосунок → «ШІ-провайдер». It is stored 
 (`profiles.agent_language`) and cached by the local API; `KERMANYCH_LANGUAGE` (any of the
 codes, e.g. `uk` or `en-ste-80`) is a dev override. Unset means no preference: the agent keeps
 its own default. The choice reaches every managed spawn — agents, chats, discussions, reviews,
-resumes, the «Менеджмент» chat and release notes — as a system-prompt append
+resumes and the «Менеджмент» chat — as a system-prompt append
 (`--append-system-prompt` for `omp`, `systemPrompt.append` for `claude-code`), read fresh on
-each spawn. Native sessions get nothing.
+each spawn. Native sessions get nothing, and neither does the release-notes generator: its one
+reply is the note, and a note is always written in English.
 
 Three entries are levels of [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/),
 the controlled English of aircraft maintenance manuals, rather than plain languages:
@@ -312,7 +313,9 @@ Setting up the Slack app, once per workspace:
    manifest** at <https://api.slack.com/apps?new_app=1> in your Slack workspace. The
    manifest enables Socket Mode, the bot scopes `channels:history`, `groups:history`,
    `channels:read`, `groups:read`, `chat:write`, and the `message.channels` /
-   `message.groups` events.
+   `message.groups` events. It also carries what release notes need (below): the user
+   scopes `chat:write`, `channels:read`, `groups:read`, the redirect
+   `http://localhost:53170/callback` and PKCE.
 2. **Install to Workspace**, then copy the **Bot User OAuth Token** (`xoxb-…`) from
    *OAuth & Permissions*.
 3. In *Basic Information → App-Level Tokens* generate a token with the
@@ -355,6 +358,36 @@ Setting up the Slack app, once per workspace:
   owner. «Disconnect» removes the row and this machine's tokens.
 - **One Slack app per Kermanych workspace.** Two workspaces sharing one app would split
   its messages between machines that cannot see each other's workspace.
+
+#### Sending release notes to Slack
+
+A release note opened on the **Release Notes** screen has a **«Send to Slack»** button. It
+posts the note to the workspace's release-notes channel **under the Slack name of the
+member who pressed it** — a real message from that person, not from the bot. This works
+without the Q&A bot above; it only needs the same Slack app.
+
+- **The channel is set by the owner**, in the **Slack** button of the Release Notes toolbar:
+  paste the Slack app's **Client ID** (*Basic Information → App Credentials*), connect your
+  own Slack account, and pick the channel. Only channels you are a member of are listed. The
+  setting lives in the cloud row `workspace_release_notes_slack` (created by the additive
+  `20261009090000_release_notes_slack.sql` — push it before shipping this UI): the Client
+  ID, the Slack workspace and the channel, readable by members and written by the owner.
+- **An app created before this feature needs the new manifest.** Copy it (Integrations →
+  Slack, or the Release Notes Slack settings) and paste it into the app's *App Manifest*
+  page. Enabling PKCE marks the app as a public client, which Slack does not let you undo.
+- **Each member connects their own Slack account once**, on the first «Send to Slack» or in
+  the same settings. Kermanych opens Slack's consent page in your browser (OAuth with PKCE,
+  user scopes only, no client secret anywhere); the redirect comes back to the desktop app's
+  loopback listener on port 53170. Desktop app only — the browser build cannot connect.
+- **Your Slack token is local.** The user token (`xoxp-…`) is stored in this machine's
+  registry SQLite (`slack_user_tokens`), never in the cloud. «Disconnect» forgets it. A
+  token Slack stops accepting is forgotten on the next send, and the next press connects
+  again.
+- **You must be in the channel.** Slack posts a member's message only where they are a
+  member; otherwise the send says to join the channel first.
+- **Formatting.** Headings become bold lines, `**bold**` and links are converted to Slack's
+  markup. A note longer than about 3,500 characters is one channel message continued as
+  replies in its thread, in order.
 
 ### Why the backend is in the repository
 
@@ -1020,6 +1053,34 @@ That field is a real assistant, and it is deliberately narrow:
   clue the range or the branch was not the one you meant. A failed run keeps a row on the
   section screen with its reason and a retry. Editing, copying and deleting a stored note
   stay on the screen; the assistant has no verb for them and the prompt says so.
+  By default the note groups changes by meaning («New», «Improvements», «Fixes») and names
+  nobody. Tick «Звіт по людях» in the form — or ask the chat to split the note by person
+  («хто що зробив»), which adds `"groupBy": "person"` to the action — and the note gets one
+  section per commit author in the period, headed by their name, saying in the same plain
+  language what that person completed. Authors are read as git's `%aN`, so a repository's
+  `.mailmap` folds one person's aliases into one section; bots get a closing sentence, not a
+  section of their own.
+  The form can also write one note over several projects of the workspace — the back-end
+  and the front-end, say. Pick more than one project in its «Projects» picker and each
+  picked project gets its own branch picker, preselected with that project's default branch,
+  so the back-end can be read from `dev` while the front-end is read from `main`. The note
+  then has one section per project, headed by the project's name, in the order you picked
+  them; the «New» / «Improvements» / «Fixes» groups (or the per-person sections) sit inside
+  each project's section, and each section is written only from that project's commits. One
+  child writes the whole note: it starts in the first project's repository and is told
+  where every other picked repository is on this machine, and the commit budget is split
+  evenly between the projects. Every picked project must be bound on this machine and have
+  commits on its branch in the period — a project with none refuses the whole generation and
+  names the project, because an empty range is usually the wrong branch. The chat's
+  `release.notes` action still names one project. The note row and the note header show one
+  tag per project with its branch; the cloud stores the list in
+  `workspace_release_notes.sources` (additive migration
+  `20261012090000_release_notes_sources.sql` — push it before shipping this UI), and the old
+  `project_name` / `branch` columns keep a « + »-joined summary for builds that predate it.
+  Every note is written in English — from the form and from the chat alike, whatever the
+  interface language, the agent communication language or the language the commits are
+  written in. Commits in another language are translated; names of people, the product and
+  interface labels stay as they are.
 - **It reads the team's capacity.** Team Capacity is the one section marked `read`: the
   screen adds up the Jira board's remaining estimates (spread over business days up to
   each ticket's due date) and its worklogs against 8 h per person per business day, for a

@@ -20,6 +20,7 @@ import {
   ForbiddenException,
 } from "@nestjs/common";
 import { SlackService } from "../slack/slack.service";
+import { SlackReleaseNotesService } from "../slack/slack-release-notes.service";
 import { isSlackAuthError } from "../slack/slack-client";
 
 type Authed = { user: { id: string } };
@@ -31,7 +32,10 @@ function rethrow(err: unknown): never {
 
 @Controller("slack")
 export class SlackController {
-  constructor(private slack: SlackService) {}
+  constructor(
+    private slack: SlackService,
+    private releaseNotes: SlackReleaseNotesService,
+  ) {}
 
   // ── tokens (this machine, this user, this workspace) ─────────────────────────
 
@@ -91,6 +95,86 @@ export class SlackController {
     try {
       await this.slack.disconnect(workspaceId, req.user.id);
       return { ok: true };
+    } catch (err) {
+      rethrow(err);
+    }
+  }
+
+  // ── this member's Slack account (release notes posted under their own name) ───
+
+  @Get("account")
+  account(@Query("workspace") workspace: string, @Req() req: Authed) {
+    if (!workspace?.trim()) throw new BadRequestException("workspace is required");
+    return this.releaseNotes.account(workspace.trim(), req.user.id);
+  }
+
+  // Step one of the PKCE round trip: the URL the desktop app opens. `clientId` only while
+  // the owner is setting the channel up; otherwise the workspace's row names the app.
+  @Post("account/authorize")
+  async authorize(@Body() b: { workspaceId: string; clientId?: string }, @Req() req: Authed) {
+    if (!b?.workspaceId) throw new BadRequestException("workspaceId is required");
+    try {
+      return await this.releaseNotes.authorize(b.workspaceId, req.user.id, b.clientId);
+    } catch (err) {
+      rethrow(err);
+    }
+  }
+
+  // Step two: the code the loopback caught.
+  @Put("account")
+  async completeAuthorize(@Body() b: { workspaceId: string; code: string }, @Req() req: Authed) {
+    if (!b?.workspaceId || !b?.code?.trim()) throw new BadRequestException("workspaceId and code are required");
+    try {
+      return await this.releaseNotes.completeAuthorize(b.workspaceId, req.user.id, b.code.trim());
+    } catch (err) {
+      rethrow(err);
+    }
+  }
+
+  @Delete("account")
+  disconnectAccount(@Query("workspace") workspace: string, @Req() req: Authed) {
+    if (!workspace?.trim()) throw new BadRequestException("workspace is required");
+    this.releaseNotes.disconnect(workspace.trim(), req.user.id);
+    return { ok: true };
+  }
+
+  @Get("account/channels")
+  async accountChannels(@Query("workspace") workspace: string, @Req() req: Authed) {
+    if (!workspace?.trim()) throw new BadRequestException("workspace is required");
+    try {
+      return await this.releaseNotes.channels(workspace.trim(), req.user.id);
+    } catch (err) {
+      rethrow(err);
+    }
+  }
+
+  // ── the release-notes channel (owner) and sending (any member) ───────────────
+
+  @Put("release-notes")
+  async setReleaseNotesChannel(@Body() b: { workspaceId: string; channelId: string }, @Req() req: Authed) {
+    if (!b?.workspaceId || !b?.channelId?.trim()) throw new BadRequestException("workspaceId and channelId are required");
+    try {
+      return await this.releaseNotes.setChannel(b.workspaceId, req.user.id, b.channelId.trim());
+    } catch (err) {
+      rethrow(err);
+    }
+  }
+
+  @Delete("release-notes/:workspaceId")
+  async removeReleaseNotesChannel(@Param("workspaceId") workspaceId: string) {
+    try {
+      await this.releaseNotes.removeChannel(workspaceId);
+      return { ok: true };
+    } catch (err) {
+      rethrow(err);
+    }
+  }
+
+  @Post("release-notes/send")
+  async sendReleaseNote(@Body() b: { workspaceId: string; noteId: string }, @Req() req: Authed) {
+    if (!b?.workspaceId || !b?.noteId) throw new BadRequestException("workspaceId and noteId are required");
+    try {
+      return await this.releaseNotes.send(b.workspaceId, req.user.id, b.noteId);
     } catch (err) {
       rethrow(err);
     }

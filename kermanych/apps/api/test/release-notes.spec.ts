@@ -20,11 +20,16 @@ function commit(over: Partial<ReleaseCommit> = {}): ReleaseCommit {
 describe("buildReleaseNotesPrompt", () => {
   const prompt = buildReleaseNotesPrompt({
     workspaceName: "Acme",
-    projectName: "мобільний-застосунок",
-    branch: "release/2.4",
+    sources: [
+      {
+        projectName: "мобільний-застосунок",
+        branch: "release/2.4",
+        repoPath: "/repos/mobile",
+        commits: [commit(), commit({ subject: "виправлено падіння на логіні", body: "Падало, коли токен протух." })],
+      },
+    ],
     rangeFrom: "2026-08-01",
     rangeTo: "2026-08-31",
-    commits: [commit(), commit({ subject: "виправлено падіння на логіні", body: "Падало, коли токен протух." })],
   });
 
   it("states the repository, the branch and the range verbatim, and no platform", () => {
@@ -36,27 +41,17 @@ describe("buildReleaseNotesPrompt", () => {
     expect(prompt).not.toContain("Платформа");
   });
 
-  // The whole feature request in one assertion: the reader is not an engineer, and the
-  // document is written in English by default.
-  it("demands plain language for a non-technical reader, in English", () => {
+  // The whole feature request in one assertion: the reader is not an engineer.
+  it("demands plain language for a non-technical reader", () => {
     expect(prompt).toContain("без технічної освіти");
-    expect(prompt).toContain("Пиши англійською");
   });
 
-  // The operator's locale drives the note's language; the prompt body stays a Ukrainian
-  // template and only the language word varies. Absent locale keeps the English default.
-  it("writes the note in the operator's locale when one is given", () => {
-    const uk = buildReleaseNotesPrompt({
-      workspaceName: "Acme",
-      projectName: "мобільний-застосунок",
-      branch: "main",
-      rangeFrom: "2026-08-01",
-      rangeTo: "2026-08-31",
-      commits: [commit()],
-      locale: "uk",
-    });
-    expect(uk).toContain("Пиши українською");
-    expect(uk).not.toContain("Пиши англійською");
+  // Every note is English, whatever language the commits (here Ukrainian) are written in:
+  // the rule names English and tells the model to translate rather than quote.
+  it("always writes the note in English, translating commits in another language", () => {
+    expect(prompt).toContain("МОВА ДОКУМЕНТА — АНГЛІЙСЬКА, завжди");
+    expect(prompt).toContain("коміти іншою мовою перекладай англійською");
+    expect(prompt).not.toContain("українською");
   });
 
   it("carries each commit's subject and its indented body", () => {
@@ -66,6 +61,129 @@ describe("buildReleaseNotesPrompt", () => {
 
   it("requires a first-level heading, which is where the stored title comes from", () => {
     expect(prompt).toContain("заголовок першого рівня");
+  });
+
+  // One project is the note it always was: no project sections, and no folder to point at
+  // — the child is born in that repository.
+  it("writes no project sections for a single project", () => {
+    expect(prompt).not.toContain("Розділи документ за проєктами");
+    expect(prompt).not.toContain("/repos/mobile");
+  });
+});
+
+describe("buildReleaseNotesPrompt — several projects", () => {
+  const back = { projectName: "Backend", branch: "dev", repoPath: "/repos/back" };
+  const front = { projectName: "Frontend", branch: "main", repoPath: "/repos/front" };
+  const ask = { workspaceName: "Acme", rangeFrom: "2026-08-01", rangeTo: "2026-08-31" };
+  const prompt = buildReleaseNotesPrompt({
+    ...ask,
+    sources: [
+      { ...back, commits: [commit({ subject: "черга листів" })] },
+      { ...front, commits: [commit({ subject: "темна тема" })] },
+    ],
+  });
+
+  it("heads one section per project, by its exact name, in the order given", () => {
+    expect(prompt).toContain("Розділи документ за проєктами");
+    expect(prompt).toContain("заголовок другого рівня, який є РІВНО назвою проєкту");
+    expect(prompt).toContain("1. Backend — гілка dev, код у теці /repos/back\n2. Frontend — гілка main, код у теці /repos/front");
+  });
+
+  // The split the operator asked for: a commit is printed under its own project only, so the
+  // model has no mixed list to mis-attribute from.
+  it("prints each project's commits under that project", () => {
+    const backAt = prompt.indexOf("=== Проєкт Backend (гілка dev) ===");
+    const frontAt = prompt.indexOf("=== Проєкт Frontend (гілка main) ===");
+    expect(backAt).toBeGreaterThan(0);
+    expect(frontAt).toBeGreaterThan(backAt);
+    const mail = prompt.indexOf(": черга листів");
+    const theme = prompt.indexOf(": темна тема");
+    expect(mail > backAt && mail < frontAt).toBe(true);
+    expect(theme).toBeGreaterThan(frontAt);
+  });
+
+  it("moves the by-meaning groups and the per-person sections inside each project", () => {
+    expect(prompt).toContain("Усередині розділу кожного проєкту згрупуй");
+    expect(prompt).toContain("«New», «Improvements», «Fixes» (заголовки третього рівня");
+    const perPerson = buildReleaseNotesPrompt({
+      ...ask,
+      groupBy: "person",
+      sources: [
+        { ...back, commits: [commit({ author: "Оля" })] },
+        { ...front, commits: [commit({ author: "Петро" })] },
+      ],
+    });
+    expect(perPerson).toContain("заголовок третього рівня для кожної людини");
+    // Each project's own roster, not one merged list.
+    expect(perPerson.match(/Учасники \(/g)).toHaveLength(2);
+  });
+
+  // One busy repository must not push the other one's commits out of the prompt.
+  it("splits the commit budget evenly between the projects", () => {
+    const out = buildReleaseNotesPrompt({
+      ...ask,
+      sources: [
+        { ...back, commits: [commit({ body: "x".repeat(MAX_COMMITS_CHARS * 0.6) }), commit({ subject: "за межею" })] },
+        { ...front, commits: [commit({ subject: "темна тема" })] },
+      ],
+    });
+    expect(out).not.toContain(": за межею");
+    expect(out).toContain("(1 з 2 — список обрізано");
+    expect(out).toContain(": темна тема");
+  });
+});
+
+describe("buildReleaseNotesPrompt — per person", () => {
+  const ask = {
+    workspaceName: "Acme",
+    rangeFrom: "2026-08-01",
+    rangeTo: "2026-08-31",
+  };
+  const repo = { projectName: "мобільний-застосунок", branch: "main", repoPath: "/repos/mobile" };
+  // Newest first and interleaved, as git hands them out.
+  const commits = [
+    commit({ author: "Петро", subject: "п-1" }),
+    commit({ author: "Оля", subject: "о-1" }),
+    commit({ author: "Петро", subject: "п-2" }),
+    commit({ author: "Андрій", subject: "а-1" }),
+  ];
+
+  // The default must stay the document it always was: grouped by meaning, nobody listed.
+  it("keeps the by-topic note when no grouping, or topic, is asked for", () => {
+    const plain = buildReleaseNotesPrompt({ ...ask, sources: [{ ...repo, commits }] });
+    expect(buildReleaseNotesPrompt({ ...ask, sources: [{ ...repo, commits }], groupBy: "topic" })).toBe(plain);
+    expect(plain).toContain("«New», «Improvements», «Fixes»");
+    expect(plain).not.toContain("Учасники");
+  });
+
+  it("lists every author with a count and prints each author's commits together, busiest first", () => {
+    const prompt = buildReleaseNotesPrompt({ ...ask, sources: [{ ...repo, commits }], groupBy: "person" });
+    expect(prompt).not.toContain("«New», «Improvements», «Fixes»");
+    expect(prompt).toContain("- Петро — 2\n- Андрій — 1\n- Оля — 1");
+    const order = ["п-1", "п-2", "а-1", "о-1"].map((s) => prompt.indexOf(`: ${s}`));
+    expect(order.every((at, i) => at > 0 && (i === 0 || at > order[i - 1]!))).toBe(true);
+  });
+
+  // A person whose commits fell past the cap is still in the roster — a report about people
+  // must not silently drop one because somebody else wrote long commit bodies.
+  it("names an author whose commits were cut by the cap", () => {
+    const prompt = buildReleaseNotesPrompt({
+      ...ask,
+      groupBy: "person",
+      sources: [
+        {
+          ...repo,
+          commits: [
+            commit({ author: "Оля", body: "x".repeat(MAX_COMMITS_CHARS) }),
+            commit({ author: "Оля", subject: "друге" }),
+            commit({ author: "Петро", subject: "за межею" }),
+          ],
+        },
+      ],
+    });
+    expect(prompt).toContain("- Петро — 1");
+    expect(prompt).not.toContain("за межею");
+    expect(prompt).toContain("не вигадуй, які саме");
   });
 });
 
@@ -164,4 +282,12 @@ test("logRange carries the commit body and survives newlines inside it", async (
 test("logRange answers an empty list for an unknown branch rather than throwing", async () => {
   commitOn("2026-08-10", "on dev", "a.txt");
   expect(await wt.logRange(repo, "no-such-branch", "2026-08-01", "2026-08-31")).toEqual([]);
+});
+
+// The per-person note groups by this name, so one person's two spellings must arrive as one.
+test("logRange names authors through the repository's .mailmap", async () => {
+  writeFileSync(join(repo, ".mailmap"), "Тарас Шевченко <t@t>\n");
+  commitOn("2026-08-10", "mapped", "a.txt");
+  const commits = await wt.logRange(repo, "dev", "2026-08-01", "2026-08-31");
+  expect(commits[0]!.author).toBe("Тарас Шевченко");
 });
