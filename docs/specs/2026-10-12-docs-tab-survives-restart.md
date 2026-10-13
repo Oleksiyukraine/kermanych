@@ -185,11 +185,16 @@ same holds for the «Сесія» tab.
 
 ## Changes
 
-- **Cloud:** migration `kermanych/supabase/migrations/20261012090000_task_reports.sql` adds
+- **Cloud:** migration `kermanych/supabase/migrations/20261013090000_task_reports.sql` adds
   `tasks.docs_report jsonb not null default '{}'` and `tasks.session_report jsonb not null
   default '{}'`, commented like `qa_checklist`. Grants, RLS, `tasks_guard()` and realtime cover
   them as they are. It must be applied before the client ships: `TASK_COLUMNS` selects the
-  columns by name, so without them every task read fails.
+  columns by name, so without them every task read fails. It was first versioned
+  `20261012090000`, the same version as `20261012090000_release_notes_sources.sql` from #152.
+  Supabase keys migrations on that prefix, so the two could not coexist: on a clean
+  `supabase db reset` the second insert into `schema_migrations` failed with a duplicate key,
+  and a hosted project that already had `20261012090000` would have skipped this one. It now
+  comes after that migration.
 - **Core:** `task-reports.ts` with `DocsReport`, `SessionReport`, the write shape and
   `mergeTaskReports`, exported from the package.
 - **`@kermanych/cloud`:** `Task` / `TaskPatch` get `docsReport` and `sessionReport`;
@@ -239,10 +244,11 @@ Tests (`pnpm --filter <package> exec vitest run`):
   known `test/runtime-messages.spec.ts` TS2352, once the API package is built.
 
 Smoke on a local Supabase stack (`supabase start`, then `supabase migration up --local`
-applied `20261012090000_task_reports.sql`). The API and UI were built from this worktree: the
-API ran on port 4399 with its own temporary registry (`KERMANYCH_DB`), and `quasar dev` ran
-with `VITE_API_BASE` pointing at it. The seed was an owner and a teammate in one workspace, a
-project bound to a scratch repository, and a card (`claude-haiku-5-5`, effort low).
+applied this migration, at the time still versioned `20261012090000`). The API and UI were
+built from this worktree: the API ran on port 4399 with its own temporary registry
+(`KERMANYCH_DB`), and `quasar dev` ran with `VITE_API_BASE` pointing at it. The seed was an
+owner and a teammate in one workspace, a project bound to a scratch repository, and a card
+(`claude-haiku-5-5`, effort low).
 
 1. «Задачі» → the card → launcher with a PNG attached → ⌘↵. The agent read `README.md` and
    `docs/guide.md` and wrote `docs/notes.md`. On the card, `docs_report` had both reads and
@@ -261,6 +267,20 @@ project bound to a scratch repository, and a card (`claude-haiku-5-5`, effort lo
 6. Restart the API and reload again. The finished session's tab and «Сесія» were unchanged:
    2 reads, 1 change, `task-plan`, the image. This is the scenario from the report, which used
    to show «Ця сесія не читала й не змінювала документацію.»
+
+After merging `dev` (#152 multi-project release notes, #153 agent findings) into the branch:
+
+- The textual conflicts were additive: imports and helpers in `registry.service.ts` and imports
+  in `supervisor.service.ts`. Against `dev`, both files differ by this task's changes only.
+- Tests: core 207 passed; cloud 158 passed, 65 skipped; api 902 passed, 4 skipped, plus the same
+  2 `rpc-session.compact.spec.ts` failures; ui 591 passed. The typecheck errors are the same as
+  before.
+- `supabase db reset --local` applies every migration from scratch:
+  `20261012090000_release_notes_sources.sql`, then `20261013090000_task_reports.sql`. With the
+  old shared version the reset failed
+  (`duplicate key value violates unique constraint "schema_migrations_pkey"`).
+- The built API boots against a fresh registry, and that registry gets `report_outbox` next to
+  #153's `session_findings`.
 
 ## Documentation impact
 

@@ -732,7 +732,9 @@ live. The web build has no session browser.
   resume; native ones via `claude --mcp-config <file>` (a per-session `0600` file) or a
   second `omp --hook`. The endpoint is `POST /api/browser/mcp` on the local API with a
   per-session bearer; a session's calls run one at a time (dialog, console and network
-  answer at once). An API started without the desktop app offers no browser tools.
+  answer at once). The same server also carries the findings tools `report_finding` and
+  `list_findings` (see «Agent findings» below). An API started without the desktop app still
+  hands the server out, but it lists only the findings tools.
 - **Cookies** are kept per project (Electron partition `persist:kermanych-browser-<projectId>`):
   sessions of one project share logins, projects do not. The page's user agent carries no
   `Electron/` token. `target=_blank` links load in the same page; a `window.open` popup (an
@@ -832,6 +834,47 @@ phases, interactive prompts and the provider-plan spend under the account name (
 THAT a task waits for input, and only the person running it can answer, on their own
 machine.
 
+### Agent findings («Знахідки»)
+
+Agents often notice problems outside their own task. A session's agent can report one
+through the `report_finding` tool of its `kermanych` MCP server (spec:
+`docs/specs/2026-10-13-agent-findings.md`). It gives a title (≤ 120 characters), a kind
+(`bug`, `security`, `tech-debt`, `docs`), the context, evidence (`path:line` references or
+reproduction commands), acceptance criteria and an optional suggested fix. Then it continues
+its task. `list_findings` shows it what it already reported, so it does not repeat itself. The
+tool descriptions are the agent's whole instruction, so every runtime gets the same rules,
+native sessions included. Discussion and review branches have no such tools.
+
+**Nothing is filed without you.** Findings are kept only on this machine (SQLite
+`session_findings`) and are deleted with their session and with their project. A session holds
+at most 20 open findings. Past that, the tool refuses and tells the agent to mention further
+problems in its reply.
+
+- **Where.** The session's **Знахідки** tab on «Агенти» lists them (a chat has the same tab on
+  «Чат»). Its counter and the ⚑ mark on the agent's session card show how many are still open.
+  A new report arrives live, and it does not change the session's status or interrupt the
+  agent.
+- **Створити задачу →** opens one dialog for both targets, prefilled and editable: the title,
+  and a description with Context, Acceptance criteria, Evidence, Suggested fix and the origin
+  (project, branch, session).
+  - **Дошка** creates a card under your account in any project of the session's workspace
+    (the session's own by default). The assignee is optional, model and effort come from the
+    project's defaults, and the branch prefix is `fix` for bugs and vulnerabilities, otherwise
+    `feature`.
+  - **Jira** creates an issue on a connected board through `POST /api/jira/issues/:integrationId`,
+    signed with your personal Jira token. The issue type defaults to Bug for `bug` / `security`
+    and to Task otherwise (or to the first type the project offers). The labels are
+    `kermanych-finding` plus the kind. The option is disabled, with the reason, when the
+    workspace has no connected board or this machine has no token for its site.
+- **Відхилити** marks a finding dismissed. This cannot be undone, and the agent sees it in
+  `list_findings`.
+- **Routes.** `GET /api/sessions/:id/findings`;
+  `POST /api/sessions/:id/findings/:findingId/filed` with `{ "kind": "board", "taskId" }` or
+  `{ "kind": "jira", "key", "url" }`; `POST /api/sessions/:id/findings/:findingId/dismiss`.
+  An unknown session or finding answers 404, and a finding that is no longer open answers 400.
+  If the card or issue is created but recording it fails, the finding stays open with the error
+  shown in the dialog. The card or issue already exists then: check before filing again.
+
 ### Project documentation
 
 A project can require that its tasks are documented in its repository. The rules live in the
@@ -889,7 +932,7 @@ them once the transcript or the worktree is gone. Reads and skills only accumula
 compacted context never drops one. After «Завершити» the changed documents are a plain list:
 the diff and «Задача →» need the worktree, which «↻ Відновити» brings back. Sessions that
 predate this are not backfilled, and the board does not show these reports yet. Migration
-`20261012090000_task_reports.sql` must be applied before a client that reads the columns
+`20261013090000_task_reports.sql` must be applied before a client that reads the columns
 ships: the client selects them by name.
 
 **Mid-task: request and handoff without finishing.** An API request is usually needed while
@@ -1035,6 +1078,23 @@ That field is a real assistant, and it is deliberately narrow:
   language what that person completed. Authors are read as git's `%aN`, so a repository's
   `.mailmap` folds one person's aliases into one section; bots get a closing sentence, not a
   section of their own.
+  The form can also write one note over several projects of the workspace — the back-end
+  and the front-end, say. Pick more than one project in its «Projects» picker and each
+  picked project gets its own branch picker, preselected with that project's default branch,
+  so the back-end can be read from `dev` while the front-end is read from `main`. The note
+  then has one section per project, headed by the project's name, in the order you picked
+  them; the «New» / «Improvements» / «Fixes» groups (or the per-person sections) sit inside
+  each project's section, and each section is written only from that project's commits. One
+  child writes the whole note: it starts in the first project's repository and is told
+  where every other picked repository is on this machine, and the commit budget is split
+  evenly between the projects. Every picked project must be bound on this machine and have
+  commits on its branch in the period — a project with none refuses the whole generation and
+  names the project, because an empty range is usually the wrong branch. The chat's
+  `release.notes` action still names one project. The note row and the note header show one
+  tag per project with its branch; the cloud stores the list in
+  `workspace_release_notes.sources` (additive migration
+  `20261012090000_release_notes_sources.sql` — push it before shipping this UI), and the old
+  `project_name` / `branch` columns keep a « + »-joined summary for builds that predate it.
   Every note is written in English — from the form and from the chat alike, whatever the
   interface language, the agent communication language or the language the commits are
   written in. Commits in another language are translated; names of people, the product and

@@ -75,6 +75,8 @@ import {
   type SubagentInfo,
   type SubagentNode,
   taskReportsWrite,
+  type AgentFinding,
+  type FindingTarget,
 } from "@kermanych/core";
 import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type AiTrigger, type TaskPatch } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
@@ -187,6 +189,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // counterpart of a managed terminal `agent_end`, and the whole transcript besides.
       void this.queueTaskReport(e.sessionId, e.transcript.entries);
     });
+    // «Знахідки»: a report changes the session's open counter, which the UI reads off the row.
+    this.browser?.findingReported$.subscribe((id) => this.pushUpdate(id));
   }
 
   private requireNative(): NativeSessionService {
@@ -2039,6 +2043,21 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
     await this.sendAsKermanych(id, docsWritePrompt(kind) + block, "prompt");
     return { sent: true };
+  }
+
+  // «Знахідки» (docs/specs/2026-10-13-agent-findings.md): the session's findings, and the
+  // operator's decision on one. The card or Jira issue itself is created by the UI under the
+  // operator's own credentials; this only records where the finding went.
+  listFindings(id: string): AgentFinding[] {
+    if (!this.registry.listSessions().some((s) => s.id === id)) throw new Error("session not found");
+    return this.registry.listFindings(id);
+  }
+
+  resolveFinding(id: string, findingId: string, next: { status: "filed"; target: FindingTarget } | { status: "dismissed" }): AgentFinding {
+    if (!this.registry.listSessions().some((s) => s.id === id)) throw new Error("session not found");
+    const f = this.registry.resolveFinding(id, findingId, next);
+    this.pushUpdate(id);
+    return f;
   }
 
   // The Зміни tab opens one of the files `finishInfo` listed. Same worktree and same fork

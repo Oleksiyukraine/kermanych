@@ -29,6 +29,8 @@ import type {
   DocsGate,
   DocsGateFailure,
   DocsPolicy,
+  AgentFinding,
+  FindingTarget,
 } from '@kermanych/core';
 import type {
   CloudProject,
@@ -582,6 +584,16 @@ export const api = {
 
   getSubagents: (id: string): Promise<SubagentNode[]> =>
     get<SubagentNode[]>(`/sessions/${id}/subagents`),
+
+  // «Знахідки»: what the session's agent reported outside its task, in creation order. The
+  // two writes only move the finding's local state — the card or issue itself is created
+  // first, by the board store or the Jira route, and the target is reported here afterwards.
+  sessionFindings: (id: string): Promise<AgentFinding[]> =>
+    get<AgentFinding[]>(`/sessions/${id}/findings`),
+  fileFinding: (id: string, findingId: string, target: FindingTarget): Promise<AgentFinding> =>
+    post<AgentFinding>(`/sessions/${id}/findings/${encodeURIComponent(findingId)}/filed`, target),
+  dismissFinding: (id: string, findingId: string): Promise<AgentFinding> =>
+    post<AgentFinding>(`/sessions/${id}/findings/${encodeURIComponent(findingId)}/dismiss`, {}),
 
   getSubagentTranscript: (id: string, subagentId: string): Promise<TranscriptEntry[]> =>
     get<TranscriptEntry[]>(`/sessions/${id}/subagents/${encodeURIComponent(subagentId)}/transcript`),

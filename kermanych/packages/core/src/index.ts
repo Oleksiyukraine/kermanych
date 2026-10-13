@@ -58,6 +58,7 @@ export {
   RELEASE_GROUPINGS,
   type ReleaseGrouping,
   type ReleaseCommit,
+  type ReleaseSource,
   type ReleaseNotesAsk,
   type ReleaseNotesReply,
 } from "./release-notes";
@@ -142,6 +143,25 @@ export {
   type AgentKind,
 } from "./agents";
 export { DEEP_ANALYSIS_SKILL, deepAnalysisPrompt } from "./deep-analysis";
+export {
+  FINDING_KINDS,
+  FINDING_STATUSES,
+  FINDING_TITLE_MAX,
+  OPEN_FINDINGS_LIMIT,
+  FINDING_JIRA_LABEL,
+  isFindingKind,
+  validateFindingReport,
+  parseFindingTarget,
+  renderFindingDescription,
+  findingIssueTypeName,
+  type FindingKind,
+  type FindingStatus,
+  type FindingReport,
+  type FindingTarget,
+  type AgentFinding,
+  type FindingValidation,
+  type FindingOrigin,
+} from "./findings";
 export {
   buildChatBlocks,
   THINK_MIN_MS,

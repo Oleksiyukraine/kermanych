@@ -20,11 +20,16 @@ function commit(over: Partial<ReleaseCommit> = {}): ReleaseCommit {
 describe("buildReleaseNotesPrompt", () => {
   const prompt = buildReleaseNotesPrompt({
     workspaceName: "Acme",
-    projectName: "мобільний-застосунок",
-    branch: "release/2.4",
+    sources: [
+      {
+        projectName: "мобільний-застосунок",
+        branch: "release/2.4",
+        repoPath: "/repos/mobile",
+        commits: [commit(), commit({ subject: "виправлено падіння на логіні", body: "Падало, коли токен протух." })],
+      },
+    ],
     rangeFrom: "2026-08-01",
     rangeTo: "2026-08-31",
-    commits: [commit(), commit({ subject: "виправлено падіння на логіні", body: "Падало, коли токен протух." })],
   });
 
   it("states the repository, the branch and the range verbatim, and no platform", () => {
@@ -57,16 +62,84 @@ describe("buildReleaseNotesPrompt", () => {
   it("requires a first-level heading, which is where the stored title comes from", () => {
     expect(prompt).toContain("заголовок першого рівня");
   });
+
+  // One project is the note it always was: no project sections, and no folder to point at
+  // — the child is born in that repository.
+  it("writes no project sections for a single project", () => {
+    expect(prompt).not.toContain("Розділи документ за проєктами");
+    expect(prompt).not.toContain("/repos/mobile");
+  });
+});
+
+describe("buildReleaseNotesPrompt — several projects", () => {
+  const back = { projectName: "Backend", branch: "dev", repoPath: "/repos/back" };
+  const front = { projectName: "Frontend", branch: "main", repoPath: "/repos/front" };
+  const ask = { workspaceName: "Acme", rangeFrom: "2026-08-01", rangeTo: "2026-08-31" };
+  const prompt = buildReleaseNotesPrompt({
+    ...ask,
+    sources: [
+      { ...back, commits: [commit({ subject: "черга листів" })] },
+      { ...front, commits: [commit({ subject: "темна тема" })] },
+    ],
+  });
+
+  it("heads one section per project, by its exact name, in the order given", () => {
+    expect(prompt).toContain("Розділи документ за проєктами");
+    expect(prompt).toContain("заголовок другого рівня, який є РІВНО назвою проєкту");
+    expect(prompt).toContain("1. Backend — гілка dev, код у теці /repos/back\n2. Frontend — гілка main, код у теці /repos/front");
+  });
+
+  // The split the operator asked for: a commit is printed under its own project only, so the
+  // model has no mixed list to mis-attribute from.
+  it("prints each project's commits under that project", () => {
+    const backAt = prompt.indexOf("=== Проєкт Backend (гілка dev) ===");
+    const frontAt = prompt.indexOf("=== Проєкт Frontend (гілка main) ===");
+    expect(backAt).toBeGreaterThan(0);
+    expect(frontAt).toBeGreaterThan(backAt);
+    const mail = prompt.indexOf(": черга листів");
+    const theme = prompt.indexOf(": темна тема");
+    expect(mail > backAt && mail < frontAt).toBe(true);
+    expect(theme).toBeGreaterThan(frontAt);
+  });
+
+  it("moves the by-meaning groups and the per-person sections inside each project", () => {
+    expect(prompt).toContain("Усередині розділу кожного проєкту згрупуй");
+    expect(prompt).toContain("«New», «Improvements», «Fixes» (заголовки третього рівня");
+    const perPerson = buildReleaseNotesPrompt({
+      ...ask,
+      groupBy: "person",
+      sources: [
+        { ...back, commits: [commit({ author: "Оля" })] },
+        { ...front, commits: [commit({ author: "Петро" })] },
+      ],
+    });
+    expect(perPerson).toContain("заголовок третього рівня для кожної людини");
+    // Each project's own roster, not one merged list.
+    expect(perPerson.match(/Учасники \(/g)).toHaveLength(2);
+  });
+
+  // One busy repository must not push the other one's commits out of the prompt.
+  it("splits the commit budget evenly between the projects", () => {
+    const out = buildReleaseNotesPrompt({
+      ...ask,
+      sources: [
+        { ...back, commits: [commit({ body: "x".repeat(MAX_COMMITS_CHARS * 0.6) }), commit({ subject: "за межею" })] },
+        { ...front, commits: [commit({ subject: "темна тема" })] },
+      ],
+    });
+    expect(out).not.toContain(": за межею");
+    expect(out).toContain("(1 з 2 — список обрізано");
+    expect(out).toContain(": темна тема");
+  });
 });
 
 describe("buildReleaseNotesPrompt — per person", () => {
   const ask = {
     workspaceName: "Acme",
-    projectName: "мобільний-застосунок",
-    branch: "main",
     rangeFrom: "2026-08-01",
     rangeTo: "2026-08-31",
   };
+  const repo = { projectName: "мобільний-застосунок", branch: "main", repoPath: "/repos/mobile" };
   // Newest first and interleaved, as git hands them out.
   const commits = [
     commit({ author: "Петро", subject: "п-1" }),
@@ -77,14 +150,14 @@ describe("buildReleaseNotesPrompt — per person", () => {
 
   // The default must stay the document it always was: grouped by meaning, nobody listed.
   it("keeps the by-topic note when no grouping, or topic, is asked for", () => {
-    const plain = buildReleaseNotesPrompt({ ...ask, commits });
-    expect(buildReleaseNotesPrompt({ ...ask, commits, groupBy: "topic" })).toBe(plain);
+    const plain = buildReleaseNotesPrompt({ ...ask, sources: [{ ...repo, commits }] });
+    expect(buildReleaseNotesPrompt({ ...ask, sources: [{ ...repo, commits }], groupBy: "topic" })).toBe(plain);
     expect(plain).toContain("«New», «Improvements», «Fixes»");
     expect(plain).not.toContain("Учасники");
   });
 
   it("lists every author with a count and prints each author's commits together, busiest first", () => {
-    const prompt = buildReleaseNotesPrompt({ ...ask, commits, groupBy: "person" });
+    const prompt = buildReleaseNotesPrompt({ ...ask, sources: [{ ...repo, commits }], groupBy: "person" });
     expect(prompt).not.toContain("«New», «Improvements», «Fixes»");
     expect(prompt).toContain("- Петро — 2\n- Андрій — 1\n- Оля — 1");
     const order = ["п-1", "п-2", "а-1", "о-1"].map((s) => prompt.indexOf(`: ${s}`));
@@ -97,10 +170,15 @@ describe("buildReleaseNotesPrompt — per person", () => {
     const prompt = buildReleaseNotesPrompt({
       ...ask,
       groupBy: "person",
-      commits: [
-        commit({ author: "Оля", body: "x".repeat(MAX_COMMITS_CHARS) }),
-        commit({ author: "Оля", subject: "друге" }),
-        commit({ author: "Петро", subject: "за межею" }),
+      sources: [
+        {
+          ...repo,
+          commits: [
+            commit({ author: "Оля", body: "x".repeat(MAX_COMMITS_CHARS) }),
+            commit({ author: "Оля", subject: "друге" }),
+            commit({ author: "Петро", subject: "за межею" }),
+          ],
+        },
       ],
     });
     expect(prompt).toContain("- Петро — 1");

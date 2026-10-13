@@ -73,9 +73,8 @@ function chatAsk(): ManagementChatAsk {
 
 function notesAsk(): ReleaseNotesAsk {
   return {
-    projectId: "p1",
+    sources: [{ projectId: "p1", branch: "main" }],
     workspaceName: "Acme",
-    branch: "main",
     rangeFrom: "2026-08-01",
     rangeTo: "2026-08-31",
   };
@@ -146,5 +145,55 @@ describe("ReleaseNotesService runtime", () => {
     await new ReleaseNotesService(r, fakeWorktree).generate(notesAsk());
     expect(calls).toHaveLength(1);
     expect(calls[0]?.opts.appendSystemPrompt).toBeUndefined();
+  });
+});
+
+describe("ReleaseNotesService — several projects", () => {
+  // The back-end from `dev`, the front-end from `main`: each repository is read on its own
+  // branch, and one child writes the one document.
+  function twoRepos(logs: Record<string, ReleaseCommit[]>) {
+    const r = registry();
+    r.upsertProject({ id: "p2", name: "Бета", localRepoPath: "/repos/beta" });
+    const read: [string, string][] = [];
+    const worktree = {
+      listBranches: async () => ["main", "dev"],
+      logRange: async (path: string, branch: string) => {
+        read.push([path, branch]);
+        return logs[path] ?? [];
+      },
+    } as unknown as WorktreeService;
+    return { svc: new ReleaseNotesService(r, worktree), read };
+  }
+  const ask: ReleaseNotesAsk = {
+    sources: [
+      { projectId: "p1", branch: "dev" },
+      { projectId: "p2", branch: "main" },
+    ],
+    workspaceName: "Acme",
+    rangeFrom: "2026-08-01",
+    rangeTo: "2026-08-31",
+  };
+
+  it("reads every project on its own branch and writes one note from the first repository", async () => {
+    const { svc, read } = twoRepos({ "/repos/alpha": [commit, commit], "/repos/beta": [commit] });
+    const out = await svc.generate(ask);
+    expect(read).toEqual([
+      ["/repos/alpha", "dev"],
+      ["/repos/beta", "main"],
+    ]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.opts.cwd).toBe("/repos/alpha");
+    expect(out.commitCount).toBe(3);
+  });
+
+  // An empty project is usually the wrong branch: the operator learns which one before a
+  // model turn is spent on a note that silently leaves it out.
+  it("refuses the whole note, naming the project, when one project has no commits", async () => {
+    const { svc } = twoRepos({ "/repos/alpha": [commit] });
+    await expect(svc.generate(ask)).rejects.toMatchObject({
+      code: "no_commits_in_range",
+      params: { project: "Бета", branch: "main", from: "2026-08-01", to: "2026-08-31" },
+    });
+    expect(calls).toHaveLength(0);
   });
 });

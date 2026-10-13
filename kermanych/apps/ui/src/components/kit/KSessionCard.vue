@@ -27,6 +27,12 @@
           v-tip="t('kit.sessionCard.browsing')"
           :aria-label="t('kit.sessionCard.browsing')"
         >◎</span>
+        <span
+          v-if="findings"
+          class="k-session-card__findings mono"
+          v-tip="t('kit.sessionCard.findings', { n: findings })"
+          :aria-label="t('kit.sessionCard.findings', { n: findings })"
+        >⚑ {{ findings }}</span>
         <span class="k-session-card__time">{{ time }}</span>
       </div>
       <div class="k-session-card__status">
@@ -90,6 +96,10 @@ import type { LaunchMode } from '../../lib/native-session';
 // browser (a browser tool call in the last few seconds) — the board's view of the Браузер
 // tab's live dot, so the operator sees which agent is clicking without opening it.
 //
+// `findings` counts the session's OPEN «Знахідки» — problems its agent reported outside its
+// task, waiting for the operator to file or dismiss them. A ⚑ with the number before the time;
+// absent at zero.
+//
 // `deepAnalysis` marks a «Глибокий аналіз» card (KAnalysisMark) in the accounting line, right
 // after the harness: it is HOW this agent works, and it must not be the field that clips.
 const props = withDefaults(
@@ -112,8 +122,9 @@ const props = withDefaults(
     removable?: boolean;
     removeTitle?: string;
     browsing?: boolean;
+    findings?: number;
   }>(),
-  { selected: false, fork: false, removable: false, browsing: false },
+  { selected: false, fork: false, removable: false, browsing: false, findings: 0 },
 );
 
 defineEmits<{ click: []; remove: [] }>();
@@ -170,6 +181,21 @@ const spend = computed(() => {
 
 @keyframes k-session-card-browsing {
   50% { opacity: 0.3; }
+}
+
+// ── Open findings (⚑ n) ───────────────────────────────────────────────────────────────
+// Same seat as the browsing mark: pushed right against the time. When both show, the ◎
+// already took the free space and the ⚑ sits beside it.
+.k-session-card__findings {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--k-fs-xs);
+  line-height: 1;
+  color: var(--k-accent);
+}
+
+.k-session-card__browsing + .k-session-card__findings {
+  margin-left: 0;
 }
 
 // ── Remove (✕ on hover) ───────────────────────────────────────────────────────────────
