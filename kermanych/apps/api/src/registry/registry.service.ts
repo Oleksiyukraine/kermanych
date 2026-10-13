@@ -5,8 +5,9 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
-import { isThinkingLevel, isAgentRuntime, isAgentLanguage, isFindingKind, parseFindingTarget, docsPolicy } from "@kermanych/core";
-import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, Project, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage } from "@kermanych/core";
+import { Subject } from "rxjs";
+import { isThinkingLevel, isAgentRuntime, isAgentLanguage, isFindingKind, parseFindingTarget, docsPolicy, combineReportWrites } from "@kermanych/core";
+import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, Project, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -23,6 +24,13 @@ export type AuthSessionRow = {
 // log: if a session goes thinking → tool → thinking while offline, only the newest status is
 // worth sending, and the cloud board has no use for the intermediate ones.
 export type OutboxRow = { taskId: string; status: SessionStatus; updatedAt: string; attempts: number; lastError?: string };
+
+// A queued write of a session's «Документація» / «Сесія» reports onto its cloud card
+// (docs/specs/2026-10-12-docs-tab-survives-restart.md). One row per card, like status_outbox,
+// but coalesced rather than latest-wins: a later write may carry no transcript (a dormant
+// «Завершити»), and replacing the row with it would lose the reads still waiting to be sent.
+// `queuedAt` is the row's version — what a delivery retires and a failure is charged to.
+export type ReportOutboxRow = { taskId: string; write: TaskReportsWrite; queuedAt: string; attempts: number; lastError?: string };
 
 // One stored Slack bot (for a Kermanych workspace, for the user who owns the row). Both
 // tokens are secrets that never leave this machine; team and bot identity are what
@@ -63,6 +71,20 @@ function readUsage(raw: string | null): Usage | undefined {
     const u = JSON.parse(raw) as Partial<Usage>;
     if (typeof u?.cost !== "number") return undefined;
     return { input: u.input ?? 0, output: u.output ?? 0, cacheRead: u.cacheRead ?? 0, cacheWrite: u.cacheWrite ?? 0, cost: u.cost };
+  } catch {
+    return undefined;
+  }
+}
+
+// A queued report write, back into a shape. Only this process writes the column, so the
+// check is a guard against a hand-edited or half-written blob, not a full validation — the
+// cloud's readers validate the merged report again on the way out.
+function parseReportWrite(raw: string): TaskReportsWrite | undefined {
+  try {
+    const w = JSON.parse(raw) as Partial<TaskReportsWrite> | null;
+    if (typeof w?.sessionId !== "string" || typeof w.generatedAt !== "string" || typeof w.session !== "object" || !w.session)
+      return undefined;
+    return w as TaskReportsWrite;
   } catch {
     return undefined;
   }
@@ -130,6 +152,11 @@ function toFinding(r: FindingRow): AgentFinding {
 @Injectable()
 export class RegistryService {
   private db: Database.Database;
+  // Fires once per enqueued card report, so the cloud drain wakes without the supervisor
+  // knowing it exists (CloudSyncService already depends on the supervisor — the reverse
+  // would be circular) and without a new `events$` type, which would reach the UI socket.
+  private reportQueued = new Subject<void>();
+  reportQueued$ = this.reportQueued.asObservable();
 
   constructor(@Optional() path: string = process.env.KERMANYCH_DB ?? join(homedir(), ".kermanych", "kermanych.sqlite")) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -343,6 +370,11 @@ export class RegistryService {
     // collapses a burst of changes into the newest one. No FK: the tasks live in Postgres.
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS status_outbox (task_id TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT)`,
+    );
+    // Durable queue of card report writes (ReportOutboxRow). `write` is a JSON
+    // TaskReportsWrite; one row per card, coalesced on enqueue.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS report_outbox (task_id TEXT PRIMARY KEY, write TEXT NOT NULL, queued_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT)`,
     );
     // Per-user Jira API tokens, THIS machine only — the localRepoPath rule for secrets:
     // the cloud carries the integration's address, never a credential. Keyed by (site,
@@ -849,6 +881,62 @@ export class RegistryService {
         `UPDATE status_outbox SET attempts = attempts + 1, last_error = ? WHERE task_id = ? AND status = ? AND updated_at = ?`,
       )
       .run(error, taskId, status, updatedAt);
+  }
+
+  // Queue a card report write, folded into whatever is still pending for that card
+  // (combineReportWrites: the same session's reads and skills accumulate, another session's
+  // newer write replaces the row). A fresh `queued_at` and zeroed `attempts`: the merged row
+  // is a new delivery, for the same reason enqueueTaskStatus resets its counter. The version
+  // must also strictly grow, or two enqueues in one millisecond would share it and a drop of
+  // the first would retire the second unsent.
+  enqueueTaskReport(taskId: string, write: TaskReportsWrite): void {
+    const prev = this.db.prepare(`SELECT write, queued_at as queuedAt FROM report_outbox WHERE task_id = ?`).get(taskId) as
+      | { write: string; queuedAt: string }
+      | undefined;
+    const older = prev ? parseReportWrite(prev.write) : undefined;
+    const merged = older ? combineReportWrites(older, write) : write;
+    let queuedAt = new Date().toISOString();
+    if (prev && queuedAt <= prev.queuedAt) queuedAt = new Date(Date.parse(prev.queuedAt) + 1).toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO report_outbox (task_id, write, queued_at, attempts, last_error) VALUES (?,?,?,0,NULL)
+         ON CONFLICT(task_id) DO UPDATE SET write = excluded.write, queued_at = excluded.queued_at, attempts = 0, last_error = NULL`,
+      )
+      .run(taskId, JSON.stringify(merged), queuedAt);
+    this.reportQueued.next();
+  }
+
+  // Oldest first, like listOutbox. A row whose JSON no longer parses can never be delivered,
+  // and kept it would hold the retry timer at its backoff forever — so it is dropped here.
+  listReportOutbox(): ReportOutboxRow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT task_id as taskId, write, queued_at as queuedAt, attempts, last_error as lastError FROM report_outbox ORDER BY queued_at`,
+      )
+      .all() as { taskId: string; write: string; queuedAt: string; attempts: number; lastError: string | null }[];
+    const out: ReportOutboxRow[] = [];
+    for (const r of rows) {
+      const write = parseReportWrite(r.write);
+      if (!write) {
+        this.dropReportOutbox(r.taskId, r.queuedAt);
+        continue;
+      }
+      out.push({ taskId: r.taskId, write, queuedAt: r.queuedAt, attempts: r.attempts, lastError: r.lastError ?? undefined });
+    }
+    return out;
+  }
+
+  // Retire the version just delivered — scoped like dropOutbox, so a write enqueued (and
+  // coalesced onto this card's row) while the delivery was in flight survives for the next pass.
+  dropReportOutbox(taskId: string, queuedAt: string): void {
+    this.db.prepare(`DELETE FROM report_outbox WHERE task_id = ? AND queued_at = ?`).run(taskId, queuedAt);
+  }
+
+  // Charge a failure to the version that failed, as bumpOutboxAttempt does.
+  bumpReportOutboxAttempt(taskId: string, queuedAt: string, error: string): void {
+    this.db
+      .prepare(`UPDATE report_outbox SET attempts = attempts + 1, last_error = ? WHERE task_id = ? AND queued_at = ?`)
+      .run(error, taskId, queuedAt);
   }
 
   getAuthSession(): AuthSessionRow | undefined {

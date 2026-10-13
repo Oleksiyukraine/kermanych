@@ -1,7 +1,7 @@
 // apps/api/test/cloud-sync.spec.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Subject } from "rxjs";
-import type { ServerEvent, Session } from "@kermanych/core";
+import type { DocsReport, ServerEvent, Session, SessionReport, TaskReportsWrite } from "@kermanych/core";
 import type { AuthService } from "../src/auth/auth.service";
 import type { SupervisorService } from "../src/supervisor/supervisor.service";
 
@@ -14,6 +14,9 @@ let failing = false;
 // other test here serialises enqueues with `flush()`, so nothing can arrive mid-flight —
 // which is exactly why the "drop the row we did not push" race stayed invisible.
 let gate: { arrived: () => void; released: Promise<void> } | null = null;
+type Card = { docsReport?: DocsReport; sessionReport?: SessionReport };
+const cards = new Map<string, Card>();
+const patches: ({ taskId: string } & Card)[] = [];
 vi.mock("@kermanych/cloud", () => ({
   taskStatusFromSession: (s: { status: string }) => s.status,
   pushTaskStatus: async (_client: unknown, taskId: string, status: string, updatedAt: string) => {
@@ -25,6 +28,16 @@ vi.mock("@kermanych/cloud", () => ({
     }
     if (failing) throw new Error("fetch failed");
     pushed.push({ taskId, status, updatedAt });
+  },
+  // The card-report half: the cards as the cloud holds them, and every patch sent. `failing`
+  // fails the PATCH only, so a test sees a delivery that read the card and could not write it.
+  getTask: async (_client: unknown, id: string) => cards.get(id),
+  patchTask: async (_client: unknown, id: string, patch: { docsReport?: DocsReport; sessionReport?: SessionReport }) => {
+    if (failing) throw new Error("fetch failed");
+    patches.push({ taskId: id, ...patch });
+    const card = { ...cards.get(id), ...patch };
+    cards.set(id, card);
+    return card;
   },
 }));
 
@@ -98,6 +111,8 @@ beforeEach(() => {
   pushed.length = 0;
   failing = false;
   gate = null;
+  cards.clear();
+  patches.length = 0;
 });
 
 describe("CloudSyncService", () => {
@@ -278,5 +293,93 @@ describe("CloudSyncService", () => {
 
     expect(pushed.map((p) => p.status)).toEqual(["thinking", "stopped"]);
     expect(registry.listOutbox()).toEqual([]);
+  });
+});
+
+// The card reports (docs/specs/2026-10-12-docs-tab-survives-restart.md): queued by the
+// supervisor in the registry, merged here onto whatever the card holds at delivery time.
+describe("CloudSyncService card reports", () => {
+  const facts = { runtime: "omp", native: false, branch: "feature/a", worktree: true } as const;
+  const docs = (over: Partial<DocsReport> = {}): DocsReport => ({ sessionId: "s1", generatedAt: "2026-10-12T10:00:00.000Z", read: [], changed: [], ...over });
+  const sessionReport = (over: Partial<SessionReport> = {}): SessionReport => ({ sessionId: "s1", generatedAt: "2026-10-12T10:00:00.000Z", skills: [], ...facts, ...over });
+  const write = (over: Partial<TaskReportsWrite> = {}): TaskReportsWrite => ({ sessionId: "s1", generatedAt: "2026-10-12T10:05:00.000Z", session: facts, ...over });
+
+  it("merges the write onto the card's current reports and patches both columns", async () => {
+    const { registry } = make();
+    // An earlier turn already reached the card; the transcript of this one was compacted and
+    // no longer shows that read.
+    cards.set("t1", {
+      docsReport: docs({ read: ["docs/a.md"], changed: [{ path: "docs/a.md", added: 1, removed: 0 }] }),
+      sessionReport: sessionReport({ skills: ["librarian"] }),
+    });
+
+    registry.enqueueTaskReport("t1", write({ read: ["docs/b.md"], skills: ["qa-tester"], changed: [{ path: "docs/b.md", added: 4, removed: 2 }] }));
+    await flush();
+
+    expect(patches).toHaveLength(1);
+    expect(patches[0].docsReport).toEqual({
+      sessionId: "s1",
+      generatedAt: "2026-10-12T10:05:00.000Z",
+      read: ["docs/a.md", "docs/b.md"],
+      changed: [{ path: "docs/b.md", added: 4, removed: 2 }],
+    });
+    expect(patches[0].sessionReport).toMatchObject({ sessionId: "s1", skills: ["librarian", "qa-tester"], branch: "feature/a" });
+    expect(registry.listReportOutbox()).toEqual([]);
+  });
+
+  it("drops the row of a card that is gone without retrying it", async () => {
+    const { registry } = make();
+
+    registry.enqueueTaskReport("t-deleted", write({ read: ["docs/a.md"] }));
+    await flush();
+
+    expect(patches).toEqual([]);
+    expect(registry.listReportOutbox()).toEqual([]);
+  });
+
+  it("never overwrites a newer report of the card's relaunch", async () => {
+    const { registry } = make();
+    const relaunch = { docsReport: docs({ sessionId: "s2", generatedAt: "2026-10-12T11:00:00.000Z", read: ["docs/new.md"] }), sessionReport: sessionReport({ sessionId: "s2", generatedAt: "2026-10-12T11:00:00.000Z" }) };
+    cards.set("t1", relaunch);
+
+    // An old machine's write, queued offline before the relaunch.
+    registry.enqueueTaskReport("t1", write({ read: ["docs/old.md"] }));
+    await flush();
+
+    expect(patches).toEqual([]);
+    expect(cards.get("t1")).toEqual(relaunch);
+    expect(registry.listReportOutbox()).toEqual([]);
+  });
+
+  it("keeps the row with its attempt counted when the patch fails, then delivers it", async () => {
+    const { sync, registry } = make();
+    cards.set("t1", {});
+    failing = true;
+
+    registry.enqueueTaskReport("t1", write({ read: ["docs/a.md"] }));
+    await flush();
+
+    expect(registry.listReportOutbox()).toMatchObject([{ taskId: "t1", attempts: 1, lastError: "fetch failed" }]);
+
+    failing = false;
+    await sync.drain();
+
+    expect(patches.map((p) => p.docsReport?.read)).toEqual([["docs/a.md"]]);
+    expect(registry.listReportOutbox()).toEqual([]);
+  });
+
+  it("holds a report while signed out and delivers it on the token handoff", async () => {
+    const { registry, signIn } = make({ signedIn: false });
+    cards.set("t1", {});
+
+    registry.enqueueTaskReport("t1", write({ read: ["docs/a.md"] }));
+    await flush();
+    expect(registry.listReportOutbox()).toMatchObject([{ attempts: 0 }]);
+
+    signIn();
+    await flush();
+
+    expect(patches).toHaveLength(1);
+    expect(registry.listReportOutbox()).toEqual([]);
   });
 });

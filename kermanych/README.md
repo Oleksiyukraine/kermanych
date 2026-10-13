@@ -819,6 +819,14 @@ developer's machine. The direction is always task → session.
    card back on «На ревʼю» — even the plain follow-up prompts you send to fix review findings,
    which drive the card through «в роботі» mid-turn. «Закоміти» has the agent commit and push
    that follow-up work onto the same branch, updating the open PR.
+6. **Reports flow back** — after every turn and on «Завершити» the local API also writes onto
+   the card what the session's «Документація» and «Сесія» tabs show: the documentation it read
+   and the documentation it created or changed (repository paths with +/− counts), and the
+   session summary — harness, the model and effort it ran with, the working branch and its
+   base, the skills it used, tokens and cost, and the provider's session id. Paths on your disk
+   (the worktree, a native session's file) never go. Images attached in «Агенти» → «Нова
+   задача» are uploaded to the card once the launch succeeds. The writes go through a local
+   queue, like the status, so a session run offline publishes when the machine is back online.
 
 Nothing else leaves your machine. Transcripts, the current tool, context usage, todo
 phases, interactive prompts and the provider-plan spend under the account name (read from
@@ -916,6 +924,16 @@ no documentation checkboxes. «Доповнити документацію» sen
 exactly the missing documents and closes the sheet. You watch the agent write and commit them
 in the transcript, and it pushes them if the PR is already open. Changed documents appear in
 the session's «Документація» tab tagged специфікація / план / схема / хендоф / запит API.
+
+The tab survives an API restart and «Завершити». The documents a session read, the documents
+it changed and the skills on «Сесія» are kept on its card (`tasks.docs_report`,
+`tasks.session_report`; see «Reports flow back» above), and the session's own tabs fall back to
+them once the transcript or the worktree is gone. Reads and skills only accumulate, so a
+compacted context never drops one. After «Завершити» the changed documents are a plain list:
+the diff and «Задача →» need the worktree, which «↻ Відновити» brings back. Sessions that
+predate this are not backfilled, and the board does not show these reports yet. Migration
+`20261013090000_task_reports.sql` must be applied before a client that reads the columns
+ships: the client selects them by name.
 
 **Mid-task: request and handoff without finishing.** An API request is usually needed while
 the frontend work is still going, not at the end of it. The session's «Документація» tab has

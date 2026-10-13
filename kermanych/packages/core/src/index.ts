@@ -250,3 +250,17 @@ export {
   type QaChecklistItem,
   type TaskAction,
 } from "./task-actions";
+export {
+  taskReportsWrite,
+  mergeTaskReports,
+  combineReportWrites,
+  readDocsReport,
+  readSessionReport,
+  type DocChange,
+  type DocsReport,
+  type SessionReport,
+  type SessionFacts,
+  type TaskReports,
+  type TaskReportsWrite,
+  type ReportSource,
+} from "./task-reports";
