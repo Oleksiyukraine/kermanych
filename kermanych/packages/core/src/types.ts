@@ -65,6 +65,10 @@ export type Session = {
   // opening turn asked for the interview and the task document before any code. Stamped from
   // the card when the session is created and never changed. Absent means an ordinary task.
   deepAnalysis?: boolean;
+  // «Знахідки» (docs/specs/2026-10-13-agent-findings.md): how many of this session's findings
+  // still wait for the operator (status `open`). Counted by the registry on every read, never
+  // written through updateSession. Absent or 0 means nothing waits.
+  openFindings?: number;
   // Live-only: the pty (`TerminalInfo.id`) a native session's harness runs in, while it runs.
   terminalId?: string;
   // "task" is no longer produced: a task is a cloud card and `from-task` is the only way an

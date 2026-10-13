@@ -732,7 +732,9 @@ live. The web build has no session browser.
   resume; native ones via `claude --mcp-config <file>` (a per-session `0600` file) or a
   second `omp --hook`. The endpoint is `POST /api/browser/mcp` on the local API with a
   per-session bearer; a session's calls run one at a time (dialog, console and network
-  answer at once). An API started without the desktop app offers no browser tools.
+  answer at once). The same server also carries the findings tools `report_finding` and
+  `list_findings` (see «Agent findings» below). An API started without the desktop app still
+  hands the server out, but it lists only the findings tools.
 - **Cookies** are kept per project (Electron partition `persist:kermanych-browser-<projectId>`):
   sessions of one project share logins, projects do not. The page's user agent carries no
   `Electron/` token. `target=_blank` links load in the same page; a `window.open` popup (an
@@ -823,6 +825,47 @@ phases, interactive prompts and the provider-plan spend under the account name (
 `omp usage` on this machine, never mirrored) are local-only by design — the board shows
 THAT a task waits for input, and only the person running it can answer, on their own
 machine.
+
+### Agent findings («Знахідки»)
+
+Agents often notice problems outside their own task. A session's agent can report one
+through the `report_finding` tool of its `kermanych` MCP server (spec:
+`docs/specs/2026-10-13-agent-findings.md`). It gives a title (≤ 120 characters), a kind
+(`bug`, `security`, `tech-debt`, `docs`), the context, evidence (`path:line` references or
+reproduction commands), acceptance criteria and an optional suggested fix. Then it continues
+its task. `list_findings` shows it what it already reported, so it does not repeat itself. The
+tool descriptions are the agent's whole instruction, so every runtime gets the same rules,
+native sessions included. Discussion and review branches have no such tools.
+
+**Nothing is filed without you.** Findings are kept only on this machine (SQLite
+`session_findings`) and are deleted with their session and with their project. A session holds
+at most 20 open findings. Past that, the tool refuses and tells the agent to mention further
+problems in its reply.
+
+- **Where.** The session's **Знахідки** tab on «Агенти» lists them (a chat has the same tab on
+  «Чат»). Its counter and the ⚑ mark on the agent's session card show how many are still open.
+  A new report arrives live, and it does not change the session's status or interrupt the
+  agent.
+- **Створити задачу →** opens one dialog for both targets, prefilled and editable: the title,
+  and a description with Context, Acceptance criteria, Evidence, Suggested fix and the origin
+  (project, branch, session).
+  - **Дошка** creates a card under your account in any project of the session's workspace
+    (the session's own by default). The assignee is optional, model and effort come from the
+    project's defaults, and the branch prefix is `fix` for bugs and vulnerabilities, otherwise
+    `feature`.
+  - **Jira** creates an issue on a connected board through `POST /api/jira/issues/:integrationId`,
+    signed with your personal Jira token. The issue type defaults to Bug for `bug` / `security`
+    and to Task otherwise (or to the first type the project offers). The labels are
+    `kermanych-finding` plus the kind. The option is disabled, with the reason, when the
+    workspace has no connected board or this machine has no token for its site.
+- **Відхилити** marks a finding dismissed. This cannot be undone, and the agent sees it in
+  `list_findings`.
+- **Routes.** `GET /api/sessions/:id/findings`;
+  `POST /api/sessions/:id/findings/:findingId/filed` with `{ "kind": "board", "taskId" }` or
+  `{ "kind": "jira", "key", "url" }`; `POST /api/sessions/:id/findings/:findingId/dismiss`.
+  An unknown session or finding answers 404, and a finding that is no longer open answers 400.
+  If the card or issue is created but recording it fails, the finding stays open with the error
+  shown in the dialog. The card or issue already exists then: check before filing again.
 
 ### Project documentation
 

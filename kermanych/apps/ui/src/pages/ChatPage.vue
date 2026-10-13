@@ -135,18 +135,18 @@
                carries no reachable tooltip is still stated. -->
           <p v-if="promoteBlocked" class="chat__detail-note">{{ BIND_HINT }}</p>
 
-          <!-- One-tab bar over the log, the same row the Агенти detail uses: a «Лог» tab
+          <!-- The tab bar over the log, the same row the Агенти detail uses: a «Лог» tab
                with the density switch («Розгорнути всі» / «Згорнути всі») pinned to its right
                edge, so the two screens read as one system instead of a mono strip here and a
-               tab row there. -->
+               tab row there; and «Знахідки», because a chat's agent can report them too. -->
           <KTabs v-model="detailTab" :tabs="detailTabs" class="chat__detail-tabs">
-            <template v-if="!chatSession.native" #end>
+            <template v-if="!chatSession.native && detailTab === 'log'" #end>
               <button type="button" class="chat__log-ctl" @click="onExpandAll(true)">{{ t('agents.detail.expandAll') }}</button>
               <button type="button" class="chat__log-ctl" @click="onExpandAll(false)">{{ t('agents.detail.collapseAll') }}</button>
             </template>
           </KTabs>
 
-          <div class="chat__tabpane">
+          <div v-show="detailTab === 'log'" class="chat__tabpane">
             <!-- A native chat's Лог is the harness's own TUI; Kermanych only hosts its pty. -->
             <template v-if="chatSession.native">
               <KTerminalView
@@ -195,6 +195,9 @@
               <div v-else class="chat__log-empty mono">{{ t('chat.page.empty') }}</div>
             </KPanel>
           </div>
+          <div v-if="detailTab === 'findings'" class="chat__tabpane chat__findings">
+            <SessionFindings :session="chatSession" />
+          </div>
         </template>
         <div v-else class="chat__detail-blank mono">{{ t('chat.page.detailBlank') }}</div>
       </aside>
@@ -233,6 +236,7 @@ import KStatusDot from 'components/kit/KStatusDot.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KTabs from 'components/kit/KTabs.vue';
+import SessionFindings from 'components/agents/SessionFindings.vue';
 import KChipSelect from 'components/kit/KChipSelect.vue';
 import KTerminalView from 'components/kit/KTerminalView.vue';
 
@@ -258,10 +262,13 @@ const clearing = ref(false);
 // stale command is not adopted by the newly opened session's rows.
 const expandAll = ref<ExpandAllCommand>(EXPAND_ALL_NONE);
 
-// The detail column carries one view — the log — but presents it through the same tab row the
-// Агенти detail uses, so the density switch keeps the identical home.
+// The detail column carries the log and the chat agent's «Знахідки», through the same tab row
+// the Агенти detail uses, so the density switch keeps the identical home.
 const detailTab = ref('log');
-const detailTabs = computed(() => [{ value: 'log', label: t('agents.tabs.log') }]);
+const detailTabs = computed(() => [
+  { value: 'log', label: t('agents.tabs.log') },
+  { value: 'findings', label: t('agents.tabs.findings'), count: chatSession.value?.openFindings ?? 0 },
+]);
 
 const BIND_HINT = computed(() => t('chat.page.bindHint'));
 const selectedProject = computed(() => store.projects.find((p) => p.id === store.selectedProjectId));
@@ -754,6 +761,7 @@ watch(
 watch(chatId, () => {
   expandAll.value = EXPAND_ALL_NONE;
   renaming.value = false;
+  detailTab.value = 'log';
 });
 </script>
 
@@ -1011,6 +1019,11 @@ watch(chatId, () => {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.chat__findings {
+  overflow-y: auto;
+  padding: 16px 12px;
 }
 
 // The panel fills the pane; `min-height: 0` lets its inner log scroll. Bare, so it flows flat
