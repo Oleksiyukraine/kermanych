@@ -99,6 +99,8 @@ dismisses it.
      over `EventsGateway`. No new event type.
    - Reporting does not change the session status. It is never `waiting_input`, and the agent
      is not blocked.
+   - A chat gets the findings tools too (it has the same MCP server), so «Чат» shows the same
+     «Знахідки» tab beside its «Лог». Without it a chat's findings would be invisible.
 
    Rejected for now: a cross-session «Знахідки» page. Same data, more navigation. Worth adding
    once real use shows many findings. Rejected: a toast only. Easy to miss, and it leaves
@@ -176,42 +178,76 @@ dismisses it.
 
 ## Changes
 
-- **Core:** `AgentFinding`, `FindingKind`, `FindingStatus` types, a validator for
-  `report_finding` arguments, and `renderFindingDescription()` (reusing
-  `renderTicketDescription`). `Session.openFindings?: number`.
+- **Core** (`packages/core/src/findings.ts`): `AgentFinding`, `FindingReport`, `FindingKind`,
+  `FindingStatus`, `FindingTarget`; `validateFindingReport()` (the tool's arguments) and
+  `parseFindingTarget()` (a request body or a stored blob); `renderFindingDescription()`
+  (reusing `renderTicketDescription`); `findingIssueTypeName()`; `OPEN_FINDINGS_LIMIT`,
+  `FINDING_TITLE_MAX`, `FINDING_JIRA_LABEL`. `Session.openFindings?: number`.
 - **API:**
   - Registry: `session_findings` table (`id`, `session_id`, `status`, `kind`, `title`,
-    `context`, `evidence` JSON, `acceptance_criteria` JSON, `suggested_fix`, `target_kind`,
-    `target_ref`, `target_url`, `created_at`, `updated_at`); deleted with its session and its
-    project; open count joined into session listing.
-  - `BrowserMcpService`: binding without a browser host; `report_finding` / `list_findings`
-    beside the browser tools; browser tools listed only with a host. After a report the
-    supervisor emits `session_update`.
+    `context`, `evidence` JSON, `acceptance_criteria` JSON, `suggested_fix`, `target` JSON,
+    `created_at`, `updated_at`). One JSON `target` column, not three, because a target is
+    read and written whole. Deleted with its session and its project. The open count is a
+    subquery of `listSessions`, surfaced only when non-zero.
+  - `findings/findings-tools.ts`: the two tool definitions and `callFindingTool`.
+    `BrowserMcpService` serves them beside the browser tools, unqueued and without a host. It
+    hands out a binding without a browser host and lists the browser tools only with one.
+    `findingReported$` makes the supervisor emit `session_update`.
   - Routes: `GET /sessions/:id/findings`;
     `POST /sessions/:id/findings/:findingId/filed { kind: "board", taskId } | { kind: "jira",
     key, url }`; `POST /sessions/:id/findings/:findingId/dismiss`. 404 for an unknown session
-    or finding, 400 for a finding that is not `open`.
-- **UI:** `api` and store methods; the «Знахідки» tab in `AgentsPage.vue`; the filing dialog
-  (board/Jira switch, project, assignee, Jira board and issue type, title, description); the
-  counter on the tab and on `KSessionCard`; uk/en strings.
+    or finding, 400 for a finding that is not `open` or for a malformed target (a Jira URL must
+    be http(s)).
+- **UI:**
+  - The `api` methods. There is no pinia store, because only the pane reads the list.
+  - `components/agents/SessionFindings.vue` (the pane and the filing dialog), used by
+    `AgentsPage.vue` and `ChatPage.vue`.
+  - `lib/findings.ts` `pickFindingIssueType`.
+  - `KSessionCard` `findings` prop (⚑ n) and its kit sample. uk/en strings.
+  - Known limits:
+    - A board refusal is toasted by `board.createTask`, so the dialog shows a generic line.
+    - A filed board finding links to the board, which has no per-card deep link.
+    - If the card or issue was created but `…/filed` fails, the finding stays open with the
+      error shown, and nothing is rolled back.
 - **Docs:** README «Session browser» (the `kermanych` server now also carries the findings
-  tools and exists without the desktop app), and a findings paragraph under «Cloud tasks and
-  local sessions».
+  tools and exists without the desktop app), and «Agent findings («Знахідки»)» under «Cloud
+  tasks and local sessions».
 
 ## Verification
 
-- Core unit tests: the validator (required fields, kind vocabulary, title length, empty
-  arrays) and the description renderer.
-- API tests: the `session_findings` round trip and the deletion cascade; `report_finding`
-  stores, refuses bad arguments and enforces the open limit; `list_findings` returns all
-  states; `tools/list` with and without a browser host; the filed/dismiss routes and their
-  404/400 cases.
-- Smoke on a preview api (`KERMANYCH_PREVIEW=1`) with the UI dev server: call
-  `report_finding` over `POST /api/browser/mcp` with the session's bearer, see the counter and
-  the row appear live, file one finding to the board, dismiss another, and check both states
-  through `list_findings`. A Jira create is exercised only if a Jira site and token are
-  available. Otherwise the disabled Jira option and its hint are what is checked, and this is
-  reported as such.
+- `pnpm --filter @kermanych/core test`: 20 files, 196 passed, including `findings.spec.ts`
+  (validator, renderer, issue type).
+- `pnpm --filter @kermanych/api test`: 864 passed, 2 failed. Both failures are
+  `test/rpc-session.compact.spec.ts`, the same pre-existing failures the deep-analysis spec
+  records. New `test/findings.spec.ts` covers:
+  - report and push of the open count;
+  - refusal of a bad argument;
+  - the open limit, and a decided finding freeing a slot;
+  - `list_findings` in all states;
+  - a deleted session;
+  - the session and project cascade;
+  - the routes' filed-once / 404 / 400 cases.
+
+  `test/browser-mcp.spec.ts` now pins the binding and the findings-only list without a host.
+- `pnpm --filter @kermanych/ui test`: 53 files, 580 passed. Typecheck (`tsc` / `vue-tsc`):
+  only the base commit's errors (`jira.controller.ts` TS2504, `runtime-messages.spec.ts`
+  TS2352), plus `@kermanych/api` TS2307 in `src-electron` because the api package is unbuilt.
+- Smoke: a preview api (`KERMANYCH_PREVIEW=1`, seeded temp DB, standalone, so no browser host)
+  with a seeded project rebound to a throwaway git repo holding an off-by-one `average()`.
+  - A real managed omp chat was asked an unrelated question. It called `list_findings`, then
+    `report_finding` through the omp MCP bridge, and in its reply said it had logged the bug
+    and not fixed it. The finding (kind `bug`, `math.js:4` evidence, three acceptance
+    criteria, a suggested fix) appeared under `GET …/findings`, with `openFindings: 1` on the
+    session.
+  - In the UI dev server, «Чат» showed «Знахідки 1» and the full row.
+  - «Створити задачу →» opened the prefilled dialog. Jira was disabled with «немає звʼязку з
+    хмарою», and the board could not be targeted because the preview has no cloud project.
+  - «Відхилити» turned the row into «відхилено» and cleared the counter live.
+  - On «Агенти», findings placed on an agent session showed ⚑ 1 on its card, «Знахідки 1»,
+    and a row filed through `…/filed` as «у Jira: KRM-42». A second decision on it answered
+    400 «finding is not open».
+  - Not exercised: a real board card or Jira issue creation, because the preview has no
+    Supabase project, Jira site or token.
 
 ## Documentation impact
 

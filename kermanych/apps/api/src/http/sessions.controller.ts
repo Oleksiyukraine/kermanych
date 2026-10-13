@@ -1,11 +1,17 @@
 // apps/api/src/http/sessions.controller.ts
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from "@nestjs/common";
-import { isAgentRuntime, isThinkingLevel } from "@kermanych/core";
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req } from "@nestjs/common";
+import { isAgentRuntime, isThinkingLevel, parseFindingTarget } from "@kermanych/core";
 import type { BranchPrefix, DocsWriteKind, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft, ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { sessionFailure } from "./session-failure";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
+
+// A findings failure: an unknown session or finding is a 404, an already-decided one a 400.
+function findingFailure(err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  return message === "session not found" || message === "finding not found" ? new NotFoundException(message) : new BadRequestException(message);
+}
 
 @Controller("sessions")
 export class SessionsController {
@@ -268,6 +274,38 @@ export class SessionsController {
       return await this.sup.writeDoc(id, kind satisfies DocsWriteKind);
     } catch (err) {
       throw sessionFailure(err);
+    }
+  }
+
+  // «Знахідки» (docs/specs/2026-10-13-agent-findings.md): what the session's agent reported,
+  // and the operator's decision on one. Filing itself (board card / Jira issue) happens before
+  // `filed` is called, under the operator's own credentials.
+  @Get(":id/findings")
+  listFindings(@Param("id") id: string) {
+    try {
+      return this.sup.listFindings(id);
+    } catch (err) {
+      throw findingFailure(err);
+    }
+  }
+
+  @Post(":id/findings/:findingId/filed")
+  findingFiled(@Param("id") id: string, @Param("findingId") findingId: string, @Body() b: unknown) {
+    const target = parseFindingTarget(b);
+    if (!target) throw new BadRequestException("body must be { kind: \"board\", taskId } or { kind: \"jira\", key, url }");
+    try {
+      return this.sup.resolveFinding(id, findingId, { status: "filed", target });
+    } catch (err) {
+      throw findingFailure(err);
+    }
+  }
+
+  @Post(":id/findings/:findingId/dismiss")
+  dismissFinding(@Param("id") id: string, @Param("findingId") findingId: string) {
+    try {
+      return this.sup.resolveFinding(id, findingId, { status: "dismissed" });
+    } catch (err) {
+      throw findingFailure(err);
     }
   }
 

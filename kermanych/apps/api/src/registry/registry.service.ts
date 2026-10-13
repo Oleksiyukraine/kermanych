@@ -5,8 +5,8 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
-import { isThinkingLevel, isAgentRuntime, isAgentLanguage, docsPolicy } from "@kermanych/core";
-import type { DocsPolicy, Project, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage } from "@kermanych/core";
+import { isThinkingLevel, isAgentRuntime, isAgentLanguage, isFindingKind, parseFindingTarget, docsPolicy } from "@kermanych/core";
+import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, Project, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -50,6 +50,65 @@ function readUsage(raw: string | null): Usage | undefined {
   } catch {
     return undefined;
   }
+}
+
+// A `session_findings` row as SQLite hands it back.
+type FindingRow = {
+  id: string;
+  sessionId: string;
+  status: string;
+  kind: string;
+  title: string;
+  context: string;
+  evidence: string;
+  acceptanceCriteria: string;
+  suggestedFix: string | null;
+  target: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+const FINDING_COLUMNS =
+  "id, session_id as sessionId, status, kind, title, context, evidence, acceptance_criteria as acceptanceCriteria, suggested_fix as suggestedFix, target, created_at as createdAt, updated_at as updatedAt";
+
+// The JSON blobs back into shapes, tolerant like readUsage: a hand-edited row degrades to an
+// empty list or no target rather than breaking the session's pane.
+function readLines(raw: string): string[] {
+  try {
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function readTarget(raw: string | null): FindingTarget | undefined {
+  if (!raw) return undefined;
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  return parseFindingTarget(v);
+}
+
+function toFinding(r: FindingRow): AgentFinding {
+  const target = readTarget(r.target);
+  return {
+    id: r.id,
+    sessionId: r.sessionId,
+    status: r.status === "filed" || r.status === "dismissed" ? r.status : "open",
+    // An unknown word from an older or hand-edited row reads as the most generic kind.
+    kind: isFindingKind(r.kind) ? r.kind : "tech-debt",
+    title: r.title,
+    context: r.context,
+    evidence: readLines(r.evidence),
+    acceptanceCriteria: readLines(r.acceptanceCriteria),
+    ...(r.suggestedFix ? { suggestedFix: r.suggestedFix } : {}),
+    ...(target ? { target } : {}),
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+  };
 }
 
 @Injectable()
@@ -297,6 +356,15 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS slack_tokens (workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, bot_token TEXT NOT NULL, app_token TEXT NOT NULL, team_id TEXT NOT NULL, team_name TEXT NOT NULL, bot_user_id TEXT NOT NULL, PRIMARY KEY (workspace_id, user_id))`,
     );
+    // «Знахідки» (docs/specs/2026-10-13-agent-findings.md): problems a session's agent reported
+    // outside its task, waiting here — on the machine whose operator will sign whatever they
+    // become — until that operator files or dismisses them. Owned by the session: removed with
+    // it and with its project. `evidence` / `acceptance_criteria` are JSON string arrays,
+    // `target` the JSON FindingTarget of a filed finding.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS session_findings (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', kind TEXT NOT NULL, title TEXT NOT NULL, context TEXT NOT NULL, evidence TEXT NOT NULL, acceptance_criteria TEXT NOT NULL, suggested_fix TEXT, target TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    );
+    this.db.exec(`CREATE INDEX IF NOT EXISTS session_findings_session_idx ON session_findings (session_id)`);
   }
 
   // v1 (2026-08-21, team cloud): `groups` becomes `projects`, its id becomes the CLOUD
@@ -490,24 +558,25 @@ export class RegistryService {
   }
 
   removeProject(id: string): void {
+    this.db.prepare(`DELETE FROM session_findings WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?)`).run(id);
     this.db.prepare(`DELETE FROM sessions WHERE project_id = ?`).run(id);
     this.db.prepare(`DELETE FROM projects WHERE id = ?`).run(id);
   }
 
   listSessions(projectId?: string): Session[] {
-    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, runtime, native, deep_analysis, effort, status, pr_opened as prOpened, archived, usage, created_at as createdAt, last_activity_at as lastActivityAt FROM sessions`;
+    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, runtime, native, deep_analysis, effort, status, pr_opened as prOpened, archived, usage, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
     const rows = (
       projectId
         ? this.db.prepare(sql + ` WHERE project_id = ? ORDER BY created_at`).all(projectId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "native" | "deepAnalysis"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; native: number; deep_analysis: number })[];
+    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "native" | "deepAnalysis" | "openFindings"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; native: number; deep_analysis: number; open_findings: number })[];
     // SQLite stores the flag as 0/1; hand callers a real boolean. `effort` is validated rather
     // than cast: a row written by an older build (or by hand) must degrade to "not known" —
     // typing an unknown word as a ThinkingLevel would send it straight back into omp's argv.
     // Same for `runtime`: guard with isAgentRuntime so invalid values degrade to undefined.
     // `native` and `deep_analysis` are 0/1 flags too, surfaced only when set so an ordinary row
-    // stays as it was.
-    return rows.map(({ native, deep_analysis, ...r }) => ({ ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isAgentRuntime(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) }));
+    // stays as it was; `open_findings` likewise appears only when something waits.
+    return rows.map(({ native, deep_analysis, open_findings, ...r }) => ({ ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(open_findings ? { openFindings: open_findings } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isAgentRuntime(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) }));
   }
 
   createSession(
@@ -629,7 +698,69 @@ export class RegistryService {
   }
 
   removeSession(id: string): void {
+    this.db.prepare(`DELETE FROM session_findings WHERE session_id = ?`).run(id);
     this.db.prepare(`DELETE FROM sessions WHERE id = ?`).run(id);
+  }
+
+  // ── Findings (docs/specs/2026-10-13-agent-findings.md) ───────────────────────────
+
+  addFinding(sessionId: string, report: FindingReport): AgentFinding {
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    this.db
+      .prepare(
+        `INSERT INTO session_findings (id, session_id, status, kind, title, context, evidence, acceptance_criteria, suggested_fix, target, created_at, updated_at) VALUES (?,?,'open',?,?,?,?,?,?,NULL,?,?)`,
+      )
+      .run(
+        id,
+        sessionId,
+        report.kind,
+        report.title,
+        report.context,
+        JSON.stringify(report.evidence),
+        JSON.stringify(report.acceptanceCriteria),
+        report.suggestedFix ?? null,
+        now,
+        now,
+      );
+    return { ...report, id, sessionId, status: "open", createdAt: now, updatedAt: now };
+  }
+
+  // Creation order — the order the agent reported them in. `rowid` breaks ties within one
+  // millisecond, which a burst of parallel tool calls produces.
+  listFindings(sessionId: string): AgentFinding[] {
+    const rows = this.db
+      .prepare(`SELECT ${FINDING_COLUMNS} FROM session_findings WHERE session_id = ? ORDER BY created_at, rowid`)
+      .all(sessionId) as FindingRow[];
+    return rows.map(toFinding);
+  }
+
+  countOpenFindings(sessionId: string): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) as n FROM session_findings WHERE session_id = ? AND status = 'open'`)
+      .get(sessionId) as { n: number };
+    return row.n;
+  }
+
+  // The operator's decision on an open finding. Only `open` moves: a filed finding already
+  // points at its card or issue, and a dismissed one stays dismissed (no undo in this change).
+  // A filed finding needs its target; a dismissed one carries none.
+  resolveFinding(
+    sessionId: string,
+    id: string,
+    next: { status: "filed"; target: FindingTarget } | { status: "dismissed" },
+  ): AgentFinding {
+    const row = this.db
+      .prepare(`SELECT ${FINDING_COLUMNS} FROM session_findings WHERE id = ? AND session_id = ?`)
+      .get(id, sessionId) as FindingRow | undefined;
+    if (!row) throw new Error("finding not found");
+    if (row.status !== "open") throw new Error("finding is not open");
+    const now = new Date().toISOString();
+    const target = next.status === "filed" ? JSON.stringify(next.target) : null;
+    this.db
+      .prepare(`UPDATE session_findings SET status = ?, target = ?, updated_at = ? WHERE id = ?`)
+      .run(next.status, target, now, id);
+    return toFinding({ ...row, status: next.status, target, updatedAt: now });
   }
 
   // Queue (or replace) the pending cloud status for a task. Resetting `attempts` is

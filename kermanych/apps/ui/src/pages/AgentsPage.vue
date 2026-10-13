@@ -115,6 +115,7 @@
               :selected="store.selectedSessionId === item.session.id"
               :removable="item.session.kind === 'task'"
               :browsing="sessionBrowser.agentLive.has(item.session.id)"
+              :findings="item.session.openFindings ?? 0"
               :remove-title="t('agents.board.removeStranded', { name: item.session.name })"
               @click="onRowClick(item.session)"
               @remove="onDeleteStranded(item.session)"
@@ -593,6 +594,10 @@
             </section>
           </template>
           <p v-else class="agents__log-empty mono">{{ t('agents.docs.empty') }}</p>
+        </div>
+        <!-- Знахідки: what the agent reported outside its task; filed from here, never automatically. -->
+        <div v-if="detailTab === 'findings'" class="agents__tabpane agents__docs">
+          <SessionFindings :session="selectedSession" />
         </div>
         <!-- QA tab: the checklist lives on the linked cloud CARD, so it is read from the board
              store (not the transcript) and persists past this session's archive. A brand-new
@@ -1085,6 +1090,7 @@ import KLogBlock from 'components/kit/KLogBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KTag from 'components/kit/KTag.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
+import SessionFindings from 'components/agents/SessionFindings.vue';
 import KAnalysisMark from 'components/kit/KAnalysisMark.vue';
 import KSplitButton from 'components/kit/KSplitButton.vue';
 import { type KIconName } from 'components/kit/KIcon.vue';
@@ -1728,6 +1734,7 @@ const detailTabs = computed(() => {
     { value: 'changes', label: t('agents.tabs.changes'), count: changesInfo.value?.files.length ?? 0 },
     { value: 'session', label: t('agents.tabs.session') },
     { value: 'docs', label: t('agents.tabs.docs'), count: usedDocs.value.length + changedDocs.value.length },
+    { value: 'findings', label: t('agents.tabs.findings'), count: selectedSession.value?.openFindings ?? 0 },
   ];
   // Always present, like the other tabs — a missing tab reads as breakage. The pane shows the
   // checklist for a task-linked session and an empty state otherwise (it fills after «Створити
@@ -1750,7 +1757,7 @@ watch(
   (id) => {
     const saved = id ? localStorage.getItem(`kermanych.agents.tab.${id}`) : null;
     detailTab.value =
-      saved === 'changes' || saved === 'session' || saved === 'docs' || saved === 'qa' ||
+      saved === 'changes' || saved === 'session' || saved === 'docs' || saved === 'findings' || saved === 'qa' ||
       (saved === 'browser' && sessionBrowser.available && !browserSplit.value)
         ? saved
         : 'log';

@@ -401,6 +401,17 @@
       </div>
       <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionRemove') }}</div>
 
+      <!-- FINDINGS — the agent reported problems outside its task; ⚑ counts the open ones,
+           waiting for the operator to file or dismiss them. -->
+      <div class="kit__cards">
+        <KSessionCard
+          branch="chore/pnpm-10" :title="t('kit.gallery.sessionCard.findingsTitle')" :time="t('kit.gallery.sessionCard.findingsTime')"
+          status="thinking" :status-line="t('kit.gallery.sessionCard.findingsStatus')" model="opus-5" harness="managed" :findings="3"
+          :usage="{ input: 6100, output: 2400, cacheRead: 96000, cacheWrite: 8100, cost: 0.42 }"
+        />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionFindings') }}</div>
+
       <!-- DEEP ANALYSIS — a «Глибокий аналіз» task: the mark sits in the accounting line, right
            after the harness, so it never clips. -->
       <div class="kit__cards">
