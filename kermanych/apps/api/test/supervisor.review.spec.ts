@@ -29,6 +29,7 @@ function make() {
     addWorktree: vi.fn(), removeWorktree: vi.fn(), removeBranch: vi.fn(),
     createBranchHere: vi.fn(), checkout: vi.fn(),
     currentBranch: vi.fn().mockResolvedValue("main"),
+    forkPoint: vi.fn().mockResolvedValue(""),
     hasUncommitted: vi.fn().mockResolvedValue(false),
     diff: vi.fn().mockResolvedValue("diff --git a/x.ts b/x.ts\n+const answer = 42;"),
   };

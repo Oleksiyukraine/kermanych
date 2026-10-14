@@ -35,7 +35,15 @@ import type { SkillsService } from "../src/skills/skills.service";
 
 function make(skills: SkillsService = stubSkills()) {
   const registry = new RegistryService(":memory:");
-  const worktree = { currentBranch: vi.fn().mockResolvedValue("main") };
+  // The turn-end check (docs/specs/2026-10-14-create-pr-base-sync.md, decision 6) reads the tree;
+  // these sessions' worktrees do not exist, so it finds nothing and fetches nothing.
+  const worktree = {
+    currentBranch: vi.fn().mockResolvedValue("main"),
+    unmergedFiles: vi.fn().mockResolvedValue([]),
+    fetchBranch: vi.fn().mockResolvedValue("skipped"),
+    refExists: vi.fn().mockResolvedValue(false),
+    behindCount: vi.fn().mockResolvedValue(0),
+  };
   // Partial mock: createPullRequest only resumes the agent — the DI seam is cast once.
   const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth(), skills);
   return { sup, registry };
@@ -96,6 +104,36 @@ describe("createPullRequest", () => {
     expect(p).not.toContain("Conventional Commits");
   });
 
+  // docs/specs/2026-10-14-create-pr-base-sync.md, decision 2: the agent merges origin's base in
+  // before the push, in the same turn — never a rebase.
+  it("has the agent bring origin's base in before it pushes", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
+    registry.updateSession(s.id, { status: "done" });
+
+    await sup.createPullRequest(s.id);
+
+    const p = prompts.at(-1)!;
+    expect(p).toContain("git fetch origin dev");
+    expect(p).toContain("git merge --no-commit origin/dev");
+    expect(p).toMatch(/never rebase/);
+    expect(p.indexOf("git merge --no-commit")).toBeGreaterThan(p.indexOf("gh pr create")); // after the instruction
+  });
+
+  // The name goes into shell commands the agent runs; a project's default branch is typed by a
+  // person and shared through the cloud.
+  it("adds no base sync for a base git would not take as a branch name", async () => {
+    const { sup, registry } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj", defaultBranch: "--upload-pack=touch /tmp/x" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    registry.updateSession(s.id, { status: "done" });
+
+    await sup.createPullRequest(s.id);
+
+    expect(prompts.at(-1)!).not.toContain("git merge --no-commit");
+  });
+
   // The whole point of an editable instruction: what reaches the child is the PROJECT's text,
   // holes filled from the same session state, with its assigned skills still trailing it.
   it("renders the project's own instruction when one exists, skills block and all", async () => {
@@ -115,6 +153,8 @@ describe("createPullRequest", () => {
     expect(p.startsWith("Відкрий ПР для feature/aaa.")).toBe(true);
     expect(p).toContain("Target the PR at `dev`");
     expect(p).not.toMatch(/gh pr create/); // the default text is gone, not appended to
+    // Kermanych's base sync rides any instruction, an override included (decision 8).
+    expect(p).toContain("git merge --no-commit origin/dev");
     expect(p.endsWith("SKILL BLOCK")).toBe(true);
   });
 
@@ -207,6 +247,7 @@ describe("commitChanges", () => {
     expect(p).toMatch(/Conventional Commits/); // built-in commit conventions fallback
     expect(p).toContain("GIT_TOKEN"); // reads the project's configured token from .env
     expect(p).toMatch(/Co-Authored-By: Kermanych </); // credits Kermanych as a commit co-author
+    expect(p).toContain("git merge --no-commit origin/dev"); // the one-click update for a PR whose base moved
   });
 
   it("settles the turn back on in_review with no PR URL to wait for", async () => {

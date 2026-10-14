@@ -36,6 +36,17 @@ export function uniqueSlug(base: string, existing: Set<string>): string {
   if (!existing.has(base)) return base;
   let n = 2; while (existing.has(`${base}-${n}`)) n++; return `${base}-${n}`;
 }
+
+// `git check-ref-format --branch`'s rules. A base branch can come from a person — a project's
+// default branch is typed in settings and shared through the cloud — and it is put on git
+// command lines (`git fetch origin <base>`) and into an agent's instructions. A name that passes
+// cannot become an option (`-…`), a refspec (`a:b`) or a revision expression (`@{…}`, `~`, `^`).
+export function isGitBranchName(name: string): boolean {
+  if (!name || name === "@" || name === "HEAD" || name.startsWith("-")) return false;
+  if (/[\x00-\x20\x7f~^:?*\[\\]/.test(name) || name.includes("..") || name.includes("@{")) return false;
+  if (name.startsWith("/") || name.endsWith("/") || name.includes("//") || name.endsWith(".")) return false;
+  return name.split("/").every((part) => !part.startsWith(".") && !part.endsWith(".lock"));
+}
 export function worktreeDir(sessionId: string): string {
   return join(homedir(), ".kermanych", "worktrees", sessionId);
 }

@@ -933,6 +933,9 @@
             {{ t('agents.finish.aheadInfo', { n: finishData.ahead, base: finishData.target, dirty: finishData.dirty ? t('agents.finish.aheadDirty') : '' }, finishData.ahead) }}
           </p>
           <p v-else class="agents__hint mono">{{ t('agents.changes.preparing') }}</p>
+          <p v-if="finishData && finishData.behind > 0" class="agents__hint">
+            {{ t('agents.finish.behindInfo', { n: finishData.behind, base: finishData.target, action: finishHasPr ? t('agents.finish.commit') : t('agents.finish.createPr') }, finishData.behind) }}
+          </p>
           <!-- DOCUMENTATION POLICY — only for a project that switched it on: what the api will
                refuse PR / commit / finish over. A handoff or an API request the operator wants
                on this branch is asked for from the «Документація» tab, not here. -->

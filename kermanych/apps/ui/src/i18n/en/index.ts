@@ -503,10 +503,11 @@ export const en: MessageSchema = {
     },
     finish: {
       title: 'Finish the session',
-      conflictError: 'An unfinished merge with conflicts is sitting in the worktree — resolve it and the session can be finished.',
+      conflictError: 'An unfinished merge with conflicts is sitting in the worktree — until it is resolved, no PR can be created and the session cannot be finished.',
       conflictFiles: 'Conflicting files:',
-      conflictHint: 'Open in an editor, remove the conflict markers, commit — then “Finish”.',
+      conflictHint: 'The agent stopped mid-merge: answer it in the chat, press “Resolve automatically”, or resolve the conflicts in an editor and commit.',
       aheadInfo: '{n} commit{dirty} against {base}; the worktree will be retired, the branch stays for its PR. | {n} commits{dirty} against {base}; the worktree will be retired, the branch stays for its PR.',
+      behindInfo: 'The branch is {n} commit behind origin/{base} — “{action}” brings it in first. | The branch is {n} commits behind origin/{base} — “{action}” brings them in first.',
       aheadDirty: ' + uncommitted changes (auto-commit)',
       close: 'Close',
       resolveAuto: 'Resolve automatically',
@@ -1358,6 +1359,7 @@ export const en: MessageSchema = {
       automationNote: 'No model is involved here — Kermanych performs this action itself, so there is neither an instruction nor any skills.',
       readOnly: 'Only the workspace owner can change instructions and skills — for you they are read-only.',
       headerCaption: 'The role receives its skills under this header, verbatim:',
+      baseSyncCaption: 'Kermanych appends this after the instruction — it cannot be changed or switched off:',
     },
     skillSeq: {
       add: 'Add',
@@ -2612,6 +2614,8 @@ export const en: MessageSchema = {
     session_dormant_inactive: 'Session inactive. Send a message to restore it and pull in its history.',
     context_compacted: 'context compacted — the conversation history was condensed and token budget freed',
     context_compact_failed: 'could not compact context: {reason}',
+    base_fetch_failed: 'Could not update origin/{base} — the branch was created from {ref} as of the last successful fetch, so the base may not be the latest.',
+    pr_behind_base: 'The PR is missing {count} commit from origin/{base}: the agent did not merge the base or did not push the merge. Press “Commit” in the “Finish the session” window. | The PR is missing {count} commits from origin/{base}: the agent did not merge the base or did not push the merge. Press “Commit” in the “Finish the session” window.',
     // The backend child died MID-SESSION — its launch succeeded long ago, so there is nobody to
     // throw to and this transcript row is the only account of it. The same fault at launch time
     // becomes a `runtime_*` error above instead.

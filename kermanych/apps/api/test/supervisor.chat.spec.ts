@@ -67,6 +67,7 @@ function make() {
     createBranchHere: vi.fn().mockResolvedValue(undefined),
     checkout: vi.fn().mockResolvedValue(undefined),
     currentBranch: vi.fn().mockResolvedValue("main"),
+    forkStart: vi.fn(async (_repo: string, base: string) => ({ ref: base, stale: false })),
     hasUncommitted: vi.fn().mockResolvedValue(false),
   };
   const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth(), stubSkills());
@@ -252,6 +253,7 @@ describe("trigger-driven promotion", () => {
       createBranchHere: vi.fn().mockResolvedValue(undefined),
       checkout: vi.fn().mockResolvedValue(undefined),
       currentBranch: vi.fn().mockResolvedValue("main"),
+      forkStart: vi.fn(async (_repo: string, base: string) => ({ ref: base, stale: false })),
       hasUncommitted: vi.fn().mockResolvedValue(false),
     };
     const auth = {

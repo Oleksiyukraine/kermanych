@@ -87,8 +87,12 @@ Settled with the operator one question at a time.
      on at launch, recorded on the session, so the PR prompt and «Зміни» always know it. A
      detached HEAD keeps today's behaviour.
    - Every worktree birth follows the rule: a card launch, a promoted chat, and a reopen whose
-     branch is gone. In-place sessions keep forking from the operator's checkout, because moving
+     branch is gone. A reopen gets no notice: its session is dormant, with no live transcript
+     to write to. In-place sessions keep forking from the operator's checkout, because moving
      that checkout is what was just rejected.
+   - The fetch names an explicit refspec, `+refs/heads/<base>:refs/remotes/origin/<base>`, with
+     no tags. It also works in a clone whose configured refspec does not cover the branch, and an
+     argument that starts with `+refs/heads/` can never be read as a git option.
 5. **Counts and diffs start at the newer fork point.** That is the newer of
    `merge-base(HEAD, <base>)` and `merge-base(HEAD, origin/<base>)`; when the two diverge, the
    origin one, because that is what the PR shows. «Зміни», the finish sheet, the documentation
@@ -102,7 +106,9 @@ Settled with the operator one question at a time.
    - *A turn ended mid-merge.* An agent session whose turn ends with unmerged files settles at
      `conflict`, not `done` / `in_review`. The check runs right after the turn settles; a turn
      that has already started wins. `conflict` clears when a later turn ends with no unmerged
-     files, or when the finish sheet or «Зміни» reads the branch and finds none.
+     files, or when the finish sheet or «Зміни» reads the branch and finds none. Unmerged files
+     are read from git's stdout only, and a failed read (the worktree folder is gone) counts as
+     none: git's error text is not a list of paths.
    - *After the PR or commit turn.* When the turn that settles on «На ревʼю» after «Створити ПР»
      or «Закоміти» ends with no unmerged files, the api fetches `origin/<base>` and the session
      branch. It then checks that the PR head (`origin/<branch>`, else the local HEAD) contains
@@ -126,79 +132,128 @@ Settled with the operator one question at a time.
    get decision 6's warning after every PR. Rejected: a required `{{base}}` hole. Saved overrides
    without it would become invalid and silently fall back to the default. Cost: no project can
    choose rebase, which `kermanych-session` forbids anyway. The block names the base the PR
-   prompt names (the session's base, else the project's default branch). In a project whose PR
-   conventions retarget the PR, decision 6's check still compares against the session's base.
+   prompt names (the session's base, else the project's default branch), and only when git takes
+   it as a branch name (`isGitBranchName`, the rules of `git check-ref-format --branch`). A
+   project's default branch is typed by a person and shared through the cloud, and the name
+   lands in shell commands the agent runs and in the api's own fetch. For any other name there
+   is no block and no check. In a project whose PR conventions retarget the PR, decision 6's
+   check still compares against the session's base.
 9. **Native sessions.** The pasted «Створити ПР» / «Закоміти» prompt carries the block. Decisions
-   4 and 5, the finish-sheet line and the `conflict` status apply. The launch notice and the
-   post-PR warning do not: a native transcript is its harness's own file, and Kermanych writes
-   nothing into it.
-10. **Kermanych's own texts follow.** `kermanych-session` says the operator triggers conflict
-    resolution explicitly. It will say that a merge the agent starts to bring the base in is the
-    agent's to resolve, and that one it did not start is resolved only when the operator asks.
+   4 and 5, the finish-sheet line and the `conflict` status apply, and a harness resting at
+   `conflict` still takes helper pastes such as «Вирішити автоматично». The launch notice and the
+   post-PR warning do not apply: a native transcript is its harness's own file, and Kermanych
+   writes nothing into it.
+10. **Kermanych's own texts follow.** `kermanych-session` said the operator triggers conflict
+    resolution explicitly. It now says that the merge the PR and commit actions start is the
+    agent's to resolve, and that a conflicted merge it did not start waits for the operator.
     `kermanych-pull-request`'s order of operations gains the merge step. The default skill bodies
     stay under `ASSIGNED_BYTES_WARN`. The finish sheet's conflict hint names the three ways out:
     answer the agent in the chat, «Вирішити автоматично», or resolve in an editor and commit.
 
 ### The block
 
-A draft of what the agent receives (`<base>` filled in; the trailer is `KERMANYCH_COAUTHOR`):
+What the agent receives (`baseSyncBlock` in `packages/core/src/agents.ts`; `<base>` filled in,
+the trailer is `KERMANYCH_COAUTHOR`):
 
-> Before you push, bring the base branch in. This step is Kermanych's own and applies whatever
-> the instruction above says.
-> 1. `git fetch origin <base>`, applying `GIT_TOKEN` exactly as you apply it to the push. If
->    `origin` has no `<base>`, skip this step and say so.
-> 2. `git merge --no-commit origin/<base>` — merge, never rebase, never force-push. If it stops
->    before committing, finish it with `git commit --no-edit --trailer "Co-Authored-By: …"`.
+> Before you push, bring the base branch `<base>` in. This step is Kermanych's own and applies
+> whatever the instruction above says:
+> 1. `git fetch origin <base>`, applying `GIT_TOKEN` to it exactly as you apply it to the push.
+>    If `origin` has no `<base>`, skip this step and say so.
+> 2. `git merge --no-commit origin/<base>` — merge, never rebase, never force-push. A
+>    fast-forward or "Already up to date" needs nothing more; otherwise finish the merge with
+>    `git commit --no-edit --trailer "Co-Authored-By: …"`.
 > 3. Resolve conflicts yourself: keep what both sides added, then commit as in step 2. Stop and
 >    ask the operator only when both sides changed the same behaviour in ways that cannot both
->    hold and choosing between them is a product decision. Then leave the merge unfinished,
+>    hold and choosing between them is a product decision — then leave the merge unfinished,
 >    list the files and ask.
-> 4. If the merge brought anything in, run the project's checks for what it touched. Fix a
->    failure caused by the two sides meeting in a separate commit. Report a failure already on
->    `origin/<base>` (in the PR's `## Testing` when you write one) without fixing it.
+> 4. If the merge brought anything in, run the project's checks (typecheck, tests) for what it
+>    touched. Fix a failure caused by the two sides meeting in a separate commit. Report a
+>    failure that is already on `origin/<base>` — in the PR's `## Testing` when you write one —
+>    without fixing it.
 
-## Changes (planned)
+## Changes
 
-- **Core** `packages/core/src/agents.ts`: the block and its renderer. `skills.ts`: the
-  `kermanych-session` and `kermanych-pull-request` bodies.
+- **Core** `worktree-names.ts`: `isGitBranchName`. `agents.ts`: `baseSyncBlock`.
+  `i18n-codes.ts`: notice codes `base_fetch_failed` (`{ base, ref }`) and `pr_behind_base`
+  (`{ base, count }`). `skills.ts`: the `kermanych-session` conflict line and the
+  `kermanych-pull-request` merge step; the default skill bodies total 8189 of the 8192 bytes.
 - **API**
-  - `worktree/worktree.service.ts`: fetching one branch with a timeout, serialised per repository
-    with `incoming`; remote and ancestry checks; fork-point resolution; ahead and behind counts;
-    `addWorktree` with `--no-track` for a remote start point; `changedFiles`, `fileDiff` and
-    `diff` from the resolved fork point.
+  - `worktree/worktree.service.ts`: `fetchBranch`, `forkStart`, `forkPoint`, `isAncestor` and
+    `behindCount`. `aheadCount` also excludes `origin/<base>`. `addWorktree` passes
+    `--no-track`. `unmergedFiles` reads stdout only and reports nothing on a failed call. Every
+    api fetch of one repository, the footer's included, runs in one queue (`serialRemote`):
+    concurrent fetches fail on each other's ref locks.
   - `supervisor/supervisor.service.ts`: `resolveLaunchParams` records the checkout's branch when
-    no base is given. `launch` and `reopenSession` fork from the fresher base and post the
-    notice. `finishInfo` returns `behind`, uses the fork point and clears a stale `conflict`.
-    `docsGate`, `fileDiff` and `reviewSession` use the fork point (the reviewer: the session's
-    base). `createPullRequest` and `commitChanges` append the block. `onRpcEvent` sets
-    `conflict` after a turn that ends mid-merge and runs the post-PR check.
-  - `native/native-session.service.ts`: `conflict` after a native turn that ends mid-merge.
-- **UI** `pages/AgentsPage.vue`: the finish sheet's behind line and conflict hint.
-  `lib/api.ts`: `finishInfo` gains `behind`. `components/settings/AiAgentsPanel.vue`: the
-  read-only block. i18n `uk` / `en`.
+    no base is given. `launch` (with the notice) and `reopenSession` fork from `forkStart`.
+    `branchBase` gives `finishInfo` (now with `behind`), `docsGate`, `fileDiff` and
+    `reviewSession` the session's base and fork point. `syncBase` validates the base, and
+    `createPullRequest` / `commitChanges` append the block and arm `baseCheck`. `checkTurnEnd`
+    runs after every settled turn: it sets `conflict` on a mid-merge tree, or runs the post-PR
+    check. `clearConflict` runs from `finishInfo`.
+  - `native/native-session.service.ts`: a `settled` event the supervisor answers with
+    `markConflict`, `resettle` for `clearConflict`, and `conflict` in `PASTE_OK`.
+- **UI** `pages/AgentsPage.vue`: the finish sheet's behind line (`agents.finish.behindInfo`);
+  new conflict copy. `lib/api.ts`: `finishInfo.behind`. `components/settings/AiAgentsPanel.vue`:
+  the read-only block under «Провізор» and «Комітер». i18n `uk` / `en`, notices included. The
+  Ukrainian strings carry no plural forms («нових комітів: N»), like the existing `aheadInfo`:
+  the app configures no Ukrainian plural rule for vue-i18n, so a three-form message picks the
+  wrong form for n = 1. That is reported as a separate finding.
+- **Tests**
+  - New `apps/api/test/base-sync.spec.ts`, 10 tests against real repositories: the fork when
+    local is behind, ahead, diverged, unreachable or absent from origin; the counts and the
+    reviewer's diff once the branch merged origin's base; `conflict` and its clearing; the
+    post-PR warning when the agent skipped the sync and when the merge stayed unpushed, and
+    silence when the PR has the base.
+  - Additions to `supervisor.pr.spec.ts` (sync before the push, under an override, in the commit
+    prompt, none for a base git would not take) and `sessions.from-task.spec.ts` (the stale-base
+    notice, and none when origin answered).
+  - Additions to `supervisor.base-branch.spec.ts` (the checkout's branch recorded; detached
+    HEAD) and `supervisor.native.spec.ts` (native `conflict`, the resolve helper accepted there,
+    and the clearing).
+  - Additions to core `worktree-names.spec.ts` (`isGitBranchName`).
+  - The worktree mocks of the launch and review specs gained `forkStart` / `forkPoint` /
+    `unmergedFiles`.
 - No migration: `conflict` is already in the cloud's status enum
   (`20260821090000_team_cloud_schema.sql`) and in core's `SessionStatus`.
 
-## Verification (plan)
+## Verification
 
-- api tests against real git repositories in a temp folder (a bare origin, the project clone, a
-  teammate clone):
-  - fork: local behind → `origin/<base>`, with no upstream on the session branch; local ahead or
-    diverged → local; failed fetch → last-known `origin/<base>` plus the notice; no origin →
-    today's behaviour without a notice; no base picked → the checkout's branch is recorded;
-  - after the branch merges a newer `origin/<base>`, `finishInfo` lists only the session's
-    files, counts only its commits and reports `behind: 0`; a stale branch reports `behind: N`;
-  - a turn that ends with unmerged files settles at `conflict` (managed and native); the next
-    clean turn end settles at `done` / `in_review`;
-  - the post-PR check warns when the PR head lacks `origin/<base>` and stays silent when it
-    contains it;
-  - the PR and commit prompts carry the block with the base, also under a project override.
-- `assignments.spec.ts` (default skills under the byte warning) and `agents.spec.ts` stay green.
-- Full suites of `@kermanych/core`, `@kermanych/api` and `@kermanych/ui`, plus typechecks of the
-  api and the ui.
-- Smoke: the api from this worktree with a temp project whose origin is a local bare repository.
-  Check the fork point of a launch, the finish sheet's behind line, «конфлікт» on the card after
-  a turn that ends mid-merge, and the prompt the agent receives.
+- `@kermanych/core`: 19 files, 193 passed. `@kermanych/ui`: 52 files, 576 passed, including the
+  i18n completeness test and `assignments.spec.ts` (default skills under the byte warning).
+- `@kermanych/api`: 896 passed and 2 failed, both in `test/rpc-session.compact.spec.ts`. That
+  failure is already recorded in `2026-10-05-slack-integration.md`, and this change does not
+  touch `rpc-session.ts`.
+- Typechecks: `tsc --noEmit` in `apps/api` reports only `jira.controller.ts` TS2504.
+  `vue-tsc --noEmit` in `apps/ui` reports only `src-electron/*` (`@kermanych/api` not built) and
+  `runtime-messages.spec.ts` TS2352. Both are errors this change does not touch.
+- Smoke: the api built from this worktree in preview mode (`KERMANYCH_PREVIEW=1`, temp DB) and
+  the UI dev server, in the pane. The seeded «Acme Web» project pointed at a real repository
+  with a bare origin and a teammate's clone. The «Логотип у хедері» session was moved onto a real
+  worktree forked from a stale local `dev`, with a commit to `header.txt`; the teammate pushed a
+  different change to the same line, and the checkout fetched.
+  - `GET /sessions/:id/finish` answered `ahead: 1, behind: 1, files: [header.txt]`. The finish
+    sheet showed «Гілка відстає від origin/dev, нових комітів: 1 — «Створити ПР» спершу
+    підтягне їх.»
+  - «Створити ПР» ran a real omp agent (haiku). It ran `git fetch origin dev` and
+    `git merge --no-commit origin/dev`, hit the conflict, and kept both sides («шапка з
+    логотипом і меню»). It committed with
+    `--trailer "Co-Authored-By: Kermanych <…>"`, said the repository has no checks and pushed.
+    It stopped at `gh pr create` — origin was a local bare repository, not GitHub — and said so.
+    The pushed `feature/header-logo` contained `dev`.
+  - A second change by the teammate, merged into the worktree by hand and left conflicted; then
+    the message «Відповідай одним словом: ок. Нічого не змінюй.» The agent answered «ок» and left
+    the merge alone, as the new `kermanych-session` line says. The card settled at «конфлікт»,
+    moved to «Помилки» (2 → 3), and the finish sheet showed `header.txt` with the new hint.
+  - After resolving the merge in the folder and reopening the finish sheet, the card went back to
+    «готово». The sheet said «комітів: 3»: the session's commit and its two merges, none of the
+    teammate's.
+- Not verified live:
+  - the post-PR warning against a real GitHub pull request (`base-sync.spec.ts` covers it
+    against a local origin);
+  - the launch-time fork and its notice through a real cloud card (the preview has no Supabase
+    project; `base-sync.spec.ts` and `sessions.from-task.spec.ts` cover them);
+  - the read-only block in «ШІ-команда → Агенти», which the preview does not render because it
+    has no workspace owner.
 
 ## Documentation impact
 

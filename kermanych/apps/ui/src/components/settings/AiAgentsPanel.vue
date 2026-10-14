@@ -63,6 +63,12 @@
           <i18n-t v-if="a.holes?.length" keypath="settings.aiAgents.holesRequired" tag="p" class="ai__hint">
             <template #holes><span class="mono">{{ a.holes.join(', ') }}</span></template>
           </i18n-t>
+          <!-- Read-only: Kermanych appends this after ANY instruction, default or override, so
+               every project syncs the base before pushing (spec decision 8). -->
+          <template v-if="a.id === 'pull-request' || a.id === 'commit'">
+            <p class="ai__caption">{{ t('settings.aiAgents.baseSyncCaption') }}</p>
+            <pre class="ai__header mono">{{ BASE_SYNC_PREVIEW }}</pre>
+          </template>
 
           <p v-if="rowError[a.id]" class="ai__error mono">{{ rowError[a.id] }}</p>
           <p v-else-if="savedRow[a.id]" class="ai__saved">{{ t('settings.aiAgents.saved') }}</p>
@@ -132,6 +138,7 @@ import { useI18n } from 'vue-i18n';
 import {
   AGENTS,
   ASSIGNED_BLOCK_HEADER,
+  baseSyncBlock,
   effectiveInstruction,
   instructionErrors,
   type AgentDef,
@@ -161,6 +168,8 @@ const props = defineProps<{ owner: AiOwner; ownerName: string }>();
 const auth = useAuth();
 const projects = useProjects();
 const { t } = useI18n();
+// Rendered here, not in the template: a literal `<base>` inside a mustache trips the SFC parser.
+const BASE_SYNC_PREVIEW = baseSyncBlock('<base>');
 
 const view = ref<SkillView[]>([]);
 const bodyBytes = ref<Record<string, number>>({});

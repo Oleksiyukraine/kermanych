@@ -657,9 +657,12 @@ in your own terminal. (Spec: `docs/specs/2026-10-05-native-sessions.md`.)
   (`claude --resume <id>` / `omp launch --resume <file>`). A brand-new folder may show
   claude's trust dialog first — answer it in the terminal.
 - **Helpers** (create PR, commit, resolve conflict, documentation) paste their prompt into
-  the terminal only while the agent is idle; otherwise they are refused with «Агент зараз
-  працює…» and you retry after the turn. On a stopped session they resume it with that
-  prompt.
+  the terminal only while the agent is idle (or stopped at `conflict`); otherwise they are
+  refused with «Агент зараз працює…» and you retry after the turn. On a stopped session they
+  resume it with that prompt. «Створити ПР» and «Закоміти» carry Kermanych's base sync, as for
+  a managed session, and a turn that ends mid-merge settles the card at `conflict`. Kermanych
+  writes no notices into a native transcript, so the stale-base note at launch and the
+  post-PR warning (see «Cloud tasks and local sessions») are managed-only.
 - **Not available** for native sessions: changing model or effort from Kermanych, harness
   commands from a composer, answering prompts outside the terminal, discussion branches,
   review, images and the subagent map. Launches from «Дошка» and «В беклог» stay managed.
@@ -803,12 +806,21 @@ developer's machine. The direction is always task → session.
 4. **Run** — `POST /api/sessions/from-task` creates a git worktree under
    `~/.kermanych/worktrees/<sessionId>`, copies the project's `carryFiles` (`.env` by
    default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
-   ordinary local session: it appears on the Агенти board and you drive it there.
+   ordinary local session: it appears on the Агенти board and you drive it there. The branch
+   starts from the session's base — the card's base branch, else the project's default
+   branch, else the branch the project checkout is on, recorded on the session either way.
+   Before the fork the API fetches `origin/<base>` with this machine's own git credentials
+   (15 s timeout). When origin's copy contains the local `<base>` (the local branch is only
+   behind), the branch starts from `origin/<base>`, without tracking it; when the local
+   `<base>` is ahead or the two diverged, it starts from the local one. If origin cannot be
+   asked, the same pick is made over the last fetched `origin/<base>` and the transcript says
+   the base may not be the latest. (Spec: `docs/specs/2026-10-14-create-pr-base-sync.md`.)
 5. **Status flows back** — the local API mirrors the session's coarse status
    (`queued → thinking → tool → waiting_input → done | in_review | error | stopped |
    merged | conflict`) to the task, and everyone's board updates live over Supabase
    Realtime. `in_review` is the pull-request outcome: «Завершити» → «Створити ПР» has the
-   agent commit, push and open the PR, and when that turn ends the card lands in the
+   agent commit, bring the latest `origin/<base>` in, push and open the PR, and when that
+   turn ends the card lands in the
    board's «На ревʼю» column — settled, but waiting on a human reviewer rather than
    closed. «Завершити» → «Влити» is the other exit and still lands on `merged`. Once a
    session's branch has an open PR, that fact is
@@ -817,6 +829,28 @@ developer's machine. The direction is always task → session.
    card back on «На ревʼю» — even the plain follow-up prompts you send to fix review findings,
    which drive the card through «в роботі» mid-turn. «Закоміти» has the agent commit and push
    that follow-up work onto the same branch, updating the open PR.
+
+   **Base sync.** Before it pushes, the agent run by «Створити ПР» or «Закоміти» fetches
+   `origin/<base>` and merges it into the branch — a merge, never a rebase. It resolves the
+   conflicts itself, commits the merge with the Kermanych co-author trailer and runs the
+   project's checks for what the merge touched. It stops to ask only when the two sides
+   changed the same behaviour in ways that cannot both hold. «Закоміти» on an open PR is
+   therefore also the one-click update for a PR whose base moved. The step is Kermanych's
+   own: it is appended after the «Провізор» / «Комітер» instruction even when a project
+   overrides that instruction, and «ШІ-команда → Агенти» shows it read-only. Kermanych
+   watches the outcome in three places:
+   - the finish sheet says how many commits of `origin/<base>` the branch still lacks
+     (against the last fetch, no network);
+   - a turn that ends with the worktree mid-merge settles the card at `conflict` (the red dot,
+     «Помилки», the finish sheet's conflict view with «Вирішити автоматично»). It clears when
+     a later turn ends without unmerged files, or when the finish sheet or «Зміни» finds the
+     merge resolved;
+   - after the turn that lands on «На ревʼю», the API fetches `origin/<base>` and the pushed
+     branch, and warns in the transcript when the PR still lacks commits of `origin/<base>`.
+
+   «Зміни», the finish sheet's counts, the documentation gate and the reviewer's diff start at
+   the newer of the branch's fork points with `<base>` and with `origin/<base>`, so a branch
+   that merged a newer base does not list teammates' files as its own.
 
 Nothing else leaves your machine. Transcripts, the current tool, context usage, todo
 phases, interactive prompts and the provider-plan spend under the account name (read from

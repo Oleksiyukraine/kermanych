@@ -617,6 +617,8 @@ export const api = {
     branch: string;
     target: string;
     ahead: number;
+    // Commits of origin/<target> the branch lacks, against the last-known origin ref (0 without one).
+    behind: number;
     dirty: boolean;
     conflicts: string[];
     files: { path: string; added: number; removed: number }[];

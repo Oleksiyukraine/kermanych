@@ -5,6 +5,7 @@
 // comes from NativeSessionService.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { tmpdir } from "node:os";
+import { setImmediate as nextMacrotask } from "node:timers/promises";
 import { join } from "node:path";
 import { Subject } from "rxjs";
 import type { HttpAdapterHost } from "@nestjs/core";
@@ -57,7 +58,9 @@ function make() {
     createBranchHere: vi.fn().mockResolvedValue(undefined),
     checkout: vi.fn().mockResolvedValue(undefined),
     currentBranch: vi.fn().mockResolvedValue("main"),
+    forkStart: vi.fn(async (_repo: string, base: string) => ({ ref: base, stale: false })),
     hasUncommitted: vi.fn().mockResolvedValue(false),
+    unmergedFiles: vi.fn().mockResolvedValue([] as string[]),
   };
   const auth = { current: () => ({ userId: USER, accessToken: "t" }), cloudClient: () => ({}) } as unknown as AuthService;
   const models = { validModel: async (_r: string, m: string | undefined) => m } as unknown as ModelsService;
@@ -77,7 +80,7 @@ function make() {
   const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, skills, models, native);
   const out: ServerEvent[] = [];
   sup.events$.subscribe((e) => out.push(e));
-  return { sup, registry, terminal, worktree, out };
+  return { sup, registry, terminal, worktree, out, native };
 }
 
 function card(over: Partial<Task> = {}): Task {
@@ -115,7 +118,8 @@ describe("a native launch", () => {
     expect(s.model).toBeUndefined();
     expect(s.effort).toBeUndefined();
     const wt = join(process.env.HOME ?? "", ".kermanych", "worktrees", s.id);
-    expect(worktree.addWorktree).toHaveBeenCalledWith("/tmp/proj", wt, s.branch, undefined);
+    // No base on the card or the project: the branch the project checkout is on (decision 4).
+    expect(worktree.addWorktree).toHaveBeenCalledWith("/tmp/proj", wt, s.branch, "main");
     expect(terminal.openSession).toHaveBeenCalledTimes(1);
     const opts = terminal.openSession.mock.calls[0][0] as { cwd: string; file: string; args: string[] };
     expect(opts.cwd).toBe(wt);
@@ -143,6 +147,31 @@ describe("a native launch", () => {
     const opts = terminal.openSession.mock.calls[0][0] as { args: string[] };
     expect(opts.args.at(-2)).toBe("--");
     expect(opts.args.at(-1)).toBe(deepAnalysisPrompt("wire GitHub OAuth"));
+  });
+
+  // docs/specs/2026-10-14-create-pr-base-sync.md, decision 6: the harness stopped with the tree
+  // mid-merge, so the card reads «конфлікт» — and the harness, idle at its prompt, still takes
+  // «Вирішити автоматично». A later turn that leaves no unmerged files settles as usual.
+  it("rests at conflict after a turn that ends mid-merge, and takes the resolve helper there", async () => {
+    const { sup, terminal, worktree, native } = make();
+    card();
+    const s = await sup.createSessionFromTask("task-1", USER, undefined, "omp");
+    const status = () => sup.snapshot().sessions.find((x) => x.id === s.id)!.status;
+
+    worktree.unmergedFiles.mockResolvedValue(["src/a.ts"]);
+    native.ompEvent(s.id, { event: "working" });
+    native.ompEvent(s.id, { event: "idle" });
+    await vi.waitFor(() => expect(status()).toBe("conflict"));
+
+    await sup.resolveConflict(s.id);
+    expect(terminal.write).toHaveBeenCalledWith("t1", expect.stringContaining("src/a.ts"));
+
+    worktree.unmergedFiles.mockResolvedValue([]);
+    native.ompEvent(s.id, { event: "working" });
+    native.ompEvent(s.id, { event: "idle" });
+    await vi.waitFor(() => expect(worktree.unmergedFiles).toHaveBeenCalledTimes(3));
+    await nextMacrotask();
+    expect(status()).toBe("done");
   });
 
   it("refuses images before touching the card", async () => {
