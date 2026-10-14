@@ -29,6 +29,9 @@ export type NoticeCode =
   // supervisor.service.ts — the transcript notices the /compact command appends:
   | "context_compacted" // supervisor.service.ts — /compact succeeded, context was compacted (params: none)
   | "context_compact_failed" // supervisor.service.ts — /compact failed (params: { reason })
+  // supervisor.service.ts — the base-sync notices (docs/specs/2026-10-14-create-pr-base-sync.md):
+  | "base_fetch_failed" // supervisor.service.ts launch — origin/<base> could not be refreshed; forked from the last-known base (params: { base, ref })
+  | "pr_behind_base" // supervisor.service.ts after a PR/commit turn — the PR head lacks commits of origin/<base> (params: { base, count })
   // runtime/*-runtime.ts — a runtime child that DIED MID-SESSION, long after its launch was
   // called a success. The launch-time twins of these live in `ApiErrorCode` below: the same
   // machine fault is a thrown error when it stops a session from starting, and a transcript
@@ -115,6 +118,8 @@ export const NOTICE_CODES = [
   "session_dormant_inactive",
   "context_compacted",
   "context_compact_failed",
+  "base_fetch_failed",
+  "pr_behind_base",
   "claude_not_authenticated",
   "claude_binary_missing",
   "omp_not_authenticated",

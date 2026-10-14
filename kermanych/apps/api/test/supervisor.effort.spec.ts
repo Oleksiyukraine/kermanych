@@ -61,6 +61,7 @@ function make() {
     checkout: vi.fn().mockResolvedValue(undefined),
     currentBranch: vi.fn().mockResolvedValue("main"),
     hasUncommitted: vi.fn().mockResolvedValue(false),
+    unmergedFiles: vi.fn().mockResolvedValue([]),
   };
   const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth(), stubSkills());
   const seen: ServerEvent[] = [];

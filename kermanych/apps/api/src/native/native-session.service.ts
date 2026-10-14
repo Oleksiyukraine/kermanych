@@ -26,9 +26,13 @@ import { claudeMcpConfigPath, claudeSettingsPath, NATIVE_TOKEN_ENV, NATIVE_URL_E
 import { BrowserMcpService } from "../browser/browser-mcp.service";
 import { MCP_TOKEN_ENV, MCP_URL_ENV, ompMcpBridgePath } from "../runtime/omp-mcp-bridge";
 
+// `settled`: a turn just came to rest at `status` — the supervisor checks the tree for a merge
+// left mid-way (docs/specs/2026-10-14-create-pr-base-sync.md, decision 6) and may call
+// `markConflict`.
 export type NativeEvent =
   | { type: "changed"; sessionId: string }
-  | { type: "transcript"; sessionId: string; transcript: Rehydrated };
+  | { type: "transcript"; sessionId: string; transcript: Rehydrated }
+  | { type: "settled"; sessionId: string; status: SessionStatus };
 
 // The live overlay the supervisor merges over a native row while its harness runs.
 export type NativeLive = Pick<Session, "status" | "currentTool" | "error" | "terminalId">;
@@ -59,8 +63,9 @@ const CLAUDE_ASKING_NOTIFICATIONS: Record<string, true> = {
   elicitation_url_dialog: true,
   agent_needs_input: true,
 };
-// A helper prompt is pasted only into a harness that sits idle at its input box.
-const PASTE_OK: readonly SessionStatus[] = ["done", "in_review", "error"];
+// A helper prompt is pasted only into a harness that sits idle at its input box — `conflict`
+// included: a turn that stopped mid-merge waits there for «Вирішити автоматично» or an answer.
+const PASTE_OK: readonly SessionStatus[] = ["done", "in_review", "error", "conflict"];
 // The Stop hook fires before claude flushes the turn's last transcript lines.
 const CLAUDE_FLUSH_MS = 300;
 // Bracketed paste lands as one (multi-line) message; the Enter after it submits it.
@@ -335,6 +340,21 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     run.prFrom = session ? (await this.history(session).catch(() => [])).length : 0;
   }
 
+  // The supervisor found the tree mid-merge right after a turn settled at `settled`: the session
+  // rests at `conflict` instead — unless a new turn has already moved it.
+  markConflict(id: string, settled: SessionStatus): void {
+    const run = this.runs.get(id);
+    if (run?.status === settled) this.setStatus(id, run, "conflict");
+  }
+
+  // The merge is gone, resolved outside a turn: back to the rest state.
+  resettle(id: string): void {
+    const run = this.runs.get(id);
+    if (run) return this.setStatus(id, run, this.settled(id));
+    this.persist(id, this.settled(id));
+    this.events$.next({ type: "changed", sessionId: id });
+  }
+
   authorize(id: string, token: string | undefined): boolean {
     const run = this.runs.get(id);
     if (!run || !token) return false;
@@ -497,6 +517,7 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     const status = run.reviewPending ? "in_review" : this.settled(id);
     run.reviewPending = false;
     this.setStatus(id, run, status);
+    this.events$.next({ type: "settled", sessionId: id, status });
   }
 
   private settled(id: string): SessionStatus {

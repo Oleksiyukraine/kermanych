@@ -87,6 +87,7 @@ function make() {
     createBranchHere: vi.fn(),
     checkout: vi.fn(),
     currentBranch: vi.fn().mockResolvedValue("main"),
+    forkStart: vi.fn(async (_repo: string, base: string) => ({ ref: base, stale: false })),
     hasUncommitted: vi.fn().mockResolvedValue(false),
   };
   // The launch path only forwards this client to @kermanych/cloud, which is mocked above.
@@ -383,6 +384,32 @@ describe("createSessionFromTask", () => {
     expect(text).toMatch(/Co-Authored-By: Kermanych </);
     const first = sup.getTranscript(session.id).find((e) => e.kind === "user_text");
     expect(first).toMatchObject({ kind: "user_text", text: "wire GitHub OAuth" });
+  });
+
+  // docs/specs/2026-10-14-create-pr-base-sync.md, decision 4: origin could not be asked before
+  // the fork, so the session starts from the last-known origin base and the transcript says so.
+  it("says in the transcript when the base could not be refreshed from origin", async () => {
+    const { sup, registry, worktree } = make();
+    bind(registry);
+    task({ assigneeId: USER, createdBy: USER });
+    worktree.forkStart.mockResolvedValueOnce({ ref: "refs/remotes/origin/main", stale: true });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    expect(worktree.addWorktree).toHaveBeenCalledWith(expect.any(String), expect.any(String), session.branch, "refs/remotes/origin/main");
+    expect(registry.listSessions().find((s) => s.id === session.id)!.baseBranch).toBe("main");
+    const notice = sup.getTranscript(session.id).find((e) => e.kind === "notice");
+    expect(notice).toMatchObject({ level: "warn", code: "base_fetch_failed", params: { base: "main", ref: "origin/main" } });
+  });
+
+  it("adds no notice when origin answered", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, createdBy: USER });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    expect(sup.getTranscript(session.id).some((e) => e.kind === "notice")).toBe(false);
   });
 
   it("leaves a plain card's session unflagged", async () => {

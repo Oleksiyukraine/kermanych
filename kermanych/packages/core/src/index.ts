@@ -47,6 +47,7 @@ export {
   branchName,
   uniqueSlug,
   worktreeDir,
+  isGitBranchName,
   BRANCH_PREFIXES,
   type BranchPrefix,
 } from "./worktree-names";
@@ -139,6 +140,7 @@ export {
   instructionErrors,
   instructionHoles,
   renderInstruction,
+  baseSyncBlock,
   type AgentDef,
   type AgentKind,
 } from "./agents";

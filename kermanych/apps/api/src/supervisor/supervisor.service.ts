@@ -39,6 +39,7 @@ import {
   parseTaskActions,
   type TaskAction,
   agentById,
+  baseSyncBlock,
   renderInstruction,
   expandHelpers,
   helperNotice,
@@ -53,6 +54,7 @@ import {
   branchName,
   uniqueSlug,
   worktreeDir,
+  isGitBranchName,
   deepAnalysisPrompt,
   DEEP_ANALYSIS_SKILL,
   BRANCH_PREFIXES,
@@ -116,6 +118,10 @@ type Live = {
   // rather than fall to `done`. Sticky and cleared on that settle, same as the PR flags, so a
   // commit flow interrupted to ask the operator for a token still lands back on review.
   reviewPending?: boolean;
+  // «Створити ПР» / «Закоміти» appended the base sync: the first turn that settles on review
+  // afterwards checks that the PR head has origin's base (checkTurnEnd). Sticky across turns
+  // like `prRequested`, and left armed while the tree is mid-merge.
+  baseCheck?: boolean;
   // Whether the "which model is this child actually running" question has been settled for
   // this child (refreshState). One lookup per omp process, not one per two-second poll.
   modelResolved?: boolean;
@@ -183,6 +189,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   ) {
     this.native?.events$.subscribe((e) => {
       if (e.type === "changed") return this.pushUpdate(e.sessionId);
+      if (e.type === "settled") {
+        void this.checkTurnEnd(e.sessionId, e.status, false).catch((err: unknown) =>
+          console.warn(`[supervisor] turn-end check skipped for session ${e.sessionId}: ${(err as Error).message}`),
+        );
+        return;
+      }
       for (const [callId, lines] of e.transcript.full) this.toolDetails.put(e.sessionId, callId, lines);
       this.events.next({ type: "transcript_reset", sessionId: e.sessionId, entries: e.transcript.entries });
       // A native turn's end is this re-read of the harness's own history — the native
@@ -766,8 +778,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       baseBranch = await this.worktree.currentBranch(project.localRepoPath);
       if (!baseBranch) throw new Error("project has a detached HEAD — checkout a branch first");
     } else {
-      // Worktree agents fork from the chosen base: explicit pick > project default > current HEAD.
-      baseBranch = requestedBase ?? project.defaultBranch ?? undefined;
+      // Worktree agents fork from the chosen base: explicit pick > project default > the branch
+      // the project checkout is on. The last one is recorded too, so the PR prompt, the base sync
+      // and «Зміни» always know the base; only a detached HEAD leaves none (fork from HEAD).
+      baseBranch = requestedBase || project.defaultBranch || (await this.worktree.currentBranch(project.localRepoPath)) || undefined;
     }
     const existing = new Set(
       this.registry.listSessions(project.id).filter((s) => s.id !== excludeId).map((s) => s.branch).filter(Boolean),
@@ -812,10 +826,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const firstPrompt = opts.firstPrompt ?? task;
     let wtDir = "";
     let branchCreated = false;
+    // Origin could not be asked before the fork: the transcript says the base may be stale.
+    let staleFrom = "";
     try {
       if (worktree) {
         wtDir = worktreeDir(id);
-        await this.worktree.addWorktree(project.localRepoPath, wtDir, branch, baseBranch);
+        // docs/specs/2026-10-14-create-pr-base-sync.md, decision 4: the fresher of `<base>` and
+        // `origin/<base>`, after asking origin.
+        const start = baseBranch ? await this.worktree.forkStart(project.localRepoPath, baseBranch) : undefined;
+        if (start?.stale) staleFrom = start.ref.replace(/^refs\/remotes\//, "");
+        await this.worktree.addWorktree(project.localRepoPath, wtDir, branch, start?.ref);
         branchCreated = true;
         await copyCarryFiles(project.localRepoPath, wtDir, project.carryFiles ?? [".env"]);
       } else {
@@ -858,6 +878,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         this.rehydrate(live, id, await rpc.getAllMessages());
         this.events.next({ type: "transcript_reset", sessionId: id, entries: live.transcript });
       }
+      if (staleFrom && baseBranch)
+        this.appendEntry(
+          id,
+          this.noticeEntry(
+            {
+              text: `Не вдалося оновити origin/${baseBranch} — гілку створено від ${staleFrom} станом на останній вдалий fetch, тож база може бути не найсвіжішою.`,
+              code: "base_fetch_failed",
+              params: { base: baseBranch, ref: staleFrom },
+            },
+            "warn",
+          ),
+        );
       if (firstPrompt.trim()) {
         // The transcript shows the operator's own ask; the directives ride only on what the
         // model receives (like a matched trigger's body). The co-author trailer credits every
@@ -991,9 +1023,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (live && (live.state.status === "thinking" || live.state.status === "tool"))
       throw new Error("wait for the agent to finish its turn before requesting a review");
 
-    const cwd = s.worktreePath || g.localRepoPath;
-    const base = s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : (s.baseBranch ?? "");
-    const diff = await this.worktree.diff(cwd, base);
+    // The session's own base and fork point, the same as «Зміни» — not whatever branch the
+    // project checkout happens to be on.
+    const { dir: cwd, target: base, from } = await this.branchBase(s, g);
+    const diff = await this.worktree.diff(cwd, from);
     if (!diff.trim()) throw new Error("nothing to review — the branch has no changes yet");
 
     const child = this.registry.createSession({
@@ -1306,10 +1339,59 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // that was aborted and will never send its end frame. Without this the maps only shrink.
       l.toolStarted.clear();
       l.toolArgs.clear();
+      void this.checkTurnEnd(id, settled, review).catch((err: unknown) =>
+        console.warn(`[supervisor] turn-end check skipped for session ${id}: ${(err as Error).message}`),
+      );
     }
     if ((l.state.status === "thinking" || l.state.status === "tool") && !l.poll)
       l.poll = setInterval(() => this.refreshState(id), 2000);
     if (before !== l.state.status || e.type === "tool_execution_start" || spent) this.pushUpdate(id);
+  }
+
+  // What the tree says once a turn has settled (docs/specs/2026-10-14-create-pr-base-sync.md,
+  // decision 6). A turn that ended mid-merge — the agent stopped to ask about a conflict, or a
+  // merge was left half done — rests at `conflict` instead: the finish sheet's conflict view,
+  // the red dot and the notification all key off it. A turn that has started meanwhile wins.
+  // Otherwise the first review settle after «Створити ПР» / «Закоміти» checks that the PR head
+  // — the pushed branch, freshly fetched — has origin's base. A failed fetch leaves the refs the
+  // agent's own fetch wrote, so the check still compares against something recent.
+  private async checkTurnEnd(id: string, settled: Session["status"], review: boolean): Promise<void> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    const g = s && this.registry.listProjects().find((p) => p.id === s.projectId);
+    if (!s || !g || s.kind !== "agent") return;
+    const dir = s.worktreePath || (s.worktree ? "" : g.localRepoPath);
+    if (!dir) return;
+    const l = this.map.get(id);
+    if ((await this.worktree.unmergedFiles(dir)).length) {
+      if (s.native) return this.native?.markConflict(id, settled);
+      if (l?.state.status !== settled) return;
+      l.state = { status: "conflict" };
+      l.live.status = "conflict";
+      this.registry.updateSession(id, { status: "conflict" });
+      this.pushUpdate(id);
+      return;
+    }
+    if (!review || !l?.baseCheck) return;
+    l.baseCheck = false;
+    const base = this.syncBase(s, g);
+    if (!base) return;
+    await this.worktree.fetchBranch(g.localRepoPath, base);
+    await this.worktree.fetchBranch(g.localRepoPath, s.branch);
+    const pushed = `refs/remotes/origin/${s.branch}`;
+    const head = (await this.worktree.refExists(g.localRepoPath, pushed)) ? pushed : "HEAD";
+    const count = await this.worktree.behindCount(dir, base, head);
+    if (count > 0 && this.map.has(id))
+      this.appendEntry(
+        id,
+        this.noticeEntry(
+          {
+            text: `ПР бракує комітів з origin/${base}: ${count}. Агент не підтягнув базу або не запушив злиття — натисни «Закоміти» у вікні «Завершити сесію».`,
+            code: "pr_behind_base",
+            params: { base, count },
+          },
+          "warn",
+        ),
+      );
   }
 
   private stopPoll(l: Live) {
@@ -1701,6 +1783,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return { ok: true };
   }
 
+  // The base the PR prompt names — the session's own, else the project's default — when git
+  // takes it as a branch name: it goes into the agent's commands and into the api's own fetch.
+  // "" means no base sync and no check.
+  private syncBase(s: Session, g: Project): string {
+    const base = (s.baseBranch || g.defaultBranch || "").trim();
+    return isGitBranchName(base) ? base : "";
+  }
+
   // Open a pull request for the session's branch by delegating to its own omp agent: it already
   // has the repo's CLAUDE.md/AGENTS.md (auto-loaded) in context, so it honours the repo's own
   // ### PR/Commit Conventions when present and Kermanych's fallback otherwise, then commits,
@@ -1731,6 +1821,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // work, so it knows what to test. onRpcEvent captures whichever block it emits.
     // A native session has no event stream to capture the block from, so it is not asked.
     const artifacts = s.taskId && !s.native ? `\n\n${QA_CHECKLIST_DIRECTIVE}` : "";
+    // Kermanych's base sync (docs/specs/2026-10-14-create-pr-base-sync.md, decision 8) goes right
+    // after the instruction, whatever its source, so an overridden PR agent still brings the base in.
+    const base = this.syncBase(s, g);
+    const sync = base ? `\n\n${baseSyncBlock(base)}` : "";
     const prompt =
       renderInstruction(
         agentById("pull-request")!,
@@ -1740,7 +1834,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           baseLine,
         },
         template,
-      ) + block + artifacts;
+      ) + sync + block + artifacts;
 
     await this.sendAsKermanych(id, prompt, "prompt");
     // After the send, never before: the flag must belong to the turn this call just started,
@@ -1749,7 +1843,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // so no event can be processed between it and this line.
     if (s.native) await this.requireNative().arm(id, "pr");
     const l = this.map.get(id);
-    if (l) l.prRequested = true;
+    if (l) {
+      l.prRequested = true;
+      l.baseCheck = base !== "";
+    }
     return { ok: true };
   }
 
@@ -1784,6 +1881,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const g = this.project(s.projectId);
 
     const { template, block } = await this.agentPrompt(s.projectId, "commit", s.worktreePath || g.localRepoPath);
+    // The same base sync as createPullRequest: «Закоміти» is the one-click update for an open PR
+    // whose base moved.
+    const base = this.syncBase(s, g);
     const prompt =
       renderInstruction(
         agentById("commit")!,
@@ -1792,7 +1892,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           conventions: (g.conventions || "").trim() || PR_CONVENTIONS_FALLBACK,
         },
         template,
-      ) + block;
+      ) + (base ? `\n\n${baseSyncBlock(base)}` : "") + block;
 
     await this.sendAsKermanych(id, prompt, "prompt");
     // After the send, for the same reason createPullRequest arms its flag there: the flag must
@@ -1800,7 +1900,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // dormant-session respawn must not consume it.
     if (s.native) await this.requireNative().arm(id, "review");
     const l = this.map.get(id);
-    if (l) l.reviewPending = true;
+    if (l) {
+      l.reviewPending = true;
+      l.baseCheck = base !== "";
+    }
     return { ok: true };
   }
   answerUi(id: string, res: RpcExtensionUIResponse) {
@@ -1910,25 +2013,52 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return this.merge(saved);
   }
 
+  // The base a session's branch is measured against, and the commit its changes count from
+  // (docs/specs/2026-10-14-create-pr-base-sync.md, decision 5). `target` is the base its PR
+  // targets — only a row from before `baseBranch` was recorded falls back to whatever the project
+  // repo is on. `from` is the newer fork point over `<base>` and `origin/<base>`, so a branch that
+  // merged origin's newer base does not list the teammates' files as its own.
+  private async branchBase(s: Session, g: Project): Promise<{ dir: string; target: string; from: string }> {
+    const dir = s.worktreePath || g.localRepoPath;
+    const target = s.baseBranch || (s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : "");
+    return { dir, target, from: (await this.worktree.forkPoint(dir, target)) || target };
+  }
+
+  // A session left at `conflict` whose tree is no longer mid-merge — resolved in an editor, with
+  // no agent turn to notice — goes back to its rest state: on review when its branch has a PR.
+  private clearConflict(s: Session): void {
+    if (this.merge(s).status !== "conflict") return;
+    if (s.native) return this.native?.resettle(s.id);
+    const settled: Session["status"] = s.prOpened ? "in_review" : "done";
+    const l = this.map.get(s.id);
+    if (l) {
+      l.state = { status: settled };
+      l.live.status = settled;
+    }
+    this.registry.updateSession(s.id, { status: settled });
+    this.pushUpdate(s.id);
+  }
+
   // Preview of what "finish" will do: the base the branch will be PR'd against, how many
-  // commits the branch carries, whether the worktree has uncommitted work that would be
-  // auto-committed before it is retired, and the documentation gate over the same file list.
-  async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; dirty: boolean; conflicts: string[]; files: ChangedFile[]; docsGate: DocsGate }> {
+  // commits the branch carries and how many of origin's base it still lacks, whether the
+  // worktree has uncommitted work that would be auto-committed before it is retired, and the
+  // documentation gate over the same file list.
+  async finishInfo(id: string): Promise<{ branch: string; target: string; ahead: number; behind: number; dirty: boolean; conflicts: string[]; files: ChangedFile[]; docsGate: DocsGate }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
-    const dir = s.worktreePath || g.localRepoPath;
-    // The branch the session forked from — the base its PR targets, and the fork point every
-    // count and diff below is taken against. Only a row predating `baseBranch` falls back to
-    // whatever the project repo happens to be on.
-    const target = s.baseBranch || (s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : "");
+    // The branch the session forked from is the base its PR targets; counts and diffs start at
+    // the newer fork point over it and origin's copy (branchBase).
+    const { dir, target, from } = await this.branchBase(s, g);
     const ahead = target ? await this.worktree.aheadCount(g.localRepoPath, target, s.branch) : 0;
+    const behind = target ? await this.worktree.behindCount(dir, target) : 0;
     const dirty = await this.worktree.hasUncommitted(dir);
     const conflicts = await this.worktree.unmergedFiles(dir);
-    const files = await this.worktree.changedFiles(dir, target);
+    const files = await this.worktree.changedFiles(dir, from);
     const docsGate = await this.evaluateDocsGate(g, dir, files);
-    return { branch: s.branch, target, ahead, dirty, conflicts, files, docsGate };
+    if (!conflicts.length) this.clearConflict(s);
+    return { branch: s.branch, target, ahead, behind, dirty, conflicts, files, docsGate };
   }
 
   // Queue this session's «Документація» / «Сесія» reports for its cloud card
@@ -1976,9 +2106,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (!this.project(s.projectId).docsRequired) return { enabled: false, failures: [] };
     const g = this.boundProject(s.projectId);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
-    const dir = s.worktreePath || g.localRepoPath;
-    const target = s.baseBranch || (s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : "");
-    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, target));
+    const { dir, from } = await this.branchBase(s, g);
+    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, from));
   }
 
   // The pure gate (core docsGateFailures) over an already-listed change set. Only the changed
@@ -2067,9 +2196,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
-    const dir = s.worktreePath || g.localRepoPath;
-    const target = s.baseBranch || (s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : "");
-    return this.worktree.fileDiff(dir, target, path);
+    const { dir, from } = await this.branchBase(s, g);
+    return this.worktree.fileDiff(dir, from, path);
   }
 
   // The Файли tab's two reads. Same directory resolution as fileDiff — the worktree, or the
@@ -2170,7 +2298,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const wtDir = worktreeDir(id);
     try {
       if (kept) await this.worktree.attachWorktree(g.localRepoPath, wtDir, branch);
-      else await this.worktree.addWorktree(g.localRepoPath, wtDir, branch, baseBranch);
+      else await this.worktree.addWorktree(g.localRepoPath, wtDir, branch, baseBranch ? (await this.worktree.forkStart(g.localRepoPath, baseBranch)).ref : undefined);
       await copyCarryFiles(g.localRepoPath, wtDir, g.carryFiles ?? [".env"]);
     } catch (err) {
       await this.worktree.removeWorktree(g.localRepoPath, wtDir).catch(() => {});

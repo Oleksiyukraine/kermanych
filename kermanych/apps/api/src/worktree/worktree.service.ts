@@ -4,9 +4,13 @@ import { spawn } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { addedFileDiff, splitDiff, type SplitDiff } from "./split-diff";
-import type { TreeEntry, FileContent, ReleaseCommit } from "@kermanych/core";
+import { isGitBranchName, type TreeEntry, type FileContent, type ReleaseCommit } from "@kermanych/core";
 
 export type ChangedFile = { path: string; added: number; removed: number };
+
+// What a single-branch fetch from `origin` came to. `absent`: origin has no such branch.
+// `skipped`: nothing was asked — no `origin` remote, or a name git would not take as a branch.
+export type BranchFetch = "fetched" | "absent" | "failed" | "skipped";
 
 // Upper bound on a changed-files listing: the Зміни tab is a summary, and an agent that
 // touched thousands of paths must not turn one tab open into an unbounded walk.
@@ -27,6 +31,10 @@ const LITERAL_PATHS = ["--literal-pathspecs"];
 // Ceiling on the footer's background `git fetch`: a hung remote must not keep the request
 // (and the per-repo in-flight slot) open forever.
 const FETCH_TIMEOUT_MS = 30_000;
+
+// Ceiling on a single-branch fetch the api makes on its own — before a worktree forks and
+// after a pull-request turn. Shorter than the footer's: a launch waits on this one.
+const BRANCH_FETCH_TIMEOUT_MS = 15_000;
 
 // A small extension→MIME table for the docs raw route. Anything not listed streams as
 // application/octet-stream, which a browser downloads rather than mis-renders.
@@ -89,14 +97,31 @@ async function addedLines(file: string): Promise<number> {
 export class WorktreeService {
   // In-flight `git fetch` per repo directory, shared by concurrent `incoming` calls.
   private readonly fetching = new Map<string, Promise<{ ok: boolean; out: string }>>();
+  // One remote operation per repo directory at a time: the footer's fetch, a launch's fetch of
+  // the base and the post-PR check all write the same remote-tracking refs, and two concurrent
+  // fetches fail on each other's ref locks.
+  private readonly remoteTail = new Map<string, Promise<unknown>>();
+
+  private serialRemote<T>(repoDir: string, run: () => Promise<T>): Promise<T> {
+    const next = (this.remoteTail.get(repoDir) ?? Promise.resolve()).then(run, run);
+    this.remoteTail.set(repoDir, next);
+    const release = () => {
+      if (this.remoteTail.get(repoDir) === next) this.remoteTail.delete(repoDir);
+    };
+    next.then(release, release);
+    return next;
+  }
 
   async isGitRepo(dir: string): Promise<boolean> {
     return (await git(dir, ["rev-parse", "--is-inside-work-tree"])).ok;
   }
 
   // `base` is the ref the new branch forks from; omit it to fork from the repo's current HEAD.
+  // `--no-track`: a remote start point (`refs/remotes/origin/<base>`, see forkStart) would
+  // otherwise make the session branch track origin's base, and `git status` / `pull` inside the
+  // session would compare against it.
   async addWorktree(repoDir: string, wtDir: string, branch: string, base?: string): Promise<void> {
-    const args = ["worktree", "add", wtDir, "-b", branch];
+    const args = ["worktree", "add", "--no-track", wtDir, "-b", branch];
     if (base) args.push(base);
     const r = await git(repoDir, args);
     if (!r.ok) throw new Error(`git worktree add failed: ${r.out}`);
@@ -172,10 +197,48 @@ export class WorktreeService {
     if (!r.ok) throw new Error(`git commit failed: ${r.out}`);
   }
 
-  // How many session commits will land (commits on branch not yet in base).
+  // The session's own commits: on the branch, in neither `<base>` nor `origin/<base>`. A merge
+  // that brought origin's newer base in must not count the teammates' commits it carries.
   async aheadCount(repoDir: string, base: string, branch: string): Promise<number> {
-    const n = Number((await git(repoDir, ["rev-list", "--count", `${base}..${branch}`])).out.trim());
+    const args = ["rev-list", "--count", branch, `^${base}`];
+    const remote = `refs/remotes/origin/${base}`;
+    if (isGitBranchName(base) && (await this.refExists(repoDir, remote))) args.push(`^${remote}`);
+    const n = Number((await git(repoDir, args)).out.trim());
     return Number.isFinite(n) ? n : 0;
+  }
+
+  // Commits of `origin/<base>` that `head` does not have yet: what «Створити ПР» / «Закоміти»
+  // will bring in or, with the pushed branch as `head`, what the open PR is missing. Counted
+  // against the last-known remote-tracking ref, without a fetch; 0 without one.
+  async behindCount(dir: string, base: string, head = "HEAD"): Promise<number> {
+    if (!isGitBranchName(base)) return 0;
+    const r = await git(dir, ["rev-list", "--count", `${head}..refs/remotes/origin/${base}`]);
+    const n = r.ok ? Number(r.out.trim()) : 0;
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  // The commit a session's changes are counted from (docs/specs/2026-10-14-create-pr-base-sync.md,
+  // decision 5): the newer of the branch's merge-base with the local `<base>` and with
+  // `origin/<base>`; when the two diverge, origin's, because that is what the pull request
+  // shows. Counted from the local `<base>` alone, a branch that merged a newer origin/<base>
+  // listed the teammates' files as its own. "" when neither resolves — callers keep their own
+  // fallback.
+  async forkPoint(dir: string, base: string): Promise<string> {
+    if (!base) return "";
+    const [local, remote] = await Promise.all(
+      [base, isGitBranchName(base) ? `refs/remotes/origin/${base}` : ""].map(async (ref) => {
+        if (!ref) return "";
+        const r = await git(dir, ["merge-base", "HEAD", ref]);
+        return r.ok ? r.out.trim() : "";
+      }),
+    );
+    if (!local || !remote || local === remote) return remote || local || "";
+    return (await this.isAncestor(dir, remote, local)) ? local : remote;
+  }
+
+  // True when commit `a` is reachable from `b`.
+  async isAncestor(dir: string, a: string, b: string): Promise<boolean> {
+    return (await git(dir, ["merge-base", "--is-ancestor", a, b])).ok;
   }
 
   // Everything the session has produced since it forked off `base`: commits on the
@@ -366,9 +429,12 @@ export class WorktreeService {
     if (!r.ok) throw new Error(`git checkout failed: ${r.out}`);
   }
 
-  // Paths with unresolved merge conflicts in a worktree.
+  // Paths with unresolved merge conflicts in a worktree. stdout only, and nothing on a failed
+  // call (the folder is gone): git's error text is not a list of paths, and a session must not
+  // read as mid-merge because of one.
   async unmergedFiles(dir: string): Promise<string[]> {
-    const out = (await git(dir, ["diff", "--name-only", "--diff-filter=U"])).out.trim();
+    const r = await gitStdout(dir, [...RAW_PATHS, "diff", "--name-only", "--diff-filter=U"]);
+    const out = r.ok ? r.out.trim() : "";
     return out ? out.split("\n") : [];
   }
 
@@ -397,10 +463,12 @@ export class WorktreeService {
     if (fetch) {
       let run = this.fetching.get(repoDir);
       if (!run) {
-        run = git(repoDir, ["fetch", "--quiet"], {
-          env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-          timeoutMs: FETCH_TIMEOUT_MS,
-        }).finally(() => this.fetching.delete(repoDir));
+        run = this.serialRemote(repoDir, () =>
+          git(repoDir, ["fetch", "--quiet"], {
+            env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+            timeoutMs: FETCH_TIMEOUT_MS,
+          }),
+        ).finally(() => this.fetching.delete(repoDir));
         this.fetching.set(repoDir, run);
       }
       await run;
@@ -413,5 +481,40 @@ export class WorktreeService {
   // True when `ref` resolves — tells a reopen whether the session's own branch is still there.
   async refExists(repoDir: string, ref: string): Promise<boolean> {
     return (await git(repoDir, ["rev-parse", "--verify", "--quiet", ref])).ok;
+  }
+
+  // Refresh `origin/<branch>` alone, with the machine's own credentials like the footer's fetch:
+  // no prompt, a timeout. The explicit refspec writes the remote-tracking ref even in a clone
+  // whose configured refspec does not cover the branch, and a `+refs/heads/…` argument can never
+  // be read as an option.
+  async fetchBranch(repoDir: string, branch: string): Promise<BranchFetch> {
+    const remotes = await git(repoDir, ["remote"]);
+    const hasOrigin = remotes.ok && remotes.out.split("\n").some((name) => name.trim() === "origin");
+    if (!hasOrigin || !isGitBranchName(branch)) return "skipped";
+    const r = await this.serialRemote(repoDir, () =>
+      git(repoDir, ["fetch", "--quiet", "--no-tags", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`], {
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+        timeoutMs: BRANCH_FETCH_TIMEOUT_MS,
+      }),
+    );
+    if (r.ok) return "fetched";
+    return /couldn't find remote ref/i.test(r.out) ? "absent" : "failed";
+  }
+
+  // Where a new session branch starts (docs/specs/2026-10-14-create-pr-base-sync.md, decision 4):
+  // `origin/<base>` when it contains the local `<base>` — the local branch is only behind — else
+  // the local `<base>`, as before: ahead of origin or diverged, and the sync before the PR closes
+  // that gap. `stale`: origin could not be asked, so the pick is over the last-known
+  // `origin/<base>` and the base may not be the latest.
+  async forkStart(repoDir: string, base: string): Promise<{ ref: string; stale: boolean }> {
+    const fetched = await this.fetchBranch(repoDir, base);
+    if (fetched === "skipped" || fetched === "absent") return { ref: base, stale: false };
+    const stale = fetched === "failed";
+    const local = `refs/heads/${base}`;
+    const remote = `refs/remotes/origin/${base}`;
+    if (!(await this.refExists(repoDir, remote))) return { ref: base, stale };
+    if (!(await this.refExists(repoDir, local))) return { ref: remote, stale };
+    if (await this.isAncestor(repoDir, remote, local)) return { ref: base, stale };
+    return { ref: (await this.isAncestor(repoDir, local, remote)) ? remote : base, stale };
   }
 }

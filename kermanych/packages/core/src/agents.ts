@@ -162,6 +162,32 @@ const COMMIT = [
   "Reply when done. Do only this.",
 ].join("");
 
+// Kermanych's own step for «Створити ПР» and «Закоміти» (docs/specs/2026-10-14-create-pr-base-sync.md):
+// bring the PR's base in before the push, so the PR merges cleanly. Appended AFTER the rendered
+// instruction — the default or any override — rather than written into the templates: a project
+// that rewrote its PR agent must still sync, and a required `{{base}}` hole would invalidate every
+// saved override, which would then silently fall back to the default. Merge, never rebase: the
+// session branch is never rewritten (kermanych-session), and an open PR must not be force-pushed
+// over reviewed history. `base` lands in shell commands the agent runs — the caller passes only a
+// name that isGitBranchName accepts.
+export function baseSyncBlock(base: string): string {
+  return [
+    `Before you push, bring the base branch \`${base}\` in. This step is Kermanych's own and applies `,
+    "whatever the instruction above says:\n",
+    `1. \`git fetch origin ${base}\`, applying \`GIT_TOKEN\` to it exactly as you apply it to the push. `,
+    `If \`origin\` has no \`${base}\`, skip this step and say so.\n`,
+    `2. \`git merge --no-commit origin/${base}\` — merge, never rebase, never force-push. A fast-forward `,
+    `or "Already up to date" needs nothing more; otherwise finish the merge with \`git commit --no-edit `,
+    `--trailer "Co-Authored-By: ${KERMANYCH_COAUTHOR}"\`.\n`,
+    "3. Resolve conflicts yourself: keep what both sides added, then commit as in step 2. Stop and ask ",
+    "the operator only when both sides changed the same behaviour in ways that cannot both hold and ",
+    "choosing between them is a product decision — then leave the merge unfinished, list the files and ask.\n",
+    "4. If the merge brought anything in, run the project's checks (typecheck, tests) for what it touched. ",
+    "Fix a failure caused by the two sides meeting in a separate commit. Report a failure that is already ",
+    `on \`origin/${base}\` — in the PR's \`## Testing\` when you write one — without fixing it.`,
+  ].join("");
+}
+
 export const AGENTS: readonly AgentDef[] = [
   { id: "review", labelKey: "agents.role.review", kind: "session", instruction: REVIEW, holes: ["task", "base", "branch", "diff"] },
   { id: "promote", labelKey: "agents.role.promote", kind: "session", instruction: PROMOTE, holes: ["branch"] },
