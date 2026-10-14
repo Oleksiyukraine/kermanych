@@ -58,6 +58,7 @@ function make(native?: NativeSessionService) {
     currentBranch: vi.fn().mockResolvedValue("main"),
     hasUncommitted: vi.fn().mockResolvedValue(false),
     changedFiles: vi.fn().mockResolvedValue(LISTING),
+    unmergedFiles: vi.fn().mockResolvedValue([]),
   };
   const sup = new SupervisorService(
     registry,

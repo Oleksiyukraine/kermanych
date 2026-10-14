@@ -61,6 +61,8 @@ function make() {
     forkStart: vi.fn(async (_repo: string, base: string) => ({ ref: base, stale: false })),
     hasUncommitted: vi.fn().mockResolvedValue(false),
     unmergedFiles: vi.fn().mockResolvedValue([] as string[]),
+    // A task-born native turn also queues its card report, which lists the changed files.
+    changedFiles: vi.fn().mockResolvedValue([]),
   };
   const auth = { current: () => ({ userId: USER, accessToken: "t" }), cloudClient: () => ({}) } as unknown as AuthService;
   const models = { validModel: async (_r: string, m: string | undefined) => m } as unknown as ModelsService;
