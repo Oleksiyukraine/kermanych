@@ -1,14 +1,15 @@
 // apps/api/src/cloud/cloud-sync.service.ts
-// Local → cloud status mirror. The ONLY component that writes to Supabase from this
-// process. It never mutates a session and never blocks one: everything it needs is on
-// `supervisor.events$`, and every push it owes goes through a SQLite outbox first.
+// Local → cloud mirror of what the supervisor owes the cloud card on its own: the coarse
+// status, and a session's «Документація» / «Сесія» reports
+// (docs/specs/2026-10-12-docs-tab-survives-restart.md). It never mutates a session and never
+// blocks one: statuses come off `supervisor.events$`, reports are queued by the supervisor in
+// the registry, and every push it owes goes through a SQLite outbox first.
 import { Injectable, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
-import { ACTIVE_STATUSES, type Session } from "@kermanych/core";
-import { pushTaskStatus, taskStatusFromSession, type TaskStatus } from "@kermanych/cloud";
+import { ACTIVE_STATUSES, mergeTaskReports, type Session } from "@kermanych/core";
+import { getTask, patchTask, pushTaskStatus, taskStatusFromSession, type TaskStatus } from "@kermanych/cloud";
 import { RegistryService } from "../registry/registry.service";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { AuthService } from "../auth/auth.service";
-import type { OutboxRow } from "../registry/registry.service";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const BASE_DELAY_MS = 1_000;
@@ -40,6 +41,9 @@ export class CloudSyncService implements OnModuleInit, OnModuleDestroy {
       if (e.type === "session_update") this.onSession(e.session);
       else if (e.type === "session_removed") this.onRemoved(e.sessionId);
     });
+    // The supervisor queues a card report after every turn and on «Завершити»; the registry
+    // signals it so the push leaves now rather than with the next status change.
+    this.registry.reportQueued$.subscribe(() => void this.drain());
     // Relogin / TOKEN_REFRESHED: a queue parked on "not signed in" resumes immediately
     // instead of waiting out its backoff.
     this.auth.onToken(() => void this.drain());
@@ -114,7 +118,8 @@ export class CloudSyncService implements OnModuleInit, OnModuleDestroy {
 
   private async pass(): Promise<void> {
     const rows = this.registry.listOutbox();
-    if (!rows.length) return;
+    const reports = this.registry.listReportOutbox();
+    if (!rows.length && !reports.length) return;
 
     let client: SupabaseClient;
     try {
@@ -122,7 +127,7 @@ export class CloudSyncService implements OnModuleInit, OnModuleDestroy {
     } catch {
       // Signed out: nothing was attempted, so `attempts` stays untouched and the row keeps
       // its place in the queue. The next token handoff drains it.
-      this.rearm(rows);
+      this.rearm([...rows, ...reports]);
       return;
     }
 
@@ -139,14 +144,33 @@ export class CloudSyncService implements OnModuleInit, OnModuleDestroy {
         console.warn(`[cloud-sync] status push for task ${row.taskId} failed (attempt ${row.attempts + 1}): ${message}`);
       }
     }
-    this.rearm(this.registry.listOutbox());
+
+    // A report lands on the card's CURRENT value: read, merge, write. The merge is what keeps
+    // reads accumulating across writes and what refuses to overwrite a relaunch's newer report,
+    // so it has to run against the card, not against what this machine last sent.
+    for (const row of reports) {
+      try {
+        const task = await getTask(client, row.taskId);
+        // No task: deleted, or no longer readable by this user (left the workspace). Retrying
+        // cannot change that, and the row would only hold the retry timer — so it is dropped.
+        // `undefined` from the merge: the card already carries a newer session's report.
+        const merged = task && mergeTaskReports({ docs: task.docsReport, session: task.sessionReport }, row.write);
+        if (merged) await patchTask(client, row.taskId, { docsReport: merged.docs, sessionReport: merged.session });
+        this.registry.dropReportOutbox(row.taskId, row.queuedAt);
+      } catch (err) {
+        const message = (err as Error).message;
+        this.registry.bumpReportOutboxAttempt(row.taskId, row.queuedAt, message);
+        console.warn(`[cloud-sync] report push for task ${row.taskId} failed (attempt ${row.attempts + 1}): ${message}`);
+      }
+    }
+    this.rearm([...this.registry.listOutbox(), ...this.registry.listReportOutbox()]);
   }
 
   // Exponential backoff — first retry ~2 s (attempts is already 1 after the first
-  // failure), doubling to a 60 s cap — driven by the least-retried row so a single
-  // poisoned row cannot starve a fresh one. Unref'd: a pending retry must never
+  // failure), doubling to a 60 s cap — driven by the least-retried row of either outbox, so
+  // a single poisoned row cannot starve a fresh one. Unref'd: a pending retry must never
   // hold the process open.
-  private rearm(rows: OutboxRow[]): void {
+  private rearm(rows: readonly { attempts: number }[]): void {
     clearTimeout(this.timer);
     this.timer = undefined;
     if (!rows.length) return;

@@ -115,6 +115,7 @@
               :selected="store.selectedSessionId === item.session.id"
               :removable="item.session.kind === 'task'"
               :browsing="sessionBrowser.agentLive.has(item.session.id)"
+              :findings="item.session.openFindings ?? 0"
               :remove-title="t('agents.board.removeStranded', { name: item.session.name })"
               @click="onRowClick(item.session)"
               @remove="onDeleteStranded(item.session)"
@@ -552,9 +553,24 @@
             </section>
             <section v-if="changedDocs.length" class="agents__docs-group">
               <h3 class="agents__docs-title">{{ t('agents.docs.changedTitle') }}</h3>
+              <!-- A finished session's rows are the card's copy: no worktree behind them, so no
+                   diff and no «Задача →» — only the way back to both. -->
+              <p v-if="changedDocsListOnly" class="agents__hint mono">{{ t('agents.docs.finishedHint') }}</p>
               <ul class="agents__file-list">
                 <li v-for="d in changedDocs" :key="d.path" class="agents__file-item">
-                  <div class="agents__docs-row">
+                  <div v-if="changedDocsListOnly" class="agents__docs-row">
+                    <div class="agents__file-row agents__file-row--static">
+                      <span class="agents__file-path mono">{{ d.path }}</span>
+                      <KTag v-if="docsLayoutKind(d.path)" class="agents__docs-kind">
+                        {{ t(`agents.docs.kind.${docsLayoutKind(d.path)}`) }}
+                      </KTag>
+                      <span class="agents__file-stat mono">
+                        <span class="agents__diff-add">+{{ d.added }}</span>
+                        <span class="agents__diff-del">−{{ d.removed }}</span>
+                      </span>
+                    </div>
+                  </div>
+                  <div v-else class="agents__docs-row">
                     <button
                       type="button"
                       class="agents__file-row"
@@ -580,7 +596,7 @@
                     >{{ t('agents.docs.toTask') }}</button>
                   </div>
                   <KDiffView
-                    v-if="openFile === d.path"
+                    v-if="!changedDocsListOnly && openFile === d.path"
                     class="agents__file-diff"
                     :path="d.path"
                     :diff="fileDiff"
@@ -593,6 +609,10 @@
             </section>
           </template>
           <p v-else class="agents__log-empty mono">{{ t('agents.docs.empty') }}</p>
+        </div>
+        <!-- Знахідки: what the agent reported outside its task; filed from here, never automatically. -->
+        <div v-if="detailTab === 'findings'" class="agents__tabpane agents__docs">
+          <SessionFindings :session="selectedSession" />
         </div>
         <!-- QA tab: the checklist lives on the linked cloud CARD, so it is read from the board
              store (not the transcript) and persists past this session's archive. A brand-new
@@ -1067,7 +1087,7 @@ import {
   type ThinkingLevel,
   type RpcExtensionUIResponse,
 } from '@kermanych/core';
-import { createTask as cloudCreateTask } from '@kermanych/cloud';
+import { createTask as cloudCreateTask, signedTaskImageUrls } from '@kermanych/cloud';
 import type { Task } from '@kermanych/cloud';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useRouter } from 'vue-router';
@@ -1079,6 +1099,8 @@ import { api, type FileDiff, type MessageMode } from '../lib/api';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import { sessionScopedProjectIds } from '../lib/scope';
 import type { Bucket } from '../lib/buckets';
+import { changedDocsView, ownReports, unionInOrder } from '../lib/session-reports';
+import { imageToFile } from '../lib/images';
 import { myBacklogTasks, taskInsertFromDraft, taskPatchFromDraft } from '../lib/tasks-view';
 import { planBacklogPublication } from '../lib/publish-backlog';
 import { byNewestSession, byNewestTask, filterSessions, filterTaskCards, newestActivityAt, newestUpdateAt } from '../lib/agents-board';
@@ -1088,6 +1110,7 @@ import KLogBlock from 'components/kit/KLogBlock.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KTag from 'components/kit/KTag.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
+import SessionFindings from 'components/agents/SessionFindings.vue';
 import KAnalysisMark from 'components/kit/KAnalysisMark.vue';
 import KSplitButton from 'components/kit/KSplitButton.vue';
 import { type KIconName } from 'components/kit/KIcon.vue';
@@ -1585,20 +1608,54 @@ const entries = computed<TranscriptEntry[]>(() =>
     : [],
 );
 
+// The session's cloud card. The QA checklist lives on it (the QA tab below), and so do the
+// «Документація» / «Сесія» reports the api writes there after every turn and on «Завершити».
+// Declared ahead of the image watcher below, which reads it eagerly.
+const linkedTask = computed(() =>
+  selectedSession.value?.taskId ? board.tasks.find((t) => t.id === selectedSession.value!.taskId) : undefined,
+);
+// The card's «Документація» / «Сесія» reports, only when they describe THIS session — a
+// relaunch of the card overwrites them with the newer run's.
+const cardReports = computed(() => ownReports(linkedTask.value, selectedSession.value?.id));
+
 // The images the operator attached at task creation ride the FIRST user message into the
 // transcript (supervisor.userEntry maps them to data URLs). The «Сесія» tab surfaces them
 // beside the full task text so the brief is visible without scrolling the whole log; a
 // session created without attachments simply has none.
-const taskImages = computed<string[]>(() => {
+const logImages = computed<string[]>(() => {
   const first = entries.value.find(
     (e): e is Extract<TranscriptEntry, { kind: 'user_text' }> => e.kind === 'user_text',
   );
   return first?.images ?? [];
 });
+// After an api restart the log is only the dormant notice, so the images fall back to the
+// card's copies (the launcher uploads what it sends; «Дошка» uploads its own). The bucket is
+// private, so they render through short-lived signed URLs — re-signed whenever the session or
+// the card's paths change, and a reply that lands after a newer request is dropped. A failed
+// sign shows nothing: the images are a convenience beside the text, not worth an error line.
+const cardImageUrls = ref<string[]>([]);
+let cardImagesRun = 0;
+watch(
+  () => [store.selectedSessionId, logImages.value.length ? '' : (linkedTask.value?.imagePaths ?? []).join('\n')] as const,
+  async ([, joined]) => {
+    const run = ++cardImagesRun;
+    cardImageUrls.value = [];
+    if (!joined) return;
+    try {
+      const urls = await signedTaskImageUrls(auth.client, joined.split('\n'));
+      if (run === cardImagesRun) cardImageUrls.value = urls;
+    } catch {
+      // See above: nothing to show.
+    }
+  },
+  { immediate: true },
+);
+const taskImages = computed(() => (logImages.value.length ? logImages.value : cardImageUrls.value));
 
 // Which library skills this session took, read straight off the transcript rows the
-// reducer already produced — the «Сесія» tab needs no state of its own for it.
-const usedSkills = computed(() => skillsUsed(entries.value));
+// reducer already produced, joined with the card's record of them — the transcript is only the
+// dormant notice after an api restart, and the card's list is what survives it.
+const usedSkills = computed(() => unionInOrder(cardReports.value.session?.skills, skillsUsed(entries.value)));
 
 // The session's provider-side identifier — omp's session id, or Claude Code's session UUID —
 // stored on the row as `ompSessionId` once the child answers its first state poll. The «Сесія»
@@ -1693,23 +1750,30 @@ watch(
 );
 
 // ── Документація tab: docs the agent used vs docs it changed ────────────────
-// ONE mechanism feeds this tab: the session's own data, so the list is identical before and
-// after «Створити ПР». `usedDocs` is the documentation the agent READ — off the transcript, the
-// same way usedSkills is — as shortened display paths, hence list-only. `changedDocs` is the
-// documentation among the Зміни listing, so it carries full paths and opens the same diff view.
-// A doc read and then edited legitimately appears in both. Only real documentation paths qualify
-// (isDocPath), so source files never leak in.
-const usedDocs = computed(() => docsRead(entries.value));
-const changedDocs = computed(() => changesInfo.value?.files.filter((f) => isDocPath(f.path)) ?? []);
+// The session's own data, joined with its report on the card (lib/session-reports.ts) so the
+// tab survives an api restart and «Завершити». `usedDocs` is the documentation the agent READ —
+// off the transcript, the same way usedSkills is, plus the card's accumulated list — as shortened
+// display paths, hence list-only. `changedDocs` is the documentation among the Зміни listing while
+// the worktree exists, so it carries full paths and opens the same diff view; once the session is
+// finished it is the card's copy, list-only (`changedDocsListOnly`), because there is no worktree
+// behind a row any more. A doc read and then edited legitimately appears in both. Only real
+// documentation paths qualify (isDocPath), so source files never leak in.
+const usedDocs = computed(() => unionInOrder(cardReports.value.docs?.read, docsRead(entries.value)));
+const changedDocsState = computed(() =>
+  changedDocsView({
+    finished: selectedSession.value?.status === 'merged' || worktreeGone.value,
+    liveFiles: changesInfo.value?.files ?? null,
+    card: cardReports.value.docs?.changed,
+  }),
+);
+const changedDocs = computed(() => changedDocsState.value.docs);
+const changedDocsListOnly = computed(() => changedDocsState.value.listOnly);
 const docsUsedHint = computed(() => t('agents.docs.usedHint'));
 
 // ── QA tab: the checklist off the linked cloud CARD ─────────────────────────
-// Unlike «Документація» (derived from this session's transcript), the QA checklist lives on
-// the task and outlives the session, so it is read from the board store by the session's
-// taskId and ticked back through the same store method the board dialog uses.
-const linkedTask = computed(() =>
-  selectedSession.value?.taskId ? board.tasks.find((t) => t.id === selectedSession.value!.taskId) : undefined,
-);
+// Like «Документація»'s reports, the QA checklist lives on the task and outlives the session,
+// so it is read off `linkedTask` (above) and ticked back through the same store method the
+// board dialog uses.
 const qaChecklist = computed(() => linkedTask.value?.qaChecklist);
 const qaDone = computed(() => qaChecklist.value?.items.filter((i) => i.checked).length ?? 0);
 
@@ -1731,6 +1795,7 @@ const detailTabs = computed(() => {
     { value: 'changes', label: t('agents.tabs.changes'), count: changesInfo.value?.files.length ?? 0 },
     { value: 'session', label: t('agents.tabs.session') },
     { value: 'docs', label: t('agents.tabs.docs'), count: usedDocs.value.length + changedDocs.value.length },
+    { value: 'findings', label: t('agents.tabs.findings'), count: selectedSession.value?.openFindings ?? 0 },
   ];
   // Always present, like the other tabs — a missing tab reads as breakage. The pane shows the
   // checklist for a task-linked session and an empty state otherwise (it fills after «Створити
@@ -1753,7 +1818,7 @@ watch(
   (id) => {
     const saved = id ? localStorage.getItem(`kermanych.agents.tab.${id}`) : null;
     detailTab.value =
-      saved === 'changes' || saved === 'session' || saved === 'docs' || saved === 'qa' ||
+      saved === 'changes' || saved === 'session' || saved === 'docs' || saved === 'findings' || saved === 'qa' ||
       (saved === 'browser' && sessionBrowser.available && !browserSplit.value)
         ? saved
         : 'log';
@@ -2328,7 +2393,16 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     // in the launcher the operator is looking at — so the modal closes only after from-task
     // resolves. The card is already saved either way.
     const native = nativeRuntimeFor(draftMode.value);
+    // Rebuilt before the await and before clearLaunchImages(): these are exactly the images the
+    // agent receives (`images` above), and the strip is emptied below.
+    const cardFiles = native ? [] : launchImages.value.map(imageToFile);
     const session = await api.createSessionFromTask(cardId, native ? undefined : images, native);
+    // The same images go on the card too, so «Сесія» still shows them once the log is only the
+    // dormant notice, and teammates can see them. Only after the session exists — uploading
+    // earlier would put a retry of a failed launch through a second upload — and best-effort:
+    // the agent already has them, so a storage failure is the store's toast, never a failed
+    // launch. A native launch sends none, so it uploads none.
+    if (cardFiles.length) void board.addTaskImages(cardId, cardFiles);
     launcherOpen.value = false;
     clearLaunchImages();
     store.setBucket('active');
@@ -3735,6 +3809,12 @@ async function submitPreviewConfig(): Promise<void> {
   }
 }
 .agents__file-row--open .agents__file-path { color: var(--k-accent); }
+// A finished session's document row has nothing to open: same row, no pointer, no hover cue.
+.agents__file-row--static {
+  cursor: default;
+
+  &:hover .agents__file-path { color: var(--k-text); }
+}
 .agents__file-diff { margin: 0 0 8px; }
 .agents__file-path {
   color: var(--k-text);

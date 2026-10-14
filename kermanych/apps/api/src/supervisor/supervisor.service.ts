@@ -76,6 +76,9 @@ import {
   type Notice,
   type SubagentInfo,
   type SubagentNode,
+  taskReportsWrite,
+  type AgentFinding,
+  type FindingTarget,
 } from "@kermanych/core";
 import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type AiTrigger, type TaskPatch } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
@@ -194,7 +197,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       }
       for (const [callId, lines] of e.transcript.full) this.toolDetails.put(e.sessionId, callId, lines);
       this.events.next({ type: "transcript_reset", sessionId: e.sessionId, entries: e.transcript.entries });
+      // A native turn's end is this re-read of the harness's own history — the native
+      // counterpart of a managed terminal `agent_end`, and the whole transcript besides.
+      void this.queueTaskReport(e.sessionId, e.transcript.entries);
     });
+    // «Знахідки»: a report changes the session's open counter, which the UI reads off the row.
+    this.browser?.findingReported$.subscribe((id) => this.pushUpdate(id));
   }
 
   private requireNative(): NativeSessionService {
@@ -1296,6 +1304,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     l.live.currentTool = l.state.currentTool;
     if (l.state.status !== "waiting_input") l.live.pendingUiRequest = undefined;
     if (e.type === "agent_end" && (e as Extract<RpcEvent, { type: "agent_end" }>).isTerminal !== false) {
+      // The turn's reads, skills and doc changes go to the card while the transcript that
+      // proves them is still in memory (docs/specs/2026-10-12-docs-tab-survives-restart.md).
+      void this.queueTaskReport(id, l.transcript);
       // A turn the operator opened with «Створити ПР» settles at `in_review` once the branch
       // actually has a pull request — a PR URL has surfaced in this session's output. The
       // request stays armed across turns until then, so an interrupted PR flow (the agent
@@ -2050,6 +2061,41 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return { branch: s.branch, target, ahead, behind, dirty, conflicts, files, docsGate };
   }
 
+  // Queue this session's «Документація» / «Сесія» reports for its cloud card
+  // (docs/specs/2026-10-12-docs-tab-survives-restart.md, decisions 7–8). Only a task-born
+  // agent has a card to write to. `entries` is the FULL transcript, or absent when none is at
+  // hand — the write then leaves the card's reads and skills as they are. The doc changes come
+  // from the same listing finishInfo shows, at the same fork point; with no tree to list (a
+  // retired worktree, or an in-place session whose checkout has moved off its branch) the write
+  // leaves the card's list alone instead of diffing the wrong tree. Never throws: it runs on
+  // the event path and inside «Завершити», neither of which a report may break.
+  private async queueTaskReport(id: string, entries?: readonly TranscriptEntry[]): Promise<void> {
+    try {
+      const row = this.registry.listSessions().find((x) => x.id === id);
+      if (!row?.taskId || row.kind !== "agent") return;
+      const repo = this.registry.listProjects().find((p) => p.id === row.projectId)?.localRepoPath;
+      let changedFiles: ChangedFile[] | undefined;
+      if (repo) {
+        const dir = row.worktree
+          ? row.worktreePath
+          : (await this.worktree.currentBranch(repo)) === row.branch
+            ? repo
+            : "";
+        if (dir) {
+          const target = row.baseBranch || (row.worktree ? await this.worktree.currentBranch(repo) : "");
+          changedFiles = await this.worktree.changedFiles(dir, target).catch((err: unknown) => {
+            console.warn(`[supervisor] no doc changes in the report of ${id}: ${(err as Error).message}`);
+            return undefined;
+          });
+        }
+      }
+      const write = taskReportsWrite({ session: this.merge(row), at: new Date().toISOString(), entries, changedFiles });
+      this.registry.enqueueTaskReport(row.taskId, write);
+    } catch (err) {
+      console.warn(`[supervisor] could not queue the card report of ${id}: ${(err as Error).message}`);
+    }
+  }
+
   // «Обовʼязкова документація» (docs/specs/2026-09-28-mandatory-documentation-design.md §3.5):
   // whether this session's branch carries the documentation its project requires. Same
   // directory and fork point as finishInfo, so the sheet's file list and its gate agree.
@@ -2128,6 +2174,21 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return { sent: true };
   }
 
+  // «Знахідки» (docs/specs/2026-10-13-agent-findings.md): the session's findings, and the
+  // operator's decision on one. The card or Jira issue itself is created by the UI under the
+  // operator's own credentials; this only records where the finding went.
+  listFindings(id: string): AgentFinding[] {
+    if (!this.registry.listSessions().some((s) => s.id === id)) throw new Error("session not found");
+    return this.registry.listFindings(id);
+  }
+
+  resolveFinding(id: string, findingId: string, next: { status: "filed"; target: FindingTarget } | { status: "dismissed" }): AgentFinding {
+    if (!this.registry.listSessions().some((s) => s.id === id)) throw new Error("session not found");
+    const f = this.registry.resolveFinding(id, findingId, next);
+    this.pushUpdate(id);
+    return f;
+  }
+
   // The Зміни tab opens one of the files `finishInfo` listed. Same worktree and same fork
   // point, so the summary and the diff can never disagree about what the session changed.
   async fileDiff(id: string, path: string): Promise<SplitDiff> {
@@ -2197,6 +2258,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       throw new Error("unresolved merge conflicts - resolve them before finishing");
     if (await this.worktree.hasUncommitted(dir))
       await this.worktree.commitAll(dir, `session work: ${s.name}`);
+
+    // The card's reports take their last listing NOW: below, the worktree is removed (or the
+    // in-place checkout handed back to its base) and the Live with its transcript dropped. A
+    // session dormant after a restart has no Live; its write carries no reads or skills and
+    // the card keeps the ones earlier turns sent.
+    await this.queueTaskReport(id, this.map.get(id)?.transcript);
 
     if (s.native) await this.native?.stop(id);
     const l = this.map.get(id);

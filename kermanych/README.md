@@ -735,7 +735,9 @@ live. The web build has no session browser.
   resume; native ones via `claude --mcp-config <file>` (a per-session `0600` file) or a
   second `omp --hook`. The endpoint is `POST /api/browser/mcp` on the local API with a
   per-session bearer; a session's calls run one at a time (dialog, console and network
-  answer at once). An API started without the desktop app offers no browser tools.
+  answer at once). The same server also carries the findings tools `report_finding` and
+  `list_findings` (see «Agent findings» below). An API started without the desktop app still
+  hands the server out, but it lists only the findings tools.
 - **Cookies** are kept per project (Electron partition `persist:kermanych-browser-<projectId>`):
   sessions of one project share logins, projects do not. The page's user agent carries no
   `Electron/` token. `target=_blank` links load in the same page; a `window.open` popup (an
@@ -822,13 +824,22 @@ developer's machine. The direction is always task → session.
    agent commit, bring the latest `origin/<base>` in, push and open the PR, and when that
    turn ends the card lands in the
    board's «На ревʼю» column — settled, but waiting on a human reviewer rather than
-   closed. «Завершити» → «Влити» is the other exit and still lands on `merged`. Once a
-   session's branch has an open PR, that fact is
+   closed. «Завершити» itself is the other exit: it retires the session — commits loose work,
+   stops the agent, removes the worktree — and lands on `merged`; nothing is merged into the
+   base branch, the branch stays for its PR. Once a session's branch has an open PR, that fact is
    durable: the finish sheet's secondary action stays «Закоміти» (never «Створити ПР», which
    would try to open a second PR and find nothing to push), and EVERY later turn settles the
    card back on «На ревʼю» — even the plain follow-up prompts you send to fix review findings,
    which drive the card through «в роботі» mid-turn. «Закоміти» has the agent commit and push
    that follow-up work onto the same branch, updating the open PR.
+6. **Reports flow back** — after every turn and on «Завершити» the local API also writes onto
+   the card what the session's «Документація» and «Сесія» tabs show: the documentation it read
+   and the documentation it created or changed (repository paths with +/− counts), and the
+   session summary — harness, the model and effort it ran with, the working branch and its
+   base, the skills it used, tokens and cost, and the provider's session id. Paths on your disk
+   (the worktree, a native session's file) never go. Images attached in «Агенти» → «Нова
+   задача» are uploaded to the card once the launch succeeds. The writes go through a local
+   queue, like the status, so a session run offline publishes when the machine is back online.
 
    **Base sync.** Before it pushes, the agent run by «Створити ПР» or «Закоміти» fetches
    `origin/<base>` and merges it into the branch — a merge, never a rebase. It resolves the
@@ -857,6 +868,47 @@ phases, interactive prompts and the provider-plan spend under the account name (
 `omp usage` on this machine, never mirrored) are local-only by design — the board shows
 THAT a task waits for input, and only the person running it can answer, on their own
 machine.
+
+### Agent findings («Знахідки»)
+
+Agents often notice problems outside their own task. A session's agent can report one
+through the `report_finding` tool of its `kermanych` MCP server (spec:
+`docs/specs/2026-10-13-agent-findings.md`). It gives a title (≤ 120 characters), a kind
+(`bug`, `security`, `tech-debt`, `docs`), the context, evidence (`path:line` references or
+reproduction commands), acceptance criteria and an optional suggested fix. Then it continues
+its task. `list_findings` shows it what it already reported, so it does not repeat itself. The
+tool descriptions are the agent's whole instruction, so every runtime gets the same rules,
+native sessions included. Discussion and review branches have no such tools.
+
+**Nothing is filed without you.** Findings are kept only on this machine (SQLite
+`session_findings`) and are deleted with their session and with their project. A session holds
+at most 20 open findings. Past that, the tool refuses and tells the agent to mention further
+problems in its reply.
+
+- **Where.** The session's **Знахідки** tab on «Агенти» lists them (a chat has the same tab on
+  «Чат»). Its counter and the ⚑ mark on the agent's session card show how many are still open.
+  A new report arrives live, and it does not change the session's status or interrupt the
+  agent.
+- **Створити задачу →** opens one dialog for both targets, prefilled and editable: the title,
+  and a description with Context, Acceptance criteria, Evidence, Suggested fix and the origin
+  (project, branch, session).
+  - **Дошка** creates a card under your account in any project of the session's workspace
+    (the session's own by default). The assignee is optional, model and effort come from the
+    project's defaults, and the branch prefix is `fix` for bugs and vulnerabilities, otherwise
+    `feature`.
+  - **Jira** creates an issue on a connected board through `POST /api/jira/issues/:integrationId`,
+    signed with your personal Jira token. The issue type defaults to Bug for `bug` / `security`
+    and to Task otherwise (or to the first type the project offers). The labels are
+    `kermanych-finding` plus the kind. The option is disabled, with the reason, when the
+    workspace has no connected board or this machine has no token for its site.
+- **Відхилити** marks a finding dismissed. This cannot be undone, and the agent sees it in
+  `list_findings`.
+- **Routes.** `GET /api/sessions/:id/findings`;
+  `POST /api/sessions/:id/findings/:findingId/filed` with `{ "kind": "board", "taskId" }` or
+  `{ "kind": "jira", "key", "url" }`; `POST /api/sessions/:id/findings/:findingId/dismiss`.
+  An unknown session or finding answers 404, and a finding that is no longer open answers 400.
+  If the card or issue is created but recording it fails, the finding stays open with the error
+  shown in the dialog. The card or issue already exists then: check before filing again.
 
 ### Project documentation
 
@@ -907,6 +959,16 @@ no documentation checkboxes. «Доповнити документацію» sen
 exactly the missing documents and closes the sheet. You watch the agent write and commit them
 in the transcript, and it pushes them if the PR is already open. Changed documents appear in
 the session's «Документація» tab tagged специфікація / план / схема / хендоф / запит API.
+
+The tab survives an API restart and «Завершити». The documents a session read, the documents
+it changed and the skills on «Сесія» are kept on its card (`tasks.docs_report`,
+`tasks.session_report`; see «Reports flow back» above), and the session's own tabs fall back to
+them once the transcript or the worktree is gone. Reads and skills only accumulate, so a
+compacted context never drops one. After «Завершити» the changed documents are a plain list:
+the diff and «Задача →» need the worktree, which «↻ Відновити» brings back. Sessions that
+predate this are not backfilled, and the board does not show these reports yet. Migration
+`20261013090000_task_reports.sql` must be applied before a client that reads the columns
+ships: the client selects them by name.
 
 **Mid-task: request and handoff without finishing.** An API request is usually needed while
 the frontend work is still going, not at the end of it. The session's «Документація» tab has
