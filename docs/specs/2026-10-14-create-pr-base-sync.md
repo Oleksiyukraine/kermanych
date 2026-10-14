@@ -195,9 +195,9 @@ the trailer is `KERMANYCH_COAUTHOR`):
 - **UI** `pages/AgentsPage.vue`: the finish sheet's behind line (`agents.finish.behindInfo`);
   new conflict copy. `lib/api.ts`: `finishInfo.behind`. `components/settings/AiAgentsPanel.vue`:
   the read-only block under «Провізор» and «Комітер». i18n `uk` / `en`, notices included. The
-  Ukrainian strings carry no plural forms («нових комітів: N»), like the existing `aheadInfo`:
-  the app configures no Ukrainian plural rule for vue-i18n, so a three-form message picks the
-  wrong form for n = 1. That is reported as a separate finding.
+  Ukrainian strings carry no plural forms («нових комітів: N»), like the existing `aheadInfo`.
+  They were written while the app configured no Ukrainian plural rule for vue-i18n; the rule
+  has landed since (`docs/specs/2026-10-14-uk-plural-rule.md`), and this phrasing needs none.
 - **Tests**
   - New `apps/api/test/base-sync.spec.ts`, 10 tests against real repositories: the fork when
     local is behind, ahead, diverged, unreachable or absent from origin; the counts and the
