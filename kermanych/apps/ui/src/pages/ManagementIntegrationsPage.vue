@@ -345,7 +345,13 @@
               {{ t('slack.connect.tokenOnMachine') }}
               <span class="int__state mono">
                 <i class="int__state-dot" :class="{ 'int__state-dot--on': slackListening }" aria-hidden="true"></i>
-                {{ slackListening ? t('slack.connect.listening') : t('slack.connect.notListening') }}
+                {{
+                  slackListening
+                    ? t('slack.connect.listening')
+                    : slackCloud?.enabled
+                      ? t('slack.connect.cloudStandby')
+                      : t('slack.connect.notListening')
+                }}
               </span>
             </template>
             <template v-else>
@@ -376,6 +382,88 @@
           </div>
         </div>
 
+        <!-- CLOUD ANSWERS — the second host: the slack-events Edge Function with the owner's AI key. -->
+        <div class="int__token">
+          <p class="int__token-state">
+            {{ t('slack.cloud.title') }} —
+            <span class="int__state mono">
+              <i class="int__state-dot" :class="{ 'int__state-dot--on': slackCloud?.enabled }" aria-hidden="true"></i>
+              {{ slackCloud ? (slackCloud.enabled ? t('slack.cloud.stateOn') : t('slack.cloud.stateOff')) : t('slack.cloud.stateNotSet') }}
+            </span>
+          </p>
+          <p class="int__hint">{{ t('slack.cloud.lead') }}</p>
+
+          <dl v-if="slackCloud && !slackCloudEditing" class="int__facts">
+            <div>
+              <dt>{{ t('slack.cloud.aiFact') }}</dt>
+              <dd class="mono">{{ slackCloudProviderLabel(slackCloud.aiProvider) }} · {{ slackCloud.aiModel }} · …{{ slackCloud.aiKeyHint }}</dd>
+            </div>
+            <div v-if="slackCloud.aiBaseUrl">
+              <dt>{{ t('slack.cloud.baseUrlFact') }}</dt>
+              <dd class="mono">{{ slackCloud.aiBaseUrl }}</dd>
+            </div>
+            <div>
+              <dt>{{ t('slack.cloud.reachedFact') }}</dt>
+              <dd>{{ slackCloud.eventsSeenAt ? t('slack.cloud.reachedAt', { when: formatSlackTime(slackCloud.eventsSeenAt) }) : t('slack.cloud.notReached') }}</dd>
+            </div>
+          </dl>
+
+          <template v-if="slackCloud?.enabled && !slackCloudEditing">
+            <p class="int__hint">{{ t('slack.cloud.stepManifest') }}</p>
+            <dl class="int__facts">
+              <div>
+                <dt>{{ t('slack.cloud.requestUrlLabel') }}</dt>
+                <dd class="mono int__url">{{ slackCloudUrl }}</dd>
+              </div>
+            </dl>
+            <p class="int__hint">{{ t('slack.cloud.desktopStandsDown') }}</p>
+          </template>
+          <p v-else-if="slackCloud && !slackCloudEditing" class="int__hint">{{ t('slack.cloud.stepManifestBack') }}</p>
+
+          <template v-if="isOwner && slackCloudEditing">
+            <KSelect v-model="slackCloudProvider" :label="t('slack.cloud.providerLabel')" :options="slackCloudProviderOptions" />
+            <KField v-model="slackCloudModel" :label="t('slack.cloud.modelLabel')" />
+            <template v-if="slackCloudProvider === 'openai'">
+              <KField v-model="slackCloudBaseUrl" :label="t('slack.cloud.baseUrlLabel')" placeholder="https://api.openai.com/v1" />
+              <p class="int__hint">{{ t('slack.cloud.baseUrlHint') }}</p>
+            </template>
+            <KField
+              v-model="slackCloudApiKey"
+              :label="t('slack.cloud.apiKeyLabel')"
+              type="password"
+              :placeholder="slackCloud ? t('slack.cloud.apiKeyKeep', { hint: slackCloud.aiKeyHint }) : ''"
+            />
+            <KField
+              v-model="slackCloudSigningSecret"
+              :label="t('slack.cloud.signingSecretLabel')"
+              type="password"
+              :placeholder="slackCloud ? t('slack.cloud.signingSecretKeep') : ''"
+            />
+            <p class="int__hint">{{ t('slack.cloud.signingSecretHint') }}</p>
+            <p class="int__hint">{{ t('slack.cloud.storedHint') }}</p>
+            <div class="int__row">
+              <KBtn variant="secondary" :disabled="slackCloudBusy || !slackCloudModel.trim()" @click="saveSlackCloud">
+                {{ slackCloudBusy ? t('slack.cloud.saving') : slackCloud ? t('slack.cloud.save') : t('slack.cloud.saveOn') }}
+              </KBtn>
+              <KBtn variant="ghost" @click="slackCloudEditing = false">{{ t('slack.connect.cancel') }}</KBtn>
+            </div>
+          </template>
+          <div v-else-if="isOwner" class="int__row int__row--wrap">
+            <template v-if="slackCloud">
+              <KBtn variant="secondary" :loading="slackCloudBusy" @click="toggleSlackCloud">
+                {{ slackCloud.enabled ? t('slack.cloud.turnOff') : t('slack.cloud.turnOn') }}
+              </KBtn>
+              <KBtn variant="ghost" @click="copySlackCloudManifest(slackCloud.enabled)">
+                {{ slackCloud.enabled ? t('slack.cloud.copyCloudManifest') : t('slack.cloud.copyDesktopManifest') }}
+              </KBtn>
+              <KBtn variant="ghost" @click="startSlackCloudEdit">{{ t('slack.cloud.change') }}</KBtn>
+              <KBtn variant="ghost" :loading="removingSlackCloud" @click="removeSlackCloud">{{ t('slack.cloud.remove') }}</KBtn>
+            </template>
+            <KBtn v-else variant="secondary" @click="startSlackCloudEdit">{{ t('slack.cloud.setUp') }}</KBtn>
+          </div>
+          <p v-else-if="!slackCloud" class="int__hint">{{ t('slack.cloud.ownerOnly') }}</p>
+        </div>
+
         <p v-if="slackFlowError" class="int__error mono">{{ slackFlowError }}</p>
 
         <div v-if="isOwner" class="int__danger">
@@ -403,11 +491,17 @@ import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
-import type { SlackIntegration } from '@kermanych/cloud';
-import { getSlackIntegration } from '@kermanych/cloud';
+import type { SlackCloudStatus, SlackIntegration } from '@kermanych/cloud';
+import { cloudEnv, getSlackCloudStatus, getSlackIntegration } from '@kermanych/cloud';
+import {
+  SLACK_CLOUD_AI_PROVIDERS,
+  SLACK_CLOUD_DEFAULT_MODELS,
+  isSlackCloudAiProvider,
+  type SlackCloudAiProvider,
+} from '@kermanych/core';
 import { api, type JiraBoardOption, type LinearTeamOption, type SlackChannelOption } from '../lib/api';
 import { IS_PREVIEW } from '../lib/preview';
-import { SLACK_MANIFEST } from '../lib/slack-manifest';
+import { SLACK_MANIFEST, slackCloudManifest, slackCloudRequestUrl } from '../lib/slack-manifest';
 import { useAuth } from 'stores/auth';
 import { useJira } from 'stores/jira';
 import { useLinear } from 'stores/linear';
@@ -812,6 +906,26 @@ const slackTokenEditing = ref(false);
 const removingSlackToken = ref(false);
 const disconnectingSlack = ref(false);
 
+// Cloud answers (docs/specs/2026-10-16-slack-cloud-answers.md): the status every member
+// sees, and the owner's form. The form's secrets start empty — an empty one keeps the stored.
+const slackCloud = ref<SlackCloudStatus | null>(null);
+const slackCloudEditing = ref(false);
+const slackCloudProvider = ref<string>('anthropic');
+const slackCloudModel = ref('');
+const slackCloudBaseUrl = ref('');
+const slackCloudApiKey = ref('');
+const slackCloudSigningSecret = ref('');
+const slackCloudBusy = ref(false);
+const removingSlackCloud = ref(false);
+// Where this workspace's Slack app sends its events in cloud mode: the Edge Function of the
+// Supabase project this build talks to.
+const slackCloudUrl = computed(() =>
+  slackCloudRequestUrl(cloudEnv('ui', import.meta.env as unknown as Record<string, string | undefined>).url, props.workspaceId),
+);
+const slackCloudProviderOptions = computed<KSelectOption[]>(() =>
+  SLACK_CLOUD_AI_PROVIDERS.map((p) => ({ value: p, label: slackCloudProviderLabel(p) })),
+);
+
 // The stale-completion guard (the stores' `generation` idiom): a probe for a workspace the
 // user already switched away from must not install its row here.
 let slackGeneration = 0;
@@ -829,6 +943,7 @@ const slackChannelOptions = computed<KSelectOption[]>(() =>
 async function probeSlack(workspaceId: string): Promise<void> {
   if (IS_PREVIEW || !auth.user) {
     slackIntegration.value = null;
+    slackCloud.value = null;
     slackTokenPresent.value = false;
     slackListening.value = false;
     return;
@@ -842,7 +957,7 @@ async function probeSlack(workspaceId: string): Promise<void> {
     // An unreachable cloud reads as «not connected», the Linear store's rule.
     if (mine === slackGeneration) slackIntegration.value = null;
   }
-  await refreshSlackTokenState(workspaceId, mine);
+  await Promise.all([refreshSlackTokenState(workspaceId, mine), refreshSlackCloud(workspaceId, mine)]);
 }
 
 // A local sqlite read through the api, never a Slack call — cheap enough for every probe.
@@ -856,6 +971,21 @@ async function refreshSlackTokenState(workspaceId = props.workspaceId, mine = sl
     if (mine !== slackGeneration) return;
     slackTokenPresent.value = false;
     slackListening.value = false;
+  }
+}
+
+// Cloud answers' status, secret-free, straight from the cloud: whether they are on, which AI,
+// and when Slack last reached the Edge Function. No integration → nothing to read.
+async function refreshSlackCloud(workspaceId = props.workspaceId, mine = slackGeneration): Promise<void> {
+  if (!slackIntegration.value) {
+    slackCloud.value = null;
+    return;
+  }
+  try {
+    const status = await getSlackCloudStatus(auth.client, workspaceId);
+    if (mine === slackGeneration) slackCloud.value = status ?? null;
+  } catch {
+    if (mine === slackGeneration) slackCloud.value = null;
   }
 }
 
@@ -889,8 +1019,11 @@ function openSlackSettings(): void {
   slackBotTokenInput.value = '';
   slackAppTokenInput.value = '';
   slackSettingsOpen.value = true;
-  // Listening is live machine state — it may have dropped since the tile was probed.
+  // Listening is live machine state — it may have dropped since the tile was probed; the
+  // cloud's «Slack reached it» stamp moves with every event.
+  slackCloudEditing.value = false;
   void refreshSlackTokenState();
+  void refreshSlackCloud();
 }
 
 async function copySlackManifest(): Promise<void> {
@@ -1023,6 +1156,117 @@ async function disconnectSlack(): Promise<void> {
   }
 }
 
+// ── Slack cloud answers ─────────────────────────────────────────────────────────
+function slackCloudProviderLabel(p: SlackCloudAiProvider): string {
+  return p === 'anthropic' ? t('slack.cloud.providerAnthropic') : t('slack.cloud.providerOpenai');
+}
+
+function formatSlackTime(iso: string): string {
+  return new Date(iso).toLocaleString(locale.value);
+}
+
+// A provider switch brings its default model along — unless the owner already typed one.
+watch(slackCloudProvider, (next, prev) => {
+  if (!isSlackCloudAiProvider(next)) return;
+  const model = slackCloudModel.value.trim();
+  if (!model || (isSlackCloudAiProvider(prev) && model === SLACK_CLOUD_DEFAULT_MODELS[prev]))
+    slackCloudModel.value = SLACK_CLOUD_DEFAULT_MODELS[next];
+});
+
+function startSlackCloudEdit(): void {
+  const s = slackCloud.value;
+  slackCloudProvider.value = s?.aiProvider ?? 'anthropic';
+  slackCloudModel.value = s?.aiModel ?? SLACK_CLOUD_DEFAULT_MODELS.anthropic;
+  slackCloudBaseUrl.value = s?.aiBaseUrl ?? '';
+  slackCloudApiKey.value = '';
+  slackCloudSigningSecret.value = '';
+  slackFlowError.value = '';
+  slackCloudEditing.value = true;
+}
+
+// The first save turns cloud answers on; later saves keep the switch where it is. The api
+// proves the AI key with a one-word answer before anything is stored.
+async function saveSlackCloud(): Promise<void> {
+  const provider = slackCloudProvider.value;
+  if (!isSlackCloudAiProvider(provider) || slackCloudBusy.value) return;
+  const firstTime = !slackCloud.value;
+  const baseUrl = provider === 'openai' ? slackCloudBaseUrl.value.trim() : '';
+  const apiKey = slackCloudApiKey.value.trim();
+  const signingSecret = slackCloudSigningSecret.value.trim();
+  slackFlowError.value = '';
+  slackCloudBusy.value = true;
+  try {
+    slackCloud.value = await api.slackSetCloud(props.workspaceId, {
+      enabled: slackCloud.value?.enabled ?? true,
+      aiProvider: provider,
+      aiModel: slackCloudModel.value.trim(),
+      ...(baseUrl ? { aiBaseUrl: baseUrl } : {}),
+      ...(apiKey ? { aiApiKey: apiKey } : {}),
+      ...(signingSecret ? { signingSecret } : {}),
+    });
+    slackCloudEditing.value = false;
+    slackCloudApiKey.value = '';
+    slackCloudSigningSecret.value = '';
+    local.notify(firstTime ? t('slack.notify.cloudOn') : t('slack.notify.cloudSaved'), 'info');
+    recheckSlackSoon();
+  } catch (e) {
+    slackFlowError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    slackCloudBusy.value = false;
+  }
+}
+
+// The switch alone: same AI, no secrets re-sent. The Slack app follows only once the
+// matching manifest is pasted into it, which the notice says.
+async function toggleSlackCloud(): Promise<void> {
+  const s = slackCloud.value;
+  if (!s || slackCloudBusy.value) return;
+  slackFlowError.value = '';
+  slackCloudBusy.value = true;
+  try {
+    slackCloud.value = await api.slackSetCloud(props.workspaceId, {
+      enabled: !s.enabled,
+      aiProvider: s.aiProvider,
+      aiModel: s.aiModel,
+      ...(s.aiBaseUrl ? { aiBaseUrl: s.aiBaseUrl } : {}),
+    });
+    local.notify(slackCloud.value.enabled ? t('slack.notify.cloudOn') : t('slack.notify.cloudOff'), 'info');
+    recheckSlackSoon();
+  } catch (e) {
+    slackFlowError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    slackCloudBusy.value = false;
+  }
+}
+
+async function removeSlackCloud(): Promise<void> {
+  if (removingSlackCloud.value) return;
+  slackFlowError.value = '';
+  removingSlackCloud.value = true;
+  try {
+    await api.slackDeleteCloud(props.workspaceId);
+    slackCloud.value = null;
+    local.notify(t('slack.notify.cloudRemoved'), 'info');
+    recheckSlackSoon();
+  } catch (e) {
+    slackFlowError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    removingSlackCloud.value = false;
+  }
+}
+
+// Cloud mode: Socket Mode off, events to this workspace's Request URL. Desktop mode: the
+// connect flow's manifest, which turns Socket Mode back on.
+async function copySlackCloudManifest(cloudMode: boolean): Promise<void> {
+  const manifest = cloudMode ? slackCloudManifest(slackCloudUrl.value) : SLACK_MANIFEST;
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(manifest, null, 2));
+    local.notify(t('slack.notify.copied'), 'info');
+  } catch (e) {
+    local.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
 onMounted(() => {
   void jira.probe(props.workspaceId);
   void linear.probe(props.workspaceId);
@@ -1038,7 +1282,7 @@ watch(
 );
 onBeforeUnmount(() => clearTimeout(slackRecheck));
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 type BrandId = 'jira' | 'linear' | 'slack';
 
@@ -1333,6 +1577,17 @@ const BRANDS: readonly Brand[] = [
 .int__row {
   display: flex;
   gap: var(--k-sp-2);
+}
+
+// The cloud card's owner actions: four buttons do not fit one row of a 520px modal.
+.int__row--wrap {
+  flex-wrap: wrap;
+}
+
+// A Request URL is one unbroken token; it wraps anywhere rather than widening the modal.
+.int__url {
+  min-width: 0;
+  word-break: break-all;
 }
 
 .int__danger {
