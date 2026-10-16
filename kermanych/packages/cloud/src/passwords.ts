@@ -3,7 +3,7 @@
 // `workspace_password_access`, plus the `password-files` Storage bucket. Every call runs
 // under the caller's JWT, so the RLS policies and the rpcs in
 // 20260907120000_workspace_passwords.sql, 20260928090000_workspace_password_fields.sql,
-// 20260928100000_workspace_password_share.sql and 20261016090000_workspace_password_revoke.sql —
+// 20260928100000_workspace_password_share.sql and 20261016100000_workspace_password_revoke.sql —
 // not this code — are the authorization surface; refusals surface as thrown postgrest
 // messages, or (for a read a developer is not entitled to) as an empty result the caller
 // reads as "not permitted".

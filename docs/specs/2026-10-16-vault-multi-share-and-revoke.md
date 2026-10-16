@@ -56,7 +56,7 @@ Two fixes to the «Storage» (password vault) management section:
 
 ## Changes
 
-- DB: `supabase/migrations/20261016090000_workspace_password_revoke.sql` —
+- DB: `supabase/migrations/20261016100000_workspace_password_revoke.sql` —
   `share_password_with_members`, `revoke_password_access`, `list_password_holders` + `via`.
 - Cloud: `sharePassword(client, passwordId, userIds[])` → `WorkspacePasswordAccess[]` through
   the new rpc; new `revokePasswordAccess(client, passwordId, userId)`; `PasswordHolder.via`

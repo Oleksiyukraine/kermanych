@@ -1371,7 +1371,7 @@ member stops being able to read the secret and its file, and can request access 
 workspace owner and managers read every password through their role, so their access is
 changed in the members panel, not here.
 
-This needs migration `20261016090000_workspace_password_revoke.sql`
+This needs migration `20261016100000_workspace_password_revoke.sql`
 (`share_password_with_members`, `revoke_password_access`, and the `via` column of
 `list_password_holders`) — push it before shipping this UI
 ([Applying a migration](#applying-a-migration-to-the-teams-project)). Spec:
