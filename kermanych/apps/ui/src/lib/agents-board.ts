@@ -65,6 +65,22 @@ export function byNewestSession(a: Session, b: Session): number {
   return byActivity !== 0 ? byActivity : instant(b.createdAt) - instant(a.createdAt);
 }
 
+/**
+ * Launch order, newest first: the order of the «Активні» column.
+ *
+ * Every running agent stamps `lastActivityAt` on each event, so ordering live rows by it made
+ * two agents working at once swap places on every tool call — the card under the cursor
+ * jumped away. `createdAt` never moves while an agent runs: a row keeps its slot for the
+ * whole run, and only a new launch (which lands at the top) or a run ending (which leaves the
+ * bucket) changes the list. The id breaks a same-millisecond tie (a batch launch), so the
+ * order never depends on the order the store happened to hand the rows over.
+ */
+export function byNewestLaunch(a: Session, b: Session): number {
+  const byLaunch = instant(b.createdAt) - instant(a.createdAt);
+  if (byLaunch !== 0) return byLaunch;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
 /** The same order for backlog cards, whose only activity is being edited: `updatedAt`. */
 export function byNewestTask(a: Task, b: Task): number {
   const byUpdate = instant(b.updatedAt) - instant(a.updatedAt);
@@ -80,6 +96,16 @@ export function newestActivityAt(rows: readonly Session[]): number {
   let newest = 0;
   for (const s of rows) {
     const at = instant(s.lastActivityAt);
+    if (at > newest) newest = at;
+  }
+  return newest;
+}
+
+/** The launch-order equivalent: a group leads on its newest launch, which never moves mid-run. */
+export function newestLaunchAt(rows: readonly Session[]): number {
+  let newest = 0;
+  for (const s of rows) {
+    const at = instant(s.createdAt);
     if (at > newest) newest = at;
   }
   return newest;
