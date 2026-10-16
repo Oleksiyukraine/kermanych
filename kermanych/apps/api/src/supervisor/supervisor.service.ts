@@ -47,6 +47,7 @@ import {
   type ParsedCommand,
   INITIAL_STATUS,
   isAgentRuntime,
+  managedRuntime,
   reduceStatus,
   ACTIVE_STATUSES,
   slugify,
@@ -73,6 +74,7 @@ import {
   type ToolLine,
   type TranscriptEntry,
   type AgentRuntimeKind,
+  type NativeHarness,
   type Notice,
   type SubagentInfo,
   type SubagentNode,
@@ -503,7 +505,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // a task-born session behaves exactly like a locally created one — including offline.
   // `native` launches the card as a native session of that harness: the task text alone is its
   // first prompt, and model, effort and images stay with the harness's own UI.
-  async createSessionFromTask(taskId: string, userId: string, images?: ImageInput[], native?: AgentRuntimeKind): Promise<Session> {
+  async createSessionFromTask(taskId: string, userId: string, images?: ImageInput[], native?: NativeHarness): Promise<Session> {
     if (native && images?.length) throw nativeUnsupported();
     if (native) this.requireNative();
     const client = this.auth.cloudClient();
@@ -582,7 +584,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // operator switches to omp) is dropped so the spawned backend uses its own default rather
     // than running the wrong provider's model; an unreadable catalog keeps the id untouched.
     // A native session carries neither model nor effort: the harness's own `/model` owns them.
-    const model = native ? undefined : await this.models.validModel(runtime, task.model);
+    const model = native ? undefined : await this.models.validModel(this.runtimeFor(), task.model);
     const session = this.registry.createSession({
       projectId: project.id,
       taskId: task.id,
@@ -628,7 +630,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // sends the first message. It can later be promoted (forked) into a real agent, so a throwaway
   // exploration becomes real work without losing context. `native` opens it as that harness's
   // own TUI instead (docs/specs/2026-10-06-native-chats.md).
-  async createChat(projectId: string, native?: AgentRuntimeKind): Promise<Session> {
+  async createChat(projectId: string, native?: NativeHarness): Promise<Session> {
     const project = this.boundProject(projectId);
     const n = this.registry.listSessions(projectId).filter((s) => s.kind === "chat").length + 1;
     if (native) return this.createNativeChat(projectId, `чат ${n}`, native);
@@ -639,7 +641,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
     const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
     const browserMcp = this.browser?.bindingFor(session.id);
-    const rpc = createRuntime(session.runtime ?? "omp", { cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
+    const rpc = createRuntime(managedRuntime(session.runtime), { cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await rpc.start();
@@ -668,7 +670,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // operator types the first message into it, and the harness settles idle (`done`). No skills,
   // triggers or system append; the chat's read-only tool set rides on the launch argv
   // (NativeSessionService.command). A harness that cannot start leaves no row behind.
-  private async createNativeChat(projectId: string, name: string, runtime: AgentRuntimeKind): Promise<Session> {
+  private async createNativeChat(projectId: string, name: string, runtime: NativeHarness): Promise<Session> {
     const native = this.requireNative();
     const session = this.registry.createSession({
       projectId, name, task: "", worktreePath: "", branch: "",
@@ -869,7 +871,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const configPath = await this.ompSkills(project.id, cwd, id);
     const extensionPath = await this.ompTriggers(project.id, cwd, id);
     const browserMcp = this.browser?.bindingFor(id);
-    const rpc = createRuntime(session.runtime ?? "omp", { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
+    const rpc = createRuntime(managedRuntime(session.runtime), { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await rpc.start();
@@ -955,7 +957,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     // A fork can only continue on the parent's backend (R1/R2): omp resumes from the parent's
     // session FILE, claude resumes from the parent's session UUID (stored in ompSessionId).
-    const parentRuntime = s.runtime ?? "omp";
+    const parentRuntime = managedRuntime(s.runtime);
     let forkHandle = parentRuntime === "claude-code" ? s.ompSessionId : s.ompSessionFile;
     if (!forkHandle) {
       await this.refreshState(parentId);
@@ -1047,7 +1049,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = createRuntime(child.runtime ?? "omp", { cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
+    const rpc = createRuntime(managedRuntime(child.runtime), { cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await rpc.start();
@@ -2516,7 +2518,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // through switch_session; claude resumes the same session UUID (stored in ompSessionId) in
     // place via opts.resume at start(), where switch_session is a no-op. One resume handle,
     // read per backend, so both re-render their prior transcript on wake.
-    const runtimeKind = s.runtime ?? "omp";
+    const runtimeKind = managedRuntime(s.runtime);
     const resumeHandle = runtimeKind === "claude-code" ? s.ompSessionId : s.ompSessionFile;
     // Forks (discussion/review) never get the session browser; agents and chats do.
     const browserMcp = s.kind === "discussion" || s.kind === "review" ? undefined : this.browser?.bindingFor(id);

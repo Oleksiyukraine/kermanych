@@ -633,29 +633,32 @@ edge to resize (the height and whether it is open are remembered).
 ## Native sessions
 
 A task can also run in the harness's **own** interface instead of Kermanych's wrapper. In
-«Нова задача», set **Режим** to `omp` or `claude` and press «Запустити»: Kermanych creates
-the worktree and branch as usual, then starts that harness's TUI there with the task text
-as its first prompt. The session's «Лог» tab is that terminal — type into it as you would
-in your own terminal. (Spec: `docs/specs/2026-10-05-native-sessions.md`.)
+«Нова задача», set **Режим** to `omp`, `claude` or `codex` and press «Запустити»: Kermanych
+creates the worktree and branch as usual, then starts that harness's TUI there with the task
+text as its first prompt. The session's «Лог» tab is that terminal — type into it as you would
+in your own terminal. (Specs: `docs/specs/2026-10-05-native-sessions.md`,
+`docs/specs/2026-10-16-native-codex.md`.) Each harness must be on your login shell's `PATH`;
+for codex that is `npm i -g @openai/codex` (or `brew install codex`) — the copy inside the
+ChatGPT app is not used. A missing binary shows `command not found` in the «Лог» tab.
 
 - **Nothing of Kermanych enters the agent's context**: no project skills, triggers,
   language or documentation directives, co-author trailer, model or effort flags. Your own
-  `~/.claude` / `~/.omp` configuration applies unchanged; switch model with the harness's
+  `~/.claude` / `~/.omp` / `~/.codex` configuration applies unchanged; switch model with the harness's
   own `/model`. Model, effort and images are hidden in the launcher for this mode. The
   exceptions are the [session browser](#session-browser)'s tools, passed on the launch in the
   desktop app, and a «Глибокий аналіз» card's opening prompt: the TUI receives the task
   wrapped in the deep-analysis instructions, because that is the task you chose.
 - **What Kermanych still tracks.** Status on the board (working, tool, waiting for you,
   ready, on review, stopped) comes from hooks passed **on that launch only** —
-  `claude --settings <file>` and `omp --hook <file>`, posting to the local API with a
-  per-launch secret. Nothing is installed into your harness configuration. After every turn
-  it reads the harness's own session file for token usage (claude's file has no cost, so
-  none is shown), the model, a PR link opened by «Створити ПР», and the history that the
-  «Сесія» and «Документація» tabs use.
+  `claude --settings <file>`, `omp --hook <file>` and codex's `-c hooks.*` overrides, posting
+  to the local API with a per-launch secret. Nothing is installed into your harness
+  configuration. After every turn it reads the harness's own session file for token usage
+  (claude's and codex's files have no cost, so none is shown), the model, a PR link opened by
+  «Створити ПР», and the history that the «Сесія» and «Документація» tabs use.
 - **Lifecycle.** Exiting the harness (`/exit`, <kbd>Ctrl</kbd>+<kbd>D</kbd>), «Зупинити», or
   quitting the app stops it; «Продовжити» in the «Лог» tab resumes the same conversation
-  (`claude --resume <id>` / `omp launch --resume <file>`). A brand-new folder may show
-  claude's trust dialog first — answer it in the terminal.
+  (`claude --resume <id>` / `omp launch --resume <file>` / `codex resume <id>`). A brand-new
+  folder may show claude's trust dialog first — answer it in the terminal.
 - **Helpers** (create PR, commit, resolve conflict, documentation) paste their prompt into
   the terminal only while the agent is idle (or stopped at `conflict`); otherwise they are
   refused with «Агент зараз працює…» and you retry after the turn. On a stopped session they
@@ -666,12 +669,25 @@ in your own terminal. (Spec: `docs/specs/2026-10-05-native-sessions.md`.)
 - **Not available** for native sessions: changing model or effort from Kermanych, harness
   commands from a composer, answering prompts outside the terminal, discussion branches,
   review, images and the subagent map. Launches from «Дошка» and «В беклог» stay managed.
+- **codex specifics.** codex trusts hooks only after review and asks about every new folder;
+  Kermanych passes both answers on the command line for that launch — the session's folder as
+  trusted (`-c projects={…}`) and a `trusted_hash` for exactly its own hooks
+  (`-c hooks.state={…}`) — so no dialog appears and `~/.codex/config.toml` is never written. If
+  a future codex changes how it hashes hooks, its «Hooks need review» modal shows in the «Лог»
+  tab instead. Esc ends a turn through codex's `Interrupt` hook (codex 0.163+; an older codex
+  keeps the card busy until your next prompt). A turn that fails has no hook either way: the
+  card stays busy until the next prompt.
+- **codex and git in a worktree.** A task's worktree keeps its git data in the main
+  repository's `.git`, outside the folder codex's default sandbox lets it write. So a commit —
+  including the one «Закоміти» and «Створити ПР» ask for — makes codex request escalation: the
+  card shows «чекає», you approve in the «Лог» tab (answer «Yes, proceed» to approve only that
+  command), and the commit goes through. Kermanych does not widen codex's sandbox for you.
 
 ### Native chats
 
 The «Чат» page offers the same choice per thread (spec:
 `docs/specs/2026-10-06-native-chats.md`). The chip next to «+ Новий» picks the **Режим** of
-the next chat — `Керманич`, `omp` or `claude` — and is remembered on this machine; a thread
+the next chat — `Керманич`, `omp`, `claude` or `codex` — and is remembered on this machine; a thread
 keeps the mode it was created with, and its card shows that harness's mark. A native chat
 opens the harness's TUI idle in the project folder; type the first message into it. After
 each turn the first message becomes the thread's name, as for a managed chat.
@@ -679,7 +695,9 @@ each turn the first message becomes the thread's name, as for a managed chat.
 - **Read-only, like every chat.** A chat runs in your own checkout, not a worktree, so the
   harness is started with the chat's read-only built-ins only — `claude --tools
   Read,Grep,Glob` / `omp launch --tools read,grep,glob` — on every start and resume. MCP and
-  extension tools are unaffected. Nothing else of Kermanych's is added.
+  extension tools are unaffected. Nothing else of Kermanych's is added. codex has no tool
+  allowlist, so its chat runs in codex's read-only sandbox instead (`-s read-only -a never`):
+  it can read with any shell command, but cannot write a file or ask to escalate.
 - **Opening a thread does not start its harness.** A stopped native chat shows
   «Продовжити» instead; ■ stops a running one. Archiving a thread (✕) stops its harness.
 - **Not available** for native chats: «Почати імплементацію» (▶) — promotion forks the

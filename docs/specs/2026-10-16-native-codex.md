@@ -94,9 +94,12 @@ https://developers.openai.com/codex/hooks.
   "hooks":[<normalized handler>]}` serialised compact with sorted keys, e.g.
   `{"event_name":"stop","hooks":[{"async":false,"command":"…","timeout":5,"type":"command"}]}`
   (reproduced codex's own value for `stop`, `session_start`, `pre_tool_use`,
-  `permission_request`). `<layer>` is the synthetic path codex gives the `-c` layer. The
-  algorithm is internal. `--dangerously-bypass-hook-trust` also skips the modal but runs
-  every untrusted user/project hook too and prints a warning on each start.
+  `permission_request`). `<layer>` is the synthetic path codex gives the `-c` layer
+  (`/<session-flags>/config.toml`). codex clamps the timeout of `Interrupt` and `SessionEnd`
+  hooks to 3 s and hashes the clamped value (found in the 0.163 smoke: a 5 s `Interrupt`
+  hook stayed «needs review»). The algorithm is internal. `--dangerously-bypass-hook-trust`
+  also skips the modal but runs every untrusted user/project hook too and prints a warning
+  on each start.
 - **Folder trust.** A new folder asks «Do you trust the contents of this directory?»; Enter
   writes `[projects."<path>"] trust_level` into `~/.codex/config.toml`. The inline-table
   override `-c 'projects={"<realpath>"={trust_level="trusted"}}'` skips it and writes
@@ -109,9 +112,10 @@ https://developers.openai.com/codex/hooks.
     cache_write_input_tokens, output_tokens, reasoning_output_tokens, total_tokens}`,
     cumulative across resume; `input_tokens` includes `cached_input_tokens`; `info` may be
     `null`. No cost (ChatGPT plan).
-  - `event_msg` `user_message` — the clean prompt (`message`). `response_item` user
-    messages also carry injected blocks (`<environment_context>` …); `developer` messages
-    are system injections.
+  - The clean prompt: `event_msg` `user_message{message}` in 0.147, `event_msg`
+    `item_completed{item:{type:"UserMessage",content:[{type:"text",text}]}}` in 0.163 (found
+    in the smoke). `response_item` user messages also carry injected blocks
+    (`<environment_context>` …); `developer` messages are system injections.
   - `response_item` `message` role `assistant`, `content[{type:"output_text",text}]`.
   - Tools: `response_item` `function_call{name, arguments(JSON string), call_id}` +
     `function_call_output{call_id, output}`, and `custom_tool_call{name, input, call_id}`
@@ -149,9 +153,10 @@ https://developers.openai.com/codex/hooks.
 - `POST /sessions/chat` and `POST /sessions/from-task` validate `native` with
   `isNativeHarness` (`400 unknown native harness` otherwise); `createChat` /
   `createSessionFromTask` take `NativeHarness`.
-- The adapter's per-harness parts become a `Record<NativeHarness, …>` (argv builder, hook
-  handler, usage reader, history reader, session-file path) instead of the binary
-  `=== "claude-code"` ternaries, so a harness without an implementation does not compile.
+- The adapter's per-harness parts are exhaustive over `NativeHarness` — a `switch` for the
+  argv and the history reader, a `Record<NativeHarness, …>` for the usage reader — instead of
+  the binary `=== "claude-code"` ternaries, so a harness without an implementation does not
+  compile.
 - Rejected: `"codex"` in `AGENT_RUNTIMES` — it would become a valid account preference,
   `KERMANYCH_RUNTIME` and runtime-check input, and `createRuntime` would silently run it as
   claude; each needs a separate guard.
@@ -169,7 +174,7 @@ alpha that updates with ChatGPT, at a path inside a third-party bundle), no pref
 start:  codex  <common> [<chat>] [-- <prompt>]
 resume: codex resume <common> [<chat>] <sessionId> [-- <prompt>]
 common: -c 'projects={"<realpath cwd>"={trust_level="trusted"}}'
-        -c 'hooks.<Event>=[{hooks=[{type="command",command="<hook>",timeout=5}]}]'   (per event)
+        -c 'hooks.<Event>=[{hooks=[{type="command",command="'<hook.sh>'",timeout=3,async=false}]}]'   (per event)
         -c 'hooks.state={"<layer>:<event>:0:0"={trusted_hash="sha256:…"}, …}'
         [-c 'mcp_servers.<name>={url="<url>",bearer_token_env_var="<MCP_TOKEN_ENV>"}']
 chat:   -s read-only -a never
@@ -186,11 +191,14 @@ chat:   -s read-only -a never
 
 - Events: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
   `PermissionRequest`, `Stop`, `Interrupt`.
-- One command for all of them, the claude pattern:
-  `curl -sS -m 3 -o /dev/null -H "Authorization: Bearer $KERMANYCH_NATIVE_TOKEN" -H
-  'Content-Type: application/json' --data-binary @- "$KERMANYCH_NATIVE_URL/codex" || true`
+- One script for all of them (`<tmp>/kermanych-native/codex-hook.sh`, 0755), so env expansion
+  and `|| true` never depend on how codex runs a hook command: inert without both env vars,
+  then `curl -sS -m 2 -o /dev/null -H "Authorization: Bearer $KERMANYCH_NATIVE_TOKEN" -H
+  'Content-Type: application/json' --data-binary @- "$KERMANYCH_NATIVE_URL/codex"`, `exit 0`
   — no stdout, exit 0 always. The raw hook JSON goes to `POST /api/native/:id/codex`
   (`@Public`, bearer-checked, like `/claude`).
+- Every hook has `timeout=3` (codex clamps `Interrupt` to 3 s and hashes the clamped value;
+  one value keeps one handler and one hash rule).
 - `native-hooks.ts` builds the `-c` arguments and the `hooks.state` table; the hash follows
   codex's algorithm (above) and is pinned by a unit test against a value codex itself wrote.
   If a future codex changes the algorithm, the «Hooks need review» modal shows in the
@@ -240,10 +248,10 @@ config). claude's own trust dialog is unchanged.
     `output = output_tokens`, cost `0`;
   - **model** — the last `turn_context.model`;
   - the armed **PR link** and the `transcript_reset`, through the history below.
-- **History** → `OmpMessage[]` → `messagesToTranscript`: user = `event_msg`
-  `user_message`; assistant = `response_item` assistant `output_text`; tool calls =
-  `function_call` / `custom_tool_call` paired by `call_id` with their outputs; reasoning,
-  developer and injected user items are skipped.
+- **History** → `OmpMessage[]` → `messagesToTranscript`: user = the clean prompt event (either
+  shape above; a prompt written in both counts once); assistant = `response_item` assistant
+  `output_text`; tool calls = `function_call` / `custom_tool_call` paired by `call_id` with
+  their outputs; reasoning, developer and injected user items are skipped.
 - `sessionCostKnown` is false for codex (no cost row, as for native claude).
 
 ### D8. Native chat
@@ -261,10 +269,11 @@ non-claude harnesses), never in argv. Forks never get it (as today).
 
 ### D10. git in the worktree
 
-Nothing added. The smoke runs «Закоміти» on a codex task: if the commit goes through
-(possibly after an approval in the terminal) the behaviour is documented; if it cannot work
-even after approval, `--add-dir <common git dir>` is tried and the result goes back to the
-operator before anything is changed.
+Nothing added. Smoke result (codex 0.163, default sandbox): «Закоміти» made codex try
+`git add`, fail with «Operation not permitted» (the worktree's git data lives in the main
+repository's `.git`), and request escalation — the card went to `waiting_input`; one «Yes,
+proceed» in the terminal and the commit landed. The helpers work, so `--add-dir` was not
+needed; the behaviour is documented in the README.
 
 ### D11. UI
 
@@ -278,45 +287,66 @@ operator before anything is changed.
 
 ## Changes
 
-- `packages/core`: `runtime.ts` (`NATIVE_HARNESSES`, `NativeHarness`, `isNativeHarness`),
-  `types.ts` (`Session.runtime`), `task-reports.ts` (report runtime), `index.ts`.
-- `packages/cloud`: types follow (`readSessionReport` via core).
+- `packages/core`: `runtime.ts` (`NATIVE_HARNESSES`, `NativeHarness`, `isNativeHarness`,
+  `managedRuntime`), `types.ts` (`Session.runtime`, `CreateSessionDto.runtime`; the
+  hand-written `AgentRuntime` union is removed), `task-reports.ts` (report runtime),
+  `index.ts`.
+- `packages/cloud`: `account.ts` / `types.ts` use `AgentRuntimeKind` for the account
+  preference.
 - `apps/api`:
-  - `native/native-session.service.ts` — per-harness record; codex argv, hook handler,
-    usage/history readers, session-file path.
-  - `native/native-hooks.ts` — codex hook / trust / projects / MCP arguments and hash.
+  - `native/native-session.service.ts` — exhaustive per-harness argv / history / usage;
+    codex argv, `codexHook`, `codexFileUsage`, `codexFileMessages`.
+  - `native/native-hooks.ts` — `codex-hook.sh`, `codexHookHash`, `codexConfigArgs`.
   - `http/native.controller.ts` — `POST native/:id/codex`.
   - `http/sessions.controller.ts` — `isNativeHarness`.
-  - `supervisor/supervisor.service.ts` — `NativeHarness` on native entry points; managed
-    paths narrow through the helper.
-  - `registry/registry.service.ts` — runtime guard.
-- `apps/ui`: `lib/native-session.ts`, `KHarnessMark.vue`, `AgentsPage.vue`, `ChatPage.vue`,
-  `KitGalleryPage.vue`, `lib/api.ts`, `stores/orchestrator.ts`, i18n uk/en.
+  - `supervisor/supervisor.service.ts` — `NativeHarness` on native entry points; every
+    `createRuntime` / fork / resume handle goes through `managedRuntime`; a card's model is
+    validated against the managed runtime only.
+  - `registry/registry.service.ts` — runtime guard `isNativeHarness`.
+- `apps/ui`: `lib/native-session.ts` (exhaustive maps), `KHarnessMark.vue` (codex `>_` mark),
+  `AgentsPage.vue` (launcher «Режим» with four modes sized to their labels, codex engine-id
+  row), `ChatPage.vue`, `KitGalleryPage.vue`, `lib/api.ts`, `stores/orchestrator.ts`, i18n
+  uk/en (`modeHint`, `chat.page.modeTitle`, `engineIdCodex`, `engineIdHintCodex`).
 - `kermanych/README.md` — «Native sessions» and «Native chats».
 
 ## Verification
 
-- Unit (`apps/api`): codex status table incl. `Interrupt`, `request_user_input`, bearer
-  refusal; usage reader (cumulative, cached split, null `info`); history reader (clean user
-  prompts, injected items skipped, tool call/output pairing, string and array outputs);
-  argv for start / resume / chat / MCP / no-id fallback; `trusted_hash` pinned to a value
-  codex wrote. `supervisor.native.spec.ts`: a codex chat's argv. `packages/core`:
-  `isNativeHarness`; the task-report spec that used `"codex"` as an unknown runtime moves to
-  another value. `apps/ui`: `native-session.spec.ts` for the codex mode.
-- Smoke with real `codex-cli 0.163.0` on the preview api's `PATH`, preview UI in the
-  browser, a throwaway git repo:
-  - a codex task with a prompt: no trust or hook modal; `queued → thinking → tool →
-    done`; the row gets the codex id, rollout path, model and usage; Лог is the TUI;
-  - a two-line helper pasted while idle arrives as one message; a second one mid-turn gets
-    `native_busy`; Esc mid-turn → `done` (`Interrupt`);
-  - an approval prompt → `waiting_input`, approved → back to `thinking`;
-  - «Зупинити» → `stopped`; «Продовжити» resumes the same conversation; `/new` in the TUI
-    then «Продовжити» continues the new one;
-  - «Закоміти» on the task (D10);
-  - a native codex chat: opens idle, a write attempt fails, the first message names the
-    thread;
-  - the session browser's tools are listed in codex;
-  - `~/.codex/config.toml` checksum is unchanged by all of the above.
+- `packages/core` 211 pass (new: `isNativeHarness` / `managedRuntime`; a session report with
+  runtime `codex` is read). `packages/cloud` 158 pass. `apps/api`: `tsc --noEmit` — only the
+  pre-existing `jira.controller.ts` TS2504 (also on the base commit); `vitest run` 925 pass,
+  2 fail in `rpc-session.compact.spec.ts` (fail identically with this change stashed). New in
+  `native-session.spec.ts`: codex argv (trusted folder, seven hooks, `hooks.state`, MCP
+  bearer only in env, prompt after `--`, resume by the reported id, chat sandbox flags),
+  `trusted_hash` pinned to a value codex wrote, status table incl. `Interrupt` /
+  `request_user_input` / `/new`, usage reader, both prompt shapes, tool pairing. `apps/ui`:
+  `vitest run` 615 pass; `vue-tsc` — only the pre-existing `runtime-messages.spec.ts` TS2352
+  and `@kermanych/api` TS2307 in `src-electron`. No supervisor-level codex test: its argv is
+  the adapter's, already covered.
+- Smoke: built api (`KERMANYCH_PREVIEW=1`, throwaway DB) with npm `codex-cli 0.163.0` (package
+  unpacked to `/tmp`, put on the api's `PATH`, never installed), preview UI in the browser, a
+  throwaway repo + worktree, a native codex agent row and a native codex chat:
+  - first launch showed «Hooks need review — 1 hook»: `Interrupt`, whose timeout codex clamps
+    to 3 s. Fixed by `timeout=3` for every hook (D4); afterwards no hook or folder dialog.
+  - a prompt: `queued → thinking → tool (Bash) → done`; the row got the codex id, rollout
+    path, model `gpt-6-luna`, usage (no cost row in «Сесія», «Сесія codex» id shown); the
+    «Лог» tab is the TUI; `/mcp` listed `kermanych: connected`.
+  - a two-line helper pasted while idle arrived as one message; a second one 0.5 s later got
+    `400 native_busy`; Esc mid-turn → `done` (`Interrupt`).
+  - a network command → approval modal → `waiting_input` («чекає»); «Yes, proceed» → `done`.
+  - «Закоміти»: escalation for the worktree's `.git` (D10), approved once, commit `2e22772`
+    landed; the turn settled `in_review`.
+  - api restart → both rows `stopped`; «Продовжити» resumed the same conversation (earlier
+    turns on screen); `/new` + a prompt moved `ompSessionId` to the new conversation.
+  - native chat: opened idle in the repo; «create x.txt» failed with «operation not
+    permitted», no file; the thread took its name from the first message (after the 0.163
+    prompt shape was added, D7); resume argv carried `-s read-only -a never`.
+  - `POST /sessions/chat` with `native: "cursor"` → `400 unknown native harness`.
+  - launcher: «Режим» shows `Керманич / omp / claude / codex` unclipped; `codex` hides model,
+    effort and images. The chat chip lists codex.
+  - `~/.codex/config.toml`: unchanged by every Kermanych launch (checksum before/after). The
+    one write during the smoke was codex 0.163's own first-run `[tui]
+    screen_reader_detection_done = true`, not a trust entry. codex also keeps its usual
+    rollout files in `~/.codex/sessions` for these sessions.
 
 ## Documentation impact
 

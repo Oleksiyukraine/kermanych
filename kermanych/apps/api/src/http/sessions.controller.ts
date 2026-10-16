@@ -1,6 +1,6 @@
 // apps/api/src/http/sessions.controller.ts
 import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req } from "@nestjs/common";
-import { isAgentRuntime, isThinkingLevel, parseFindingTarget } from "@kermanych/core";
+import { isNativeHarness, isThinkingLevel, parseFindingTarget } from "@kermanych/core";
 import type { BranchPrefix, DocsWriteKind, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft, ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { sessionFailure } from "./session-failure";
@@ -29,7 +29,7 @@ export class SessionsController {
   // `native` opens the chat as that harness's own TUI (docs/specs/2026-10-06-native-chats.md).
   @Post("chat")
   async createChat(@Body() b: { projectId: string; native?: string }) {
-    if (b.native !== undefined && !isAgentRuntime(b.native)) throw new BadRequestException(`unknown native harness ${JSON.stringify(b.native)}`);
+    if (b.native !== undefined && !isNativeHarness(b.native)) throw new BadRequestException(`unknown native harness ${JSON.stringify(b.native)}`);
     try {
       return await this.sup.createChat(b.projectId, b.native);
     } catch (err) {
@@ -46,7 +46,7 @@ export class SessionsController {
   // session of that harness (docs/specs/2026-10-05-native-sessions.md).
   @Post("from-task")
   async createFromTask(@Body() b: { taskId: string; images?: ImageInput[]; native?: string }, @Req() req: { user: { id: string } }) {
-    if (b.native !== undefined && !isAgentRuntime(b.native)) throw new BadRequestException(`unknown native harness ${JSON.stringify(b.native)}`);
+    if (b.native !== undefined && !isNativeHarness(b.native)) throw new BadRequestException(`unknown native harness ${JSON.stringify(b.native)}`);
     try {
       return await this.sup.createSessionFromTask(b.taskId, req.user.id, b.images, b.native);
     } catch (err) {

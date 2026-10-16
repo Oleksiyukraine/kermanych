@@ -16,6 +16,18 @@
     <rect x="75" y="20" width="12" height="45" rx="2" fill="currentColor" />
     <rect x="71" y="55" width="20" height="16" rx="3" fill="#f97316" />
   </svg>
+  <!-- codex: its prompt glyph `>_`, monochrome in the text colour like omp's strokes. -->
+  <svg
+    v-else-if="harness === 'codex'"
+    v-tip="'codex'"
+    class="k-harness-mark"
+    viewBox="0 0 100 100"
+    role="img"
+    aria-label="codex"
+  >
+    <path d="M14 22 L46 50 L14 78" fill="none" stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" />
+    <rect x="52" y="70" width="36" height="12" rx="2" fill="currentColor" />
+  </svg>
   <!-- Kermanych: the top bar's brand mark without its tile, cropped to the glyph. -->
   <svg
     v-else
@@ -36,7 +48,7 @@ import { useI18n } from 'vue-i18n';
 import KModelMark from './KModelMark.vue';
 import type { LaunchMode } from '../../lib/native-session';
 
-// The harness running a session — Kermanych's managed session, or omp / claude in their own
+// The harness running a session — Kermanych's managed session, or omp / claude / codex in their own
 // TUI — as the mark the operator knows it by. Keyed by the launcher's «Режим», so the card
 // says exactly what was picked there. Brand colours stay fixed (they are logos, not theme
 // accents); the neutral strokes follow `currentColor`, so the marks sit in any theme's text.

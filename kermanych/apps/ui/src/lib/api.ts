@@ -24,6 +24,7 @@ import type {
   ApiErrorCode,
   ApiErrorParams,
   AgentRuntimeKind,
+  NativeHarness,
   AgentLanguage,
   DocsWriteKind,
   DocsGate,
@@ -325,13 +326,13 @@ export const api = {
     post<Project[]>('/projects/sync', { projects, prune }),
 
   // `native` opens the chat as the harness's own TUI in a pty (docs/specs/2026-10-06-native-chats.md).
-  createChat: (projectId: string, native?: AgentRuntimeKind): Promise<Session> =>
+  createChat: (projectId: string, native?: NativeHarness): Promise<Session> =>
     post<Session>('/sessions/chat', native ? { projectId, native } : { projectId }),
 
   // The user is NOT sent: the api takes it from the guard's cached token, so a board
   // client cannot launch a task on somebody else's behalf.
   // `native` launches the harness's own TUI in a pty instead of a managed session.
-  createSessionFromTask: (taskId: string, images?: ImageInput[], native?: AgentRuntimeKind): Promise<Session> =>
+  createSessionFromTask: (taskId: string, images?: ImageInput[], native?: NativeHarness): Promise<Session> =>
     post<Session>('/sessions/from-task', native ? { taskId, images, native } : { taskId, images }),
 
   // ── Jira. The acting user comes from the guard's token; their Jira token from the

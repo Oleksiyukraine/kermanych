@@ -7,6 +7,7 @@ describe('nativeRuntimeFor', () => {
     expect(nativeRuntimeFor('managed')).toBeUndefined();
     expect(nativeRuntimeFor('omp')).toBe('omp');
     expect(nativeRuntimeFor('claude')).toBe('claude-code');
+    expect(nativeRuntimeFor('codex')).toBe('codex');
   });
 });
 
@@ -14,6 +15,7 @@ describe('sessionLaunchMode', () => {
   it('names the harness that runs the session', () => {
     expect(sessionLaunchMode({ native: true, runtime: 'claude-code' })).toBe('claude');
     expect(sessionLaunchMode({ native: true, runtime: 'omp' })).toBe('omp');
+    expect(sessionLaunchMode({ native: true, runtime: 'codex' })).toBe('codex');
     // A native row written before `runtime` was stamped ran the default harness.
     expect(sessionLaunchMode({ native: true })).toBe('omp');
   });
@@ -39,7 +41,8 @@ describe('panelTerminals', () => {
 });
 
 describe('sessionCostKnown', () => {
-  it('is unknown only for a native claude session', () => {
+  it('is unknown only for a native claude or codex session', () => {
+    expect(sessionCostKnown({ native: true, runtime: 'codex' })).toBe(false);
     expect(sessionCostKnown({ native: true, runtime: 'claude-code' })).toBe(false);
     expect(sessionCostKnown({ native: true, runtime: 'omp' })).toBe(true);
     expect(sessionCostKnown({ runtime: 'claude-code' })).toBe(true);

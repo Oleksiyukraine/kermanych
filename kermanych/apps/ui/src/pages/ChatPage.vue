@@ -211,7 +211,7 @@
 // consolidated identity/action bar over the SAME KPanel + KRequestBlock stack the Агенти
 // detail renders `bare`. Log grouping, decision block, stall banner, live status, todo lane,
 // my-message navigation and the composer's model/effort/rehydrate chips all come for free.
-// A native thread (omp / claude in its own TUI) shows its harness's terminal there instead,
+// A native thread (omp / claude / codex in its own TUI) shows its harness's terminal there instead,
 // exactly as a native agent's Лог tab does (docs/specs/2026-10-06-native-chats.md).
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';

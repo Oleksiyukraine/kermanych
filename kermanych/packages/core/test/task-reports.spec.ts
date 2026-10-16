@@ -121,7 +121,9 @@ describe("reading a stored report", () => {
   });
 
   test("a session report needs a known runtime and drops unknown values", () => {
-    expect(readSessionReport({ sessionId: "s1", generatedAt: "t", runtime: "codex", branch: "b" })).toBeUndefined();
+    expect(readSessionReport({ sessionId: "s1", generatedAt: "t", runtime: "gemini", branch: "b" })).toBeUndefined();
+    // A native-only harness is a known runtime too.
+    expect(readSessionReport({ sessionId: "s1", generatedAt: "t", runtime: "codex", native: true, branch: "b" })?.runtime).toBe("codex");
     expect(
       readSessionReport({ sessionId: "s1", generatedAt: "t", runtime: "claude-code", branch: "b", effort: "turbo", usage: { input: 1 }, skills: ["x", null] }),
     ).toEqual({ sessionId: "s1", generatedAt: "t", runtime: "claude-code", native: false, branch: "b", worktree: true, skills: ["x"] });
