@@ -6,6 +6,10 @@
 //     PKCE to the desktop app's loopback (apps/api/src/slack/slack-oauth.ts, whose
 //     SLACK_OAUTH_REDIRECT and SLACK_USER_SCOPES must match `redirect_urls` and `scopes.user`).
 // Token rotation stays off: a rotating user token would expire within hours.
+//
+// SLACK_MANIFEST is the desktop mode; slackCloudManifest the cloud mode — the same app with
+// Socket Mode off and its events sent to the slack-events Edge Function. Pasting one or the
+// other into the app's manifest editor is how the app follows the Kermanych switch.
 export const SLACK_MANIFEST = {
   display_information: {
     name: 'Kermanych',
@@ -27,3 +31,20 @@ export const SLACK_MANIFEST = {
     token_rotation_enabled: false,
   },
 };
+
+// The Edge Function's address for one workspace: Slack has no way to say which Kermanych
+// workspace an event is for, so the URL does, and the signature proves it.
+export function slackCloudRequestUrl(supabaseUrl: string, workspaceId: string): string {
+  return `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/slack-events?workspace=${workspaceId}`;
+}
+
+export function slackCloudManifest(requestUrl: string) {
+  return {
+    ...SLACK_MANIFEST,
+    settings: {
+      ...SLACK_MANIFEST.settings,
+      event_subscriptions: { ...SLACK_MANIFEST.settings.event_subscriptions, request_url: requestUrl },
+      socket_mode_enabled: false,
+    },
+  };
+}
