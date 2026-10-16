@@ -888,12 +888,17 @@ export type WorkspacePasswordSecretPatch = {
   twoFactorOwner?: string | null;
 };
 
+// The seat a holder reads a password through: the workspace owner, a seated manager, or an
+// approved grant (a share, or an approved request). Only a grant can be revoked.
+export type PasswordHolderVia = "owner" | "manager" | "grant";
+
 // One person who may read a password's secret, as `list_password_holders` reports it: the
 // owner, a seated manager, or an approved requester. Profile fields come with the row
 // because an approved requester may no longer be on the workspace roster.
 export type PasswordHolder = {
   passwordId: string;
   userId: string;
+  via: PasswordHolderVia;
   githubUsername?: string;
   displayName?: string;
   avatarUrl?: string;
@@ -902,9 +907,10 @@ export type PasswordHolder = {
 export type PasswordAccessStatus = "pending" | "approved" | "declined";
 
 // One row of the request -> approve/decline ledger, one per (password, requester). Written
-// only by the `request_password_access` / `decide_password_access` / `share_password` rpcs;
-// a shared row is born approved, with `requesterId` the recipient and `decidedBy` the sharer.
-// A developer sees their own rows; a manager/owner sees every row in the workspace.
+// only by the `request_password_access` / `decide_password_access` / `share_password(_with_members)`
+// rpcs and removed by `revoke_password_access`; a shared row is born approved, with
+// `requesterId` the recipient and `decidedBy` the sharer. A developer sees their own rows; a
+// manager/owner sees every row in the workspace.
 export type WorkspacePasswordAccess = {
   id: string;
   passwordId: string;

@@ -31,8 +31,8 @@
           :aria-controls="listId"
           :aria-activedescendant="activeId"
           :disabled="disabled"
-          :value="open ? query : current ? currentLabel : ''"
-          :placeholder="currentLabel"
+          :value="open ? query : closedText"
+          :placeholder="triggerLabel"
           @focus="onFieldFocus"
           @click="openMenu()"
           @input="onQuery"
@@ -242,6 +242,13 @@ const selectedSet = computed(() => new Set(props.values ?? []));
 const isSelected = (value: string): boolean => (props.multiple ? selectedSet.value.has(value) : value === current.value);
 // The trigger's caption: the chosen option in single-select, the caller's summary in multiple.
 const triggerLabel = computed(() => (props.multiple ? props.summary ?? EMPTY_LABEL : currentLabel.value));
+// What the searchable field holds while closed: the held value's label, or — for a
+// multi-select with something ticked — the summary. Empty otherwise, so the placeholder (the
+// same caption) shows faded, as an unpicked field.
+const closedText = computed(() => {
+  if (props.multiple) return props.values?.length ? triggerLabel.value : '';
+  return current.value ? currentLabel.value : '';
+});
 
 // The live search box, empty unless `searchable` and the operator has typed. Reset by
 // close(), so a reopened list always starts on the whole catalog.
