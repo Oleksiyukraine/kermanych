@@ -552,8 +552,9 @@ const workspaceIcon = computed(() => {
 }
 
 // Dim pools of light so the frosted capsule has something to bend — a flat canvas
-// behind glass renders as plain grey. The first pool sits directly under the
-// composer, which is what makes its fill read as frost rather than as paint.
+// behind glass renders as plain grey. Both pools sit under the composer, which is
+// what makes its fill read as frost rather than as paint; the rest of the canvas,
+// the top corner included, stays the flat `--k-canvas` the rail and pane rest on.
 //
 // Carried mostly by `--k-surface2`, not the accent: surface2 is defined as
 // «distance from the canvas» in BOTH palettes (lighter on dark, a shade darker on
@@ -575,11 +576,6 @@ const workspaceIcon = computed(() => {
       680px 340px at 56% 112%,
       color-mix(in srgb, var(--k-surface2) 85%, transparent),
       transparent 70%
-    ),
-    radial-gradient(
-      620px 320px at 88% 2%,
-      color-mix(in srgb, var(--k-surface2) 70%, transparent),
-      transparent 72%
     );
 }
 
