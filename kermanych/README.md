@@ -437,9 +437,12 @@ without the Q&A bot above; it only needs the same Slack app.
   user scopes only, no client secret anywhere); the redirect comes back to the desktop app's
   loopback listener on port 53170. Desktop app only — the browser build cannot connect.
 - **Your Slack token is local.** The user token (`xoxp-…`) is stored in this machine's
-  registry SQLite (`slack_user_tokens`), never in the cloud. «Disconnect» forgets it. A
-  token Slack stops accepting is forgotten on the next send, and the next press connects
-  again.
+  registry SQLite (`slack_user_tokens`), never in the cloud. «Disconnect» forgets it. A Slack
+  app with token rotation on (it cannot be switched off once on) hands out a rotating token
+  (`xoxe.xoxp-…`) that lives 12 hours; its refresh token is stored beside it and the api renews
+  it before it expires, so the connection lasts as long as it is used at least once in 30 days.
+  A token Slack stops accepting — revoked, or no longer renewable — is forgotten on the next
+  send or channel list, and Kermanych asks you to connect again.
 - **You must be in the channel.** Slack posts a member's message only where they are a
   member; otherwise the send says to join the channel first.
 - **Formatting.** Headings become bold lines, `**bold**` and links are converted to Slack's
@@ -1449,12 +1452,15 @@ owner included — can read; the screen only shows which keys are set:
 - **Slack bot token** (optional): the `xoxb-` token of the workspace's Slack app (Integrations →
   Slack). Invite the bot to the channels cloud routines post to.
 
-**Once per Supabase project, the maintainer** deploys the function and its two secrets:
+**Once per Supabase project, the maintainer** deploys the function and its two secrets. A git
+push or merge deploys nothing: until this is done the Cloud dialog says «the routines-runner
+function is not deployed yet», and every cloud routine is unavailable.
 
 ```bash
 supabase db push --linked                                   # both routines migrations
 supabase functions deploy routines-runner --use-api --project-ref uqqdudlfizfwqfegfrlh
-supabase secrets set ROUTINES_RUNNER_SECRET=$(openssl rand -hex 32) --project-ref uqqdudlfizfwqfegfrlh
+SECRET=$(openssl rand -hex 32); echo "$SECRET"              # keep it for the Vault step below
+supabase secrets set ROUTINES_RUNNER_SECRET="$SECRET" --project-ref uqqdudlfizfwqfegfrlh
 ```
 
 Then, in the SQL editor, give the minute tick the project URL and the **same** secret:
@@ -1463,6 +1469,11 @@ Then, in the SQL editor, give the minute tick the project URL and the **same** s
 select vault.create_secret('https://uqqdudlfizfwqfegfrlh.supabase.co', 'routines_project_url');
 select vault.create_secret('<the ROUTINES_RUNNER_SECRET value>', 'routines_runner_secret');
 ```
+
+To check the deploy: `curl -X POST https://uqqdudlfizfwqfegfrlh.supabase.co/functions/v1/routines-runner`
+answers `{"code":"NOT_FOUND",…}` while the function is not deployed, `{"error":"function not
+configured"}` while `ROUTINES_RUNNER_SECRET` is missing, and `{"error":"invalid JSON body"}` once
+both are in place.
 
 Until both Vault secrets exist the tick does nothing. A run is held to the platform's
 wall-clock limit (150 s on the free plan): `ROUTINES_RUN_BUDGET_MS` (default 130000) can be

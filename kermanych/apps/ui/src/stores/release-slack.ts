@@ -13,12 +13,12 @@ import { ref } from 'vue';
 import type { ReleaseNotesSlack } from '@kermanych/cloud';
 import { getReleaseNotesSlack } from '@kermanych/cloud';
 import { useAuth } from './auth';
-import { api, ApiError, type ReleaseNoteSent, type SlackAccountStatus } from '../lib/api';
+import { api, ApiError, type ReleaseNoteSent, type SlackAccountStatus, type SlackChannelOption } from '../lib/api';
 import { IS_PREVIEW } from '../lib/preview';
 import { globalTr } from '../boot/i18n';
 
 // What the api's Slack routes answer (403) when Slack refuses the stored token — revoked in
-// Slack, an account deactivated (apps/api/src/http/slack.controller.ts).
+// Slack, an account deactivated, a rotating token past renewal (apps/api/src/http/slack.controller.ts).
 const TOKEN_INVALID = 'slack token invalid';
 
 export const useReleaseSlack = defineStore('release-slack', () => {
@@ -68,7 +68,7 @@ export const useReleaseSlack = defineStore('release-slack', () => {
   }
 
   async function saveChannel(workspaceId: string, channelId: string): Promise<ReleaseNotesSlack> {
-    const row = await api.slackSetReleaseNotesChannel(workspaceId, channelId);
+    const row = await withAccount(workspaceId, () => api.slackSetReleaseNotesChannel(workspaceId, channelId));
     settings.value = { ...settings.value, [workspaceId]: row };
     return row;
   }
@@ -78,21 +78,32 @@ export const useReleaseSlack = defineStore('release-slack', () => {
     settings.value = { ...settings.value, [workspaceId]: null };
   }
 
-  // Connects first when this member has no Slack account here yet, so «Send to Slack» is one
-  // press for everyone. A token Slack refuses is forgotten, and the error says to connect
-  // again — the next press then starts the round trip instead of failing the same way.
-  async function send(workspaceId: string, noteId: string): Promise<ReleaseNoteSent> {
-    if (!accounts.value[workspaceId]?.connected) await connect(workspaceId);
+  // A token Slack refuses — revoked, or a rotating one that could no longer be renewed — is
+  // forgotten, and the error says to connect again: the screen then offers «Connect» (or «Send
+  // to Slack» starts the round trip) instead of failing the same way on every try.
+  async function withAccount<T>(workspaceId: string, call: () => Promise<T>, reconnect = 'releaseSlack.reconnectAccount'): Promise<T> {
     try {
-      return await api.slackSendReleaseNote(workspaceId, noteId);
+      return await call();
     } catch (e) {
       if (e instanceof ApiError && e.serverMessage === TOKEN_INVALID) {
         await disconnect(workspaceId).catch(() => undefined);
-        throw new Error(globalTr.t('releaseSlack.reconnect'));
+        throw new Error(globalTr.t(reconnect));
       }
       throw e;
     }
   }
 
-  return { settings, accounts, canConnect, load, connect, disconnect, saveChannel, removeChannel, send };
+  // The channels this member is in — the only ones their token can post into.
+  function channels(workspaceId: string): Promise<SlackChannelOption[]> {
+    return withAccount(workspaceId, () => api.slackAccountChannels(workspaceId));
+  }
+
+  // Connects first when this member has no Slack account here yet, so «Send to Slack» is one
+  // press for everyone.
+  async function send(workspaceId: string, noteId: string): Promise<ReleaseNoteSent> {
+    if (!accounts.value[workspaceId]?.connected) await connect(workspaceId);
+    return withAccount(workspaceId, () => api.slackSendReleaseNote(workspaceId, noteId), 'releaseSlack.reconnect');
+  }
+
+  return { settings, accounts, canConnect, load, connect, disconnect, channels, saveChannel, removeChannel, send };
 });

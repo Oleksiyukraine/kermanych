@@ -6,6 +6,11 @@
 // registry, and `chat.postMessage` with it is the member speaking, not a bot. The cloud row
 // (`workspace_release_notes_slack`) names the app and the channel; the owner sets it.
 //
+// Slack may issue a ROTATING user token (`xoxe.xoxp-`, 12 hours) — always, once the app has
+// token rotation on. Every use goes through token(), which renews it with its refresh token
+// shortly before it expires, so a connection lasts as long as it is used at least once per
+// refresh-token lifetime (30 days for a PKCE app).
+//
 // Separate from SlackService on purpose: that one is a long-lived bot with sockets and a
 // queue, this one is a handful of request/response calls the UI makes.
 import { Injectable, Optional } from "@nestjs/common";
@@ -13,10 +18,14 @@ import { getReleaseNotesSlack, getWorkspaceReleaseNote, upsertReleaseNotesSlack,
 import type { ReleaseNotesSlack } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { RegistryService, type SlackUserTokenRow } from "../registry/registry.service";
-import { SlackApiError, SlackClient, type SlackChannel } from "./slack-client";
+import { isSlackAuthError, SlackApiError, SlackClient, type SlackChannel } from "./slack-client";
 import { splitForSlack, toSlackMrkdwn } from "@kermanych/core";
 import { SLACK_CLIENT_ID, SLACK_OAUTH_REDIRECT, newPkceVerifier, pkceChallenge, slackAuthorizeUrl } from "./slack-oauth";
 import type { SlackClientFactory } from "./slack.service";
+
+// Renew a rotating token this long before Slack's expiry: a token handed to a call must not
+// expire mid-request, nor fall to a few minutes' clock skew.
+const REFRESH_MARGIN_MS = 5 * 60_000;
 
 // `clientId`: the Slack app this account authorized — the owner's settings compare it with
 // the Client ID being set, since the channel row takes its app from the owner's token.
@@ -33,6 +42,9 @@ export class SlackReleaseNotesService {
   // The verifier of the authorization each (workspace, user) has in flight. One at a time:
   // starting again replaces it, and finishing consumes it.
   private pending = new Map<string, { verifier: string; clientId: string }>();
+  // The renewal each (workspace, user) has in flight: a refresh token is single-use, so two
+  // calls that find the token expiring share one refresh.
+  private renewing = new Map<string, Promise<SlackUserTokenRow>>();
 
   constructor(
     private registry: RegistryService,
@@ -89,6 +101,8 @@ export class SlackReleaseNotesService {
     this.registry.setSlackUserToken(userId, {
       workspaceId,
       accessToken: grant.accessToken,
+      refreshToken: grant.refreshToken,
+      expiresAt: grant.expiresIn === null ? null : Date.now() + grant.expiresIn * 1000,
       clientId: flow.clientId,
       teamId: me.teamId,
       teamName: me.teamName,
@@ -102,24 +116,46 @@ export class SlackReleaseNotesService {
     this.registry.deleteSlackUserToken(workspaceId, userId);
   }
 
-  private token(workspaceId: string, userId: string): SlackUserTokenRow {
+  // The member's token, renewed first when it is a rotating one about to expire. A renewal
+  // Slack refuses (refresh token spent or expired) is an auth error: the UI asks to connect again.
+  private async token(workspaceId: string, userId: string): Promise<SlackUserTokenRow> {
     const row = this.registry.getSlackUserToken(workspaceId, userId);
     if (!row) throw new Error("connect your Slack account first");
-    return row;
+    if (row.expiresAt === null || row.expiresAt - REFRESH_MARGIN_MS > Date.now()) return row;
+    const key = `${workspaceId}:${userId}`;
+    let renewal = this.renewing.get(key);
+    if (!renewal) {
+      renewal = this.renew(userId, row).finally(() => this.renewing.delete(key));
+      this.renewing.set(key, renewal);
+    }
+    return renewal;
+  }
+
+  private async renew(userId: string, row: SlackUserTokenRow): Promise<SlackUserTokenRow> {
+    if (!row.refreshToken) throw new SlackApiError("oauth.v2.access", "token_expired");
+    const grant = await this.clientFactory("").oauthUserRefresh({ clientId: row.clientId, refreshToken: row.refreshToken });
+    const next: SlackUserTokenRow = {
+      ...row,
+      accessToken: grant.accessToken,
+      refreshToken: grant.refreshToken ?? row.refreshToken,
+      expiresAt: grant.expiresIn === null ? null : Date.now() + grant.expiresIn * 1000,
+    };
+    this.registry.setSlackUserToken(userId, next);
+    return next;
   }
 
   // ── the channel (owner) ──────────────────────────────────────────────────────
 
   // Only channels the owner is in: a user token cannot post anywhere else, so any other
   // channel would be a setting that fails on its first send.
-  channels(workspaceId: string, userId: string): Promise<SlackChannel[]> {
-    return this.clientFactory(this.token(workspaceId, userId).accessToken).memberChannels();
+  async channels(workspaceId: string, userId: string): Promise<SlackChannel[]> {
+    return this.clientFactory((await this.token(workspaceId, userId)).accessToken).memberChannels();
   }
 
   // Owner action (RLS enforces it). The app and team are the ones the owner's own token was
   // granted by, so the row can never name an app nobody has authorized.
   async setChannel(workspaceId: string, userId: string, channelId: string): Promise<ReleaseNotesSlack> {
-    const row = this.token(workspaceId, userId);
+    const row = await this.token(workspaceId, userId);
     const channel = await this.clientFactory(row.accessToken).memberChannel(channelId);
     if (!channel) throw new Error("you are not a member of that channel — join it in Slack first");
     return upsertReleaseNotesSlack(this.auth.cloudClient(), {
@@ -146,7 +182,7 @@ export class SlackReleaseNotesService {
     const cloud = this.auth.cloudClient();
     const settings = await getReleaseNotesSlack(cloud, workspaceId);
     if (!settings) throw new Error("no Slack channel is set for this workspace's release notes");
-    const token = this.token(workspaceId, userId);
+    const token = await this.token(workspaceId, userId);
     if (token.teamId !== settings.teamId)
       throw new Error(`your Slack account is in «${token.teamName}», but release notes go to «${settings.teamName}» — connect again`);
     const note = await getWorkspaceReleaseNote(cloud, noteId);
@@ -164,10 +200,16 @@ export class SlackReleaseNotesService {
     target: { teamId: string; channelId: string; channelName: string },
     markdown: string,
   ): Promise<ReleaseNoteSent> {
-    const token = this.token(workspaceId, userId);
-    if (token.teamId !== target.teamId)
-      throw new Error(`your Slack account is in «${token.teamName}», but #${target.channelName} is in another Slack workspace — connect again`);
-    return this.post(token, { id: target.channelId, name: target.channelName }, markdown);
+    try {
+      const token = await this.token(workspaceId, userId);
+      if (token.teamId !== target.teamId)
+        throw new Error(`your Slack account is in «${token.teamName}», but #${target.channelName} is in another Slack workspace — connect again`);
+      return await this.post(token, { id: target.channelId, name: target.channelName }, markdown);
+    } catch (err) {
+      // The run history shows this sentence; Slack's bare code would not say what to do.
+      if (isSlackAuthError(err)) throw new Error("Slack no longer accepts your connection — connect your Slack account again");
+      throw err;
+    }
   }
 
   // One document is one channel message; a document longer than a Slack message continues in

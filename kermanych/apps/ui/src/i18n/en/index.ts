@@ -3404,6 +3404,7 @@ export const en: MessageSchema = {
     sent: 'Sent',
     sendTip: 'Posts this note to #{channel} under your Slack name',
     reconnect: 'Slack no longer accepts your connection — press «Send to Slack» again to reconnect.',
+    reconnectAccount: 'Slack no longer accepts your connection — connect your Slack account again.',
     notify: {
       connected: 'Slack account connected: {user}',
       channelSet: 'Release notes will be sent to {channel}',
