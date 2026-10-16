@@ -15,19 +15,12 @@
 //     every workspace's documents in one place outside the schema that protects them. Only
 //     identifiers, counts and latency are logged.
 //
-// This is the first Edge Function in the repo; its secrets come from supabase/functions/.env
-// locally (see .env.example), NOT from `supabase secrets set`.
+// Its secrets come from supabase/functions/.env locally (see .env.example), NOT from
+// `supabase secrets set`.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { CORS_HEADERS, jsonResponse } from "../_shared/cors.ts";
+import { VOYAGE_MODEL, embed, embedQuery, halfvecLiteral } from "../_shared/voyage.ts";
 
-// The product-wide embedding model. Stored on every chunk row (embedding_model) and passed
-// to the search RPC so vectors from two models are never compared. Changing it requires a
-// full reindex.
-const VOYAGE_MODEL = "voyage-4-lite";
-const VOYAGE_DIM = 1024;
-// Voyage accepts many inputs per request; keep each request modest so one large file cannot
-// exceed the per-request input ceiling.
-const EMBED_BATCH = 96;
 // A hard cap on how many chunks one search returns to the turn.
 const DEFAULT_MATCH_COUNT = 12;
 
@@ -38,42 +31,6 @@ type ChunkInput = {
   endLine: number;
   content: string;
 };
-
-// pgvector accepts a text literal "[a,b,c]" and casts it to halfvec; that is how the vector
-// crosses the PostgREST/JSON boundary as an RPC arg and an insert value.
-function halfvecLiteral(v: number[]): string {
-  return `[${v.join(",")}]`;
-}
-
-// Embed a list of texts with Voyage, batched. Returns null when no key is configured, which
-// is the deliberate "Voyage unavailable" signal the search path degrades on. THROWS on an
-// actual API error so the index path fails loudly (a half-embedded index is worse than none).
-async function embed(texts: string[], inputType: "query" | "document"): Promise<number[][] | null> {
-  const key = Deno.env.get("VOYAGE_API_KEY");
-  if (!key) return null;
-  const out: number[][] = [];
-  for (let i = 0; i < texts.length; i += EMBED_BATCH) {
-    const batch = texts.slice(i, i + EMBED_BATCH);
-    const res = await fetch("https://api.voyageai.com/v1/embeddings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({ input: batch, model: VOYAGE_MODEL, input_type: inputType, output_dimension: VOYAGE_DIM }),
-    });
-    if (!res.ok) throw new Error(`voyage embeddings failed: ${res.status}`);
-    const j: unknown = await res.json();
-    if (!j || typeof j !== "object" || !("data" in j) || !Array.isArray(j.data)) {
-      throw new Error("voyage embeddings: unexpected response shape");
-    }
-    for (const d of j.data) {
-      if (d && typeof d === "object" && "embedding" in d && Array.isArray(d.embedding)) {
-        out.push(d.embedding as number[]);
-      } else {
-        throw new Error("voyage embeddings: missing embedding in response");
-      }
-    }
-  }
-  return out;
-}
 
 type SearchRow = {
   folder: string;
@@ -93,20 +50,10 @@ async function handleSearch(client: SupabaseClient, body: Record<string, unknown
   }
   const matchCount = typeof body.matchCount === "number" ? body.matchCount : DEFAULT_MATCH_COUNT;
 
-  // Embed the question. A null result (no key) or a thrown Voyage error both degrade to
-  // full-text — the feature's real fallback — rather than failing the turn.
-  let embedding: number[] | null = null;
-  let status: "ok" | "fulltext" = "fulltext";
-  try {
-    const vecs = await embed([query], "query");
-    if (vecs && vecs[0]) {
-      embedding = vecs[0];
-      status = "ok";
-    }
-  } catch {
-    embedding = null;
-    status = "fulltext";
-  }
+  // Embed the question. No key or a Voyage error both degrade to full-text — the feature's
+  // real fallback — rather than failing the turn.
+  const embedding = await embedQuery(query);
+  const status: "ok" | "fulltext" = embedding ? "ok" : "fulltext";
 
   const { data, error } = await client.rpc("match_project_doc_chunks", {
     p_project_id: projectId,

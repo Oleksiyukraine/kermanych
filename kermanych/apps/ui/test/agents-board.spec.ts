@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Session } from '@kermanych/core';
 import type { Task } from '@kermanych/cloud';
 import {
+  byNewestLaunch,
   byNewestSession,
   byNewestTask,
   filterSessions,
@@ -117,6 +118,28 @@ describe('byNewestSession', () => {
       session({ id: 'ok', lastActivityAt: '2026-08-30T09:00:00.000Z' }),
     ];
     expect([...rows].sort(byNewestSession).map((s) => s.id)).toEqual(['ok', 'broken']);
+  });
+});
+
+describe('byNewestLaunch', () => {
+  // The «Активні» promise: a running agent keeps its slot. Two agents working at once both
+  // stamp lastActivityAt on every event — the order must not follow those stamps, or the
+  // cards trade places on every tool call.
+  it('ignores activity, so concurrent agents do not swap places', () => {
+    const older = session({ id: 'older', createdAt: '2026-08-30T09:00:00.000Z' });
+    const newer = session({ id: 'newer', createdAt: '2026-08-30T10:00:00.000Z' });
+    const olderBusy = { ...older, lastActivityAt: '2026-08-30T12:00:01.000Z' };
+    const newerBusy = { ...newer, lastActivityAt: '2026-08-30T12:00:02.000Z' };
+    expect([olderBusy, newer].sort(byNewestLaunch).map((s) => s.id)).toEqual(['newer', 'older']);
+    expect([older, newerBusy].sort(byNewestLaunch).map((s) => s.id)).toEqual(['newer', 'older']);
+  });
+
+  // A batch launch stamps the same millisecond: the id decides, whatever order the store holds.
+  it('breaks a launch tie by id, independent of input order', () => {
+    const a = session({ id: 'a' });
+    const b = session({ id: 'b' });
+    expect([a, b].sort(byNewestLaunch).map((s) => s.id)).toEqual(['a', 'b']);
+    expect([b, a].sort(byNewestLaunch).map((s) => s.id)).toEqual(['a', 'b']);
   });
 });
 

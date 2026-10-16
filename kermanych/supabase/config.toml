@@ -411,6 +411,16 @@ deno_version = 2
 enabled = true
 verify_jwt = true
 
+# slack-events — the Slack documentation bot's cloud host (Slack's HTTP events for
+# workspaces in cloud mode). verify_jwt = false: the caller is Slack, which has no Supabase
+# JWT; the function authenticates every request by its Slack signature instead. It holds the
+# platform's service-role key, which 20261016090000_slack_cloud_answers.sql lets execute
+# only the slack_cloud_* functions. It imports packages/core/src/slack-answer.ts from
+# outside supabase/, so it deploys with `supabase functions deploy slack-events --use-api`.
+[functions.slack-events]
+enabled = true
+verify_jwt = false
+
 # routines-runner — the cloud runner of routines (docs/specs/2026-10-16-routines.md). verify_jwt
 # = false because its minute tick comes from pg_cron with no user JWT: the function authenticates
 # that call by the shared ROUTINES_RUNNER_SECRET and every member action by the caller's own JWT

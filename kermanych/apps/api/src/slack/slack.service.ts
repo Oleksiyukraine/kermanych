@@ -1,12 +1,18 @@
 // apps/api/src/slack/slack.service.ts
-// The Slack documentation bot's engine: token custody, the connect flow, the Socket Mode
-// connections this machine holds, and answering.
+// The Slack documentation bot's DESKTOP host: token custody, the connect flow, the Socket
+// Mode connections this machine holds, answering — and the owner's switch to the cloud host.
 //
-// Why the api and not the cloud: Slack must reach whoever answers, and answering needs the
-// documentation (readable only under a member's JWT — there is no service role) and a model
-// (billed to a member's own plan). This machine has both while its user is signed in, so
-// it dials OUT to Slack over Socket Mode. The consequence is stated plainly in the spec:
-// the bot answers only while a token holder has Kermanych open.
+// Why the api: Slack must reach whoever answers, and answering needs the documentation
+// (readable under a member's JWT) and a model (billed to a member's own plan). This machine
+// has both while its user is signed in, so it dials OUT to Slack over Socket Mode. The
+// consequence: in desktop mode the bot answers only while a token holder has Kermanych open.
+// A workspace that must answer with nobody online switches to cloud mode
+// (supabase/functions/slack-events, docs/specs/2026-10-16-slack-cloud-answers.md); this
+// service stores that setup and, while it is on, holds no socket for the workspace.
+//
+// The answer itself is packages/core's answerSlackAsk, shared with the cloud host so both
+// reply the same way; this file supplies only the search (under the operator's JWT) and the
+// generation (the operator's agent runtime).
 //
 // Routing, from the cloud row: a workspace is bound to ONE channel, and an event is
 // answered only for the workspace whose row names that channel. The row is read fresh per
@@ -14,15 +20,28 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from "@nestjs/common";
 import { homedir } from "node:os";
 import {
+  deleteSlackCloud,
   deleteSlackIntegration,
   getDocIndexState,
+  getSlackCloudStatus,
   getSlackIntegration,
   listProjects,
   listWorkspaces,
   searchProjectDocs,
+  setSlackCloud,
   upsertSlackIntegration,
 } from "@kermanych/cloud";
-import type { SlackIntegration } from "@kermanych/cloud";
+import type { SlackCloudStatus, SlackIntegration } from "@kermanych/cloud";
+import {
+  SLACK_MATCH_COUNT,
+  SLACK_PLACEHOLDER,
+  answerSlackAsk,
+  classifyMessage,
+  slackCloudGenerate,
+  type SlackAsk,
+  type SlackCloudAiProvider,
+  type SlackPromptDocs,
+} from "@kermanych/core";
 import { AuthService } from "../auth/auth.service";
 import { RegistryService, type SlackTokenRow } from "../registry/registry.service";
 import { runOneShot } from "../runtime/one-shot";
@@ -31,31 +50,24 @@ import { DOCS_MODEL } from "../management/management-chat.service";
 import { CodedError } from "../management/coded-error";
 import { SlackClient, type SlackChannel, type SlackIdentity } from "./slack-client";
 import { SlackSocket } from "./slack-socket";
-import {
-  classifyMessage,
-  threadTranscript,
-  type SlackAsk,
-  type TranscriptLine,
-} from "./slack-map";
-import { splitForSlack, toSlackMrkdwn } from "./slack-format";
-import { buildSlackAnswerPrompt, type SlackPromptDocs } from "./slack-prompt";
 
-// Posted the moment a question is accepted and edited into the answer: an LLM answer takes
-// tens of seconds, and a silent channel reads as a bot that did not hear.
-const PLACEHOLDER = "_Looking through the documentation…_";
+// What the owner's cloud-answers form sends. A secret left empty keeps the stored one.
+export type SlackCloudSetup = {
+  enabled: boolean;
+  aiProvider: SlackCloudAiProvider;
+  aiModel: string;
+  aiBaseUrl?: string;
+  aiApiKey?: string;
+  signingSecret?: string;
+};
 
-// No index anywhere in the workspace: said without spending a model call, because a model
-// handed zero fragments could only say «not built» — which would be a lie about the product.
-const NOT_INDEXED =
-  "The documentation of this Kermanych workspace is not indexed yet, so there is nothing I can answer from. Index it from a project's Documentation tab in Kermanych.";
+// Slack's signing secret as Basic Information → App Credentials shows it: hex.
+const SIGNING_SECRET = /^[0-9a-f]{20,}$/i;
 
-// Per project, the same match count the management chat's documentation turns retrieve.
-const MATCH_COUNT = 8;
-
-// How much of a long thread the model reads: the root question plus the newest replies
-// before the follow-up. The discussion right before a mention is what it is about; the
-// middle of a hundred-message thread is not worth the prompt.
-const THREAD_CONTEXT = 60;
+// The AI key is proven before it is stored, like the Slack tokens: a one-word generation
+// checks the key, the model and the base URL at once, for a few tokens.
+const AI_CHECK_PROMPT = "Reply with the single word OK.";
+const AI_CHECK_TIMEOUT_MS = 30_000;
 
 export type SlackClientFactory = (token: string) => SlackClient;
 export type SlackSocketFactory = (openUrl: () => Promise<string>, onEvent: (event: unknown, eventId: string) => void) => SlackSocket;
@@ -71,6 +83,9 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
   // parallel (each is a full agent process on the operator's plan); the placeholder already
   // told the asker they were heard.
   private queue: Promise<void> = Promise.resolve();
+  // Refreshes run one after another: each reads the cloud, and two interleaved could open a
+  // socket the later one just decided against.
+  private reconciling: Promise<void> = Promise.resolve();
 
   constructor(
     private registry: RegistryService,
@@ -88,9 +103,9 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
     if (process.env.KERMANYCH_PREVIEW === "1") return;
     // Every token push, not only sign-in: a refresh is a no-op when nothing changed, and a
     // different user signing in must swap the sockets to their own tokens.
-    this.auth.onToken(() => this.refresh());
+    this.auth.onToken(() => void this.refresh());
     this.auth.onClear(() => this.stopAll());
-    if (this.auth.current()) this.refresh();
+    if (this.auth.current()) void this.refresh();
   }
 
   onModuleDestroy(): void {
@@ -100,13 +115,30 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
   // ── sockets ──────────────────────────────────────────────────────────────────
 
   // Reconcile the open connections with the signed-in user's stored tokens: open what is
-  // missing, stop what is gone. Idempotent and never throws — it runs from listeners that
-  // have no one to report to.
-  refresh(): void {
-    if (process.env.KERMANYCH_PREVIEW === "1") return;
+  // missing, stop what is gone — and hold none for a workspace in cloud mode, whose Slack
+  // app delivers to the Edge Function instead. Idempotent and never throws — it runs from
+  // listeners that have no one to report to.
+  refresh(): Promise<void> {
+    if (process.env.KERMANYCH_PREVIEW === "1") return Promise.resolve();
+    const run = (): Promise<void> => this.reconcile();
+    this.reconciling = this.reconciling.then(run, run);
+    return this.reconciling;
+  }
+
+  private async reconcile(): Promise<void> {
     try {
       const user = this.auth.current();
-      const want = new Set((user ? this.registry.listSlackTokens(user.userId) : []).map((r) => r.appToken));
+      const rows = user ? this.registry.listSlackTokens(user.userId) : [];
+      const want = new Set<string>();
+      for (const row of rows) {
+        // An unreadable cloud keeps the desktop answering: a socket that receives nothing
+        // costs little, a channel nobody answers costs the asker.
+        const cloud = await getSlackCloudStatus(this.auth.cloudClient(), row.workspaceId).catch(() => undefined);
+        if (!cloud?.enabled) want.add(row.appToken);
+      }
+      // Signed out (or someone else signed in) while the cloud was being read: that sign-out
+      // already stopped the sockets, and these rows are not the current user's.
+      if (this.auth.current()?.userId !== user?.userId) return;
       for (const [appToken, socket] of this.sockets)
         if (!want.has(appToken)) {
           socket.stop();
@@ -151,13 +183,13 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
         `these tokens belong to the Slack workspace «${id.teamName}», but this workspace is connected to «${integration.teamName}»`,
       );
     this.registry.setSlackToken(userId, { workspaceId, botToken, appToken, ...id });
-    this.refresh();
+    void this.refresh();
     return id;
   }
 
   deleteToken(workspaceId: string, userId: string): void {
     this.registry.deleteSlackToken(workspaceId, userId);
-    this.refresh();
+    void this.refresh();
   }
 
   private tokenRow(workspaceId: string, userId: string): SlackTokenRow {
@@ -187,17 +219,89 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
       channelName: channel.name,
       botUserId: row.botUserId,
     });
-    this.refresh();
+    void this.refresh();
     return integration;
   }
 
   // The row AND this machine's tokens: an owner disconnecting means «stop answering», and
   // keeping the socket open on their own machine would keep acknowledging events for an
-  // integration that no longer exists.
+  // integration that no longer exists. The cloud-answers row and its secrets go with the
+  // integration row (on delete cascade).
   async disconnect(workspaceId: string, userId: string): Promise<void> {
     await deleteSlackIntegration(this.auth.cloudClient(), workspaceId);
     this.registry.deleteSlackToken(workspaceId, userId);
-    this.refresh();
+    void this.refresh();
+  }
+
+  // ── cloud answers (owner) ────────────────────────────────────────────────────
+
+  // Stores the cloud host's setup through set_slack_cloud, which refuses anyone but the
+  // owner. Everything is proven before it is stored, the setToken rule: the bot token is
+  // this machine's, checked against the connected Slack workspace; the AI key, model and
+  // base URL by a one-word answer. The signing secret cannot be proven from here — the
+  // card's «Slack reaches the cloud» stamp is its proof, once Slack sends a signed request.
+  async setCloud(workspaceId: string, setup: SlackCloudSetup, userId: string): Promise<SlackCloudStatus> {
+    const cloud = this.auth.cloudClient();
+    const integration = await getSlackIntegration(cloud, workspaceId);
+    if (!integration) throw new Error("connect a Slack channel before setting up cloud answers");
+    const current = await getSlackCloudStatus(cloud, workspaceId);
+
+    // The bot token the cloud posts with is this machine's, re-sent on every save so a token
+    // replaced here reaches the cloud too. Without one, the stored token stays.
+    const row = this.registry.getSlackToken(workspaceId, userId);
+    if (row) {
+      const id = await this.clientFactory(row.botToken).authTest();
+      if (id.teamId !== integration.teamId)
+        throw new Error(
+          `this machine's Slack tokens belong to «${id.teamName}», but this workspace is connected to «${integration.teamName}»`,
+        );
+    } else if (!current) {
+      throw new Error("this machine holds no Slack tokens — save the bot and app tokens on this card first");
+    }
+
+    const signingSecret = setup.signingSecret?.trim() || undefined;
+    if (signingSecret && !SIGNING_SECRET.test(signingSecret))
+      throw new Error("that is not a signing secret — copy it from Basic Information → App Credentials");
+    if (!signingSecret && !current) throw new Error("the signing secret is required");
+
+    const aiModel = setup.aiModel.trim();
+    if (!aiModel) throw new Error("the model is required");
+    const aiBaseUrl = setup.aiProvider === "openai" ? setup.aiBaseUrl?.trim() || undefined : undefined;
+    if (aiBaseUrl && !aiBaseUrl.startsWith("https://")) throw new Error("the base URL must start with https://");
+    const aiApiKey = setup.aiApiKey?.trim() || undefined;
+    // The stored key cannot be read back to test it against another provider, model or URL.
+    const aiChanged =
+      !current || current.aiProvider !== setup.aiProvider || current.aiModel !== aiModel || current.aiBaseUrl !== aiBaseUrl;
+    if (aiChanged && !aiApiKey) throw new Error("enter the AI API key again to change the provider, model or base URL");
+    if (aiApiKey) {
+      const ai = { provider: setup.aiProvider, model: aiModel, apiKey: aiApiKey, ...(aiBaseUrl ? { baseUrl: aiBaseUrl } : {}) };
+      try {
+        await slackCloudGenerate(ai, AI_CHECK_PROMPT, { maxTokens: 16, signal: AbortSignal.timeout(AI_CHECK_TIMEOUT_MS) });
+      } catch (err) {
+        throw new Error(`the AI key did not answer — ${(err as Error).message}`);
+      }
+    }
+
+    await setSlackCloud(cloud, {
+      workspaceId,
+      enabled: setup.enabled,
+      aiProvider: setup.aiProvider,
+      aiModel,
+      ...(aiBaseUrl ? { aiBaseUrl } : {}),
+      ...(aiApiKey ? { aiApiKey } : {}),
+      ...(signingSecret ? { signingSecret } : {}),
+      ...(row ? { botToken: row.botToken } : {}),
+    });
+    await this.refresh();
+    const saved = await getSlackCloudStatus(cloud, workspaceId);
+    if (!saved) throw new Error("cloud answers were not saved");
+    return saved;
+  }
+
+  // «Remove cloud keys»: the secrets leave the cloud and this machine's sockets come back.
+  async deleteCloud(workspaceId: string): Promise<void> {
+    await deleteSlackCloud(this.auth.cloudClient(), workspaceId);
+    await this.refresh();
   }
 
   // ── answering ────────────────────────────────────────────────────────────────
@@ -216,7 +320,7 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
         if (!integration || integration.channelId !== ask.channel) continue;
 
         const client = this.clientFactory(row.botToken);
-        const placeholder = await client.postMessage(ask.channel, ask.threadTs, PLACEHOLDER);
+        const placeholder = await client.postMessage(ask.channel, ask.threadTs, SLACK_PLACEHOLDER);
         const job = (): Promise<void> => this.answer(row, ask, client, placeholder.ts);
         this.queue = this.queue.then(job, job);
         return;
@@ -226,69 +330,40 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async answer(row: SlackTokenRow, ask: SlackAsk, client: SlackClient, placeholderTs: string): Promise<void> {
+  // The shared answer, with this host's search (the docs-rag search under the operator's
+  // JWT) and generation (a tool-less one-shot child on the operator's agent runtime).
+  private answer(row: SlackTokenRow, ask: SlackAsk, client: SlackClient, placeholderTs: string): Promise<void> {
     const startedAt = Date.now();
-    // Once the placeholder holds the start of the answer, a failure further on must not
-    // overwrite it: the apology goes after it instead.
-    let started = false;
-    try {
-      let transcript: TranscriptLine[] = [];
-      let query = ask.text;
-      if (ask.kind === "followup") {
-        // Only what was said up to the follow-up: later replies were not part of the
-        // question, and the placeholder is the answer being written.
-        const before = (await client.replies(ask.channel, ask.threadTs)).filter((m) => Number(m.ts) < Number(ask.ts));
-        const kept = before.length > THREAD_CONTEXT ? [before[0]!, ...before.slice(-(THREAD_CONTEXT - 1))] : before;
-        transcript = threadTranscript(kept, row.botUserId, placeholderTs);
-        // Retrieval sees the root question too: «and on mobile?» alone matches nothing.
-        if (transcript[0]) query = `${transcript[0].text}\n${ask.text}`;
-      }
-
-      const cloud = this.auth.cloudClient();
-      const docs: SlackPromptDocs[] = [];
-      for (const project of await listProjects(cloud)) {
-        if (project.workspaceId !== row.workspaceId) continue;
-        if ((await getDocIndexState(cloud, project.id)).fileCount === 0) continue;
-        const found = await searchProjectDocs(cloud, { projectId: project.id, query, matchCount: MATCH_COUNT });
-        docs.push({ projectName: project.name, fragments: found.fragments });
-      }
-      if (docs.length === 0) {
-        await client.update(ask.channel, placeholderTs, NOT_INDEXED);
-        return;
-      }
-
-      // Best-effort: the name only flavours the prompt, it must not cost the answer.
-      const workspaceName = (await listWorkspaces(cloud).catch(() => [])).find((w) => w.id === row.workspaceId)?.name;
-      const prompt = buildSlackAnswerPrompt({
-        ...(workspaceName ? { workspaceName } : {}),
-        transcript,
-        question: ask.text,
-        docs,
-      });
+    const cloud = this.auth.cloudClient();
+    return answerSlackAsk(ask, placeholderTs, {
+      slack: client,
+      botUserId: row.botUserId,
+      searchDocs: async (query) => {
+        const docs: SlackPromptDocs[] = [];
+        for (const project of await listProjects(cloud)) {
+          if (project.workspaceId !== row.workspaceId) continue;
+          if ((await getDocIndexState(cloud, project.id)).fileCount === 0) continue;
+          const found = await searchProjectDocs(cloud, { projectId: project.id, query, matchCount: SLACK_MATCH_COUNT });
+          docs.push({ projectName: project.name, fragments: found.fragments });
+        }
+        return docs;
+      },
+      workspaceName: async () => (await listWorkspaces(cloud)).find((w) => w.id === row.workspaceId)?.name,
       // Tool-less, in the home directory: the answer comes from the fragments in the prompt,
       // and there is no repository this child should be able to wander into.
-      const { text } = await runOneShot({
-        kind: resolveRuntime(process.env.KERMANYCH_RUNTIME, this.registry.getAuthSession()?.agentRuntime),
-        cwd: homedir(),
-        prompt,
-        noTools: true,
-        model: DOCS_MODEL,
-        startedAt,
-      });
-      // The placeholder becomes the first part; a longer answer continues in the thread,
-      // one message per part, in order.
-      const [first, ...rest] = splitForSlack(toSlackMrkdwn(text));
-      await client.update(ask.channel, placeholderTs, first!);
-      started = true;
-      for (const part of rest) await client.postMessage(ask.channel, ask.threadTs, part);
-    } catch (err) {
-      const reason = err instanceof CodedError ? err.code : (err as Error).message;
-      this.log.warn(`slack: answering in ${ask.channel} failed — ${reason}`);
-      const apology = `_Sorry, I could not answer this one (${reason})._`;
-      await (started
-        ? client.postMessage(ask.channel, ask.threadTs, apology)
-        : client.update(ask.channel, placeholderTs, apology)
-      ).catch((e: Error) => this.log.warn(`slack: posting the apology failed — ${e.message}`));
-    }
+      generate: async (prompt) =>
+        (
+          await runOneShot({
+            kind: resolveRuntime(process.env.KERMANYCH_RUNTIME, this.registry.getAuthSession()?.agentRuntime),
+            cwd: homedir(),
+            prompt,
+            noTools: true,
+            model: DOCS_MODEL,
+            startedAt,
+          })
+        ).text,
+      failureReason: (err) => (err instanceof CodedError ? err.code : (err as Error).message),
+      warn: (message) => this.log.warn(message),
+    });
   }
 }

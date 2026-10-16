@@ -7,7 +7,14 @@
 // Slack live in each machine's registry SQLite; apps/api's SlackService reads this row to
 // learn which channel to listen on for a workspace.
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ReleaseNotesSlack, ReleaseNotesSlackInsert, SlackIntegration, SlackIntegrationInsert } from "./types";
+import type {
+  ReleaseNotesSlack,
+  ReleaseNotesSlackInsert,
+  SlackCloudInput,
+  SlackCloudStatus,
+  SlackIntegration,
+  SlackIntegrationInsert,
+} from "./types";
 
 const INTEGRATION_COLUMNS =
   "id, workspace_id, team_id, team_name, channel_id, channel_name, bot_user_id, connected_by, created_at, updated_at";
@@ -85,6 +92,60 @@ export async function upsertSlackIntegration(
 // Only the binding goes; each member's local tokens are theirs to remove.
 export async function deleteSlackIntegration(client: SupabaseClient, workspaceId: string): Promise<void> {
   const { error } = await client.from("workspace_slack_integrations").delete().eq("workspace_id", workspaceId);
+  if (error) throw new Error(error.message);
+}
+
+// ── cloud answers ─────────────────────────────────────────────────────────────
+// workspace_slack_cloud is unreadable to every client role; these three security definer
+// functions are its whole client surface (20261016090000_slack_cloud_answers.sql).
+
+type CloudStatusRow = {
+  enabled: boolean;
+  ai_provider: SlackCloudStatus["aiProvider"];
+  ai_model: string;
+  ai_base_url: string | null;
+  ai_key_hint: string;
+  events_seen_at: string | null;
+  updated_at: string;
+};
+
+// `undefined` = cloud answers were never set up, or the caller is not a member.
+export async function getSlackCloudStatus(client: SupabaseClient, workspaceId: string): Promise<SlackCloudStatus | undefined> {
+  const { data, error } = await client.rpc("get_slack_cloud_status", { p_workspace_id: workspaceId });
+  if (error) throw new Error(error.message);
+  const row = (data as CloudStatusRow[] | null)?.[0];
+  if (!row) return undefined;
+  const s: SlackCloudStatus = {
+    workspaceId,
+    enabled: row.enabled,
+    aiProvider: row.ai_provider,
+    aiModel: row.ai_model,
+    aiKeyHint: row.ai_key_hint,
+    updatedAt: row.updated_at,
+  };
+  if (row.ai_base_url !== null) s.aiBaseUrl = row.ai_base_url;
+  if (row.events_seen_at !== null) s.eventsSeenAt = row.events_seen_at;
+  return s;
+}
+
+// Owner-only (the function checks). Undefined secrets keep the stored ones.
+export async function setSlackCloud(client: SupabaseClient, input: SlackCloudInput): Promise<void> {
+  const { error } = await client.rpc("set_slack_cloud", {
+    p_workspace_id: input.workspaceId,
+    p_enabled: input.enabled,
+    p_bot_token: input.botToken ?? null,
+    p_signing_secret: input.signingSecret ?? null,
+    p_ai_provider: input.aiProvider,
+    p_ai_model: input.aiModel,
+    p_ai_base_url: input.aiBaseUrl ?? null,
+    p_ai_api_key: input.aiApiKey ?? null,
+  });
+  if (error) throw new Error(error.message);
+}
+
+// Owner-only: the secrets leave the cloud; the channel binding stays.
+export async function deleteSlackCloud(client: SupabaseClient, workspaceId: string): Promise<void> {
+  const { error } = await client.rpc("delete_slack_cloud", { p_workspace_id: workspaceId });
   if (error) throw new Error(error.message);
 }
 

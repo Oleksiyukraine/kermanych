@@ -1103,7 +1103,16 @@ import { changedDocsView, ownReports, unionInOrder } from '../lib/session-report
 import { imageToFile } from '../lib/images';
 import { myBacklogTasks, taskInsertFromDraft, taskPatchFromDraft } from '../lib/tasks-view';
 import { planBacklogPublication } from '../lib/publish-backlog';
-import { byNewestSession, byNewestTask, filterSessions, filterTaskCards, newestActivityAt, newestUpdateAt } from '../lib/agents-board';
+import {
+  byNewestLaunch,
+  byNewestSession,
+  byNewestTask,
+  filterSessions,
+  filterTaskCards,
+  newestActivityAt,
+  newestLaunchAt,
+  newestUpdateAt,
+} from '../lib/agents-board';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KLogBlock from 'components/kit/KLogBlock.vue';
@@ -1250,25 +1259,6 @@ watch(
   },
 );
 
-// Row order for the agents table. Sessions are bucketed into status tiers and
-// sorted by creation time within each tier. Ranking by tier — not by the live
-// status — is what stops rows from jumping while agents run: every "process
-// alive" status (queued/thinking/tool/waiting_input) shares rank 0, so an agent
-// flipping between `thinking` and `tool` mid-run never reorders the table. Only
-// real lifecycle moves (a run ending, a branch merging) shift a row's tier.
-const STATUS_RANK: Record<SessionStatus, number> = {
-  backlog: 0,
-  queued: 0,
-  thinking: 0,
-  tool: 0,
-  waiting_input: 0,
-  error: 1,
-  conflict: 1,
-  done: 2,
-  in_review: 2,
-  stopped: 2,
-  merged: 3,
-};
 // ── Scope: workspace → project → session ──────────────────────────────────
 // The same three levels the board answers one step up, with the one difference that decides
 // this whole file: a local session needs NO cloud to exist. So the cloud is consulted for
@@ -1304,16 +1294,18 @@ const scopedSessions = computed(() =>
   }),
 );
 
-// What the column orders: the rows the query kept, freshest first.
+// What the column orders: the rows the query kept, newest first.
 //
-// Recency, and no longer a status tier. The list used to rank by status — every «process
-// alive» status sharing one rank — so that an agent flipping between `thinking` and `tool`
-// never reordered the table. `lastActivityAt` moves for the same reason, but it moves
-// TOWARDS the top, and the top is where the operator is looking: a working agent leads, a
-// finished one sinks as newer work arrives. The cost is real and accepted — two agents
-// running at once do trade places as their events land.
+// «Активні» orders by LAUNCH (createdAt): every running agent stamps lastActivityAt on each
+// event, so ordering live rows by it made two agents working at once trade places on every
+// tool call. A launch time never moves mid-run — each card keeps its slot until its run ends
+// and it leaves the bucket. Every other bucket holds agents that have stopped, so recency
+// there is stable and still means «the one that finished last leads».
+const activeBucket = computed(() => store.selectedBucket === 'active');
 const projectSessions = computed(() =>
-  [...filterSessions(scopedSessions.value, query.value)].sort(byNewestSession),
+  [...filterSessions(scopedSessions.value, query.value)].sort(
+    activeBucket.value ? byNewestLaunch : byNewestSession,
+  ),
 );
 
 // Board order: each discussion child immediately follows its parent (a one-level
@@ -1360,7 +1352,8 @@ const boardGroups = computed<BoardGroup[]>(() => {
     group.rows.push(s);
   }
   const out = [...groups.values()];
-  for (const g of out) g.newest = newestActivityAt(g.rows);
+  const newestOf = activeBucket.value ? newestLaunchAt : newestActivityAt;
+  for (const g of out) g.newest = newestOf(g.rows);
   return out.sort((a, b) => b.newest - a.newest);
 });
 
