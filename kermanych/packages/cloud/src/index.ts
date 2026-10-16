@@ -69,6 +69,9 @@ export type {
   WorkspaceRoutineRun,
   WorkspaceRoutineRunClaim,
   WorkspaceRoutineRunResult,
+  RoutineCloudStatus,
+  RoutineCloudConfig,
+  RoutineCloudChannel,
   WorkspacePassword,
   WorkspacePasswordField,
   WorkspacePasswordSecret,
@@ -207,6 +210,10 @@ export {
   listWorkspaceRoutineRuns,
   claimRoutineRun,
   finishRoutineRun,
+  getRoutineCloudStatus,
+  configureRoutineCloud,
+  listRoutineCloudChannels,
+  runRoutineInCloud,
 } from "./routines";
 
 export {

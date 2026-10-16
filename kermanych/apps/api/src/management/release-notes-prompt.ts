@@ -7,6 +7,13 @@
 // INTO the prompt rather than left for the model to dig out, because the child's tools are
 // read-only (no bash, so no `git log`) — but the tools still matter: a commit subject that
 // says nothing («fix», «wip») can be resolved by reading the code it touched.
+//
+// Two generators read it: the local api (code in a checkout on this machine, omp's
+// read/grep/glob) and the cloud routine runner (code on GitHub, its own list_files/read_file/
+// search_code tools). The runner is Deno and gets a copy of this file in
+// supabase/functions/_shared/ (`node scripts/sync-edge-shared.mjs`, which rewrites the one
+// import below; apps/api/test/edge-mirrors.spec.ts fails when the copy is stale). Edit THIS
+// file, then sync.
 import type { ReleaseCommit, ReleaseGrouping } from "@kermanych/core";
 
 // Upper bound on the commit blocks, in characters. A quarter's worth of a busy repo can be
@@ -16,6 +23,14 @@ import type { ReleaseCommit, ReleaseGrouping } from "@kermanych/core";
 // A note over several projects splits it evenly, so one busy repository cannot push another
 // one's commits out of the prompt.
 export const MAX_COMMITS_CHARS = 48_000;
+
+// The document's title, read from its first `# ` heading — the prompt requires one, but a
+// model that ignored the rule must not sink the whole generation, so the fallback restates
+// what the note is about in the list's own terms.
+export function titleOf(markdown: string, fallback: string): string {
+  const m = /^#[^\S\n]+(.+)$/m.exec(markdown);
+  return m?.[1]?.trim() || fallback;
+}
 
 function commitLine(c: ReleaseCommit): string {
   // The body indented under its subject so the model reads them as one commit; hashes are
@@ -58,14 +73,19 @@ export function commitsByAuthor(commits: ReleaseCommit[]): Map<string, ReleaseCo
 }
 
 // One project as the generator is shown it: the name its section is headed with, the branch
-// that was read, where its code lives on this machine (so the read-only tools can open the
-// code behind a vague commit) and the commits of the period.
+// that was read, where its code lives (a folder on this machine, or an `owner/repo` on GitHub
+// for the cloud runner — so the read-only tools can open the code behind a vague commit) and
+// the commits of the period.
 export type ReleasePromptSource = {
   projectName: string;
   branch: string;
   repoPath: string;
   commits: ReleaseCommit[];
 };
+
+// How the generator reaches the code: `local` is a checkout and omp's tools, `github` is the
+// cloud runner's GitHub-backed tools.
+export type ReleaseCodeAccess = "local" | "github";
 
 // No language input: every note is written in English, whatever the operator's UI locale,
 // agent language or the commits' own language. A note is read by the whole team and by
@@ -81,7 +101,12 @@ export function buildReleaseNotesPrompt(input: {
   rangeTo: string;
   // `topic` (default) groups changes by meaning; `person` writes one section per author.
   groupBy?: ReleaseGrouping;
+  // Absent means `local`, the generator every caller had before the cloud runner.
+  codeAccess?: ReleaseCodeAccess;
 }): string {
+  const github = input.codeAccess === "github";
+  const codeHome = github ? "репозиторії GitHub" : "теці";
+  const tools = github ? "list_files/read_file/search_code" : "read/grep/glob";
   const multi = input.sources.length > 1;
   const cap = Math.floor(MAX_COMMITS_CHARS / Math.max(1, input.sources.length));
   const byPerson = input.groupBy === "person";
@@ -139,7 +164,7 @@ export function buildReleaseNotesPrompt(input: {
         `Період: ${input.rangeFrom} — ${input.rangeTo} включно, однаковий для всіх проєктів.`,
         ``,
         `Проєкти (кожен — окремий репозиторій зі своєю гілкою):`,
-        ...input.sources.map((s, i) => `${i + 1}. ${s.projectName} — гілка ${s.branch}, код у теці ${s.repoPath}`),
+        ...input.sources.map((s, i) => `${i + 1}. ${s.projectName} — гілка ${s.branch}, код у ${codeHome} ${s.repoPath}`),
       ]
     : [
         `Репозиторій: ${input.sources[0]?.projectName ?? ""}. Гілка: ${input.sources[0]?.branch ?? ""}. Період: ${input.rangeFrom} — ${input.rangeTo} включно.`,
@@ -174,8 +199,8 @@ export function buildReleaseNotesPrompt(input: {
     ...projects,
     ...layout,
     multi
-      ? `- Якщо з коміта незрозуміло, що саме він змінює для користувача — відкрий код репозиторію саме цього проєкту (його тека — у списку «Проєкти»; read/grep/glob) і розберися, перш ніж писати.`
-      : `- Якщо з коміта незрозуміло, що саме він змінює для користувача — відкрий код репозиторію (read/grep/glob) і розберися, перш ніж писати.`,
+      ? `- Якщо з коміта незрозуміло, що саме він змінює для користувача — відкрий код репозиторію саме цього проєкту (його ${github ? "репозиторій" : "тека"} — у списку «Проєкти»; ${tools}) і розберися, перш ніж писати.`
+      : `- Якщо з коміта незрозуміло, що саме він змінює для користувача — відкрий код репозиторію (${tools}) і розберися, перш ніж писати.`,
     `- Перший рядок — заголовок першого рівня \`#\`, що називає продукт і період.`,
     `- У відповіді — ЛИШЕ готовий markdown-документ. Без преамбули, без коментарів поза документом, без запитань.`,
     ``,

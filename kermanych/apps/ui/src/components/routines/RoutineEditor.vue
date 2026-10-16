@@ -28,6 +28,19 @@
         />
       </div>
 
+      <!-- Where it runs: the author's computer (their checkouts, Slack account and plan, only
+           while Kermanych is open) or the workspace's cloud runner (always, with the
+           workspace's own keys). -->
+      <KSelect
+        :model-value="form.runner"
+        :label="t('management.routines.editor.runner')"
+        :options="runnerOptions"
+        @update:model-value="(v: string) => (form.runner = v as RoutineRunner)"
+      />
+      <p v-if="form.runner === 'cloud' && cloudMissing" class="rtn-ed__hint rtn-ed__hint--warn">
+        {{ cloudStatus === null ? t('management.routines.editor.cloudUnavailable') : t('management.routines.editor.cloudNotReady') }}
+      </p>
+
       <!-- ── What it does ───────────────────────────────────────────────────── -->
       <template v-if="form.kind === 'prompt'">
         <KField
@@ -38,7 +51,12 @@
           :rows="7"
         />
         <p class="rtn-ed__hint">
-          {{ form.scope ? t('management.routines.editor.promptProjectHint', { project: scopeName }) : t('management.routines.editor.promptWorkspaceHint') }}
+          <template v-if="form.scope">
+            {{ form.runner === 'cloud' ? t('management.routines.editor.promptProjectCloudHint', { project: scopeName }) : t('management.routines.editor.promptProjectHint', { project: scopeName }) }}
+          </template>
+          <template v-else>
+            {{ form.runner === 'cloud' ? t('management.routines.editor.promptWorkspaceCloudHint') : t('management.routines.editor.promptWorkspaceHint') }}
+          </template>
         </p>
         <KCheckbox v-if="form.scope" v-model="form.hideFromBoard" :label="t('management.routines.editor.hideFromBoard')" />
       </template>
@@ -118,7 +136,20 @@
       <!-- ── Where the result goes ──────────────────────────────────────────── -->
       <template v-if="slackAllowed">
         <KCheckbox v-model="form.slackOn" :label="t('management.routines.editor.slack')" />
-        <template v-if="form.slackOn">
+        <template v-if="form.slackOn && form.runner === 'cloud'">
+          <p v-if="!cloudStatus?.slack" class="rtn-ed__hint">{{ t('management.routines.editor.slackNoBot') }}</p>
+          <KSelect
+            v-else
+            :model-value="form.channelId"
+            :label="t('management.routines.editor.slackBotChannel', { team: cloudStatus.slack.teamName })"
+            :options="channelOptions"
+            :placeholder="channelsFailed ? t('management.routines.editor.slackChannelsFailed') : t('management.routines.editor.slackChannelPlaceholder')"
+            searchable
+            @update:model-value="(v: string) => (form.channelId = v)"
+          />
+          <p v-if="cloudStatus?.slack" class="rtn-ed__hint">{{ t('management.routines.editor.slackBotHint') }}</p>
+        </template>
+        <template v-else-if="form.slackOn">
           <p v-if="!slackAccount?.connected && !slack.settings[workspaceId]" class="rtn-ed__hint">
             {{ t('management.routines.editor.slackNoApp') }}
           </p>
@@ -144,7 +175,9 @@
         {{ t('management.routines.editor.slackAgentHint') }}
       </p>
 
-      <p class="rtn-ed__hint rtn-ed__hint--runner">{{ t('management.routines.editor.runnerHint') }}</p>
+      <p class="rtn-ed__hint rtn-ed__hint--runner">
+        {{ form.runner === 'cloud' ? t('management.routines.editor.runnerCloudHint') : t('management.routines.editor.runnerHint') }}
+      </p>
       <p v-if="error" class="rtn-ed__error">{{ error }}</p>
     </div>
 
@@ -156,9 +189,9 @@
 </template>
 
 <script setup lang="ts">
-// The routine form: what a routine does, when, and where its result goes. It validates with
-// core's `validateRoutine` — the same vocabulary the api runs — and writes the row through the
-// routines store under the operator's own JWT.
+// The routine form: what a routine does, where it runs, when, and where its result goes. It
+// validates with core's `validateRoutine` — the same vocabulary both runners run — and writes
+// the row through the routines store under the operator's own JWT.
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
@@ -166,6 +199,7 @@ import {
   parseRoutineSchedule,
   validateRoutine,
   type RoutineActionKind,
+  type RoutineRunner,
   type RoutineDraft,
   type RoutineSchedule,
   type RoutineScheduleKind,
@@ -218,6 +252,7 @@ const form = reactive({
   day: '1',
   slackOn: false,
   channelId: '',
+  runner: 'local' as RoutineRunner,
 });
 const saving = ref(false);
 const error = ref('');
@@ -226,6 +261,18 @@ const error = ref('');
 const timezone = computed(() => props.routine?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
 
 const workspaceProjects = computed(() => projects.projects.filter((p) => p.workspaceId === props.workspaceId));
+
+// ── where it runs ─────────────────────────────────────────────────────────────
+
+// `null` = the cloud runner could not be asked (not deployed, offline); undefined = not loaded.
+const cloudStatus = computed(() => store.cloud[props.workspaceId]);
+const runnerOptions = computed<KSelectOption[]>(() => [
+  { value: 'local', label: t('management.routines.runner.local') },
+  { value: 'cloud', label: t('management.routines.runner.cloud') },
+]);
+// A project prompt in the cloud only files its card, which needs no key; everything else reads
+// GitHub and asks the model.
+const cloudMissing = computed(() => !(form.kind === 'prompt' && form.scope) && !cloudStatus.value?.configured);
 
 // The scope picker's value for «the whole workspace». `form.scope` itself stays '' for it —
 // what the row stores as a null project — so every check below reads as «has a project».
@@ -281,11 +328,13 @@ async function loadBranches(projectId: string): Promise<void> {
 }
 
 // The clone's branches, plus the branch a saved routine names when this machine's clone lacks
-// it (not bound here, or not fetched yet) — an edit of the name must not drop the branch.
+// it (not bound here, or not fetched yet) — an edit of the name must not drop the branch — and
+// the project's default branch, so a cloud routine can be set up for a project nobody bound on
+// this machine: the cloud reads GitHub, not a clone.
 function branchOptions(projectId: string): string[] {
   const listed = branchLists.value[projectId]?.branches ?? [];
-  const kept = form.branches[projectId];
-  return kept && !listed.includes(kept) ? [kept, ...listed] : listed;
+  const extra = [form.branches[projectId], workspaceProjects.value.find((p) => p.id === projectId)?.defaultBranch];
+  return [...new Set([...extra.filter((b): b is string => !!b), ...listed])];
 }
 
 function pickProjects(ids: string[]): void {
@@ -311,16 +360,23 @@ const slackAccount = computed(() => {
   const a = slack.accounts[props.workspaceId];
   return a?.connected ? a : undefined;
 });
+// The channels of whoever posts: the author's own Slack account for a local routine, the
+// workspace's bot for a cloud one.
 const channels = ref<SlackChannelOption[]>([]);
+const channelsFor = ref<RoutineRunner | undefined>(undefined);
 const channelsFailed = ref(false);
 const connecting = ref(false);
 const channelOptions = computed<KSelectOption[]>(() => channels.value.map((c) => ({ value: c.id, label: `#${c.name}` })));
 
 async function loadChannels(): Promise<void> {
+  const runner = form.runner;
   channelsFailed.value = false;
+  channelsFor.value = runner;
   try {
-    channels.value = await api.slackAccountChannels(props.workspaceId);
-    if (!form.channelId) form.channelId = slack.settings[props.workspaceId]?.channelId ?? '';
+    const list = runner === 'cloud' ? await store.cloudChannels(props.workspaceId) : await api.slackAccountChannels(props.workspaceId);
+    if (form.runner !== runner) return;
+    channels.value = list;
+    if (!list.some((c) => c.id === form.channelId)) form.channelId = slack.settings[props.workspaceId]?.channelId ?? '';
   } catch {
     channels.value = [];
     channelsFailed.value = true;
@@ -340,9 +396,10 @@ async function connectSlack(): Promise<void> {
 }
 
 watch(
-  () => form.slackOn && !!slackAccount.value,
-  (want) => {
-    if (want && !channels.value.length) void loadChannels();
+  () => [form.slackOn, form.runner, !!slackAccount.value, !!cloudStatus.value?.slack] as const,
+  ([on, runner, account, bot]) => {
+    if (!on || !(runner === 'cloud' ? bot : account)) return;
+    if (channelsFor.value !== runner || !channels.value.length) void loadChannels();
   },
 );
 
@@ -368,14 +425,18 @@ function schedule(): RoutineSchedule {
 
 const draft = computed<RoutineDraft>(() => {
   const channel = channels.value.find((c) => c.id === form.channelId);
-  const keptSlack = props.routine?.slack?.channelId === form.channelId ? props.routine.slack : undefined;
+  // A saved channel counts as long as the routine still posts through the same identity.
+  const keptSlack =
+    props.routine?.slack?.channelId === form.channelId && props.routine.runner === form.runner ? props.routine.slack : undefined;
+  const poster = form.runner === 'cloud' ? cloudStatus.value?.slack?.teamId : slackAccount.value?.teamId;
   const target =
-    channel && slackAccount.value
-      ? { teamId: slackAccount.value.teamId, channelId: channel.id, channelName: channel.name }
+    channel && poster && channelsFor.value === form.runner
+      ? { teamId: poster, channelId: channel.id, channelName: channel.name }
       : keptSlack;
   return {
     name: form.name,
     ...(form.scope ? { projectId: form.scope } : {}),
+    runner: form.runner,
     timezone: timezone.value,
     action:
       form.kind === 'prompt'
@@ -408,7 +469,9 @@ watch(
     if (!open) return;
     error.value = '';
     void slack.load(props.workspaceId);
+    void store.loadCloud(props.workspaceId);
     channels.value = [];
+    channelsFor.value = undefined;
     const r = props.routine;
     const s = r?.schedule;
     const a = r?.action;
@@ -430,6 +493,9 @@ watch(
       day: s?.kind === 'monthly' ? String(s.day) : '1',
       slackOn: !!r?.slack,
       channelId: r?.slack?.channelId ?? '',
+      // A new routine starts in the cloud when the workspace has one: that is the runner that
+      // does not depend on anybody's computer being on.
+      runner: r?.runner ?? (store.cloud[props.workspaceId]?.configured ? 'cloud' : 'local'),
     });
     for (const id of sourceIds.value) void loadBranches(id);
   },
@@ -449,11 +515,16 @@ async function save(): Promise<void> {
     error.value = t('management.routines.editor.oncePast');
     return;
   }
+  if (v.runner === 'cloud' && cloudMissing.value) {
+    error.value = t('management.routines.editor.cloudNotReady');
+    return;
+  }
   saving.value = true;
   try {
     const saved = props.routine
       ? await store.update(props.routine, {
           name: v.name,
+          runner: v.runner,
           action: v.action,
           schedule: v.schedule,
           timezone: v.timezone,
@@ -507,6 +578,10 @@ async function save(): Promise<void> {
 .rtn-ed__hint--runner {
   padding-top: var(--k-sp-2);
   border-top: var(--k-rule-thin) solid var(--k-line);
+}
+
+.rtn-ed__hint--warn {
+  color: var(--k-warn, var(--k-danger));
 }
 
 .rtn-ed__error {

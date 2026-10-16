@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { classifyMessage, splitForSlack, threadTranscript, toSlackMrkdwn } from "../src/slack/slack-map";
+import { classifyMessage, threadTranscript } from "../src/slack/slack-map";
+import { splitForSlack, toSlackMrkdwn } from "../src/slack/slack-format";
 import { SlackSocket, type SocketLike } from "../src/slack/slack-socket";
 
 const BOT = "UBOT";

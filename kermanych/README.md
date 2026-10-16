@@ -399,17 +399,19 @@ not credentials, so they are committed:
 | project URL | public | `DEFAULT_CLOUD` in `packages/cloud/src/client.ts` |
 | `Publishable key` (`sb_publishable_…`, formerly `anon`) | public — shipped inside the browser bundle by design | same |
 | `GITHUB_CLIENT_ID` | public | Supabase dashboard (hosted), `.env` (local stack only) |
-| `GITHUB_SECRET` | **secret** — the only real one in this repo | Supabase dashboard (hosted), your own `.env` (local stack only) |
-| `Secret key` (`sb_secret_…`, formerly `service_role`) | **secret** — never used by Kermanych | the dashboard, and nowhere else |
+| `GITHUB_SECRET` | **secret** — the GitHub sign-in's | Supabase dashboard (hosted), your own `.env` (local stack only) |
+| `Secret key` (`sb_secret_…`, formerly `service_role`) | **secret** — used only by the `routines-runner` Edge Function, inside Supabase's runtime | the dashboard, and the Edge Runtime's own environment |
+| `ROUTINES_RUNNER_SECRET` | **secret** — authenticates the minute tick to `routines-runner` | the function's secrets and Supabase Vault ([The cloud runner](#the-cloud-runner)) |
 
 What protects the project is not the obscurity of those two values but **RLS**,
 verified against the live project: an anonymous read of any table is refused with
 `42501 permission denied`, and the policies isolate each user to the workspaces
 they are a member of — and so to the projects and tasks inside them. Sign-in is
 open, so RLS is the sole authorization surface — every request runs under the
-user's own JWT. **No secret
-key ever belongs on a machine running Kermanych**, and nothing in this repo reads
-one.
+user's own JWT. **No secret key ever belongs on a machine running Kermanych**, and
+nothing in this repo reads one — with one exception that never leaves Supabase: the
+cloud runner of routines, which a timer starts and which therefore has no user to run as
+([The cloud runner](#the-cloud-runner)).
 
 ### Applying a migration to the team's project
 
@@ -1306,20 +1308,27 @@ quietly missing a row you asked for would be forwarded as complete.
 **Менеджмент → Routines** schedules things Kermanych already does: a prompt, or a release-notes
 generation, at a set date and time, once or on a recurring schedule. The worked example is
 «every Monday at 10:00, write the release notes of the last 7 days for the back-end and the
-front-end and post them to #releases». The model is Claude Desktop's local scheduled tasks
-(the app checks every minute while it is open, and catches up a missed run once), with the
-definitions kept where Claude's cloud routines keep theirs — in a shared account, here the
-workspace. Spec: `docs/specs/2026-10-16-routines.md`.
+front-end and post them to #releases». Spec: `docs/specs/2026-10-16-routines.md`.
 
-What a routine does depends on its **level** — the whole workspace, or one of its projects —
-and its **action**:
+Every routine has a **runner**, picked in its editor (**Runs on**):
 
-| Level | Action | A run… | Slack |
-|---|---|---|---|
-| workspace | Release notes | writes one note over the projects you picked (a branch each) and stores it in Release Notes | optional |
-| project | Release notes | the same, over that project | optional |
-| workspace | Prompt → report | runs a read-only assistant over every repository of the workspace (Менеджмент's `read`/`grep`/`glob`); its answer is the run's report | optional |
-| project | Prompt → agent | files a card with the prompt, assigned to you (optionally hidden from «Дошка»), and launches an agent in the project, as ▶ does | no — the result is the session in «Агенти» |
+| | Cloud | My computer |
+|---|---|---|
+| Runs when | always, on schedule — nobody needs to be online | while the author has Kermanych open and signed in |
+| Runs as | the workspace: its GitHub token, its Anthropic API key (billed per use), its Slack bot | the author: their checkouts, their agent plan, their Slack account |
+| Reads code from | GitHub | the checkouts on the author's machine |
+| Missed runs | — | the most recent miss within 7 days runs once on the next start |
+| Modelled on | Claude Code cloud routines | Claude Desktop local scheduled tasks |
+
+What a run does depends on its **level** — the whole workspace, or one of its projects — and
+its **action**:
+
+| Level | Action | On my computer, a run… | In the cloud, a run… | Slack |
+|---|---|---|---|---|
+| workspace | Release notes | writes one note over the projects you picked (a branch each), stores it in Release Notes | the same, from the GitHub commits | optional |
+| project | Release notes | the same, over that project | the same | optional |
+| workspace | Prompt → report | a read-only assistant reads every repository of the workspace (`read`/`grep`/`glob`); its answer is the run's report | a model reads the repositories on GitHub (`list_files`/`read_file`/`search_code`) | optional |
+| project | Prompt → agent | files a card with the prompt, assigned to you (optionally hidden from «Дошка»), and launches an agent | **only files the card** — the cloud has no checkout to run an agent in; launch it from «Задачі» | no |
 
 - **Schedules**: once (date and time; the routine switches itself off after it fires), hourly
   (at a minute), daily, weekdays, weekly (chosen days), monthly (a day of the month — the last
@@ -1328,39 +1337,87 @@ and its **action**:
   the next run before you save.
 - **Release-notes period**: the last *N* days, including the day of the run. A project without
   commits in the period is left out of the note; a run where no project has commits is
-  **skipped**, not failed. Notes are stored in Release Notes like any other.
-- **It runs on its author's computer, in their name.** Only the api of the member who created
-  the routine fires it, while Kermanych is open and signed in there: their repository
-  checkouts, their Slack account, their agent runtime and plan. Nobody else's machine runs it,
-  because a Slack message or a card would otherwise appear under whoever happened to be online.
-  With the app closed nothing runs; on the next start (or sign-in), the most recent missed run
-  within the last 7 days runs once, labelled a catch-up, and older misses are dropped — so write
-  prompts that still make sense a few hours late.
+  **skipped**, not failed. Notes are stored in Release Notes like any other, credited to the
+  routine's author.
+- **A local routine runs on its author's computer, in their name.** Only the api of the member
+  who created it fires it. With the app closed nothing runs; on the next start (or sign-in), the
+  most recent missed run within the last 7 days runs once, labelled a catch-up, and older misses
+  are dropped — so write prompts that still make sense a few hours late.
 - **Exactly once.** A run is claimed by inserting its row, and `(routine, scheduled time)` is
-  unique, so the author signed in on two computers never runs one occurrence twice. Runs on
-  one machine are queued one at a time; an occurrence that comes due while the same routine is
-  still running is recorded as skipped.
+  unique, so neither the author signed in on two computers nor the cloud ever runs one
+  occurrence twice. Runs are one at a time per routine; an occurrence that comes due while the
+  same routine is still running is recorded as skipped. A cloud run that has not finished
+  after 15 minutes is recorded as failed («did not finish in time»).
 - **Who may do what.** Any member creates routines and sees every routine and its history.
   Only the author edits a routine or presses «Run now». The author or the workspace owner
   pauses, resumes or deletes it — the owner cannot change what someone else's routine does
-  (the database refuses it). Changing the schedule or resuming never fires a time that is
-  already past.
-- **Slack**: «Post the result to Slack» posts the note or the report as you — the release-notes
-  Slack connection (*Sending release notes to Slack* above), so the owner must have set the
-  Slack app's Client ID there first, and you connect your own Slack account once. Any channel
-  you are a member of can be picked; it defaults to the release-notes channel. A post that
-  fails fails the run but keeps the stored note or report.
+  (the database refuses it). Changing the schedule or the runner, or resuming, never fires a
+  time that is already past.
+- **Slack**: «Post the result to Slack» posts the note or the report. A local routine posts **as
+  you**, through the release-notes Slack connection (*Sending release notes to Slack* above):
+  the owner sets the Slack app's Client ID there, you connect your own Slack account once, and
+  any channel you are a member of can be picked. A cloud routine posts **as the workspace's
+  bot**, to a channel the bot was invited to (`/invite @Kermanych`). A post that fails fails the
+  run but keeps the stored note or report.
 - **History**: each routine's detail lists its runs — succeeded, failed, skipped or running;
-  scheduled, catch-up or manual; with the note, the agent or the report it produced and the
-  reason a run failed or was skipped. «Succeeded» for an agent means the agent started; what it
-  did is in «Агенти». The run's end is toasted in the author's window (and notified while the
-  window is in the background).
+  scheduled, catch-up or manual; with the note, the agent (or card) or the report it produced and
+  the reason a run failed or was skipped. «Succeeded» for an agent means the agent started (or,
+  in the cloud, the card was filed). A local run's end is toasted in the author's window (and
+  notified while the window is in the background); a screen showing a running cloud run
+  refreshes every 15 seconds until it ends.
 - **Not from the chat.** The section is `read`: the Менеджмент assistant can describe it but
-  refuses to create or change a routine, because a routine acts in its author's name.
-- **Cloud tables**: `workspace_routines` and `workspace_routine_runs`, created by the additive
-  `20261016090000_workspace_routines.sql` — push it before shipping this UI
-  ([Applying a migration](#applying-a-migration-to-the-teams-project)). The runner writes runs,
-  notes and cards under the author's own JWT, so RLS decides what lands.
+  refuses to create or change a routine, because a routine acts on its author's decision.
+
+#### The cloud runner
+
+A cloud routine is fired by the `routines-runner` Edge Function: Postgres calls it every minute
+(`pg_cron` + `pg_net`), it claims what is due and runs each claimed run in an invocation of its
+own. It is the one part of Kermanych that uses the **service role** — a timer has no caller to
+run as — and the service role exists only inside Supabase's Edge Runtime, never on a machine
+running Kermanych. Member actions (status, keys, channels, «Run now») are checked against the
+caller's own JWT first.
+
+**Per workspace, the owner** opens **Routines → Cloud** and pastes three keys. Each is checked
+against its service before it is stored in `workspace_routine_cloud`, a table no member — the
+owner included — can read; the screen only shows which keys are set:
+
+- **Anthropic API key** (console.anthropic.com). Every cloud run that writes text is billed to
+  it, per use — not to anybody's subscription. The model is picked from the key's own model list
+  (the newest Sonnet by default).
+- **GitHub token**: a fine-grained token with read-only *Contents* and *Metadata* on the
+  workspace's repositories. Projects must have a GitHub `git_remote_url`; the screen lists each
+  project and whether the token can read it.
+- **Slack bot token** (optional): the `xoxb-` token of the workspace's Slack app (Integrations →
+  Slack). Invite the bot to the channels cloud routines post to.
+
+**Once per Supabase project, the maintainer** deploys the function and its two secrets:
+
+```bash
+supabase db push --linked                                   # both routines migrations
+supabase functions deploy routines-runner --project-ref uqqdudlfizfwqfegfrlh
+supabase secrets set ROUTINES_RUNNER_SECRET=$(openssl rand -hex 32) --project-ref uqqdudlfizfwqfegfrlh
+```
+
+Then, in the SQL editor, give the minute tick the project URL and the **same** secret:
+
+```sql
+select vault.create_secret('https://uqqdudlfizfwqfegfrlh.supabase.co', 'routines_project_url');
+select vault.create_secret('<the ROUTINES_RUNNER_SECRET value>', 'routines_runner_secret');
+```
+
+Until both Vault secrets exist the tick does nothing. A run is held to the platform's
+wall-clock limit (150 s on the free plan): `ROUTINES_RUN_BUDGET_MS` (default 130000) can be
+raised on a paid plan (400 s). The function's pure modules — the schedule math, the prompts, the
+Slack formatting — are copies of the monorepo's, written to `supabase/functions/_shared/` by
+`node scripts/sync-edge-shared.mjs`; `apps/api/test/edge-mirrors.spec.ts` fails when a copy is
+stale. Locally, `supabase functions serve` reads `ROUTINES_RUNNER_SECRET` from
+`supabase/functions/.env` (`.env.example`).
+
+**Cloud tables**: `workspace_routines` and `workspace_routine_runs`
+(`20261016090000_workspace_routines.sql`), and `workspace_routine_cloud` with the minute tick
+(`20261016100000_routines_cloud_runner.sql`, which also lets a note written by the cloud runner
+keep its routine's author). Both are additive — push them before shipping this UI
+([Applying a migration](#applying-a-migration-to-the-teams-project)).
 
 ### Giving another section something it can write
 

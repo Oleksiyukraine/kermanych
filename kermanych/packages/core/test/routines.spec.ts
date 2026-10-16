@@ -5,11 +5,11 @@ import {
   nextOccurrence,
   releaseRangeFor,
   routineLocalDate,
-  validateRoutine,
   zonedInstant,
   ROUTINE_CATCH_UP_MS,
   type RoutineSchedule,
-} from "../src/routines";
+} from "../src/routine-schedule";
+import { validateRoutine } from "../src/routines";
 
 const KYIV = "Europe/Kyiv";
 const iso = (ms: number | undefined) => (ms === undefined ? undefined : new Date(ms).toISOString());
@@ -135,6 +135,7 @@ describe("validateRoutine", () => {
     expect(validateRoutine(base)).toEqual({
       routine: {
         name: "Weekly release notes",
+        runner: "local",
         timezone: KYIV,
         action: { kind: "release_notes", sources: [{ projectId: "p1", branch: "main" }], periodDays: 7, groupBy: "topic" },
         schedule: { kind: "weekly", days: [1, 5], time: "10:00" },

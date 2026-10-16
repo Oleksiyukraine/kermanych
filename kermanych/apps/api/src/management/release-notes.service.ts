@@ -22,15 +22,7 @@ import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { MANAGEMENT_TOOLS } from "./management-chat.service";
 import { CodedError } from "./coded-error";
-import { buildReleaseNotesPrompt, type ReleasePromptSource } from "./release-notes-prompt";
-
-// The document's title, read from its first `# ` heading — the prompt requires one, but a
-// model that ignored the rule must not sink the whole generation, so the fallback restates
-// what the note is about in the list's own terms.
-export function titleOf(markdown: string, fallback: string): string {
-  const m = /^#[^\S\n]+(.+)$/m.exec(markdown);
-  return m?.[1]?.trim() || fallback;
-}
+import { buildReleaseNotesPrompt, titleOf, type ReleasePromptSource } from "./release-notes-prompt";
 
 // A routine's note (`generateScheduled`): the document and the sources it was written from.
 export type ScheduledReleaseNotes = {

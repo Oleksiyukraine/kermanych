@@ -16,6 +16,11 @@
         @update:model-value="(v: string) => (scope = v)"
       />
       <span class="rtn__count mono">{{ shown.length ? t('management.routines.count', { count: shown.length }) : '' }}</span>
+      <!-- The workspace's cloud runner: what lets a routine run with nobody online. The label
+           says whether it is ready, so a member can tell before choosing it. -->
+      <KBtn variant="secondary" @click="cloudOpen = true">
+        {{ store.cloud[workspaceId]?.configured ? t('management.routines.cloud.toolbarOn') : t('management.routines.cloud.toolbarOff') }}
+      </KBtn>
       <KBtn variant="primary" @click="openNew">{{ t('management.routines.new') }}</KBtn>
     </div>
 
@@ -39,6 +44,7 @@
           <span class="rtn__row-meta">
             <KTag>{{ r.projectId ? projectName(r.projectId) : t('management.routines.scopeWorkspace') }}</KTag>
             <KTag>{{ kindLabel(r) }}</KTag>
+            <KTag>{{ t(`management.routines.runner.${r.runner}`) }}</KTag>
             <KTag v-if="r.slack">#{{ r.slack.channelName }}</KTag>
             <span class="rtn__row-schedule">{{ describeSchedule(t, r.schedule) }}</span>
           </span>
@@ -59,6 +65,7 @@
       :routine="editing"
       :default-project-id="scope === ALL || scope === WORKSPACE ? undefined : scope"
     />
+    <RoutineCloudModal v-model="cloudOpen" :workspace-id="workspaceId" />
     <RoutineDetail
       :routine="opened"
       :workspace-id="workspaceId"
@@ -78,7 +85,7 @@
 // The runs themselves happen in the AUTHOR's local api, not here. This window hears about its
 // own machine's runs over the socket (`lastRoutineRun`) and refetches; every other member sees
 // the same history when they open the screen.
-import { computed, ref, watch } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import { nextOccurrence } from '@kermanych/core';
@@ -88,6 +95,7 @@ import KBtn from 'components/kit/KBtn.vue';
 import KTag from 'components/kit/KTag.vue';
 import RoutineEditor from 'components/routines/RoutineEditor.vue';
 import RoutineDetail from 'components/routines/RoutineDetail.vue';
+import RoutineCloudModal from 'components/routines/RoutineCloudModal.vue';
 import { useRoutines } from 'stores/routines';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -109,6 +117,7 @@ watch(
   (id) => {
     if (!id) return;
     void store.load(id);
+    void store.loadCloud(id);
     if (!projects.members[id]) void projects.loadMembers(id);
   },
   { immediate: true },
@@ -150,6 +159,26 @@ const shown = computed(() =>
   routines.value.filter((r) => (scope.value === ALL ? true : scope.value === WORKSPACE ? !r.projectId : r.projectId === scope.value)),
 );
 
+// A cloud run is not this machine's, so no socket event ends it: while one is running on the
+// screen, the history is refetched until it has finished.
+const CLOUD_POLL_MS = 15_000;
+let poller: ReturnType<typeof setInterval> | undefined;
+watch(
+  () =>
+    (store.runs[props.workspaceId] ?? []).some(
+      (run) => run.status === 'running' && routines.value.find((r) => r.id === run.routineId)?.runner === 'cloud',
+    ),
+  (cloudRunning) => {
+    if (cloudRunning === !!poller) return;
+    if (cloudRunning) poller = setInterval(() => void store.loadRuns(props.workspaceId), CLOUD_POLL_MS);
+    else {
+      clearInterval(poller);
+      poller = undefined;
+    }
+  },
+);
+onUnmounted(() => clearInterval(poller));
+
 // ── rows ──────────────────────────────────────────────────────────────────────
 
 function projectName(id: string): string {
@@ -181,6 +210,7 @@ function lastRun(r: WorkspaceRoutine): WorkspaceRoutineRun | undefined {
 // ── editor and detail ─────────────────────────────────────────────────────────
 
 const editorOpen = ref(false);
+const cloudOpen = ref(false);
 const editing = ref<WorkspaceRoutine | undefined>(undefined);
 const openId = ref<string | undefined>(undefined);
 // Read through the store so a pause, an edit or a finished run shows in the open detail at once.

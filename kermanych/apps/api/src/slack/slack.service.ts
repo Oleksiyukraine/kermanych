@@ -33,12 +33,11 @@ import { SlackClient, type SlackChannel, type SlackIdentity } from "./slack-clie
 import { SlackSocket } from "./slack-socket";
 import {
   classifyMessage,
-  splitForSlack,
   threadTranscript,
-  toSlackMrkdwn,
   type SlackAsk,
   type TranscriptLine,
 } from "./slack-map";
+import { splitForSlack, toSlackMrkdwn } from "./slack-format";
 import { buildSlackAnswerPrompt, type SlackPromptDocs } from "./slack-prompt";
 
 // Posted the moment a question is accepted and edited into the answer: an LLM answer takes

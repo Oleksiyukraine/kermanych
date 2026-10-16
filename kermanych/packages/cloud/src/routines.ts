@@ -5,8 +5,12 @@
 //     deletes them, and the touch trigger lets only the author change what one does;
 //   * only the routine's author claims (inserts) a run, and only the runner finishes it.
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { RoutineAction, RoutineRunStatus, RoutineRunTrigger, RoutineSchedule, RoutineSlackTarget } from "@kermanych/core";
+import type { RoutineAction, RoutineRunStatus, RoutineRunTrigger, RoutineRunner, RoutineSchedule, RoutineSlackTarget } from "@kermanych/core";
+import { invokeEdge } from "./edge";
 import type {
+  RoutineCloudChannel,
+  RoutineCloudConfig,
+  RoutineCloudStatus,
   WorkspaceRoutine,
   WorkspaceRoutineInsert,
   WorkspaceRoutinePatch,
@@ -17,7 +21,7 @@ import type {
 
 // One string literal each: postgrest-js parses these at the type level.
 const ROUTINE_COLUMNS =
-  "id, workspace_id, project_id, name, action, schedule, timezone, slack, enabled, armed_at, created_at, created_by, updated_at, updated_by";
+  "id, workspace_id, project_id, name, runner, action, schedule, timezone, slack, enabled, armed_at, created_at, created_by, updated_at, updated_by";
 const RUN_COLUMNS =
   "id, routine_id, workspace_id, trigger, scheduled_for, status, started_at, finished_at, run_by, note_id, task_id, commit_count, output_md, slack_channel_name, error_code, error_message, error_params";
 
@@ -26,6 +30,7 @@ type RoutineRow = {
   workspace_id: string;
   project_id: string | null;
   name: string;
+  runner: RoutineRunner;
   action: RoutineAction;
   schedule: RoutineSchedule;
   timezone: string;
@@ -64,6 +69,7 @@ export function toWorkspaceRoutine(row: RoutineRow): WorkspaceRoutine {
     workspaceId: row.workspace_id,
     ...(row.project_id === null ? {} : { projectId: row.project_id }),
     name: row.name,
+    runner: row.runner,
     action: row.action,
     schedule: row.schedule,
     timezone: row.timezone,
@@ -111,13 +117,14 @@ export async function listWorkspaceRoutines(client: SupabaseClient, workspaceId:
   return (data as RoutineRow[]).map(toWorkspaceRoutine);
 }
 
-// What the runner of THIS machine may fire: the signed-in member's own enabled routines, in
-// every workspace they belong to.
+// What the runner of THIS machine may fire: the signed-in member's own enabled LOCAL routines,
+// in every workspace they belong to. Cloud routines are the routines-runner Edge Function's.
 export async function listRunnableRoutines(client: SupabaseClient, userId: string): Promise<WorkspaceRoutine[]> {
   const { data, error } = await client
     .from("workspace_routines")
     .select(ROUTINE_COLUMNS)
     .eq("created_by", userId)
+    .eq("runner", "local")
     .eq("enabled", true);
   if (error) throw new Error(error.message);
   return (data as RoutineRow[]).map(toWorkspaceRoutine);
@@ -137,6 +144,7 @@ export async function createWorkspaceRoutine(client: SupabaseClient, input: Work
       workspace_id: input.workspaceId,
       project_id: input.projectId ?? null,
       name: input.name,
+      runner: input.runner,
       action: input.action,
       schedule: input.schedule,
       timezone: input.timezone,
@@ -158,6 +166,7 @@ export async function patchWorkspaceRoutine(
     .from("workspace_routines")
     .update({
       ...(patch.name === undefined ? {} : { name: patch.name }),
+      ...(patch.runner === undefined ? {} : { runner: patch.runner }),
       ...(patch.action === undefined ? {} : { action: patch.action }),
       ...(patch.schedule === undefined ? {} : { schedule: patch.schedule }),
       ...(patch.timezone === undefined ? {} : { timezone: patch.timezone }),
@@ -250,4 +259,35 @@ export async function finishRoutineRun(
     .single();
   if (error) throw new Error(error.message);
   return toWorkspaceRoutineRun(data as RunRow);
+}
+
+// ── the cloud runner (supabase/functions/routines-runner) ──────────────────────
+// Called with the caller's own JWT; the function checks membership (and ownership, for
+// `configure`) before it touches the workspace's keys with the service role. No key ever comes
+// back: `status` says which are set.
+const RUNNER_FUNCTION = "routines-runner";
+
+export function getRoutineCloudStatus(client: SupabaseClient, workspaceId: string): Promise<RoutineCloudStatus> {
+  return invokeEdge<RoutineCloudStatus>(client, RUNNER_FUNCTION, { action: "status", workspaceId });
+}
+
+// Owner only. Each key is checked against its service before it is stored; an absent field keeps
+// the stored value and an empty string removes it.
+export function configureRoutineCloud(
+  client: SupabaseClient,
+  workspaceId: string,
+  config: RoutineCloudConfig,
+): Promise<RoutineCloudStatus> {
+  return invokeEdge<RoutineCloudStatus>(client, RUNNER_FUNCTION, { action: "configure", workspaceId, ...config });
+}
+
+// The channels the workspace's Slack bot was invited to — the only ones a cloud run can post to.
+export function listRoutineCloudChannels(client: SupabaseClient, workspaceId: string): Promise<RoutineCloudChannel[]> {
+  return invokeEdge<RoutineCloudChannel[]>(client, RUNNER_FUNCTION, { action: "slack-channels", workspaceId });
+}
+
+// «Run now» on a cloud routine (its author only). Answers the claimed run; the work continues in
+// the cloud and the screen sees its end on the next refetch.
+export async function runRoutineInCloud(client: SupabaseClient, routineId: string): Promise<WorkspaceRoutineRun> {
+  return toWorkspaceRoutineRun(await invokeEdge<RunRow>(client, RUNNER_FUNCTION, { action: "run-now", routineId }));
 }

@@ -3,11 +3,13 @@
 -- altered, so it is safe to push before the client that reads it ships.
 --
 -- Shape of trust. A routine is DEFINED here, where the whole team can see it, and RUN by exactly
--- one machine: the local api of the member who created it (`created_by`), while Kermanych is open
--- and signed in there. It acts with that member's JWT, their Slack user token, their repository
--- checkouts and their agent plan — so what it does is the author's to decide, which is why only
--- the author may change it (the touch trigger below) while the workspace owner may still pause or
--- delete it.
+-- one runner (`runner`):
+--   local — the local api of the member who created it (`created_by`), while Kermanych is open
+--           and signed in there, with that member's JWT, Slack user token, checkouts and plan;
+--   cloud — the workspace's cloud runner (20261016100000_routines_cloud_runner.sql and the
+--           routines-runner Edge Function), with the workspace's own keys, whoever is online.
+-- Either way it acts on the author's decision, which is why only the author may change what it
+-- does (the touch trigger below) while the workspace owner may still pause or delete it.
 --
 -- Exactly-once. A run is CLAIMED by inserting its row: `(routine_id, scheduled_for)` is unique,
 -- so the author signed in on two computers, or an api restarted mid-minute, cannot run one
@@ -39,6 +41,8 @@ create table public.workspace_routines (
   -- The channel a run's document is posted to, as the author: { teamId, channelId, channelName }.
   -- Slack ids, no secrets — the author's user token stays in their machine's registry.
   slack        jsonb check (slack is null or jsonb_typeof(slack) = 'object'),
+  -- Where it runs (packages/core `ROUTINE_RUNNERS`).
+  runner       text not null default 'local' check (runner in ('local', 'cloud')),
 
   enabled      boolean not null default true,
   -- Server-owned: the moment the schedule last started counting. An occurrence at or before it
@@ -53,7 +57,7 @@ create table public.workspace_routines (
 
 -- The screen reads one workspace at a time; the runner reads its author's enabled rows.
 create index workspace_routines_workspace_idx on public.workspace_routines (workspace_id, created_at);
-create index workspace_routines_runner_idx on public.workspace_routines (created_by) where enabled;
+create index workspace_routines_runner_idx on public.workspace_routines (runner, created_by) where enabled;
 
 grant select, insert, update, delete on table public.workspace_routines to authenticated;
 
@@ -90,12 +94,13 @@ begin
     -- A routine acts in its author's name, so only the author changes what it does. Anyone the
     -- policy admits (the owner) may still switch it on or off.
     if auth.uid() is distinct from old.created_by
-       and (new.name, new.project_id, new.action, new.schedule, new.timezone, new.slack)
-           is distinct from (old.name, old.project_id, old.action, old.schedule, old.timezone, old.slack) then
+       and (new.name, new.project_id, new.runner, new.action, new.schedule, new.timezone, new.slack)
+           is distinct from (old.name, old.project_id, old.runner, old.action, old.schedule, old.timezone, old.slack) then
       raise exception 'only the author of a routine can change what it does' using errcode = '42501';
     end if;
     if new.schedule is distinct from old.schedule
        or new.timezone is distinct from old.timezone
+       or new.runner is distinct from old.runner
        or (new.enabled and not old.enabled) then
       new.armed_at := now();
     else

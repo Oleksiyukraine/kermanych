@@ -6,25 +6,37 @@
 //   * the cloud, under the operator's own JWT — creating, editing, pausing and deleting a
 //     routine are row writes RLS decides on (any member creates; the author edits; the author or
 //     the owner pauses and deletes);
-//   * the local api, for «Run now» only — running needs this machine's checkouts, Slack token
-//     and agent runtime. Scheduled runs need nobody's click: the author's api fires them.
+//   * the runners, for «Run now» only: a LOCAL routine through this machine's api (its
+//     checkouts, Slack token and agent runtime), a CLOUD routine through the routines-runner
+//     Edge Function. Scheduled runs need nobody's click — the author's api, or the cloud, fires
+//     them.
+//   * the cloud runner's settings: its status (never a key), the owner's keys, the bot's
+//     channels — all through the Edge Function.
 //
-// No Realtime channel: the runner tells its own window over the local socket (`routine_run`,
-// read off the orchestrator by the screen), and every other member's screen refetches on open.
+// No Realtime channel: the local runner tells its own window over the local socket
+// (`routine_run`, read off the orchestrator by the screen), a screen showing a running cloud run
+// polls until it ends, and every other member's screen refetches on open.
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type {
+  RoutineCloudChannel,
+  RoutineCloudConfig,
+  RoutineCloudStatus,
   WorkspaceRoutine,
   WorkspaceRoutineInsert,
   WorkspaceRoutinePatch,
   WorkspaceRoutineRun,
 } from '@kermanych/cloud';
 import {
+  configureRoutineCloud,
   createWorkspaceRoutine,
   deleteWorkspaceRoutine,
+  getRoutineCloudStatus,
+  listRoutineCloudChannels,
   listWorkspaceRoutineRuns,
   listWorkspaceRoutines,
   patchWorkspaceRoutine,
+  runRoutineInCloud,
 } from '@kermanych/cloud';
 import { useAuth } from './auth';
 import { api } from '../lib/api';
@@ -39,6 +51,9 @@ export const useRoutines = defineStore('routines', () => {
   const runs = ref<Record<string, WorkspaceRoutineRun[]>>({});
   const loading = ref(false);
   const loadError = ref<string | null>(null);
+  // The workspace's cloud runner. `null` = could not be read (not deployed, offline): the
+  // editor then offers the cloud as unavailable rather than guessing.
+  const cloud = ref<Record<string, RoutineCloudStatus | null>>({});
 
   function put(workspaceId: string, routine: WorkspaceRoutine): void {
     const rows = (byWorkspace.value[workspaceId] ?? []).filter((r) => r.id !== routine.id);
@@ -98,9 +113,31 @@ export const useRoutines = defineStore('routines', () => {
     };
   }
 
-  // The claimed run lands in the history at once, as `running`; its end comes as an event.
+  async function loadCloud(workspaceId: string): Promise<void> {
+    await auth.ready;
+    if (IS_PREVIEW || !auth.user || !workspaceId) return;
+    try {
+      cloud.value = { ...cloud.value, [workspaceId]: await getRoutineCloudStatus(auth.client, workspaceId) };
+    } catch {
+      cloud.value = { ...cloud.value, [workspaceId]: null };
+    }
+  }
+
+  // Owner only; the function checks every key before it stores it and answers the new status.
+  async function configureCloud(workspaceId: string, config: RoutineCloudConfig): Promise<RoutineCloudStatus> {
+    const status = await configureRoutineCloud(auth.client, workspaceId, config);
+    cloud.value = { ...cloud.value, [workspaceId]: status };
+    return status;
+  }
+
+  function cloudChannels(workspaceId: string): Promise<RoutineCloudChannel[]> {
+    return listRoutineCloudChannels(auth.client, workspaceId);
+  }
+
+  // The claimed run lands in the history at once, as `running`. A local run's end comes as a
+  // socket event; a cloud run's end is polled for by the screen.
   async function runNow(routine: WorkspaceRoutine): Promise<WorkspaceRoutineRun> {
-    const run = await api.runRoutine(routine.id);
+    const run = routine.runner === 'cloud' ? await runRoutineInCloud(auth.client, routine.id) : await api.runRoutine(routine.id);
     runs.value = {
       ...runs.value,
       [routine.workspaceId]: [run, ...(runs.value[routine.workspaceId] ?? []).filter((r) => r.id !== run.id)],
@@ -108,5 +145,5 @@ export const useRoutines = defineStore('routines', () => {
     return run;
   }
 
-  return { byWorkspace, runs, loading, loadError, load, loadRuns, create, update, remove, runNow };
+  return { byWorkspace, runs, cloud, loading, loadError, load, loadRuns, loadCloud, configureCloud, cloudChannels, create, update, remove, runNow };
 });

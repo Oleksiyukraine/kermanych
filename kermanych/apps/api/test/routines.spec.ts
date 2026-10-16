@@ -70,6 +70,7 @@ function routine(over: Partial<WorkspaceRoutine> = {}): WorkspaceRoutine {
     id: "r1",
     workspaceId: "w1",
     name: "Weekly notes",
+    runner: "local",
     action: { kind: "release_notes", sources: [{ projectId: "p1", branch: "main" }], periodDays: 7, groupBy: "topic" },
     // Mondays 10:00 Kyiv = 07:00Z in October.
     schedule: { kind: "weekly", days: [1], time: "10:00" },

@@ -46,10 +46,11 @@ const row = {
 };
 
 describe("listRunnableRoutines", () => {
-  it("reads only the member's own enabled routines", async () => {
+  it("reads only the member's own enabled local routines — cloud ones are the Edge Function's", async () => {
     const { client, queries } = fakeClient({ data: [row], error: null });
     await listRunnableRoutines(client, "u1");
     expect(queries[0]!.ops).toContainEqual(["eq", "created_by", "u1"]);
+    expect(queries[0]!.ops).toContainEqual(["eq", "runner", "local"]);
     expect(queries[0]!.ops).toContainEqual(["eq", "enabled", true]);
   });
 });

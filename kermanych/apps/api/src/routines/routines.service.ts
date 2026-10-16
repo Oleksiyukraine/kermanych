@@ -253,7 +253,12 @@ export class RoutinesService implements OnModuleInit, OnModuleDestroy {
       routineName: routine.name,
       date,
       timezone: routine.timezone,
-      repos,
+      repos: repos.map((r) => ({
+        name: r.name,
+        location: r.localRepoPath,
+        ...(r.defaultBranch ? { defaultBranch: r.defaultBranch } : {}),
+      })),
+      howToRead: "Open the repositories by the absolute paths below.",
       instructions,
       ...(routine.slack ? { slackChannel: routine.slack.channelName } : {}),
     });

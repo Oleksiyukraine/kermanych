@@ -39,14 +39,17 @@
           </span>
         </dd>
 
+        <dt>{{ t('management.routines.detail.runsOn') }}</dt>
+        <dd>
+          {{ t(`management.routines.runner.${routine.runner}`) }}
+          <span class="rtn-dt__sub">{{ routine.runner === 'cloud' ? t('management.routines.detail.cloudHint') : t('management.routines.detail.authorHint') }}</span>
+        </dd>
+
         <dt>{{ t('management.routines.detail.slack') }}</dt>
         <dd>{{ routine.slack ? `#${routine.slack.channelName}` : '—' }}</dd>
 
         <dt>{{ t('management.routines.detail.author') }}</dt>
-        <dd>
-          {{ memberName(routine.createdBy) }}
-          <span class="rtn-dt__sub">{{ t('management.routines.detail.authorHint') }}</span>
-        </dd>
+        <dd>{{ memberName(routine.createdBy) }}</dd>
       </dl>
 
       <section class="rtn-dt__history">
@@ -67,7 +70,7 @@
                 {{ t('management.routines.detail.openNote') }}
               </a>
               <a v-if="run.taskId" class="rtn-dt__link" @click="emit('openSection', 'agents')">
-                {{ t('management.routines.detail.openAgent') }}
+                {{ routine.runner === 'cloud' ? t('management.routines.detail.openCard') : t('management.routines.detail.openAgent') }}
               </a>
               <span v-if="run.slackChannelName">{{ t('management.routines.detail.posted', { channel: run.slackChannelName }) }}</span>
               <a v-if="run.outputMd" class="rtn-dt__link" @click="toggle(run.id)">
