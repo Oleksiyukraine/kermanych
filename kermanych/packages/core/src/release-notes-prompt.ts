@@ -1,6 +1,6 @@
-// apps/api/src/management/release-notes-prompt.ts
+// packages/core/src/release-notes-prompt.ts
 // Everything the release-notes generator is told, as one pure function so the wording is
-// testable without spawning omp — the same rule management-prompt.ts follows.
+// testable without spawning a model — the same rule management-prompt.ts follows.
 //
 // The generator is a ONE-SHOT turn, not a conversation: there is no contract to send once
 // and reuse, so the whole instruction rides on the single prompt. The commits are printed
@@ -10,11 +10,14 @@
 //
 // Two generators read it: the local api (code in a checkout on this machine, omp's
 // read/grep/glob) and the cloud routine runner (code on GitHub, its own list_files/read_file/
-// search_code tools). The runner is Deno and gets a copy of this file in
-// supabase/functions/_shared/ (`node scripts/sync-edge-shared.mjs`, which rewrites the one
-// import below; apps/api/test/edge-mirrors.spec.ts fails when the copy is stale). Edit THIS
-// file, then sync.
-import type { ReleaseCommit, ReleaseGrouping } from "@kermanych/core";
+// search_code tools).
+//
+// NO IMPORTS, on purpose — the slack-answer.ts rule: the routines-runner Edge Function imports
+// this file by relative path from Deno, which resolves neither extensionless specifiers nor
+// workspace packages. The two types below are structural copies of ./release-notes; a drift
+// there stops the api compiling where it hands those types in.
+type ReleaseCommit = { date: string; author: string; subject: string; body: string };
+type ReleaseGrouping = "topic" | "person";
 
 // Upper bound on the commit blocks, in characters. A quarter's worth of a busy repo can be
 // megabytes of commit bodies; past this the tail is dropped and the prompt says so, which

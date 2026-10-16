@@ -3,16 +3,19 @@
 // wires it to the platform: the service-role Store, the caller's identity, and the dispatch of
 // one run per Edge Function invocation.
 //
-// The rules are the local runner's (apps/api/src/routines/routines.service.ts) — same schedule
-// math, same due rule, same exactly-once claim, same prompts — with three differences the
+// The rules are the local runner's (apps/api/src/routines/routines.service.ts) — the same
+// schedule math, due rule, exactly-once claim and prompts, imported from packages/core — with
+// three differences the
 // operator agreed to for running without anybody online:
 //   * the code comes from GitHub with the workspace's read-only token;
 //   * the model is Anthropic's API with the workspace's key, billed per use;
 //   * Slack posts come from the workspace's bot, and a project prompt only files its card.
-import { dueOccurrence, parseRoutineSchedule, releaseRangeFor, routineLocalDate, zonedInstant } from "../_shared/routine-schedule.ts";
-import { buildReleaseNotesPrompt, titleOf } from "../_shared/release-notes-prompt.ts";
-import { buildRoutineReportPrompt } from "../_shared/routine-report-prompt.ts";
-import type { ReleaseGrouping } from "../_shared/release-notes-types.ts";
+// The monorepo's own import-free modules, by relative path (the slack-events precedent; deploy
+// with `supabase functions deploy routines-runner --use-api`): one schedule math and one set of
+// prompts for both runners.
+import { dueOccurrence, parseRoutineSchedule, releaseRangeFor, routineLocalDate, zonedInstant } from "../../../packages/core/src/routine-schedule.ts";
+import { buildReleaseNotesPrompt, titleOf } from "../../../packages/core/src/release-notes-prompt.ts";
+import { buildRoutineReportPrompt } from "../../../packages/core/src/routine-report-prompt.ts";
 import { defaultModel, listModels, runModel } from "./anthropic.ts";
 import { GitHub, githubTools, parseGitHubRemote, type GitHubRepo } from "./github.ts";
 import { botChannels, botIdentity, postDocument } from "./slack.ts";
@@ -26,7 +29,7 @@ export const STALE_RUN_MS = 15 * 60 * 1000;
 
 export type CloudAction =
   | { kind: "prompt"; prompt: string; hideFromBoard?: boolean }
-  | { kind: "release_notes"; sources: { projectId: string; branch: string }[]; periodDays: number; groupBy?: ReleaseGrouping };
+  | { kind: "release_notes"; sources: { projectId: string; branch: string }[]; periodDays: number; groupBy?: "topic" | "person" };
 
 export type CloudRoutine = {
   id: string;

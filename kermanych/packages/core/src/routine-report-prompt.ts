@@ -1,6 +1,4 @@
-// GENERATED from kermanych/apps/api/src/routines/routine-report-prompt.ts by scripts/sync-edge-shared.mjs — do not edit.
-// Edit the source, then run `node scripts/sync-edge-shared.mjs` from kermanych/.
-// apps/api/src/routines/routine-report-prompt.ts
+// packages/core/src/routine-report-prompt.ts
 // The prompt of a WORKSPACE prompt routine (docs/specs/2026-10-16-routines.md): the author's
 // saved instructions, run unattended by a read-only model over every repository of the
 // workspace, whose one answer is the run's report. A pure function so the wording is testable
@@ -8,9 +6,8 @@
 //
 // Two runners read it: the local api (repositories are folders on this machine, omp's read-only
 // tools) and the cloud runner (repositories on GitHub, its list_files/read_file/search_code
-// tools). Import-free on purpose: the cloud runner is Deno and gets a copy of this file in
-// supabase/functions/_shared/ (`node scripts/sync-edge-shared.mjs`;
-// apps/api/test/edge-mirrors.spec.ts fails when the copy is stale). Edit THIS file, then sync.
+// tools). NO IMPORTS, on purpose — the slack-answer.ts rule: the routines-runner Edge Function
+// imports this file by relative path from Deno.
 //
 // Two things the model must know that an interactive chat does not need to say: nobody is there
 // to answer a question, and the answer is a finished document that is stored (and maybe posted

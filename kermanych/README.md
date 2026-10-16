@@ -1431,7 +1431,7 @@ its **action**:
 
 A cloud routine is fired by the `routines-runner` Edge Function: Postgres calls it every minute
 (`pg_cron` + `pg_net`), it claims what is due and runs each claimed run in an invocation of its
-own. It is the one part of Kermanych that uses the **service role** — a timer has no caller to
+own. Like `slack-events`, it uses the **service role** — a timer has no caller to
 run as — and the service role exists only inside Supabase's Edge Runtime, never on a machine
 running Kermanych. Member actions (status, keys, channels, «Run now») are checked against the
 caller's own JWT first.
@@ -1453,7 +1453,7 @@ owner included — can read; the screen only shows which keys are set:
 
 ```bash
 supabase db push --linked                                   # both routines migrations
-supabase functions deploy routines-runner --project-ref uqqdudlfizfwqfegfrlh
+supabase functions deploy routines-runner --use-api --project-ref uqqdudlfizfwqfegfrlh
 supabase secrets set ROUTINES_RUNNER_SECRET=$(openssl rand -hex 32) --project-ref uqqdudlfizfwqfegfrlh
 ```
 
@@ -1466,15 +1466,15 @@ select vault.create_secret('<the ROUTINES_RUNNER_SECRET value>', 'routines_runne
 
 Until both Vault secrets exist the tick does nothing. A run is held to the platform's
 wall-clock limit (150 s on the free plan): `ROUTINES_RUN_BUDGET_MS` (default 130000) can be
-raised on a paid plan (400 s). The function's pure modules — the schedule math, the prompts, the
-Slack formatting — are copies of the monorepo's, written to `supabase/functions/_shared/` by
-`node scripts/sync-edge-shared.mjs`; `apps/api/test/edge-mirrors.spec.ts` fails when a copy is
-stale. Locally, `supabase functions serve` reads `ROUTINES_RUNNER_SECRET` from
-`supabase/functions/.env` (`.env.example`).
+raised on a paid plan (400 s). The function imports the monorepo's import-free modules — the
+schedule math (`packages/core/src/routine-schedule.ts`), both prompts and the Slack formatting
+(`slack-answer.ts`) — by relative path, like `slack-events`, which is why it deploys with
+`--use-api`: both runners run one set of rules. Locally, `supabase functions serve` reads
+`ROUTINES_RUNNER_SECRET` from `supabase/functions/.env` (`.env.example`).
 
 **Cloud tables**: `workspace_routines` and `workspace_routine_runs`
-(`20261016090000_workspace_routines.sql`), and `workspace_routine_cloud` with the minute tick
-(`20261016100000_routines_cloud_runner.sql`, which also lets a note written by the cloud runner
+(`20261017090000_workspace_routines.sql`), and `workspace_routine_cloud` with the minute tick
+(`20261017100000_routines_cloud_runner.sql`, which also lets a note written by the cloud runner
 keep its routine's author). Both are additive — push them before shipping this UI
 ([Applying a migration](#applying-a-migration-to-the-teams-project)).
 

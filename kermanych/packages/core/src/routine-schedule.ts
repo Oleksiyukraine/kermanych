@@ -1,10 +1,8 @@
 // Routines — the schedule half of the vocabulary (docs/specs/2026-10-16-routines.md): what a
 // schedule is, when it is due, and on which calendar day a run falls. Split from ./routines on
-// purpose and kept free of imports: two runners share it — the author's local api (through
-// @kermanych/core) and the cloud runner (supabase/functions/routines-runner), which is Deno and
-// cannot import this package. The Edge Function gets a byte-for-byte copy in
-// supabase/functions/_shared/, written by `node scripts/sync-edge-shared.mjs`, and
-// apps/api/test/edge-mirrors.spec.ts fails when the copy is stale. Edit THIS file, then sync.
+// purpose and kept free of imports — the slack-answer.ts rule: two runners share it, the
+// author's local api (through @kermanych/core) and the cloud runner
+// (supabase/functions/routines-runner), which imports this file by relative path from Deno.
 //
 // Reference: Claude Desktop's local scheduled tasks (checked every minute; one catch-up run for
 // the most recent miss within seven days).

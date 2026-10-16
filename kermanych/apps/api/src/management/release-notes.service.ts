@@ -22,7 +22,7 @@ import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { MANAGEMENT_TOOLS } from "./management-chat.service";
 import { CodedError } from "./coded-error";
-import { buildReleaseNotesPrompt, titleOf, type ReleasePromptSource } from "./release-notes-prompt";
+import { buildReleaseNotesPrompt, titleOf, type ReleasePromptSource } from "@kermanych/core";
 
 // A routine's note (`generateScheduled`): the document and the sources it was written from.
 export type ScheduledReleaseNotes = {

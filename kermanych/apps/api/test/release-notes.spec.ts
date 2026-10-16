@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ReleaseCommit } from "@kermanych/core";
 import { WorktreeService } from "../src/worktree/worktree.service";
-import { buildReleaseNotesPrompt, commitsBlock, MAX_COMMITS_CHARS, titleOf } from "../src/management/release-notes-prompt";
+import { buildReleaseNotesPrompt, commitsBlock, MAX_COMMITS_CHARS, titleOf } from "@kermanych/core";
 
 function commit(over: Partial<ReleaseCommit> = {}): ReleaseCommit {
   return { date: "2026-08-20", author: "Оля", subject: "додано експорт у PDF", body: "", ...over };

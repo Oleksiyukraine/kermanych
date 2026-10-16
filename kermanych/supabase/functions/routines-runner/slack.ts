@@ -1,8 +1,8 @@
 // routines-runner/slack.ts — posting as the workspace's Slack bot. The local runner posts as the
 // author with their user token; nobody's user token is in the cloud, so a cloud run's message
 // comes from the bot (the Q&A bot's app), in a channel the bot was invited to. The formatting is
-// the local runner's, byte for byte (_shared/slack-format.ts).
-import { splitForSlack, toSlackMrkdwn } from "../_shared/slack-format.ts";
+// the local runner's — packages/core/src/slack-answer.ts, imported by relative path.
+import { splitForSlack, toSlackMrkdwn } from "../../../packages/core/src/slack-answer.ts";
 
 const API = "https://slack.com/api";
 

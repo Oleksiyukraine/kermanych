@@ -33,7 +33,7 @@ import {
   patchWorkspaceRoutine,
 } from "@kermanych/cloud";
 import type { WorkspaceRoutine, WorkspaceRoutineRun, WorkspaceRoutineRunClaim, WorkspaceRoutineRunResult } from "@kermanych/cloud";
-import { dueOccurrence, releaseRangeFor, routineLocalDate, ROUTINE_CATCH_UP_MS, type RoutineAction, type RoutineRunStatus, type ServerEvent } from "@kermanych/core";
+import { buildRoutineReportPrompt, dueOccurrence, releaseRangeFor, routineLocalDate, ROUTINE_CATCH_UP_MS, type RoutineAction, type RoutineRunStatus, type ServerEvent } from "@kermanych/core";
 import { AuthService } from "../auth/auth.service";
 import { RegistryService } from "../registry/registry.service";
 import { ReleaseNotesService, type ScheduledReleaseNotes } from "../management/release-notes.service";
@@ -44,7 +44,6 @@ import { SlackReleaseNotesService } from "../slack/slack-release-notes.service";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { runOneShot } from "../runtime/one-shot";
 import { resolveRuntime } from "../runtime/resolve-runtime";
-import { buildRoutineReportPrompt } from "./routine-report-prompt";
 
 const TICK_MS = 60_000;
 // After sign-in the token handoff settles first; a catch-up a few seconds later is soon enough.

@@ -83,6 +83,16 @@ export {
   type RoutineInvalidCode,
 } from "./routine-schedule";
 export {
+  MAX_COMMITS_CHARS,
+  buildReleaseNotesPrompt,
+  commitsBlock,
+  commitsByAuthor,
+  titleOf,
+  type ReleaseCodeAccess,
+  type ReleasePromptSource,
+} from "./release-notes-prompt";
+export { buildRoutineReportPrompt, type RoutineReportInput, type RoutineReportRepo } from "./routine-report-prompt";
+export {
   ROUTINE_ACTION_KINDS,
   ROUTINE_RUNNERS,
   ROUTINE_RUN_STATUSES,

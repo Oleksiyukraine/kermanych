@@ -2,8 +2,7 @@
 // the workspace's read-only token. The local runner reads a checkout; here the commits of a
 // period come from the commits API, and the model's read-only tools (list_files, read_file,
 // search_code) are three GET endpoints.
-import type { ReleaseCommit } from "../_shared/release-notes-types.ts";
-import { routineLocalDate } from "../_shared/routine-schedule.ts";
+import { routineLocalDate } from "../../../packages/core/src/routine-schedule.ts";
 import { RunFailure } from "./failure.ts";
 import type { ToolSpec } from "./anthropic.ts";
 
@@ -15,6 +14,9 @@ const MAX_LISTED_FILES = 400;
 const MAX_FILE_CHARS = 50_000;
 
 export type GitHubRepo = { owner: string; repo: string };
+
+// One commit as the release-notes prompt reads it (core's ReleaseCommit, structurally).
+type Commit = { date: string; author: string; subject: string; body: string };
 
 // `https://github.com/o/r(.git)`, `git@github.com:o/r(.git)`, `ssh://git@github.com/o/r(.git)`.
 // Anything else is not GitHub, and the cloud runner cannot read it.
@@ -59,8 +61,8 @@ export class GitHub {
 
   // The branch's commits in [since, until), newest first, merges left out — what the local
   // runner's `git log --no-merges` reads. Dates are the author's, on the routine's clock.
-  async commits(r: GitHubRepo, branch: string, since: string, until: string, tz: string): Promise<ReleaseCommit[]> {
-    const out: ReleaseCommit[] = [];
+  async commits(r: GitHubRepo, branch: string, since: string, until: string, tz: string): Promise<Commit[]> {
+    const out: Commit[] = [];
     for (let page = 1; page <= MAX_COMMIT_PAGES; page++) {
       const q = new URLSearchParams({ sha: branch, since, until, per_page: "100", page: String(page) });
       const res = await this.get(`/repos/${r.owner}/${r.repo}/commits?${q}`);

@@ -36,7 +36,7 @@ export function describeSchedule(t: Translate, s: RoutineSchedule): string {
 
 // A routine acts in its author's name, so the author alone edits it and runs it by hand. The
 // workspace owner may still pause or delete it — the database enforces the same split
-// (20261016090000_workspace_routines.sql); this only keeps the buttons honest.
+// (20261017090000_workspace_routines.sql); this only keeps the buttons honest.
 export type RoutineRights = { edit: boolean; run: boolean; toggle: boolean; remove: boolean };
 
 export function routineRights(routine: WorkspaceRoutine, userId: string | undefined, isOwner: boolean): RoutineRights {

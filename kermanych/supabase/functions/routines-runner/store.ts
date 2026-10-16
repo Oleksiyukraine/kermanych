@@ -1,5 +1,5 @@
 // routines-runner/store.ts — the runner's database access, with the SERVICE ROLE (the cloud
-// runner's agreed exception to «caller's JWT only»; 20261016100000_routines_cloud_runner.sql).
+// runner's agreed exception to «caller's JWT only»; 20261017100000_routines_cloud_runner.sql).
 // Every query names its workspace or row explicitly: with RLS bypassed, the WHERE clause is the
 // isolation, so nothing here lists across workspaces except the tick's own routine list.
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";

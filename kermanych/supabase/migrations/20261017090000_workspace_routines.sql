@@ -6,7 +6,7 @@
 -- one runner (`runner`):
 --   local — the local api of the member who created it (`created_by`), while Kermanych is open
 --           and signed in there, with that member's JWT, Slack user token, checkouts and plan;
---   cloud — the workspace's cloud runner (20261016100000_routines_cloud_runner.sql and the
+--   cloud — the workspace's cloud runner (20261017100000_routines_cloud_runner.sql and the
 --           routines-runner Edge Function), with the workspace's own keys, whoever is online.
 -- Either way it acts on the author's decision, which is why only the author may change what it
 -- does (the touch trigger below) while the workspace owner may still pause or delete it.

@@ -814,7 +814,7 @@ export type ReleaseNotesSlackInsert = {
 
 // ── Routines ──────────────────────────────────────────────────────────────────
 // Scheduled tasks of a workspace (`projectId` absent) or of one of its projects, and their run
-// history (20261016090000_workspace_routines.sql, docs/specs/2026-10-16-routines.md). The
+// history (20261017090000_workspace_routines.sql, docs/specs/2026-10-16-routines.md). The
 // vocabularies of `action` and `schedule` are core's; routines.ts owns the snake_case boundary.
 // `createdBy` is the author — the one member whose machine runs the routine, in whose name.
 export type WorkspaceRoutine = {
