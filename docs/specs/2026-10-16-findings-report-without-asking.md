@@ -56,7 +56,8 @@ instruction.
      «Do not get side-tracked. Record it and continue.»
 
 2. **The rule goes in two places: the tool description and the default `deep-analysis` skill.**
-   - At the end of the `report_finding` description's rules (`findings-tools.ts`), add: «Report
+   - In the `report_finding` description (`findings-tools.ts`), right after «Do not get
+     side-tracked…», add: «Report
      right away; do not ask the operator whether to report: the finding is itself the proposal,
      and they can dismiss it. This holds while planning or interviewing too, because reporting
      changes no code. If the problem partly overlaps your task, report the part outside it and
@@ -107,16 +108,29 @@ pin wording.
 
 ## Verification
 
-- `pnpm --filter @kermanych/core test` and `pnpm --filter @kermanych/api test` stay green,
-  apart from the failures already recorded on the base commit.
-- Smoke (the findings spec's setup): a preview api (`KERMANYCH_PREVIEW=1`) with a seeded
-  project rebound to a throwaway git repo. The repo holds a task-unrelated bug, and its task has
-  a decision worth asking about.
-  - A managed omp session started with the deep-analysis prompt and the default skill must call
-    `report_finding` before or alongside its first interview question, without offering
-    «record it as a finding?» as an option. The finding then appears under `GET …/findings`.
-  - In an ordinary managed session with an unrelated question, the agent must report at once
-    without asking first.
+- `pnpm --filter @kermanych/core test`: 22 files, 228 passed.
+- `apps/api` `vitest run`: 954 passed, 2 failed. Both failures are
+  `test/rpc-session.compact.spec.ts`, the same pre-existing failures the findings spec records.
+  `nest build` reports only the base commit's `jira.controller.ts` TS2504 and still emits `dist/`.
+- Smoke: a preview api (`KERMANYCH_PREVIEW=1`, `KERMANYCH_SEED=1`, temp DB) with the seeded
+  «Acme Web» project rebound to a throwaway git repo. The repo had `src/orders.js` (the email
+  notification) and `src/shops.js`, an unauthenticated `GET /api/shops/:id` that returns
+  `paymentSettings.secretKey` and `ownerEmail`. Both runs used managed omp chats with
+  `claude-opus-5-5`.
+  - **Deep analysis.** The first message was `deepAnalysisPrompt("…add a Telegram notification
+    to the shop owner…")` plus the default `deep-analysis` skill body. The agent called
+    `list_findings`, read the code, and called `report_finding` (kind `security`, «Unauthenticated
+    GET /api/shops/:id returns paymentSettings.secretKey and ownerEmail», `src/shops.js:4-7`
+    evidence) before writing anything to the operator. Its reply said «Outside the task: … I've
+    reported it as a separate finding», noted the one overlap (a new Telegram field on the shop
+    would leak through the same endpoint) as a later question, and asked question 1 about the
+    task itself, how to get the owner's `chat_id`. It did not offer «record it as a finding?»
+    as an option.
+  - **Ordinary chat.** The question was what `orderSummary` does with an item without `qty`,
+    after reading the rest of `src/`. The agent called `list_findings`, then `report_finding`
+    with the same title, answered the question, and closed with: it changed nothing and handed
+    the vulnerability over as a finding in «Знахідки».
+  - Both findings appeared under `GET /api/sessions/:id/findings` as `open`.
 
 ## Documentation impact
 

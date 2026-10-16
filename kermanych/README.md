@@ -936,8 +936,10 @@ Agents often notice problems outside their own task. A session's agent can repor
 through the `report_finding` tool of its `kermanych` MCP server (spec:
 `docs/specs/2026-10-13-agent-findings.md`). It gives a title (≤ 120 characters), a kind
 (`bug`, `security`, `tech-debt`, `docs`), the context, evidence (`path:line` references or
-reproduction commands), acceptance criteria and an optional suggested fix. Then it continues
-its task. `list_findings` shows it what it already reported, so it does not repeat itself. The
+reproduction commands), acceptance criteria and an optional suggested fix. It reports at once,
+without asking you first, including in the middle of a «Глибокий аналіз» interview; it asks you
+only about a part of the problem that overlaps its own task. Then it continues its task.
+`list_findings` shows it what it already reported, so it does not repeat itself. The
 tool descriptions are the agent's whole instruction, so every runtime gets the same rules,
 native sessions included. Discussion and review branches have no such tools.
 
