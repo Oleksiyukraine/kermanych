@@ -1301,6 +1301,24 @@ order (by exposure), and the chat line names the file — or, in a plain browser
 PDF opened in the print dialog. A code the register does not hold exports nothing: a file
 quietly missing a row you asked for would be forwarded as complete.
 
+### Sharing a password in Storage
+
+In the Storage section, the person who filed a password — and the workspace owner and every
+manager — can hand it to colleagues with the 👥 button, no access request needed. The dialog's
+«Share with» picker takes several members at once, and they are granted together: if one of
+them cannot receive it, nobody does and the dialog says why. Under the picker, «People with
+access» lists everyone who can read the password and how — workspace owner, manager, or
+shared (a share or an approved request). A shared grant has a «Remove access» button: the
+member stops being able to read the secret and its file, and can request access again. The
+workspace owner and managers read every password through their role, so their access is
+changed in the members panel, not here.
+
+This needs migration `20261016090000_workspace_password_revoke.sql`
+(`share_password_with_members`, `revoke_password_access`, and the `via` column of
+`list_password_holders`) — push it before shipping this UI
+([Applying a migration](#applying-a-migration-to-the-teams-project)). Spec:
+`docs/specs/2026-10-16-vault-multi-share-and-revoke.md`.
+
 ### Giving another section something it can write
 
 The Risk Registry and Release Notes are wired end to end; Team Capacity is `read` (a screen

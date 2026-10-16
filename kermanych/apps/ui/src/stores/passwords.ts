@@ -21,6 +21,7 @@ import {
   patchPasswordSecret as cloudPatchSecret,
   patchWorkspacePassword as cloudRename,
   requestPasswordAccess as cloudRequest,
+  revokePasswordAccess as cloudRevoke,
   setPasswordFile as cloudSetFile,
   sharePassword as cloudShare,
   signedPasswordFileUrl as cloudSignedUrl,
@@ -215,16 +216,49 @@ export const usePasswords = defineStore('passwords', () => {
     return row;
   }
 
-  // The password's owner (its filer, the workspace owner or a manager) hands it to a member
-  // without a request. Merges the approved row — which also clears that member's pending ask
-  // from the requests panel, the rpc having turned it into this grant — and re-reads the
-  // access column, which gains the recipient. THROWS so the dialog can say why.
-  async function share(workspaceId: string, passwordId: string, userId: string): Promise<WorkspacePasswordAccess> {
+  // The password's owner (its filer, the workspace owner or a manager) hands it to one or more
+  // members without a request, all or nothing. Merges the approved rows — which also clears
+  // those members' pending asks from the requests panel, the rpc having turned them into these
+  // grants — and re-reads the access column, which gains the recipients. THROWS so the dialog
+  // can say why.
+  async function share(
+    workspaceId: string,
+    passwordId: string,
+    userIds: readonly string[],
+  ): Promise<WorkspacePasswordAccess[]> {
     if (!auth.user) throw new Error(globalTr.t('common.notify.signInFirst'));
-    const row = await cloudShare(auth.client, passwordId, userId);
-    upsertAccess(workspaceId, row);
+    const rows = await cloudShare(auth.client, passwordId, userIds);
+    for (const row of rows) upsertAccess(workspaceId, row);
     await refreshHolders(workspaceId);
-    return row;
+    return rows;
+  }
+
+  // The same owner takes one member's grant back. The ledger row is gone in Postgres, so it
+  // goes here too, and the member leaves the access column at once — before the re-read, which
+  // may fail quietly. A refusal re-reads the column as well: the commonest one is a grant that
+  // is already gone, and the stale row would otherwise keep offering it. THROWS so the dialog
+  // can say why.
+  async function revoke(workspaceId: string, passwordId: string, userId: string): Promise<void> {
+    if (!auth.user) throw new Error(globalTr.t('common.notify.signInFirst'));
+    try {
+      await cloudRevoke(auth.client, passwordId, userId);
+    } catch (e) {
+      void refreshHolders(workspaceId);
+      throw e;
+    }
+    accessByWorkspace.value = {
+      ...accessByWorkspace.value,
+      [workspaceId]: (accessByWorkspace.value[workspaceId] ?? []).filter(
+        (a) => !(a.passwordId === passwordId && a.requesterId === userId),
+      ),
+    };
+    holdersByWorkspace.value = {
+      ...holdersByWorkspace.value,
+      [workspaceId]: (holdersByWorkspace.value[workspaceId] ?? []).filter(
+        (h) => !(h.passwordId === passwordId && h.userId === userId && h.via === 'grant'),
+      ),
+    };
+    await refreshHolders(workspaceId);
   }
 
   return {
@@ -246,5 +280,6 @@ export const usePasswords = defineStore('passwords', () => {
     requestAccess,
     decideAccess,
     share,
+    revoke,
   };
 });
