@@ -411,6 +411,16 @@ deno_version = 2
 enabled = true
 verify_jwt = true
 
+# slack-events — the Slack documentation bot's cloud host (Slack's HTTP events for
+# workspaces in cloud mode). verify_jwt = false: the caller is Slack, which has no Supabase
+# JWT; the function authenticates every request by its Slack signature instead. It holds the
+# platform's service-role key, which 20261016090000_slack_cloud_answers.sql lets execute
+# only the slack_cloud_* functions. It imports packages/core/src/slack-answer.ts from
+# outside supabase/, so it deploys with `supabase functions deploy slack-events --use-api`.
+[functions.slack-events]
+enabled = true
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54427

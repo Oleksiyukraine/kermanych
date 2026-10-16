@@ -14,7 +14,7 @@ import type { ReleaseNotesSlack } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { RegistryService, type SlackUserTokenRow } from "../registry/registry.service";
 import { SlackApiError, SlackClient, type SlackChannel } from "./slack-client";
-import { splitForSlack, toSlackMrkdwn } from "./slack-map";
+import { splitForSlack, toSlackMrkdwn } from "@kermanych/core";
 import { SLACK_CLIENT_ID, SLACK_OAUTH_REDIRECT, newPkceVerifier, pkceChallenge, slackAuthorizeUrl } from "./slack-oauth";
 import type { SlackClientFactory } from "./slack.service";
 
