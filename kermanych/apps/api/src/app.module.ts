@@ -43,9 +43,11 @@ import { NativeSessionService } from "./native/native-session.service";
 import { NativeController } from "./http/native.controller";
 import { BrowserMcpController } from "./http/browser-mcp.controller";
 import { BrowserMcpService } from "./browser/browser-mcp.service";
+import { RoutinesController } from "./http/routines.controller";
+import { RoutinesService } from "./routines/routines.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, RoutinesController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -110,6 +112,12 @@ import { BrowserMcpService } from "./browser/browser-mcp.service";
     // bearer per session; the supervisor and NativeSessionService hand its binding to each
     // launch. The browser itself is the desktop app's (`bootstrap({ browser })`).
     BrowserMcpService,
+    // Routines (docs/specs/2026-10-16-routines.md): the signed-in member's scheduled tasks,
+    // fired by this api every minute while the app is open. Reads and claims runs under their
+    // JWT (AuthService.cloudClient) and runs them through the existing pipelines — the release-
+    // notes generator, the read-only one-shot, SupervisorService.createSessionFromTask, and
+    // SlackReleaseNotesService for posting. Nothing depends back on it except EventsGateway.
+    RoutinesService,
     // Global by design: the api binds 127.0.0.1 but was previously drivable by
     // anything on the machine, including GET /fs/list (arbitrary local directory
     // enumeration). Opt out per route with @Public(), never per module.

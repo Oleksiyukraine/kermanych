@@ -1060,7 +1060,7 @@ it will simply push its real status again.
 
 ## The Менеджмент tab and its assistant
 
-Менеджмент is the non-code half of the product: seven workspace-scoped sections
+Менеджмент is the non-code half of the product: eight workspace-scoped sections
 (`packages/core/src/management.ts` is the one table that names them) plus a chat
 field docked to the foot of the page.
 
@@ -1300,6 +1300,67 @@ uses (`saveRiskRegister` in `apps/ui/src/lib/export-file.ts`), rows in the scree
 order (by exposure), and the chat line names the file — or, in a plain browser tab, says the
 PDF opened in the print dialog. A code the register does not hold exports nothing: a file
 quietly missing a row you asked for would be forwarded as complete.
+
+### Routines (scheduled tasks)
+
+**Менеджмент → Routines** schedules things Kermanych already does: a prompt, or a release-notes
+generation, at a set date and time, once or on a recurring schedule. The worked example is
+«every Monday at 10:00, write the release notes of the last 7 days for the back-end and the
+front-end and post them to #releases». The model is Claude Desktop's local scheduled tasks
+(the app checks every minute while it is open, and catches up a missed run once), with the
+definitions kept where Claude's cloud routines keep theirs — in a shared account, here the
+workspace. Spec: `docs/specs/2026-10-16-routines.md`.
+
+What a routine does depends on its **level** — the whole workspace, or one of its projects —
+and its **action**:
+
+| Level | Action | A run… | Slack |
+|---|---|---|---|
+| workspace | Release notes | writes one note over the projects you picked (a branch each) and stores it in Release Notes | optional |
+| project | Release notes | the same, over that project | optional |
+| workspace | Prompt → report | runs a read-only assistant over every repository of the workspace (Менеджмент's `read`/`grep`/`glob`); its answer is the run's report | optional |
+| project | Prompt → agent | files a card with the prompt, assigned to you (optionally hidden from «Дошка»), and launches an agent in the project, as ▶ does | no — the result is the session in «Агенти» |
+
+- **Schedules**: once (date and time; the routine switches itself off after it fires), hourly
+  (at a minute), daily, weekdays, weekly (chosen days), monthly (a day of the month — the last
+  day of a shorter month), or manual only. Times are wall-clock times in the time zone of the
+  member who created the routine, so 10:00 stays 10:00 across a DST change. The editor shows
+  the next run before you save.
+- **Release-notes period**: the last *N* days, including the day of the run. A project without
+  commits in the period is left out of the note; a run where no project has commits is
+  **skipped**, not failed. Notes are stored in Release Notes like any other.
+- **It runs on its author's computer, in their name.** Only the api of the member who created
+  the routine fires it, while Kermanych is open and signed in there: their repository
+  checkouts, their Slack account, their agent runtime and plan. Nobody else's machine runs it,
+  because a Slack message or a card would otherwise appear under whoever happened to be online.
+  With the app closed nothing runs; on the next start (or sign-in), the most recent missed run
+  within the last 7 days runs once, labelled a catch-up, and older misses are dropped — so write
+  prompts that still make sense a few hours late.
+- **Exactly once.** A run is claimed by inserting its row, and `(routine, scheduled time)` is
+  unique, so the author signed in on two computers never runs one occurrence twice. Runs on
+  one machine are queued one at a time; an occurrence that comes due while the same routine is
+  still running is recorded as skipped.
+- **Who may do what.** Any member creates routines and sees every routine and its history.
+  Only the author edits a routine or presses «Run now». The author or the workspace owner
+  pauses, resumes or deletes it — the owner cannot change what someone else's routine does
+  (the database refuses it). Changing the schedule or resuming never fires a time that is
+  already past.
+- **Slack**: «Post the result to Slack» posts the note or the report as you — the release-notes
+  Slack connection (*Sending release notes to Slack* above), so the owner must have set the
+  Slack app's Client ID there first, and you connect your own Slack account once. Any channel
+  you are a member of can be picked; it defaults to the release-notes channel. A post that
+  fails fails the run but keeps the stored note or report.
+- **History**: each routine's detail lists its runs — succeeded, failed, skipped or running;
+  scheduled, catch-up or manual; with the note, the agent or the report it produced and the
+  reason a run failed or was skipped. «Succeeded» for an agent means the agent started; what it
+  did is in «Агенти». The run's end is toasted in the author's window (and notified while the
+  window is in the background).
+- **Not from the chat.** The section is `read`: the Менеджмент assistant can describe it but
+  refuses to create or change a routine, because a routine acts in its author's name.
+- **Cloud tables**: `workspace_routines` and `workspace_routine_runs`, created by the additive
+  `20261016090000_workspace_routines.sql` — push it before shipping this UI
+  ([Applying a migration](#applying-a-migration-to-the-teams-project)). The runner writes runs,
+  notes and cards under the author's own JWT, so RLS decides what lands.
 
 ### Giving another section something it can write
 

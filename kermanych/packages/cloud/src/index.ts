@@ -63,6 +63,12 @@ export type {
   SlackIntegrationInsert,
   ReleaseNotesSlack,
   ReleaseNotesSlackInsert,
+  WorkspaceRoutine,
+  WorkspaceRoutineInsert,
+  WorkspaceRoutinePatch,
+  WorkspaceRoutineRun,
+  WorkspaceRoutineRunClaim,
+  WorkspaceRoutineRunResult,
   WorkspacePassword,
   WorkspacePasswordField,
   WorkspacePasswordSecret,
@@ -188,6 +194,20 @@ export {
   createWorkspaceReleaseNote,
   patchWorkspaceReleaseNote,
 } from "./release-notes";
+
+export {
+  toWorkspaceRoutine,
+  toWorkspaceRoutineRun,
+  listWorkspaceRoutines,
+  listRunnableRoutines,
+  getWorkspaceRoutine,
+  createWorkspaceRoutine,
+  patchWorkspaceRoutine,
+  deleteWorkspaceRoutine,
+  listWorkspaceRoutineRuns,
+  claimRoutineRun,
+  finishRoutineRun,
+} from "./routines";
 
 export {
   PASSWORD_FILE_BUCKET,

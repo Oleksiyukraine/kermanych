@@ -300,6 +300,7 @@ const SECTION_ICONS: Record<string, KIconName> = {
   'management-docs': 'docs',
   'management-risks': 'risks',
   'management-releases': 'releases',
+  'management-routines': 'routines',
   'management-capacity': 'capacity',
   'management-integrations': 'integrations',
 };

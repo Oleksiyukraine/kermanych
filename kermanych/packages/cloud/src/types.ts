@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { AgentLanguage, AgentRuntime, DocsPolicy, DocsReport, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionReport, SessionStatus, ThinkingLevel } from "@kermanych/core";
+import type { AgentLanguage, AgentRuntime, DocsPolicy, DocsReport, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, RoutineAction, RoutineRunStatus, RoutineRunTrigger, RoutineSchedule, RoutineSlackTarget, SessionReport, SessionStatus, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same eleven labels.
@@ -780,6 +780,93 @@ export type ReleaseNotesSlackInsert = {
   teamName: string;
   channelId: string;
   channelName: string;
+};
+
+// ── Routines ──────────────────────────────────────────────────────────────────
+// Scheduled tasks of a workspace (`projectId` absent) or of one of its projects, and their run
+// history (20261016090000_workspace_routines.sql, docs/specs/2026-10-16-routines.md). The
+// vocabularies of `action` and `schedule` are core's; routines.ts owns the snake_case boundary.
+// `createdBy` is the author — the one member whose machine runs the routine, in whose name.
+export type WorkspaceRoutine = {
+  id: string;
+  workspaceId: string;
+  projectId?: string;
+  name: string;
+  action: RoutineAction;
+  schedule: RoutineSchedule;
+  timezone: string;
+  slack?: RoutineSlackTarget;
+  enabled: boolean;
+  // Server-owned: occurrences at or before it never run (packages/core `dueOccurrence`).
+  armedAt: string;
+  createdAt: string;
+  createdBy?: string;
+  updatedAt: string;
+  updatedBy?: string;
+};
+
+export type WorkspaceRoutineInsert = {
+  workspaceId: string;
+  projectId?: string;
+  name: string;
+  action: RoutineAction;
+  schedule: RoutineSchedule;
+  timezone: string;
+  slack?: RoutineSlackTarget;
+  enabled?: boolean;
+};
+
+// The scope is fixed at creation; `slack: null` removes the channel.
+export type WorkspaceRoutinePatch = {
+  name?: string;
+  action?: RoutineAction;
+  schedule?: RoutineSchedule;
+  timezone?: string;
+  slack?: RoutineSlackTarget | null;
+  enabled?: boolean;
+};
+
+export type WorkspaceRoutineRun = {
+  id: string;
+  routineId: string;
+  workspaceId: string;
+  trigger: RoutineRunTrigger;
+  scheduledFor?: string;
+  status: RoutineRunStatus;
+  startedAt: string;
+  finishedAt?: string;
+  runBy?: string;
+  noteId?: string;
+  taskId?: string;
+  commitCount?: number;
+  outputMd?: string;
+  slackChannelName?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  errorParams?: Record<string, string | number>;
+};
+
+// The claim: a scheduled run carries its occurrence, and a skip is claimed already finished.
+export type WorkspaceRoutineRunClaim = {
+  routineId: string;
+  trigger: RoutineRunTrigger;
+  scheduledFor?: string;
+  status?: RoutineRunStatus;
+  errorCode?: string;
+  errorMessage?: string;
+};
+
+// The outcome, written once by the runner.
+export type WorkspaceRoutineRunResult = {
+  status: Exclude<RoutineRunStatus, "running">;
+  noteId?: string;
+  taskId?: string;
+  commitCount?: number;
+  outputMd?: string;
+  slackChannelName?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  errorParams?: Record<string, string | number>;
 };
 
 // ── Password vault ────────────────────────────────────────────────────────────

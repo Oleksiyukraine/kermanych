@@ -20,9 +20,11 @@ import type { SlackClientFactory } from "./slack.service";
 
 // `clientId`: the Slack app this account authorized — the owner's settings compare it with
 // the Client ID being set, since the channel row takes its app from the owner's token.
+// `teamId`: the Slack workspace of the account — a routine stores it beside the channel it
+// picked, so a run can refuse a token from another Slack workspace.
 export type SlackAccountStatus =
   | { connected: false }
-  | { connected: true; teamName: string; userName: string; clientId: string };
+  | { connected: true; teamId: string; teamName: string; userName: string; clientId: string };
 
 export type ReleaseNoteSent = { channelName: string; ts: string };
 
@@ -44,7 +46,7 @@ export class SlackReleaseNotesService {
   account(workspaceId: string, userId: string): SlackAccountStatus {
     const row = this.registry.getSlackUserToken(workspaceId, userId);
     return row
-      ? { connected: true, teamName: row.teamName, userName: row.slackUserName, clientId: row.clientId }
+      ? { connected: true, teamId: row.teamId, teamName: row.teamName, userName: row.slackUserName, clientId: row.clientId }
       : { connected: false };
   }
 
@@ -150,17 +152,38 @@ export class SlackReleaseNotesService {
     const note = await getWorkspaceReleaseNote(cloud, noteId);
     if (!note || note.workspaceId !== workspaceId) throw new Error("this release note is not in the workspace");
 
+    return this.post(token, { id: settings.channelId, name: settings.channelName }, note.bodyMd);
+  }
+
+  // A routine's document (docs/specs/2026-10-16-routines.md) to the channel the routine picked, as
+  // its author. The channel need not be the release-notes one; it must be in the Slack workspace
+  // the author's account belongs to — the one it was picked from.
+  async postToChannel(
+    workspaceId: string,
+    userId: string,
+    target: { teamId: string; channelId: string; channelName: string },
+    markdown: string,
+  ): Promise<ReleaseNoteSent> {
+    const token = this.token(workspaceId, userId);
+    if (token.teamId !== target.teamId)
+      throw new Error(`your Slack account is in «${token.teamName}», but #${target.channelName} is in another Slack workspace — connect again`);
+    return this.post(token, { id: target.channelId, name: target.channelName }, markdown);
+  }
+
+  // One document is one channel message; a document longer than a Slack message continues in
+  // that message's thread, in order.
+  private async post(token: SlackUserTokenRow, channel: { id: string; name: string }, markdown: string): Promise<ReleaseNoteSent> {
     const client = this.clientFactory(token.accessToken);
-    const [first, ...rest] = splitForSlack(toSlackMrkdwn(note.bodyMd));
+    const [first, ...rest] = splitForSlack(toSlackMrkdwn(markdown));
     let posted: { ts: string };
     try {
-      posted = await client.postMessage(settings.channelId, undefined, first!);
+      posted = await client.postMessage(channel.id, undefined, first!);
     } catch (err) {
       if (err instanceof SlackApiError && (err.error === "not_in_channel" || err.error === "channel_not_found"))
-        throw new Error(`you are not a member of #${settings.channelName} — join it in Slack first`);
+        throw new Error(`you are not a member of #${channel.name} — join it in Slack first`);
       throw err;
     }
-    for (const part of rest) await client.postMessage(settings.channelId, posted.ts, part);
-    return { channelName: settings.channelName, ts: posted.ts };
+    for (const part of rest) await client.postMessage(channel.id, posted.ts, part);
+    return { channelName: channel.name, ts: posted.ts };
   }
 }
