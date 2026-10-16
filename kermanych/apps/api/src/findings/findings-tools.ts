@@ -20,6 +20,9 @@ export const FINDING_TOOLS = [
       "Report a real problem: a bug, a vulnerability, broken or dead code, documentation that contradicts the code, or significant tech debt. " +
       "Something that is part of your current task is not a finding: fix it instead. " +
       "Do not get side-tracked: record the finding and continue your task. Do not fix it on this branch unless the operator asked. " +
+      "Report right away; do not ask the operator whether to report: the finding is itself the proposal, and they can dismiss it. " +
+      "This holds while planning or interviewing too, because reporting changes no code. " +
+      "If the problem partly overlaps your task, report the part outside it and raise only the overlap. " +
       "Report only what you saw in code or output, with `path:line` references or a reproduction command — no guesses, no style advice. " +
       "Call list_findings first and do not report anything already there, including dismissed findings. " +
       `Write every field in English. Nothing is filed until the operator decides; at most ${OPEN_FINDINGS_LIMIT} findings of a session can wait at once.`,
