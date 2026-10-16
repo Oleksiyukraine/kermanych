@@ -421,6 +421,17 @@ verify_jwt = true
 enabled = true
 verify_jwt = false
 
+# routines-runner — the cloud runner of routines (docs/specs/2026-10-16-routines.md). verify_jwt
+# = false because its minute tick comes from pg_cron with no user JWT: the function authenticates
+# that call by the shared ROUTINES_RUNNER_SECRET and every member action by the caller's own JWT
+# (auth.getUser), then works with the service role. Secrets (ROUTINES_RUNNER_SECRET, optionally
+# ROUTINES_RUN_BUDGET_MS) come from supabase/functions/.env locally; the workspace's own keys
+# live in public.workspace_routine_cloud. It imports packages/core modules from outside
+# supabase/, so it deploys with `supabase functions deploy routines-runner --use-api`.
+[functions.routines-runner]
+enabled = true
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54427

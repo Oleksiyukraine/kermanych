@@ -31,6 +31,7 @@ export type KIconName =
   | 'docs'
   | 'risks'
   | 'releases'
+  | 'routines'
   | 'capacity'
   | 'integrations'
   | 'worktree'
@@ -96,6 +97,17 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // Release Notes — a written page. Read as «notes» rather than as a version tag on purpose:
   // a tag glyph at this size reads as «label», and labels are not what the section holds.
   releases: ['M14.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7.5z', 'M14.5 3v4.5H19', 'M9 13.5h6', 'M9 17h4'],
+  // Routines — a calendar with a clock (Lucide's calendar-clock): «on this day, at this time».
+  // A bare clock would read as «recent» or «history»; the page behind it is what says the time
+  // is a scheduled one.
+  routines: [
+    'M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5',
+    'M16 2v4',
+    'M8 2v4',
+    'M3 10h5',
+    'M17.5 17.5 16 16.3V14',
+    'M22 16a6 6 0 1 1-12 0 6 6 0 0 1 12 0Z',
+  ],
   // Team Capacity — a gauge. The hint is «навантаження команди»: a load, i.e. a reading
   // against a limit, which a group-of-people mark would have said nothing about.
   capacity: ['M3.34 19a10 10 0 1 1 17.32 0', 'm12 14 4.5-4.5'],

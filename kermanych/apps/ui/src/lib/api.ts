@@ -42,6 +42,7 @@ import type {
   ReleaseNotesSlack,
   SlackCloudStatus,
   SlackIntegration,
+  WorkspaceRoutineRun,
 } from '@kermanych/cloud';
 import { globalTr } from '../boot/i18n';
 import { localizeError } from './i18n-coded';
@@ -307,7 +308,7 @@ export type SlackCloudSetup = {
 // it exists and whose it is.
 export type SlackAccountStatus =
   | { connected: false }
-  | { connected: true; teamName: string; userName: string; clientId: string };
+  | { connected: true; teamId: string; teamName: string; userName: string; clientId: string };
 export type ReleaseNoteSent = { channelName: string; ts: string };
 
 export const api = {
@@ -563,6 +564,11 @@ export const api = {
   // and stores/release-notes.ts saves it to the cloud under the user's own JWT.
   generateReleaseNotes: (ask: ReleaseNotesAsk): Promise<ReleaseNotesReply> =>
     post<ReleaseNotesReply>('/management/release-notes', ask),
+
+  // «Run now» on a routine (docs/specs/2026-10-16-routines.md). Answers the claimed run at
+  // once; the run's end arrives as a `routine_run` socket event.
+  runRoutine: (routineId: string): Promise<WorkspaceRoutineRun> =>
+    post<WorkspaceRoutineRun>(`/routines/${encodeURIComponent(routineId)}/run`, {}),
 
   // The chat is promoted onto a card the UI has already minted: `taskId` is that card, and
   // the guard reads who may run it from its own token, never from this body.

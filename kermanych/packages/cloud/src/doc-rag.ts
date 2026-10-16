@@ -12,6 +12,7 @@
 // visibility with it.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { DocChunk, ManagementDocFragment } from "@kermanych/core";
+import { invokeEdge } from "./edge";
 
 // The one Edge Function. `action` discriminates search from index inside it, so the browser
 // (search) and the api (index) share a single deployed function and a single caller-JWT
@@ -96,7 +97,7 @@ export async function searchProjectDocs(
   client: SupabaseClient,
   input: { projectId: string; query: string; matchCount?: number },
 ): Promise<DocSearchResult> {
-  return invokeEdge<DocSearchResult>(client, {
+  return invokeEdge<DocSearchResult>(client, EDGE_FUNCTION, {
     action: "search",
     projectId: input.projectId,
     query: input.query,
@@ -137,27 +138,5 @@ export type DocIndexResult = {
 // caller's JWT (the api passes the operator's token), so a member who cannot write the
 // project's chunks is refused by RLS, not by this code.
 export async function indexProjectDocs(client: SupabaseClient, req: DocIndexRequest): Promise<DocIndexResult> {
-  return invokeEdge<DocIndexResult>(client, { action: "index", ...req });
-}
-
-// supabase-js functions.invoke resolves { data, error }; a non-2xx becomes a
-// FunctionsHttpError whose `context` is the Response. The function bodies below put their
-// message on `{ error }`, so dig it out — otherwise every failure reads "Edge Function
-// returned a non-2xx status code" with no cause.
-async function invokeEdge<T>(client: SupabaseClient, body: Record<string, unknown>): Promise<T> {
-  const { data, error } = await client.functions.invoke(EDGE_FUNCTION, { body });
-  if (error) {
-    let detail = error.message;
-    const ctx = "context" in error ? error.context : undefined;
-    if (ctx instanceof Response) {
-      try {
-        const j: unknown = await ctx.clone().json();
-        if (j && typeof j === "object" && "error" in j && typeof j.error === "string") detail = j.error;
-      } catch {
-        // non-JSON body — keep the generic message
-      }
-    }
-    throw new Error(detail);
-  }
-  return data as T;
+  return invokeEdge<DocIndexResult>(client, EDGE_FUNCTION, { action: "index", ...req });
 }

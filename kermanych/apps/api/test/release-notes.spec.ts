@@ -10,8 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ReleaseCommit } from "@kermanych/core";
 import { WorktreeService } from "../src/worktree/worktree.service";
-import { buildReleaseNotesPrompt, commitsBlock, MAX_COMMITS_CHARS } from "../src/management/release-notes-prompt";
-import { titleOf } from "../src/management/release-notes.service";
+import { buildReleaseNotesPrompt, commitsBlock, MAX_COMMITS_CHARS, titleOf } from "@kermanych/core";
 
 function commit(over: Partial<ReleaseCommit> = {}): ReleaseCommit {
   return { date: "2026-08-20", author: "Оля", subject: "додано експорт у PDF", body: "", ...over };
@@ -87,6 +86,23 @@ describe("buildReleaseNotesPrompt — several projects", () => {
     expect(prompt).toContain("Розділи документ за проєктами");
     expect(prompt).toContain("заголовок другого рівня, який є РІВНО назвою проєкту");
     expect(prompt).toContain("1. Backend — гілка dev, код у теці /repos/back\n2. Frontend — гілка main, код у теці /repos/front");
+  });
+
+  // The cloud routine runner reads code on GitHub with its own tools; a prompt pointing it at
+  // a folder or at omp's tools would send the model after something it cannot open.
+  it("points the cloud runner at GitHub and its own tools", () => {
+    const cloud = buildReleaseNotesPrompt({
+      ...ask,
+      codeAccess: "github",
+      sources: [
+        { ...back, repoPath: "acme/back", commits: [commit()] },
+        { ...front, repoPath: "acme/front", commits: [commit()] },
+      ],
+    });
+    expect(cloud).toContain("1. Backend — гілка dev, код у репозиторії GitHub acme/back");
+    expect(cloud).toContain("list_files/read_file/search_code");
+    expect(cloud).not.toContain("read/grep/glob");
+    expect(cloud).not.toContain("код у теці");
   });
 
   // The split the operator asked for: a commit is printed under its own project only, so the
