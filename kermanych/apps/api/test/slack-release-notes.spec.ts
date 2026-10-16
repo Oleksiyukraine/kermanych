@@ -24,6 +24,7 @@ import { RegistryService } from "../src/registry/registry.service";
 import type { AuthService } from "../src/auth/auth.service";
 import { SlackReleaseNotesService } from "../src/slack/slack-release-notes.service";
 import { pkceChallenge, SLACK_OAUTH_REDIRECT } from "../src/slack/slack-oauth";
+import { isSlackAuthError } from "../src/slack/slack-client";
 
 type Call = { method: string; auth: string | null; params: URLSearchParams };
 
@@ -73,10 +74,12 @@ const note = (over: Partial<WorkspaceReleaseNote> = {}): WorkspaceReleaseNote =>
 let registry: RegistryService;
 let svc: SlackReleaseNotesService;
 
-function storeToken(teamId = "T1"): void {
+function storeToken(teamId = "T1", rotation: { refreshToken: string; expiresAt: number } | null = null): void {
   registry.setSlackUserToken("u1", {
     workspaceId: "w1",
     accessToken: "xoxp-me",
+    refreshToken: rotation?.refreshToken ?? null,
+    expiresAt: rotation?.expiresAt ?? null,
     clientId: "111.222",
     teamId,
     teamName: teamId === "T1" ? "Acme" : "Other",
@@ -93,7 +96,10 @@ beforeEach(() => {
   svc = new SlackReleaseNotesService(registry, { cloudClient: () => ({}) } as unknown as AuthService);
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe("pkceChallenge", () => {
   // RFC 7636 Appendix B, and the example in Slack's PKCE guide. Plain base64 (padding, +/)
@@ -213,5 +219,72 @@ describe("SlackReleaseNotesService — a routine's channel", () => {
     storeToken("T2");
     stubSlack([]);
     await expect(svc.postToChannel("w1", "u1", target, "x")).rejects.toThrow("another Slack workspace");
+  });
+});
+
+// An app with token rotation on (it cannot be turned off) hands out 12-hour `xoxe.xoxp-` tokens.
+describe("SlackReleaseNotesService — a rotating user token", () => {
+  const NOW = Date.parse("2026-10-16T12:00:00Z");
+  const CHANNELS = { ok: true, channels: [{ id: "C1", name: "general" }] };
+  const REFRESHED = { ok: true, token_type: "user", access_token: "xoxe.xoxp-2", refresh_token: "xoxe-1-b", expires_in: 43200 };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+
+  it("keeps the refresh token it was granted and renews the token once it is about to expire", async () => {
+    cloud.settings = settings();
+    await svc.authorize("w1", "u1");
+    stubSlack([
+      {
+        ok: true,
+        authed_user: { id: "U1", access_token: "xoxe.xoxp-1", refresh_token: "xoxe-1-a", expires_in: 43200, scope: "chat:write,channels:read,groups:read" },
+        team: { id: "T1", name: "Acme" },
+      },
+      { ok: true, team_id: "T1", team: "Acme", user_id: "U1", user: "andrii" },
+    ]);
+    await svc.completeAuthorize("w1", "u1", "the-code");
+
+    // Still fresh: used as granted.
+    let calls = stubSlack([CHANNELS]);
+    await svc.channels("w1", "u1");
+    expect(calls.map((c) => [c.method, c.auth])).toEqual([["users.conversations", "Bearer xoxe.xoxp-1"]]);
+
+    // Twelve hours on: renewed first, without a token or a client secret (a PKCE app is public).
+    vi.setSystemTime(NOW + 12 * 3600_000);
+    calls = stubSlack([REFRESHED, CHANNELS]);
+    await expect(svc.channels("w1", "u1")).resolves.toEqual([{ id: "C1", name: "general", isPrivate: false }]);
+    const refresh = calls[0]!;
+    expect(refresh.method).toBe("oauth.v2.access");
+    expect(refresh.auth).toBeNull();
+    expect(Object.fromEntries(refresh.params)).toEqual({ client_id: "111.222", grant_type: "refresh_token", refresh_token: "xoxe-1-a" });
+    expect(calls[1]!.auth).toBe("Bearer xoxe.xoxp-2");
+
+    // The renewed pair is what the next renewal spends.
+    vi.setSystemTime(NOW + 24 * 3600_000);
+    calls = stubSlack([{ ...REFRESHED, access_token: "xoxe.xoxp-3", refresh_token: "xoxe-1-c" }, CHANNELS]);
+    await svc.channels("w1", "u1");
+    expect(calls[0]!.params.get("refresh_token")).toBe("xoxe-1-b");
+    expect(calls[1]!.auth).toBe("Bearer xoxe.xoxp-3");
+  });
+
+  it("spends a refresh token once when two calls find the token expiring together", async () => {
+    storeToken("T1", { refreshToken: "xoxe-1-a", expiresAt: NOW + 60_000 });
+    const calls = stubSlack([REFRESHED, CHANNELS, CHANNELS]);
+    await Promise.all([svc.channels("w1", "u1"), svc.channels("w1", "u1")]);
+    expect(calls.map((c) => c.method)).toEqual(["oauth.v2.access", "users.conversations", "users.conversations"]);
+  });
+
+  it("asks to connect again when Slack refuses the renewal", async () => {
+    storeToken("T1", { refreshToken: "xoxe-1-spent", expiresAt: NOW - 1 });
+    stubSlack([{ ok: false, error: "invalid_refresh_token" }]);
+    const refused = await svc.channels("w1", "u1").catch((e: unknown) => e);
+    expect(isSlackAuthError(refused)).toBe(true);
+
+    stubSlack([{ ok: false, error: "invalid_refresh_token" }]);
+    await expect(svc.postToChannel("w1", "u1", { teamId: "T1", channelId: "C42", channelName: "weekly" }, "x")).rejects.toThrow(
+      "connect your Slack account again",
+    );
   });
 });

@@ -143,7 +143,7 @@
             :model-value="form.channelId"
             :label="t('management.routines.editor.slackBotChannel', { team: cloudStatus.slack.teamName })"
             :options="channelOptions"
-            :placeholder="channelsFailed ? t('management.routines.editor.slackChannelsFailed') : t('management.routines.editor.slackChannelPlaceholder')"
+            :placeholder="channelsError ? t('management.routines.editor.slackChannelsFailed') : t('management.routines.editor.slackChannelPlaceholder')"
             searchable
             @update:model-value="(v: string) => (form.channelId = v)"
           />
@@ -164,12 +164,13 @@
             :model-value="form.channelId"
             :label="t('management.routines.editor.slackChannel', { team: slackAccount.teamName })"
             :options="channelOptions"
-            :placeholder="channelsFailed ? t('management.routines.editor.slackChannelsFailed') : t('management.routines.editor.slackChannelPlaceholder')"
+            :placeholder="channelsError ? t('management.routines.editor.slackChannelsFailed') : t('management.routines.editor.slackChannelPlaceholder')"
             searchable
             @update:model-value="(v: string) => (form.channelId = v)"
           />
           <p v-if="slackAccount" class="rtn-ed__hint">{{ t('management.routines.editor.slackHint') }}</p>
         </template>
+        <p v-if="form.slackOn && channelsError && channelsFor === form.runner" class="rtn-ed__error">{{ channelsError }}</p>
       </template>
       <p v-else-if="form.kind === 'prompt' && form.scope" class="rtn-ed__hint">
         {{ t('management.routines.editor.slackAgentHint') }}
@@ -215,7 +216,7 @@ import { useRoutines } from 'stores/routines';
 import { useReleaseSlack } from 'stores/release-slack';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
-import { api, type SlackChannelOption } from '../../lib/api';
+import type { SlackChannelOption } from '../../lib/api';
 import { formatInstant, WEEK_ORDER } from '../../lib/routines';
 
 const props = defineProps<{
@@ -364,22 +365,24 @@ const slackAccount = computed(() => {
 // workspace's bot for a cloud one.
 const channels = ref<SlackChannelOption[]>([]);
 const channelsFor = ref<RoutineRunner | undefined>(undefined);
-const channelsFailed = ref(false);
+// Why the channels could not be read — shown, since «could not read» alone leaves nothing to do.
+const channelsError = ref('');
 const connecting = ref(false);
 const channelOptions = computed<KSelectOption[]>(() => channels.value.map((c) => ({ value: c.id, label: `#${c.name}` })));
 
 async function loadChannels(): Promise<void> {
   const runner = form.runner;
-  channelsFailed.value = false;
+  channelsError.value = '';
   channelsFor.value = runner;
   try {
-    const list = runner === 'cloud' ? await store.cloudChannels(props.workspaceId) : await api.slackAccountChannels(props.workspaceId);
+    const list = runner === 'cloud' ? await store.cloudChannels(props.workspaceId) : await slack.channels(props.workspaceId);
     if (form.runner !== runner) return;
     channels.value = list;
     if (!list.some((c) => c.id === form.channelId)) form.channelId = slack.settings[props.workspaceId]?.channelId ?? '';
-  } catch {
+  } catch (e) {
+    if (form.runner !== runner) return;
     channels.value = [];
-    channelsFailed.value = true;
+    channelsError.value = e instanceof Error ? e.message : String(e);
   }
 }
 

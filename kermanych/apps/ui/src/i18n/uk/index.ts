@@ -3413,6 +3413,7 @@ export const uk = {
     sent: 'Надіслано',
     sendTip: 'Публікує цю нотатку в #{channel} від вашого імені в Slack',
     reconnect: 'Slack більше не приймає ваше підключення — натисніть «Надіслати в Slack» ще раз, щоб підключитися знову.',
+    reconnectAccount: 'Slack більше не приймає ваше підключення — підключіть свій Slack-акаунт знову.',
     notify: {
       connected: 'Slack-акаунт підключено: {user}',
       channelSet: 'Реліз-ноти надсилатимуться в {channel}',
