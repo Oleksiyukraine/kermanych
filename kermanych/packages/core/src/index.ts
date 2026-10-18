@@ -116,7 +116,15 @@ export {
   type ValidRoutine,
 } from "./routines";
 export { THINKING_LEVELS, isThinkingLevel, type ThinkingLevel } from "./thinking";
-export { AGENT_RUNTIMES, isAgentRuntime, type AgentRuntimeKind } from "./runtime";
+export {
+  AGENT_RUNTIMES,
+  isAgentRuntime,
+  type AgentRuntimeKind,
+  NATIVE_HARNESSES,
+  isNativeHarness,
+  managedRuntime,
+  type NativeHarness,
+} from "./runtime";
 export {
   AGENT_LANGUAGES,
   AGENT_LANGUAGE_LABELS,

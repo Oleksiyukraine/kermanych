@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
-import { isThinkingLevel, isAgentRuntime, isAgentLanguage, isFindingKind, parseFindingTarget, docsPolicy, combineReportWrites } from "@kermanych/core";
+import { isThinkingLevel, isAgentRuntime, isNativeHarness, isAgentLanguage, isFindingKind, parseFindingTarget, docsPolicy, combineReportWrites } from "@kermanych/core";
 import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, Project, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
@@ -674,10 +674,11 @@ export class RegistryService {
     // SQLite stores the flag as 0/1; hand callers a real boolean. `effort` is validated rather
     // than cast: a row written by an older build (or by hand) must degrade to "not known" —
     // typing an unknown word as a ThinkingLevel would send it straight back into omp's argv.
-    // Same for `runtime`: guard with isAgentRuntime so invalid values degrade to undefined.
+    // Same for `runtime`: guard with isNativeHarness (the superset — a native `codex` row is
+    // valid) so invalid values degrade to undefined.
     // `native` and `deep_analysis` are 0/1 flags too, surfaced only when set so an ordinary row
     // stays as it was; `open_findings` likewise appears only when something waits.
-    return rows.map(({ native, deep_analysis, open_findings, ...r }) => ({ ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(open_findings ? { openFindings: open_findings } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isAgentRuntime(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) }));
+    return rows.map(({ native, deep_analysis, open_findings, ...r }) => ({ ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(open_findings ? { openFindings: open_findings } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) }));
   }
 
   createSession(

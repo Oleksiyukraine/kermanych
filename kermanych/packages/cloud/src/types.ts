@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { AgentLanguage, AgentRuntime, DocsPolicy, DocsReport, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, RoutineAction, RoutineRunStatus, RoutineRunTrigger, RoutineRunner, RoutineSchedule, RoutineSlackTarget, SessionReport, SessionStatus, SlackCloudAiProvider, ThinkingLevel } from "@kermanych/core";
+import type { AgentLanguage, AgentRuntimeKind, DocsPolicy, DocsReport, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, RoutineAction, RoutineRunStatus, RoutineRunTrigger, RoutineRunner, RoutineSchedule, RoutineSlackTarget, SessionReport, SessionStatus, SlackCloudAiProvider, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same eleven labels.
@@ -12,7 +12,7 @@ export type Profile = {
   githubUsername?: string;
   displayName?: string;
   avatarUrl?: string;
-  agentRuntime?: AgentRuntime;
+  agentRuntime?: AgentRuntimeKind;
   agentLanguage?: AgentLanguage;
 };
 

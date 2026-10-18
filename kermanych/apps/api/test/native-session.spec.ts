@@ -1,8 +1,9 @@
 // apps/api/test/native-session.spec.ts
-// Native sessions (docs/specs/2026-10-05-native-sessions.md): the harness argv, the hook →
-// status mapping for both harnesses, the per-launch bearer, helper delivery by bracketed paste,
-// the session-file readers, and the api-start reset. The pty is a fake TerminalService.
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+// Native sessions (docs/specs/2026-10-05-native-sessions.md, 2026-10-16-native-codex.md): the
+// harness argv, the hook → status mapping per harness, the per-launch bearer, helper delivery by
+// bracketed paste, the session-file readers, and the api-start reset. The pty is a fake
+// TerminalService.
+import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HttpException } from "@nestjs/common";
@@ -12,7 +13,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session, TerminalInfo } from "@kermanych/core";
 import { RegistryService } from "../src/registry/registry.service";
 import type { TerminalEvent, TerminalService } from "../src/terminal/terminal.service";
-import { claudeFileUsage, NativeSessionService, ompFileUsage, type NativeEvent } from "../src/native/native-session.service";
+import { claudeFileUsage, codexFileMessages, codexFileUsage, NativeSessionService, ompFileUsage, type NativeEvent } from "../src/native/native-session.service";
+import { codexHookHash } from "../src/native/native-hooks";
+import { messagesToTranscript } from "../src/supervisor/messages-to-transcript";
 import { NativeController } from "../src/http/native.controller";
 import { CodedError } from "../src/management/coded-error";
 import type { BrowserMcpService } from "../src/browser/browser-mcp.service";
@@ -126,6 +129,52 @@ describe("harness argv", () => {
     expect(opened[1].args).toEqual(["launch", "--hook", hook, "--hook", bridge]);
     expect(opened[1].env).toMatchObject({ KERMANYCH_MCP_URL: binding.url, KERMANYCH_MCP_TOKEN: "tok", KERMANYCH_NATIVE_TOKEN: expect.any(String) });
   });
+
+  it("codex: trusted folder and pre-trusted hooks on every launch; resume by the id its hooks report", async () => {
+    const binding = { name: "kermanych", url: "http://127.0.0.1:4317/api/browser/mcp", token: "tok" };
+    const { native, opened, create, row, terminal } = make(binding);
+    const s = create("codex");
+    await native.start(s, { prompt: "--fix it", resume: true });
+    const hook = join(tmpdir(), "kermanych-native", "codex-hook.sh");
+    expect(statSync(hook).mode & 0o111).not.toBe(0);
+    const args = opened[0].args;
+    expect(opened[0].file).toBe("codex");
+    // No id known yet → a fresh start; the prompt stays text after `--`.
+    expect(args[0]).toBe("-c");
+    expect(args.slice(-2)).toEqual(["--", "--fix it"]);
+    expect(args).toContain(`projects={${JSON.stringify(realpathSync(dir))}={trust_level="trusted"}}`);
+    const events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Stop", "Interrupt"];
+    for (const e of events) expect(args).toContain(`hooks.${e}=[{hooks=[{type="command",command=${JSON.stringify(`'${hook}'`)},timeout=3,async=false}]}]`);
+    const state = args.find((a) => a.startsWith("hooks.state="))!;
+    expect(state).toContain(`"/<session-flags>/config.toml:user_prompt_submit:0:0"={trusted_hash="${codexHookHash("user_prompt_submit", `'${hook}'`, 3)}"}`);
+    expect(state.match(/trusted_hash=/g)).toHaveLength(events.length);
+    // The session MCP server's bearer stays in the env, never in argv.
+    expect(args).toContain(`mcp_servers.kermanych={url="${binding.url}",bearer_token_env_var="KERMANYCH_MCP_TOKEN"}`);
+    expect(args.join(" ")).not.toContain("tok\"");
+    expect(opened[0].env).toMatchObject({ KERMANYCH_MCP_TOKEN: "tok" });
+    expect(args).not.toContain("read-only");
+
+    native.codexHook(s.id, { hook_event_name: "SessionStart", session_id: "01a1-x", transcript_path: "/x/rollout.jsonl" });
+    expect(row(s.id)).toMatchObject({ ompSessionId: "01a1-x", ompSessionFile: "/x/rollout.jsonl" });
+    terminal.events$.next({ type: "exit", id: "t1", exitCode: 0 });
+    await native.start(row(s.id), { prompt: "more", resume: true });
+    const resumed = opened[1].args;
+    expect(resumed[0]).toBe("resume");
+    expect(resumed.slice(-3)).toEqual(["01a1-x", "--", "more"]);
+  });
+
+  it("codex chat: read-only by sandbox, on every start", async () => {
+    const { native, opened, create } = make();
+    const s = create("codex", { kind: "chat" });
+    await native.start(s, { resume: false });
+    expect(opened[0].args.slice(-4)).toEqual(["-s", "read-only", "-a", "never"]);
+  });
+
+  it("codex trusted_hash reproduces the value codex itself wrote for a hook", () => {
+    // From a real codex 0.147 config.toml after «Trust all» for `-c hooks.Stop=[{hooks=[{type="command",
+    // command="/tmp/cxsmoke/hook.sh Stop",timeout=5,async=false}]}]`.
+    expect(codexHookHash("stop", "/tmp/cxsmoke/hook.sh Stop", 5)).toBe("sha256:3540b6ed7771f9d056b4f997eb7b69a5d51c84aaf9f018339fd76747d721f8f9");
+  });
 });
 
 describe("status mapping", () => {
@@ -158,6 +207,35 @@ describe("status mapping", () => {
     hook({ hook_event_name: "Stop" });
     expect(status()?.status).toBe("done");
     expect(row(s.id).status).toBe("done");
+  });
+
+  it("codex hooks, including Interrupt and a handle switched inside the TUI", async () => {
+    const { native, create, row } = make();
+    const s = create("codex");
+    await native.start(s, { prompt: "go", resume: false });
+    const status = () => native.live(s.id);
+    const hook = (body: Record<string, unknown>) => native.codexHook(s.id, { session_id: "a", transcript_path: "/x/a.jsonl", ...body });
+
+    hook({ hook_event_name: "UserPromptSubmit" });
+    expect(status()?.status).toBe("thinking");
+    expect(row(s.id).ompSessionId).toBe("a");
+    hook({ hook_event_name: "PreToolUse", tool_name: "Bash" });
+    expect(status()).toMatchObject({ status: "tool", currentTool: "Bash" });
+    hook({ hook_event_name: "PermissionRequest", tool_name: "Bash" });
+    expect(status()?.status).toBe("waiting_input");
+    hook({ hook_event_name: "PostToolUse", tool_name: "Bash" });
+    expect(status()).toMatchObject({ status: "thinking", currentTool: undefined });
+    hook({ hook_event_name: "PreToolUse", tool_name: "request_user_input" });
+    expect(status()?.status).toBe("waiting_input");
+    hook({ hook_event_name: "Stop" });
+    expect(status()?.status).toBe("done");
+    // Esc mid-turn: no Stop, an Interrupt.
+    hook({ hook_event_name: "UserPromptSubmit" });
+    hook({ hook_event_name: "Interrupt" });
+    expect(status()?.status).toBe("done");
+    // `/new` in the TUI: the next prompt reports the new conversation.
+    native.codexHook(s.id, { hook_event_name: "SessionStart", source: "startup", session_id: "b", transcript_path: "/x/b.jsonl" });
+    expect(row(s.id)).toMatchObject({ ompSessionId: "b", ompSessionFile: "/x/b.jsonl" });
   });
 
   it("omp events, and `in_review` once the branch has a PR", async () => {
@@ -311,6 +389,64 @@ describe("session-file readers", () => {
       JSON.stringify({ type: "message", message: { role: "assistant", model: "m-2", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0.5 } } } }),
     ].join("\n");
     expect(ompFileUsage(text)).toEqual({ usage: { input: 4, output: 5, cacheRead: 5, cacheWrite: 6, cost: 0.75 }, model: "m-2" });
+  });
+
+  it("codex: the last cumulative token count, cached input split out, no cost; the model per turn", () => {
+    const line = (type: string, payload: unknown) => JSON.stringify({ timestamp: "2026-10-16T12:00:00.000Z", type, payload });
+    const tokens = (input: number, cached: number, output: number) =>
+      line("event_msg", { type: "token_count", info: { total_token_usage: { input_tokens: input, cached_input_tokens: cached, cache_write_input_tokens: 2, output_tokens: output, total_tokens: input + output } } });
+    const text = [
+      line("session_meta", { id: "a" }),
+      line("turn_context", { model: "gpt-a" }),
+      tokens(100, 40, 5),
+      line("turn_context", { model: "gpt-b" }),
+      tokens(300, 200, 9),
+      line("event_msg", { type: "token_count", info: null }),
+    ].join("\n");
+    expect(codexFileUsage(text)).toEqual({ usage: { input: 100, output: 9, cacheRead: 200, cacheWrite: 2, cost: 0 }, model: "gpt-b" });
+    expect(codexFileUsage(line("session_meta", { id: "a" }))).toEqual({ model: undefined });
+  });
+
+  it("codex history: 0.163's UserMessage items are prompts too, and a prompt written in both shapes counts once", () => {
+    const line = (type: string, payload: unknown) => JSON.stringify({ timestamp: "2026-10-16T12:00:00.000Z", type, payload });
+    const item = (text: string) => line("event_msg", { type: "item_completed", item: { type: "UserMessage", content: [{ type: "text", text, text_elements: [] }] } });
+    const text = [
+      item("first"),
+      line("event_msg", { type: "item_completed", item: { type: "AgentMessage", content: [{ type: "text", text: "not a prompt" }] } }),
+      line("event_msg", { type: "user_message", message: "second" }),
+      item("second"),
+    ].join("\n");
+    expect(codexFileMessages(text).map((m) => [m.role, m.content?.[0]?.text])).toEqual([
+      ["user", "first"],
+      ["user", "second"],
+    ]);
+  });
+
+  it("codex history: clean prompts, assistant text, tool calls paired with their outputs", () => {
+    const line = (type: string, payload: unknown) => JSON.stringify({ timestamp: "2026-10-16T12:00:00.000Z", type, payload });
+    const text = [
+      line("response_item", { type: "message", role: "developer", content: [{ type: "input_text", text: "system" }] }),
+      line("response_item", { type: "message", role: "user", content: [{ type: "input_text", text: "<environment_context>…</environment_context>" }] }),
+      line("response_item", { type: "message", role: "user", content: [{ type: "input_text", text: "list files" }] }),
+      line("event_msg", { type: "user_message", message: "list files" }),
+      line("response_item", { type: "message", role: "assistant", content: [{ type: "output_text", text: "Listing." }], phase: "commentary" }),
+      line("response_item", { type: "custom_tool_call", name: "exec", input: "tools.exec_command({cmd:'ls'})", call_id: "c1" }),
+      line("response_item", { type: "reasoning", encrypted_content: "…" }),
+      line("response_item", { type: "function_call", name: "wait", arguments: "{\"cell_id\":\"2\"}", call_id: "c2" }),
+      line("response_item", { type: "function_call_output", call_id: "c2", output: "waited" }),
+      line("response_item", { type: "custom_tool_call_output", call_id: "c1", output: [{ type: "input_text", text: "a.txt\n" }, { type: "input_text", text: "b.txt" }] }),
+      line("response_item", { type: "message", role: "assistant", content: [{ type: "output_text", text: "Two files." }], phase: "final_answer" }),
+    ].join("\n");
+    const messages = codexFileMessages(text);
+    expect(messages.filter((m) => m.role === "user").map((m) => m.content?.[0]?.text)).toEqual(["list files"]);
+    expect(messages.find((m) => m.role === "assistant" && m.content?.[0]?.type === "toolCall" && m.content[0].name === "wait")?.content?.[0]?.arguments).toEqual({ cell_id: "2" });
+    const results = messages.filter((m) => m.role === "toolResult");
+    expect(results.map((m) => [m.toolCallId, m.toolName, m.content?.[0]?.text])).toEqual([
+      ["c2", "wait", "waited"],
+      ["c1", "exec", "a.txt\nb.txt"],
+    ]);
+    const { entries } = messagesToTranscript(messages);
+    expect(entries.map((e) => e.kind).filter((k) => k !== "turn")).toEqual(["user_text", "assistant_text", "tool", "tool", "assistant_text"]);
   });
 
   it("after an omp turn: absolute usage, model, the armed PR link, and the history", async () => {

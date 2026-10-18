@@ -361,11 +361,13 @@ export const uk = {
     native: {
       modeLabel: 'Режим',
       modeManaged: 'Керманич',
-      modeHint: 'omp / claude — власний TUI харнесу в терміналі, без обгортки Керманича',
+      modeHint: 'omp / claude / codex — власний TUI харнесу в терміналі, без обгортки Керманича',
       label: '{harness} · нативно',
       idle: 'Харнес зараз не запущений. Продовжте сесію, щоб відкрити його TUI тут.',
       resume: 'Продовжити',
       engineIdHintOmp: 'Файл сесії omp. Щоб продовжити її без Керманича: перейдіть у робочу теку сесії й виконайте omp --resume <цей файл>.',
+      engineIdCodex: 'Сесія codex',
+      engineIdHintCodex: 'Ідентифікатор сесії codex. Щоб продовжити її без Керманича: перейдіть у робочу теку сесії й виконайте codex resume <цей id>.',
     },
     launcher: {
       esc: 'Esc — закрити',
@@ -2780,7 +2782,7 @@ export const uk = {
       bindHint: 'Прив’яжіть локальну теку репозиторію',
       historyTitle: 'Чати',
       newChat: '+ Новий',
-      modeTitle: 'Режим нового чату: Керманич або власний TUI omp / claude',
+      modeTitle: 'Режим нового чату: Керманич або власний TUI omp / claude / codex',
       historyEmpty: 'Ще немає чатів.',
       detailBlank: 'Виберіть чат зі списку.',
       archiveThread: 'Відкласти чат «{title}»',

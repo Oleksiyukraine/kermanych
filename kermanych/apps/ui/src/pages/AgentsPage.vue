@@ -523,7 +523,7 @@
               <dt
                 v-tip="engineSessionIdHint"
                 class="agents__meta-label"
-              >{{ t('agents.session.engineId') }}</dt>
+              >{{ selectedSession?.native && selectedSession.runtime === 'codex' ? t('agents.native.engineIdCodex') : t('agents.session.engineId') }}</dt>
               <dd class="agents__meta-value mono agents__meta-value--id">{{ engineSessionId }}</dd>
             </div>
           </dl>
@@ -751,7 +751,7 @@
           <!-- «Режим» — Kermanych's managed session, or the harness's own TUI in a terminal. -->
           <div>
             <div class="agents-launcher__label">{{ t('agents.native.modeLabel') }}</div>
-            <div class="agents-launcher__seg">
+            <div class="agents-launcher__seg agents-launcher__seg--fit">
               <button
                 v-for="opt in LAUNCH_MODES"
                 :key="opt"
@@ -1525,20 +1525,21 @@ const skillsHint = computed(() => t('agents.session.skillsHint'));
 // so the bubble says where to spend it rather than leaving an opaque uuid on screen.
 const sessionIdHint = computed(() => t('agents.session.idHint'));
 // The engine's own handle, which is what `--resume` takes — our id names the folder, not the
-// conversation. A claude session keeps its uuid in `ompSessionId`. A managed omp agent reports
+// conversation. A claude or codex session keeps its id in `ompSessionId` (`codex resume`
+// takes the id, not the rollout file). A managed omp agent reports
 // a sessionId too, but its resume goes through Kermanych, so printing it would promise a
 // `--resume` that does not exist; a native omp session prints its session FILE, which
 // `omp --resume` takes. Read from the session row, so a dormant agent still states it.
 const engineSessionId = computed(() => {
   const s = selectedSession.value;
-  if (s?.runtime === 'claude-code') return s.ompSessionId;
+  if (s?.runtime === 'claude-code' || s?.runtime === 'codex') return s.ompSessionId;
   return s?.native ? s.ompSessionFile ?? s.ompSessionId : undefined;
 });
-const engineSessionIdHint = computed(() =>
-  selectedSession.value?.native && selectedSession.value.runtime !== 'claude-code'
-    ? t('agents.native.engineIdHintOmp')
-    : t('agents.session.engineIdHint'),
-);
+const engineSessionIdHint = computed(() => {
+  const s = selectedSession.value;
+  if (!s?.native || s.runtime === 'claude-code') return t('agents.session.engineIdHint');
+  return s.runtime === 'codex' ? t('agents.native.engineIdHintCodex') : t('agents.native.engineIdHintOmp');
+});
 const isBound = computed(() => !!launchProject.value?.localRepoPath);
 
 // Row-level check: the board can show sessions of an orphan project whose row is still here
@@ -4242,6 +4243,11 @@ async function submitPreviewConfig(): Promise<void> {
 .agents-launcher__seg--grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
+}
+/* Labels of uneven length (`Керманич` beside `omp`): each button starts at its own width, so
+   the long one is not cut to a quarter of the row. */
+.agents-launcher__seg--fit .agents-launcher__seg-btn {
+  flex: 1 1 auto;
 }
 .agents-launcher__seg-btn {
   flex: 1;

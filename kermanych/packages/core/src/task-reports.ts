@@ -8,10 +8,10 @@
 // current value when the queue drains. The UI only reads.
 
 import { docsRead, isDocPath } from "./docs";
-import { isAgentRuntime } from "./runtime";
+import { isNativeHarness, type NativeHarness } from "./runtime";
 import { skillsUsed } from "./skills";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking";
-import type { AgentRuntime, Session, TranscriptEntry, Usage } from "./types";
+import type { Session, TranscriptEntry, Usage } from "./types";
 
 /** One changed documentation file, counted the way the «Зміни» listing counts it. */
 export type DocChange = { path: string; added: number; removed: number };
@@ -30,7 +30,7 @@ export type DocsReport = {
 export type SessionReport = {
   sessionId: string;
   generatedAt: string;
-  runtime: AgentRuntime;
+  runtime: NativeHarness;
   native: boolean;
   /** What the agent actually ran with — the card's own `model`/`effort` are the launch request. */
   model?: string;
@@ -199,7 +199,7 @@ function readUsage(v: unknown): Usage | undefined {
 export function readSessionReport(raw: unknown): SessionReport | undefined {
   if (!isObj(raw)) return undefined;
   const head = stamp(raw);
-  if (!head || !isAgentRuntime(raw.runtime) || typeof raw.branch !== "string") return undefined;
+  if (!head || !isNativeHarness(raw.runtime) || typeof raw.branch !== "string") return undefined;
   const usage = readUsage(raw.usage);
   return {
     ...head,

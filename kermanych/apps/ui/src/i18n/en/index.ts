@@ -356,11 +356,13 @@ export const en: MessageSchema = {
     native: {
       modeLabel: 'Mode',
       modeManaged: 'Kermanych',
-      modeHint: 'omp / claude — the harness’s own TUI in a terminal, without Kermanych’s wrapper',
+      modeHint: 'omp / claude / codex — the harness’s own TUI in a terminal, without Kermanych’s wrapper',
       label: '{harness} · native',
       idle: 'The harness is not running. Resume the session to open its TUI here.',
       resume: 'Resume',
       engineIdHintOmp: 'The omp session file. To continue it without Kermanych: cd into the session’s worktree and run omp --resume <this file>.',
+      engineIdCodex: 'codex session',
+      engineIdHintCodex: 'The codex session id. To continue it without Kermanych: cd into the session’s worktree and run codex resume <this id>.',
     },
     launcher: {
       esc: 'Esc — close',
@@ -2771,7 +2773,7 @@ export const en: MessageSchema = {
       bindHint: 'Bind the local repository folder',
       historyTitle: 'Chats',
       newChat: '+ New',
-      modeTitle: 'New chat mode: Kermanych, or the omp / claude TUI itself',
+      modeTitle: 'New chat mode: Kermanych, or the omp / claude / codex TUI itself',
       historyEmpty: 'No chats yet.',
       detailBlank: 'Pick a chat from the list.',
       archiveThread: 'Archive chat “{title}”',
