@@ -32,6 +32,7 @@ import type {
   DocsPolicy,
   AgentFinding,
   FindingTarget,
+  SlackCloudAiProvider,
 } from '@kermanych/core';
 import type {
   CloudProject,
@@ -40,7 +41,9 @@ import type {
   LinearIntegration,
   LinearIssue,
   ReleaseNotesSlack,
+  SlackCloudStatus,
   SlackIntegration,
+  WorkspaceRoutineRun,
 } from '@kermanych/cloud';
 import { globalTr } from '../boot/i18n';
 import { localizeError } from './i18n-coded';
@@ -290,12 +293,23 @@ export type SlackTokenStatus = { present: boolean; listening: boolean };
 export type SlackTokenResult = { teamId: string; teamName: string; botUserId: string };
 export type SlackChannelOption = { id: string; name: string; isPrivate: boolean };
 
+// The owner's cloud-answers form (apps/api SlackCloudSetup). An empty secret keeps the
+// stored one; the bot token is taken from this machine by the api, never sent from here.
+export type SlackCloudSetup = {
+  enabled: boolean;
+  aiProvider: SlackCloudAiProvider;
+  aiModel: string;
+  aiBaseUrl?: string;
+  aiApiKey?: string;
+  signingSecret?: string;
+};
+
 // ── Release notes → Slack, posted under the member's own name. The member's Slack user
 // token lives in this machine's registry like the bot's; the browser only ever sees whether
 // it exists and whose it is.
 export type SlackAccountStatus =
   | { connected: false }
-  | { connected: true; teamName: string; userName: string; clientId: string };
+  | { connected: true; teamId: string; teamName: string; userName: string; clientId: string };
 export type ReleaseNoteSent = { channelName: string; ts: string };
 
 export const api = {
@@ -497,6 +511,12 @@ export const api = {
   slackConnect: (workspaceId: string, channelId: string): Promise<SlackIntegration> =>
     post<SlackIntegration>('/slack/integrations', { workspaceId, channelId }),
   slackDisconnect: (workspaceId: string): Promise<void> => del(`/slack/integrations/${workspaceId}`),
+  // Cloud answers (owner). The status is read from the cloud directly (getSlackCloudStatus);
+  // writes go through the api because they carry this machine's bot token.
+  slackSetCloud: (workspaceId: string, setup: SlackCloudSetup): Promise<SlackCloudStatus> =>
+    put<SlackCloudStatus>('/slack/cloud', { workspaceId, ...setup }),
+  slackDeleteCloud: (workspaceId: string): Promise<void> =>
+    del(`/slack/cloud?workspace=${encodeURIComponent(workspaceId)}`),
 
   // This member's Slack account. Connecting is two calls around the desktop app's loopback:
   // `slackAccountAuthorize` hands back the URL to open (the PKCE verifier stays in the api),
@@ -545,6 +565,11 @@ export const api = {
   // and stores/release-notes.ts saves it to the cloud under the user's own JWT.
   generateReleaseNotes: (ask: ReleaseNotesAsk): Promise<ReleaseNotesReply> =>
     post<ReleaseNotesReply>('/management/release-notes', ask),
+
+  // «Run now» on a routine (docs/specs/2026-10-16-routines.md). Answers the claimed run at
+  // once; the run's end arrives as a `routine_run` socket event.
+  runRoutine: (routineId: string): Promise<WorkspaceRoutineRun> =>
+    post<WorkspaceRoutineRun>(`/routines/${encodeURIComponent(routineId)}/run`, {}),
 
   // The chat is promoted onto a card the UI has already minted: `taskId` is that card, and
   // the guard reads who may run it from its own token, never from this body.

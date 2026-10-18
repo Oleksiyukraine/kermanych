@@ -12,6 +12,7 @@
 // the code string — not the status — is what callers branch on (`invalid_auth`,
 // `not_authed`, `channel_not_found`, …).
 import { setTimeout as sleep } from "node:timers/promises";
+import type { SlackRawMessage } from "@kermanych/core";
 
 const API_URL = "https://slack.com/api";
 
@@ -39,13 +40,15 @@ export class SlackApiError extends Error {
 
 // The codes that mean «this token is not (or no longer) a token» — the controller maps them
 // to 403 so the UI asks for fresh tokens. A user token revoked in Slack, or of a deactivated
-// account, answers with the last three.
+// account, answers with the last three; a rotating token whose refresh token is spent or
+// expired (30 days unused, for a PKCE app) cannot be renewed: `invalid_refresh_token`.
 const AUTH_ERRORS: Record<string, true> = {
   invalid_auth: true,
   not_authed: true,
   token_revoked: true,
   token_expired: true,
   account_inactive: true,
+  invalid_refresh_token: true,
 };
 export function isSlackAuthError(err: unknown): boolean {
   return err instanceof SlackApiError && AUTH_ERRORS[err.error] === true;
@@ -58,19 +61,19 @@ export type SlackChannel = { id: string; name: string; isPrivate: boolean };
 // Who a USER token speaks as: what `auth.test` reports for an `xoxp-` token.
 export type SlackUserIdentity = { teamId: string; teamName: string; userId: string; userName: string };
 
-// What the PKCE code exchange hands back for a user-scopes-only authorization.
-export type SlackUserGrant = { accessToken: string; scope: string; userId: string; teamId: string; teamName: string };
-
-// A message as conversations.replies (and the Events API) carry it. Typed loosely on
-// purpose — slack-map.ts is the tolerant boundary that decides what a message means.
-export type SlackRawMessage = {
-  user?: string;
-  bot_id?: string;
-  text?: string;
-  ts: string;
-  thread_ts?: string;
-  subtype?: string;
+// What the PKCE code exchange (and a refresh of its token) hands back for a user-scopes-only
+// authorization. `refreshToken` / `expiresIn` (seconds) only when Slack issued a ROTATING token.
+export type SlackUserGrant = {
+  accessToken: string;
+  refreshToken: string | null;
+  expiresIn: number | null;
+  scope: string;
+  userId: string;
+  teamId: string;
+  teamName: string;
 };
+
+type UserTokenFields = { id?: string; access_token?: string; refresh_token?: string; expires_in?: number; scope?: string };
 
 type Envelope = { ok: boolean; error?: string; response_metadata?: { next_cursor?: string } };
 
@@ -124,21 +127,35 @@ export class SlackClient {
   // stands in for the client secret, so a client built with an empty token calls it. Only
   // user scopes are ever requested, so the token is `authed_user`'s.
   async oauthUserAccess(input: { clientId: string; code: string; codeVerifier: string; redirectUri: string }): Promise<SlackUserGrant> {
-    const r = await this.call<{
-      authed_user?: { id?: string; access_token?: string; scope?: string };
-      team?: { id?: string; name?: string };
-    }>("oauth.v2.access", {
+    return this.userGrant({
       client_id: input.clientId,
       code: input.code,
       code_verifier: input.codeVerifier,
       redirect_uri: input.redirectUri,
     });
-    const user = r.authed_user;
-    if (!user?.access_token) throw new SlackApiError("oauth.v2.access", "no_user_token");
+  }
+
+  // A rotating user token's renewal: the refresh token for a fresh pair. A PKCE app is a public
+  // client, so — like the exchange — no client secret; the old refresh token is spent.
+  async oauthUserRefresh(input: { clientId: string; refreshToken: string }): Promise<SlackUserGrant> {
+    return this.userGrant({ client_id: input.clientId, grant_type: "refresh_token", refresh_token: input.refreshToken });
+  }
+
+  // The code exchange nests the user token under `authed_user`; a refresh answers it at the top
+  // level (`token_type: "user"`). Either shape is read.
+  private async userGrant(params: Record<string, string>): Promise<SlackUserGrant> {
+    const r = await this.call<UserTokenFields & { authed_user?: UserTokenFields; team?: { id?: string; name?: string } }>(
+      "oauth.v2.access",
+      params,
+    );
+    const user = r.authed_user?.access_token ? r.authed_user : r;
+    if (!user.access_token) throw new SlackApiError("oauth.v2.access", "no_user_token");
     return {
       accessToken: user.access_token,
+      refreshToken: user.refresh_token ?? null,
+      expiresIn: typeof user.expires_in === "number" ? user.expires_in : null,
       scope: user.scope ?? "",
-      userId: user.id ?? "",
+      userId: user.id ?? r.authed_user?.id ?? "",
       teamId: r.team?.id ?? "",
       teamName: r.team?.name ?? "",
     };

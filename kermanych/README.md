@@ -307,6 +307,16 @@ Integrations** (create the Slack app → paste its two tokens → pick the chann
 that, every top-level message in the channel is a question, and Kermanych replies in a
 thread under it.
 
+The bot runs in one of two modes, switched by the owner on the Slack settings card:
+
+- **Desktop** (default) — answered by a member's Kermanych app over Socket Mode, so only
+  while someone holding the tokens has Kermanych open.
+- **Cloud** — answered by the `slack-events` Edge Function with the owner's own AI API
+  key, so with nobody online. See [Cloud answers](#cloud-answers) below.
+
+Both modes answer the same way: the same documentation search, the same prompt, the same
+formatting, the same fixed replies (`packages/core/src/slack-answer.ts` is shared by both).
+
 Setting up the Slack app, once per workspace:
 
 1. On the Slack tile press «Connect», then «Copy manifest», and create an app **from a
@@ -343,21 +353,68 @@ Setting up the Slack app, once per workspace:
   @-mention it, and reads the whole thread — the question, its earlier answers and the
   discussion — as the context for the new answer. Thread replies without a mention are
   left alone, as are messages in any other channel the bot was invited to.
-- **It answers while someone is online.** Slack delivers events over Socket Mode to
-  the Kermanych app itself, because the local API is not reachable from the internet.
-  The bot therefore answers only while a member whose machine holds the tokens has
-  Kermanych open and signed in; the settings card shows whether this machine is
+- **In desktop mode it answers while someone is online.** Slack delivers events over
+  Socket Mode to the Kermanych app itself, because the local API is not reachable from the
+  internet. The bot therefore answers only while a member whose machine holds the tokens
+  has Kermanych open and signed in; the settings card shows whether this machine is
   connected to Slack. Any member can paste the same two tokens there to host the bot
   too — Slack hands each message to one connection, so nobody is answered twice. The
   documentation search runs under that member's own login, and the answer is generated
   by their agent runtime (omp or Claude Code) on their plan.
-- **Tokens are local.** Both tokens are stored in this machine's registry SQLite and
-  never reach the cloud; the cloud row (`workspace_slack_integrations`, created by the
-  additive `20261005090000_slack_integration.sql` — push it before shipping this UI)
+- **Tokens are local in desktop mode.** Both tokens are stored in this machine's registry
+  SQLite and never reach the cloud; the cloud row (`workspace_slack_integrations`, created
+  by the additive `20261005090000_slack_integration.sql` — push it before shipping this UI)
   holds only the Slack workspace and channel ids, readable by members and written by the
-  owner. «Disconnect» removes the row and this machine's tokens.
+  owner. «Disconnect» removes the row, this machine's tokens and any cloud-answers keys.
 - **One Slack app per Kermanych workspace.** Two workspaces sharing one app would split
   its messages between machines that cannot see each other's workspace.
+
+#### Cloud answers
+
+Cloud answers make the bot answer with nobody online. A Slack app delivers its events
+either over Socket Mode (desktop) or to an HTTP Request URL (cloud), never both, so the
+mode is a switch in Kermanych **and** the matching manifest in the Slack app.
+
+Turning them on (the owner, on the machine that holds the Slack tokens):
+
+1. Connect the channel as above (desktop mode).
+2. On the Slack settings card press «Set up cloud answers». Pick the AI provider —
+   **Anthropic** (default model `claude-sonnet-5`, the desktop bot's own model) or
+   **OpenAI or compatible** (default `gpt-5`; an optional `https://` base URL points it at
+   any OpenAI-compatible API: OpenRouter, Groq, Mistral, Gemini's OpenAI endpoint, a
+   gateway) — and paste the AI API key and the Slack app's **Signing Secret** (*Basic
+   Information → App Credentials*). «Check and turn on» proves the key with a one-word
+   answer before anything is saved.
+3. Press «Copy cloud manifest» and paste it into the Slack app's *App Manifest* page. It is
+   the same app with Socket Mode off and the Request URL
+   `<Supabase URL>/functions/v1/slack-events?workspace=<workspace id>`. Slack verifies the
+   URL at once; the card's *Slack* line then shows when Slack last reached the cloud.
+
+Turning them off is «Turn off» plus pasting the desktop manifest («Copy desktop
+manifest») back into the Slack app. The keys stay stored, so turning on again needs no
+re-entry; «Remove cloud keys» deletes them.
+
+- **What the cloud holds.** `workspace_slack_cloud` stores the AI key, the signing secret
+  and the bot token (copied from the owner's machine on every save). No client role can
+  read it: members see only the mode, the provider, the model and the key's last four
+  characters (`get_slack_cloud_status`); the owner writes it through `set_slack_cloud`.
+- **What the Edge Function may do.** It runs with the platform's service-role key, which
+  `20261016090000_slack_cloud_answers.sql` lets call only the `slack_cloud_*` functions —
+  no table directly. Every request must carry a valid Slack signature for the workspace in
+  its URL; documentation is returned only while that workspace's cloud mode is on, and only
+  for that workspace's projects. Like `docs-rag`, it logs neither questions nor
+  documentation.
+- **Machines stand down.** While cloud answers are on, no machine opens a Slack socket for
+  the workspace; the card says «not connecting — cloud answers are on».
+- **Costs** are the owner's AI account's, not a member's plan. Retrieval embeds the
+  question with the product-wide Voyage key (`VOYAGE_API_KEY`, shared with `docs-rag`) and
+  falls back to full-text search without it.
+- **Shipping it** takes the additive migration `20261016090000_slack_cloud_answers.sql`
+  (`supabase db push`) and the function:
+  `supabase functions deploy slack-events --use-api` — `--use-api` because the function
+  imports `packages/core/src/slack-answer.ts` from outside `supabase/`. `config.toml`
+  already sets `verify_jwt = false` for it: Slack carries no Supabase JWT, the signature
+  authenticates it instead.
 
 #### Sending release notes to Slack
 
@@ -380,9 +437,12 @@ without the Q&A bot above; it only needs the same Slack app.
   user scopes only, no client secret anywhere); the redirect comes back to the desktop app's
   loopback listener on port 53170. Desktop app only — the browser build cannot connect.
 - **Your Slack token is local.** The user token (`xoxp-…`) is stored in this machine's
-  registry SQLite (`slack_user_tokens`), never in the cloud. «Disconnect» forgets it. A
-  token Slack stops accepting is forgotten on the next send, and the next press connects
-  again.
+  registry SQLite (`slack_user_tokens`), never in the cloud. «Disconnect» forgets it. A Slack
+  app with token rotation on (it cannot be switched off once on) hands out a rotating token
+  (`xoxe.xoxp-…`) that lives 12 hours; its refresh token is stored beside it and the api renews
+  it before it expires, so the connection lasts as long as it is used at least once in 30 days.
+  A token Slack stops accepting — revoked, or no longer renewable — is forgotten on the next
+  send or channel list, and Kermanych asks you to connect again.
 - **You must be in the channel.** Slack posts a member's message only where they are a
   member; otherwise the send says to join the channel first.
 - **Formatting.** Headings become bold lines, `**bold**` and links are converted to Slack's
@@ -399,8 +459,9 @@ not credentials, so they are committed:
 | project URL | public | `DEFAULT_CLOUD` in `packages/cloud/src/client.ts` |
 | `Publishable key` (`sb_publishable_…`, formerly `anon`) | public — shipped inside the browser bundle by design | same |
 | `GITHUB_CLIENT_ID` | public | Supabase dashboard (hosted), `.env` (local stack only) |
-| `GITHUB_SECRET` | **secret** — the only real one in this repo | Supabase dashboard (hosted), your own `.env` (local stack only) |
-| `Secret key` (`sb_secret_…`, formerly `service_role`) | **secret** — never used by Kermanych | the dashboard, and nowhere else |
+| `GITHUB_SECRET` | **secret** — the GitHub sign-in's | Supabase dashboard (hosted), your own `.env` (local stack only) |
+| `Secret key` (`sb_secret_…`, formerly `service_role`) | **secret** — never on a machine; only the `slack-events` and `routines-runner` Edge Functions hold it, injected by the platform | the dashboard, and nowhere else |
+| `ROUTINES_RUNNER_SECRET` | **secret** — authenticates the minute tick to `routines-runner` | the function's secrets and Supabase Vault ([The cloud runner](#the-cloud-runner)) |
 
 What protects the project is not the obscurity of those two values but **RLS**,
 verified against the live project: an anonymous read of any table is refused with
@@ -409,7 +470,10 @@ they are a member of — and so to the projects and tasks inside them. Sign-in i
 open, so RLS is the sole authorization surface — every request runs under the
 user's own JWT. **No secret
 key ever belongs on a machine running Kermanych**, and nothing in this repo reads
-one.
+one — except two Edge Functions, inside Supabase: `slack-events`, whose platform-injected
+service-role key may call only the `slack_cloud_*` functions (see [Cloud answers](#cloud-answers)),
+and `routines-runner`, the cloud runner of routines, which a timer starts and which therefore
+has no user to run as ([The cloud runner](#the-cloud-runner)).
 
 ### Applying a migration to the team's project
 
@@ -893,8 +957,10 @@ Agents often notice problems outside their own task. A session's agent can repor
 through the `report_finding` tool of its `kermanych` MCP server (spec:
 `docs/specs/2026-10-13-agent-findings.md`). It gives a title (≤ 120 characters), a kind
 (`bug`, `security`, `tech-debt`, `docs`), the context, evidence (`path:line` references or
-reproduction commands), acceptance criteria and an optional suggested fix. Then it continues
-its task. `list_findings` shows it what it already reported, so it does not repeat itself. The
+reproduction commands), acceptance criteria and an optional suggested fix. It reports at once,
+without asking you first, including in the middle of a «Глибокий аналіз» interview; it asks you
+only about a part of the problem that overlaps its own task. Then it continues its task.
+`list_findings` shows it what it already reported, so it does not repeat itself. The
 tool descriptions are the agent's whole instruction, so every runtime gets the same rules,
 native sessions included. Discussion and review branches have no such tools.
 
@@ -1078,7 +1144,7 @@ it will simply push its real status again.
 
 ## The Менеджмент tab and its assistant
 
-Менеджмент is the non-code half of the product: seven workspace-scoped sections
+Менеджмент is the non-code half of the product: eight workspace-scoped sections
 (`packages/core/src/management.ts` is the one table that names them) plus a chat
 field docked to the foot of the page.
 
@@ -1318,6 +1384,148 @@ uses (`saveRiskRegister` in `apps/ui/src/lib/export-file.ts`), rows in the scree
 order (by exposure), and the chat line names the file — or, in a plain browser tab, says the
 PDF opened in the print dialog. A code the register does not hold exports nothing: a file
 quietly missing a row you asked for would be forwarded as complete.
+
+### Routines (scheduled tasks)
+
+**Менеджмент → Routines** schedules things Kermanych already does: a prompt, or a release-notes
+generation, at a set date and time, once or on a recurring schedule. The worked example is
+«every Monday at 10:00, write the release notes of the last 7 days for the back-end and the
+front-end and post them to #releases». Spec: `docs/specs/2026-10-16-routines.md`.
+
+Every routine has a **runner**, picked in its editor (**Runs on**):
+
+| | Cloud | My computer |
+|---|---|---|
+| Runs when | always, on schedule — nobody needs to be online | while the author has Kermanych open and signed in |
+| Runs as | the workspace: its GitHub token, its Anthropic API key (billed per use), its Slack bot | the author: their checkouts, their agent plan, their Slack account |
+| Reads code from | GitHub | the checkouts on the author's machine |
+| Missed runs | — | the most recent miss within 7 days runs once on the next start |
+| Modelled on | Claude Code cloud routines | Claude Desktop local scheduled tasks |
+
+What a run does depends on its **level** — the whole workspace, or one of its projects — and
+its **action**:
+
+| Level | Action | On my computer, a run… | In the cloud, a run… | Slack |
+|---|---|---|---|---|
+| workspace | Release notes | writes one note over the projects you picked (a branch each), stores it in Release Notes | the same, from the GitHub commits | optional |
+| project | Release notes | the same, over that project | the same | optional |
+| workspace | Prompt → report | a read-only assistant reads every repository of the workspace (`read`/`grep`/`glob`); its answer is the run's report | a model reads the repositories on GitHub (`list_files`/`read_file`/`search_code`) | optional |
+| project | Prompt → agent | files a card with the prompt, assigned to you (optionally hidden from «Дошка»), and launches an agent | **only files the card** — the cloud has no checkout to run an agent in; launch it from «Задачі» | no |
+
+- **Schedules**: once (date and time; the routine switches itself off after it fires), hourly
+  (at a minute), daily, weekdays, weekly (chosen days), monthly (a day of the month — the last
+  day of a shorter month), or manual only. Times are wall-clock times in the time zone of the
+  member who created the routine, so 10:00 stays 10:00 across a DST change. The editor shows
+  the next run before you save.
+- **Release-notes period**: the last *N* days, including the day of the run. A project without
+  commits in the period is left out of the note; a run where no project has commits is
+  **skipped**, not failed. Notes are stored in Release Notes like any other, credited to the
+  routine's author.
+- **A local routine runs on its author's computer, in their name.** Only the api of the member
+  who created it fires it. With the app closed nothing runs; on the next start (or sign-in), the
+  most recent missed run within the last 7 days runs once, labelled a catch-up, and older misses
+  are dropped — so write prompts that still make sense a few hours late.
+- **Exactly once.** A run is claimed by inserting its row, and `(routine, scheduled time)` is
+  unique, so neither the author signed in on two computers nor the cloud ever runs one
+  occurrence twice. Runs are one at a time per routine; an occurrence that comes due while the
+  same routine is still running is recorded as skipped. A cloud run that has not finished
+  after 15 minutes is recorded as failed («did not finish in time»).
+- **Who may do what.** Any member creates routines and sees every routine and its history.
+  Only the author edits a routine or presses «Run now». The author or the workspace owner
+  pauses, resumes or deletes it — the owner cannot change what someone else's routine does
+  (the database refuses it). Changing the schedule or the runner, or resuming, never fires a
+  time that is already past.
+- **Slack**: «Post the result to Slack» posts the note or the report. A local routine posts **as
+  you**, through the release-notes Slack connection (*Sending release notes to Slack* above):
+  the owner sets the Slack app's Client ID there, you connect your own Slack account once, and
+  any channel you are a member of can be picked. A cloud routine posts **as the workspace's
+  bot**, to a channel the bot was invited to (`/invite @Kermanych`). A post that fails fails the
+  run but keeps the stored note or report.
+- **History**: each routine's detail lists its runs — succeeded, failed, skipped or running;
+  scheduled, catch-up or manual; with the note, the agent (or card) or the report it produced and
+  the reason a run failed or was skipped. «Succeeded» for an agent means the agent started (or,
+  in the cloud, the card was filed). A local run's end is toasted in the author's window (and
+  notified while the window is in the background); a screen showing a running cloud run
+  refreshes every 15 seconds until it ends.
+- **Not from the chat.** The section is `read`: the Менеджмент assistant can describe it but
+  refuses to create or change a routine, because a routine acts on its author's decision.
+
+#### The cloud runner
+
+A cloud routine is fired by the `routines-runner` Edge Function: Postgres calls it every minute
+(`pg_cron` + `pg_net`), it claims what is due and runs each claimed run in an invocation of its
+own. Like `slack-events`, it uses the **service role** — a timer has no caller to
+run as — and the service role exists only inside Supabase's Edge Runtime, never on a machine
+running Kermanych. Member actions (status, keys, channels, «Run now») are checked against the
+caller's own JWT first.
+
+**Per workspace, the owner** opens **Routines → Cloud** and pastes three keys. Each is checked
+against its service before it is stored in `workspace_routine_cloud`, a table no member — the
+owner included — can read; the screen only shows which keys are set:
+
+- **Anthropic API key** (console.anthropic.com). Every cloud run that writes text is billed to
+  it, per use — not to anybody's subscription. The model is picked from the key's own model list
+  (the newest Sonnet by default).
+- **GitHub token**: a fine-grained token with read-only *Contents* and *Metadata* on the
+  workspace's repositories. Projects must have a GitHub `git_remote_url`; the screen lists each
+  project and whether the token can read it.
+- **Slack bot token** (optional): the `xoxb-` token of the workspace's Slack app (Integrations →
+  Slack). Invite the bot to the channels cloud routines post to.
+
+**Once per Supabase project, the maintainer** deploys the function and its two secrets. A git
+push or merge deploys nothing: until this is done the Cloud dialog says «the routines-runner
+function is not deployed yet», and every cloud routine is unavailable.
+
+```bash
+supabase db push --linked                                   # both routines migrations
+supabase functions deploy routines-runner --use-api --project-ref uqqdudlfizfwqfegfrlh
+SECRET=$(openssl rand -hex 32); echo "$SECRET"              # keep it for the Vault step below
+supabase secrets set ROUTINES_RUNNER_SECRET="$SECRET" --project-ref uqqdudlfizfwqfegfrlh
+```
+
+Then, in the SQL editor, give the minute tick the project URL and the **same** secret:
+
+```sql
+select vault.create_secret('https://uqqdudlfizfwqfegfrlh.supabase.co', 'routines_project_url');
+select vault.create_secret('<the ROUTINES_RUNNER_SECRET value>', 'routines_runner_secret');
+```
+
+To check the deploy: `curl -X POST https://uqqdudlfizfwqfegfrlh.supabase.co/functions/v1/routines-runner`
+answers `{"code":"NOT_FOUND",…}` while the function is not deployed, `{"error":"function not
+configured"}` while `ROUTINES_RUNNER_SECRET` is missing, and `{"error":"invalid JSON body"}` once
+both are in place.
+
+Until both Vault secrets exist the tick does nothing. A run is held to the platform's
+wall-clock limit (150 s on the free plan): `ROUTINES_RUN_BUDGET_MS` (default 130000) can be
+raised on a paid plan (400 s). The function imports the monorepo's import-free modules — the
+schedule math (`packages/core/src/routine-schedule.ts`), both prompts and the Slack formatting
+(`slack-answer.ts`) — by relative path, like `slack-events`, which is why it deploys with
+`--use-api`: both runners run one set of rules. Locally, `supabase functions serve` reads
+`ROUTINES_RUNNER_SECRET` from `supabase/functions/.env` (`.env.example`).
+
+**Cloud tables**: `workspace_routines` and `workspace_routine_runs`
+(`20261017090000_workspace_routines.sql`), and `workspace_routine_cloud` with the minute tick
+(`20261017100000_routines_cloud_runner.sql`, which also lets a note written by the cloud runner
+keep its routine's author). Both are additive — push them before shipping this UI
+([Applying a migration](#applying-a-migration-to-the-teams-project)).
+
+### Sharing a password in Storage
+
+In the Storage section, the person who filed a password — and the workspace owner and every
+manager — can hand it to colleagues with the 👥 button, no access request needed. The dialog's
+«Share with» picker takes several members at once, and they are granted together: if one of
+them cannot receive it, nobody does and the dialog says why. Under the picker, «People with
+access» lists everyone who can read the password and how — workspace owner, manager, or
+shared (a share or an approved request). A shared grant has a «Remove access» button: the
+member stops being able to read the secret and its file, and can request access again. The
+workspace owner and managers read every password through their role, so their access is
+changed in the members panel, not here.
+
+This needs migration `20261016100000_workspace_password_revoke.sql`
+(`share_password_with_members`, `revoke_password_access`, and the `via` column of
+`list_password_holders`) — push it before shipping this UI
+([Applying a migration](#applying-a-migration-to-the-teams-project)). Spec:
+`docs/specs/2026-10-16-vault-multi-share-and-revoke.md`.
 
 ### Giving another section something it can write
 

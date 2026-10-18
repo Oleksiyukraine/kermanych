@@ -50,9 +50,16 @@ const SLACK_TOKEN_COLUMNS =
 // workspace's release notes under the member's own name. A secret that never leaves this
 // machine. `clientId` is the Slack app the token was granted by; the identity is what
 // `auth.test` reported when the token was obtained.
+//
+// A ROTATING token (`xoxe.xoxp-`, docs.slack.dev/authentication/using-token-rotation) lives 12
+// hours: Slack issues one whenever the app has token rotation on — which cannot be turned off
+// once on — and `refreshToken` / `expiresAt` (epoch ms) are what renews it. Both are null for a
+// token that never expires, and for a row written before they were kept.
 export type SlackUserTokenRow = {
   workspaceId: string;
   accessToken: string;
+  refreshToken: string | null;
+  expiresAt: number | null;
   clientId: string;
   teamId: string;
   teamName: string;
@@ -60,7 +67,7 @@ export type SlackUserTokenRow = {
   slackUserName: string;
 };
 const SLACK_USER_TOKEN_COLUMNS =
-  "workspace_id as workspaceId, access_token as accessToken, client_id as clientId, team_id as teamId, team_name as teamName, slack_user_id as slackUserId, slack_user_name as slackUserName";
+  "workspace_id as workspaceId, access_token as accessToken, refresh_token as refreshToken, expires_at as expiresAt, client_id as clientId, team_id as teamId, team_name as teamName, slack_user_id as slackUserId, slack_user_name as slackUserName";
 
 // The `usage` column, back into a shape. Tolerant on purpose: a row written before the
 // column existed reads `null`, and a hand-edited or half-written blob must degrade to
@@ -409,6 +416,14 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS slack_user_tokens (workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, access_token TEXT NOT NULL, client_id TEXT NOT NULL, team_id TEXT NOT NULL, team_name TEXT NOT NULL, slack_user_id TEXT NOT NULL, slack_user_name TEXT NOT NULL, PRIMARY KEY (workspace_id, user_id))`,
     );
+    // Additive migration: the rotating token's refresh token and expiry (SlackUserTokenRow).
+    for (const col of ["refresh_token TEXT", "expires_at INTEGER"]) {
+      try {
+        this.db.exec(`ALTER TABLE slack_user_tokens ADD COLUMN ${col}`);
+      } catch {
+        /* column already exists */
+      }
+    }
     // «Знахідки» (docs/specs/2026-10-13-agent-findings.md): problems a session's agent reported
     // outside its task, waiting here — on the machine whose operator will sign whatever they
     // become — until that operator files or dismisses them. Owned by the session: removed with
@@ -619,12 +634,24 @@ export class RegistryService {
   setSlackUserToken(userId: string, row: SlackUserTokenRow): void {
     this.db
       .prepare(
-        `INSERT INTO slack_user_tokens (workspace_id, user_id, access_token, client_id, team_id, team_name, slack_user_id, slack_user_name) VALUES (?,?,?,?,?,?,?,?)
-         ON CONFLICT(workspace_id, user_id) DO UPDATE SET access_token = excluded.access_token, client_id = excluded.client_id,
+        `INSERT INTO slack_user_tokens (workspace_id, user_id, access_token, refresh_token, expires_at, client_id, team_id, team_name, slack_user_id, slack_user_name) VALUES (?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(workspace_id, user_id) DO UPDATE SET access_token = excluded.access_token, refresh_token = excluded.refresh_token,
+           expires_at = excluded.expires_at, client_id = excluded.client_id,
            team_id = excluded.team_id, team_name = excluded.team_name, slack_user_id = excluded.slack_user_id,
            slack_user_name = excluded.slack_user_name`,
       )
-      .run(row.workspaceId, userId, row.accessToken, row.clientId, row.teamId, row.teamName, row.slackUserId, row.slackUserName);
+      .run(
+        row.workspaceId,
+        userId,
+        row.accessToken,
+        row.refreshToken,
+        row.expiresAt,
+        row.clientId,
+        row.teamId,
+        row.teamName,
+        row.slackUserId,
+        row.slackUserName,
+      );
   }
 
   deleteSlackUserToken(workspaceId: string, userId: string): void {

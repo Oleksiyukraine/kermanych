@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { AgentLanguage, AgentRuntimeKind, DocsPolicy, DocsReport, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionReport, SessionStatus, ThinkingLevel } from "@kermanych/core";
+import type { AgentLanguage, AgentRuntimeKind, DocsPolicy, DocsReport, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, RoutineAction, RoutineRunStatus, RoutineRunTrigger, RoutineRunner, RoutineSchedule, RoutineSlackTarget, SessionReport, SessionStatus, SlackCloudAiProvider, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same eleven labels.
@@ -754,6 +754,36 @@ export type SlackIntegrationInsert = {
   botUserId: string;
 };
 
+// Cloud answers: the same bot answering from the `slack-events` Edge Function, with the AI
+// key the owner stored, while nobody has Kermanych open. What any member may see of
+// workspace_slack_cloud — no secret ever comes back, only the AI key's last four characters
+// (20261016090000_slack_cloud_answers.sql).
+export type SlackCloudStatus = {
+  workspaceId: string;
+  enabled: boolean;
+  aiProvider: SlackCloudAiProvider;
+  aiModel: string;
+  // «openai» only; absent = OpenAI itself.
+  aiBaseUrl?: string;
+  aiKeyHint: string;
+  // The last request Slack signed correctly: proof the app's Request URL points here.
+  eventsSeenAt?: string;
+  updatedAt: string;
+};
+
+// The owner's write. A secret left undefined keeps the stored one; the first write needs
+// all three. `botToken` is copied by the local api from the owner's machine registry.
+export type SlackCloudInput = {
+  workspaceId: string;
+  enabled: boolean;
+  aiProvider: SlackCloudAiProvider;
+  aiModel: string;
+  aiBaseUrl?: string;
+  aiApiKey?: string;
+  signingSecret?: string;
+  botToken?: string;
+};
+
 // ── Release notes → Slack ─────────────────────────────────────────────────────
 // The channel a workspace's release notes are sent to, and the Slack app every member
 // authorizes to post there under their own name. The camelCase shape of
@@ -780,6 +810,121 @@ export type ReleaseNotesSlackInsert = {
   teamName: string;
   channelId: string;
   channelName: string;
+};
+
+// ── Routines ──────────────────────────────────────────────────────────────────
+// Scheduled tasks of a workspace (`projectId` absent) or of one of its projects, and their run
+// history (20261017090000_workspace_routines.sql, docs/specs/2026-10-16-routines.md). The
+// vocabularies of `action` and `schedule` are core's; routines.ts owns the snake_case boundary.
+// `createdBy` is the author — the one member whose machine runs the routine, in whose name.
+export type WorkspaceRoutine = {
+  id: string;
+  workspaceId: string;
+  projectId?: string;
+  name: string;
+  runner: RoutineRunner;
+  action: RoutineAction;
+  schedule: RoutineSchedule;
+  timezone: string;
+  slack?: RoutineSlackTarget;
+  enabled: boolean;
+  // Server-owned: occurrences at or before it never run (packages/core `dueOccurrence`).
+  armedAt: string;
+  createdAt: string;
+  createdBy?: string;
+  updatedAt: string;
+  updatedBy?: string;
+};
+
+export type WorkspaceRoutineInsert = {
+  workspaceId: string;
+  projectId?: string;
+  name: string;
+  runner: RoutineRunner;
+  action: RoutineAction;
+  schedule: RoutineSchedule;
+  timezone: string;
+  slack?: RoutineSlackTarget;
+  enabled?: boolean;
+};
+
+// The scope is fixed at creation; `slack: null` removes the channel.
+export type WorkspaceRoutinePatch = {
+  name?: string;
+  runner?: RoutineRunner;
+  action?: RoutineAction;
+  schedule?: RoutineSchedule;
+  timezone?: string;
+  slack?: RoutineSlackTarget | null;
+  enabled?: boolean;
+};
+
+export type WorkspaceRoutineRun = {
+  id: string;
+  routineId: string;
+  workspaceId: string;
+  trigger: RoutineRunTrigger;
+  scheduledFor?: string;
+  status: RoutineRunStatus;
+  startedAt: string;
+  finishedAt?: string;
+  runBy?: string;
+  noteId?: string;
+  taskId?: string;
+  commitCount?: number;
+  outputMd?: string;
+  slackChannelName?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  errorParams?: Record<string, string | number>;
+};
+
+// The cloud runner of a workspace, as the routines-runner Edge Function reports it. Never a key.
+//   configured — a cloud routine can run: an Anthropic key and model and a GitHub token are set
+//   models     — the key's own model list, for the owner's picker (owner only, else empty)
+//   repos      — each project of the workspace, and whether the GitHub token can read it
+export type RoutineCloudStatus = {
+  isOwner: boolean;
+  configured: boolean;
+  anthropic: boolean;
+  model?: string;
+  models: string[];
+  github: boolean;
+  repos: { projectId: string; projectName: string; repo?: string; ok: boolean; reason?: string }[];
+  slack?: { teamId: string; teamName: string };
+};
+
+// The owner's change: an absent field keeps the stored value, an empty string removes it.
+export type RoutineCloudConfig = {
+  anthropicApiKey?: string;
+  anthropicModel?: string;
+  githubToken?: string;
+  slackBotToken?: string;
+};
+
+export type RoutineCloudChannel = { id: string; name: string; isPrivate: boolean };
+
+// The claim: a scheduled run carries its occurrence, and a skip is claimed already finished.
+export type WorkspaceRoutineRunClaim = {
+  routineId: string;
+  trigger: RoutineRunTrigger;
+  scheduledFor?: string;
+  status?: RoutineRunStatus;
+  errorCode?: string;
+  errorMessage?: string;
+};
+
+// The outcome, written once by the runner.
+export type WorkspaceRoutineRunResult = {
+  status: Exclude<RoutineRunStatus, "running">;
+  noteId?: string;
+  taskId?: string;
+  commitCount?: number;
+  outputMd?: string;
+  slackChannelName?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  errorParams?: Record<string, string | number>;
 };
 
 // ── Password vault ────────────────────────────────────────────────────────────
@@ -858,12 +1003,17 @@ export type WorkspacePasswordSecretPatch = {
   twoFactorOwner?: string | null;
 };
 
+// The seat a holder reads a password through: the workspace owner, a seated manager, or an
+// approved grant (a share, or an approved request). Only a grant can be revoked.
+export type PasswordHolderVia = "owner" | "manager" | "grant";
+
 // One person who may read a password's secret, as `list_password_holders` reports it: the
 // owner, a seated manager, or an approved requester. Profile fields come with the row
 // because an approved requester may no longer be on the workspace roster.
 export type PasswordHolder = {
   passwordId: string;
   userId: string;
+  via: PasswordHolderVia;
   githubUsername?: string;
   displayName?: string;
   avatarUrl?: string;
@@ -872,9 +1022,10 @@ export type PasswordHolder = {
 export type PasswordAccessStatus = "pending" | "approved" | "declined";
 
 // One row of the request -> approve/decline ledger, one per (password, requester). Written
-// only by the `request_password_access` / `decide_password_access` / `share_password` rpcs;
-// a shared row is born approved, with `requesterId` the recipient and `decidedBy` the sharer.
-// A developer sees their own rows; a manager/owner sees every row in the workspace.
+// only by the `request_password_access` / `decide_password_access` / `share_password(_with_members)`
+// rpcs and removed by `revoke_password_access`; a shared row is born approved, with
+// `requesterId` the recipient and `decidedBy` the sharer. A developer sees their own rows; a
+// manager/owner sees every row in the workspace.
 export type WorkspacePasswordAccess = {
   id: string;
   passwordId: string;

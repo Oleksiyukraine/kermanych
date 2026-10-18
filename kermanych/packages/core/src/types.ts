@@ -4,6 +4,7 @@ import type { Platform } from "./platform";
 import type { ThinkingLevel } from "./thinking";
 import type { NoticeCode, NoticeParams } from "./i18n-codes";
 import type { NativeHarness } from "./runtime";
+import type { RoutineRunStatus } from "./routines";
 
 // `in_review` is the PR hand-off state: the operator asked for a pull request, the agent
 // pushed it, and the work now waits on a HUMAN reviewer. It is settled (nothing moves on
@@ -261,7 +262,11 @@ export type ServerEvent =
   | { type: "subagents_update"; sessionId: string; subagents: SubagentNode[] }
   | { type: "project_update"; project: Project }
   | { type: "session_removed"; sessionId: string }
-  | { type: "project_removed"; projectId: string };
+  | { type: "project_removed"; projectId: string }
+  // A routine run of THIS machine started (`running`) or ended (docs/specs/2026-10-16-routines.md).
+  // A notice, not the row: the Routines screen refetches the run list from the cloud, and the
+  // toast needs only the name and the outcome.
+  | { type: "routine_run"; workspaceId: string; routineId: string; routineName: string; runId: string; status: RoutineRunStatus };
 
 // How much of omp's subagent activity a session subscribes to. "progress" streams lifecycle
 // + coalesced progress (enough for the agent map); "events" adds every subagent tool/message

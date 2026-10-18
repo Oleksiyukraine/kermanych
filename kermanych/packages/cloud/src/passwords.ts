@@ -2,8 +2,8 @@
 // <-> camelCase boundary for `workspace_passwords`, `workspace_password_secrets` and
 // `workspace_password_access`, plus the `password-files` Storage bucket. Every call runs
 // under the caller's JWT, so the RLS policies and the rpcs in
-// 20260907120000_workspace_passwords.sql, 20260928090000_workspace_password_fields.sql and
-// 20260928100000_workspace_password_share.sql —
+// 20260907120000_workspace_passwords.sql, 20260928090000_workspace_password_fields.sql,
+// 20260928100000_workspace_password_share.sql and 20261016100000_workspace_password_revoke.sql —
 // not this code — are the authorization surface; refusals surface as thrown postgrest
 // messages, or (for a read a developer is not entitled to) as an empty result the caller
 // reads as "not permitted".
@@ -15,6 +15,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   PasswordHolder,
+  PasswordHolderVia,
   WorkspacePassword,
   WorkspacePasswordAccess,
   WorkspacePasswordField,
@@ -59,6 +60,7 @@ type SecretRow = {
 type HolderRow = {
   password_id: string;
   user_id: string;
+  via: PasswordHolderVia;
   github_username: string | null;
   display_name: string | null;
   avatar_url: string | null;
@@ -118,7 +120,7 @@ export function toWorkspacePasswordAccess(row: AccessRow): WorkspacePasswordAcce
 }
 
 export function toPasswordHolder(row: HolderRow): PasswordHolder {
-  const h: PasswordHolder = { passwordId: row.password_id, userId: row.user_id };
+  const h: PasswordHolder = { passwordId: row.password_id, userId: row.user_id, via: row.via };
   if (row.github_username) h.githubUsername = row.github_username;
   if (row.display_name) h.displayName = row.display_name;
   if (row.avatar_url) h.avatarUrl = row.avatar_url;
@@ -390,25 +392,42 @@ export async function decidePasswordAccess(
   return toWorkspacePasswordAccess(res.data as AccessRow);
 }
 
-// Share one password with one workspace member: their ledger row becomes an approved grant
-// with no request in between (a pending or declined ask of theirs is turned into it). The
-// password's filer, the workspace owner or a manager only, enforced inside the rpc. Returns
-// the approved row so the screen updates in place.
+// Share one password with one or more workspace members: each one's ledger row becomes an
+// approved grant with no request in between (a pending or declined ask is turned into it).
+// All or nothing — one refused recipient refuses the whole call. The password's filer, the
+// workspace owner or a manager only, enforced inside the rpc. Returns the approved rows so the
+// screen updates in place.
 export async function sharePassword(
   client: SupabaseClient,
   passwordId: string,
-  userId: string,
-): Promise<WorkspacePasswordAccess> {
-  const res = await client.rpc("share_password", { p_password_id: passwordId, p_user_id: userId });
+  userIds: readonly string[],
+): Promise<WorkspacePasswordAccess[]> {
+  const res = await client.rpc("share_password_with_members", {
+    p_password_id: passwordId,
+    p_user_ids: [...userIds],
+  });
   if (res.error) throw new Error(res.error.message);
-  return toWorkspacePasswordAccess(res.data as AccessRow);
+  return ((res.data ?? []) as AccessRow[]).map(toWorkspacePasswordAccess);
 }
 
-// Who may read each password in one workspace: the owner, every seated manager, every
-// approved requester — the same answer `can_read_password_secret` gives, computed by a
-// security-definer rpc because a developer's own RLS on the ledger shows only their rows.
-// Every member may call it; the rows carry people, never secret content. Ordered per
-// password owner → managers → grants, so the first faces drawn are stable between reads.
+// Take a share back: deletes the member's approved grant, so they can no longer read the
+// password (they may request it again). Only a grant — the workspace owner and managers read
+// through their seat. Same authority as sharing, enforced inside the rpc, which raises when
+// the member holds no grant.
+export async function revokePasswordAccess(
+  client: SupabaseClient,
+  passwordId: string,
+  userId: string,
+): Promise<void> {
+  const res = await client.rpc("revoke_password_access", { p_password_id: passwordId, p_user_id: userId });
+  if (res.error) throw new Error(res.error.message);
+}
+
+// Who may read each password in one workspace, and through what seat (`via`): the owner,
+// every seated manager, every approved requester — the same answer `can_read_password_secret`
+// gives, computed by a security-definer rpc because a developer's own RLS on the ledger shows
+// only their rows. Every member may call it; the rows carry people, never secret content.
+// Ordered per password owner → managers → grants, so the first faces drawn are stable.
 export async function listPasswordHolders(
   client: SupabaseClient,
   workspaceId: string,
