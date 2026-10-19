@@ -307,16 +307,6 @@ Integrations** (create the Slack app → paste its two tokens → pick the chann
 that, every top-level message in the channel is a question, and Kermanych replies in a
 thread under it.
 
-The bot runs in one of two modes, switched by the owner on the Slack settings card:
-
-- **Desktop** (default) — answered by a member's Kermanych app over Socket Mode, so only
-  while someone holding the tokens has Kermanych open.
-- **Cloud** — answered by the `slack-events` Edge Function with the owner's own AI API
-  key, so with nobody online. See [Cloud answers](#cloud-answers) below.
-
-Both modes answer the same way: the same documentation search, the same prompt, the same
-formatting, the same fixed replies (`packages/core/src/slack-answer.ts` is shared by both).
-
 Setting up the Slack app, once per workspace:
 
 1. On the Slack tile press «Connect», then «Copy manifest», and create an app **from a
@@ -353,68 +343,21 @@ Setting up the Slack app, once per workspace:
   @-mention it, and reads the whole thread — the question, its earlier answers and the
   discussion — as the context for the new answer. Thread replies without a mention are
   left alone, as are messages in any other channel the bot was invited to.
-- **In desktop mode it answers while someone is online.** Slack delivers events over
-  Socket Mode to the Kermanych app itself, because the local API is not reachable from the
-  internet. The bot therefore answers only while a member whose machine holds the tokens
-  has Kermanych open and signed in; the settings card shows whether this machine is
+- **It answers while someone is online.** Slack delivers events over Socket Mode to
+  the Kermanych app itself, because the local API is not reachable from the internet.
+  The bot therefore answers only while a member whose machine holds the tokens has
+  Kermanych open and signed in; the settings card shows whether this machine is
   connected to Slack. Any member can paste the same two tokens there to host the bot
   too — Slack hands each message to one connection, so nobody is answered twice. The
   documentation search runs under that member's own login, and the answer is generated
   by their agent runtime (omp or Claude Code) on their plan.
-- **Tokens are local in desktop mode.** Both tokens are stored in this machine's registry
-  SQLite and never reach the cloud; the cloud row (`workspace_slack_integrations`, created
-  by the additive `20261005090000_slack_integration.sql` — push it before shipping this UI)
+- **Tokens are local.** Both tokens are stored in this machine's registry SQLite and
+  never reach the cloud; the cloud row (`workspace_slack_integrations`, created by the
+  additive `20261005090000_slack_integration.sql` — push it before shipping this UI)
   holds only the Slack workspace and channel ids, readable by members and written by the
-  owner. «Disconnect» removes the row, this machine's tokens and any cloud-answers keys.
+  owner. «Disconnect» removes the row and this machine's tokens.
 - **One Slack app per Kermanych workspace.** Two workspaces sharing one app would split
   its messages between machines that cannot see each other's workspace.
-
-#### Cloud answers
-
-Cloud answers make the bot answer with nobody online. A Slack app delivers its events
-either over Socket Mode (desktop) or to an HTTP Request URL (cloud), never both, so the
-mode is a switch in Kermanych **and** the matching manifest in the Slack app.
-
-Turning them on (the owner, on the machine that holds the Slack tokens):
-
-1. Connect the channel as above (desktop mode).
-2. On the Slack settings card press «Set up cloud answers». Pick the AI provider —
-   **Anthropic** (default model `claude-sonnet-5`, the desktop bot's own model) or
-   **OpenAI or compatible** (default `gpt-5`; an optional `https://` base URL points it at
-   any OpenAI-compatible API: OpenRouter, Groq, Mistral, Gemini's OpenAI endpoint, a
-   gateway) — and paste the AI API key and the Slack app's **Signing Secret** (*Basic
-   Information → App Credentials*). «Check and turn on» proves the key with a one-word
-   answer before anything is saved.
-3. Press «Copy cloud manifest» and paste it into the Slack app's *App Manifest* page. It is
-   the same app with Socket Mode off and the Request URL
-   `<Supabase URL>/functions/v1/slack-events?workspace=<workspace id>`. Slack verifies the
-   URL at once; the card's *Slack* line then shows when Slack last reached the cloud.
-
-Turning them off is «Turn off» plus pasting the desktop manifest («Copy desktop
-manifest») back into the Slack app. The keys stay stored, so turning on again needs no
-re-entry; «Remove cloud keys» deletes them.
-
-- **What the cloud holds.** `workspace_slack_cloud` stores the AI key, the signing secret
-  and the bot token (copied from the owner's machine on every save). No client role can
-  read it: members see only the mode, the provider, the model and the key's last four
-  characters (`get_slack_cloud_status`); the owner writes it through `set_slack_cloud`.
-- **What the Edge Function may do.** It runs with the platform's service-role key, which
-  `20261016090000_slack_cloud_answers.sql` lets call only the `slack_cloud_*` functions —
-  no table directly. Every request must carry a valid Slack signature for the workspace in
-  its URL; documentation is returned only while that workspace's cloud mode is on, and only
-  for that workspace's projects. Like `docs-rag`, it logs neither questions nor
-  documentation.
-- **Machines stand down.** While cloud answers are on, no machine opens a Slack socket for
-  the workspace; the card says «not connecting — cloud answers are on».
-- **Costs** are the owner's AI account's, not a member's plan. Retrieval embeds the
-  question with the product-wide Voyage key (`VOYAGE_API_KEY`, shared with `docs-rag`) and
-  falls back to full-text search without it.
-- **Shipping it** takes the additive migration `20261016090000_slack_cloud_answers.sql`
-  (`supabase db push`) and the function:
-  `supabase functions deploy slack-events --use-api` — `--use-api` because the function
-  imports `packages/core/src/slack-answer.ts` from outside `supabase/`. `config.toml`
-  already sets `verify_jwt = false` for it: Slack carries no Supabase JWT, the signature
-  authenticates it instead.
 
 #### Sending release notes to Slack
 
@@ -460,7 +403,7 @@ not credentials, so they are committed:
 | `Publishable key` (`sb_publishable_…`, formerly `anon`) | public — shipped inside the browser bundle by design | same |
 | `GITHUB_CLIENT_ID` | public | Supabase dashboard (hosted), `.env` (local stack only) |
 | `GITHUB_SECRET` | **secret** — the only real one in this repo | Supabase dashboard (hosted), your own `.env` (local stack only) |
-| `Secret key` (`sb_secret_…`, formerly `service_role`) | **secret** — never on a machine; only the `slack-events` Edge Function holds it, injected by the platform | the dashboard, and nowhere else |
+| `Secret key` (`sb_secret_…`, formerly `service_role`) | **secret** — never used by Kermanych | the dashboard, and nowhere else |
 
 What protects the project is not the obscurity of those two values but **RLS**,
 verified against the live project: an anonymous read of any table is refused with
@@ -469,8 +412,7 @@ they are a member of — and so to the projects and tasks inside them. Sign-in i
 open, so RLS is the sole authorization surface — every request runs under the
 user's own JWT. **No secret
 key ever belongs on a machine running Kermanych**, and nothing in this repo reads
-one — except the `slack-events` Edge Function, whose platform-injected service-role
-key may call only the `slack_cloud_*` functions (see [Cloud answers](#cloud-answers)).
+one.
 
 ### Applying a migration to the team's project
 
@@ -505,6 +447,15 @@ unschedules the `routines-cloud-tick` job and deletes the `routines_project_url`
 `routines_runner_secret` Vault secrets. Only a build that still has the Routines screen reads
 those tables, and that screen is all it loses. If the `routines-runner` Edge Function was ever
 deployed, delete it too: `supabase functions delete routines-runner --project-ref uqqdudlfizfwqfegfrlh`.
+
+`20261019100000_drop_slack_cloud_answers.sql` removes the retired Slack cloud answers: it drops
+`workspace_slack_cloud` and `slack_cloud_events` with every row — the stored Slack bot tokens,
+signing secrets and AI keys — and the seven `*slack_cloud*` functions. Only a build that still
+has the «Cloud answers» section on the Slack card calls them. Delete the Edge Function too:
+`supabase functions delete slack-events --project-ref uqqdudlfizfwqfegfrlh`. A workspace that had
+switched its Slack app to the cloud manifest must paste the desktop manifest back («Copy
+manifest» on the Slack tile), or Slack keeps sending events to the deleted URL and no machine
+gets the questions.
 
 ### Running against a local stack or your own project
 
