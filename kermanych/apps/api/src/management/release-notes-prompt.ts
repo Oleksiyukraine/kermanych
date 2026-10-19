@@ -9,38 +9,66 @@
 // says nothing («fix», «wip») can be resolved by reading the code it touched.
 import type { ReleaseCommit, ReleaseGrouping } from "@kermanych/core";
 
-// Upper bound on the commit blocks, in characters. A quarter's worth of a busy repo can be
-// megabytes of commit bodies; past this the tail is dropped and the prompt says so, which
-// beats a provider-side truncation the note would never mention. ~48k chars is roughly 12k
-// tokens — small beside any modern context window, large enough for hundreds of commits.
-// A note over several projects splits it evenly, so one busy repository cannot push another
-// one's commits out of the prompt.
+// Budget of the commit blocks, in characters. A quarter's worth of a busy repo can be
+// megabytes of commit bodies, so past this budget the BODIES give way — never a commit:
+// every subject is always printed, because the note must name every change and a commit
+// the model never saw can only be written up as «and 45 other changes». ~48k chars is
+// roughly 12k tokens. A note over several projects splits it evenly, so one busy
+// repository cannot push another one's bodies out of the prompt.
 export const MAX_COMMITS_CHARS = 48_000;
 
-function commitLine(c: ReleaseCommit): string {
-  // The body indented under its subject so the model reads them as one commit; hashes are
-  // deliberately absent — the note must not quote them, so the prompt never shows them.
-  const body = c.body.trim();
-  return `- ${c.date} · ${c.author}: ${c.subject}${body ? `\n${body.replace(/^/gm, "    ")}` : ""}`;
+// Hard ceiling on the subject lines alone, over the whole note. Subjects are never dropped,
+// so this is what bounds the prompt: past it (roughly 1,500+ commits) the generation is
+// refused before any model turn — a note that names every change of such a period would
+// not fit one reply, and a note that silently leaves changes out is what this replaces.
+export const MAX_SUBJECT_CHARS = 160_000;
+
+// One commit's subject line. Shared by the block and by subjectsSize, so the ceiling the
+// service checks measures exactly what the prompt prints. Hashes are deliberately absent —
+// the note must not quote them, so the prompt never shows them.
+function subjectLine(c: ReleaseCommit): string {
+  return `- ${c.date} · ${c.author}: ${c.subject}`;
 }
 
-// The commit block plus whether the cap cut it short. Whole commits only: a body sliced
-// mid-sentence would be quoted into the note as if the sentence ended there.
+// What the subject lines of these commits cost — the measure MAX_SUBJECT_CHARS bounds.
+export function subjectsSize(commits: ReleaseCommit[]): number {
+  return commits.reduce((n, c) => n + subjectLine(c).length, 0);
+}
+
+// The commit block, in the order given, and how many bodies did not fit. Every commit's
+// subject is always in it. When subjects and bodies together exceed the cap, the bodies
+// are kept shortest first while they fit, so as many commits as possible keep theirs, and
+// the longest go. Whole bodies only: a body sliced mid-sentence would be quoted into the
+// note as if the sentence ended there.
 export function commitsBlock(
   commits: ReleaseCommit[],
   cap: number = MAX_COMMITS_CHARS,
-): { block: string; included: number; truncated: boolean } {
-  const lines: string[] = [];
-  let size = 0;
-  for (const c of commits) {
-    const line = commitLine(c);
-    if (size + line.length > cap && lines.length > 0) {
-      return { block: lines.join("\n"), included: lines.length, truncated: true };
-    }
-    lines.push(line);
-    size += line.length;
+): { block: string; bodiesDropped: number } {
+  const subjects = commits.map(subjectLine);
+  // Each body indented under its subject so the model reads them as one commit.
+  const bodies = commits.map((c) => {
+    const body = c.body.trim();
+    return body ? `\n${body.replace(/^/gm, "    ")}` : "";
+  });
+  const subjectsTotal = subjects.reduce((n, s) => n + s.length, 0);
+  const bodiesTotal = bodies.reduce((n, b) => n + b.length, 0);
+  if (subjectsTotal + bodiesTotal <= cap) return { block: subjects.map((s, i) => s + bodies[i]).join("\n"), bodiesDropped: 0 };
+
+  let room = cap - subjectsTotal;
+  const kept = new Set<number>();
+  const byLength = commits
+    .map((_, i) => i)
+    .filter((i) => bodies[i]!.length > 0)
+    .sort((a, b) => bodies[a]!.length - bodies[b]!.length || a - b);
+  for (const i of byLength) {
+    if (bodies[i]!.length > room) break;
+    kept.add(i);
+    room -= bodies[i]!.length;
   }
-  return { block: lines.join("\n"), included: lines.length, truncated: false };
+  return {
+    block: subjects.map((s, i) => (kept.has(i) ? s + bodies[i] : s)).join("\n"),
+    bodiesDropped: byLength.length - kept.size,
+  };
 }
 
 // The period's commits per author, in the order the per-person note writes its sections:
@@ -86,14 +114,13 @@ export function buildReleaseNotesPrompt(input: {
   const cap = Math.floor(MAX_COMMITS_CHARS / Math.max(1, input.sources.length));
   const byPerson = input.groupBy === "person";
   // Per person, each author's commits are printed together and in section order, so the
-  // model attributes from one contiguous run instead of re-sorting a mixed list. The roster
-  // is counted over ALL commits, before the cap: a person whose commits fell past it is
-  // still named, with a count, rather than silently missing from a report about people.
+  // model attributes from one contiguous run instead of re-sorting a mixed list. Every
+  // commit is printed (only bodies give way to the budget), so every person on the roster
+  // has their own commits to write their section from.
   const parts = input.sources.map((s) => {
     const authors = byPerson ? commitsByAuthor(s.commits) : undefined;
     return { source: s, authors, ...commitsBlock(authors ? [...authors.values()].flat() : s.commits, cap) };
   });
-  const truncated = parts.some((p) => p.truncated);
   // The heading level the layout's groups use: the top level of the document for one
   // project, one level under the project's own heading for several.
   const level = multi ? "третього" : "другого";
@@ -103,6 +130,14 @@ export function buildReleaseNotesPrompt(input: {
     // below are routinely Ukrainian and a model left alone mirrors the language it reads.
     `- МОВА ДОКУМЕНТА — АНГЛІЙСЬКА, завжди: заголовки, пункти, речення й заголовок першого рівня. Мова комітів, репозиторію чи цього завдання на неї не впливає — коміти іншою мовою перекладай англійською, не цитуй.`,
     `- Власні назви не перекладай: назву продукту, імена людей і підписи інтерфейсу пиши так, як вони існують, усередині англійського речення.`,
+  ];
+  // The rule this layout exists for: a long period must still name every change. A model
+  // left alone compresses a long tail into «and 45 other changes», which tells the reader
+  // nothing — so the tail is written compactly instead of counted.
+  const completeness = [
+    `- ПОВНОТА: кожен коміт зі списку нижче має бути відображений у документі — у власному пункті або в одному пункті разом зі спорідненими комітами. Жоден коміт не пропускай і не відкидай як неважливий.`,
+    `- Ніколи не заміняй зміни їхньою кількістю: жодних «and 45 other changes», «plus several smaller fixes», «various improvements» чи «N commits». Кожна зміна названа словами — що саме змінилося. Кількість комітів у документі не пиши взагалі.`,
+    `- Документ має бути компактним, але повним: один пункт — один рядок без вступних фраз; споріднені коміти (одна функція, один екран, серія правок одного місця) обʼєднуй в один пункт, який перелічує, що саме змінилося. Помітні для користувача зміни описуй реченням про користь, дрібні — коротким пунктом у кілька слів.`,
   ];
   // The split the operator asked for when they picked several projects: the reader sees
   // what changed in the back-end apart from what changed in the front-end.
@@ -117,21 +152,17 @@ export function buildReleaseNotesPrompt(input: {
         multi
           ? `- Усередині розділу кожного проєкту — заголовок ${level} рівня для кожної людини зі списку «Учасники» цього проєкту нижче, який є РІВНО її імʼям, як воно записане у списку (без нумерації, ролей і підписів), у тому самому порядку. Людина, що працювала в кількох проєктах, має розділ у кожному з них — з роботою саме в цьому проєкті.`
           : `- Розділи документ за людьми. Для кожної людини зі списку «Учасники» нижче — заголовок ${level} рівня, який є РІВНО її імʼям, як воно записане у списку (без нумерації, ролей і підписів), у тому самому порядку.`,
-        `- Під іменем — що ця людина завершила за період: пункти простою мовою про те, що змінилося для користувача і чим це корисно. Споріднені коміти однієї людини обʼєднуй в один пункт.`,
+        `- Під іменем — усе, що ця людина зробила за період: спершу помітні для користувача зміни — пункти простою мовою про те, що змінилося і чим це корисно. Споріднені коміти однієї людини обʼєднуй в один пункт.`,
+        `- Решту роботи людини — дрібні правки й роботу, якої користувач не помітить (рефакторинг, залежності, CI, тести), — не пропускай: після основних пунктів додай рядок «**Smaller changes**» і під ним короткі пункти по кілька слів, кожен з яких називає, що саме зроблено. Якщо вся робота людини така, її розділ складається лише з цього списку.`,
         `- Пункт у розділі людини пишеться ЛИШЕ з її власних комітів: не приписуй їй чужої роботи й не перенось її роботу іншим.`,
-        `- Якщо вся робота людини — дрібниці, яких користувач не помітить (рефакторинг, залежності, CI), напиши в її розділі одне речення про це, але людину не пропускай.`,
-        `- Автоматичні облікові записи (боти, наприклад «dependabot[bot]») окремого розділу не отримують: їхню роботу згадай одним реченням наприкінці${multi ? " розділу проєкту" : ""} або пропусти.`,
-        ...(truncated
-          ? [
-              `- Список комітів нижче обрізано за обсягом. Якщо комітів людини в ньому немає, напиши в її розділі одним реченням, скільки змін вона зробила, — не вигадуй, які саме.`,
-            ]
-          : []),
+        `- Автоматичні облікові записи (боти, наприклад «dependabot[bot]») окремого розділу не отримують: наприкінці${multi ? " розділу проєкту" : ""} одним реченням назви, що саме вони оновили.`,
       ]
     : [
         multi
-          ? `- Усередині розділу кожного проєкту згрупуй його зміни за смислом: «New», «Improvements», «Fixes» (заголовки ${level} рівня; порожні групи пропусти). Споріднені коміти об'єднуй в один пункт.`
-          : `- Згрупуй зміни за смислом: «New», «Improvements», «Fixes» (заголовки ${level} рівня; порожні групи пропусти). Споріднені коміти об'єднуй в один пункт.`,
-        `- Дрібниці, які користувач не помітить (рефакторинг, залежності, CI), збери одним реченням наприкінці${multi ? " розділу проєкту" : ""} або пропусти.`,
+          ? `- Усередині розділу кожного проєкту згрупуй його зміни за смислом: «New», «Improvements», «Fixes», «Maintenance» (заголовки ${level} рівня, у цьому порядку; порожні групи пропусти).`
+          : `- Згрупуй зміни за смислом: «New», «Improvements», «Fixes», «Maintenance» (заголовки ${level} рівня, у цьому порядку; порожні групи пропусти).`,
+        `- У кожній групі спершу найпомітніші зміни, далі дрібніші.`,
+        `- «Maintenance» — робота, якої користувач не помітить (рефакторинг, залежності, CI, тести): короткими пунктами простою мовою, кожен називає, що саме зроблено (наприклад, «Updated the libraries behind charts and date pickers»). Її не пропускай.`,
       ];
 
   const header = multi
@@ -145,9 +176,8 @@ export function buildReleaseNotesPrompt(input: {
         `Репозиторій: ${input.sources[0]?.projectName ?? ""}. Гілка: ${input.sources[0]?.branch ?? ""}. Період: ${input.rangeFrom} — ${input.rangeTo} включно.`,
       ];
 
-  const commitSections = parts.flatMap(({ source, authors, block, included }) => {
-    const all = source.commits.length;
-    const count = `${included}${included < all ? ` з ${all} — список обрізано за обсягом, узагальни решту обережно` : ""}`;
+  const commitSections = parts.flatMap(({ source, authors, block, bodiesDropped }) => {
+    const count = `${source.commits.length}${bodiesDropped > 0 ? `; через обсяг у ${bodiesDropped} з них опис пропущено — лишився тільки заголовок коміта, але сам коміт у документі має бути` : ""}`;
     return [
       ...(multi ? [`=== Проєкт ${source.projectName} (гілка ${source.branch}) ===`, ``] : []),
       ...(authors
@@ -173,9 +203,10 @@ export function buildReleaseNotesPrompt(input: {
     `- Жодних хешів комітів, назв файлів, назв гілок, імен функцій і технічного жаргону в тексті.`,
     ...projects,
     ...layout,
+    ...completeness,
     multi
-      ? `- Якщо з коміта незрозуміло, що саме він змінює для користувача — відкрий код репозиторію саме цього проєкту (його тека — у списку «Проєкти»; read/grep/glob) і розберися, перш ніж писати.`
-      : `- Якщо з коміта незрозуміло, що саме він змінює для користувача — відкрий код репозиторію (read/grep/glob) і розберися, перш ніж писати.`,
+      ? `- Якщо з коміта незрозуміло, що саме він змінює для користувача — відкрий код репозиторію саме цього проєкту (його тека — у списку «Проєкти»; read/grep/glob) і розберися, перш ніж писати. Код відкривай лише заради помітних змін: дрібницю пиши з заголовка коміта.`
+      : `- Якщо з коміта незрозуміло, що саме він змінює для користувача — відкрий код репозиторію (read/grep/glob) і розберися, перш ніж писати. Код відкривай лише заради помітних змін: дрібницю пиши з заголовка коміта.`,
     `- Перший рядок — заголовок першого рівня \`#\`, що називає продукт і період.`,
     `- У відповіді — ЛИШЕ готовий markdown-документ. Без преамбули, без коментарів поза документом, без запитань.`,
     ``,

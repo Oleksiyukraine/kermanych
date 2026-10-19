@@ -1194,13 +1194,23 @@ That field is a real assistant, and it is deliberately narrow:
   clue the range or the branch was not the one you meant. A failed run keeps a row on the
   section screen with its reason and a retry. Editing, copying and deleting a stored note
   stay on the screen; the assistant has no verb for them and the prompt says so.
-  By default the note groups changes by meaning («New», «Improvements», «Fixes») and names
-  nobody. Tick «Звіт по людях» in the form — or ask the chat to split the note by person
-  («хто що зробив»), which adds `"groupBy": "person"` to the action — and the note gets one
-  section per commit author in the period, headed by their name, saying in the same plain
-  language what that person completed. Authors are read as git's `%aN`, so a repository's
-  `.mailmap` folds one person's aliases into one section; bots get a closing sentence, not a
-  section of their own.
+  By default the note groups changes by meaning («New», «Improvements», «Fixes», and
+  «Maintenance» for work a user does not see) and names nobody. Tick «Звіт по людях» in the
+  form — or ask the chat to split the note by person («хто що зробив»), which adds
+  `"groupBy": "person"` to the action — and the note gets one section per commit author in
+  the period, headed by their name, saying in the same plain language what that person
+  completed: their visible changes first, then a «Smaller changes» list for the rest.
+  Authors are read as git's `%aN`, so a repository's `.mailmap` folds one person's aliases
+  into one section; bots get a closing sentence naming what they updated, not a section of
+  their own.
+  **Every change of the period is named, however long the period.** The note never writes
+  «and 45 other changes»: related commits are merged into one bullet that says what changed,
+  small ones become a short bullet of a few words, and a count is never a substitute. Every
+  commit's subject always reaches the model; when a busy period's commit messages exceed the
+  prompt budget, only the longest commit descriptions are left out, never a commit. A period
+  with so many commits that their subjects alone would not fit (roughly 1,500 and more) is
+  refused before any model turn with `too_many_commits` and the count — pick a shorter
+  period.
   The form can also write one note over several projects of the workspace — the back-end
   and the front-end, say. Pick more than one project in its «Projects» picker and each
   picked project gets its own branch picker, preselected with that project's default branch,
