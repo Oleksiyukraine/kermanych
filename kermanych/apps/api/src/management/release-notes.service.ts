@@ -10,10 +10,10 @@
 // for a follow-up that has nowhere to be typed. Editing the note afterwards is a text
 // edit on the screen, not a model turn.
 //
-// The api's half of an on-screen or chat generation ends at the markdown: the browser saves the
-// note into `workspace_release_notes` under the operator's own JWT (stores/release-notes.ts),
-// the same division of labour the risk register uses. A ROUTINE's note is stored by the api
-// itself (routines/routines.service.ts), under the same JWT, because no browser asked for it.
+// The api's half of the feature ends at the markdown: the browser saves the note into
+// `workspace_release_notes` under the operator's own JWT (stores/release-notes.ts), the
+// same division of labour the risk register uses — the api has no cloud credentials and
+// must not grow any.
 import { Injectable, Logger } from "@nestjs/common";
 import type { ReleaseNotesAsk, ReleaseNotesReply, ReleaseSource, AgentRuntimeKind } from "@kermanych/core";
 import { runOneShot } from "../runtime/one-shot";
@@ -22,13 +22,15 @@ import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { MANAGEMENT_TOOLS } from "./management-chat.service";
 import { CodedError } from "./coded-error";
-import { buildReleaseNotesPrompt, titleOf, type ReleasePromptSource } from "@kermanych/core";
+import { buildReleaseNotesPrompt, type ReleasePromptSource } from "./release-notes-prompt";
 
-// A routine's note (`generateScheduled`): the document and the sources it was written from.
-export type ScheduledReleaseNotes = {
-  reply: ReleaseNotesReply;
-  sources: { projectId: string; projectName: string; branch: string }[];
-};
+// The document's title, read from its first `# ` heading — the prompt requires one, but a
+// model that ignored the rule must not sink the whole generation, so the fallback restates
+// what the note is about in the list's own terms.
+export function titleOf(markdown: string, fallback: string): string {
+  const m = /^#[^\S\n]+(.+)$/m.exec(markdown);
+  return m?.[1]?.trim() || fallback;
+}
 
 @Injectable()
 export class ReleaseNotesService {
@@ -46,39 +48,13 @@ export class ReleaseNotesService {
   }
 
   async generate(ask: ReleaseNotesAsk): Promise<ReleaseNotesReply> {
-    return (await this.write(ask, false)).reply;
-  }
-
-  // The scheduled form, for routines (docs/specs/2026-10-16-routines.md). A weekly note over
-  // the back-end and the front-end should not be lost because the front-end had a quiet week,
-  // so a project without commits in the period drops out of the note; only a period without
-  // commits in ANY project is refused (with the first project's `no_commits_in_range`). Answers
-  // the sources the note was actually written from, names included, so what is stored as the
-  // note's provenance is exactly the sections it has.
-  async generateScheduled(ask: ReleaseNotesAsk): Promise<ScheduledReleaseNotes> {
-    return this.write(ask, true);
-  }
-
-  private async write(ask: ReleaseNotesAsk, skipEmpty: boolean): Promise<ScheduledReleaseNotes> {
     const startedAt = Date.now();
 
     // Every source is resolved before the child is spawned: a note over the back-end and the
     // front-end that fails on the second one must not have spent a model turn on the first.
     // In order, so the first refusal the operator reads is about the first project they picked.
     const sources: ReleasePromptSource[] = [];
-    const used: ScheduledReleaseNotes["sources"] = [];
-    let quiet: CodedError | undefined;
-    for (const source of ask.sources) {
-      try {
-        const resolved = await this.resolve(source, ask.rangeFrom, ask.rangeTo);
-        sources.push(resolved);
-        used.push({ projectId: source.projectId, projectName: resolved.projectName, branch: source.branch });
-      } catch (err) {
-        if (!skipEmpty || !(err instanceof CodedError) || err.code !== "no_commits_in_range") throw err;
-        quiet ??= err;
-      }
-    }
-    if (sources.length === 0) throw quiet!;
+    for (const source of ask.sources) sources.push(await this.resolve(source, ask.rangeFrom, ask.rangeTo));
 
     const prompt = buildReleaseNotesPrompt({
       workspaceName: ask.workspaceName,
@@ -105,7 +81,7 @@ export class ReleaseNotesService {
     const { usage, model } = generated.spend;
     const names = sources.map((s) => s.projectName).join(" + ");
 
-    const reply: ReleaseNotesReply = {
+    return {
       title: titleOf(generated.text, `Release notes: ${names} · ${ask.rangeFrom} — ${ask.rangeTo}`),
       markdown: generated.text,
       commitCount: sources.reduce((n, s) => n + s.commits.length, 0),
@@ -114,7 +90,6 @@ export class ReleaseNotesService {
       // Wall time as the operator experienced it, spawn included.
       ms: Date.now() - startedAt,
     };
-    return { reply, sources: used };
   }
 
   // One source → its project's name, checkout and commits. Every refusal names the project:

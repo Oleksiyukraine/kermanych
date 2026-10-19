@@ -140,20 +140,6 @@ export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
     hint: "зміни по релізах",
     capability: "read_write",
   },
-  // Scheduled tasks of the workspace and its projects (docs/specs/2026-10-16-routines.md): a
-  // prompt or a release-notes generation at a date and time, once or on a recurring schedule,
-  // run by the author's own api. `read`, not writable: a schedule acts in its author's name —
-  // their Slack account, their plan, sessions on their machine — so creating one is a decision
-  // made on the screen, not something the chat may do on a model's reading of a sentence.
-  {
-    name: "management-routines",
-    path: "routines",
-    label: "Routines",
-    hint: "заплановані задачі",
-    capability: "read",
-    limitation:
-      "рутини діють від імені автора за розкладом — їх створюють і змінюють на екрані, не з чату",
-  },
   // Readable since Team Capacity got a screen: it shows Jira's estimates and worklogs
   // against an 8 h/day baseline. Nothing on it is ours to write — load changes by editing
   // tickets in Jira — so the assistant describes it (from the digest in its context) and

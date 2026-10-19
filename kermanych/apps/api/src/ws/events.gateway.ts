@@ -7,16 +7,12 @@ import {
 } from "@nestjs/websockets";
 import { Server, Socket } from "socket.io";
 import { SupervisorService } from "../supervisor/supervisor.service";
-import { RoutinesService } from "../routines/routines.service";
 
 @WebSocketGateway({ cors: { origin: "*" }, maxHttpBufferSize: 64 * 1024 * 1024 })
 export class EventsGateway implements OnGatewayConnection, OnModuleInit {
   @WebSocketServer() server!: Server;
 
-  constructor(
-    private supervisor: SupervisorService,
-    private routines: RoutinesService,
-  ) {}
+  constructor(private supervisor: SupervisorService) {}
 
   handleConnection(client: Socket) {
     client.emit("event", { type: "snapshot", ...this.supervisor.snapshot() });
@@ -24,8 +20,5 @@ export class EventsGateway implements OnGatewayConnection, OnModuleInit {
 
   onModuleInit() {
     this.supervisor.events$.subscribe((e) => this.server.emit("event", e));
-    // A routine run of this machine started or ended: the Routines screen refetches, and the
-    // window toasts the outcome (docs/specs/2026-10-16-routines.md).
-    this.routines.events$.subscribe((e) => this.server.emit("event", e));
   }
 }

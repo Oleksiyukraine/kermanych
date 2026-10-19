@@ -65,15 +65,6 @@ export type {
   SlackCloudInput,
   ReleaseNotesSlack,
   ReleaseNotesSlackInsert,
-  WorkspaceRoutine,
-  WorkspaceRoutineInsert,
-  WorkspaceRoutinePatch,
-  WorkspaceRoutineRun,
-  WorkspaceRoutineRunClaim,
-  WorkspaceRoutineRunResult,
-  RoutineCloudStatus,
-  RoutineCloudConfig,
-  RoutineCloudChannel,
   WorkspacePassword,
   WorkspacePasswordField,
   WorkspacePasswordSecret,
@@ -200,24 +191,6 @@ export {
   createWorkspaceReleaseNote,
   patchWorkspaceReleaseNote,
 } from "./release-notes";
-
-export {
-  toWorkspaceRoutine,
-  toWorkspaceRoutineRun,
-  listWorkspaceRoutines,
-  listRunnableRoutines,
-  getWorkspaceRoutine,
-  createWorkspaceRoutine,
-  patchWorkspaceRoutine,
-  deleteWorkspaceRoutine,
-  listWorkspaceRoutineRuns,
-  claimRoutineRun,
-  finishRoutineRun,
-  getRoutineCloudStatus,
-  configureRoutineCloud,
-  listRoutineCloudChannels,
-  runRoutineInCloud,
-} from "./routines";
 
 export {
   PASSWORD_FILE_BUCKET,
