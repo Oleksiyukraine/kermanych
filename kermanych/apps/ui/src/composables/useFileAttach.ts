@@ -12,7 +12,9 @@ export function useFileAttach() {
   const error = ref<string | null>(null);
 
   async function addFiles(list: Iterable<File>): Promise<void> {
-    for (const file of list) {
+    // Copy before the first await: a picker passes its live `input.files`, and the
+    // caller's synchronous `input.value = ''` empties that FileList mid-loop.
+    for (const file of [...list]) {
       try {
         files.value = [...files.value, await fileToAttachment(file)];
         error.value = null;
