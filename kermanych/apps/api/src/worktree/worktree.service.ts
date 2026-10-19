@@ -191,6 +191,23 @@ export class WorktreeService {
     return (await git(dir, ["status", "--porcelain"])).out.trim().length > 0;
   }
 
+  // The paths `git status` reports — modified, staged, deleted, untracked — in git's order.
+  // A rename or copy lists its new path only.
+  async uncommittedFiles(dir: string): Promise<string[]> {
+    const r = await git(dir, ["status", "--porcelain", "-z"]);
+    if (!r.ok) throw new Error(`git status failed: ${r.out}`);
+    const records = r.out.split("\0");
+    const files: string[] = [];
+    for (let i = 0; i < records.length; i++) {
+      const rec = records[i]!;
+      if (rec.length < 4) continue;
+      files.push(rec.slice(3));
+      // `-z` puts a rename's or copy's source path in the record that follows.
+      if (rec[0] === "R" || rec[0] === "C") i++;
+    }
+    return files;
+  }
+
   async commitAll(dir: string, message: string): Promise<void> {
     await git(dir, ["add", "-A"]);
     const r = await git(dir, ["commit", "-m", message]);

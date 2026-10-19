@@ -86,6 +86,7 @@ import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProj
 import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
 import { NativeSessionService, nativeUnsupported } from "../native/native-session.service";
+import { CodedError } from "../management/coded-error";
 import { PR_URL_RE } from "./pr-url";
 import { CHAT_TOOLS } from "./chat-tools";
 
@@ -145,6 +146,10 @@ type Live = {
 // matches, and short of the pasted logs and files that make a message big. Same idiom and the
 // same reasoning as CONFIG_MAX_BYTES in skills.service.ts.
 const MATCH_MAX_CHARS = 1 << 14;
+
+// How many uncommitted paths an in-place refusal names: enough to recognise the work in the
+// way, short enough for the launcher's one-line error slot.
+const DIRTY_FILES_SHOWN = 5;
 
 @Injectable()
 export class SupervisorService implements OnModuleInit, OnModuleDestroy {
@@ -769,16 +774,33 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (!project.localRepoPath) throw new Error("project not bound");
     let baseBranch: string | undefined;
     if (!worktree) {
-      if (await this.worktree.hasUncommitted(project.localRepoPath))
-        throw new Error("project working tree must be clean to create an in-place (non-worktree) agent");
+      // Coded refusals: the launcher shows them in the operator's locale, and the dirty-tree one
+      // names the paths in the way — the agent works in this very checkout, and finishing or
+      // deleting it would commit or discard whatever else is lying there.
+      if (await this.worktree.hasUncommitted(project.localRepoPath)) {
+        const dirty = await this.worktree.uncommittedFiles(project.localRepoPath);
+        const files = dirty.slice(0, DIRTY_FILES_SHOWN).join(", ") + (dirty.length > DIRTY_FILES_SHOWN ? ", …" : "");
+        throw new CodedError(
+          "inplace_tree_dirty",
+          `У теці проєкту є незакомічені зміни (${dirty.length}): ${files}. Закомітьте або сховайте їх (git stash) — або увімкніть «Ізолювати у worktree».`,
+          { count: dirty.length, files },
+        );
+      }
       // A pre-cutover backlog leftover never launched, so it never occupies the in-place slot.
       const activeInPlace = this.registry
         .listSessions(project.id)
         .some((s) => s.id !== excludeId && !s.worktree && s.kind !== "discussion" && s.kind !== "review" && s.status !== "merged" && s.status !== "backlog");
       if (activeInPlace)
-        throw new Error("an in-place agent is already active in this project — finish or delete it first");
+        throw new CodedError(
+          "inplace_already_active",
+          "У цьому проєкті вже працює агент без worktree — завершіть або видаліть його, або увімкніть «Ізолювати у worktree».",
+        );
       baseBranch = await this.worktree.currentBranch(project.localRepoPath);
-      if (!baseBranch) throw new Error("project has a detached HEAD — checkout a branch first");
+      if (!baseBranch)
+        throw new CodedError(
+          "inplace_detached_head",
+          "Репозиторій проєкту у стані detached HEAD — перейдіть на гілку або увімкніть «Ізолювати у worktree».",
+        );
     } else {
       // Worktree agents fork from the chosen base: explicit pick > project default > the branch
       // the project checkout is on. The last one is recorded too, so the PR prompt, the base sync
