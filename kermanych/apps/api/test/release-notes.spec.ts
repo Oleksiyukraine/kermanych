@@ -63,6 +63,19 @@ describe("buildReleaseNotesPrompt", () => {
     expect(prompt).toContain("заголовок першого рівня");
   });
 
+  // The reason this layout exists: a long period was written up as «and 45 other changes».
+  // Every commit must land in a bullet, and a count is never a substitute for one.
+  it("demands every commit in the note and forbids replacing changes with a count", () => {
+    expect(prompt).toContain("кожен коміт зі списку нижче має бути відображений у документі");
+    expect(prompt).toContain("Ніколи не заміняй зміни їхньою кількістю");
+  });
+
+  // Invisible work is listed under its own group, not folded into one sentence or skipped.
+  it("lists invisible work in a Maintenance group instead of dropping it", () => {
+    expect(prompt).toContain("«New», «Improvements», «Fixes», «Maintenance»");
+    expect(prompt).not.toContain("або пропусти");
+  });
+
   // One project is the note it always was: no project sections, and no folder to point at
   // — the child is born in that repository.
   it("writes no project sections for a single project", () => {
@@ -104,7 +117,7 @@ describe("buildReleaseNotesPrompt — several projects", () => {
 
   it("moves the by-meaning groups and the per-person sections inside each project", () => {
     expect(prompt).toContain("Усередині розділу кожного проєкту згрупуй");
-    expect(prompt).toContain("«New», «Improvements», «Fixes» (заголовки третього рівня");
+    expect(prompt).toContain("«Maintenance» (заголовки третього рівня");
     const perPerson = buildReleaseNotesPrompt({
       ...ask,
       groupBy: "person",
@@ -118,17 +131,20 @@ describe("buildReleaseNotesPrompt — several projects", () => {
     expect(perPerson.match(/Учасники \(/g)).toHaveLength(2);
   });
 
-  // One busy repository must not push the other one's commits out of the prompt.
-  it("splits the commit budget evenly between the projects", () => {
+  // A busy repository's long bodies give way within its own share of the budget; none of
+  // its commits, and nothing of the other project, is dropped.
+  it("keeps every commit of a busy project and drops only the bodies past its share", () => {
     const out = buildReleaseNotesPrompt({
       ...ask,
       sources: [
-        { ...back, commits: [commit({ body: "x".repeat(MAX_COMMITS_CHARS * 0.6) }), commit({ subject: "за межею" })] },
+        { ...back, commits: [commit({ body: "x".repeat(MAX_COMMITS_CHARS * 0.6) }), commit({ subject: "друге" })] },
         { ...front, commits: [commit({ subject: "темна тема" })] },
       ],
     });
-    expect(out).not.toContain(": за межею");
-    expect(out).toContain("(1 з 2 — список обрізано");
+    expect(out).not.toContain("xxxx");
+    expect(out).toContain(": додано експорт у PDF");
+    expect(out).toContain(": друге");
+    expect(out).toContain("(2; через обсяг у 1 з них опис пропущено");
     expect(out).toContain(": темна тема");
   });
 });
@@ -164,9 +180,9 @@ describe("buildReleaseNotesPrompt — per person", () => {
     expect(order.every((at, i) => at > 0 && (i === 0 || at > order[i - 1]!))).toBe(true);
   });
 
-  // A person whose commits fell past the cap is still in the roster — a report about people
-  // must not silently drop one because somebody else wrote long commit bodies.
-  it("names an author whose commits were cut by the cap", () => {
+  // A report about people must cover every person's work in full: somebody else's long
+  // commit bodies cost bodies, never another person's commits.
+  it("prints every author's commits even when another author's body overflows the budget", () => {
     const prompt = buildReleaseNotesPrompt({
       ...ask,
       groupBy: "person",
@@ -182,33 +198,40 @@ describe("buildReleaseNotesPrompt — per person", () => {
       ],
     });
     expect(prompt).toContain("- Петро — 1");
-    expect(prompt).not.toContain("за межею");
-    expect(prompt).toContain("не вигадуй, які саме");
+    expect(prompt).toContain("Петро: за межею");
+    expect(prompt).not.toContain("xxxx");
+    // Small work is listed under the person, not summarised as a count.
+    expect(prompt).toContain("«**Smaller changes**»");
   });
 });
 
 describe("commitsBlock", () => {
-  it("keeps every commit when the block fits", () => {
-    const { block, included, truncated } = commitsBlock([commit(), commit({ subject: "друге" })]);
-    expect(included).toBe(2);
-    expect(truncated).toBe(false);
+  it("keeps every commit with its body when the block fits", () => {
+    const { block, bodiesDropped } = commitsBlock([commit({ body: "чому" }), commit({ subject: "друге" })]);
+    expect(bodiesDropped).toBe(0);
+    expect(block).toContain("    чому");
     expect(block).toContain("друге");
   });
 
-  // Whole commits only: a body sliced mid-sentence would be quoted into the note as if
-  // the sentence ended there.
-  it("cuts at a commit boundary once the cap is reached, and says so", () => {
-    const fat = commit({ body: "x".repeat(MAX_COMMITS_CHARS - 60) });
-    const { included, truncated } = commitsBlock([fat, commit({ subject: "за межею" }), commit()]);
-    expect(included).toBe(1);
-    expect(truncated).toBe(true);
+  // Over the cap the subjects all stay; bodies are kept shortest first, and whole —
+  // a body sliced mid-sentence would be quoted into the note as if the sentence ended there.
+  it("keeps every subject over the cap and drops the longest bodies whole", () => {
+    const fat = commit({ subject: "товстий", body: "x".repeat(MAX_COMMITS_CHARS) });
+    const { block, bodiesDropped } = commitsBlock([fat, commit({ subject: "за межею", body: "коротко" }), commit()]);
+    expect(bodiesDropped).toBe(1);
+    expect(block).not.toContain("xxxx");
+    expect(block.split("\n")).toEqual([
+      "- 2026-08-20 · Оля: товстий",
+      "- 2026-08-20 · Оля: за межею",
+      "    коротко",
+      "- 2026-08-20 · Оля: додано експорт у PDF",
+    ]);
   });
 
-  it("never drops the first commit even when it alone exceeds the cap", () => {
-    const oversized = commit({ body: "x".repeat(MAX_COMMITS_CHARS + 100) });
-    const { included, truncated } = commitsBlock([oversized, commit()]);
-    expect(included).toBe(1);
-    expect(truncated).toBe(true);
+  it("keeps every subject even when the subjects alone exceed the cap", () => {
+    const { block, bodiesDropped } = commitsBlock([commit({ body: "чому" }), commit({ subject: "друге" })], 10);
+    expect(bodiesDropped).toBe(1);
+    expect(block).toBe("- 2026-08-20 · Оля: додано експорт у PDF\n- 2026-08-20 · Оля: друге");
   });
 });
 

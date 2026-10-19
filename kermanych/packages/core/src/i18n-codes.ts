@@ -89,6 +89,7 @@ export type ApiErrorCode =
   | "project_not_bound" // release-notes.service.ts — project not bound on this machine (params: { project })
   | "branch_not_in_repo" // release-notes.service.ts — branch absent from the project's local repo (params: { project, branch })
   | "no_commits_in_range" // release-notes.service.ts — a project has no commits in the requested range (params: { project, branch, from, to })
+  | "too_many_commits" // release-notes.service.ts — the period's commit subjects overflow the prompt ceiling (params: { count, from, to })
   | "omp_exited_during_generation" // release-notes.service.ts:110 — the omp child died mid-generation (params: { reason })
   | "generation_timeout" // release-notes.service.ts:122 — generation did not finish in time (params: { seconds })
   | "model_no_text" // release-notes.service.ts:139 — the model returned no text (params: none)
@@ -166,6 +167,7 @@ export const API_ERROR_CODES = [
   "project_not_bound",
   "branch_not_in_repo",
   "no_commits_in_range",
+  "too_many_commits",
   "omp_exited_during_generation",
   "generation_timeout",
   "model_no_text",

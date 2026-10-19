@@ -2616,6 +2616,7 @@ export const en: MessageSchema = {
     project_not_bound: 'Project “{project}” is not bound on this machine — generation reads the local repository’s git history',
     branch_not_in_repo: 'Branch “{branch}” is not present in the local repository of “{project}”',
     no_commits_in_range: '“{project}” has no commits on branch “{branch}” in {from} — {to}; there is nothing to write release notes from',
+    too_many_commits: 'Commits in {from} — {to}: {count} — too many to list every change in one note; pick a shorter period',
     omp_exited_during_generation: 'omp exited during generation: {reason}',
     generation_timeout: 'Generation did not finish within {seconds}s — try a narrower period or a smaller branch',
     model_no_text: 'The model returned no text — try again',
