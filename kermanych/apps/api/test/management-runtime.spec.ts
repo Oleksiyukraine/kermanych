@@ -196,20 +196,4 @@ describe("ReleaseNotesService — several projects", () => {
     });
     expect(calls).toHaveLength(0);
   });
-
-  // A routine's weekly note (docs/specs/2026-10-16-routines.md): a quiet project drops out
-  // instead of sinking the note, and the stored provenance names only the projects it covers.
-  it("scheduled: leaves a project without commits out of the note", async () => {
-    const { svc } = twoRepos({ "/repos/alpha": [commit] });
-    const out = await svc.generateScheduled(ask);
-    expect(out.sources).toEqual([{ projectId: "p1", projectName: "Альфа", branch: "dev" }]);
-    expect(out.reply.commitCount).toBe(1);
-    expect(calls).toHaveLength(1);
-  });
-
-  it("scheduled: refuses only a period without commits anywhere", async () => {
-    const { svc } = twoRepos({});
-    await expect(svc.generateScheduled(ask)).rejects.toMatchObject({ code: "no_commits_in_range", params: { project: "Альфа" } });
-    expect(calls).toHaveLength(0);
-  });
 });

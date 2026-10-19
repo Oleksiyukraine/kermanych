@@ -26,8 +26,6 @@ import { globalTr } from '../boot/i18n';
 import type { Bucket } from '../lib/buckets';
 
 export type Toast = { id: string; message: string; kind: 'error' | 'info' };
-// A routine run of THIS machine started or ended (docs/specs/2026-10-16-routines.md).
-export type RoutineRunEvent = Extract<ServerEvent, { type: 'routine_run' }>;
 
 // i18n keys for the attention-worthy statuses shouldNotify() fires on. Resolved through
 // globalTr at notification time (point-in-time copy), the same adapter the api client uses.
@@ -58,10 +56,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   const selectedSessionId = ref<string | undefined>(undefined);
   const previews = ref<Record<string, string>>({});
   const toasts = ref<Toast[]>([]);
-  // The latest routine run event. The Routines screen watches it to refetch its history; the
-  // toast for a finished run is shown in `reduce`, where every event lands, so it finds the
-  // operator on whatever screen they are.
-  const lastRoutineRun = ref<RoutineRunEvent | undefined>(undefined);
   // The omp model catalog for THIS machine (see loadModels). Empty until it lands — and empty
   // for good if omp cannot be read — so every picker built on it degrades to «за замовчуванням».
   const models = ref<ModelOption[]>([]);
@@ -176,18 +170,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       }
     } else if (e.type === 'subagents_update') {
       subagents.value = { ...subagents.value, [e.sessionId]: e.subagents };
-    } else if (e.type === 'routine_run') {
-      lastRoutineRun.value = e;
-      if (e.status !== 'running') {
-        const message = globalTr.t(`management.routines.notify.${e.status}`, { name: e.routineName });
-        notify(message, e.status === 'failed' ? 'error' : 'info');
-        // A scheduled run usually ends while the operator is elsewhere — the Desktop analog
-        // notifies too. Same guard as the session notification above.
-        if (typeof document !== 'undefined' && !document.hasFocus() && typeof Notification !== 'undefined') {
-          const n = new Notification(e.routineName, { body: message });
-          n.onclick = () => window.kermanych?.focus();
-        }
-      }
     }
   }
 
@@ -515,7 +497,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     unarchiveSession,
     renameSession,
     toasts,
-    lastRoutineRun,
     notify,
     dismissToast,
     openEditor,

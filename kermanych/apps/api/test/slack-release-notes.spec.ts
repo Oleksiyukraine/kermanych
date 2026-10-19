@@ -124,7 +124,6 @@ describe("SlackReleaseNotesService — connecting a member's Slack account", () 
     ]);
     await expect(svc.completeAuthorize("w1", "u1", "the-code")).resolves.toEqual({
       connected: true,
-      teamId: "T1",
       teamName: "Acme",
       userName: "andrii",
       clientId: "111.222",
@@ -204,24 +203,6 @@ describe("SlackReleaseNotesService — sending a note", () => {
   });
 });
 
-describe("SlackReleaseNotesService — a routine's channel", () => {
-  const target = { teamId: "T1", channelId: "C42", channelName: "weekly" };
-
-  it("posts to the routine's own channel as the author, whatever the release-notes channel is", async () => {
-    storeToken();
-    const calls = stubSlack([{ ok: true, ts: "200.1" }]);
-    await expect(svc.postToChannel("w1", "u1", target, "# Weekly\n\ndone")).resolves.toEqual({ channelName: "weekly", ts: "200.1" });
-    expect(calls[0]!.auth).toBe("Bearer xoxp-me");
-    expect(calls[0]!.params.get("channel")).toBe("C42");
-  });
-
-  it("refuses a token of another Slack workspace than the channel's", async () => {
-    storeToken("T2");
-    stubSlack([]);
-    await expect(svc.postToChannel("w1", "u1", target, "x")).rejects.toThrow("another Slack workspace");
-  });
-});
-
 // An app with token rotation on (it cannot be turned off) hands out 12-hour `xoxe.xoxp-` tokens.
 describe("SlackReleaseNotesService — a rotating user token", () => {
   const NOW = Date.parse("2026-10-16T12:00:00Z");
@@ -281,10 +262,5 @@ describe("SlackReleaseNotesService — a rotating user token", () => {
     stubSlack([{ ok: false, error: "invalid_refresh_token" }]);
     const refused = await svc.channels("w1", "u1").catch((e: unknown) => e);
     expect(isSlackAuthError(refused)).toBe(true);
-
-    stubSlack([{ ok: false, error: "invalid_refresh_token" }]);
-    await expect(svc.postToChannel("w1", "u1", { teamId: "T1", channelId: "C42", channelName: "weekly" }, "x")).rejects.toThrow(
-      "connect your Slack account again",
-    );
   });
 });
