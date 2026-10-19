@@ -8,6 +8,7 @@ import type { AuthService } from "../src/auth/auth.service";
 import type { CloudProject, Task } from "@kermanych/cloud";
 import { stubSkills } from "./skills-stub";
 import { WorktreeService } from "../src/worktree/worktree.service";
+import { CodedError } from "../src/management/coded-error";
 
 // `from-task` is the only birth path of an agent session, so these launch guards are now
 // reached through a cloud card. Same wholesale mock as sessions.from-task.spec.ts (no
@@ -91,14 +92,31 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(repo, { recursive: true, force: true }));
 
-test("in-place create is refused on a dirty project tree and creates nothing", async () => {
+test("in-place create is refused on a dirty project tree, names the paths, and creates nothing", async () => {
   const g = reg.upsertProject({ id: PROJECT, name: "g", localRepoPath: repo });
-  writeFileSync(join(repo, "dirty.txt"), "x\n"); // uncommitted
+  git(repo, "mv", "file.txt", "moved.txt"); // staged rename: only the new path is named
+  writeFileSync(join(repo, "dirty.txt"), "x\n"); // untracked
   cloudTask({ worktree: false, projectId: g.id });
 
-  await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow(/clean/i);
+  const err = await sup.createSessionFromTask("task-1", USER).catch((e: unknown) => e);
+  expect(err).toMatchObject({ code: "inplace_tree_dirty", params: { count: 2 } });
+  if (!(err instanceof CodedError)) throw err;
+  expect(String(err.params?.files).split(", ").sort()).toEqual(["dirty.txt", "moved.txt"]);
   expect(reg.listSessions(g.id)).toHaveLength(0);
   expect(git(repo, "branch", "--show-current").trim()).toBe("dev"); // branch untouched
+});
+
+test("the dirty-tree refusal names the first five paths and counts them all", async () => {
+  const g = reg.upsertProject({ id: PROJECT, name: "g", localRepoPath: repo });
+  for (let i = 0; i < 7; i++) writeFileSync(join(repo, `d${i}.txt`), "x\n");
+  cloudTask({ worktree: false, projectId: g.id });
+
+  const err = await sup.createSessionFromTask("task-1", USER).catch((e: unknown) => e);
+  expect(err).toMatchObject({ code: "inplace_tree_dirty", params: { count: 7 } });
+  if (!(err instanceof CodedError)) throw err;
+  const shown = String(err.params?.files).split(", ");
+  expect(shown).toHaveLength(6);
+  expect(shown.at(-1)).toBe("…");
 });
 
 test("in-place create is refused when one is already active in the project", async () => {
@@ -109,7 +127,7 @@ test("in-place create is refused when one is already active in the project", asy
   });
   cloudTask({ worktree: false, projectId: g.id });
 
-  await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow(/already active/i);
+  await expect(sup.createSessionFromTask("task-1", USER)).rejects.toMatchObject({ code: "inplace_already_active" });
 });
 
 test("in-place create is refused on a detached HEAD", async () => {
@@ -118,7 +136,7 @@ test("in-place create is refused on a detached HEAD", async () => {
   git(repo, "checkout", "-q", head); // detached
   cloudTask({ worktree: false, projectId: g.id });
 
-  await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow(/detached/i);
+  await expect(sup.createSessionFromTask("task-1", USER)).rejects.toMatchObject({ code: "inplace_detached_head" });
 });
 
 test("worktree create failure on a pre-existing branch does not delete that branch", async () => {

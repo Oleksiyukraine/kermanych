@@ -103,7 +103,11 @@ export type ApiErrorCode =
   | "runtime_omp_binary_missing" // rpc-session.ts start() — omp not on PATH (params: none)
   // native/native-session.service.ts via supervisor.service.ts — a native session refusing:
   | "native_busy" // a helper prompt while the native harness is mid-turn or waiting on the operator (params: none)
-  | "native_unsupported"; // an action only a managed session supports (model, effort, branch, review, images…) (params: none)
+  | "native_unsupported" // an action only a managed session supports (model, effort, branch, review, images…) (params: none)
+  // supervisor.service.ts resolveLaunchParams — an in-place (non-worktree) launch refused:
+  | "inplace_tree_dirty" // the project checkout has uncommitted changes (params: { count, files } — files: the first few paths, comma-joined, `…` when cut)
+  | "inplace_already_active" // another in-place agent already owns the project checkout (params: none)
+  | "inplace_detached_head"; // the project checkout is on no branch (params: none)
 
 // Runtime mirrors of the unions above. MUST list every member of their type exactly once;
 // the exhaustiveness test in test/i18n-codes.spec.ts fails on a drift or a duplicate.
@@ -177,6 +181,9 @@ export const API_ERROR_CODES = [
   "runtime_omp_binary_missing",
   "native_busy",
   "native_unsupported",
+  "inplace_tree_dirty",
+  "inplace_already_active",
+  "inplace_detached_head",
 ] as const satisfies readonly ApiErrorCode[];
 
 // Compile-time exhaustiveness (checked by `tsc` at build; test/ is not compiled). The

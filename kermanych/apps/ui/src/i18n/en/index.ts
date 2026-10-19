@@ -2645,6 +2645,14 @@ export const en: MessageSchema = {
     attachment_too_large: 'file “{name}” is too large (max 20 MiB)',
     native_busy: 'The agent is working or waiting for you in the terminal — try again once it finishes its turn',
     native_unsupported: 'In a native session, do this in the harness itself',
+    // An in-place agent works in the project checkout itself — the refusals name what blocks
+    // it and the two ways out: clean the checkout, or keep the worktree isolation on.
+    inplace_tree_dirty:
+      'The project folder has uncommitted changes ({count}): {files}. Commit or stash them (git stash) — or turn “Isolate in a worktree” back on.',
+    inplace_already_active:
+      'An agent without a worktree is already running in this project — finish or delete it, or turn “Isolate in a worktree” back on.',
+    inplace_detached_head:
+      'The project repository is on a detached HEAD — check out a branch, or turn “Isolate in a worktree” back on.',
     image: {
       unsupported: 'unsupported type: {mime} (need PNG/JPEG/GIF/WebP)',
       unknownMime: 'unknown',
