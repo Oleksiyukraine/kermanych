@@ -66,7 +66,14 @@
     </div>
 
     <!-- floor 2 — scrollable log -->
-    <div ref="logEl" class="k-panel__log" @scroll="onLogScroll">
+    <div
+      ref="logEl"
+      class="k-panel__log"
+      @scroll="onLogScroll"
+      @wheel.passive="onLogWheel"
+      @touchmove.passive="markUserScroll"
+      @pointerdown="holdPointer"
+    >
       <slot />
 
       <!-- decision block — the ONE accent block-strip in the log -->
@@ -209,6 +216,7 @@ import KTodoLane from './KTodoLane.vue';
 import KStatusRow from './KStatusRow.vue';
 import KIconButton from './KIconButton.vue';
 import { useNow } from '../../composables/useNow';
+import { followAfterScroll } from '../../lib/log-follow';
 
 const { t } = useI18n();
 
@@ -267,17 +275,63 @@ const decisionText = ref('');
 
 // Auto-scroll: keep the log pinned to the newest entry while the user is at the
 // bottom; if they scroll up to read history, stop following until they return.
+// Only the operator's own scrolling may stop it — see lib/log-follow.ts.
 const logEl = ref<HTMLElement | null>(null);
 let stick = true;
+let lastTop = 0;
 let logObserver: MutationObserver | undefined;
+// The operator is scrolling: a wheel / touch / scroll key within the last USER_SCROLL_MS
+// (covers a smooth-scroll animation and trackpad momentum), or a pointer held on the log
+// (scrollbar drag, drag-selecting past the edge).
+const USER_SCROLL_MS = 600;
+let userScrollUntil = 0;
+let pointerHeld = false;
+function markUserScroll(): void {
+  userScrollUntil = performance.now() + USER_SCROLL_MS;
+}
+function holdPointer(): void {
+  pointerHeld = true;
+}
+function releasePointer(): void {
+  pointerHeld = false;
+}
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+function onKeyScroll(e: KeyboardEvent): void {
+  if (!SCROLL_KEYS.has(e.key)) return;
+  const t = e.target as HTMLElement | null;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  markUserScroll();
+}
 function scrollToBottom(): void {
   const el = logEl.value;
   if (el) el.scrollTop = el.scrollHeight;
 }
 function onLogScroll(): void {
   const el = logEl.value;
-  if (el) stick = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  if (el) {
+    const top = el.scrollTop;
+    stick = followAfterScroll({
+      follow: stick,
+      prevTop: lastTop,
+      top,
+      gap: el.scrollHeight - top - el.clientHeight,
+      byUser: pointerHeld || performance.now() < userScrollUntil,
+    });
+    lastTop = top;
+  }
   hideSelectionButton();
+}
+// A wheel up stops the follow before the log has moved, so a pending scrollToBottom cannot
+// snap it back mid-animation. Not when a scroller inside the log (a diff, a long tool
+// output) is the one taking the wheel.
+function onLogWheel(e: WheelEvent): void {
+  markUserScroll();
+  const el = logEl.value;
+  if (!el || e.deltaY >= 0 || el.scrollTop <= 0) return;
+  for (let n = e.target as HTMLElement | null; n && n !== el; n = n.parentElement) {
+    if (n.scrollTop > 0) return;
+  }
+  stick = false;
 }
 
 // ── "+ Задача" from a text selection in the log ────────────────────────────
@@ -374,16 +428,25 @@ onMounted(() => {
   refreshUserCount();
   logObserver = new MutationObserver(() => {
     refreshUserCount();
-    if (stick) requestAnimationFrame(scrollToBottom);
+    // Re-checked in the frame: the operator may have scrolled up since this was queued.
+    if (stick) requestAnimationFrame(() => {
+      if (stick) scrollToBottom();
+    });
   });
   logObserver.observe(el, { childList: true, subtree: true });
   window.addEventListener('keydown', onNavKeydown);
+  window.addEventListener('keydown', onKeyScroll);
+  window.addEventListener('pointerup', releasePointer);
+  window.addEventListener('pointercancel', releasePointer);
   document.addEventListener('mouseup', updateSelectionButton);
   document.addEventListener('mousedown', hideSelectionButton);
 });
 onBeforeUnmount(() => {
   logObserver?.disconnect();
   window.removeEventListener('keydown', onNavKeydown);
+  window.removeEventListener('keydown', onKeyScroll);
+  window.removeEventListener('pointerup', releasePointer);
+  window.removeEventListener('pointercancel', releasePointer);
   document.removeEventListener('mouseup', updateSelectionButton);
   document.removeEventListener('mousedown', hideSelectionButton);
 });
