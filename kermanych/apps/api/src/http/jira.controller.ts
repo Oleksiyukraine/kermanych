@@ -346,8 +346,10 @@ export class JiraController {
       const { body, contentType } = await this.jira.downloadAttachment(integrationId, attachmentId, req.user.id);
       res.setHeader("content-type", contentType);
       // Web stream → Node response without buffering: the file passes through, never
-      // touching disk or memory whole.
-      for await (const chunk of body) res.write(chunk);
+      // touching disk or memory whole. Explicit reader rather than `for await`: the
+      // xterm typings pull in lib.dom, whose ReadableStream isn't async-iterable.
+      const reader = body.getReader();
+      for (let r = await reader.read(); !r.done; r = await reader.read()) res.write(r.value);
       res.end();
     } catch (err) {
       rethrow(err);
