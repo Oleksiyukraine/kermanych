@@ -241,6 +241,35 @@ describe("ClaudeCodeRuntime.getAllMessages", () => {
     expect(await rt.getAllMessages()).toEqual([]); // never started → no id
     expect(calls).toBe(0);
   });
+
+  // The supervisor rehydrates a woken session right after start(), and the SDK reports the
+  // session id only later (~1s after spawn on a real resume). A resume continues the same id,
+  // so its history must be readable at once, or the wake wipes the transcript.
+  it("a resumed runtime reads its session's history before the first turn", async () => {
+    let asked: { id?: string; dir?: string } = {};
+    const getMsgs = async (id: string, opts?: { dir?: string }) => { asked = { id, dir: opts?.dir }; return history; };
+    const { queryFn } = fakeQuery([]);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", resume: "sess-1", startGraceMs: 0 }, queryFn as never, getMsgs as never);
+    rt.onEvent(() => {});
+    await rt.start();
+    expect(await rt.getAllMessages()).toHaveLength(2);
+    expect(asked).toEqual({ id: "sess-1", dir: "/tmp/x" });
+    expect((await rt.getState()).sessionId).toBe("sess-1");
+  });
+
+  // A fork's own id is minted by the SDK on its first turn; until then its conversation is the
+  // parent's. The parent id is read from but never reported as the child's own.
+  it("a fork reads the parent's history before its first turn without claiming the parent's id", async () => {
+    let askedId: string | undefined;
+    const getMsgs = async (id: string) => { askedId = id; return history; };
+    const { queryFn } = fakeQuery([]);
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", fork: "parent-1", startGraceMs: 0 }, queryFn as never, getMsgs as never);
+    rt.onEvent(() => {});
+    await rt.start();
+    expect(await rt.getAllMessages()).toHaveLength(2);
+    expect(askedId).toBe("parent-1");
+    expect((await rt.getState()).sessionId).toBeUndefined();
+  });
 });
 
 describe("ClaudeCodeRuntime subagents", () => {
