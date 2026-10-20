@@ -5,7 +5,8 @@
 //   * release notes posted under each member's own name — user scopes granted by OAuth with
 //     PKCE to the desktop app's loopback (apps/api/src/slack/slack-oauth.ts, whose
 //     SLACK_OAUTH_REDIRECT and SLACK_USER_SCOPES must match `redirect_urls` and `scopes.user`).
-// Token rotation stays off: a rotating user token would expire within hours.
+// Token rotation stays off in the manifest; an app that has it on anyway (it cannot be turned
+// off once on) issues 12-hour user tokens, which the api renews (slack-release-notes.service.ts).
 export const SLACK_MANIFEST = {
   display_information: {
     name: 'Kermanych',

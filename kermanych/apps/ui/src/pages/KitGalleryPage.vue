@@ -401,6 +401,17 @@
       </div>
       <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionRemove') }}</div>
 
+      <!-- FINDINGS — the agent reported problems outside its task; ⚑ counts the open ones,
+           waiting for the operator to file or dismiss them. -->
+      <div class="kit__cards">
+        <KSessionCard
+          branch="chore/pnpm-10" :title="t('kit.gallery.sessionCard.findingsTitle')" :time="t('kit.gallery.sessionCard.findingsTime')"
+          status="thinking" :status-line="t('kit.gallery.sessionCard.findingsStatus')" model="opus-5" harness="managed" :findings="3"
+          :usage="{ input: 6100, output: 2400, cacheRead: 96000, cacheWrite: 8100, cost: 0.42 }"
+        />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionFindings') }}</div>
+
       <!-- DEEP ANALYSIS — a «Глибокий аналіз» task: the mark sits in the accounting line, right
            after the harness, so it never clips. -->
       <div class="kit__cards">
@@ -579,6 +590,7 @@ const sessionCards: { branch: string; title: string; time: string; status: Sessi
   { branch: 'feature/rate-limit', title: t('kit.gallery.sessionCard.s1Title'), time: t('kit.gallery.sessionCard.s1Time'), status: 'thinking', statusLine: t('kit.gallery.sessionCard.s1Status'), model: 'opus-5', usage: { input: 18_400, output: 9_200, cacheRead: 1_240_000, cacheWrite: 62_000, cost: 3.18 }, harness: 'managed' },
   { branch: 'refactoring/session-store', title: t('kit.gallery.sessionCard.s2Title'), time: t('kit.gallery.sessionCard.s2Time'), status: 'waiting_input', statusLine: t('kit.gallery.sessionCard.s2Status'), model: 'sonnet-4.5', usage: { input: 2_100, output: 640, cacheRead: 31_000, cacheWrite: 4_800, cost: 0.004 }, harness: 'omp' },
   { branch: 'fix/remove-button', title: 'remove + button', time: t('kit.gallery.sessionCard.s3Time'), status: 'merged', statusLine: t('kit.gallery.sessionCard.s3Status'), model: 'haiku', usage: { input: 900, output: 310, cacheRead: 0, cacheWrite: 0, cost: 0.02 }, harness: 'claude' },
+  { branch: 'feat/codex-harness', title: 'codex harness', time: t('kit.gallery.sessionCard.s2Time'), status: 'waiting_input', statusLine: t('kit.gallery.sessionCard.s2Status'), model: 'gpt-5-codex', usage: { input: 4_300, output: 1_100, cacheRead: 52_000, cacheWrite: 0, cost: 0 }, harness: 'codex' },
   { branch: 'chore/ci-node-22', title: t('kit.gallery.sessionCard.s4Title'), time: t('kit.gallery.sessionCard.s4Time'), status: 'done', statusLine: t('kit.gallery.sessionCard.s4Status') },
 ];
 

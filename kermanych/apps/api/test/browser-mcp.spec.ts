@@ -81,13 +81,15 @@ describe("bearer and binding", () => {
     expect(mcp.bindingFor(s.id)!.token).not.toBe(binding.token);
   });
 
-  it("no binding without a browser host", () => {
+  it("without a browser host the binding still exists and lists only the findings tools", async () => {
     const { mcp, s } = make();
     setBrowserHost(undefined);
-    expect(mcp.bindingFor(s.id)).toBeUndefined();
+    expect(mcp.bindingFor(s.id)).toEqual({ name: "kermanych", url: "http://127.0.0.1:4317/api/browser/mcp", token: expect.any(String) });
+    const reply = (await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as { result: { tools: { name: string }[] } };
+    expect(reply.result.tools.map((t) => t.name)).toEqual(["report_finding", "list_findings"]);
   });
 
-  it("lists every browser tool with a closed object schema", async () => {
+  it("lists every browser tool, then the findings tools, each with a closed object schema", async () => {
     const { mcp, s } = make();
     const reply = (await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as {
       result: { tools: { name: string; description: string; inputSchema: { type: string; properties: Record<string, unknown>; required?: string[]; additionalProperties: boolean } }[] };
@@ -110,9 +112,11 @@ describe("bearer and binding", () => {
       "browser_console",
       "browser_network",
       "browser_evaluate",
+      "report_finding",
+      "list_findings",
     ]);
     for (const t of tools) {
-      expect(t.description).toMatch(/THIS session only/);
+      if (t.name.startsWith("browser_")) expect(t.description).toMatch(/THIS session only/);
       expect(t.inputSchema.type).toBe("object");
       expect(t.inputSchema.additionalProperties).toBe(false);
       for (const r of t.inputSchema.required ?? []) expect(Object.keys(t.inputSchema.properties)).toContain(r);

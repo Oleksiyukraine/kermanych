@@ -79,6 +79,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     private getSubagentMessagesFn: GetSubagentMessagesFn = sdkGetSubagentMessages,
   ) {
     this.thinking = opts.thinking ?? "off";
+    // A plain resume continues the SAME session id (no `forkSession`), so the id is known
+    // before the SDK reports it — on a resume its first `system` message lands ~1s after spawn,
+    // well past start()'s grace window. Without this the supervisor's rehydrate on wake
+    // (doResume, right after start()) read no id, and the session's whole transcript was
+    // replaced with an empty one. A fork's own id is minted by the SDK on its first turn, so it
+    // stays unset; see getAllMessages.
+    if (!opts.fork && opts.resume) this.sessionId = opts.resume;
   }
 
   onEvent(cb: (e: RpcEvent) => void): void { this.eventCbs.push(cb); }
@@ -236,11 +243,15 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
   // Rehydrate: read claude's own persisted transcript for this session and convert it to the
   // omp `OmpMessage[]` seam so a resumed/forked session re-renders through the same reducers
-  // the live stream uses. No session id yet (never started, or start failed before init) →
-  // nothing to read. `getSessionMessagesFn` is injectable so tests fake the SDK.
+  // the live stream uses. A fork that has not taken a turn yet has no id of its own, but its
+  // conversation IS the parent's, so the parent's transcript is read instead — the id is only
+  // borrowed here, never reported by getState(), so the parent's id is never persisted as the
+  // child's. Neither (never started, fresh start before init) → nothing to read.
+  // `getSessionMessagesFn` is injectable so tests fake the SDK.
   async getAllMessages(): Promise<unknown[]> {
-    if (!this.sessionId) return [];
-    const msgs = await this.getSessionMessagesFn(this.sessionId, { dir: this.opts.cwd });
+    const id = this.sessionId ?? this.opts.fork;
+    if (!id) return [];
+    const msgs = await this.getSessionMessagesFn(id, { dir: this.opts.cwd });
     return claudeHistoryToOmp(msgs);
   }
 

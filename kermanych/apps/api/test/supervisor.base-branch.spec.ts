@@ -101,6 +101,7 @@ function make() {
     createBranchHere: vi.fn(),
     checkout: vi.fn(),
     currentBranch: vi.fn().mockResolvedValue("main"),
+    forkStart: vi.fn(async (_repo: string, base: string) => ({ ref: base, stale: false })),
     hasUncommitted: vi.fn().mockResolvedValue(false),
     listBranches: vi.fn().mockResolvedValue(["main", "develop"]),
   };
@@ -136,13 +137,28 @@ describe("worktree fork base", () => {
     expect(worktree.addWorktree).toHaveBeenCalledWith("/tmp/proj", expect.any(String), s.branch, "release");
   });
 
-  it("forks from HEAD (no base arg) when neither a default nor an explicit base is set", async () => {
+  // Recorded, not just used: the PR prompt, the base sync and «Зміни» all read the session's base.
+  it("forks from the project checkout's branch and records it when neither a default nor an explicit base is set", async () => {
     const { sup, registry, worktree } = make();
     const g = registry.upsertProject({ id: PROJECT, name: "g", localRepoPath: "/tmp/proj" });
     cloudTask({ projectId: g.id });
 
-    await sup.createSessionFromTask("task-1", USER);
+    const s = await sup.createSessionFromTask("task-1", USER);
 
-    expect(worktree.addWorktree).toHaveBeenCalledWith("/tmp/proj", expect.any(String), expect.any(String), undefined);
+    expect(worktree.addWorktree).toHaveBeenCalledWith("/tmp/proj", expect.any(String), s.branch, "main");
+    expect(registry.listSessions(g.id).find((x) => x.id === s.id)!.baseBranch).toBe("main");
+  });
+
+  it("forks from HEAD with no base when the project checkout is on a detached HEAD", async () => {
+    const { sup, registry, worktree } = make();
+    worktree.currentBranch.mockResolvedValue("");
+    const g = registry.upsertProject({ id: PROJECT, name: "g", localRepoPath: "/tmp/proj" });
+    cloudTask({ projectId: g.id });
+
+    const s = await sup.createSessionFromTask("task-1", USER);
+
+    expect(worktree.forkStart).not.toHaveBeenCalled();
+    expect(worktree.addWorktree).toHaveBeenCalledWith("/tmp/proj", expect.any(String), s.branch, undefined);
+    expect(registry.listSessions(g.id).find((x) => x.id === s.id)!.baseBranch).toBeFalsy();
   });
 });

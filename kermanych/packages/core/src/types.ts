@@ -3,15 +3,13 @@ import type { BranchPrefix } from "./worktree-names";
 import type { Platform } from "./platform";
 import type { ThinkingLevel } from "./thinking";
 import type { NoticeCode, NoticeParams } from "./i18n-codes";
+import type { NativeHarness } from "./runtime";
 
 // `in_review` is the PR hand-off state: the operator asked for a pull request, the agent
 // pushed it, and the work now waits on a HUMAN reviewer. It is settled (nothing moves on
 // its own) but not closed — `merged` is still ahead of it.
 export type SessionStatus =
   | "backlog" | "queued" | "thinking" | "tool" | "waiting_input" | "done" | "in_review" | "error" | "stopped" | "merged" | "conflict";
-
-export type AgentRuntime = "omp" | "claude-code";
-
 
 export type TodoTask = { id: string; content: string; status: "pending" | "in_progress" | "completed" | string };
 export type TodoPhase = { id: string; name: string; tasks: TodoTask[] };
@@ -55,7 +53,7 @@ export type Session = {
   taskId?: string;
   worktreePath: string; branch: string;
   worktree: boolean; baseBranch?: string;
-  model?: string; prefix?: BranchPrefix; platform?: Platform; runtime?: AgentRuntime;
+  model?: string; prefix?: BranchPrefix; platform?: Platform; runtime?: NativeHarness;
   // A native session (docs/specs/2026-10-05-native-sessions.md): the harness `runtime` names
   // runs as its own interactive TUI in a pty, with nothing of Kermanych's in its context.
   // Kermanych only watches it — status from per-launch hooks, usage and history from the
@@ -65,6 +63,10 @@ export type Session = {
   // opening turn asked for the interview and the task document before any code. Stamped from
   // the card when the session is created and never changed. Absent means an ordinary task.
   deepAnalysis?: boolean;
+  // «Знахідки» (docs/specs/2026-10-13-agent-findings.md): how many of this session's findings
+  // still wait for the operator (status `open`). Counted by the registry on every read, never
+  // written through updateSession. Absent or 0 means nothing waits.
+  openFindings?: number;
   // Live-only: the pty (`TerminalInfo.id`) a native session's harness runs in, while it runs.
   terminalId?: string;
   // "task" is no longer produced: a task is a cloud card and `from-task` is the only way an
@@ -107,7 +109,7 @@ export type CreateSessionDto = {
   model?: string;
   prefix?: BranchPrefix;
   platform?: Platform;
-  runtime?: AgentRuntime;
+  runtime?: NativeHarness;
   effort?: ThinkingLevel;
   kind?: "agent" | "discussion" | "task" | "review" | "chat";
   parentSessionId?: string;

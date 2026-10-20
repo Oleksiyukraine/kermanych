@@ -47,6 +47,7 @@ export {
   branchName,
   uniqueSlug,
   worktreeDir,
+  isGitBranchName,
   BRANCH_PREFIXES,
   type BranchPrefix,
 } from "./worktree-names";
@@ -63,7 +64,15 @@ export {
   type ReleaseNotesReply,
 } from "./release-notes";
 export { THINKING_LEVELS, isThinkingLevel, type ThinkingLevel } from "./thinking";
-export { AGENT_RUNTIMES, isAgentRuntime, type AgentRuntimeKind } from "./runtime";
+export {
+  AGENT_RUNTIMES,
+  isAgentRuntime,
+  type AgentRuntimeKind,
+  NATIVE_HARNESSES,
+  isNativeHarness,
+  managedRuntime,
+  type NativeHarness,
+} from "./runtime";
 export {
   AGENT_LANGUAGES,
   AGENT_LANGUAGE_LABELS,
@@ -139,10 +148,30 @@ export {
   instructionErrors,
   instructionHoles,
   renderInstruction,
+  baseSyncBlock,
   type AgentDef,
   type AgentKind,
 } from "./agents";
 export { DEEP_ANALYSIS_SKILL, deepAnalysisPrompt } from "./deep-analysis";
+export {
+  FINDING_KINDS,
+  FINDING_STATUSES,
+  FINDING_TITLE_MAX,
+  OPEN_FINDINGS_LIMIT,
+  FINDING_JIRA_LABEL,
+  isFindingKind,
+  validateFindingReport,
+  parseFindingTarget,
+  renderFindingDescription,
+  findingIssueTypeName,
+  type FindingKind,
+  type FindingStatus,
+  type FindingReport,
+  type FindingTarget,
+  type AgentFinding,
+  type FindingValidation,
+  type FindingOrigin,
+} from "./findings";
 export {
   buildChatBlocks,
   THINK_MIN_MS,
@@ -240,3 +269,17 @@ export {
   changelogBetween,
   type ChangelogEntry,
 } from "./app-release";
+export {
+  taskReportsWrite,
+  mergeTaskReports,
+  combineReportWrites,
+  readDocsReport,
+  readSessionReport,
+  type DocChange,
+  type DocsReport,
+  type SessionReport,
+  type SessionFacts,
+  type TaskReports,
+  type TaskReportsWrite,
+  type ReportSource,
+} from "./task-reports";

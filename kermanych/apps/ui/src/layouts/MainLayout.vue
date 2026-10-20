@@ -20,7 +20,7 @@
         <KNavItem
           v-if="onb.sidebarVisible"
           :label="t('onboarding.checklist.navLabel')"
-          icon="tasks"
+          icon="start"
           :hint="t('onboarding.checklist.stepCount', { done: onb.doneCount, total: onb.totalCount })"
           :tip="minified ? t('onboarding.checklist.navLabel') : undefined"
           :active="onb.open"

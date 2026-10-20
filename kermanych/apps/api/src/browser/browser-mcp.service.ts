@@ -10,12 +10,19 @@
 // for the life of this api process, and revoked when the session is deleted. The route is
 // @Public and the bearer is the caller's whole credential; it names the session, and the tools
 // act on that session's view only.
+//
+// The same server carries the session's «Знахідки» tools (findings/findings-tools.ts,
+// docs/specs/2026-10-13-agent-findings.md), because a child gets exactly one MCP server. Those
+// need no desktop app, so the server is handed out without one, and the browser tools are
+// listed only while a browser host exists.
 import { Injectable, Optional } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { randomBytes } from "node:crypto";
+import { Subject } from "rxjs";
 import { isAbsolute } from "node:path";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
+import { FINDING_TOOLS, FINDING_TOOL_NAMES, callFindingTool } from "../findings/findings-tools";
 import {
   browserHost,
   type BrowserActionResult,
@@ -315,6 +322,9 @@ function int(args: Record<string, unknown>, key: string, min: number, max: numbe
 export class BrowserMcpService {
   private tokens = new Map<string, string>(); // sessionId → token
   private sessions = new Map<string, string>(); // token → sessionId
+  // A session whose agent just reported a finding — the supervisor re-sends the session so its
+  // open-findings counter reaches the UI while the agent keeps working.
+  readonly findingReported$ = new Subject<string>();
   // The tail of each session's tool-call chain. Agents fire calls in parallel (a snapshot
   // beside the navigate it depends on — observed with omp), and one page cannot serve two
   // actions at once, so a session's calls run one after another in arrival order.
@@ -347,10 +357,10 @@ export class BrowserMcpService {
     this.sessions.delete(token);
   }
 
-  // The server a launch hands its agent, or undefined when there is no browser to drive (a
-  // standalone api) or no port to reach this api on yet (specs) — then the agent gets no tools.
+  // The server a launch hands its agent, or undefined when there is no port to reach this api
+  // on yet (specs) — then the agent gets no tools. A standalone api (no desktop app) still hands
+  // it out: the findings tools work there, and tools/list then omits the browser ones.
   bindingFor(sessionId: string): { name: string; url: string; token: string } | undefined {
-    if (!browserHost()) return undefined;
     const address = this.http?.httpAdapter?.getHttpServer()?.address() as { port?: number } | string | null | undefined;
     const port = address && typeof address === "object" ? address.port : undefined;
     if (!port) return undefined;
@@ -382,12 +392,14 @@ export class BrowserMcpService {
       case "ping":
         return result({});
       case "tools/list":
-        return result({ tools: TOOLS });
+        return result({ tools: browserHost() ? [...TOOLS, ...FINDING_TOOLS] : FINDING_TOOLS });
       case "tools/call": {
         const name = typeof params.name === "string" ? params.name : "";
         const args = (params.arguments && typeof params.arguments === "object" ? params.arguments : {}) as Record<string, unknown>;
         let run: Promise<ToolResult>;
-        if (UNQUEUED.has(name)) run = this.call(sessionId, name, args);
+        if (FINDING_TOOL_NAMES.has(name))
+          run = Promise.resolve().then(() => this.callFinding(sessionId, name, args));
+        else if (UNQUEUED.has(name)) run = this.call(sessionId, name, args);
         else {
           run = (this.queues.get(sessionId) ?? Promise.resolve()).then(() => this.call(sessionId, name, args));
           const tail = run.catch(() => undefined);
@@ -405,6 +417,12 @@ export class BrowserMcpService {
       default:
         return { jsonrpc: "2.0", id, error: { code: -32601, message: `method not found: ${String(msg.method)}` } };
     }
+  }
+
+  // No queue and no host: a findings call only reads and writes this machine's registry.
+  private callFinding(sessionId: string, name: string, args: Record<string, unknown>): ToolResult {
+    if (!this.registry.listSessions().some((s) => s.id === sessionId)) throw new Error("This session no longer exists.");
+    return callFindingTool(this.registry, sessionId, name, args, () => this.findingReported$.next(sessionId));
   }
 
   private async call(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {

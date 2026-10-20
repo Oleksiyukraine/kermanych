@@ -36,7 +36,7 @@ describe("sessionFailure", () => {
     }
   });
 
-  // An ordinary domain refusal ("project not bound", "worktree must be clean") carries no code
+  // An ordinary domain refusal ("project not bound") carries no code
   // and must keep behaving exactly as before: a 400 whose body is the plain sentence. Inventing
   // a code for it would make the UI localize a message it has no translation for.
   it("leaves an uncoded failure as a plain-message 400", () => {

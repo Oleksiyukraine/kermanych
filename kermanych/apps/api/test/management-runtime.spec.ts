@@ -196,4 +196,16 @@ describe("ReleaseNotesService — several projects", () => {
     });
     expect(calls).toHaveLength(0);
   });
+
+  // Every subject goes into the prompt, so a period too long to list in one note is refused
+  // with its count before any spawn — never written up with changes left out.
+  it("refuses a period whose commit subjects overflow the prompt ceiling, before any spawn", async () => {
+    const many = Array.from({ length: 1500 }, (_, i) => ({ ...commit, subject: `зміна ${i} `.padEnd(80, "·") }));
+    const { svc } = twoRepos({ "/repos/alpha": many, "/repos/beta": many });
+    await expect(svc.generate(ask)).rejects.toMatchObject({
+      code: "too_many_commits",
+      params: { count: 3000, from: "2026-08-01", to: "2026-08-31" },
+    });
+    expect(calls).toHaveLength(0);
+  });
 });

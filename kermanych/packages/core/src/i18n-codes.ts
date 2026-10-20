@@ -29,6 +29,9 @@ export type NoticeCode =
   // supervisor.service.ts — the transcript notices the /compact command appends:
   | "context_compacted" // supervisor.service.ts — /compact succeeded, context was compacted (params: none)
   | "context_compact_failed" // supervisor.service.ts — /compact failed (params: { reason })
+  // supervisor.service.ts — the base-sync notices (docs/specs/2026-10-14-create-pr-base-sync.md):
+  | "base_fetch_failed" // supervisor.service.ts launch — origin/<base> could not be refreshed; forked from the last-known base (params: { base, ref })
+  | "pr_behind_base" // supervisor.service.ts after a PR/commit turn — the PR head lacks commits of origin/<base> (params: { base, count })
   // runtime/*-runtime.ts — a runtime child that DIED MID-SESSION, long after its launch was
   // called a success. The launch-time twins of these live in `ApiErrorCode` below: the same
   // machine fault is a thrown error when it stops a session from starting, and a transcript
@@ -86,6 +89,7 @@ export type ApiErrorCode =
   | "project_not_bound" // release-notes.service.ts — project not bound on this machine (params: { project })
   | "branch_not_in_repo" // release-notes.service.ts — branch absent from the project's local repo (params: { project, branch })
   | "no_commits_in_range" // release-notes.service.ts — a project has no commits in the requested range (params: { project, branch, from, to })
+  | "too_many_commits" // release-notes.service.ts — the period's commit subjects overflow the prompt ceiling (params: { count, from, to })
   | "omp_exited_during_generation" // release-notes.service.ts:110 — the omp child died mid-generation (params: { reason })
   | "generation_timeout" // release-notes.service.ts:122 — generation did not finish in time (params: { seconds })
   | "model_no_text" // release-notes.service.ts:139 — the model returned no text (params: none)
@@ -99,7 +103,11 @@ export type ApiErrorCode =
   | "runtime_omp_binary_missing" // rpc-session.ts start() — omp not on PATH (params: none)
   // native/native-session.service.ts via supervisor.service.ts — a native session refusing:
   | "native_busy" // a helper prompt while the native harness is mid-turn or waiting on the operator (params: none)
-  | "native_unsupported"; // an action only a managed session supports (model, effort, branch, review, images…) (params: none)
+  | "native_unsupported" // an action only a managed session supports (model, effort, branch, review, images…) (params: none)
+  // supervisor.service.ts resolveLaunchParams — an in-place (non-worktree) launch refused:
+  | "inplace_tree_dirty" // the project checkout has uncommitted changes (params: { count, files } — files: the first few paths, comma-joined, `…` when cut)
+  | "inplace_already_active" // another in-place agent already owns the project checkout (params: none)
+  | "inplace_detached_head"; // the project checkout is on no branch (params: none)
 
 // Runtime mirrors of the unions above. MUST list every member of their type exactly once;
 // the exhaustiveness test in test/i18n-codes.spec.ts fails on a drift or a duplicate.
@@ -115,6 +123,8 @@ export const NOTICE_CODES = [
   "session_dormant_inactive",
   "context_compacted",
   "context_compact_failed",
+  "base_fetch_failed",
+  "pr_behind_base",
   "claude_not_authenticated",
   "claude_binary_missing",
   "omp_not_authenticated",
@@ -161,6 +171,7 @@ export const API_ERROR_CODES = [
   "project_not_bound",
   "branch_not_in_repo",
   "no_commits_in_range",
+  "too_many_commits",
   "omp_exited_during_generation",
   "generation_timeout",
   "model_no_text",
@@ -170,6 +181,9 @@ export const API_ERROR_CODES = [
   "runtime_omp_binary_missing",
   "native_busy",
   "native_unsupported",
+  "inplace_tree_dirty",
+  "inplace_already_active",
+  "inplace_detached_head",
 ] as const satisfies readonly ApiErrorCode[];
 
 // Compile-time exhaustiveness (checked by `tsc` at build; test/ is not compiled). The

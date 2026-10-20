@@ -8,12 +8,12 @@
 import { Injectable, Optional, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Subject, type Subscription } from "rxjs";
 import { getSessionMessages, type SessionMessage, type GetSessionMessagesOptions } from "@anthropic-ai/claude-agent-sdk";
-import { ACTIVE_STATUSES, type Session, type SessionStatus, type Usage } from "@kermanych/core";
+import { ACTIVE_STATUSES, type NativeHarness, type Session, type SessionStatus, type Usage } from "@kermanych/core";
 import { RegistryService } from "../registry/registry.service";
 import { TerminalService } from "../terminal/terminal.service";
 import { CodedError } from "../management/coded-error";
@@ -22,13 +22,17 @@ import { messagesToTranscript, type OmpMessage, type Rehydrated } from "../super
 import { PR_URL_RE } from "../supervisor/pr-url";
 import { CHAT_TOOLS } from "../supervisor/chat-tools";
 import { claudeToolName } from "../runtime/claude-code-runtime";
-import { claudeMcpConfigPath, claudeSettingsPath, NATIVE_TOKEN_ENV, NATIVE_URL_ENV, ompExtensionPath } from "./native-hooks";
+import { claudeMcpConfigPath, claudeSettingsPath, codexConfigArgs, codexHookPath, NATIVE_TOKEN_ENV, NATIVE_URL_ENV, ompExtensionPath } from "./native-hooks";
 import { BrowserMcpService } from "../browser/browser-mcp.service";
 import { MCP_TOKEN_ENV, MCP_URL_ENV, ompMcpBridgePath } from "../runtime/omp-mcp-bridge";
 
+// `settled`: a turn just came to rest at `status` — the supervisor checks the tree for a merge
+// left mid-way (docs/specs/2026-10-14-create-pr-base-sync.md, decision 6) and may call
+// `markConflict`.
 export type NativeEvent =
   | { type: "changed"; sessionId: string }
-  | { type: "transcript"; sessionId: string; transcript: Rehydrated };
+  | { type: "transcript"; sessionId: string; transcript: Rehydrated }
+  | { type: "settled"; sessionId: string; status: SessionStatus };
 
 // The live overlay the supervisor merges over a native row while its harness runs.
 export type NativeLive = Pick<Session, "status" | "currentTool" | "error" | "terminalId">;
@@ -59,10 +63,15 @@ const CLAUDE_ASKING_NOTIFICATIONS: Record<string, true> = {
   elicitation_url_dialog: true,
   agent_needs_input: true,
 };
-// A helper prompt is pasted only into a harness that sits idle at its input box.
-const PASTE_OK: readonly SessionStatus[] = ["done", "in_review", "error"];
+// A helper prompt is pasted only into a harness that sits idle at its input box — `conflict`
+// included: a turn that stopped mid-merge waits there for «Вирішити автоматично» or an answer.
+const PASTE_OK: readonly SessionStatus[] = ["done", "in_review", "error", "conflict"];
 // The Stop hook fires before claude flushes the turn's last transcript lines.
 const CLAUDE_FLUSH_MS = 300;
+// codex's ask-the-operator tool; it reaches hooks as a PreToolUse like any function tool.
+const CODEX_ASK_TOOL = "request_user_input";
+// codex appends its rollout asynchronously: the turn's last lines land just around `Stop`.
+const CODEX_FLUSH_MS = 300;
 // Bracketed paste lands as one (multi-line) message; the Enter after it submits it.
 const SUBMIT_DELAY_MS = 150;
 // SIGHUP first (a closed terminal window); a harness that ignores it is killed after this.
@@ -129,6 +138,99 @@ export function ompFileMessages(text: string): OmpMessage[] {
   for (const line of jsonLines(text)) if (line.type === "message" && line.message && typeof line.message === "object") out.push(line.message as OmpMessage);
   return out;
 }
+
+// codex's rollout file (`~/.codex/sessions/…/rollout-*.jsonl`): `token_count` events carry the
+// session's CUMULATIVE usage (it keeps growing across resume), so the last one is the total.
+// `input_tokens` includes the cached part, split out here as omp/claude count it. No cost in
+// the file (ChatGPT plan) — 0, not a guess. The model is on every `turn_context`.
+export function codexFileUsage(text: string): FileUsage {
+  let total: Record<string, unknown> | undefined;
+  let model: string | undefined;
+  for (const line of jsonLines(text)) {
+    const p = line.payload as Record<string, unknown> | undefined;
+    if (!p) continue;
+    if (line.type === "turn_context" && typeof p.model === "string") model = p.model;
+    if (line.type === "event_msg" && p.type === "token_count") {
+      const info = p.info as Record<string, unknown> | null | undefined;
+      if (info?.total_token_usage && typeof info.total_token_usage === "object") total = info.total_token_usage as Record<string, unknown>;
+    }
+  }
+  if (!total) return { model };
+  const cached = num(total.cached_input_tokens);
+  return {
+    usage: { input: Math.max(0, num(total.input_tokens) - cached), output: num(total.output_tokens), cacheRead: cached, cacheWrite: num(total.cache_write_input_tokens), cost: 0 },
+    model,
+  };
+}
+
+// A codex tool output: a string, or `[{type, text}]` parts.
+function codexOutputText(raw: unknown): string {
+  if (typeof raw === "string") return raw;
+  if (Array.isArray(raw)) return (raw as Array<{ text?: unknown }>).map((p) => (typeof p.text === "string" ? p.text : "")).join("");
+  return "";
+}
+
+// codex's history as the OmpMessage seam the transcript reducer reads. The prompt comes from an
+// `event_msg`: `user_message` (codex ≤ 0.147) or `item_completed` with a `UserMessage` item
+// (0.163) — the `response_item` user messages also carry codex's injected blocks
+// (`<environment_context>` …), and `developer` messages are system text. Assistant text and tool
+// calls are `response_item`s; a call pairs with its output on `call_id`. Reasoning is encrypted
+// and skipped.
+export function codexFileMessages(text: string): OmpMessage[] {
+  const out: OmpMessage[] = [];
+  const toolNames = new Map<string, string>();
+  for (const line of jsonLines(text)) {
+    const p = line.payload as Record<string, unknown> | undefined;
+    if (!p) continue;
+    const at = typeof line.timestamp === "string" ? Date.parse(line.timestamp) : NaN;
+    const timestamp = Number.isFinite(at) ? { timestamp: at } : {};
+    if (line.type === "event_msg") {
+      let prompt: string | undefined;
+      if (p.type === "user_message" && typeof p.message === "string") prompt = p.message;
+      const item = p.item as { type?: unknown; content?: unknown } | undefined;
+      if (p.type === "item_completed" && item?.type === "UserMessage" && Array.isArray(item.content))
+        prompt = (item.content as Array<{ type?: unknown; text?: unknown }>).map((c) => (c.type === "text" && typeof c.text === "string" ? c.text : "")).join("");
+      // A build writing both shapes would otherwise show the prompt twice.
+      const last = out[out.length - 1];
+      if (prompt?.trim() && !(last?.role === "user" && last.content?.[0]?.text === prompt))
+        out.push({ role: "user", content: [{ type: "text", text: prompt }], ...timestamp });
+      continue;
+    }
+    if (line.type !== "response_item") continue;
+    const callId = typeof p.call_id === "string" ? p.call_id : "";
+    if (p.type === "message" && p.role === "assistant" && Array.isArray(p.content)) {
+      const parts = (p.content as Array<{ type?: unknown; text?: unknown }>)
+        .filter((c) => c.type === "output_text" && typeof c.text === "string")
+        .map((c) => ({ type: "text", text: c.text as string }));
+      if (parts.length) out.push({ role: "assistant", content: parts, ...timestamp });
+    } else if (p.type === "function_call" || p.type === "custom_tool_call") {
+      const name = typeof p.name === "string" ? p.name : "?";
+      toolNames.set(callId, name);
+      let args: Record<string, unknown> = { input: p.input };
+      if (p.type === "function_call") {
+        try {
+          const parsed = JSON.parse(String(p.arguments)) as unknown;
+          args = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : { arguments: p.arguments };
+        } catch {
+          args = { arguments: p.arguments };
+        }
+      }
+      out.push({ role: "assistant", content: [{ type: "toolCall", id: callId, name, arguments: args }], ...timestamp });
+    } else if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
+      out.push({
+        role: "toolResult",
+        toolCallId: callId,
+        ...(toolNames.has(callId) ? { toolName: toolNames.get(callId) } : {}),
+        content: [{ type: "text", text: codexOutputText(p.output) }],
+        ...timestamp,
+      });
+    }
+  }
+  return out;
+}
+
+// Each harness's session-file usage reader.
+const FILE_USAGE: Record<NativeHarness, (text: string) => FileUsage> = { "claude-code": claudeFileUsage, omp: ompFileUsage, codex: codexFileUsage };
 
 // claude's project directory name for a working directory.
 export function claudeProjectDir(cwd: string): string {
@@ -220,7 +322,7 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     const token = randomBytes(24).toString("hex");
     const prompt = opts.prompt?.trim() ? opts.prompt : undefined;
     const mcp = this.browser?.bindingFor(session.id);
-    const { file, args } = await this.command(session, opts.resume, prompt, mcp);
+    const { file, args } = await this.command(session, cwd, opts.resume, prompt, mcp);
 
     const run = { token, status: prompt ? "queued" : this.settled(session.id) } as Run;
     run.exited = new Promise<void>((resolve) => (run.onExit = resolve));
@@ -235,7 +337,8 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
         env: {
           [NATIVE_URL_ENV]: `http://127.0.0.1:${port}/api/native/${session.id}`,
           [NATIVE_TOKEN_ENV]: token,
-          // omp's bridge reads the browser server from here; claude has it in its --mcp-config.
+          // omp's bridge reads the browser server from here, and codex its bearer
+          // (`bearer_token_env_var`); claude has both in its --mcp-config.
           ...(mcp && session.runtime !== "claude-code" ? { [MCP_URL_ENV]: mcp.url, [MCP_TOKEN_ENV]: mcp.token } : {}),
         },
       });
@@ -248,38 +351,52 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     this.events$.next({ type: "changed", sessionId: session.id });
   }
 
-  // The harness argv (docs/specs/2026-10-05-native-sessions.md → Commands). `--` keeps a prompt
-  // that opens with a dash, or with an omp subcommand's name, from being read as an option.
-  // With the session browser bound, claude also gets `--mcp-config <file>` — variadic, so it
-  // stays right before the `--` tail (or last) and never swallows a following argument — and
-  // omp a second `--hook`: the MCP bridge, which reads its server from the pty env. A chat runs
-  // in the operator's own checkout, so it keeps the managed chat's read-only built-ins on every
-  // launch (docs/specs/2026-10-06-native-chats.md); `--tools` is variadic for claude too, so it
-  // sits before `--settings`.
+  // The harness argv (docs/specs/2026-10-05-native-sessions.md → Commands,
+  // docs/specs/2026-10-16-native-codex.md → D3). `--` keeps a prompt that opens with a dash, or
+  // with a subcommand's name, from being read as an option. With the session browser bound,
+  // claude also gets `--mcp-config <file>` — variadic, so it stays right before the `--` tail (or
+  // last) and never swallows a following argument — omp a second `--hook`: the MCP bridge, which
+  // reads its server from the pty env, and codex an `mcp_servers` override. A chat runs in the
+  // operator's own checkout, so it keeps the managed chat's read-only built-ins on every launch
+  // (docs/specs/2026-10-06-native-chats.md); `--tools` is variadic for claude too, so it sits
+  // before `--settings`. codex has no tool allowlist: its chat is read-only by sandbox.
   private async command(
     session: Session,
+    cwd: string,
     resume: boolean,
     prompt?: string,
     mcp?: { name: string; url: string; token: string },
   ): Promise<{ file: string; args: string[] }> {
     const tail = prompt ? ["--", prompt] : [];
     const chat = session.kind === "chat";
-    if (session.runtime === "claude-code") {
-      const tools = chat ? ["--tools", CHAT_TOOLS.map(claudeToolName).join(",")] : [];
-      const settings = await claudeSettingsPath();
-      const mcpArgs = mcp ? ["--mcp-config", await claudeMcpConfigPath(session.id, mcp)] : [];
-      if (resume && session.ompSessionId)
-        return { file: "claude", args: ["--resume", session.ompSessionId, ...tools, "--settings", settings, ...mcpArgs, ...tail] };
-      // Kermanych names the transcript, so history and usage are findable before any hook.
-      const uuid = randomUUID();
-      this.registry.updateSession(session.id, { ompSessionId: uuid });
-      return { file: "claude", args: ["--session-id", uuid, ...tools, "--settings", settings, ...mcpArgs, ...tail] };
+    const harness: NativeHarness = session.runtime ?? "omp";
+    switch (harness) {
+      case "claude-code": {
+        const tools = chat ? ["--tools", CHAT_TOOLS.map(claudeToolName).join(",")] : [];
+        const settings = await claudeSettingsPath();
+        const mcpArgs = mcp ? ["--mcp-config", await claudeMcpConfigPath(session.id, mcp)] : [];
+        if (resume && session.ompSessionId)
+          return { file: "claude", args: ["--resume", session.ompSessionId, ...tools, "--settings", settings, ...mcpArgs, ...tail] };
+        // Kermanych names the transcript, so history and usage are findable before any hook.
+        const uuid = randomUUID();
+        this.registry.updateSession(session.id, { ompSessionId: uuid });
+        return { file: "claude", args: ["--session-id", uuid, ...tools, "--settings", settings, ...mcpArgs, ...tail] };
+      }
+      case "omp": {
+        const hook = await ompExtensionPath();
+        const from = resume && session.ompSessionFile ? ["--resume", session.ompSessionFile] : [];
+        const bridge = mcp ? ["--hook", await ompMcpBridgePath()] : [];
+        const tools = chat ? ["--tools", CHAT_TOOLS.join(",")] : [];
+        return { file: "omp", args: ["launch", ...from, ...tools, "--hook", hook, ...bridge, ...tail] };
+      }
+      case "codex": {
+        // codex mints its own session id; the hooks report it (codexHook). Options go before
+        // `resume`'s positional id. The trust override needs the realpath (/private/tmp/…).
+        const flags = [...codexConfigArgs(await realpath(cwd), await codexHookPath(), mcp), ...(chat ? ["-s", "read-only", "-a", "never"] : [])];
+        if (resume && session.ompSessionId) return { file: "codex", args: ["resume", ...flags, session.ompSessionId, ...tail] };
+        return { file: "codex", args: [...flags, ...tail] };
+      }
     }
-    const hook = await ompExtensionPath();
-    const from = resume && session.ompSessionFile ? ["--resume", session.ompSessionFile] : [];
-    const bridge = mcp ? ["--hook", await ompMcpBridgePath()] : [];
-    const tools = chat ? ["--tools", CHAT_TOOLS.join(",")] : [];
-    return { file: "omp", args: ["launch", ...from, ...tools, "--hook", hook, ...bridge, ...tail] };
   }
 
   // Kill the harness (SIGHUP, then SIGKILL past a grace period) and resolve once it exited.
@@ -333,6 +450,21 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     run.prRequested = true;
     const session = this.registry.listSessions().find((s) => s.id === id);
     run.prFrom = session ? (await this.history(session).catch(() => [])).length : 0;
+  }
+
+  // The supervisor found the tree mid-merge right after a turn settled at `settled`: the session
+  // rests at `conflict` instead — unless a new turn has already moved it.
+  markConflict(id: string, settled: SessionStatus): void {
+    const run = this.runs.get(id);
+    if (run?.status === settled) this.setStatus(id, run, "conflict");
+  }
+
+  // The merge is gone, resolved outside a turn: back to the rest state.
+  resettle(id: string): void {
+    const run = this.runs.get(id);
+    if (run) return this.setStatus(id, run, this.settled(id));
+    this.persist(id, this.settled(id));
+    this.events$.next({ type: "changed", sessionId: id });
   }
 
   authorize(id: string, token: string | undefined): boolean {
@@ -420,19 +552,61 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  // A codex hook's stdin JSON (docs/specs/2026-10-16-native-codex.md → D6, D7). The bearer is
+  // checked. Every event carries the current session id and rollout path: `/new` and `/resume`
+  // inside the TUI switch them, and «Продовжити» must continue the conversation last open.
+  codexHook(id: string, body: Record<string, unknown>): void {
+    const run = this.runs.get(id);
+    if (!run) return;
+    const sid = typeof body.session_id === "string" && body.session_id ? body.session_id : undefined;
+    const file = typeof body.transcript_path === "string" && body.transcript_path ? body.transcript_path : undefined;
+    if (sid || file) {
+      const s = this.registry.listSessions().find((x) => x.id === id);
+      if (s && ((sid && s.ompSessionId !== sid) || (file && s.ompSessionFile !== file)))
+        this.registry.updateSession(id, { ...(sid ? { ompSessionId: sid } : {}), ...(file ? { ompSessionFile: file } : {}) });
+    }
+    switch (body.hook_event_name) {
+      case "UserPromptSubmit":
+        run.error = undefined;
+        this.registry.touchSession(id);
+        return this.setStatus(id, run, "thinking");
+      case "PreToolUse": {
+        const tool = typeof body.tool_name === "string" ? body.tool_name : "";
+        if (tool === CODEX_ASK_TOOL) return this.setStatus(id, run, "waiting_input");
+        return this.setStatus(id, run, "tool", tool || undefined);
+      }
+      case "PostToolUse":
+        return this.setStatus(id, run, "thinking");
+      case "PermissionRequest":
+        return this.setStatus(id, run, "waiting_input");
+      // Esc ends a turn without `Stop`; codex < 0.163 sends no `Interrupt` either, and a failed
+      // turn has no hook at all — both stay busy until the next prompt (spec D6).
+      case "Stop":
+      case "Interrupt":
+        this.settle(id, run);
+        this.afterTurn(id, CODEX_FLUSH_MS);
+        return;
+    }
+  }
+
   // The session's history from the harness's own file, as the Лог/Сесія transcript renders it.
   async transcript(session: Session): Promise<Rehydrated> {
     return messagesToTranscript(await this.history(session).catch(() => []));
   }
 
   private async history(session: Session): Promise<OmpMessage[]> {
-    if (session.runtime === "claude-code") {
-      if (!session.ompSessionId) return [];
-      const cwd = this.cwd(session);
-      return claudeHistoryToOmp(await this.readClaudeHistory(session.ompSessionId, cwd ? { dir: cwd } : undefined));
+    const harness: NativeHarness = session.runtime ?? "omp";
+    switch (harness) {
+      case "claude-code": {
+        if (!session.ompSessionId) return [];
+        const cwd = this.cwd(session);
+        return claudeHistoryToOmp(await this.readClaudeHistory(session.ompSessionId, cwd ? { dir: cwd } : undefined));
+      }
+      case "omp":
+        return session.ompSessionFile ? ompFileMessages(await readFile(session.ompSessionFile, "utf8")) : [];
+      case "codex":
+        return session.ompSessionFile ? codexFileMessages(await readFile(session.ompSessionFile, "utf8")) : [];
     }
-    if (!session.ompSessionFile) return [];
-    return ompFileMessages(await readFile(session.ompSessionFile, "utf8"));
   }
 
   private cwd(session: Session): string | undefined {
@@ -461,7 +635,7 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     const path = this.sessionFilePath(session, run);
     if (path) {
       const text = await readFile(path, "utf8").catch(() => "");
-      const { usage, model } = session.runtime === "claude-code" ? claudeFileUsage(text) : ompFileUsage(text);
+      const { usage, model } = FILE_USAGE[session.runtime ?? "omp"](text);
       if (usage) this.registry.setUsage(id, usage);
       if (model && model !== session.model) this.registry.updateSession(id, { model });
     }
@@ -497,6 +671,7 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     const status = run.reviewPending ? "in_review" : this.settled(id);
     run.reviewPending = false;
     this.setStatus(id, run, status);
+    this.events$.next({ type: "settled", sessionId: id, status });
   }
 
   private settled(id: string): SessionStatus {

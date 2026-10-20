@@ -88,7 +88,7 @@ import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import { useReleaseSlack } from 'stores/release-slack';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
-import { api, type SlackChannelOption } from '../../lib/api';
+import type { SlackChannelOption } from '../../lib/api';
 import { SLACK_MANIFEST } from '../../lib/slack-manifest';
 
 const props = defineProps<{ modelValue: boolean; workspaceId: string }>();
@@ -160,7 +160,7 @@ async function attempt(flag: { value: boolean }, fn: () => Promise<void>): Promi
 // the list grows by joining a channel in Slack and pressing Refresh.
 function loadChannels(): Promise<void> {
   return attempt(loadingChannels, async () => {
-    channels.value = await api.slackAccountChannels(props.workspaceId);
+    channels.value = await store.channels(props.workspaceId);
     if (!channels.value.some((c) => c.id === channelPick.value)) channelPick.value = channels.value[0]?.id ?? '';
   });
 }

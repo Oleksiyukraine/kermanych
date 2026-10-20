@@ -1,9 +1,10 @@
 // apps/api/src/http/native.controller.ts
-// POST /api/native/:id/claude and /api/native/:id/omp — a native session's status hooks
-// (docs/specs/2026-10-05-native-sessions.md). @Public because the caller is the harness's own
-// hook (a `curl` line for claude, the omp extension's `fetch`), which holds no Supabase
-// session; the bearer secret minted for that session's current launch is its whole
-// credential, as for management-mcp. The api listens on 127.0.0.1 only (main.ts).
+// POST /api/native/:id/claude, /omp and /codex — a native session's status hooks
+// (docs/specs/2026-10-05-native-sessions.md, docs/specs/2026-10-16-native-codex.md). @Public
+// because the caller is the harness's own hook (claude's `curl` line, codex's curl script, the
+// omp extension's `fetch`), which holds no Supabase session; the bearer secret minted for that
+// session's current launch is its whole credential, as for management-mcp. The api listens on
+// 127.0.0.1 only (main.ts).
 import { Body, Controller, Headers, HttpCode, HttpException, Param, Post } from "@nestjs/common";
 import { Public } from "../auth/public.decorator";
 import { NativeSessionService } from "../native/native-session.service";
@@ -24,6 +25,13 @@ export class NativeController {
   @HttpCode(204)
   omp(@Param("id") id: string, @Headers("authorization") auth: string | undefined, @Body() body: unknown): void {
     this.native.ompEvent(id, this.checked(id, auth, body));
+  }
+
+  @Public()
+  @Post(":id/codex")
+  @HttpCode(204)
+  codex(@Param("id") id: string, @Headers("authorization") auth: string | undefined, @Body() body: unknown): void {
+    this.native.codexHook(id, this.checked(id, auth, body));
   }
 
   private checked(id: string, auth: string | undefined, body: unknown): Record<string, unknown> {

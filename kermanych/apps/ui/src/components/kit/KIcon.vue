@@ -35,7 +35,8 @@ export type KIconName =
   | 'integrations'
   | 'worktree'
   | 'plus'
-  | 'analysis';
+  | 'analysis'
+  | 'start';
 </script>
 
 <script setup lang="ts">
@@ -129,6 +130,15 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // «Глибокий аналіз» — a magnifier: «look closely first». Also the mark a deep-analysis card
   // carries (KAnalysisMark), so the menu row and the card it produces share one shape.
   analysis: ['M3 11a8 8 0 1 0 16 0a8 8 0 1 0-16 0', 'm21 21-4.3-4.3'],
+  // «Розпочати» / Get started — a rocket (Lucide's): the first-run checklist sits under the
+  // buckets in the same rail, and it borrowed the `tasks` checklist mark, so the minified rail
+  // showed two identical rows. Launch is what the checklist walks toward («ready to run»).
+  start: [
+    'M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z',
+    'm12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z',
+    'M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0',
+    'M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5',
+  ],
 };
 
 const props = defineProps<{ name: KIconName }>();

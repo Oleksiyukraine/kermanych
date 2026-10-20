@@ -208,7 +208,7 @@
       </template>
     </KModal>
 
-    <!-- ── share (the password's owner) ─────────────────────────────────────── -->
+    <!-- ── share / remove access (the password's owner) ──────────────────────── -->
     <KModal
       :model-value="shareOpen"
       :title="t('management.storage.shareTitle', { title: sharing?.title ?? '' })"
@@ -220,21 +220,41 @@
         <p class="vault__note">{{ t('management.storage.shareNote') }}</p>
         <KSelect
           v-if="shareOptions.length"
-          v-model="shareTo"
+          multiple
+          :values="shareTo"
           :label="t('management.storage.shareWith')"
           :options="shareOptions"
-          :placeholder="t('management.storage.sharePick')"
+          :summary="shareSummary"
           searchable
+          @update:values="(v: string[]) => (shareTo = v)"
         />
         <p v-else class="vault__note">{{ t('management.storage.shareNobody') }}</p>
+
+        <!-- Everyone who can read it now, and through what. A share (or an approved request)
+             can be taken back here; the workspace owner and managers read through their seat,
+             which is changed in the members panel, not here. -->
+        <div v-if="sharing" class="vault__access">
+          <label class="vault__reveal-label mono">{{ t('management.storage.colHolders') }}</label>
+          <div v-for="h in holdersOf(sharing.id)" :key="h.userId" class="vault__access-row">
+            <KAvatar :name="holderName(h)" :avatar-url="h.avatarUrl" :size="22" />
+            <span class="vault__access-name">{{ holderName(h) }}</span>
+            <KTag plain class="vault__access-via">{{ viaLabel(h) }}</KTag>
+            <KBtn
+              v-if="h.via === 'grant'"
+              variant="ghost"
+              :disabled="shareBusy || revoking === h.userId"
+              @click="revoke(h)"
+            >{{ revoking === h.userId ? t('management.storage.revoking') : t('management.storage.revoke') }}</KBtn>
+          </div>
+        </div>
         <p v-if="shareError" class="vault__form-error">{{ shareError }}</p>
       </div>
 
       <template #controls>
         <KBtn variant="ghost" :disabled="shareBusy" @click="closeShare(false)">
-          {{ t('management.storage.cancel') }}
+          {{ t('management.storage.close') }}
         </KBtn>
-        <KBtn variant="primary" :disabled="shareBusy || !shareTo" @click="confirmShare">
+        <KBtn variant="primary" :disabled="shareBusy || !shareTo.length" @click="confirmShare">
           {{ shareBusy ? t('management.storage.sharing') : t('management.storage.share') }}
         </KBtn>
       </template>
@@ -334,7 +354,8 @@
 //     either an approved secret, a pending request, a declined mark, or a Request button.
 // Every member also sees WHO may read each password (count + faces), never what is inside.
 // A password's owner — the member who filed it, the workspace owner or a manager — may also
-// share it with a member outright, which lands as that member's approved grant.
+// share it with one or more members outright, which lands as each member's approved grant,
+// and take any such grant back from the same dialog.
 // A password's contents are its secret, any additional labelled fields (each secret or
 // descriptive), a 2FA marker naming who holds the second factor, and an optional file.
 // The screen owns view state only; every read and write goes through stores/passwords.ts,
@@ -472,9 +493,10 @@ async function decide(req: { id: string; passwordId: string }, approve: boolean)
   }
 }
 
-// ── share ───────────────────────────────────────────────────────────────────
+// ── share / remove access ───────────────────────────────────────────────────
 // Mirrors can_share_password: the filer of the password while still on the roster, or anyone
-// who manages the vault. UX gate only — share_password refuses everyone else.
+// who manages the vault. UX gate only — share_password_with_members and revoke_password_access
+// refuse everyone else.
 function canShare(row: WorkspacePassword): boolean {
   if (canManage.value) return true;
   const uid = auth.user?.id;
@@ -483,9 +505,10 @@ function canShare(row: WorkspacePassword): boolean {
 
 const shareOpen = ref(false);
 const sharing = ref<WorkspacePassword | undefined>(undefined);
-const shareTo = ref('');
+const shareTo = ref<string[]>([]);
 const shareBusy = ref(false);
 const shareError = ref<string | null>(null);
+const revoking = ref('');
 
 // Everyone else on the roster who cannot read this password yet — never the caller, whom
 // share_password refuses. A member with a pending or declined ask is offered too: sharing
@@ -499,10 +522,19 @@ const shareOptions = computed<KSelectOption[]>(() => {
     .filter((m) => m.userId !== uid && !holding.has(m.userId))
     .map((m) => ({ value: m.userId, label: memberName(m.userId) }));
 });
+const shareSummary = computed(() =>
+  shareTo.value.length ? shareTo.value.map(memberName).join(', ') : t('management.storage.sharePick'),
+);
+
+function viaLabel(h: PasswordHolder): string {
+  if (h.via === 'owner') return t('management.storage.viaOwner');
+  if (h.via === 'manager') return t('management.storage.viaManager');
+  return t('management.storage.viaGrant');
+}
 
 function openShare(row: WorkspacePassword): void {
   sharing.value = row;
-  shareTo.value = '';
+  shareTo.value = [];
   shareError.value = null;
   shareOpen.value = true;
 }
@@ -513,20 +545,37 @@ function closeShare(open: boolean): void {
 }
 async function confirmShare(): Promise<void> {
   const row = sharing.value;
-  const userId = shareTo.value;
-  if (!row || !userId) return;
+  const userIds = shareTo.value;
+  if (!row || !userIds.length) return;
   shareBusy.value = true;
   shareError.value = null;
   try {
-    await store.share(props.workspaceId, row.id, userId);
+    await store.share(props.workspaceId, row.id, userIds);
   } catch (e) {
     shareError.value = t('management.storage.shareFailed', { error: errText(e) });
     return;
   } finally {
     shareBusy.value = false;
   }
-  notify(t('management.storage.shared', { title: row.title, who: memberName(userId) }), 'info');
+  notify(t('management.storage.shared', { title: row.title, who: userIds.map(memberName).join(', ') }), 'info');
   closeShare(false);
+}
+
+// Takes one member's share back. The dialog stays open: the row leaves the list, and the
+// member is offered in the picker again.
+async function revoke(h: PasswordHolder): Promise<void> {
+  const row = sharing.value;
+  if (!row) return;
+  revoking.value = h.userId;
+  shareError.value = null;
+  try {
+    await store.revoke(props.workspaceId, row.id, h.userId);
+    notify(t('management.storage.revoked', { title: row.title, who: holderName(h) }), 'info');
+  } catch (e) {
+    shareError.value = t('management.storage.revokeFailed', { error: errText(e) });
+  } finally {
+    revoking.value = '';
+  }
 }
 
 // ── view / reveal ─────────────────────────────────────────────────────────────
@@ -1015,6 +1064,35 @@ function errText(e: unknown): string {
   display: flex;
   flex-direction: column;
   gap: var(--k-sp-2);
+}
+
+// The share dialog's «People with access»: one row per reader, a revoke button on shares.
+.vault__access {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
+  margin-top: var(--k-sp-2);
+}
+
+.vault__access-row {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+  min-height: 32px;
+}
+
+.vault__access-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--k-fs-sm);
+  color: var(--k-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault__access-via {
+  flex: none;
 }
 
 .vault__field-row {

@@ -380,9 +380,12 @@ without the Q&A bot above; it only needs the same Slack app.
   user scopes only, no client secret anywhere); the redirect comes back to the desktop app's
   loopback listener on port 53170. Desktop app only — the browser build cannot connect.
 - **Your Slack token is local.** The user token (`xoxp-…`) is stored in this machine's
-  registry SQLite (`slack_user_tokens`), never in the cloud. «Disconnect» forgets it. A
-  token Slack stops accepting is forgotten on the next send, and the next press connects
-  again.
+  registry SQLite (`slack_user_tokens`), never in the cloud. «Disconnect» forgets it. A Slack
+  app with token rotation on (it cannot be switched off once on) hands out a rotating token
+  (`xoxe.xoxp-…`) that lives 12 hours; its refresh token is stored beside it and the api renews
+  it before it expires, so the connection lasts as long as it is used at least once in 30 days.
+  A token Slack stops accepting — revoked, or no longer renewable — is forgotten on the next
+  send or channel list, and Kermanych asks you to connect again.
 - **You must be in the channel.** Slack posts a member's message only where they are a
   member; otherwise the send says to join the channel first.
 - **Formatting.** Headings become bold lines, `**bold**` and links are converted to Slack's
@@ -452,6 +455,22 @@ Older apps then show «Потрібне оновлення» instead of failing 
 migration only after that release is published. The table itself comes from
 `20261012120000_app_release_policy.sql` (one row, readable without signing in, written only
 by migrations); push it before the first release.
+
+`20261019090000_drop_routines.sql` removes the retired Routines feature: it drops
+`workspace_routines`, `workspace_routine_runs` and `workspace_routine_cloud` with every row,
+unschedules the `routines-cloud-tick` job and deletes the `routines_project_url` /
+`routines_runner_secret` Vault secrets. Only a build that still has the Routines screen reads
+those tables, and that screen is all it loses. If the `routines-runner` Edge Function was ever
+deployed, delete it too: `supabase functions delete routines-runner --project-ref uqqdudlfizfwqfegfrlh`.
+
+`20261019100000_drop_slack_cloud_answers.sql` removes the retired Slack cloud answers: it drops
+`workspace_slack_cloud` and `slack_cloud_events` with every row — the stored Slack bot tokens,
+signing secrets and AI keys — and the seven `*slack_cloud*` functions. Only a build that still
+has the «Cloud answers» section on the Slack card calls them. Delete the Edge Function too:
+`supabase functions delete slack-events --project-ref uqqdudlfizfwqfegfrlh`. A workspace that had
+switched its Slack app to the cloud manifest must paste the desktop manifest back («Copy
+manifest» on the Slack tile), or Slack keeps sending events to the deleted URL and no machine
+gets the questions.
 
 ### Running against a local stack or your own project
 
@@ -718,42 +737,61 @@ edge to resize (the height and whether it is open are remembered).
 ## Native sessions
 
 A task can also run in the harness's **own** interface instead of Kermanych's wrapper. In
-«Нова задача», set **Режим** to `omp` or `claude` and press «Запустити»: Kermanych creates
-the worktree and branch as usual, then starts that harness's TUI there with the task text
-as its first prompt. The session's «Лог» tab is that terminal — type into it as you would
-in your own terminal. (Spec: `docs/specs/2026-10-05-native-sessions.md`.)
+«Нова задача», set **Режим** to `omp`, `claude` or `codex` and press «Запустити»: Kermanych
+creates the worktree and branch as usual, then starts that harness's TUI there with the task
+text as its first prompt. The session's «Лог» tab is that terminal — type into it as you would
+in your own terminal. (Specs: `docs/specs/2026-10-05-native-sessions.md`,
+`docs/specs/2026-10-16-native-codex.md`.) Each harness must be on your login shell's `PATH`;
+for codex that is `npm i -g @openai/codex` (or `brew install codex`) — the copy inside the
+ChatGPT app is not used. A missing binary shows `command not found` in the «Лог» tab.
 
 - **Nothing of Kermanych enters the agent's context**: no project skills, triggers,
   language or documentation directives, co-author trailer, model or effort flags. Your own
-  `~/.claude` / `~/.omp` configuration applies unchanged; switch model with the harness's
+  `~/.claude` / `~/.omp` / `~/.codex` configuration applies unchanged; switch model with the harness's
   own `/model`. Model, effort and images are hidden in the launcher for this mode. The
   exceptions are the [session browser](#session-browser)'s tools, passed on the launch in the
   desktop app, and a «Глибокий аналіз» card's opening prompt: the TUI receives the task
   wrapped in the deep-analysis instructions, because that is the task you chose.
 - **What Kermanych still tracks.** Status on the board (working, tool, waiting for you,
   ready, on review, stopped) comes from hooks passed **on that launch only** —
-  `claude --settings <file>` and `omp --hook <file>`, posting to the local API with a
-  per-launch secret. Nothing is installed into your harness configuration. After every turn
-  it reads the harness's own session file for token usage (claude's file has no cost, so
-  none is shown), the model, a PR link opened by «Створити ПР», and the history that the
-  «Сесія» and «Документація» tabs use.
+  `claude --settings <file>`, `omp --hook <file>` and codex's `-c hooks.*` overrides, posting
+  to the local API with a per-launch secret. Nothing is installed into your harness
+  configuration. After every turn it reads the harness's own session file for token usage
+  (claude's and codex's files have no cost, so none is shown), the model, a PR link opened by
+  «Створити ПР», and the history that the «Сесія» and «Документація» tabs use.
 - **Lifecycle.** Exiting the harness (`/exit`, <kbd>Ctrl</kbd>+<kbd>D</kbd>), «Зупинити», or
   quitting the app stops it; «Продовжити» in the «Лог» tab resumes the same conversation
-  (`claude --resume <id>` / `omp launch --resume <file>`). A brand-new folder may show
-  claude's trust dialog first — answer it in the terminal.
+  (`claude --resume <id>` / `omp launch --resume <file>` / `codex resume <id>`). A brand-new
+  folder may show claude's trust dialog first — answer it in the terminal.
 - **Helpers** (create PR, commit, resolve conflict, documentation) paste their prompt into
-  the terminal only while the agent is idle; otherwise they are refused with «Агент зараз
-  працює…» and you retry after the turn. On a stopped session they resume it with that
-  prompt.
+  the terminal only while the agent is idle (or stopped at `conflict`); otherwise they are
+  refused with «Агент зараз працює…» and you retry after the turn. On a stopped session they
+  resume it with that prompt. «Створити ПР» and «Закоміти» carry Kermanych's base sync, as for
+  a managed session, and a turn that ends mid-merge settles the card at `conflict`. Kermanych
+  writes no notices into a native transcript, so the stale-base note at launch and the
+  post-PR warning (see «Cloud tasks and local sessions») are managed-only.
 - **Not available** for native sessions: changing model or effort from Kermanych, harness
   commands from a composer, answering prompts outside the terminal, discussion branches,
   review, images and the subagent map. Launches from «Дошка» and «В беклог» stay managed.
+- **codex specifics.** codex trusts hooks only after review and asks about every new folder;
+  Kermanych passes both answers on the command line for that launch — the session's folder as
+  trusted (`-c projects={…}`) and a `trusted_hash` for exactly its own hooks
+  (`-c hooks.state={…}`) — so no dialog appears and `~/.codex/config.toml` is never written. If
+  a future codex changes how it hashes hooks, its «Hooks need review» modal shows in the «Лог»
+  tab instead. Esc ends a turn through codex's `Interrupt` hook (codex 0.163+; an older codex
+  keeps the card busy until your next prompt). A turn that fails has no hook either way: the
+  card stays busy until the next prompt.
+- **codex and git in a worktree.** A task's worktree keeps its git data in the main
+  repository's `.git`, outside the folder codex's default sandbox lets it write. So a commit —
+  including the one «Закоміти» and «Створити ПР» ask for — makes codex request escalation: the
+  card shows «чекає», you approve in the «Лог» tab (answer «Yes, proceed» to approve only that
+  command), and the commit goes through. Kermanych does not widen codex's sandbox for you.
 
 ### Native chats
 
 The «Чат» page offers the same choice per thread (spec:
 `docs/specs/2026-10-06-native-chats.md`). The chip next to «+ Новий» picks the **Режим** of
-the next chat — `Керманич`, `omp` or `claude` — and is remembered on this machine; a thread
+the next chat — `Керманич`, `omp`, `claude` or `codex` — and is remembered on this machine; a thread
 keeps the mode it was created with, and its card shows that harness's mark. A native chat
 opens the harness's TUI idle in the project folder; type the first message into it. After
 each turn the first message becomes the thread's name, as for a managed chat.
@@ -761,7 +799,9 @@ each turn the first message becomes the thread's name, as for a managed chat.
 - **Read-only, like every chat.** A chat runs in your own checkout, not a worktree, so the
   harness is started with the chat's read-only built-ins only — `claude --tools
   Read,Grep,Glob` / `omp launch --tools read,grep,glob` — on every start and resume. MCP and
-  extension tools are unaffected. Nothing else of Kermanych's is added.
+  extension tools are unaffected. Nothing else of Kermanych's is added. codex has no tool
+  allowlist, so its chat runs in codex's read-only sandbox instead (`-s read-only -a never`):
+  it can read with any shell command, but cannot write a file or ask to escalate.
 - **Opening a thread does not start its harness.** A stopped native chat shows
   «Продовжити» instead; ■ stops a running one. Archiving a thread (✕) stops its harness.
 - **Not available** for native chats: «Почати імплементацію» (▶) — promotion forks the
@@ -817,7 +857,9 @@ live. The web build has no session browser.
   resume; native ones via `claude --mcp-config <file>` (a per-session `0600` file) or a
   second `omp --hook`. The endpoint is `POST /api/browser/mcp` on the local API with a
   per-session bearer; a session's calls run one at a time (dialog, console and network
-  answer at once). An API started without the desktop app offers no browser tools.
+  answer at once). The same server also carries the findings tools `report_finding` and
+  `list_findings` (see «Agent findings» below). An API started without the desktop app still
+  hands the server out, but it lists only the findings tools.
 - **Cookies** are kept per project (Electron partition `persist:kermanych-browser-<projectId>`):
   sessions of one project share logins, projects do not. The page's user agent carries no
   `Electron/` token. `target=_blank` links load in the same page; a `window.open` popup (an
@@ -888,26 +930,109 @@ developer's machine. The direction is always task → session.
 4. **Run** — `POST /api/sessions/from-task` creates a git worktree under
    `~/.kermanych/worktrees/<sessionId>`, copies the project's `carryFiles` (`.env` by
    default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
-   ordinary local session: it appears on the Агенти board and you drive it there.
+   ordinary local session: it appears on the Агенти board and you drive it there. The branch
+   starts from the session's base — the card's base branch, else the project's default
+   branch, else the branch the project checkout is on, recorded on the session either way.
+   Before the fork the API fetches `origin/<base>` with this machine's own git credentials
+   (15 s timeout). When origin's copy contains the local `<base>` (the local branch is only
+   behind), the branch starts from `origin/<base>`, without tracking it; when the local
+   `<base>` is ahead or the two diverged, it starts from the local one. If origin cannot be
+   asked, the same pick is made over the last fetched `origin/<base>` and the transcript says
+   the base may not be the latest. (Spec: `docs/specs/2026-10-14-create-pr-base-sync.md`.)
 5. **Status flows back** — the local API mirrors the session's coarse status
    (`queued → thinking → tool → waiting_input → done | in_review | error | stopped |
    merged | conflict`) to the task, and everyone's board updates live over Supabase
    Realtime. `in_review` is the pull-request outcome: «Завершити» → «Створити ПР» has the
-   agent commit, push and open the PR, and when that turn ends the card lands in the
+   agent commit, bring the latest `origin/<base>` in, push and open the PR, and when that
+   turn ends the card lands in the
    board's «На ревʼю» column — settled, but waiting on a human reviewer rather than
-   closed. «Завершити» → «Влити» is the other exit and still lands on `merged`. Once a
-   session's branch has an open PR, that fact is
+   closed. «Завершити» itself is the other exit: it retires the session — commits loose work,
+   stops the agent, removes the worktree — and lands on `merged`; nothing is merged into the
+   base branch, the branch stays for its PR. Once a session's branch has an open PR, that fact is
    durable: the finish sheet's secondary action stays «Закоміти» (never «Створити ПР», which
    would try to open a second PR and find nothing to push), and EVERY later turn settles the
    card back on «На ревʼю» — even the plain follow-up prompts you send to fix review findings,
    which drive the card through «в роботі» mid-turn. «Закоміти» has the agent commit and push
    that follow-up work onto the same branch, updating the open PR.
+6. **Reports flow back** — after every turn and on «Завершити» the local API also writes onto
+   the card what the session's «Документація» and «Сесія» tabs show: the documentation it read
+   and the documentation it created or changed (repository paths with +/− counts), and the
+   session summary — harness, the model and effort it ran with, the working branch and its
+   base, the skills it used, tokens and cost, and the provider's session id. Paths on your disk
+   (the worktree, a native session's file) never go. Images attached in «Агенти» → «Нова
+   задача» are uploaded to the card once the launch succeeds. The writes go through a local
+   queue, like the status, so a session run offline publishes when the machine is back online.
+
+   **Base sync.** Before it pushes, the agent run by «Створити ПР» or «Закоміти» fetches
+   `origin/<base>` and merges it into the branch — a merge, never a rebase. It resolves the
+   conflicts itself, commits the merge with the Kermanych co-author trailer and runs the
+   project's checks for what the merge touched. It stops to ask only when the two sides
+   changed the same behaviour in ways that cannot both hold. «Закоміти» on an open PR is
+   therefore also the one-click update for a PR whose base moved. The step is Kermanych's
+   own: it is appended after the «Провізор» / «Комітер» instruction even when a project
+   overrides that instruction, and «ШІ-команда → Агенти» shows it read-only. Kermanych
+   watches the outcome in three places:
+   - the finish sheet says how many commits of `origin/<base>` the branch still lacks
+     (against the last fetch, no network);
+   - a turn that ends with the worktree mid-merge settles the card at `conflict` (the red dot,
+     «Помилки», the finish sheet's conflict view with «Вирішити автоматично»). It clears when
+     a later turn ends without unmerged files, or when the finish sheet or «Зміни» finds the
+     merge resolved;
+   - after the turn that lands on «На ревʼю», the API fetches `origin/<base>` and the pushed
+     branch, and warns in the transcript when the PR still lacks commits of `origin/<base>`.
+
+   «Зміни», the finish sheet's counts, the documentation gate and the reviewer's diff start at
+   the newer of the branch's fork points with `<base>` and with `origin/<base>`, so a branch
+   that merged a newer base does not list teammates' files as its own.
 
 Nothing else leaves your machine. Transcripts, the current tool, context usage, todo
 phases, interactive prompts and the provider-plan spend under the account name (read from
 `omp usage` on this machine, never mirrored) are local-only by design — the board shows
 THAT a task waits for input, and only the person running it can answer, on their own
 machine.
+
+### Agent findings («Знахідки»)
+
+Agents often notice problems outside their own task. A session's agent can report one
+through the `report_finding` tool of its `kermanych` MCP server (spec:
+`docs/specs/2026-10-13-agent-findings.md`). It gives a title (≤ 120 characters), a kind
+(`bug`, `security`, `tech-debt`, `docs`), the context, evidence (`path:line` references or
+reproduction commands), acceptance criteria and an optional suggested fix. It reports at once,
+without asking you first, including in the middle of a «Глибокий аналіз» interview; it asks you
+only about a part of the problem that overlaps its own task. Then it continues its task.
+`list_findings` shows it what it already reported, so it does not repeat itself. The
+tool descriptions are the agent's whole instruction, so every runtime gets the same rules,
+native sessions included. Discussion and review branches have no such tools.
+
+**Nothing is filed without you.** Findings are kept only on this machine (SQLite
+`session_findings`) and are deleted with their session and with their project. A session holds
+at most 20 open findings. Past that, the tool refuses and tells the agent to mention further
+problems in its reply.
+
+- **Where.** The session's **Знахідки** tab on «Агенти» lists them (a chat has the same tab on
+  «Чат»). Its counter and the ⚑ mark on the agent's session card show how many are still open.
+  A new report arrives live, and it does not change the session's status or interrupt the
+  agent.
+- **Створити задачу →** opens one dialog for both targets, prefilled and editable: the title,
+  and a description with Context, Acceptance criteria, Evidence, Suggested fix and the origin
+  (project, branch, session).
+  - **Дошка** creates a card under your account in any project of the session's workspace
+    (the session's own by default). The assignee is optional, model and effort come from the
+    project's defaults, and the branch prefix is `fix` for bugs and vulnerabilities, otherwise
+    `feature`.
+  - **Jira** creates an issue on a connected board through `POST /api/jira/issues/:integrationId`,
+    signed with your personal Jira token. The issue type defaults to Bug for `bug` / `security`
+    and to Task otherwise (or to the first type the project offers). The labels are
+    `kermanych-finding` plus the kind. The option is disabled, with the reason, when the
+    workspace has no connected board or this machine has no token for its site.
+- **Відхилити** marks a finding dismissed. This cannot be undone, and the agent sees it in
+  `list_findings`.
+- **Routes.** `GET /api/sessions/:id/findings`;
+  `POST /api/sessions/:id/findings/:findingId/filed` with `{ "kind": "board", "taskId" }` or
+  `{ "kind": "jira", "key", "url" }`; `POST /api/sessions/:id/findings/:findingId/dismiss`.
+  An unknown session or finding answers 404, and a finding that is no longer open answers 400.
+  If the card or issue is created but recording it fails, the finding stays open with the error
+  shown in the dialog. The card or issue already exists then: check before filing again.
 
 ### Project documentation
 
@@ -958,6 +1083,16 @@ no documentation checkboxes. «Доповнити документацію» sen
 exactly the missing documents and closes the sheet. You watch the agent write and commit them
 in the transcript, and it pushes them if the PR is already open. Changed documents appear in
 the session's «Документація» tab tagged специфікація / план / схема / хендоф / запит API.
+
+The tab survives an API restart and «Завершити». The documents a session read, the documents
+it changed and the skills on «Сесія» are kept on its card (`tasks.docs_report`,
+`tasks.session_report`; see «Reports flow back» above), and the session's own tabs fall back to
+them once the transcript or the worktree is gone. Reads and skills only accumulate, so a
+compacted context never drops one. After «Завершити» the changed documents are a plain list:
+the diff and «Задача →» need the worktree, which «↻ Відновити» brings back. Sessions that
+predate this are not backfilled, and the board does not show these reports yet. Migration
+`20261013090000_task_reports.sql` must be applied before a client that reads the columns
+ships: the client selects them by name.
 
 **Mid-task: request and handoff without finishing.** An API request is usually needed while
 the frontend work is still going, not at the end of it. The session's «Документація» tab has
@@ -1095,13 +1230,23 @@ That field is a real assistant, and it is deliberately narrow:
   clue the range or the branch was not the one you meant. A failed run keeps a row on the
   section screen with its reason and a retry. Editing, copying and deleting a stored note
   stay on the screen; the assistant has no verb for them and the prompt says so.
-  By default the note groups changes by meaning («New», «Improvements», «Fixes») and names
-  nobody. Tick «Звіт по людях» in the form — or ask the chat to split the note by person
-  («хто що зробив»), which adds `"groupBy": "person"` to the action — and the note gets one
-  section per commit author in the period, headed by their name, saying in the same plain
-  language what that person completed. Authors are read as git's `%aN`, so a repository's
-  `.mailmap` folds one person's aliases into one section; bots get a closing sentence, not a
-  section of their own.
+  By default the note groups changes by meaning («New», «Improvements», «Fixes», and
+  «Maintenance» for work a user does not see) and names nobody. Tick «Звіт по людях» in the
+  form — or ask the chat to split the note by person («хто що зробив»), which adds
+  `"groupBy": "person"` to the action — and the note gets one section per commit author in
+  the period, headed by their name, saying in the same plain language what that person
+  completed: their visible changes first, then a «Smaller changes» list for the rest.
+  Authors are read as git's `%aN`, so a repository's `.mailmap` folds one person's aliases
+  into one section; bots get a closing sentence naming what they updated, not a section of
+  their own.
+  **Every change of the period is named, however long the period.** The note never writes
+  «and 45 other changes»: related commits are merged into one bullet that says what changed,
+  small ones become a short bullet of a few words, and a count is never a substitute. Every
+  commit's subject always reaches the model; when a busy period's commit messages exceed the
+  prompt budget, only the longest commit descriptions are left out, never a commit. A period
+  with so many commits that their subjects alone would not fit (roughly 1,500 and more) is
+  refused before any model turn with `too_many_commits` and the count — pick a shorter
+  period.
   The form can also write one note over several projects of the workspace — the back-end
   and the front-end, say. Pick more than one project in its «Projects» picker and each
   picked project gets its own branch picker, preselected with that project's default branch,
@@ -1289,6 +1434,24 @@ uses (`saveRiskRegister` in `apps/ui/src/lib/export-file.ts`), rows in the scree
 order (by exposure), and the chat line names the file — or, in a plain browser tab, says the
 PDF opened in the print dialog. A code the register does not hold exports nothing: a file
 quietly missing a row you asked for would be forwarded as complete.
+
+### Sharing a password in Storage
+
+In the Storage section, the person who filed a password — and the workspace owner and every
+manager — can hand it to colleagues with the 👥 button, no access request needed. The dialog's
+«Share with» picker takes several members at once, and they are granted together: if one of
+them cannot receive it, nobody does and the dialog says why. Under the picker, «People with
+access» lists everyone who can read the password and how — workspace owner, manager, or
+shared (a share or an approved request). A shared grant has a «Remove access» button: the
+member stops being able to read the secret and its file, and can request access again. The
+workspace owner and managers read every password through their role, so their access is
+changed in the members panel, not here.
+
+This needs migration `20261016100000_workspace_password_revoke.sql`
+(`share_password_with_members`, `revoke_password_access`, and the `via` column of
+`list_password_holders`) — push it before shipping this UI
+([Applying a migration](#applying-a-migration-to-the-teams-project)). Spec:
+`docs/specs/2026-10-16-vault-multi-share-and-revoke.md`.
 
 ### Giving another section something it can write
 

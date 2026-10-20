@@ -71,6 +71,7 @@ export type {
   WorkspacePasswordPatch,
   WorkspacePasswordSecretPatch,
   PasswordHolder,
+  PasswordHolderVia,
   WorkspacePasswordAccess,
   PasswordAccessStatus,
 } from "./types";
@@ -208,6 +209,7 @@ export {
   requestPasswordAccess,
   decidePasswordAccess,
   sharePassword,
+  revokePasswordAccess,
   toPasswordHolder,
   listPasswordHolders,
 } from "./passwords";
