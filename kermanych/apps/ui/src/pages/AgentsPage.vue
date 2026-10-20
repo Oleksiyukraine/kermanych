@@ -1148,6 +1148,7 @@ import KTerminalView from 'components/kit/KTerminalView.vue';
 import KBrowserPane from 'components/kit/KBrowserPane.vue';
 import { useSessionBrowser } from 'stores/browser';
 import { composePicksMessage, picksImages } from '../lib/browser-picks';
+import { historyLoadFor } from '../lib/open-session-history';
 
 // The Агенти screen (design-system section 07): the board of session cards for whatever is
 // in scope — one project, or every project of a workspace — plus the full panel for the
@@ -2101,13 +2102,29 @@ function statusWord(s: Session): string {
   }
 }
 
-// Lazy-load the transcript the first time a session is opened.
+// Bring the transcript back the first time a session is opened — resuming it when that is
+// what it takes. A plain load cannot rehydrate: after an app restart the api has no child for
+// the session, and once the idle reaper has stopped one but kept its Live, GET /transcript
+// answers an EMPTY list that reads as «Журнал порожній» with nothing explaining why. Only a
+// resume replays the harness's own persisted history. `historyLoadFor` holds which sessions
+// must not be woken by a mere click (native, merged, backlog) and which are already live;
+// `resumeSession` reloads the transcript itself, so no separate load follows it.
 watch(
   () => store.selectedSessionId,
   (id) => {
-    if (id && store.transcripts[id] === undefined) {
-      void store.loadTranscript(id);
+    if (!id || store.transcripts[id] !== undefined) return;
+    const s = store.sessions.find((x) => x.id === id);
+    if (s && historyLoadFor(s) === 'resume') {
+      void store.resumeSession(id).catch((e: unknown) => {
+        // A wake that fails (a worktree that will not come up, a signed-out CLI) must still
+        // leave the operator with the pane they opened, so fall back to the dormant notice
+        // the plain load serves rather than an empty log and a silent failure.
+        store.notify(e instanceof Error ? e.message : String(e), 'error');
+        void store.loadTranscript(id);
+      });
+      return;
     }
+    void store.loadTranscript(id);
   },
   { immediate: true },
 );
