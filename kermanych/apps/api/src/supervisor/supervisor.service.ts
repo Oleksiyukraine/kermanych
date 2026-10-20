@@ -706,12 +706,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (chat.native) throw nativeUnsupported();
     const project = this.boundProject(chat.projectId);
 
-    let chatFile = chat.ompSessionFile;
-    if (!chatFile) {
+    // The fork continues on the chat's own backend (R1/R2), the same per-backend handle
+    // branchSession reads: omp forks the session FILE, claude the session UUID (stored in
+    // ompSessionId — claude never reports a file). launch spawns on session.runtime, which
+    // the promotion leaves as the chat's.
+    const chatRuntime = managedRuntime(chat.runtime);
+    let forkHandle = chatRuntime === "claude-code" ? chat.ompSessionId : chat.ompSessionFile;
+    if (!forkHandle) {
       await this.refreshState(chatId);
-      chatFile = this.registry.listSessions().find((x) => x.id === chatId)?.ompSessionFile;
+      const fresh = this.registry.listSessions().find((x) => x.id === chatId);
+      forkHandle = chatRuntime === "claude-code" ? fresh?.ompSessionId : fresh?.ompSessionFile;
     }
-    if (!chatFile)
+    if (!forkHandle)
       throw new Error("chat has no omp session yet — send a message before starting implementation");
 
     const live = this.map.get(chatId);
@@ -745,7 +751,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       taskId, name, kind: "agent", worktree: true, branch, baseBranch, worktreePath: "", prefix: "feature", status: "queued",
     });
     try {
-      return await this.launch(session, project, { fork: chatFile, firstPrompt: prompt });
+      return await this.launch(session, project, { fork: forkHandle, firstPrompt: prompt });
     } catch (err) {
       // Back to being a chat, and back to being unlinked: the row keeps its conversation, and
       // the next message resumes its read-only omp child through doResume.
@@ -2320,6 +2326,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       ? { branch: s.branch, baseBranch: s.baseBranch }
       : await this.resolveLaunchParams(g, s.name, s.prefix ?? "feature", true, id, s.baseBranch);
     const wtDir = worktreeDir(id);
+    // The row owns no worktree, so anything at its path is what the retirement left behind — a
+    // tree from before removeWorktree cleaned up after itself, or one a stray process (a dev
+    // server the agent started) wrote back into. `git worktree add` refuses an existing path.
+    await this.worktree.removeWorktree(g.localRepoPath, wtDir);
     try {
       if (kept) await this.worktree.attachWorktree(g.localRepoPath, wtDir, branch);
       else await this.worktree.addWorktree(g.localRepoPath, wtDir, branch, baseBranch ? (await this.worktree.forkStart(g.localRepoPath, baseBranch)).ref : undefined);

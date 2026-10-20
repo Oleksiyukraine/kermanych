@@ -36,6 +36,14 @@ test("checkout switches branches; force checkout discards uncommitted work", asy
   expect(git(repo, "show", "dev:file.txt").trim()).toBe("base"); // discarded
 });
 
+// removeWorktree deletes whatever git leaves at the path; the project's own checkout must
+// never qualify, whatever path a caller hands it.
+test("removeWorktree never deletes a main checkout", async () => {
+  await wt.removeWorktree(repo, repo);
+  expect(readFileSync(join(repo, "file.txt"), "utf8")).toBe("base\n");
+  expect(git(repo, "status", "--porcelain")).toBe("");
+});
+
 test("diff captures the branch's committed and uncommitted changes from the fork point", async () => {
   await wt.createBranchHere(repo, "feature/x");
   writeFileSync(join(repo, "file.txt"), "base\ncommitted\n");
