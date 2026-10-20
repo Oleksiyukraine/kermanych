@@ -63,8 +63,9 @@ In both cases the test is stale. Production code is correct.
 
 - `kermanych/apps/api/test/rpc-session.compact.spec.ts`: the fake `omp` skips
   `set_subagent_subscription`.
-- `kermanych/apps/ui/test/assignments.spec.ts`: the byte-warning test measures the two named
-  harness defaults.
+- `kermanych/apps/ui/test/assignments.spec.ts`: the byte-warning test, renamed «the byte
+  warning clears both harness skills assigned at once», measures the two named harness
+  defaults and fails if either of them leaves `DEFAULT_SKILLS`.
 - `kermanych/apps/ui/src/lib/settings.ts`: the `ASSIGNED_BYTES_WARN` doc comment now names
   the two harness skills. Comment only, no behaviour change.
 
@@ -72,7 +73,7 @@ In both cases the test is stale. Production code is correct.
 
 - `pnpm --filter @kermanych/api exec vitest run test/rpc-session.compact.spec.ts`: 3 passed.
 - `pnpm --filter @kermanych/ui exec vitest run test/assignments.spec.ts`: 13 passed.
-- Full `vitest run` for `@kermanych/api` and `@kermanych/ui`: no failures.
+- Full `vitest run` after the change: api 936 passed / 4 skipped, ui 623 passed, no failures.
 
 ## Documentation impact
 

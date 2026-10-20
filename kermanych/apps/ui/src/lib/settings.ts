@@ -198,10 +198,10 @@ export function assignmentBadge(skill: AssignedSkill): AssignmentBadge {
  * the instruction and is therefore paid for on every one of that agent's turns, unlike a
  * library skill the agent may never take.
  *
- * 8 KiB is roughly two thousand tokens — enough to hold both of Kermanych's own defaults
- * and a project skill or two without a word of complaint, and past it the block is a
- * material share of a short task's budget. It is a warning and nothing else: no write is
- * blocked, because the operator may well mean it.
+ * 8 KiB is roughly two thousand tokens — enough to hold both harness skills
+ * (`kermanych-session`, `kermanych-pull-request`) and a project skill or two without a word
+ * of complaint, and past it the block is a material share of a short task's budget. It is a
+ * warning and nothing else: no write is blocked, because the operator may well mean it.
  */
 export const ASSIGNED_BYTES_WARN = 8 * 1024;
 
