@@ -182,9 +182,13 @@ test('a broken row gets its own badge rather than a source it does not have', ()
 });
 
 // The threshold exists to catch a bloated block, not to nag about a normal one: assigning
-// both of Kermanych's own defaults must stay under it, or the warning is noise from day one.
-test('the byte warning clears both Kermanych defaults assigned at once', () => {
-  const total = DEFAULT_SKILLS.reduce((sum, d) => sum + new TextEncoder().encode(d.body).length, 0);
-  expect(total).toBeGreaterThan(0);
+// both harness skills — the ones describing Kermanych's own session and PR delivery — must
+// stay under it, or the warning is noise from day one. The whole default library is not the
+// measure: no agent is meant to carry every default at once.
+const HARNESS_SKILLS = ['kermanych-session', 'kermanych-pull-request'];
+test('the byte warning clears both harness skills assigned at once', () => {
+  const harness = DEFAULT_SKILLS.filter((d) => HARNESS_SKILLS.includes(d.name));
+  expect(harness.map((d) => d.name).sort()).toEqual([...HARNESS_SKILLS].sort());
+  const total = harness.reduce((sum, d) => sum + new TextEncoder().encode(d.body).length, 0);
   expect(total).toBeLessThan(ASSIGNED_BYTES_WARN);
 });
