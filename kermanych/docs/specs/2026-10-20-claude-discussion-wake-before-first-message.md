@@ -69,11 +69,15 @@ children get their tool restriction back, and they wake in the parent's director
 
 ## Changes
 
+- `apps/api/src/supervisor/chat-tools.ts`: `launchToolsFor(kind)` — the per-kind launch tool
+  restriction (chat/review → `CHAT_TOOLS`, discussion → `noTools`, agent → none); used by
+  `createChat`, `branchSession`, `reviewSession` and `doResume`.
 - `apps/api/src/supervisor/supervisor.service.ts`
-  - per-kind launch tool restriction helper; used in `branchSession`, `reviewSession`,
+  - `assertTurnEnded(parentId, action)`: the mid-turn guard, shared by `branchSession` and
     `doResume`.
   - `doResume`: parent lookup for `discussion`/`review` → wake `dir`; claude discussion with
-    no own id → parent-mid-turn guard, `fork: parent.ompSessionId`, rehydrate.
+    no own id → mid-turn guard (before any spawn or overlay write), `fork: parent.ompSessionId`,
+    rehydrate.
 - `apps/api/test/supervisor.resume.spec.ts`: regression tests (below).
 
 ## Verification
@@ -86,11 +90,17 @@ children get their tool restriction back, and they wake in the parent's director
     `noTools` and the parent's cwd;
   - woken omp discussion → `noTools`; woken review → `read/grep/glob`, parent's cwd;
   - parent worktree retired → project root.
-- `pnpm --filter @kermanych/api typecheck` and the api test suite.
-- Smoke against the real claude SDK (no model call needed): fork a real claude session with
-  `ClaudeCodeRuntime({ fork, noTools: true, cwd: <parent cwd> })`, stop it without a prompt,
-  re-fork the same way, and check `getAllMessages()` returns the parent's history — the
-  wake path end to end. Throwaway script, removed afterwards.
+- `pnpm --filter @kermanych/api typecheck`: clean. api suite: all pass except the two
+  `rpc-session.compact.spec.ts` tests, which fail identically without this change.
+- The first four regression tests fail on the code before this change; the fallback test
+  pins the unchanged root fallback.
+- Smoke against the real claude SDK (0.3.259, no model call): a copy of a real claude session
+  in its own project dir, forked with `ClaudeCodeRuntime({ fork, noTools: true, cwd })` three
+  times in a row (branch, then two wakes) — each `getAllMessages()` returned the parent's 2
+  messages, `getState().sessionId` stayed unset, and no new session file was written (so a
+  re-fork is repeatable, and option B had nothing to persist). The same fork with
+  `cwd` = a different directory returned 0 messages: the wake must use the parent's
+  directory. Throwaway script and session copy removed.
 
 ## Documentation impact
 
