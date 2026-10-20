@@ -19,8 +19,7 @@ import {
   Req,
   ForbiddenException,
 } from "@nestjs/common";
-import { isSlackCloudAiProvider } from "@kermanych/core";
-import { SlackService, type SlackCloudSetup } from "../slack/slack.service";
+import { SlackService } from "../slack/slack.service";
 import { SlackReleaseNotesService } from "../slack/slack-release-notes.service";
 import { isSlackAuthError } from "../slack/slack-client";
 
@@ -95,40 +94,6 @@ export class SlackController {
   async disconnect(@Param("workspaceId") workspaceId: string, @Req() req: Authed) {
     try {
       await this.slack.disconnect(workspaceId, req.user.id);
-      return { ok: true };
-    } catch (err) {
-      rethrow(err);
-    }
-  }
-
-  // ── cloud answers (owner; set_slack_cloud refuses anyone else) ────────────────
-  // The status is read by the UI straight from the cloud (getSlackCloudStatus); only writes
-  // come here, because the bot token they carry lives in this machine's registry.
-
-  @Put("cloud")
-  async setCloud(@Body() b: { workspaceId: string } & Partial<SlackCloudSetup>, @Req() req: Authed) {
-    if (!b?.workspaceId || typeof b.enabled !== "boolean" || !isSlackCloudAiProvider(b.aiProvider) || !b.aiModel?.trim())
-      throw new BadRequestException("workspaceId, enabled, aiProvider (anthropic | openai) and aiModel are required");
-    const setup: SlackCloudSetup = {
-      enabled: b.enabled,
-      aiProvider: b.aiProvider,
-      aiModel: b.aiModel,
-      ...(b.aiBaseUrl ? { aiBaseUrl: b.aiBaseUrl } : {}),
-      ...(b.aiApiKey ? { aiApiKey: b.aiApiKey } : {}),
-      ...(b.signingSecret ? { signingSecret: b.signingSecret } : {}),
-    };
-    try {
-      return await this.slack.setCloud(b.workspaceId, setup, req.user.id);
-    } catch (err) {
-      rethrow(err);
-    }
-  }
-
-  @Delete("cloud")
-  async deleteCloud(@Query("workspace") workspace: string) {
-    if (!workspace?.trim()) throw new BadRequestException("workspace is required");
-    try {
-      await this.slack.deleteCloud(workspace.trim());
       return { ok: true };
     } catch (err) {
       rethrow(err);

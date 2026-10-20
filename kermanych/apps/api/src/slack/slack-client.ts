@@ -12,7 +12,6 @@
 // the code string — not the status — is what callers branch on (`invalid_auth`,
 // `not_authed`, `channel_not_found`, …).
 import { setTimeout as sleep } from "node:timers/promises";
-import type { SlackRawMessage } from "@kermanych/core";
 
 const API_URL = "https://slack.com/api";
 
@@ -74,6 +73,17 @@ export type SlackUserGrant = {
 };
 
 type UserTokenFields = { id?: string; access_token?: string; refresh_token?: string; expires_in?: number; scope?: string };
+
+// A message as conversations.replies (and the Events API) carry it. Typed loosely on
+// purpose — slack-map.ts is the tolerant boundary that decides what a message means.
+export type SlackRawMessage = {
+  user?: string;
+  bot_id?: string;
+  text?: string;
+  ts: string;
+  thread_ts?: string;
+  subtype?: string;
+};
 
 type Envelope = { ok: boolean; error?: string; response_metadata?: { next_cursor?: string } };
 

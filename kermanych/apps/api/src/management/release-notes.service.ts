@@ -22,7 +22,7 @@ import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { MANAGEMENT_TOOLS } from "./management-chat.service";
 import { CodedError } from "./coded-error";
-import { buildReleaseNotesPrompt, type ReleasePromptSource } from "./release-notes-prompt";
+import { buildReleaseNotesPrompt, MAX_SUBJECT_CHARS, subjectsSize, type ReleasePromptSource } from "./release-notes-prompt";
 
 // The document's title, read from its first `# ` heading — the prompt requires one, but a
 // model that ignored the rule must not sink the whole generation, so the fallback restates
@@ -55,6 +55,18 @@ export class ReleaseNotesService {
     // In order, so the first refusal the operator reads is about the first project they picked.
     const sources: ReleasePromptSource[] = [];
     for (const source of ask.sources) sources.push(await this.resolve(source, ask.rangeFrom, ask.rangeTo));
+
+    // The note names every commit, so every subject goes into the prompt. A period whose
+    // subjects alone overflow the ceiling is refused before the spawn, with the count, rather
+    // than written up as a note that has to leave changes out.
+    if (sources.reduce((n, s) => n + subjectsSize(s.commits), 0) > MAX_SUBJECT_CHARS) {
+      const count = sources.reduce((n, s) => n + s.commits.length, 0);
+      throw new CodedError(
+        "too_many_commits",
+        `комітів за ${ask.rangeFrom} — ${ask.rangeTo}: ${count} — забагато, щоб перелічити кожну зміну в одній нотатці; оберіть коротший період`,
+        { count, from: ask.rangeFrom, to: ask.rangeTo },
+      );
+    }
 
     const prompt = buildReleaseNotesPrompt({
       workspaceName: ask.workspaceName,

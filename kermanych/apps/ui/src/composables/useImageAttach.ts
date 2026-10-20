@@ -10,7 +10,10 @@ export function useImageAttach() {
   const error = ref<string | null>(null);
 
   async function addFiles(files: Iterable<File | Blob>): Promise<void> {
-    for (const file of files) {
+    // Copy before the first await: a picker passes its live `input.files`, and the
+    // caller's synchronous `input.value = ''` empties that FileList mid-loop, so
+    // only the first of several picked images would land.
+    for (const file of [...files]) {
       if (!file.type?.startsWith('image/')) continue;
       try {
         images.value = [...images.value, await fileToImage(file)];

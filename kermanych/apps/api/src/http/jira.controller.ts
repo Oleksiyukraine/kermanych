@@ -346,8 +346,9 @@ export class JiraController {
       const { body, contentType } = await this.jira.downloadAttachment(integrationId, attachmentId, req.user.id);
       res.setHeader("content-type", contentType);
       // Web stream → Node response without buffering: the file passes through, never
-      // touching disk or memory whole. Explicit reader rather than `for await`: the
-      // xterm typings pull in lib.dom, whose ReadableStream isn't async-iterable.
+      // touching disk or memory whole. A reader loop, not `for await`: when any
+      // dependency pulls in the DOM lib, @types/node types the global ReadableStream
+      // as the DOM one, which has no [Symbol.asyncIterator] and fails the build.
       const reader = body.getReader();
       for (let r = await reader.read(); !r.done; r = await reader.read()) res.write(r.value);
       res.end();

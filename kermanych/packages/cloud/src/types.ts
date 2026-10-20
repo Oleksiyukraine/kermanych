@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { AgentLanguage, AgentRuntimeKind, DocsPolicy, DocsReport, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionReport, SessionStatus, SlackCloudAiProvider, ThinkingLevel } from "@kermanych/core";
+import type { AgentLanguage, AgentRuntimeKind, DocsPolicy, DocsReport, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionReport, SessionStatus, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same eleven labels.
@@ -752,36 +752,6 @@ export type SlackIntegrationInsert = {
   channelId: string;
   channelName: string;
   botUserId: string;
-};
-
-// Cloud answers: the same bot answering from the `slack-events` Edge Function, with the AI
-// key the owner stored, while nobody has Kermanych open. What any member may see of
-// workspace_slack_cloud — no secret ever comes back, only the AI key's last four characters
-// (20261016090000_slack_cloud_answers.sql).
-export type SlackCloudStatus = {
-  workspaceId: string;
-  enabled: boolean;
-  aiProvider: SlackCloudAiProvider;
-  aiModel: string;
-  // «openai» only; absent = OpenAI itself.
-  aiBaseUrl?: string;
-  aiKeyHint: string;
-  // The last request Slack signed correctly: proof the app's Request URL points here.
-  eventsSeenAt?: string;
-  updatedAt: string;
-};
-
-// The owner's write. A secret left undefined keeps the stored one; the first write needs
-// all three. `botToken` is copied by the local api from the owner's machine registry.
-export type SlackCloudInput = {
-  workspaceId: string;
-  enabled: boolean;
-  aiProvider: SlackCloudAiProvider;
-  aiModel: string;
-  aiBaseUrl?: string;
-  aiApiKey?: string;
-  signingSecret?: string;
-  botToken?: string;
 };
 
 // ── Release notes → Slack ─────────────────────────────────────────────────────
