@@ -80,6 +80,38 @@ describe("ClaudeCodeRuntime", () => {
     expect(received).toEqual([]); // close() must NOT push a bogus undefined into the prompt stream
     expect(events.some((e) => e.type === "notice" && e.level === "warn")).toBe(false);
   });
+
+  // finish removes the worktree the moment stop() resolves; a CLI still alive in it can write
+  // the tree back, and the next reopen then fails on an existing path.
+  it("stop() resolves only once the CLI has exited, killing one that outlives its closed input", async () => {
+    let closes = 0;
+    const { promise: killed, resolve: kill } = Promise.withResolvers<void>();
+    // A CLI that ignores the end of its input: its stream ends only when close() kills it, and
+    // then with the error the real SDK raises for a torn-down process.
+    const queryFn = () => {
+      const gen = (async function* () {
+        yield { type: "system", subtype: "init" } as unknown as SDKMessage;
+        await killed;
+        throw new Error("Claude Code process terminated by signal SIGKILL");
+      })() as AsyncGenerator<SDKMessage, void> & Record<string, unknown>;
+      gen.interrupt = async () => undefined;
+      gen.close = () => { closes++; kill(); };
+      return gen;
+    };
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0 }, queryFn as never);
+    const events: RpcEvent[] = [];
+    const exits: { code: number | null; reason: string }[] = [];
+    rt.onEvent((e) => events.push(e));
+    rt.onExit((code, reason) => exits.push({ code, reason }));
+    await rt.start();
+
+    await rt.stop();
+
+    expect(closes).toBe(1);
+    expect(exits).toHaveLength(1); // the exit already happened when stop() returned
+    expect(exits[0].code).toBe(0); // asked for, not a crash
+    expect(events.some((e) => e.type === "notice" && e.level === "warn")).toBe(false);
+  });
 });
 
 // A child that cannot launch at all: query() itself never throws (verified against the real

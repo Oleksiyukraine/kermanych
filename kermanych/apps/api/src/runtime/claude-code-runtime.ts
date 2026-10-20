@@ -56,6 +56,17 @@ export function claudeToolName(name: string): string {
   return CLAUDE_TOOL_NAMES[name] ?? name;
 }
 
+// Whether `p` settles within `ms` — a bounded wait that never rejects.
+async function settlesWithin(p: Promise<unknown>, ms: number): Promise<boolean> {
+  const { promise: timeout, resolve } = Promise.withResolvers<false>();
+  const timer = setTimeout(resolve, ms, false);
+  try {
+    return await Promise.race([p.then(() => true, () => true), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class ClaudeCodeRuntime implements AgentRuntime {
   readonly droppedFrames = 0;
   private input = new InputQueue();
@@ -64,6 +75,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private eventCbs: ((e: RpcEvent) => void)[] = [];
   private exitCbs: ((code: number | null, reason: string) => void)[] = [];
   private alive = false;
+  // Settles once the SDK stream has ended — the CLI has exited and closed its stdout. stop()
+  // waits on it; `stopping` marks that end as asked for, not a death to report.
+  private drained?: Promise<void>;
+  private stopping = false;
   private sessionId?: string;
   private model?: string;
   private thinking: ThinkingLevel;
@@ -100,6 +115,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   // window buys the difference between "created a dead session" and "told the operator why"
   // at a cost no operator can perceive.
   private static readonly START_GRACE_MS = 250;
+  // stop(): how long a CLI whose input was closed gets to exit on its own (the omp backend's
+  // SIGTERM delay), then how long close() — which SIGKILLs the CLI's whole process group,
+  // background shells included — gets before stop() returns regardless.
+  private static readonly STOP_GRACE_MS = 1000;
+  private static readonly STOP_KILL_MS = 3000;
 
   async start(): Promise<void> {
     const effort = toClaudeEffort(this.thinking);
@@ -153,7 +173,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // start() does NOT await `ready`: the streaming query() only emits system/init after the
     // first input turn is consumed, but callers send prompt() only after start() resolves.
     // Awaiting ready here would deadlock. Events (ready included) still flow via onEvent.
-    (async () => {
+    this.drained = (async () => {
       try {
         for await (const msg of q) {
           if (msg.type === "system") {
@@ -167,6 +187,12 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         for (const cb of this.exitCbs) cb(0, "claude query ended");
       } catch (err) {
         this.alive = false;
+        // A stream torn down by stop() (close() past the grace window) is the exit stop() asked
+        // for: no warning on the transcript, no launch to fail.
+        if (this.stopping) {
+          for (const cb of this.exitCbs) cb(0, "claude query closed");
+          return;
+        }
         const reason = (err as Error).message ?? "claude query failed";
         // The notice still fires: a child that dies mid-session (after start() long returned)
         // has no launch to fail, and the transcript row is the only account of it.
@@ -293,9 +319,16 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.subagents.set(id, node);
     this.emit({ type: "subagent_progress", subagentId: id });
   }
-
+  // Resolves once the CLI has exited, as the omp backend's stop() does: callers retire the
+  // worktree right after (finish, delete), and a CLI still shutting down in it — its background
+  // shells not yet reaped — races the removal and can write the tree back. Closing the input
+  // asks for a clean exit; past the grace window close() kills the CLI's process group.
   async stop(): Promise<void> {
+    this.stopping = true;
     try { await this.q?.interrupt().catch(() => {}); } finally { this.input.close(); this.alive = false; }
+    if (!this.drained || (await settlesWithin(this.drained, ClaudeCodeRuntime.STOP_GRACE_MS))) return;
+    this.q?.close();
+    await settlesWithin(this.drained, ClaudeCodeRuntime.STOP_KILL_MS);
   }
 
   // The claude model catalog for GET /models. There is no top-level SDK export for this

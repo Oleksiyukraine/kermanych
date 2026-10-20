@@ -1,7 +1,7 @@
 // apps/api/src/worktree/worktree.service.ts
 import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { addedFileDiff, splitDiff, type SplitDiff } from "./split-diff";
 import { isGitBranchName, type TreeEntry, type FileContent, type ReleaseCommit } from "@kermanych/core";
@@ -142,8 +142,20 @@ export class WorktreeService {
     return r.out.split("\n").map((s) => s.trim()).filter(Boolean);
   }
 
+  // A removed worktree must leave nothing behind: `git worktree remove` drops git's registration
+  // even when it cannot delete every file (something still writing into the tree), and a process
+  // that outlived its session — a dev server, a watcher — recreates directories by absolute path
+  // after the fact. Either leftover makes the next `git worktree add` on this path (reopen) fail
+  // with "already exists". So whatever is still there is deleted outright, and git forgets any
+  // registration whose tree is gone. Never a main checkout: its `.git` is a directory, where a
+  // linked worktree's is a file and a leftover has none. Best effort, like the git call: it never
+  // throws, and a tree that cannot be deleted surfaces as git's own error at the next add.
   async removeWorktree(repoDir: string, wtDir: string): Promise<void> {
+    if (!wtDir) return;
     await git(repoDir, ["worktree", "remove", "--force", wtDir]);
+    const dotGit = await stat(join(wtDir, ".git")).catch(() => undefined);
+    if (!dotGit?.isDirectory()) await rm(wtDir, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
+    await git(repoDir, ["worktree", "prune"]);
   }
 
   async removeBranch(repoDir: string, branch: string): Promise<void> {
