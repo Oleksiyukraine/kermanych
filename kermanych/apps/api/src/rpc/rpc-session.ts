@@ -160,7 +160,11 @@ export class RpcSession implements AgentRuntime {
   }
 
   prompt(message: string, images?: ImageInput[]) { this.write({ id: `req_${++this.seq}`, type: "prompt", message, ...imagesFrame(images) }); }
-  followUp(message: string, images?: ImageInput[]) { this.write({ id: `req_${++this.seq}`, type: "follow_up", message, ...imagesFrame(images) }); }
+  // A follow-up is a `prompt` with `streamingBehavior: "followUp"`: omp starts a turn when the
+  // child is idle and queues the message behind the running turn otherwise. The bare
+  // `follow_up` command only queues — on omp 18.8.4 an idle child never drains that queue, so a
+  // message sent to a settled session sat there unanswered.
+  followUp(message: string, images?: ImageInput[]) { this.write({ id: `req_${++this.seq}`, type: "prompt", message, streamingBehavior: "followUp", ...imagesFrame(images) }); }
   steer(message: string, images?: ImageInput[]) { this.write({ id: `req_${++this.seq}`, type: "steer", message, ...imagesFrame(images) }); }
   answerUi(res: RpcExtensionUIResponse) { this.write(res); }
 
