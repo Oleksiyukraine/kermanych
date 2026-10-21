@@ -81,6 +81,10 @@ export type Session = {
   parentSessionId?: string;
   ompSessionId?: string; ompSessionFile?: string;
   status: SessionStatus; currentTool?: string; error?: string;
+  // The localizable cause of `error`, when the runtime recognised it — chiefly
+  // `claude_not_authenticated` / `omp_not_authenticated`, which the UI shows as «Login
+  // required». Live-only like `error`: cleared when the child respawns, absent after a restart.
+  errorCode?: NoticeCode;
   // Durable "this session's branch already has an open pull request". Set once a PR URL
   // surfaces in a «Створити ПР» run and never cleared while the session lives. Distinct from
   // `status: in_review`, which is transient — a follow-up turn drives the card through

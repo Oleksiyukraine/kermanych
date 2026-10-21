@@ -35,8 +35,9 @@ board, transcripts, worktrees, the RPC bridge — is shared.
   ~200 MB) that `pnpm install` fetches. What must come from your machine is the
   **authentication**: the same credentials `claude /login` writes. A signed-out
   machine, or one where that 200 MB package did not install, cannot start
-  `claude-code` sessions — the app now names which of the two it is, both when you
-  pick the backend and when a session fails to launch.
+  `claude-code` sessions — the app names which of the two it is when you pick
+  the backend, when a session fails to launch, and when a running session's
+  turn is refused (see «Signed out» below).
 - **pnpm** (the repo pins its version via `packageManager` in
   `package.json`).
 
@@ -50,11 +51,14 @@ created with, and resuming or branching a session never switches its backend.
 
 Picking a backend runs a preflight against it — `GET /account/runtime/check?runtime=<kind>`
 — so an unusable one is named where the choice is made rather than surfacing later
-as a session that never answers. It asks the backend for its model catalog, which
-only succeeds if that backend is both installed and signed in, and reports either
-`{ ok: true }` or `{ ok: false, code }` where `code` names the fix (signed out vs
-binary missing). The check never blocks the choice: you may be about to run
-`claude /login`.
+as a session that never answers. For `claude-code` it asks the SDK for the signed-in
+account (a signed-out claude still lists every model, so the catalog proves nothing);
+only a first-party setup with no OAuth login and no `ANTHROPIC_API_KEY` counts as signed
+out, so Bedrock/Vertex/gateway setups are never flagged. For `omp` it asks for the model
+catalog, which omp fills only from providers it holds credentials for, so an empty one
+means signed out. It reports either `{ ok: true }` or `{ ok: false, code }` where `code`
+names the fix (signed out vs binary missing). The check never blocks the choice: you may
+be about to run `claude /login`.
 
 If sessions on a backend refuse to start, that same code is what the error names.
 To see the raw reason directly, the api logs it at `warn` — including the one line
@@ -72,6 +76,25 @@ SDK loads `~/.claude/settings.json` and the project's `.claude/settings*.json`, 
 `claude` you start yourself. Limits on what claude runs (process priority, parallel subagents,
 background commands, MCP servers) are set there, not in Kermanych:
 [`docs/claude-resource-limits.md`](./docs/claude-resource-limits.md).
+
+#### Signed out
+
+A signed-out provider CLI does not always stop a session from launching: claude starts
+fine and refuses only the first turn (`Not logged in · Please run /login`). Kermanych
+shows it in two places:
+
+- **The session.** Its status reads «login required» instead of «error» or
+  «Launching…», and the panel's banner names the command (`claude /login` or
+  `omp login`). The child is stopped. Log in in a terminal and send the message
+  again: the next send respawns the session on the new credentials. A chat or a
+  session in review that is signed out mid-conversation gets the same state.
+- **The top bar.** An «AI login required» pill appears beside the settings gear while
+  the backend you chose is signed out. Its tooltip names the command. The app runs the
+  preflight again every 5 minutes while the window is visible, when the window regains
+  focus, and when you click the pill, so it clears on its own once you have logged in.
+
+Native sessions (the harness's own TUI) show the CLI's login screen in their terminal.
+They get only the top-bar pill. codex is not checked.
 
 ### Agent communication language
 

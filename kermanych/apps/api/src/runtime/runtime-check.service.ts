@@ -4,9 +4,14 @@
 // The operator picks a backend in onboarding or profile settings, and until now nothing
 // verified the choice. A machine whose claude is signed out (or whose platform binary never
 // installed) accepted the preference happily and then produced sessions that could not answer.
-// This asks the backend a question it can only answer if it is installed AND authenticated —
-// its model catalog — and reports the cause in the same vocabulary a failed launch uses, so the
-// UI has one set of messages for "you cannot start" and "you just stopped".
+// This asks the backend a question it can only answer if it is installed AND authenticated,
+// and reports the cause in the same vocabulary a failed launch uses, so the UI has one set of
+// messages for "you cannot start" and "you just stopped". The UI also polls it to keep the
+// top bar's «AI login required» pill current.
+//
+// claude: the account itself (accountInfo), because a signed-out claude still lists every
+// model. omp: its model catalog, which lists only providers it holds credentials for, so an
+// empty one IS a signed-out omp.
 //
 // Deliberately NOT ModelsService.list(): that never rejects (it degrades to `[]` so a picker
 // always renders), which is exactly the swallowing this check exists to undo.
@@ -15,7 +20,7 @@ import type { AgentRuntimeKind, ModelOption } from "@kermanych/core";
 import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeCodeRuntime } from "./claude-code-runtime";
 import { mapOmpModels } from "../models/omp-models";
-import { authFailureCode } from "./auth-failure";
+import { AuthFailure, authFailureCode } from "./auth-failure";
 
 // A probe spawns a child and asks it one question. The real failures answer in milliseconds;
 // this bound is for a wedged child, so the operator gets a verdict rather than a spinner.
@@ -28,8 +33,12 @@ export class RuntimeCheckService {
   private readonly log = new Logger(RuntimeCheckService.name);
 
   // Seams, so the tests never spawn a real child. Each must REJECT on failure — the rejection
-  // carries the cause this service classifies.
-  claudeProbe: () => Promise<ModelInfo[]> = () => ClaudeCodeRuntime.supportedModels();
+  // carries the cause this service classifies: an AuthFailure's code, or its message.
+  claudeProbe: () => Promise<ModelInfo[]> = async () => {
+    const { signedIn, models } = await ClaudeCodeRuntime.probe();
+    if (!signedIn) throw new AuthFailure("claude_not_authenticated", "Claude Code has no signed-in account");
+    return models;
+  };
   ompProbe: () => Promise<ModelOption[]> = async () => mapOmpModels(await readOmpCatalog());
   probeTimeoutMs = PROBE_TIMEOUT_MS;
 
@@ -40,14 +49,16 @@ export class RuntimeCheckService {
       const probe: Promise<readonly unknown[]> =
         runtime === "claude-code" ? this.claudeProbe() : this.ompProbe();
       const models = await this.withTimeout(probe);
-      // An answer listing nothing is its own failure: the backend runs but holds no provider
-      // credentials, so a session launched on it would have no model to run.
-      if (models.length === 0) return { ok: false, reason: `${runtime} listed no models` };
+      // An empty list is its own failure. For omp it means no provider credentials at all —
+      // signed out. For claude (which lists models signed out too) the cause is unknown.
+      if (models.length === 0) {
+        return runtime === "omp" ? { ok: false, code: "omp_not_authenticated" } : { ok: false, reason: `${runtime} listed no models` };
+      }
       return { ok: true };
     } catch (err) {
       const reason = (err as Error).message ?? `${runtime} did not answer`;
       this.log.warn(`runtime check failed for ${runtime}: ${reason}`);
-      const code = authFailureCode(reason);
+      const code = err instanceof AuthFailure ? err.code : authFailureCode(reason);
       // A classified cause travels as a code the UI localizes; anything else keeps its raw
       // prose, because a wrong instruction is worse than an unfamiliar sentence.
       return code ? { ok: false, code } : { ok: false, reason };

@@ -5,7 +5,7 @@ import type { AgentRuntime, RpcStateData, RuntimeLaunchOpts } from "./agent-runt
 import { initClaudeMapState, mapSdkMessage, type ClaudeMapState } from "./claude-event-map";
 import { toClaudeEffort, toClaudeThinking, fromClaudeEffort } from "./effort-map";
 import { claudeHistoryToOmp } from "./claude-history";
-import { authFailureCode } from "./auth-failure";
+import { AuthFailure, authFailureCode, type AuthFailureCode } from "./auth-failure";
 
 type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options?: Options }) => Query;
 type GetSessionMessagesFn = (sessionId: string, options?: GetSessionMessagesOptions) => Promise<SessionMessage[]>;
@@ -67,13 +67,23 @@ async function settlesWithin(p: Promise<unknown>, ms: number): Promise<boolean> 
   }
 }
 
+// The in-turn signature of a signed-out account: the CLI's own synthetic assistant message
+// (`model: "<synthetic>"`, no API call made) flagged `authentication_failed`, whose text is
+// the CLI's instruction, e.g. "Not logged in · Please run /login". Returns that text, or
+// undefined for every other message.
+function signedOutText(msg: SDKMessage): string | undefined {
+  if (msg.type !== "assistant" || msg.error !== "authentication_failed") return undefined;
+  const content = (msg.message?.content ?? []) as Array<{ type?: string; text?: string }>;
+  return content.filter((b) => b.type === "text" && b.text).map((b) => b.text).join(" ").trim() || "authentication failed";
+}
+
 export class ClaudeCodeRuntime implements AgentRuntime {
   readonly droppedFrames = 0;
   private input = new InputQueue();
   private q?: Query;
   private mapState: ClaudeMapState = initClaudeMapState();
   private eventCbs: ((e: RpcEvent) => void)[] = [];
-  private exitCbs: ((code: number | null, reason: string) => void)[] = [];
+  private exitCbs: ((code: number | null, reason: string, cause?: AuthFailureCode) => void)[] = [];
   private alive = false;
   // Settles once the SDK stream has ended — the CLI has exited and closed its stdout. stop()
   // waits on it; `stopping` marks that end as asked for, not a death to report.
@@ -104,7 +114,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   onEvent(cb: (e: RpcEvent) => void): void { this.eventCbs.push(cb); }
-  onExit(cb: (code: number | null, reason: string) => void): void { this.exitCbs.push(cb); }
+  onExit(cb: (code: number | null, reason: string, cause?: AuthFailureCode) => void): void { this.exitCbs.push(cb); }
   isAlive(): boolean { return this.alive; }
 
   private emit(e: RpcEvent): void { for (const cb of this.eventCbs) cb(e); }
@@ -181,6 +191,18 @@ export class ClaudeCodeRuntime implements AgentRuntime {
             if ("model" in msg && typeof msg.model === "string") this.model = msg.model;
             this.ingestSubagentTask(msg);
           }
+          // A signed-out (or revoked) account does not kill the child: it answers the turn with
+          // a synthetic assistant message flagged `authentication_failed` and then idles. The
+          // stream only rejects once the input closes, which a live session never does, so
+          // without this the turn ended empty and the session looked merely quiet. The child is
+          // ended here, before the loop unwinds into the iterator's return(): the next send
+          // respawns it with `resume` and retries on whatever credentials the operator has then.
+          const signedOut = signedOutText(msg);
+          if (signedOut !== undefined) {
+            this.input.close();
+            q.close();
+            throw new AuthFailure("claude_not_authenticated", `Claude Code is not signed in: ${signedOut}`);
+          }
           for (const e of mapSdkMessage(msg, this.mapState)) this.emit(e);
         }
         this.alive = false;
@@ -196,9 +218,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         const reason = (err as Error).message ?? "claude query failed";
         // The notice still fires: a child that dies mid-session (after start() long returned)
         // has no launch to fail, and the transcript row is the only account of it.
-        const code = authFailureCode(reason);
+        const code = err instanceof AuthFailure ? err.code : authFailureCode(reason);
         this.emit({ type: "notice", level: "warn", message: reason, ...(code ? { code } : {}) });
-        for (const cb of this.exitCbs) cb(null, reason);
+        for (const cb of this.exitCbs) cb(null, reason, code);
         onDeath(this.launchError(reason, code));
       }
     })();
@@ -336,10 +358,28 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   // the control channel — this does NOT consume a prompt turn, so it answers without any
   // input — then tear it down. `queryFn` is injectable so the test can fake the SDK.
   static async supportedModels(queryFn: QueryFn = sdkQuery): Promise<ModelInfo[]> {
+    return ClaudeCodeRuntime.control(queryFn, (q) => q.supportedModels());
+  }
+
+  // The preflight's question, on one throwaway child: is an account signed in, and which
+  // models does it offer. The catalog alone cannot tell — a signed-out child lists every model
+  // (measured) — while accountInfo() names no token for it: `tokenSource: "none"` with no
+  // `apiKeySource`. Only the first-party API needs that login; Bedrock, Vertex and gateway
+  // setups authenticate outside Claude Code, so they always count as signed in here.
+  static async probe(queryFn: QueryFn = sdkQuery): Promise<{ signedIn: boolean; models: ModelInfo[] }> {
+    return ClaudeCodeRuntime.control(queryFn, async (q) => {
+      const account = await q.accountInfo();
+      const firstParty = (account.apiProvider ?? "firstParty") === "firstParty";
+      const signedIn = !firstParty || account.tokenSource !== "none" || Boolean(account.apiKeySource);
+      return { signedIn, models: await q.supportedModels() };
+    });
+  }
+
+  private static async control<T>(queryFn: QueryFn, ask: (q: Query) => Promise<T>): Promise<T> {
     const input = new InputQueue();
     const q = queryFn({ prompt: input, options: { includePartialMessages: false } });
     try {
-      return await q.supportedModels();
+      return await ask(q);
     } finally {
       input.close();
       await q.interrupt?.().catch(() => {});

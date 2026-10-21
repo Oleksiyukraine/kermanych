@@ -1149,6 +1149,7 @@ import KBrowserPane from 'components/kit/KBrowserPane.vue';
 import { useSessionBrowser } from 'stores/browser';
 import { composePicksMessage, picksImages } from '../lib/browser-picks';
 import { historyLoadFor } from '../lib/open-session-history';
+import { needsSignIn } from '../lib/session-auth';
 
 // The Агенти screen (design-system section 07): the board of session cards for whatever is
 // in scope — one project, or every project of a workspace — plus the full panel for the
@@ -2086,7 +2087,7 @@ function statusWord(s: Session): string {
     case 'in_review':
       return t('agents.statusWord.review');
     case 'error':
-      return t('agents.statusWord.error');
+      return needsSignIn(s.errorCode) ? t('agents.statusWord.signIn') : t('agents.statusWord.error');
     case 'queued':
       return t('agents.statusWord.queued');
     case 'stopped':

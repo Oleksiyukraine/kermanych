@@ -133,10 +133,11 @@
         </div>
       </div>
 
-      <!-- error banner — the omp child exited before finishing; surface the reason -->
+      <!-- error banner — the omp child exited before finishing; surface the reason. A child
+           that died of a signed-out provider names the login command instead of its raw text. -->
       <div v-if="session.status === 'error'" class="k-panel__error" role="alert">
-        <div class="k-panel__error-head mono">{{ t('kit.panel.error') }}</div>
-        <div class="k-panel__error-msg">{{ session.error || t('kit.panel.sessionErrored') }}</div>
+        <div class="k-panel__error-head mono">{{ signIn ? t('kit.panel.signInHead') : t('kit.panel.error') }}</div>
+        <div class="k-panel__error-msg">{{ signIn ? t(`notices.${session.errorCode}`) : session.error || t('kit.panel.sessionErrored') }}</div>
       </div>
 
       <!-- live activity — a pinned, pulsing heartbeat so a long turn (thinking or a
@@ -217,6 +218,7 @@ import KStatusRow from './KStatusRow.vue';
 import KIconButton from './KIconButton.vue';
 import { useNow } from '../../composables/useNow';
 import { followAfterScroll } from '../../lib/log-follow';
+import { needsSignIn } from '../../lib/session-auth';
 
 const { t } = useI18n();
 
@@ -472,6 +474,7 @@ const running = computed(
 // active — a running agent lights the top strip; matches KStatusDot's running kind.
 const isActive = computed(() => running.value);
 const isMerged = computed(() => props.session.status === 'merged');
+const signIn = computed(() => props.session.status === 'error' && needsSignIn(props.session.errorCode));
 
 const statusLabel = computed(() => {
   switch (props.session.status) {
@@ -486,7 +489,7 @@ const statusLabel = computed(() => {
     case 'in_review':
       return t('kit.panel.status.review');
     case 'error':
-      return t('kit.panel.status.error');
+      return signIn.value ? t('kit.panel.status.signIn') : t('kit.panel.status.error');
     case 'queued':
       return t('kit.panel.status.queued');
     case 'stopped':
