@@ -6,11 +6,18 @@ export type DelaySchedule = (fn: () => void, ms: number) => () => void;
 export interface DelayedTrueOptions {
   /** Returns its own canceller, so no platform timer handle type leaks out of here. */
   schedule?: DelaySchedule;
+  /**
+   * Once the flag has turned true it stays true at least this long, even if `source` clears
+   * sooner — a skeleton or bar that appeared must not vanish after one frame. Default 0.
+   */
+  minMs?: number;
+  /** Clock for `minMs`; tests pass their own. */
+  now?: () => number;
 }
 
 /**
  * A flag that turns TRUE only once `source` has stayed true for `delayMs`, and FALSE the
- * moment `source` stops.
+ * moment `source` stops (or, with `minMs`, once it has also been visible for `minMs`).
  *
  * For status a user is meant to READ. A line that appears for 200 ms and vanishes is worse
  * than no line at all: it registers as «щось блимнуло», cannot be read, and cannot be acted
@@ -32,10 +39,13 @@ export function useDelayedTrue(
       const id = setTimeout(fn, ms);
       return () => clearTimeout(id);
     },
+    minMs = 0,
+    now = Date.now,
   } = options;
 
   const flag = ref(false);
   let cancelTimer: (() => void) | undefined;
+  let shownAt = 0;
 
   function stopTimer(): void {
     cancelTimer?.();
@@ -46,14 +56,25 @@ export function useDelayedTrue(
     source,
     (on) => {
       stopTimer();
-      if (!on) {
+      if (on) {
+        // Back on while still held visible: stay up, no second delay.
+        if (flag.value) return;
+        cancelTimer = schedule(() => {
+          cancelTimer = undefined;
+          shownAt = now();
+          flag.value = true;
+        }, delayMs);
+        return;
+      }
+      const left = flag.value ? minMs - (now() - shownAt) : 0;
+      if (left <= 0) {
         flag.value = false;
         return;
       }
       cancelTimer = schedule(() => {
         cancelTimer = undefined;
-        flag.value = true;
-      }, delayMs);
+        flag.value = false;
+      }, left);
     },
     { immediate: true, flush: 'sync' },
   );

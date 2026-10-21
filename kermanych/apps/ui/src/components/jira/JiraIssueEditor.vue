@@ -1,11 +1,14 @@
 <template>
-  <KModal :model-value="modelValue" :title="title" width="560px" @update:model-value="emit('update:modelValue', $event)">
+  <KModal :model-value="modelValue" :title="title" width="560px" :persistent="busy" @update:model-value="onToggle">
     <div class="jie">
       <KField v-model="summary" :label="t('jira.issueEditor.summaryLabel')" :placeholder="t('jira.issueEditor.summaryPlaceholder')" />
-      <KField v-model="description" :label="t('jira.issueEditor.descLabel')" multiline :rows="5" :placeholder="t('jira.issueEditor.descPlaceholder')" />
+      <!-- Until the ticket's markdown arrives the body is a placeholder, not an empty field:
+           text typed into it would be overwritten by the load, or saved over Jira's body. -->
+      <KSkeleton v-if="phase === 'skeleton'" variant="block" height="118px" />
+      <KField v-else v-model="description" :label="t('jira.issueEditor.descLabel')" multiline :rows="5" :placeholder="t('jira.issueEditor.descPlaceholder')" :disabled="!loaded" />
       <div class="jie__row">
-        <KSelect v-model="typePick" :label="t('jira.issueEditor.typeLabel')" :options="typeOptions" placeholder="—" :disabled="!!editKey" />
-        <KSelect v-model="priorityPick" :label="t('jira.issueEditor.priorityLabel')" :options="priorityOptions" placeholder="—" />
+        <KSelect v-model="typePick" :label="t('jira.issueEditor.typeLabel')" :options="typeOptions" placeholder="—" :disabled="!!editKey" :loading="loading" />
+        <KSelect v-model="priorityPick" :label="t('jira.issueEditor.priorityLabel')" :options="priorityOptions" placeholder="—" :loading="loading" />
       </div>
       <KSelect
         v-model="assigneePick"
@@ -13,6 +16,7 @@
         :options="assigneeOptions"
         :placeholder="t('jira.issueEditor.assigneePlaceholder')"
         searchable
+        :loading="loading"
       />
       <div class="jie__row">
         <!-- The start field exists only where the site does: see startDateSupported. -->
@@ -24,8 +28,8 @@
       <p v-if="error" class="jie__error mono">{{ error }}</p>
     </div>
     <template #controls>
-      <KBtn variant="ghost" @click="emit('update:modelValue', false)">{{ t('jira.issueEditor.cancel') }}</KBtn>
-      <KBtn variant="primary" :disabled="!summary.trim() || busy" @click="save">
+      <KBtn variant="ghost" :disabled="busy" @click="emit('update:modelValue', false)">{{ t('jira.issueEditor.cancel') }}</KBtn>
+      <KBtn variant="primary" :disabled="!loaded || !summary.trim()" :loading="busy" @click="save">
         {{ busy ? t('jira.issueEditor.saving') : editKey ? t('jira.issueEditor.save') : t('jira.issueEditor.create') }}
       </KBtn>
     </template>
@@ -46,8 +50,11 @@ import type { JiraIssue } from '@kermanych/cloud';
 import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import { api, type JiraAssignableUser, type JiraEditorOptions, type JiraIssueDraftWire } from '../../lib/api';
+import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
@@ -73,8 +80,15 @@ const assigneePick = ref('');
 const labelsInput = ref('');
 const startDate = ref('');
 const dueDate = ref('');
-const busy = ref(false);
 const error = ref('');
+// The editor options (types, priorities, assignees) and the description have answered for
+// THIS open. Save waits on it: before, a save sent a blank description over Jira's body or
+// a create without `issueTypeId`. A failed load keeps Save off; the error says why.
+const loaded = ref(false);
+// The read for this open is still running (false after a failure too).
+const loading = ref(false);
+let openRun = 0;
+const phase = useLoadPhase(() => props.modelValue && loading.value);
 
 // The worklog half is inert here — this editor writes issue fields, never time entries —
 // but the shape is one contract, so the placeholder states «no identity, no permissions».
@@ -118,7 +132,10 @@ watch(
   () => props.modelValue,
   async (open) => {
     if (!open) return;
+    const mine = ++openRun;
     error.value = '';
+    loaded.value = false;
+    loading.value = true;
     const issue = props.issue;
     summary.value = issue?.summary ?? '';
     // Edit starts from MARKDOWN read out of the ticket's own ADF (not the mirror's rendered
@@ -138,6 +155,7 @@ watch(
         api.jiraAssignableUsers(props.integrationId, ''),
         issue ? api.jiraIssueDescription(props.integrationId, issue.key) : Promise.resolve({ markdown: '' }),
       ]);
+      if (mine !== openRun) return;
       options.value = opts;
       assignable.value = users;
       description.value = desc.markdown;
@@ -147,20 +165,26 @@ watch(
       } else {
         typePick.value = typeOptions.value[0]?.value ?? '';
       }
+      loaded.value = true;
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e);
+      if (mine !== openRun) return;
+      error.value = errorText(e);
+    } finally {
+      if (mine === openRun) loading.value = false;
     }
   },
 );
 
-async function save(): Promise<void> {
-  busy.value = true;
-  error.value = '';
-  const labels = labelsInput.value
-    .split(',')
-    .map((l) => l.trim())
-    .filter(Boolean);
-  try {
+// Short op: the modal stays open (persistent, Cancel blocked) until Jira answers; a refusal
+// is shown inside it.
+const { run: save, busy } = useAsyncAction(
+  async () => {
+    if (!loaded.value || !summary.value.trim()) return;
+    error.value = '';
+    const labels = labelsInput.value
+      .split(',')
+      .map((l) => l.trim())
+      .filter(Boolean);
     // On CREATE a date left blank is simply not sent: a project whose create screen has no
     // due date refuses `duedate: null`, and «не заповнив» was never «очисти».
     // On EDIT a cleared input IS the instruction to clear the date in Jira.
@@ -183,11 +207,13 @@ async function save(): Promise<void> {
       : await api.jiraCreateIssue(props.integrationId, draft);
     emit('update:modelValue', false);
     emit('saved', saved);
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
-  }
+  },
+  { onError: (e) => (error.value = errorText(e)) },
+);
+
+function onToggle(open: boolean): void {
+  if (!open && busy.value) return;
+  emit('update:modelValue', open);
 }
 </script>
 

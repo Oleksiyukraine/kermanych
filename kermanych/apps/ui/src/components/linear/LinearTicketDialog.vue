@@ -41,8 +41,9 @@
 
         <!-- Attachments are read-only links in Linear (no upload): each opens its url in a
              new tab. -->
-        <div v-if="kids?.attachments.length" class="ltd__section">
+        <div v-if="kids?.attachments.length || kidsPhase === 'skeleton'" class="ltd__section">
           <h4 class="ltd__section-title">{{ t('linear.ticketDialog.attachments') }}</h4>
+          <KSkeleton v-if="kidsPhase === 'skeleton'" variant="lines" :rows="2" />
           <div v-for="a in kids?.attachments ?? []" :key="a.attachmentId" class="ltd__attachment">
             <a class="ltd__attachment-name" :href="a.url" target="_blank" rel="noopener noreferrer">
               {{ a.title || a.url }}
@@ -53,6 +54,7 @@
 
         <div class="ltd__section">
           <h4 class="ltd__section-title">{{ t('linear.ticketDialog.comments') }}{{ kids?.comments.length ? ` · ${kids.comments.length}` : '' }}</h4>
+          <KSkeleton v-if="kidsPhase === 'skeleton'" variant="rows" :rows="3" />
           <div v-for="c in kids?.comments ?? []" :key="c.commentId" class="ltd__comment">
             <div class="ltd__comment-head">
               <KAvatar :name="c.authorName || '?'" :avatar-url="c.authorAvatar || undefined" :size="18" />
@@ -61,7 +63,7 @@
             </div>
             <div class="ltd__comment-body" v-html="renderMarkdown(c.bodyMd)"></div>
           </div>
-          <p v-if="!kids?.comments.length" class="ltd__empty mono">{{ t('linear.ticketDialog.noComments') }}</p>
+          <p v-if="kidsPhase === 'ready' && !kids?.comments.length" class="ltd__empty mono">{{ t('linear.ticketDialog.noComments') }}</p>
 
           <div v-if="canAct" class="ltd__composer">
             <textarea
@@ -70,7 +72,7 @@
               rows="3"
               :placeholder="t('linear.ticketDialog.commentPlaceholder')"
             ></textarea>
-            <KBtn variant="secondary" :disabled="!commentDraft.trim() || commenting" @click="sendComment">
+            <KBtn variant="secondary" :disabled="!commentDraft.trim()" :loading="commenting" @click="sendComment">
               {{ commenting ? t('linear.ticketDialog.sending') : t('linear.ticketDialog.comment') }}
             </KBtn>
           </div>
@@ -86,18 +88,19 @@
                 class="ltd__status"
                 type="button"
                 :disabled="!canAct || transitionsLoading"
+                :aria-busy="transitionsLoading || undefined"
                 v-tip="canAct ? t('linear.ticketDialog.transitionTip') : readOnlyHint"
                 @click="openTransition"
-              >{{ issue.stateName }}</button>
+              >{{ issue.stateName }}<KSpinner v-if="transitionsLoading" :size="10" class="ltd__spin" /></button>
             </dd>
           </div>
           <div>
             <dt>{{ t('linear.ticketDialog.priority') }}</dt>
             <dd v-if="canAct">
               <KSelect
-                :model-value="priorityCurrent"
+                :model-value="priorityValue"
                 :options="priorityOptions"
-                :disabled="savingField === 'priority'"
+                :loading="priorityPending"
                 @update:model-value="pickPriority"
               />
             </dd>
@@ -117,7 +120,8 @@
                 @keydown.enter.prevent="blurTarget($event)"
                 @blur="saveEstimate"
               />
-              <span v-else>{{ issue.estimate > 0 ? issue.estimate : '—' }}</span>
+              <KSpinner v-if="savingField === 'estimate'" :size="10" class="ltd__spin" />
+              <span v-else-if="!canAct">{{ issue.estimate > 0 ? issue.estimate : '—' }}</span>
             </dd>
           </div>
           <!-- Start date is read-only: Linear derives it from when the issue first entered a
@@ -139,16 +143,17 @@
                 v-tip="overdue ? t('linear.ticketDialog.dueTipOverdue') : t('linear.ticketDialog.dueTip')"
                 @change="saveDueDate"
               />
-              <span v-else :class="{ 'ltd__date--overdue': overdue }">{{ issue.dueDate || '—' }}</span>
+              <KSpinner v-if="savingField === 'dueDate'" :size="10" class="ltd__spin" />
+              <span v-else-if="!canAct" :class="{ 'ltd__date--overdue': overdue }">{{ issue.dueDate || '—' }}</span>
             </dd>
           </div>
           <div>
             <dt>{{ t('linear.ticketDialog.assignee') }}</dt>
-            <dd v-if="canAct && assigneeOptions.length > 1">
+            <dd v-if="canAct && (assigneeOptions.length > 1 || assignableLoading)">
               <KSelect
-                :model-value="assigneeCurrent"
+                :model-value="assigneeValue"
                 :options="assigneeOptions"
-                :disabled="savingField === 'assignee'"
+                :loading="assigneePending || assignableLoading"
                 :placeholder="t('linear.ticketDialog.unassigned')"
                 searchable
                 @update:model-value="pickAssignee"
@@ -185,8 +190,8 @@
           <template v-else>
             <p class="ltd__confirm">{{ t('linear.ticketDialog.deleteConfirm', { key: issue.key }) }}</p>
             <div class="ltd__confirm-row">
-              <KBtn variant="ghost" @click="confirmingDelete = false">{{ t('linear.ticketDialog.no') }}</KBtn>
-              <KBtn variant="secondary" :disabled="deleting" @click="doDelete">{{ deleting ? '…' : t('linear.ticketDialog.yesDelete') }}</KBtn>
+              <KBtn variant="ghost" :disabled="deleting" @click="confirmingDelete = false">{{ t('linear.ticketDialog.no') }}</KBtn>
+              <KBtn variant="secondary" :loading="deleting" @click="doDelete">{{ t('linear.ticketDialog.yesDelete') }}</KBtn>
             </div>
           </template>
         </div>
@@ -217,10 +222,15 @@ import KBtn from 'components/kit/KBtn.vue';
 import KModal from 'components/kit/KModal.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
 import LinearStatusPickDialog from './LinearStatusPickDialog.vue';
 import { api, type LinearAssignableUser, type LinearIssueDraftWire } from '../../lib/api';
 import { renderMarkdown } from '../../lib/markdown';
 import { dateChip, subtasksOf, todayIso, type LinearTransitionView } from '../../lib/linear-view';
+import { useAsyncAction } from '../../composables/useAsyncAction';
+import { useLoadPhase } from '../../composables/useLoadPhase';
+import { useOptimisticValue } from '../../composables/useOptimisticValue';
 import { useLinear } from 'stores/linear';
 import { useOrchestrator } from 'stores/orchestrator';
 
@@ -243,21 +253,26 @@ const local = useOrchestrator();
 // The wide mode: the same ticket at ~90% of the screen, for descriptions that need room.
 const expanded = ref(false);
 const commentDraft = ref('');
-const commenting = ref(false);
-const deleting = ref(false);
 const confirmingDelete = ref(false);
 
 const transitionOpen = ref(false);
 const transitionOptions = ref<LinearTransitionView[]>([]);
-const transitioning = ref(false);
-const transitionsLoading = ref(false);
 
 // ── inline facts editing: priority / assignee / estimate / due date ───────────
 // One-field drafts through PUT /linear/issues — the same endpoint the full editor uses.
 const assignable = ref<LinearAssignableUser[]>([]);
 const estimateDraft = ref('');
 const dueDraft = ref('');
-const savingField = ref<'priority' | 'assignee' | 'estimate' | 'dueDate' | null>(null);
+// The free-text/date fields saved on blur/change; the two selects go through
+// useOptimisticValue instead (they show the pick while it saves).
+const savingField = ref<'estimate' | 'dueDate' | null>(null);
+// The assignee list is being read: the select renders with a spinner instead of appearing
+// later and shifting the facts column.
+const assignableLoading = ref(false);
+// The ticket's children (comments, attachments) are being read for this open and none are
+// cached yet: skeletons, never «Коментарів немає».
+const kidsLoading = ref(false);
+let openRun = 0;
 
 // Linear's fixed 0–4 priority scale from i18n; the value is the number as a string.
 const priorityOptions = computed<KSelectOption[]>(() => [
@@ -277,6 +292,7 @@ const assigneeCurrent = computed(() => props.issue.assigneeId ?? '');
 
 const canAct = computed(() => linear.tokenPresent);
 const kids = computed(() => linear.children[props.issue.issueId]);
+const kidsPhase = useLoadPhase(() => kids.value === undefined && kidsLoading.value);
 const descriptionHtml = computed(() => renderMarkdown(props.issue.descriptionMd));
 const subtasks = computed(() => subtasksOf(linear.issues, props.issue.key));
 
@@ -306,9 +322,13 @@ watch(
     commentDraft.value = '';
     estimateDraft.value = props.issue.estimate > 0 ? String(props.issue.estimate) : '';
     dueDraft.value = props.issue.dueDate;
-    void linear.loadChildren(props.issue.issueId);
+    const mine = ++openRun;
+    kidsLoading.value = true;
+    void linear.loadChildren(props.issue.issueId).finally(() => {
+      if (mine === openRun) kidsLoading.value = false;
+    });
     void linear.refreshIssue(props.workspaceId, props.issue.key);
-    if (canAct.value) void loadAssignable();
+    if (canAct.value) void loadAssignable(mine);
   },
 );
 
@@ -323,18 +343,26 @@ watch(
 );
 
 // Failure degrades to the read-only facts — the assignee select renders only on a loaded list.
-async function loadAssignable(): Promise<void> {
+async function loadAssignable(mine: number): Promise<void> {
+  assignableLoading.value = true;
   try {
-    assignable.value = await api.linearAssignableUsers(props.workspaceId, '');
+    const users = await api.linearAssignableUsers(props.workspaceId, '');
+    if (mine === openRun) assignable.value = users;
   } catch {
     /* keep static facts */
+  } finally {
+    if (mine === openRun) assignableLoading.value = false;
   }
+}
+
+async function writeField(draft: LinearIssueDraftWire): Promise<void> {
+  linear.upsert(await api.linearEditIssue(props.workspaceId, props.issue.key, draft));
 }
 
 async function saveField(field: NonNullable<typeof savingField.value>, draft: LinearIssueDraftWire): Promise<void> {
   savingField.value = field;
   try {
-    linear.upsert(await api.linearEditIssue(props.workspaceId, props.issue.key, draft));
+    await writeField(draft);
   } catch (e) {
     local.notify(e instanceof Error ? e.message : String(e), 'error');
     // A refused write leaves the mirror row as the truth: every draft returns to it.
@@ -345,12 +373,25 @@ async function saveField(field: NonNullable<typeof savingField.value>, draft: Li
   }
 }
 
+// The pick shows at once and holds until the upserted row reports it; a refusal rolls the
+// select back to the mirror's value with a toast.
+const {
+  value: priorityValue,
+  pending: priorityPending,
+  set: setPriority,
+} = useOptimisticValue(() => priorityCurrent.value, (id: string) => writeField({ priority: Number(id) }));
+const {
+  value: assigneeValue,
+  pending: assigneePending,
+  set: setAssignee,
+} = useOptimisticValue(() => assigneeCurrent.value, (id: string) => writeField({ assigneeId: id || null }));
+
 function pickPriority(id: string): void {
-  if (id !== priorityCurrent.value) void saveField('priority', { priority: Number(id) });
+  if (id !== priorityCurrent.value) void setPriority(id);
 }
 
 function pickAssignee(id: string): void {
-  if (id !== assigneeCurrent.value) void saveField('assignee', { assigneeId: id || null });
+  if (id !== assigneeCurrent.value) void setAssignee(id);
 }
 
 async function saveEstimate(): Promise<void> {
@@ -371,59 +412,33 @@ function blurTarget(e: Event): void {
   (e.target as HTMLElement).blur();
 }
 
-async function openTransition(): Promise<void> {
-  if (transitionsLoading.value) return;
-  transitionsLoading.value = true;
-  try {
-    transitionOptions.value = await api.linearTransitions(props.workspaceId, props.issue.key);
-    transitionOpen.value = true;
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    transitionsLoading.value = false;
-  }
-}
+// The status button spins while the transitions are read, then opens the pick.
+const { run: openTransition, busy: transitionsLoading } = useAsyncAction(async () => {
+  transitionOptions.value = await api.linearTransitions(props.workspaceId, props.issue.key);
+  transitionOpen.value = true;
+});
 
-async function applyTransition(tr: LinearTransitionView): Promise<void> {
-  transitioning.value = true;
-  try {
-    const updated = await api.linearTransition(props.workspaceId, props.issue.key, tr.id);
-    linear.upsert(updated);
-    transitionOpen.value = false;
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    transitioning.value = false;
-  }
-}
+const { run: applyTransition, busy: transitioning } = useAsyncAction(async (tr: LinearTransitionView) => {
+  const updated = await api.linearTransition(props.workspaceId, props.issue.key, tr.id);
+  linear.upsert(updated);
+  transitionOpen.value = false;
+});
 
-async function sendComment(): Promise<void> {
-  commenting.value = true;
-  try {
-    const updated = await api.linearComment(props.workspaceId, props.issue.key, commentDraft.value.trim());
-    linear.upsert(updated);
-    commentDraft.value = '';
-    await linear.loadChildren(props.issue.issueId);
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    commenting.value = false;
-  }
-}
+const { run: sendComment, busy: commenting } = useAsyncAction(async () => {
+  const body = commentDraft.value.trim();
+  if (!body) return;
+  const updated = await api.linearComment(props.workspaceId, props.issue.key, body);
+  linear.upsert(updated);
+  commentDraft.value = '';
+  await linear.loadChildren(props.issue.issueId);
+});
 
-async function doDelete(): Promise<void> {
-  deleting.value = true;
-  try {
-    await api.linearDeleteIssue(props.workspaceId, props.issue.key);
-    linear.drop(props.issue.issueId);
-    emit('update:modelValue', false);
-    emit('deleted');
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    deleting.value = false;
-  }
-}
+const { run: doDelete, busy: deleting } = useAsyncAction(async () => {
+  await api.linearDeleteIssue(props.workspaceId, props.issue.key);
+  linear.drop(props.issue.issueId);
+  emit('update:modelValue', false);
+  emit('deleted');
+});
 
 function shortTime(iso: string): string {
   const d = new Date(iso);
@@ -852,5 +867,11 @@ function shortTime(iso: string): string {
 .ltd__confirm-row {
   display: flex;
   gap: var(--k-sp-2);
+}
+
+// The «saving this field» mark beside an inline input / inside the status button.
+.ltd__spin {
+  margin-left: var(--k-sp-2);
+  vertical-align: middle;
 }
 </style>

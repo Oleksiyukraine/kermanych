@@ -31,6 +31,9 @@ import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KTabs from 'components/kit/KTabs.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
+import { useLoadPhase } from '../composables/useLoadPhase';
 
 const props = defineProps<{ workspaceId: string; workspaceName: string }>();
 const { t } = useI18n();
@@ -70,22 +73,36 @@ function select(id: string): void {
 // the operator's own JWT (RLS scopes it), the same way every other cloud read in the ui works.
 const auth = useAuth();
 const indexState = ref<DocIndexState | null>(null);
+// The project whose index state has answered. Until it is the selected one the line is a
+// skeleton, never «not indexed yet»; a reply for a project the operator already left is dropped.
+const indexStateFor = ref('');
+let indexSeq = 0;
 const reindexing = ref(false);
 const reindexMsg = ref<{ level: 'ok' | 'error'; text: string } | null>(null);
 
 async function loadIndexState(id: string): Promise<void> {
-  indexState.value = null;
+  const seq = ++indexSeq;
+  // A re-read of the same project (after a reindex) keeps the line on screen until it is replaced.
+  if (id !== indexStateFor.value) {
+    indexState.value = null;
+    indexStateFor.value = '';
+  }
   reindexMsg.value = null;
   if (!id) return;
+  let state: DocIndexState | null;
   try {
-    indexState.value = await getDocIndexState(auth.client, id);
+    state = await getDocIndexState(auth.client, id);
   } catch {
     // An unreachable cloud reads as "unknown"; the tab shows nothing rather than a false state.
-    indexState.value = null;
+    state = null;
   }
+  if (seq !== indexSeq) return;
+  indexState.value = state;
+  indexStateFor.value = id;
 }
 
 watch(selectedId, (id) => void loadIndexState(id), { immediate: true });
+const indexPhase = useLoadPhase(() => indexStateFor.value !== selectedId.value);
 
 // Manual "reindex everything": the api walks the bound checkout and re-embeds every published
 // doc file. Blocks (with a spinner) so the freshly-built state and any error are visible.
@@ -147,14 +164,25 @@ const previewHtml = computed(() => {
 // After v-html paints, resolve relative images (authed blob → object URL) and wire relative
 // doc links to in-app navigation. Re-run whenever the rendered HTML changes.
 const previewEl = ref<HTMLElement | null>(null);
-watch([previewHtml, previewEl], async () => {
+watch([previewHtml, previewEl], () => {
   const el = previewEl.value;
   if (!el) return;
+  // Each relative image is a skeleton block until its bytes arrive (it has no src before
+  // then). They load side by side, and the links below are wired without waiting for them.
   for (const img of Array.from(el.querySelectorAll<HTMLImageElement>('img[data-doc-path]'))) {
     const folder = img.getAttribute('data-doc-folder')!;
     const path = img.getAttribute('data-doc-path')!;
-    try { img.src = await docs.rawUrl(selectedId.value, folder, path); } catch { continue; /* leave broken */ }
-    markZoomable(img, path, path);
+    img.classList.add('docs__img-loading');
+    const done = (): void => img.classList.remove('docs__img-loading');
+    docs.rawUrl(selectedId.value, folder, path).then(
+      (url) => {
+        img.addEventListener('load', done, { once: true });
+        img.addEventListener('error', done, { once: true });
+        img.src = url;
+        markZoomable(img, path, path);
+      },
+      done, // leave broken
+    );
   }
   for (const img of Array.from(el.querySelectorAll<HTMLImageElement>('img:not([data-doc-path])'))) {
     const src = img.getAttribute('src') ?? '';
@@ -209,10 +237,15 @@ const sourceTab = computed({
   set: (v: string) => { docs.source = v === 'links' ? 'links' : 'repo'; },
 });
 const linksShown = computed(() => showSources.value && docs.source === 'links');
+// The links count appears only once the list has answered: a «0» while it loads is a false empty.
+const linksLoaded = computed(() => docs.linksLoadedFor === props.workspaceId);
 const sourceTabs = computed(() => [
   { value: 'repo', label: t('docsPage.repoTab') },
-  { value: 'links', label: t('docsPage.linksTab'), count: docs.links.length },
+  { value: 'links', label: t('docsPage.linksTab'), ...(linksLoaded.value ? { count: docs.links.length } : {}) },
 ]);
+// The preview pane's link area: a skeleton until the list answers, never «no links yet». A
+// failed load is not «not loaded» — its error is shown in the list column.
+const linksPhase = useLoadPhase(() => !linksLoaded.value && !docs.linksError);
 
 // ── Links ────────────────────────────────────────────────────────────────────
 
@@ -278,7 +311,6 @@ const editorOpen = ref(false);
 const editingId = ref('');
 const urlInput = ref('');
 const titleInput = ref('');
-const saving = ref(false);
 const editorError = ref<string | null>(null);
 const parsedUrl = computed(() => parseDocLinkUrl(urlInput.value));
 watch(urlInput, () => { editorError.value = null; });
@@ -294,7 +326,20 @@ function openEditor(id = ''): void {
   editorOpen.value = true;
 }
 
-async function saveLink(): Promise<void> {
+// One guarded run for the button and Enter in either field (the hidden submit), so a second
+// press while the first save is in flight cannot add the same link twice. The dialog stays
+// open (and persistent) until the cloud accepts the row; a failure is shown inside it.
+const save = useAsyncAction(
+  async (title: string, url: string): Promise<void> => {
+    if (editingId.value) await docs.saveLink(editingId.value, { title, url });
+    else docs.openLink((await docs.addLink(props.workspaceId, title, url)).id);
+    editorOpen.value = false;
+  },
+  { onError: (e) => { editorError.value = errorText(e); } },
+);
+
+function saveLink(): void {
+  if (save.busy.value) return;
   const url = parsedUrl.value;
   if (!url) {
     editorError.value = t('docsPage.linkUrlInvalid');
@@ -303,27 +348,18 @@ async function saveLink(): Promise<void> {
   // An untitled link is named after its provider (or host) rather than refused: the URL is
   // the part that matters, and «Google Docs» is a fair name until someone gives a better one.
   const title = titleInput.value.trim() || describeDocLink(url).label;
-  saving.value = true;
   editorError.value = null;
-  try {
-    if (editingId.value) await docs.saveLink(editingId.value, { title, url });
-    else docs.openLink((await docs.addLink(props.workspaceId, title, url)).id);
-    editorOpen.value = false;
-  } catch (e) {
-    editorError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    saving.value = false;
-  }
+  void save.run(title, url);
 }
 
-async function removeLink(id: string): Promise<void> {
+// Per link, so the × spins on the link being removed and a second press is ignored; a failure
+// is a toast.
+const remove = useKeyedAction((id: string) => docs.removeLink(id));
+
+function removeLink(id: string): void {
   const link = docs.links.find((l) => l.id === id);
-  if (!link || !window.confirm(t('docsPage.removeConfirm', { title: link.title }))) return;
-  try {
-    await docs.removeLink(id);
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
+  if (!link || remove.busyFor(id) || !window.confirm(t('docsPage.removeConfirm', { title: link.title }))) return;
+  void remove.run(id);
 }
 
 onBeforeUnmount(() => docs.releaseUrls());
@@ -374,7 +410,8 @@ onBeforeUnmount(() => docs.releaseUrls());
 
         <div v-if="selectedId && isBound" class="docs__index">
           <div class="docs__index-head">{{ t('docsPage.indexHeading') }}</div>
-          <p class="docs__index-state">
+          <KSkeleton v-if="indexPhase === 'skeleton'" variant="line" width="80%" />
+          <p v-else-if="indexPhase === 'ready'" class="docs__index-state">
             <template v-if="indexState && indexState.fileCount > 0">
               {{ t('docsPage.indexSummary', { files: indexState.fileCount, when: (indexState.lastIndexedAt || '').slice(0, 10) }) }}
             </template>
@@ -398,7 +435,7 @@ onBeforeUnmount(() => docs.releaseUrls());
           <ul v-else class="docs__nodes">
             <DocTreeNode
               v-for="n in roots"
-              :key="n.folder"
+              :key="selectedId + ':' + n.folder"
               :project-id="selectedId"
               :node="n"
             />
@@ -419,8 +456,8 @@ onBeforeUnmount(() => docs.releaseUrls());
               <span class="docs__link-host">{{ openEntry.view.label === openEntry.view.host ? openEntry.view.host : `${openEntry.view.label} · ${openEntry.view.host}` }}</span>
             </div>
             <a class="docs__open" :href="openEntry.link.url" target="_blank" rel="noopener noreferrer">{{ t('docsPage.openInBrowser') }} ↗</a>
-            <KIconButton :title="t('docsPage.editLink')" @click="openEditor(openEntry.link.id)">✎</KIconButton>
-            <KIconButton :title="t('docsPage.removeLink')" @click="removeLink(openEntry.link.id)">×</KIconButton>
+            <KIconButton :title="t('docsPage.editLink')" :disabled="remove.busyFor(openEntry.link.id)" @click="openEditor(openEntry.link.id)">✎</KIconButton>
+            <KIconButton :title="t('docsPage.removeLink')" :loading="remove.busyFor(openEntry.link.id)" @click="removeLink(openEntry.link.id)">×</KIconButton>
             <KIconButton
               :title="fullPage ? t('docsPage.exitFullPage') : t('docsPage.fullPage')"
               :active="fullPage"
@@ -488,7 +525,9 @@ onBeforeUnmount(() => docs.releaseUrls());
             </button>
           </div>
         </div>
-        <p v-else-if="docs.linksLoading" class="docs__empty">{{ t('docsPage.loading') }}</p>
+        <div v-else-if="linksPhase !== 'ready'" class="docs__links-loading">
+          <KSkeleton v-if="linksPhase === 'skeleton'" variant="card" :rows="3" />
+        </div>
         <div v-else-if="!docs.linksError" class="docs__empty">
           <p>{{ t('docsPage.linksEmpty') }}</p>
           <KBtn variant="primary" @click="openEditor()">{{ t('docsPage.addLink') }}</KBtn>
@@ -525,7 +564,12 @@ onBeforeUnmount(() => docs.releaseUrls());
       </template>
     </section>
 
-    <KModal v-model="editorOpen" :title="editingId ? t('docsPage.editLink') : t('docsPage.addLink')" width="520px">
+    <KModal
+      v-model="editorOpen"
+      :title="editingId ? t('docsPage.editLink') : t('docsPage.addLink')"
+      width="520px"
+      :persistent="save.busy.value"
+    >
       <form class="docs__editor" @submit.prevent="saveLink">
         <KField v-model="urlInput" :label="t('docsPage.linkUrl')" :placeholder="t('docsPage.linkUrlPlaceholder')" />
         <KField v-model="titleInput" :label="t('docsPage.linkTitle')" :placeholder="parsedUrl ? describeDocLink(parsedUrl).label : ''" />
@@ -535,9 +579,9 @@ onBeforeUnmount(() => docs.releaseUrls());
         <button type="submit" hidden />
       </form>
       <template #controls>
-        <KBtn variant="ghost" @click="editorOpen = false">{{ t('docsPage.cancel') }}</KBtn>
-        <KBtn variant="primary" :loading="saving" :disabled="!urlInput.trim()" @click="saveLink">
-          {{ saving ? t('docsPage.saving') : t('docsPage.save') }}
+        <KBtn variant="ghost" :disabled="save.busy.value" @click="editorOpen = false">{{ t('docsPage.cancel') }}</KBtn>
+        <KBtn variant="primary" :loading="save.busy.value" :disabled="!urlInput.trim()" @click="saveLink">
+          {{ save.busy.value ? t('docsPage.saving') : t('docsPage.save') }}
         </KBtn>
       </template>
     </KModal>
@@ -650,4 +694,22 @@ onBeforeUnmount(() => docs.releaseUrls());
 .docs__card-mark { font-size: 28px; font-weight: 800; color: var(--docs-brand); }
 .docs__card-meta { display: flex; align-items: center; gap: 8px; padding: 8px 10px; min-width: 0; }
 .docs__editor { display: flex; flex-direction: column; gap: 12px; }
+.docs__links-loading { padding: var(--k-sp-3); }
+// A relative image of a rendered doc while its bytes load: a KSkeleton-style block (flat
+// `--k-line`, slow pulse) in place of an empty <img>. :deep because the <img> comes from v-html.
+.docs__preview :deep(.docs__img-loading) {
+  display: block;
+  width: min(100%, 320px);
+  height: 160px;
+  background: var(--k-line);
+  color: transparent; // hide the alt text over the block
+  animation: docs-img-pulse 1.2s ease-in-out infinite;
+}
+@keyframes docs-img-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .docs__preview :deep(.docs__img-loading) { animation: none; opacity: 0.75; }
+}
 </style>

@@ -14,8 +14,111 @@
     <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png">
     <link rel="icon" type="image/ico" href="favicon.ico">
+
+    <script>
+      // Before first paint: the stored theme and language (the keys of lib/theme.ts and
+      // lib/locale.ts), so the splash below is drawn in the operator's palette and language.
+      // boot/tokens.ts re-applies the same theme once the app loads.
+      (function () {
+        var theme = 'dark';
+        var locale = 'uk';
+        try {
+          var t = localStorage.getItem('kermanych.theme');
+          if (t === 'light' || t === 'matrix') theme = t;
+          if (localStorage.getItem('kermanych.locale') === 'en') locale = 'en';
+        } catch (e) {
+          /* storage unavailable: the defaults */
+        }
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.lang = locale;
+      })();
+    </script>
+    <style>
+      /* The start-up splash (docs/specs/2026-10-21-async-feedback.md, decision 10). It paints
+         before any app CSS loads, so its colours are a copy of the tokens it needs
+         (--k-canvas, --k-muted, --k-accent, --k-line per theme in @kermanych/tokens). */
+      html { background: #050505; }
+      html[data-theme='light'] { background: #f6f6f7; }
+      html[data-theme='matrix'] { background: #070c08; }
+      #k-splash {
+        --s-canvas: #050505; --s-muted: #8a8a8a; --s-accent: #ff563c; --s-line: rgba(255,255,255,.08);
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        background: var(--s-canvas);
+        color: var(--s-muted);
+        font: 13px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        transition: opacity 200ms ease;
+      }
+      html[data-theme='light'] #k-splash {
+        --s-canvas: #f6f6f7; --s-muted: #63636a; --s-accent: #c8351b; --s-line: rgba(0,0,0,.12);
+      }
+      html[data-theme='matrix'] #k-splash {
+        --s-canvas: #070c08; --s-muted: #9db3a5; --s-accent: #63a079; --s-line: rgba(150,185,160,.10);
+      }
+      /* Faded by App.vue on mount, then removed; a fixed overlay, so nothing below moves. */
+      #k-splash.k-splash--out { opacity: 0; pointer-events: none; }
+      .k-splash__mark { width: 48px; height: 48px; }
+      .k-splash__line { display: flex; align-items: center; gap: 8px; }
+      .k-splash__spinner {
+        width: 12px;
+        height: 12px;
+        box-sizing: border-box;
+        border: 2px solid var(--s-line);
+        border-top-color: var(--s-accent);
+        border-radius: 50%;
+        animation: k-splash-spin 800ms linear infinite;
+      }
+      @keyframes k-splash-spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) {
+        .k-splash__spinner { animation: none; }
+        #k-splash { transition: none; }
+      }
+      /* One status line, two texts: data-status picks the one shown, so boot/backend.ts only
+         flips the attribute and the wording lives here alone. */
+      #k-splash[data-status='backend'] [data-text='auth'],
+      #k-splash[data-status='auth'] [data-text='backend'] { display: none; }
+    </style>
   </head>
   <body>
+    <div id="k-splash" data-status="auth" role="status" aria-live="polite">
+      <svg class="k-splash__mark" viewBox="0 0 1024 1024" aria-hidden="true">
+        <rect width="1024" height="1024" rx="200" fill="#12110f" />
+        <path d="M244 214 L344 214 L642 512 L344 810 L244 810 L244 730 L462 512 L244 294 Z" fill="#ff563c" />
+        <rect x="636" y="726" width="300" height="84" fill="#f3f2f2" />
+      </svg>
+      <div class="k-splash__line">
+        <span class="k-splash__spinner" aria-hidden="true"></span>
+        <span data-text="backend"></span>
+        <span data-text="auth"></span>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var texts = {
+          uk: { backend: 'Запускаю локальний сервіс…', auth: 'Входжу…' },
+          en: { backend: 'Starting the local service…', auth: 'Signing in…' },
+        };
+        var splash = document.getElementById('k-splash');
+        var t = texts[document.documentElement.lang] || texts.uk;
+        splash.querySelector('[data-text="backend"]').textContent = t.backend;
+        splash.querySelector('[data-text="auth"]').textContent = t.auth;
+        // Desktop: main starts the local api alongside this window and reports its progress.
+        // The web build has no local service, so it goes straight to signing in.
+        var k = window.kermanych;
+        if (k && k.backendReady && k.onBootStatus) {
+          splash.dataset.status = 'backend';
+          k.onBootStatus(function (status) {
+            if (status === 'ready') splash.dataset.status = 'auth';
+          });
+        }
+      })();
+    </script>
     <!-- quasar:entry-point -->
   </body>
 </html>

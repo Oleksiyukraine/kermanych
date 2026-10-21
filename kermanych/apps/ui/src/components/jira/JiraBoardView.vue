@@ -27,9 +27,10 @@
       <span v-if="filtering" class="jbv__count mono">{{ t('jira.boardView.searchCount', { n: matched.length, total: jira.issues.length, board: boardName }) }}</span>
       <span v-else class="jbv__count mono">{{ t('jira.boardView.count', { n: jira.issues.length, board: boardName }, jira.issues.length) }}</span>
       <span class="jbv__spacer"></span>
-      <span v-if="!jira.tokenPresent" class="jbv__readonly mono" v-tip="readOnlyHint">{{ t('jira.boardView.readOnly') }}</span>
+      <span v-if="jira.tokenKnown && !jira.tokenPresent" class="jbv__readonly mono" v-tip="readOnlyHint">{{ t('jira.boardView.readOnly') }}</span>
       <KBtn
-        :disabled="!jira.tokenPresent || jira.syncing"
+        :disabled="!jira.tokenPresent"
+        :loading="jira.syncing"
         :title="jira.tokenPresent ? syncHint : readOnlyHint"
         @click="jira.syncNow()"
       >
@@ -49,7 +50,13 @@
       {{ query.trim() ? t('jira.boardView.searchEmpty', { q: query.trim() }) : t('jira.boardView.filterEmpty') }}
     </p>
 
-    <div v-if="jira.columns.length" class="jbv__columns" :style="{ '--cols': jira.columns.length }">
+    <div v-if="phase === 'skeleton'" class="jbv__columns" :style="{ '--cols': 3 }">
+      <div v-for="i in 3" :key="i" class="jbv__column">
+        <KSkeleton variant="card" :rows="3" />
+      </div>
+    </div>
+
+    <div v-else-if="phase === 'ready' && jira.columns.length" class="jbv__columns" :style="{ '--cols': jira.columns.length }">
       <div
         v-for="col in jira.columns"
         :key="col.position"
@@ -66,6 +73,7 @@
             :issue="issue"
             :agent-status="agentStatusOf(issue)"
             :draggable="jira.tokenPresent"
+            :pending="pending.isPending(`issue:${issue.key}`)"
             @click="openIssue(issue)"
             @dragstart="dragged = issue"
           />
@@ -74,7 +82,7 @@
       </div>
     </div>
 
-    <p v-else-if="!jira.loading" class="jbv__error mono">
+    <p v-else-if="phase === 'ready'" class="jbv__error mono">
       {{ t('jira.boardView.emptyBoard') }}
     </p>
 
@@ -139,6 +147,7 @@ import type { Session, SessionStatus } from '@kermanych/core';
 import KBtn from 'components/kit/KBtn.vue';
 import KChipSelect from 'components/kit/KChipSelect.vue';
 import KField from 'components/kit/KField.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import JiraCard from './JiraCard.vue';
 import JiraIssueEditor from './JiraIssueEditor.vue';
@@ -146,6 +155,8 @@ import JiraLaunchDialog from './JiraLaunchDialog.vue';
 import JiraStatusPickDialog from './JiraStatusPickDialog.vue';
 import JiraTicketDialog from './JiraTicketDialog.vue';
 import { api } from '../../lib/api';
+import { useAsyncAction } from '../../composables/useAsyncAction';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import {
   assigneeOptions,
   filterByAssignee,
@@ -158,6 +169,7 @@ import {
 import { useBoard } from 'stores/board';
 import { useJira } from 'stores/jira';
 import { useOrchestrator } from 'stores/orchestrator';
+import { usePending } from 'stores/pending';
 import { useI18n } from 'vue-i18n';
 
 const { t } = useI18n();
@@ -169,6 +181,11 @@ const props = defineProps<{ workspaceId: string }>();
 const jira = useJira();
 const board = useBoard();
 const local = useOrchestrator();
+const pending = usePending();
+
+// Not loaded = no answer for this workspace yet, or a (first / board-switch) load with no
+// columns on screen. A sync of a board already shown keeps the columns.
+const phase = useLoadPhase(() => jira.integration === undefined || (jira.loading && !jira.columns.length));
 
 // The search box filters the cards, never the columns: an empty column under a query
 // still says which column it is, so the board keeps its shape while you type.
@@ -254,25 +271,40 @@ const dropPickOpen = ref(false);
 const dropIssue = ref<JiraIssue | null>(null);
 const dropColumn = ref<JiraColumn | null>(null);
 const dropOptions = ref<JiraTransitionView[]>([]);
-const dropBusy = ref(false);
+
+// The card waits on Jira from the drop until the mirror shows it in another status — the
+// HTTP answer and the realtime echo both land through the store, so the condition is on the
+// store's copy of the issue, not on the call.
+function markMoving(issue: JiraIssue): void {
+  const key = issue.key;
+  const from = issue.statusId;
+  pending.mark(`issue:${key}`, () => {
+    const now = jira.issues.find((i) => i.key === key);
+    return !now || now.statusId !== from;
+  });
+}
 
 async function onDrop(column: JiraColumn): Promise<void> {
   dragOver.value = null;
   const issue = dragged.value;
   dragged.value = null;
   if (!issue || !jira.tokenPresent) return;
+  if (pending.isPending(`issue:${issue.key}`)) return; // a move is already in flight
   if (column.statusIds.includes(issue.statusId)) return; // dropped where it already is
 
+  markMoving(issue);
   let transitions: JiraTransitionView[];
   try {
     transitions = await api.jiraTransitions(integrationId.value, issue.key);
   } catch (e) {
+    pending.clear(`issue:${issue.key}`);
     local.notify(e instanceof Error ? e.message : String(e), 'error');
     return;
   }
 
   const decision = transitionChoiceForDrop(column, transitions);
   if (decision.kind === 'none') {
+    pending.clear(`issue:${issue.key}`);
     local.notify(t('jira.boardView.dropRefused', { key: issue.key, column: column.name }), 'error');
     return;
   }
@@ -280,26 +312,28 @@ async function onDrop(column: JiraColumn): Promise<void> {
     await transitionIssue(issue, decision.transition.id);
     return;
   }
+  // The pick dialog is the feedback while the human chooses; the card waits again on pick.
+  pending.clear(`issue:${issue.key}`);
   dropIssue.value = issue;
   dropColumn.value = column;
   dropOptions.value = decision.options;
   dropPickOpen.value = true;
 }
 
-async function applyDrop(t: JiraTransitionView): Promise<void> {
+const { run: applyDrop, busy: dropBusy } = useAsyncAction(async (t: JiraTransitionView) => {
   const issue = dropIssue.value;
   if (!issue) return;
-  dropBusy.value = true;
+  markMoving(issue);
   await transitionIssue(issue, t.id);
-  dropBusy.value = false;
   dropPickOpen.value = false;
-}
+});
 
 async function transitionIssue(issue: JiraIssue, transitionId: string): Promise<void> {
   try {
     const updated = await api.jiraTransition(integrationId.value, issue.key, transitionId);
     jira.upsert(updated);
   } catch (e) {
+    pending.clear(`issue:${issue.key}`);
     // The stale-mirror case: Jira refused because the ticket moved meanwhile. Refresh the
     // one issue so the board shows where it actually is.
     local.notify(e instanceof Error ? e.message : String(e), 'error');

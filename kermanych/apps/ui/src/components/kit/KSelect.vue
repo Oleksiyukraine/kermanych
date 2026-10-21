@@ -14,7 +14,8 @@
       v-if="searchable"
       ref="shellEl"
       class="k-select__input k-select__shell"
-      :class="{ 'k-select__input--open': open, 'k-select__input--disabled': disabled }"
+      :class="{ 'k-select__input--open': open, 'k-select__input--disabled': off, 'k-select__input--loading': loading }"
+      :aria-busy="loading || undefined"
     >
       <span class="k-select__box">
         <input
@@ -30,7 +31,7 @@
           :aria-expanded="open"
           :aria-controls="listId"
           :aria-activedescendant="activeId"
-          :disabled="disabled"
+          :disabled="off"
           :value="open ? query : closedText"
           :placeholder="triggerLabel"
           @focus="onFieldFocus"
@@ -50,11 +51,12 @@
         class="k-select__toggle"
         tabindex="-1"
         aria-hidden="true"
-        :disabled="disabled"
+        :disabled="off"
         @mousedown.prevent
         @click="toggle"
       >
-        <span class="k-select__caret" aria-hidden="true"></span>
+        <KSpinner v-if="loading" :size="10" class="k-select__spinner" />
+        <span v-else class="k-select__caret" aria-hidden="true"></span>
       </button>
     </div>
 
@@ -64,14 +66,15 @@
       ref="shellEl"
       type="button"
       class="k-select__input"
-      :class="{ 'k-select__input--open': open, 'k-select__input--empty': showsPlaceholder }"
+      :class="{ 'k-select__input--open': open, 'k-select__input--empty': showsPlaceholder, 'k-select__input--loading': loading }"
       role="combobox"
       aria-haspopup="listbox"
       :aria-expanded="open"
       :aria-controls="listId"
       :aria-activedescendant="activeId"
       :aria-labelledby="label ? `${labelId} ${triggerId}` : undefined"
-      :disabled="disabled"
+      :disabled="off"
+      :aria-busy="loading || undefined"
       @click="toggle"
       @keydown="onKeydown"
     >
@@ -88,7 +91,8 @@
           <span v-for="(opt, i) in items" :key="i">{{ opt.label }}</span>
         </span>
       </span>
-      <span class="k-select__caret" aria-hidden="true"></span>
+      <KSpinner v-if="loading" :size="10" class="k-select__spinner" />
+      <span v-else class="k-select__caret" aria-hidden="true"></span>
     </button>
 
     <!-- Under <body>, `position: fixed`: every pane in this app sets `overflow: auto`, and
@@ -148,6 +152,7 @@ let seq = 0;
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { filterByQuery, isAnchorOffscreen, matchByPrefix, placeMenu } from '../../lib/menu';
+import KSpinner from './KSpinner.vue';
 
 const { t } = useI18n();
 
@@ -173,6 +178,9 @@ const props = defineProps<{
   options: readonly string[] | readonly KSelectOption[];
   placeholder?: string;
   disabled?: boolean;
+  // Options still loading, or a save-on-change in flight (useOptimisticValue): the spinner
+  // replaces the caret and the control is disabled until it settles.
+  loading?: boolean | undefined;
   // Turns the trigger into a text field that filters the list as you type. For a picker whose
   // rows are counted in dozens — the model catalog is ~26 entries all named «Claude …» —
   // scrolling is the wrong instrument, and closed-list prefix type-ahead cannot help when
@@ -188,6 +196,9 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: string]; 'update:values': [value: string[]] }>();
+
+// One «not interactive» flag: a disabled control and one that is loading behave the same.
+const off = computed(() => !!props.disabled || !!props.loading);
 
 // Ids have to be unique per instance: `aria-activedescendant` points at a row in a panel
 // that lives under <body>, far from this component's subtree. A counter is enough — Vue
@@ -298,7 +309,7 @@ function toggle(): void {
 }
 
 async function openMenu(): Promise<void> {
-  if (props.disabled || open.value) return;
+  if (off.value || open.value) return;
   // Opening lands on the current value, so ↑/↓ continue from what the control holds. Resolved
   // against `visible`, because a query typed into the closed field opens the list already
   // filtered — and the held value is usually not among the matches.
@@ -412,7 +423,7 @@ function onFieldFocus(e: FocusEvent): void {
 }
 
 function onKeydown(e: KeyboardEvent): void {
-  if (props.disabled) return;
+  if (off.value) return;
 
   if (!open.value) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || (e.key === ' ' && !props.searchable)) {
@@ -518,12 +529,9 @@ function onDocClick(e: MouseEvent): void {
 
 // A control that goes disabled (the board locks the assignee of a running task) or loses its
 // rows must not keep an open list; a list whose rows changed while open must be re-measured.
-watch(
-  () => props.disabled,
-  (off) => {
-    if (off) close();
-  },
-);
+watch(off, (isOff) => {
+  if (isOff) close();
+});
 // Watched by IDENTITY, not by length: `visible` is a new array on every query change, and a
 // filter that keeps the row COUNT can still change the panel's height (one label wraps, the
 // next does not). `filterByQuery` returns the input array unchanged when nothing is typed,
@@ -596,6 +604,17 @@ onBeforeUnmount(close);
     opacity: 0.45;
     cursor: not-allowed;
   }
+
+  // Busy rather than unavailable: readable, with a progress cursor.
+  &.k-select__input--loading {
+    opacity: 0.8;
+    cursor: progress;
+  }
+}
+
+.k-select__spinner {
+  color: var(--k-muted);
+  margin-left: var(--k-sp-2);
 }
 
 // Placeholder and «nothing selected» are muted, as they are in KField: the control's own

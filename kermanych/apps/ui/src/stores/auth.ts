@@ -33,6 +33,10 @@ export const useAuth = defineStore('auth', () => {
   const accessToken = ref<string | null>(null);
   const runtime = ref<AgentRuntimeKind | null>(null);
   const language = ref<AgentLanguage | null>(null);
+  // True while the account's runtime is being read from the cloud after a fresh session.
+  // `runtime === null` alone cannot tell «not chosen» from «not read yet», and the runtime
+  // gate in MainLayout must not pop up for a returning user during that read.
+  const runtimeLoading = ref(false);
 
   let resolveReady: () => void = () => undefined;
   // Resolves once the initial session (if any) has been read and handed to the
@@ -79,6 +83,9 @@ export const useAuth = defineStore('auth', () => {
         }
         if (mine !== applied) return;
       }
+      // Raised before `user` is set, so the gate never sees a signed-in user with an unread
+      // runtime.
+      if (fresh) runtimeLoading.value = true;
       const meta = (session.user.user_metadata ?? {}) as {
         user_name?: string;
         full_name?: string;
@@ -101,6 +108,8 @@ export const useAuth = defineStore('auth', () => {
         runtime.value = await getMyAgentRuntime(client);
       } catch {
         runtime.value = null;
+      } finally {
+        runtimeLoading.value = false;
       }
       // Same best-effort load for the communication language.
       try {
@@ -249,5 +258,5 @@ export const useAuth = defineStore('auth', () => {
     // catalog dimension.
   }
 
-  return { client, user, profile, accessToken, runtime, language, ready, init, signInWithGithub, signOut, chooseRuntime, chooseLanguage };
+  return { client, user, profile, accessToken, runtime, runtimeLoading, language, ready, init, signInWithGithub, signOut, chooseRuntime, chooseLanguage };
 });

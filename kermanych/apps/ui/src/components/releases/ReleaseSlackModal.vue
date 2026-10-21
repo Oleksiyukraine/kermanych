@@ -1,8 +1,24 @@
 <template>
-  <KModal :model-value="modelValue" :title="t('releaseSlack.title')" width="560px" @update:model-value="(v: boolean) => emit('update:modelValue', v)">
+  <KModal
+    :model-value="modelValue"
+    :title="t('releaseSlack.title')"
+    width="560px"
+    :persistent="holdOpen"
+    @update:model-value="(v: boolean) => emit('update:modelValue', v)"
+  >
     <div class="rs">
       <p class="rs__hint">{{ t('releaseSlack.lead') }}</p>
 
+      <!-- Until the setting and this machine's account are read, «канал не задано» and «не
+           підключено» would both be claims: `undefined` (not read) is not `null` (no channel). -->
+      <div v-if="phase !== 'ready'" class="rs__skeleton">
+        <template v-if="phase === 'skeleton'">
+          <KSkeleton variant="lines" :rows="2" />
+          <KSkeleton variant="block" width="100%" height="64px" />
+        </template>
+      </div>
+
+      <template v-else>
       <dl v-if="row" class="rs__facts">
         <div><dt>{{ t('releaseSlack.teamFact') }}</dt><dd>{{ row.teamName }}</dd></div>
         <div><dt>{{ t('releaseSlack.channelFact') }}</dt><dd class="mono">#{{ row.channelName }}</dd></div>
@@ -26,7 +42,7 @@
           >
             {{ account.connected ? t('releaseSlack.reconnectWithClientId') : t('releaseSlack.connect') }}
           </KBtn>
-          <KBtn v-if="account.connected" variant="ghost" :disabled="busy" @click="disconnectAccount">
+          <KBtn v-if="account.connected" variant="ghost" :disabled="busy && !disconnecting" :loading="disconnecting" @click="disconnectAccount">
             {{ t('releaseSlack.disconnect') }}
           </KBtn>
         </div>
@@ -63,14 +79,15 @@
         </template>
 
         <div v-if="row" class="rs__danger">
-          <KBtn variant="ghost" :disabled="busy" @click="removeChannel">{{ t('releaseSlack.remove') }}</KBtn>
+          <KBtn variant="ghost" :disabled="busy && !removing" :loading="removing" @click="removeChannel">{{ t('releaseSlack.remove') }}</KBtn>
         </div>
+      </template>
       </template>
 
       <p v-if="error" class="rs__error mono">{{ error }}</p>
     </div>
     <template #controls>
-      <KBtn variant="primary" @click="emit('update:modelValue', false)">{{ t('releaseSlack.done') }}</KBtn>
+      <KBtn variant="primary" :disabled="holdOpen" @click="emit('update:modelValue', false)">{{ t('releaseSlack.done') }}</KBtn>
     </template>
   </KModal>
 </template>
@@ -85,6 +102,8 @@ import KModal from 'components/kit/KModal.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useReleaseSlack } from 'stores/release-slack';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -100,6 +119,8 @@ const projects = useProjects();
 const local = useOrchestrator();
 
 const isOwner = computed(() => projects.isWorkspaceOwner(props.workspaceId));
+// `null` = loaded, no channel. The template only reads it once `ready`, so the fallback never
+// turns «not read yet» into «no channel».
 const row = computed(() => store.settings[props.workspaceId] ?? null);
 const account = computed(() => store.accounts[props.workspaceId] ?? { connected: false as const });
 
@@ -109,9 +130,17 @@ const channelPick = ref('');
 const loadingChannels = ref(false);
 const connecting = ref(false);
 const saving = ref(false);
-const working = ref(false);
+const disconnecting = ref(false);
+const removing = ref(false);
 const error = ref('');
-const busy = computed(() => connecting.value || saving.value || working.value);
+const busy = computed(() => connecting.value || saving.value || disconnecting.value || removing.value);
+// What keeps the modal open: the short writes only. Connecting waits on the system browser's
+// OAuth round trip (up to two minutes), and a long wait must not trap the operator here —
+// the account lands in the store whether or not the modal is still open.
+const holdOpen = computed(() => saving.value || disconnecting.value || removing.value);
+// The form is filled from the store's state for this workspace; false until it has been read.
+const ready = ref(false);
+const phase = useLoadPhase(() => !ready.value);
 
 // A member authorizes the app the row names; the owner, the one in the field.
 const connectClientId = computed(() => (isOwner.value ? clientIdInput.value.trim() : row.value?.clientId) ?? '');
@@ -129,17 +158,26 @@ const channelOptions = computed<KSelectOption[]>(() =>
   })),
 );
 
+function fillForm(): void {
+  const acc = account.value;
+  clientIdInput.value = row.value?.clientId ?? (acc.connected ? acc.clientId : '');
+  channelPick.value = row.value?.channelId ?? '';
+}
+
 watch(
-  () => props.modelValue,
-  async (open) => {
+  () => [props.modelValue, props.workspaceId] as const,
+  async ([open, id]) => {
     if (!open) return;
     error.value = '';
     channels.value = [];
-    await store.load(props.workspaceId);
-    const acc = account.value;
-    clientIdInput.value = row.value?.clientId ?? (acc.connected ? acc.clientId : '');
-    channelPick.value = row.value?.channelId ?? '';
-    if (isOwner.value && acc.connected) void loadChannels();
+    // Already read for this workspace: show it at once and refresh underneath.
+    ready.value = store.settings[id] !== undefined && store.accounts[id] !== undefined;
+    if (ready.value) fillForm();
+    await store.load(id);
+    if (id !== props.workspaceId || !props.modelValue) return;
+    fillForm();
+    ready.value = true;
+    if (isOwner.value && account.value.connected) void loadChannels();
   },
   { immediate: true },
 );
@@ -174,7 +212,7 @@ function connectAccount(): Promise<void> {
 }
 
 function disconnectAccount(): Promise<void> {
-  return attempt(working, () => store.disconnect(props.workspaceId));
+  return attempt(disconnecting, () => store.disconnect(props.workspaceId));
 }
 
 function saveChannel(): Promise<void> {
@@ -185,7 +223,7 @@ function saveChannel(): Promise<void> {
 }
 
 function removeChannel(): Promise<void> {
-  return attempt(working, () => store.removeChannel(props.workspaceId));
+  return attempt(removing, () => store.removeChannel(props.workspaceId));
 }
 
 async function copyManifest(): Promise<void> {
@@ -229,6 +267,12 @@ async function copyManifest(): Promise<void> {
   &:hover {
     text-decoration: underline;
   }
+}
+
+.rs__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-3);
 }
 
 .rs__state {

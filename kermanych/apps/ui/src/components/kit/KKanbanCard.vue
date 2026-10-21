@@ -1,12 +1,21 @@
 <template>
-  <div class="k-kanban-card" role="button" tabindex="0" @click="emit('click')">
+  <div
+    class="k-kanban-card"
+    :class="{ 'k-kanban-card--pending': pending }"
+    role="button"
+    tabindex="0"
+    :aria-busy="pending || undefined"
+    @click="emit('click')"
+  >
     <div class="k-kanban-card__title">
       <KStatusDot :status="status" />
       <span class="k-kanban-card__name">{{ title }}</span>
       <!-- Who owns this card, in the one spot the eye scans a Kanban column for it. Always
            rendered: a face that appears only when assigned makes «нікому» look like «не
            дочиталося», and the row would reflow as tasks get claimed. -->
+      <KSkeleton v-if="assigneeLoading" variant="avatar" />
       <KAvatar
+        v-else
         :name="assignee?.name ?? t('kit.kanbanCard.unassigned')"
         :avatar-url="assignee?.avatarUrl"
         :hint="assigneeHint"
@@ -18,6 +27,7 @@
     <div class="k-kanban-card__meta">
       <!-- A teammate's ▶ on this card launches the deep analysis too, so the board says so. -->
       <KAnalysisMark v-if="deepAnalysis" />
+      <KSpinner v-if="pending" :size="10" class="k-kanban-card__pending" />
       <span class="k-kanban-card__where">{{ project }} · {{ time }}</span>
     </div>
   </div>
@@ -32,6 +42,8 @@ import type { SessionStatus } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KAvatar from './KAvatar.vue';
 import KAnalysisMark from './KAnalysisMark.vue';
+import KSpinner from './KSpinner.vue';
+import KSkeleton from './KSkeleton.vue';
 
 // `assignee` is the resolved person, not an id: the card cannot look one up, and the board
 // already owns that resolution for its filter and its editor. `null` is «не призначено».
@@ -44,6 +56,10 @@ const props = defineProps<{
   assignee?: { name: string; avatarUrl?: string | undefined } | null;
   // A «Глибокий аналіз» card (KAnalysisMark): whoever launches it gets the interview first.
   deepAnalysis?: boolean | undefined;
+  // A move or launch of this card is waiting for its result (stores/pending): dimmed, spinning.
+  pending?: boolean | undefined;
+  // The roster that resolves `assignee` is not read yet: a placeholder face, never a raw id.
+  assigneeLoading?: boolean | undefined;
 }>();
 
 const { t } = useI18n();
@@ -58,6 +74,15 @@ const emit = defineEmits<{ click: [] }>();
 </script>
 
 <style scoped lang="scss">
+.k-kanban-card--pending {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.k-kanban-card__pending {
+  color: var(--k-muted);
+}
+
 .k-kanban-card {
   display: flex;
   flex-direction: column;

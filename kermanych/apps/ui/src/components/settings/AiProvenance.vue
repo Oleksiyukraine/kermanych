@@ -1,9 +1,15 @@
 <template>
   <p v-if="createdBy || updatedBy" class="prov">
-    <span class="prov__part">{{ t('aiTeam.provenance.author') }} {{ label(createdBy) }}<span v-if="createdAt" class="prov__when"> · {{ date(createdAt) }}</span></span>
+    <!-- A name the roster has not answered for yet is a skeleton, not «невідомо»: that word is
+         reserved for an id the loaded roster really cannot name. -->
+    <span class="prov__part">{{ t('aiTeam.provenance.author') }}
+      <KSkeleton v-if="nameState(createdBy) === 'skeleton'" variant="avatar" width="12px" height="12px" class="prov__wait" />
+      <template v-else-if="nameState(createdBy) === 'ready'">{{ label(createdBy) }}</template><span v-if="createdAt" class="prov__when"> · {{ date(createdAt) }}</span></span>
     <!-- The editor line is only worth its space once the row has actually been edited after
          it was created: same author and same timestamp means nothing changed hands. -->
-    <span v-if="edited" class="prov__part">{{ t('aiTeam.provenance.editor') }} {{ label(updatedBy) }}<span v-if="updatedAt" class="prov__when"> · {{ date(updatedAt) }}</span></span>
+    <span v-if="edited" class="prov__part">{{ t('aiTeam.provenance.editor') }}
+      <KSkeleton v-if="nameState(updatedBy) === 'skeleton'" variant="avatar" width="12px" height="12px" class="prov__wait" />
+      <template v-else-if="nameState(updatedBy) === 'ready'">{{ label(updatedBy) }}</template><span v-if="updatedAt" class="prov__when"> · {{ date(updatedAt) }}</span></span>
   </p>
 </template>
 
@@ -12,11 +18,13 @@
 // cloud user uuids; a handle needs the workspace's member list, which this loads on demand for
 // the entity's owner. The signed-in operator is named directly from the auth store, so a
 // user-scoped entity (with no workspace to read members from) still reads «ви».
-import { computed, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AiOwner } from '@kermanych/cloud';
 import { useAuth } from 'stores/auth';
 import { useProjects } from 'stores/projects';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase, type LoadPhase } from '../../composables/useLoadPhase';
 
 const props = defineProps<{
   owner: AiOwner;
@@ -41,15 +49,35 @@ const workspaceId = computed(() =>
       : undefined,
 );
 
+// The workspace whose roster read failed here: its ids settle on «невідомо» instead of waiting.
+const failedFor = ref<string>();
+
 // Load the roster once per workspace; a failure just leaves ids unresolved rather than blocking
 // the pane. `members` is a shared store cache, so a second entity in the same workspace reuses it.
 watch(
   workspaceId,
   (id) => {
-    if (id && !projects.members[id]) void projects.loadMembers(id).catch(() => undefined);
+    if (id && !projects.members[id]) {
+      projects.loadMembers(id).catch(() => {
+        failedFor.value = id;
+      });
+    }
   },
   { immediate: true },
 );
+
+// The roster this entity needs is still on its way (not loaded, not failed).
+const rosterLoading = computed(() => {
+  const id = workspaceId.value;
+  return !!id && projects.members[id] === undefined && failedFor.value !== id;
+});
+const rosterPhase = useLoadPhase(() => rosterLoading.value);
+
+// The signed-in operator and an absent id never wait on the roster; any other id does.
+function nameState(id?: string): LoadPhase {
+  if (!id || id === auth.user?.id) return 'ready';
+  return rosterPhase.value;
+}
 
 const edited = computed(
   () => !!props.updatedBy && (props.updatedBy !== props.createdBy || props.updatedAt !== props.createdAt),
@@ -84,5 +112,8 @@ function date(iso: string): string {
 }
 .prov__when {
   color: var(--k-faint);
+}
+.prov__wait {
+  vertical-align: middle;
 }
 </style>

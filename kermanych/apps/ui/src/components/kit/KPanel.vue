@@ -11,7 +11,8 @@
         <span class="k-panel__status mono">{{ statusLabel }}</span>
         <KIconButton
           v-if="session.kind === 'chat'"
-          :disabled="promoting"
+          :loading="promoting"
+          :disabled="pending"
           :title="promoting
             ? t('kit.panel.promoting')
             : t('kit.panel.promoteAgent')"
@@ -19,27 +20,34 @@
         >▶</KIconButton>
         <KIconButton
           v-if="session.kind === 'chat'"
-          :disabled="filing"
+          :loading="filing"
+          :disabled="pending"
           :title="t('kit.panel.promoteTask')"
           @click="emit('promoteTask')"
         >⊕</KIconButton>
         <KIconButton
           v-if="session.kind === 'chat'"
-          :disabled="clearing"
+          :loading="clearing"
+          :disabled="pending"
           :title="t('kit.panel.clear')"
           @click="emit('clear')"
         >✕</KIconButton>
         <KIconButton
           v-if="session.kind === 'agent'"
+          :loading="branching"
+          :disabled="pending"
           :title="t('kit.panel.branch')"
           @click="emit('branch')"
         >⑂</KIconButton>
         <KIconButton
-          v-if="running"
+          v-if="running || stopping"
+          :loading="stopping"
+          :disabled="pending"
           :title="t('kit.panel.stop')"
           @click="emit('stop')"
         >■</KIconButton>
         <KIconButton
+          :loading="openingEditor"
           :title="t('kit.panel.editor')"
           @click="emit('editor')"
         >⧉</KIconButton>
@@ -76,6 +84,19 @@
     >
       <slot />
 
+      <!-- «надсилаю…» — what the operator sent that the transcript does not show yet (a dormant
+           agent is woken before its entry is written). Replaced by the real entry. -->
+      <div v-for="msg in outgoing" :key="msg.id" class="k-panel__outgoing" aria-live="polite">
+        <div class="k-panel__outgoing-text mono">{{ msg.text }}</div>
+        <div v-if="msg.images.length" class="k-panel__outgoing-meta mono">
+          {{ t('kit.panel.outgoingImages', { count: msg.images.length }) }}
+        </div>
+        <div class="k-panel__outgoing-meta mono">
+          <KSpinner :size="10" />
+          {{ t('kit.panel.sending') }}
+        </div>
+      </div>
+
       <!-- decision block — the ONE accent block-strip in the log -->
       <div v-if="req" class="k-panel__decision">
         <div class="k-panel__decision-head mono">{{ t('kit.panel.decisionNeeded') }}</div>
@@ -84,8 +105,8 @@
 
         <!-- confirm -->
         <div v-if="req.method === 'confirm'" class="k-panel__decision-row">
-          <KBtn variant="primary" @click="answerConfirm(true)">{{ t('kit.panel.yes') }}</KBtn>
-          <KBtn variant="secondary" @click="answerConfirm(false)">{{ t('kit.panel.no') }}</KBtn>
+          <KBtn variant="primary" :loading="answering" @click="answerConfirm(true)">{{ t('kit.panel.yes') }}</KBtn>
+          <KBtn variant="secondary" :disabled="answering" @click="answerConfirm(false)">{{ t('kit.panel.no') }}</KBtn>
         </div>
 
         <!-- select -->
@@ -95,6 +116,7 @@
             :key="i"
             class="k-panel__option mono"
             type="button"
+            :disabled="answering"
             @click="answerValue(opt)"
           >{{ i + 1 }} — {{ opt }}</button>
         </div>
@@ -110,7 +132,7 @@
             class="k-panel__decision-input mono"
             :placeholder="req.placeholder ?? ''"
           />
-          <KBtn variant="primary" type="submit">{{ t('kit.panel.submit') }}</KBtn>
+          <KBtn variant="primary" type="submit" :loading="answering">{{ t('kit.panel.submit') }}</KBtn>
         </form>
 
         <!-- editor -->
@@ -125,11 +147,11 @@
             rows="4"
             :placeholder="req.placeholder ?? ''"
           />
-          <KBtn variant="primary" type="submit">{{ t('kit.panel.submit') }}</KBtn>
+          <KBtn variant="primary" type="submit" :loading="answering">{{ t('kit.panel.submit') }}</KBtn>
         </form>
 
         <div class="k-panel__decision-cancel">
-          <KBtn variant="ghost" @click="answerCancel">{{ t('kit.panel.cancel') }}</KBtn>
+          <KBtn variant="ghost" :disabled="answering" @click="answerCancel">{{ t('kit.panel.cancel') }}</KBtn>
         </div>
       </div>
 
@@ -144,7 +166,13 @@
            minutes-long tool call) never looks dead -->
       <div v-if="stalled" class="k-panel__stall" role="alert">
         <span class="k-panel__stall-msg">{{ t('kit.panel.stalled', { label: silentLabel }) }}</span>
-        <button type="button" class="k-panel__stall-btn" @click="emit('restart')">{{ t('kit.panel.restart') }}</button>
+        <button
+          type="button"
+          class="k-panel__stall-btn"
+          :disabled="restarting"
+          :aria-busy="restarting || undefined"
+          @click="emit('restart')"
+        ><KSpinner v-if="restarting" :size="10" /> {{ t('kit.panel.restart') }}</button>
       </div>
       <div v-else-if="liveActivity" class="k-panel__thinking" aria-live="polite">{{ liveActivity }}</div>
     </div>
@@ -161,11 +189,15 @@
          session-level actions (rehydrate, summarise) parked on its right edge -->
     <div v-if="!isMerged" class="k-panel__composer">
       <KComposer
+        ref="composerEl"
         v-model="draft"
         :placeholder="placeholder"
-        :model="session.model"
+        :disabled="composerDisabled"
+        :model="modelOverride ?? session.model"
         :models="models"
-        :effort="session.effort"
+        :effort="effortOverride ?? session.effort"
+        :model-loading="modelLoading"
+        :effort-loading="effortLoading"
         :worktree="session.worktree"
         :context="session.contextPercent"
         :usage="session.usage"
@@ -175,11 +207,12 @@
       >
         <template #actions>
           <KIconButton
-            :disabled="refreshing"
+            :loading="refreshing"
             :title="t('kit.panel.refreshTip')"
             @click="emit('refresh')"
           >↻</KIconButton>
           <KIconButton
+            :loading="summarizing"
             :disabled="running"
             :title="running
               ? t('kit.panel.summaryBusyTip')
@@ -216,8 +249,10 @@ import KComposer from './KComposer.vue';
 import KTodoLane from './KTodoLane.vue';
 import KStatusRow from './KStatusRow.vue';
 import KIconButton from './KIconButton.vue';
+import KSpinner from './KSpinner.vue';
 import { useNow } from '../../composables/useNow';
 import { followAfterScroll } from '../../lib/log-follow';
+import type { OutgoingMessage } from '../../lib/outgoing';
 import { needsSignIn } from '../../lib/session-auth';
 
 const { t } = useI18n();
@@ -229,18 +264,41 @@ const props = withDefaults(
   defineProps<{
     session: Session;
     placeholder?: string;
-    // The chat is being turned into an agent right now (worktree + omp respawn): the button
-    // stays down until the server answers, so a second click cannot race the first.
+    // Busy props (README «Design → Async states»): each turns its control into the kit spinner
+    // and blocks it, so the click is answered at once and a second one cannot race the first.
+    // The chat is being turned into an agent (worktree + omp respawn) — ▶.
     promoting?: boolean;
-    // The session is being rehydrated right now (omp respawn + history reload): the composer's
-    // ↻ stays down until the server answers, so a second click cannot race the first.
+    // The session is being rehydrated (omp respawn + history reload) — the composer's ↻.
     refreshing?: boolean;
-    // «В беклог» files a cloud card right now: the ⊕ stays down until the write returns, so
-    // a second click cannot mint a second card.
+    // «В беклог» files a cloud card — ⊕.
     filing?: boolean;
-    // The chat is being discarded and re-created right now: the ✕ stays down until the delete
-    // returns, so a second click cannot race it.
+    // The chat is being discarded and re-created — ✕.
     clearing?: boolean;
+    // A fork is being created — ⑂; stays until the child session appears.
+    branching?: boolean;
+    // A stop is in flight — ■; stays until the status is no longer running.
+    stopping?: boolean;
+    // A stalled agent is being restarted — the stall banner's «Перезапустити».
+    restarting?: boolean;
+    // An answer to the decision block is being delivered — its buttons.
+    answering?: boolean;
+    // «≡ Підсумок» is being sent — ≡.
+    summarizing?: boolean;
+    // The editor is being spawned — ⧉.
+    openingEditor?: boolean;
+    // The session itself is pending a result (deleted, archived, reopened…; stores/pending):
+    // every session action here is blocked until it settles.
+    pending?: boolean;
+    // Sent messages the transcript does not show yet — the «надсилаю…» bubbles.
+    outgoing?: readonly OutgoingMessage[];
+    // A model / effort pick being saved (useOptimisticValue): the chip shows the picked value
+    // and spins until the session reports it.
+    modelOverride?: string | undefined;
+    effortOverride?: ThinkingLevel | undefined;
+    modelLoading?: boolean;
+    effortLoading?: boolean;
+    // The log is not loaded yet: sending would land in a transcript the operator cannot see.
+    composerDisabled?: boolean;
     // The omp model catalog, forwarded to the composer's model chip so it can offer a picker.
     models?: readonly ModelOption[] | undefined;
     // Suppresses this panel's own header + density toolbar. The agent detail column
@@ -248,7 +306,25 @@ const props = withDefaults(
     // above its tabs, so the embedded panel would only stack a second, redundant one.
     bare?: boolean;
   }>(),
-  { promoting: false, refreshing: false, filing: false, clearing: false, models: () => [], bare: false },
+  {
+    promoting: false,
+    refreshing: false,
+    filing: false,
+    clearing: false,
+    branching: false,
+    stopping: false,
+    restarting: false,
+    answering: false,
+    summarizing: false,
+    openingEditor: false,
+    pending: false,
+    outgoing: () => [],
+    modelLoading: false,
+    effortLoading: false,
+    composerDisabled: false,
+    models: () => [],
+    bare: false,
+  },
 );
 
 // `finish`, `reopen` and `delete` are NOT declared here: завершити / відновити / видалити are
@@ -273,6 +349,17 @@ const emit = defineEmits<{
 }>();
 
 const draft = ref('');
+const composerEl = ref<InstanceType<typeof KComposer> | null>(null);
+
+// A send that failed hands its text and images back here, so nothing typed is lost. Only
+// into an empty composer: if the operator has started a new message, theirs wins and the
+// failed one stays in the error toast.
+function restoreDraft(text: string, images: readonly ImageInput[]): void {
+  if (draft.value.trim()) return;
+  draft.value = text;
+  composerEl.value?.restoreImages(images);
+}
+defineExpose({ restoreDraft });
 const decisionText = ref('');
 
 // Auto-scroll: keep the log pinned to the newest entry while the user is at the
@@ -746,7 +833,29 @@ function answerCancel() {
   padding: 3px 10px;
   cursor: pointer;
 }
-.k-panel__stall-btn:hover { background: var(--k-accent); color: var(--k-on-accent); }
+.k-panel__stall-btn:hover:not(:disabled) { background: var(--k-accent); color: var(--k-on-accent); }
+.k-panel__stall-btn:disabled { cursor: progress; opacity: 0.8; }
+
+// «надсилаю…» — the operator's own message, muted until the transcript confirms it.
+.k-panel__outgoing {
+  margin-top: 14px;
+  padding: var(--k-sp-2) var(--k-sp-3);
+  border-left: 2px solid var(--k-line-strong);
+  opacity: 0.6;
+}
+.k-panel__outgoing-text {
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.k-panel__outgoing-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
+}
 
 // error — the omp child exited before finishing; full accent border reads as failure.
 .k-panel__error {

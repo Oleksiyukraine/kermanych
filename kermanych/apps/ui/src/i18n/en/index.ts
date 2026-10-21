@@ -146,6 +146,7 @@ export const en: MessageSchema = {
   terminal: {
     title: 'Terminal',
     tabLabel: '{n}: {shell}',
+    opening: 'Starting…',
     new: 'New terminal',
     kill: 'Kill terminal',
     hide: 'Hide the terminal panel',
@@ -605,6 +606,7 @@ export const en: MessageSchema = {
         jiraNoBoard: 'No Jira board is connected to this workspace — connect one in Management → Integrations',
         jiraNoToken: 'Add your Jira token in Management → Integrations to create Jira issues',
         jiraUnavailable: 'Jira is not available here: no connection to the cloud',
+        jiraProbing: 'Checking Jira…',
         notCloud: 'This session’s project is not published to a workspace — there is nowhere to create the task.',
       },
     },
@@ -1221,6 +1223,7 @@ export const en: MessageSchema = {
       omp: 'omp',
       claude: 'claude-code',
       note: 'Existing sessions keep their current backend.',
+      checking: 'Checking that the CLI is ready…',
     },
     language: {
       label: 'Agent communication language',
@@ -1604,7 +1607,6 @@ export const en: MessageSchema = {
         period: 'Period',
         gateJira: 'Capacity reads from Jira — connect a board to see it.',
         gateOpen: 'Integrations',
-        loading: 'Reading the Jira mirror…',
         empty: 'No estimated work lands in this period.',
       },
       releases: {
@@ -1853,6 +1855,7 @@ export const en: MessageSchema = {
       branchFor: 'Branch · {project}',
       branchPlaceholderFailed: 'branches unavailable — the project is not bound here',
       branchPlaceholderEmpty: '— no branches found —',
+      branchPlaceholderLoading: 'reading branches…',
       multiHint: 'The note gets one section per project, in the order you picked them, and each section is written only from that project’s commits on its branch.',
       rangeFromLabel: 'Period from',
       rangeToLabel: 'to',
@@ -1881,7 +1884,6 @@ export const en: MessageSchema = {
       gateTitle: 'Capacity reads from Jira',
       gateText: 'Team Capacity adds up the estimates and worklogs of the workspace’s Jira board. The native board has no estimates, so there is nothing to show until a Jira board is connected.',
       gateButton: 'Open Integrations',
-      loading: 'Reading the Jira mirror…',
       loadError: 'Could not read the Jira mirror: {error}',
       from: 'From',
       to: 'To',
@@ -2133,7 +2135,15 @@ export const en: MessageSchema = {
       contextPct: 'context {pc}%',
       tokens: '{count} tokens',
     },
+    skeleton: {
+      loading: 'Loading…',
+    },
+    progress: {
+      label: 'Working…',
+    },
     panel: {
+      sending: 'sending…',
+      outgoingImages: 'images: {count}',
       promoting: 'Preparing worktree…',
       promoteAgent: 'Start implementing what was discussed (worktree + full access, same context)',
       promoteTask: 'Save as a task in the backlog',
@@ -2373,6 +2383,7 @@ export const en: MessageSchema = {
         chat: '08 · Chat',
         composer: '09 · Composer',
         diff: '10 · File diff',
+        async: '11 · Async states',
       },
       btn: {
         newAgent: '+ New agent',
@@ -2383,6 +2394,13 @@ export const en: MessageSchema = {
         cancel: 'Cancel',
         launch: 'Launch',
         showDiff: 'Show diff',
+      },
+      async: {
+        checkbox: 'Enabled',
+        select: 'Branch',
+        selectPlaceholder: 'reading branches…',
+        chipMedium: 'Medium',
+        chipHigh: 'High',
       },
       iconTip: {
         run: 'Launch',
@@ -2439,6 +2457,10 @@ export const en: MessageSchema = {
         save: 'Save',
       },
       cap: {
+        asyncControls: 'loading — a spinner in place of the glyph or caret, the control locked, aria-busy. The pressed button spins at once; select / chip / checkbox / toggle show the picked value while it is saved (useOptimisticValue).',
+        asyncSkeleton: 'KSkeleton — «not loaded yet»: rows, cards, a paragraph, an avatar, a line, a block. Appears after 150 ms and stays at least 300 ms (useLoadPhase); the empty state only once the data has really arrived.',
+        asyncPending: 'pending — an action on the entity waits for its result over the socket (stop, delete, fork, moving a ticket): the card is dimmed, spins, and its actions are blocked for up to 15 s.',
+        asyncBar: 'KProgressBar — 2 px of accent under the top navigation for work the operator started (useAsyncAction / trackLoad), after 300 ms. Background polling never lights it.',
         actionButtons: '28×28 · a dense control for groups of glyph actions: table row and panel header (tighter than KBtn variant="icon" 34×34). active = accent. The hint is a custom tooltip (v-tip), not the native title.',
         kbd: 'KKbd · ⌘ and ⏎ carry far less ink than a letter of the same em, so the chip is sized off the ICON scale (--k-icon-sm), never off --k-fs-*, and is never dimmed with opacity. tone="on-accent" inherits the control colour for a chip riding inside a filled button; tone="muted" is the standalone hint. aria-hidden: the keybinding belongs in the control label, not in this span.',
         fields: 'branch={branch} · select(rows)={branchSel} · select(pairs)={wsSel} · select(search)={modelSel} · date={date} — the list shows the name on the right while the model holds the id: a name filter breaks the moment a second workspace with the same name appears. The date lives in the model as YYYY-MM-DD and shows itself as dd.mm.yyyy — either can be typed by hand.',

@@ -8,8 +8,9 @@ import { join, resolve } from 'node:path';
 
 export default defineConfig((ctx) => {
   return {
-    // app boot files (/src/boot) — order matters
-    boot: ['tokens', 'i18n', 'tip', 'supabase'],
+    // app boot files (/src/boot) — order matters. `backend` comes first: on the desktop build
+    // it holds every later boot until main's local api listens.
+    boot: ['backend', 'tokens', 'i18n', 'tip', 'supabase'],
 
     // global CSS (/src/css)
     css: ['app.scss'],

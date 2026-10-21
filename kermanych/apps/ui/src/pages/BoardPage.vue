@@ -40,15 +40,29 @@
       :workspace-id="local.selectedWorkspaceId"
     />
 
-    <template v-if="boardView === 'tasks'">
+    <!-- This workspace remembers «Jira»/«Linear» as its default but that integration has not
+         been probed yet: a skeleton, not the native board flashing up and then swapping. -->
+    <div v-if="viewPhase === 'skeleton'" class="board__columns">
+      <div v-for="col in COLUMNS" :key="col.key" class="board__skeleton-col">
+        <KSkeleton variant="line" width="60%" />
+        <KSkeleton variant="card" />
+      </div>
+    </div>
+
+    <template v-if="boardView === 'tasks' && viewPhase === 'ready'">
     <header class="board__head">
       <div class="board__title">
         <h1 class="board__heading">{{ scopeHeading }}</h1>
-        <span class="board__count mono">{{ t('board.header.count', { n: visibleTasks.length }, visibleTasks.length) }}</span>
+        <span v-if="tasksPhase === 'ready'" class="board__count mono">{{ t('board.header.count', { n: visibleTasks.length }, visibleTasks.length) }}</span>
       </div>
       <div class="board__controls">
         <KSelect v-model="projectFilter" :options="projectOptions" :placeholder="t('board.filter.allProjects')" />
-        <KSelect v-model="assigneeFilter" :options="assigneeOptions" :placeholder="t('board.filter.allAssignees')" />
+        <KSelect
+          v-model="assigneeFilter"
+          :options="assigneeOptions"
+          :placeholder="t('board.filter.allAssignees')"
+          :loading="assigneeRosterPending"
+        />
         <!-- A task row needs a `project_id` the tasks policies can check membership
              against, so with no project IN SCOPE there is nothing to create a task on.
              Say so: a grey button with no explanation is what made this look broken. -->
@@ -113,7 +127,17 @@
       </p>
     </div>
 
-    <div v-if="cloud.projects.length" class="board__columns">
+    <!-- The task read for this board has not answered: skeleton columns, never «—» / 0, which
+         would claim an empty board. -->
+    <div v-if="cloud.projects.length && tasksPhase === 'skeleton'" class="board__columns">
+      <div v-for="col in COLUMNS" :key="col.key" class="board__skeleton-col">
+        <span class="board__skeleton-label">{{ t(col.labelKey) }}</span>
+        <KSkeleton variant="card" />
+        <KSkeleton variant="card" />
+      </div>
+    </div>
+
+    <div v-else-if="cloud.projects.length && tasksPhase === 'ready'" class="board__columns">
       <KKanbanColumn
         v-for="col in COLUMNS"
         :key="col.key"
@@ -129,6 +153,7 @@
           :time="renderTime(t, relativeTime(task.updatedAt, now))"
           :status="task.status"
           :assignee="resolveAssignee(task.assigneeId, membersOf(task.projectId))"
+          :assignee-loading="!!task.assigneeId && rosterPending(task.projectId)"
           :deep-analysis="task.deepAnalysis"
           @click="openEdit(task)"
         />
@@ -137,14 +162,19 @@
       </KKanbanColumn>
     </div>
 
-    <div v-else class="board__blank">
+    <div v-else-if="!cloud.projects.length" class="board__blank">
       <div class="board__blank-eyebrow mono">{{ t('board.blank.eyebrow') }}</div>
       <p class="board__blank-text">{{ blankText }}</p>
     </div>
     </template>
 
     <!-- CREATE / EDIT TASK — same launch vocabulary as the local launcher -->
-    <KModal v-model="editorOpen" :title="editingId ? t('board.editor.editTitle') : t('board.editor.createTitle')" width="720px">
+    <KModal
+      v-model="editorOpen"
+      :title="editingId ? t('board.editor.editTitle') : t('board.editor.createTitle')"
+      width="720px"
+      :persistent="editorBusy"
+    >
       <template #head-meta>
         <span class="board__esc mono">{{ t('board.editor.esc') }}</span>
       </template>
@@ -262,36 +292,38 @@
       </div>
 
       <template #controls>
-        <KBtn v-if="editingTask" variant="ghost" @click="onDelete(editingTask); editorOpen = false">{{ t('board.editor.delete') }}</KBtn>
+        <KBtn v-if="editingTask" variant="ghost" :disabled="editorBusy" @click="onDelete(editingTask); editorOpen = false">{{ t('board.editor.delete') }}</KBtn>
         <KBtn
           v-if="editingTask && canForceStop(editingTask)"
           variant="ghost"
+          :disabled="editorBusy"
           @click="editorOpen = false; openForceStop(editingTask)"
         >{{ t('board.forceStop.mark') }}</KBtn>
-        <KBtn variant="ghost" @click="editorOpen = false">{{ t('board.action.cancel') }}</KBtn>
+        <KBtn variant="ghost" :disabled="editorBusy" @click="editorOpen = false">{{ t('board.action.cancel') }}</KBtn>
         <KBtn
           v-if="editingTask"
           variant="secondary"
-          :disabled="launching !== null || isActiveTask(editingTask) || !canRun(editingTask)"
+          :loading="launching === editingTask.id"
+          :disabled="launching !== null || submitting || isActiveTask(editingTask) || !canRun(editingTask)"
           :title="launchHint(editingTask)"
-          @click="editorOpen = false; launch(editingTask)"
+          @click="launchFromEditor(editingTask)"
         >{{ t('board.editor.launch') }}</KBtn>
-        <KBtn variant="primary" :loading="submitting" :disabled="!canSubmit || submitting" @click="submitEditor">{{ editingId ? t('board.editor.save') : t('board.editor.create') }}</KBtn>
+        <KBtn variant="primary" :loading="submitting" :disabled="!canSubmit || submitting || launching !== null" @click="submitEditor">{{ editingId ? t('board.editor.save') : t('board.editor.create') }}</KBtn>
       </template>
     </KModal>
 
     <!-- LOCAL BINDING: a cloud task only runs where its repo actually lives -->
-    <KModal v-model="bindingOpen" :title="t('board.binding.title')">
+    <KModal v-model="bindingOpen" :title="t('board.binding.title')" :persistent="binding">
       <div class="board__bind">
         <p class="board__bind-note">
           {{ t('board.binding.note', { title: pendingLaunch?.title ?? '', project: bindingProjectId ? projectName(bindingProjectId) : '' }) }}
         </p>
         <KField v-model="bindingPath" :label="t('board.binding.pathLabel')" placeholder="/Users/me/code/project" />
-        <KBtn variant="secondary" @click="pickerOpen = true">{{ t('board.binding.pick') }}</KBtn>
+        <KBtn variant="secondary" :disabled="binding" @click="pickerOpen = true">{{ t('board.binding.pick') }}</KBtn>
         <p v-if="bindingError" class="board__bind-error" role="alert">{{ bindingError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="bindingOpen = false">{{ t('board.action.cancel') }}</KBtn>
+        <KBtn variant="ghost" :disabled="binding" @click="bindingOpen = false">{{ t('board.action.cancel') }}</KBtn>
         <KBtn variant="primary" :loading="binding" :disabled="!bindingPath.trim() || binding" @click="confirmBinding">
           {{ t('board.binding.confirm') }}
         </KBtn>
@@ -341,6 +373,8 @@ import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KKanbanCard from 'components/kit/KKanbanCard.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../composables/useLoadPhase';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import KAvatar from 'components/kit/KAvatar.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
@@ -409,6 +443,17 @@ function readBoardView(ws: string): BoardViewKind {
   }
 }
 
+// The remembered default of this workspace is a mirrored board whose probe has not answered
+// (the stores reset `integration` to undefined on a workspace change, before awaiting): the
+// view is not decided yet, so neither the native board nor the Jira/Linear one renders.
+const viewPhase = useLoadPhase(() => {
+  const ws = local.selectedWorkspaceId;
+  if (!ws) return false;
+  const stored = readBoardView(ws);
+  if (stored === 'jira') return jiraStore.integration === undefined && jiraStore.loading;
+  if (stored === 'linear') return linearStore.integration === undefined && linearStore.loading;
+  return false;
+});
 watch(
   () => local.selectedWorkspaceId,
   (ws) => {
@@ -546,6 +591,7 @@ async function loadMembers(): Promise<void> {
         await cloud.loadMembers(w.id);
       } catch {
         /* membership is decoration here; the cards render with raw ids instead */
+        rosterFailed.value = new Set(rosterFailed.value).add(w.id);
       }
     }),
   );
@@ -710,6 +756,9 @@ watch(() => local.selectedWorkspaceId, () => {
 // is long enough to be worth explaining. An error is not transient, so it shows at once.
 const SLOW_LOAD_MS = 500;
 const slowLoad = useDelayedTrue(() => board.loading, SLOW_LOAD_MS);
+// The columns' skeleton: no task read has answered yet for this user (reset on sign-out). A
+// later reconcile read — even of an empty board — keeps what is on screen.
+const tasksPhase = useLoadPhase(() => !board.loaded);
 
 const loadHint = computed(() => {
   if (slowLoad.value) return t('board.loadHint.reading');
@@ -873,6 +922,25 @@ function membersOf(projectId: string): WorkspaceMember[] {
   return workspaceId ? cloud.members[workspaceId] ?? [] : [];
 }
 
+// Workspaces whose roster read failed: they render raw ids (see loadMembers), not a skeleton
+// that would never resolve.
+const rosterFailed = ref<Set<string>>(new Set());
+function rosterPendingFor(workspaceId: string): boolean {
+  return cloud.members[workspaceId] === undefined && !rosterFailed.value.has(workspaceId);
+}
+// The card's assignee cannot be named yet — its workspace roster has not been read: the avatar
+// is a skeleton instead of a raw uuid.
+function rosterPending(projectId: string): boolean {
+  const workspaceId = cloud.byId.get(projectId)?.workspaceId;
+  return !!workspaceId && rosterPendingFor(workspaceId);
+}
+// «Виконавці» filter options come from the rosters (scoped one, or all of them unscoped); the
+// select spins until they are read instead of offering only «Не призначено».
+const assigneeRosterPending = computed(() => {
+  const ws = local.selectedWorkspaceId;
+  return ws ? rosterPendingFor(ws) : cloud.workspaces.some((w) => rosterPendingFor(w.id));
+});
+
 function onAssign(task: Task, userId: string): void {
   // Id-keyed like both filters. '' is KSelect's placeholder, i.e. «не призначено».
   const next = userId || null;
@@ -994,37 +1062,52 @@ const launchErrors = computed<Record<string, string>>(() => ({
 
 // The board is a shared surface, so this is a pre-check for UX only: the API re-checks the
 // binding and the RLS-backed assignee rule regardless of what the button allowed.
-async function launch(task: Task): Promise<void> {
+//
+// The editor stays open (persistent, «Запустити» spinning) until the session exists — closing
+// it first left a seconds-long gap where nothing on screen said a launch was under way — and
+// a refusal is shown inside it. An unbound project hands over to the binding modal instead.
+async function launchFromEditor(task: Task): Promise<void> {
   if (launching.value) return;
+  editorError.value = null;
   if (!isBound(task)) {
+    editorOpen.value = false;
     openBinding(task);
     return;
   }
-  await runLaunch(task);
+  const outcome = await runLaunch(task, (msg) => (editorError.value = msg));
+  if (outcome === 'unbound') editorOpen.value = false;
 }
 
-async function runLaunch(task: Task): Promise<void> {
+type LaunchOutcome = 'started' | 'unbound' | 'failed';
+
+// Starts the session and, once it exists, closes whichever modal asked and goes to the
+// Агенти board. `report` puts a refusal where the operator is looking (the open modal).
+async function runLaunch(task: Task, report: (message: string) => void): Promise<LaunchOutcome> {
   launching.value = task.id;
   try {
     const session = await api.createSessionFromTask(task.id);
+    editorOpen.value = false;
+    bindingOpen.value = false;
     local.notify(t('board.notify.sessionStarted', { name: session.name }), 'info');
     // The local session lives on the Агенти board, so go where the work is.
     await router.push('/');
+    return 'started';
   } catch (e) {
     // `fetch` itself rejects with a TypeError; every refusal from the api arrives as a
     // plain Error carrying the server's message. That is what separates "the local
     // Kermanych is not answering" from "it answered no".
     if (e instanceof TypeError) {
-      local.notify(t('board.notify.localUnreachable'), 'error');
-      return;
+      report(t('board.notify.localUnreachable'));
+      return 'failed';
     }
     const message = e instanceof Error ? e.message : String(e);
     if (message === 'project not bound') {
       // Raced with someone unbinding, or the row vanished — offer the picker instead of a toast.
       openBinding(task);
-      return;
+      return 'unbound';
     }
-    local.notify(launchErrors.value[message] ?? t('board.launchError.generic', { error: message }), 'error');
+    report(launchErrors.value[message] ?? t('board.launchError.generic', { error: message }));
+    return 'failed';
   } finally {
     launching.value = null;
   }
@@ -1038,6 +1121,8 @@ function openBinding(task: Task): void {
   bindingOpen.value = true;
 }
 
+// The binding modal stays open (persistent, primary spinning) through the bind AND the launch
+// that follows it; it closes when the session exists, and either refusal is shown inside it.
 async function confirmBinding(): Promise<void> {
   const projectId = bindingProjectId.value;
   const task = pendingLaunch.value;
@@ -1047,8 +1132,7 @@ async function confirmBinding(): Promise<void> {
   binding.value = true;
   try {
     await api.setProjectBinding(projectId, bindingPath.value.trim());
-    bindingOpen.value = false;
-    await runLaunch(task);
+    await runLaunch(task, (msg) => (bindingError.value = msg));
   } catch (e) {
     // Same split as `runLaunch`: a dropped connection is a `TypeError` whose message is the
     // browser's own English text, which has no business inside this modal. Everything else
@@ -1080,6 +1164,9 @@ const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 const editorError = ref<string | null>(null);
 const submitting = ref(false);
+// A save or a launch from the editor is in flight: the modal is persistent and its other
+// controls are down until it answers.
+const editorBusy = computed(() => submitting.value || launching.value !== null);
 const editingTask = computed(() =>
   editingId.value ? board.tasks.find((t) => t.id === editingId.value) : undefined,
 );
@@ -1380,6 +1467,20 @@ function onDelete(task: Task): void {
 
 .board__column-empty {
   padding: var(--k-sp-3);
+}
+
+// Stands in for a KKanbanColumn while the tasks (or the board view) are not read yet.
+.board__skeleton-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
+  min-width: 0;
+  padding: var(--k-sp-2);
+}
+
+.board__skeleton-label {
+  font-size: var(--k-fs-sm);
+  color: var(--k-muted);
 }
 
 .board__assign {

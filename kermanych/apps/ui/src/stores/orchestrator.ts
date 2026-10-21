@@ -24,6 +24,8 @@ import { api, type MessageMode } from '../lib/api';
 import { applyTranscriptUpdate } from './transcript-update';
 import { globalTr } from '../boot/i18n';
 import type { Bucket } from '../lib/buckets';
+import { unsettledOutgoing, type OutgoingMessage } from '../lib/outgoing';
+import { PENDING_TIMEOUT_MS } from './pending';
 
 export type Toast = { id: string; message: string; kind: 'error' | 'info' };
 
@@ -44,6 +46,12 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   const projects = ref<Project[]>([]);
   const sessions = ref<Session[]>([]);
   const transcripts = ref<Record<string, TranscriptEntry[]>>({});
+  // Messages sent from the composer that the transcript does not hold yet — rendered as the
+  // «надсилаю…» bubble (lib/outgoing.ts). Keyed by session id, like `transcripts`.
+  const outgoing = ref<Record<string, OutgoingMessage[]>>({});
+  // The socket's first `snapshot` has arrived. Until then an empty `sessions` / `projects`
+  // means «not loaded», not «none», and the board / sidebar show a skeleton.
+  const snapshotReceived = ref(false);
   // Per-session subagent tree for the agent map, streamed over `subagents_update` and primed
   // by loadSubagents(). Keyed by session id, same as `transcripts`.
   const subagents = ref<Record<string, SubagentNode[]>>({});
@@ -93,6 +101,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     if (e.type === 'snapshot') {
       projects.value = e.projects;
       sessions.value = e.sessions;
+      snapshotReceived.value = true;
     } else if (e.type === 'project_update') {
       projects.value = [
         ...projects.value.filter((p) => p.id !== e.project.id),
@@ -160,8 +169,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         ...transcripts.value,
         [e.sessionId]: [...(transcripts.value[e.sessionId] ?? []), e.entry],
       };
+      settleOutgoing(e.sessionId);
     } else if (e.type === 'transcript_reset') {
       transcripts.value = { ...transcripts.value, [e.sessionId]: e.entries };
+      settleOutgoing(e.sessionId);
     } else if (e.type === 'transcript_update') {
       const list = transcripts.value[e.sessionId];
       if (list) {
@@ -242,8 +253,43 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.promoteChat(id, taskId);
   }
 
-  function sendMessage(id: string, text: string, mode: MessageMode, images?: ImageInput[]) {
-    return api.sendMessage(id, text, mode, images);
+  function setOutgoing(id: string, list: OutgoingMessage[]): void {
+    const next = { ...outgoing.value };
+    if (list.length) next[id] = list;
+    else delete next[id];
+    outgoing.value = next;
+  }
+
+  // Drops the bubbles the transcript now shows as real entries.
+  function settleOutgoing(id: string): void {
+    const list = outgoing.value[id];
+    if (!list?.length) return;
+    const left = unsettledOutgoing(list, transcripts.value[id] ?? []);
+    if (left.length !== list.length) setOutgoing(id, left);
+  }
+
+  // The bubble shows at once; the real user entry replaces it when the transcript reports it.
+  // A failed send removes the bubble and rethrows, so the caller can hand the text back to the
+  // composer. A bubble the transcript never confirms (a native session pastes into its TUI and
+  // records nothing) is dropped after PENDING_TIMEOUT_MS.
+  async function sendMessage(id: string, text: string, mode: MessageMode, images?: ImageInput[]) {
+    const msg: OutgoingMessage = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      text,
+      images: images ?? [],
+      at: Date.now(),
+    };
+    setOutgoing(id, [...(outgoing.value[id] ?? []), msg]);
+    const drop = () => setOutgoing(id, (outgoing.value[id] ?? []).filter((m) => m.id !== msg.id));
+    try {
+      const res = await api.sendMessage(id, text, mode, images);
+      settleOutgoing(id);
+      if (outgoing.value[id]?.some((m) => m.id === msg.id)) setTimeout(drop, PENDING_TIMEOUT_MS);
+      return res;
+    } catch (e) {
+      drop();
+      throw e;
+    }
   }
 
   // The composer's effort chip. No optimistic patch: the api answers with the saved row AND
@@ -309,6 +355,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   async function loadTranscript(id: string) {
     const entries = await api.loadTranscript(id);
     transcripts.value = { ...transcripts.value, [id]: entries };
+    settleOutgoing(id);
     return entries;
   }
 
@@ -440,6 +487,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     projects,
     sessions,
     transcripts,
+    outgoing,
+    snapshotReceived,
     selectedProjectId,
     selectedSessionId,
     selectedWorkspaceId,

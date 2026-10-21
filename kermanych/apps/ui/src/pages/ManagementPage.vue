@@ -25,7 +25,8 @@
             :style="{ background: workspaceColor }"
             aria-hidden="true"
           ></span>
-          <span class="mgmt__chip-name">{{ workspaceName || t('management.nav.workspaceEmpty') }}</span>
+          <KSkeleton v-if="chipPhase === 'skeleton'" variant="line" width="8em" />
+          <span v-else-if="chipPhase === 'ready'" class="mgmt__chip-name">{{ workspaceName || t('management.nav.workspaceEmpty') }}</span>
         </span>
         <p class="mgmt__rail-note">{{ t('management.nav.scopeNote') }}</p>
       </div>
@@ -111,10 +112,11 @@
                 v-tip="t('management.assistant.newChat')"
                 class="mgmt__log-close mono"
                 type="button"
-                :disabled="chat.busy"
+                :disabled="chat.busy || chat.resetting"
+                :aria-busy="chat.resetting || undefined"
                 :aria-label="t('management.assistant.closeChat')"
-                @click="chat.reset()"
-              >×</button>
+                @click="newChat()"
+              ><KSpinner v-if="chat.resetting" :size="10" /><template v-else>×</template></button>
             </header>
             <div v-show="!collapsed" ref="logEl" class="mgmt__log-body" @click="onLogClick">
               <template v-for="e in chat.entries" :key="e.id">
@@ -182,7 +184,7 @@
               v-model="draft"
               class="mgmt__c-input"
               rows="1"
-              :disabled="chat.busy"
+              :disabled="composerLocked"
               :placeholder="t('management.assistant.placeholder')"
               :aria-label="t('management.assistant.inputLabel')"
               @input="autoGrow"
@@ -194,7 +196,7 @@
               class="mgmt__c-helpers mono"
               type="button"
               :aria-label="t('management.assistant.helpers')"
-              :disabled="chat.busy"
+              :disabled="composerLocked"
               @click="pickerOpen = !pickerOpen"
             >/</button>
             <button
@@ -202,7 +204,7 @@
               class="mgmt__c-helpers"
               type="button"
               :aria-label="t('management.assistant.attach')"
-              :disabled="chat.busy"
+              :disabled="composerLocked"
               @click="attachInput?.click()"
             >📎</button>
             <input
@@ -262,6 +264,10 @@ import KNavItem from 'components/kit/KNavItem.vue';
 import { type KIconName } from 'components/kit/KIcon.vue';
 import KChatMessage from 'components/kit/KChatMessage.vue';
 import KHelperPicker from 'components/kit/KHelperPicker.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
+import { useAsyncAction } from '../composables/useAsyncAction';
+import { useLoadPhase } from '../composables/useLoadPhase';
 import { renderMarkdown } from '../lib/markdown';
 import { percent, planWindow, renderWindow } from '../lib/format';
 import { until, renderTime } from '../lib/time';
@@ -313,6 +319,13 @@ const workspaceName = computed(() => {
   const id = workspaceId.value;
   if (!id) return '';
   return projects.workspaceById.get(id)?.name ?? '';
+});
+
+// A workspace id held before the cloud list has the row is «not loaded yet», not «none
+// chosen»: skeleton in the chip instead of claiming «воркспейс не вибрано».
+const chipPhase = useLoadPhase(() => {
+  const id = workspaceId.value;
+  return !!id && !projects.workspaceById.has(id) && (!projects.loadSettled || projects.loading);
 });
 
 // ── The assistant ────────────────────────────────────────────────────────────
@@ -377,7 +390,11 @@ function autoGrow(): void {
   grown.value = el.scrollHeight > parseFloat(getComputedStyle(el).lineHeight) * 1.5;
 }
 
-const canSend = computed(() => (draft.value.trim().length > 0 || attachFiles.value.length > 0) && !chat.busy);
+// «Новий чат» keeps the composer locked until the api has dropped the old conversation
+// (stores/management-chat.ts `resetting`); the store reports a failure in the log itself.
+const { run: newChat } = useAsyncAction(() => chat.reset());
+const composerLocked = computed(() => chat.busy || chat.resetting);
+const canSend = computed(() => (draft.value.trim().length > 0 || attachFiles.value.length > 0) && !composerLocked.value);
 
 // Attachments — images the model sees natively plus the documents (PDF, Excel, Word,
 // Pages, Markdown) the api lands on disk for the read tool. Collected by paste, drop or the 📎
@@ -486,7 +503,7 @@ onUnmounted(() => clearInterval(thinkTimer));
 // The composer has room for one number, and the number that matters before spending a turn
 // is the window closest to its ceiling. `providers` empty means nothing can be reported (no
 // omp on PATH, no authenticated plan), and then the chip is absent rather than zero.
-const planUsage = useSubscriptionUsage();
+const { usage: planUsage } = useSubscriptionUsage();
 const planNow = useNow(30_000);
 
 const planChip = computed(() => {

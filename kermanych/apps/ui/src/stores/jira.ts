@@ -75,15 +75,32 @@ export const useJira = defineStore('jira', () => {
   const children = ref<Record<string, JiraIssueChildren>>({});
   const tokenPresent = ref(false);
   const tokenEmail = ref<string | undefined>(undefined);
-  const loading = ref(false);
+  // Whether the active board's token status has been answered: the «Тільки читання» badge
+  // must not flash before the probe says whether this machine can write.
+  const tokenKnown = ref(false);
+  // True from the start of open()/probe() through the end of loadBoard — the contract the
+  // Management/Board/Home skeletons read (`integration === undefined || loading && !issues`).
+  // Two halves, because the probe and the board session have different owners: closing the
+  // board view (close()) ends the board half but must not hide a probe still in flight.
+  const probing = ref(false);
+  const boardLoading = ref(false);
+  const loading = computed(() => probing.value || boardLoading.value);
   const loadError = ref<string | null>(null);
   const syncing = ref(false);
 
   let unsubscribe: (() => void) | undefined;
   let ticker: ReturnType<typeof setInterval> | undefined;
-  // The load()/open() race guard, the board store's `generation` idiom: a stale async
+  // The board/feed race guard, the board store's `generation` idiom: a stale async
   // completion must not install state for a workspace or board the user already left.
+  // Bumped by close/open/setActive and by a workspace change.
   let generation = 0;
+  // The probe's own guard, bumped only by a newer probe: closing the board view between a
+  // workspace switch and its probe's reply must not throw that reply away (the new
+  // workspace would never get its Jira tab).
+  let probeGen = 0;
+  // The probe in flight, so an overlapping probe of the same workspace (the Менеджмент chat
+  // asks while the board's open() is asking) shares it instead of superseding it.
+  let inflight: { ws: string; done: Promise<void> } | null = null;
   // Set while a Jira view holds a session open (see open/close). `setActive` rebuilds the
   // realtime feed + tick only while one is held — switching boards on the Integrations tab,
   // which never calls open(), must not start a poller.
@@ -108,22 +125,26 @@ export const useJira = defineStore('jira', () => {
   // The active board's token status. A board may live on a different Jira site than its
   // siblings, so the answer is per board: switching to a board on a site this machine has
   // no token for drops the view to read-only, exactly as an unconnected token would.
-  async function refreshTokenStatus(): Promise<void> {
+  async function refreshTokenStatus(stillCurrent: () => boolean): Promise<void> {
     const row = active.value;
     if (!row) {
       tokenPresent.value = false;
       tokenEmail.value = undefined;
+      tokenKnown.value = true;
       return;
     }
-    const mine = generation;
+    // The answer is about `row`: it lands only while the caller is current AND that row is
+    // still the active board (a board switch meanwhile asked for its own).
+    const applies = () => stillCurrent() && active.value?.id === row.id;
     try {
       const status = await api.jiraTokenStatus(row.siteUrl);
-      if (mine !== generation) return;
+      if (!applies()) return;
       tokenPresent.value = status.present;
       tokenEmail.value = status.email;
     } catch {
-      if (mine === generation) tokenPresent.value = false;
+      if (applies()) tokenPresent.value = false;
     }
+    if (applies()) tokenKnown.value = true;
   }
 
   // The workspace's boards plus this machine's answer to «may I write to the active one» —
@@ -136,37 +157,66 @@ export const useJira = defineStore('jira', () => {
   // ticket can be created before anybody has opened the Jira board, and «there is a board»
   // without «I can write to it» would have it promise a ticket the api cannot sign. It costs
   // a local sqlite read through the local api, not a Jira call.
-  async function probe(ws: string): Promise<void> {
-    workspaceId.value = ws;
-    if (IS_PREVIEW || !auth.user) {
+  function probe(ws: string): Promise<void> {
+    // Same workspace already being asked: share that answer.
+    if (inflight && inflight.ws === ws) return inflight.done;
+    // A different workspace's boards must not stay on screen while this one's are asked:
+    // reset synchronously, so `integration === undefined` reads «not loaded for this
+    // workspace». A re-probe of the same workspace keeps what is shown.
+    if (workspaceId.value !== ws) {
+      generation++; // an in-flight board load belongs to the workspace being left
       integrations.value = [];
       activeId.value = null;
-      probed.value = true;
+      probed.value = false;
+      columns.value = [];
+      issues.value = [];
+      children.value = {};
+      loadError.value = null;
       tokenPresent.value = false;
-      return;
+      tokenEmail.value = undefined;
+      tokenKnown.value = false;
     }
-    const mine = ++generation;
+    workspaceId.value = ws;
+    const mine = ++probeGen;
+    probing.value = true;
+    const entry = { ws, done: runProbe(ws, mine) };
+    inflight = entry;
+    void entry.done.finally(() => {
+      if (inflight === entry) inflight = null;
+    });
+    return entry.done;
+  }
+
+  async function runProbe(ws: string, mine: number): Promise<void> {
+    const current = () => mine === probeGen;
     try {
-      const rows = await listJiraIntegrations(auth.client, ws);
-      if (mine !== generation) return;
-      integrations.value = rows;
-      probed.value = true;
-      const stored = readActive(ws);
-      activeId.value = rows.find((r) => r.id === stored)?.id ?? rows[0]?.id ?? null;
-    } catch {
-      // An unreachable cloud answers «нема табу», not an error banner: the native board
-      // already owns the offline story.
-      if (mine === generation) {
+      if (IS_PREVIEW || !auth.user) {
+        integrations.value = [];
+        activeId.value = null;
+        probed.value = true;
+        tokenPresent.value = false;
+        tokenKnown.value = true;
+        return;
+      }
+      try {
+        const rows = await listJiraIntegrations(auth.client, ws);
+        if (!current()) return;
+        integrations.value = rows;
+        probed.value = true;
+        const stored = readActive(ws);
+        activeId.value = rows.find((r) => r.id === stored)?.id ?? rows[0]?.id ?? null;
+      } catch {
+        // An unreachable cloud answers «нема табу», not an error banner: the native board
+        // already owns the offline story.
+        if (!current()) return;
         integrations.value = [];
         activeId.value = null;
         probed.value = true;
       }
+      await refreshTokenStatus(current);
+    } finally {
+      if (current()) probing.value = false;
     }
-    if (!active.value) {
-      if (mine === generation) tokenPresent.value = false;
-      return;
-    }
-    await refreshTokenStatus();
   }
 
   function readActive(ws: string): string | null {
@@ -192,11 +242,15 @@ export const useJira = defineStore('jira', () => {
     }
     // The previous board's cards, columns and children do not belong to this one.
     generation++;
+    const mine = generation;
     columns.value = [];
     issues.value = [];
     children.value = {};
     loadError.value = null;
-    await refreshTokenStatus();
+    tokenKnown.value = false;
+    // The view shows a skeleton, not «порожня дошка», until the new board's load answers.
+    if (sessionOpen) boardLoading.value = true;
+    await refreshTokenStatus(() => mine === generation);
     if (sessionOpen) {
       teardownFeed();
       await startFeed();
@@ -207,7 +261,7 @@ export const useJira = defineStore('jira', () => {
     const row = active.value;
     if (!row) return;
     const mine = generation;
-    loading.value = true;
+    boardLoading.value = true;
     loadError.value = null;
     try {
       const [cols, iss] = await Promise.all([
@@ -220,7 +274,7 @@ export const useJira = defineStore('jira', () => {
     } catch (e) {
       if (mine === generation) loadError.value = e instanceof Error ? e.message : String(e);
     } finally {
-      if (mine === generation) loading.value = false;
+      if (mine === generation) boardLoading.value = false;
     }
   }
 
@@ -289,8 +343,18 @@ export const useJira = defineStore('jira', () => {
     const token = ++opener;
     close();
     sessionOpen = true;
-    await probe(ws);
-    if (!active.value) return token;
+    // Up before the probe ends, so `loading` does not dip between the probe and loadBoard.
+    boardLoading.value = true;
+    const asked = probe(ws);
+    // Taken after probe()'s synchronous workspace reset: only a later close/open/board
+    // switch makes this session stale — an overlapping probe does not.
+    const mine = generation;
+    await asked;
+    if (mine !== generation) return token; // a newer open/close owns the session
+    if (!active.value) {
+      boardLoading.value = false;
+      return token;
+    }
     await startFeed();
     return token;
   }
@@ -327,6 +391,9 @@ export const useJira = defineStore('jira', () => {
   function close(token?: number): void {
     if (token !== undefined && token !== opener) return;
     generation++;
+    // The bump discards an in-flight board load, so nothing else would lower its half; a
+    // probe in flight keeps `loading` up through its own half.
+    boardLoading.value = false;
     sessionOpen = false;
     teardownFeed();
   }
@@ -371,6 +438,7 @@ export const useJira = defineStore('jira', () => {
     children,
     tokenPresent,
     tokenEmail,
+    tokenKnown,
     loading,
     loadError,
     syncing,

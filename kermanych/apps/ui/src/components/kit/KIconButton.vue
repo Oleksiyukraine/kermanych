@@ -2,15 +2,19 @@
   <button
     type="button"
     class="k-icon-btn"
-    :class="{ 'k-icon-btn--on': active }"
+    :class="{ 'k-icon-btn--on': active, 'k-icon-btn--loading': loading }"
+    :disabled="disabled || loading"
     v-tip="title"
     :aria-label="title"
+    :aria-busy="loading || undefined"
   >
-    <slot />
+    <KSpinner v-if="loading" :size="11" />
+    <slot v-else />
   </button>
 </template>
 
 <script setup lang="ts">
+import KSpinner from './KSpinner.vue';
 // Dense, glyph-only action control for the app's icon clusters — the agents
 // board's per-row actions (run / edit / merge / archive …) and the session
 // panel's header controls. Square, muted 1px rule, a single glyph in the default
@@ -22,6 +26,10 @@
 // KIconButton wherever glyph actions sit side by side; reach for
 // KBtn variant="icon" for a lone toolbar icon.
 //
+// `loading` is the busy affordance (README «Design → Async states»): the glyph gives way
+// to the kit spinner and the control is disabled, so one flag both shows the action is
+// running and blocks a second press. `disabled` alone is for «not available».
+//
 // `title` drives the app tooltip (`v-tip`, src/lib/tip.ts) instead of the native
 // attribute, and doubles as the `aria-label`: the default slot holds a bare
 // glyph, which gives the control no accessible name of its own.
@@ -32,8 +40,10 @@ withDefaults(
   defineProps<{
     title?: string;
     active?: boolean;
+    disabled?: boolean | undefined;
+    loading?: boolean | undefined;
   }>(),
-  { active: false },
+  { active: false, disabled: false, loading: false },
 );
 </script>
 
@@ -76,6 +86,12 @@ withDefaults(
       border-color: var(--k-line);
       color: var(--k-muted);
     }
+  }
+
+  // Busy: the spinner must stay readable, so less dim than «not available».
+  &.k-icon-btn--loading:disabled {
+    opacity: 0.8;
+    cursor: progress;
   }
 }
 

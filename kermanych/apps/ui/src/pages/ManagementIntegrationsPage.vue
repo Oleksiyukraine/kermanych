@@ -22,10 +22,16 @@
 
         <!-- Each tile is live: its own state line and its own connect/settings modals. -->
         <div class="int__foot">
+          <!-- Not probed for THIS workspace yet: «не підключено» and a Connect button would be
+               claims about a workspace nobody has asked about. -->
+          <template v-if="!tileState[brand.id]">
+            <KSkeleton v-if="tilePhase[brand.id].value === 'skeleton'" variant="line" width="140px" />
+          </template>
+          <template v-else>
           <!-- One line whatever the name's length: it truncates, and the tip carries it whole. -->
-          <span class="int__state mono" v-tip="tileState[brand.id].on ? tileState[brand.id].label : ''">
-            <i class="int__state-dot" :class="{ 'int__state-dot--on': tileState[brand.id].on }" aria-hidden="true"></i>
-            <span class="int__state-text">{{ tileState[brand.id].label }}</span>
+          <span class="int__state mono" v-tip="tileState[brand.id]!.on ? tileState[brand.id]!.label : ''">
+            <i class="int__state-dot" :class="{ 'int__state-dot--on': tileState[brand.id]!.on }" aria-hidden="true"></i>
+            <span class="int__state-text">{{ tileState[brand.id]!.label }}</span>
           </span>
           <template v-if="brand.id === 'jira'">
             <template v-if="jira.integrations.length">
@@ -78,12 +84,13 @@
               @click="openSlackConnect"
             >{{ t('management.integrations.connect') }}</button>
           </template>
+          </template>
         </div>
       </article>
     </div>
 
     <!-- CONNECT — the owner's three steps: site → personal token → board. -->
-    <KModal v-model="connectOpen" :title="t('jira.connect.title')" width="520px">
+    <KModal v-model="connectOpen" :title="t('jira.connect.title')" width="520px" :persistent="busy">
       <div class="int__flow">
         <template v-if="connectStep === 'site'">
           <KField
@@ -119,12 +126,12 @@
         <p v-if="flowError" class="int__error mono">{{ flowError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="connectOpen = false">{{ t('jira.connect.cancel') }}</KBtn>
-        <KBtn v-if="connectStep === 'site'" variant="primary" :disabled="!siteInput.trim() || busy" @click="siteNext">{{ t('jira.connect.next') }}</KBtn>
-        <KBtn v-else-if="connectStep === 'token'" variant="primary" :disabled="!emailInput.trim() || !tokenInput.trim() || busy" @click="tokenNext">
+        <KBtn variant="ghost" :disabled="busy" @click="connectOpen = false">{{ t('jira.connect.cancel') }}</KBtn>
+        <KBtn v-if="connectStep === 'site'" variant="primary" :loading="busy" :disabled="!siteInput.trim()" @click="siteNext">{{ t('jira.connect.next') }}</KBtn>
+        <KBtn v-else-if="connectStep === 'token'" variant="primary" :loading="busy" :disabled="!emailInput.trim() || !tokenInput.trim()" @click="tokenNext">
           {{ busy ? t('jira.connect.checking') : t('jira.connect.next') }}
         </KBtn>
-        <KBtn v-else variant="primary" :disabled="!boardPick || busy" @click="connectFinish">
+        <KBtn v-else variant="primary" :loading="busy" :disabled="!boardPick" @click="connectFinish">
           {{ busy ? t('jira.connect.connecting') : t('management.integrations.connect') }}
         </KBtn>
       </template>
@@ -148,6 +155,10 @@
         </dl>
 
         <div class="int__token">
+          <!-- The token status is a second read per board: until it answers, «немає токена»
+               and its token form would be a false state. -->
+          <KSkeleton v-if="!settingsTokenKnown" variant="lines" :rows="2" />
+          <template v-else>
           <p class="int__token-state">
             <template v-if="settingsTokenPresent">
               {{ t('jira.connect.tokenOnMachine') }} <span class="mono">{{ settingsTokenEmail }}</span>
@@ -163,7 +174,7 @@
               <a class="int__link" href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer">id.atlassian.com → API tokens</a>
             </p>
             <div class="int__row">
-              <KBtn variant="secondary" :disabled="!emailInput.trim() || !tokenInput.trim() || busy" @click="saveToken">
+              <KBtn variant="secondary" :loading="busy" :disabled="!emailInput.trim() || !tokenInput.trim()" @click="saveToken">
                 {{ busy ? t('jira.connect.checking') : t('jira.connect.saveToken') }}
               </KBtn>
               <KBtn v-if="tokenEditing" variant="ghost" @click="tokenEditing = false">{{ t('jira.connect.cancel') }}</KBtn>
@@ -173,6 +184,7 @@
             <KBtn variant="ghost" @click="startTokenEdit">{{ t('jira.connect.replaceToken') }}</KBtn>
             <KBtn variant="ghost" :loading="removingToken" @click="removeToken">{{ t('jira.connect.removeToken') }}</KBtn>
           </div>
+          </template>
         </div>
 
         <p v-if="flowError" class="int__error mono">{{ flowError }}</p>
@@ -188,7 +200,7 @@
     </KModal>
 
     <!-- LINEAR CONNECT — the owner's two steps: personal API key → team. -->
-    <KModal v-model="linearConnectOpen" :title="t('linear.connect.title')" width="520px">
+    <KModal v-model="linearConnectOpen" :title="t('linear.connect.title')" width="520px" :persistent="linearBusy">
       <div class="int__flow">
         <template v-if="linearConnectStep === 'token'">
           <KField v-model="linearApiKeyInput" :label="t('linear.connect.tokenLabel')" type="password" placeholder="lin_api_…" @keydown.enter="linearTokenNext" />
@@ -213,11 +225,11 @@
         <p v-if="linearFlowError" class="int__error mono">{{ linearFlowError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="linearConnectOpen = false">{{ t('linear.connect.cancel') }}</KBtn>
-        <KBtn v-if="linearConnectStep === 'token'" variant="primary" :disabled="!linearApiKeyInput.trim() || linearBusy" @click="linearTokenNext">
+        <KBtn variant="ghost" :disabled="linearBusy" @click="linearConnectOpen = false">{{ t('linear.connect.cancel') }}</KBtn>
+        <KBtn v-if="linearConnectStep === 'token'" variant="primary" :loading="linearBusy" :disabled="!linearApiKeyInput.trim()" @click="linearTokenNext">
           {{ linearBusy ? t('linear.connect.checking') : t('linear.connect.next') }}
         </KBtn>
-        <KBtn v-else variant="primary" :disabled="!linearTeamPick || linearBusy" @click="linearConnectFinish">
+        <KBtn v-else variant="primary" :loading="linearBusy" :disabled="!linearTeamPick" @click="linearConnectFinish">
           {{ linearBusy ? t('linear.connect.connecting') : t('management.integrations.connect') }}
         </KBtn>
       </template>
@@ -247,7 +259,7 @@
               <a class="int__link" href="https://linear.app/settings/api" target="_blank" rel="noopener noreferrer">linear.app → Settings → API</a>
             </p>
             <div class="int__row">
-              <KBtn variant="secondary" :disabled="!linearApiKeyInput.trim() || linearBusy" @click="saveLinearToken">
+              <KBtn variant="secondary" :loading="linearBusy" :disabled="!linearApiKeyInput.trim()" @click="saveLinearToken">
                 {{ linearBusy ? t('linear.connect.checking') : t('linear.connect.saveToken') }}
               </KBtn>
               <KBtn v-if="linearTokenEditing" variant="ghost" @click="linearTokenEditing = false">{{ t('linear.connect.cancel') }}</KBtn>
@@ -272,7 +284,7 @@
     </KModal>
 
     <!-- SLACK CONNECT — the owner's two steps: the app and its tokens → the channel. -->
-    <KModal v-model="slackConnectOpen" :title="t('slack.connect.title')" width="520px">
+    <KModal v-model="slackConnectOpen" :title="t('slack.connect.title')" width="520px" :persistent="slackBusy">
       <div class="int__flow">
         <template v-if="slackConnectStep === 'app'">
           <ol class="int__hint int__steps">
@@ -294,8 +306,13 @@
         </template>
 
         <template v-else>
+          <!-- The bot's channels are read when this step opens: «Бота ще не додано в жоден
+               канал» must wait for that answer. -->
+          <template v-if="slackChannelsPhase !== 'ready'">
+            <KSkeleton v-if="slackChannelsPhase === 'skeleton'" variant="line" width="100%" height="32px" />
+          </template>
           <KSelect
-            v-if="slackChannelOptions.length"
+            v-else-if="slackChannelOptions.length"
             v-model="slackChannelPick"
             :label="t('slack.connect.channelLabel')"
             :options="slackChannelOptions"
@@ -315,17 +332,18 @@
         <p v-if="slackFlowError" class="int__error mono">{{ slackFlowError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="slackConnectOpen = false">{{ t('slack.connect.cancel') }}</KBtn>
-        <KBtn v-if="slackConnectStep === 'channel'" variant="ghost" @click="slackConnectStep = 'app'">{{ t('slack.connect.otherTokens') }}</KBtn>
+        <KBtn variant="ghost" :disabled="slackBusy" @click="slackConnectOpen = false">{{ t('slack.connect.cancel') }}</KBtn>
+        <KBtn v-if="slackConnectStep === 'channel'" variant="ghost" :disabled="slackBusy" @click="slackConnectStep = 'app'">{{ t('slack.connect.otherTokens') }}</KBtn>
         <KBtn
           v-if="slackConnectStep === 'app'"
           variant="primary"
-          :disabled="!slackBotTokenInput.trim() || !slackAppTokenInput.trim() || slackBusy"
+          :loading="slackBusy"
+          :disabled="!slackBotTokenInput.trim() || !slackAppTokenInput.trim()"
           @click="slackTokenNext"
         >
           {{ slackBusy ? t('slack.connect.checking') : t('slack.connect.next') }}
         </KBtn>
-        <KBtn v-else variant="primary" :disabled="!slackChannelPick || slackBusy" @click="slackConnectFinish">
+        <KBtn v-else variant="primary" :loading="slackBusy" :disabled="!slackChannelPick" @click="slackConnectFinish">
           {{ slackBusy ? t('slack.connect.connecting') : t('management.integrations.connect') }}
         </KBtn>
       </template>
@@ -344,8 +362,13 @@
             <template v-if="slackTokenPresent">
               {{ t('slack.connect.tokenOnMachine') }}
               <span class="int__state mono">
+                <!-- Listening is live machine state, re-read each time the card opens: the
+                     last probe's answer may be stale, so the dot waits for the fresh one. -->
+                <KSkeleton v-if="!slackListeningKnown" variant="line" width="96px" />
+                <template v-else>
                 <i class="int__state-dot" :class="{ 'int__state-dot--on': slackListening }" aria-hidden="true"></i>
                 {{ slackListening ? t('slack.connect.listening') : t('slack.connect.notListening') }}
+                </template>
               </span>
             </template>
             <template v-else>
@@ -362,7 +385,8 @@
             <div class="int__row">
               <KBtn
                 variant="secondary"
-                :disabled="!slackBotTokenInput.trim() || !slackAppTokenInput.trim() || slackBusy"
+                :loading="slackBusy"
+                :disabled="!slackBotTokenInput.trim() || !slackAppTokenInput.trim()"
                 @click="saveSlackToken"
               >
                 {{ slackBusy ? t('slack.connect.checking') : t('slack.connect.saveToken') }}
@@ -403,6 +427,9 @@ import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useAsyncAction, errorText } from '../composables/useAsyncAction';
+import { useLoadPhase } from '../composables/useLoadPhase';
 import type { SlackIntegration } from '@kermanych/cloud';
 import { getSlackIntegration } from '@kermanych/cloud';
 import { api, type JiraBoardOption, type LinearTeamOption, type SlackChannelOption } from '../lib/api';
@@ -433,8 +460,14 @@ const emailInput = ref('');
 const tokenInput = ref('');
 const boards = ref<JiraBoardOption[]>([]);
 const boardPick = ref('');
-const busy = ref(false);
 const flowError = ref('');
+// One guard for every step of the Jira flow — the button and the field's Enter both go
+// through `run`, so a second Enter while the first check is in flight is dropped. Errors
+// render inside the modal, which stays open.
+const jiraFlow = useAsyncAction((step: () => Promise<void>) => step(), {
+  onError: (e) => (flowError.value = errorText(e)),
+});
+const busy = jiraFlow.busy;
 
 const settingsOpen = ref(false);
 // Which connected board the settings card is about. Defaults to the active board, and the
@@ -445,6 +478,8 @@ const settingsBoardId = ref('');
 // any of the workspace's boards, each possibly on its own Jira site.
 const settingsTokenPresent = ref(false);
 const settingsTokenEmail = ref<string | undefined>(undefined);
+// Whether the selected board's token status has answered; the card shows a skeleton until then.
+const settingsTokenKnown = ref(false);
 const tokenEditing = ref(false);
 const removingToken = ref(false);
 const disconnecting = ref(false);
@@ -478,16 +513,16 @@ function openSettings(): void {
   emailInput.value = '';
   tokenInput.value = '';
   settingsBoardId.value = jira.activeId ?? jira.integrations[0]?.id ?? '';
+  settingsTokenKnown.value = false;
   void loadSettingsToken();
   settingsOpen.value = true;
 }
 
-async function siteNext(): Promise<void> {
+function siteNext(): void {
   const site = siteInput.value.trim();
   if (!site) return;
   flowError.value = '';
-  busy.value = true;
-  try {
+  void jiraFlow.run(async () => {
     // A token already on this machine for this site skips the token step entirely.
     const status = await api.jiraTokenStatus(site);
     if (status.present) {
@@ -496,26 +531,17 @@ async function siteNext(): Promise<void> {
     } else {
       connectStep.value = 'token';
     }
-  } catch (e) {
-    flowError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
-  }
+  });
 }
 
-async function tokenNext(): Promise<void> {
+function tokenNext(): void {
   flowError.value = '';
-  busy.value = true;
-  try {
+  void jiraFlow.run(async () => {
     await api.jiraSetToken(siteInput.value.trim(), emailInput.value.trim(), tokenInput.value.trim());
     tokenInput.value = '';
     await loadBoards();
     connectStep.value = 'board';
-  } catch (e) {
-    flowError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
-  }
+  });
 }
 
 async function loadBoards(): Promise<void> {
@@ -526,22 +552,17 @@ async function loadBoards(): Promise<void> {
   boardPick.value = boardOptions.value[0]?.value ?? '';
 }
 
-async function connectFinish(): Promise<void> {
+function connectFinish(): void {
   if (!boardPick.value) return;
   flowError.value = '';
-  busy.value = true;
-  try {
+  void jiraFlow.run(async () => {
     const created = await api.jiraConnect(props.workspaceId, siteInput.value.trim(), Number(boardPick.value));
     await jira.probe(props.workspaceId);
     // Land on the board just added.
     await jira.setActive(created.id);
     connectOpen.value = false;
     local.notify(t('jira.notify.connected'), 'info');
-  } catch (e) {
-    flowError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
-  }
+  });
 }
 
 // ── settings actions ──────────────────────────────────────────────────────────
@@ -558,15 +579,20 @@ async function loadSettingsToken(): Promise<void> {
   if (!site) {
     settingsTokenPresent.value = false;
     settingsTokenEmail.value = undefined;
+    settingsTokenKnown.value = true;
     return;
   }
   try {
     const status = await api.jiraTokenStatus(site);
+    // The picker may have moved on to another board's site meanwhile.
+    if (site !== settingsBoard.value?.siteUrl) return;
     settingsTokenPresent.value = status.present;
     settingsTokenEmail.value = status.email;
   } catch {
+    if (site !== settingsBoard.value?.siteUrl) return;
     settingsTokenPresent.value = false;
   }
+  settingsTokenKnown.value = true;
 }
 
 watch(settingsBoardId, () => {
@@ -574,15 +600,17 @@ watch(settingsBoardId, () => {
   emailInput.value = '';
   tokenInput.value = '';
   flowError.value = '';
-  if (settingsOpen.value) void loadSettingsToken();
+  if (settingsOpen.value) {
+    settingsTokenKnown.value = false;
+    void loadSettingsToken();
+  }
 });
 
-async function saveToken(): Promise<void> {
+function saveToken(): void {
   const site = settingsBoard.value?.siteUrl;
   if (!site) return;
   flowError.value = '';
-  busy.value = true;
-  try {
+  void jiraFlow.run(async () => {
     await api.jiraSetToken(site, emailInput.value.trim(), tokenInput.value.trim());
     tokenInput.value = '';
     tokenEditing.value = false;
@@ -590,11 +618,7 @@ async function saveToken(): Promise<void> {
     // Keep the board view's active-board token in step if it shares this site.
     await jira.probe(props.workspaceId);
     local.notify(t('jira.notify.tokenSaved'), 'info');
-  } catch (e) {
-    flowError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
-  }
+  });
 }
 
 async function removeToken(): Promise<void> {
@@ -648,8 +672,12 @@ const linearApiKeyInput = ref('');
 const linearOrgUrlKey = ref('');
 const linearTeams = ref<LinearTeamOption[]>([]);
 const linearTeamPick = ref('');
-const linearBusy = ref(false);
 const linearFlowError = ref('');
+// Same single guard as the Jira flow: button and Enter share `run`.
+const linearFlow = useAsyncAction((step: () => Promise<void>) => step(), {
+  onError: (e) => (linearFlowError.value = errorText(e)),
+});
+const linearBusy = linearFlow.busy;
 
 const linearSettingsOpen = ref(false);
 const linearTokenEditing = ref(false);
@@ -677,22 +705,17 @@ function openLinearSettings(): void {
 
 // The key is stored keyed by the discovered org url-key + this viewer, and its org is what
 // the team list is fetched against.
-async function linearTokenNext(): Promise<void> {
+function linearTokenNext(): void {
   const apiKey = linearApiKeyInput.value.trim();
   if (!apiKey) return;
   linearFlowError.value = '';
-  linearBusy.value = true;
-  try {
+  void linearFlow.run(async () => {
     const res = await api.linearSetToken(apiKey);
     linearApiKeyInput.value = '';
     linearOrgUrlKey.value = res.orgUrlKey;
     await loadLinearTeams();
     linearConnectStep.value = 'team';
-  } catch (e) {
-    linearFlowError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    linearBusy.value = false;
-  }
+  });
 }
 
 async function loadLinearTeams(): Promise<void> {
@@ -700,20 +723,15 @@ async function loadLinearTeams(): Promise<void> {
   linearTeamPick.value = linearTeamOptions.value[0]?.value ?? '';
 }
 
-async function linearConnectFinish(): Promise<void> {
+function linearConnectFinish(): void {
   if (!linearTeamPick.value) return;
   linearFlowError.value = '';
-  linearBusy.value = true;
-  try {
+  void linearFlow.run(async () => {
     await api.linearConnect(props.workspaceId, linearOrgUrlKey.value, linearTeamPick.value);
     await linear.probe(props.workspaceId);
     linearConnectOpen.value = false;
     local.notify(t('linear.notify.connected'), 'info');
-  } catch (e) {
-    linearFlowError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    linearBusy.value = false;
-  }
+  });
 }
 
 // ── Linear settings actions ─────────────────────────────────────────────────────
@@ -722,22 +740,17 @@ function startLinearTokenEdit(): void {
   linearApiKeyInput.value = '';
 }
 
-async function saveLinearToken(): Promise<void> {
+function saveLinearToken(): void {
   const apiKey = linearApiKeyInput.value.trim();
   if (!apiKey) return;
   linearFlowError.value = '';
-  linearBusy.value = true;
-  try {
+  void linearFlow.run(async () => {
     await api.linearSetToken(apiKey);
     linearApiKeyInput.value = '';
     linearTokenEditing.value = false;
     await refreshLinearTokenState();
     local.notify(t('linear.notify.tokenSaved'), 'info');
-  } catch (e) {
-    linearFlowError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    linearBusy.value = false;
-  }
+  });
 }
 
 async function removeLinearToken(): Promise<void> {
@@ -804,8 +817,16 @@ const slackAppTokenInput = ref('');
 const slackChannels = ref<SlackChannelOption[]>([]);
 const slackChannelPick = ref('');
 const slackLoadingChannels = ref(false);
-const slackBusy = ref(false);
 const slackFlowError = ref('');
+// Same single guard as the Jira flow: button and the app-token field's Enter share `run`.
+const slackFlow = useAsyncAction((step: () => Promise<void>) => step(), {
+  onError: (e) => (slackFlowError.value = errorText(e)),
+});
+const slackBusy = slackFlow.busy;
+// Whether `slackListening` is a fresh answer for this workspace — the settings card re-reads
+// it on open, and its dot shows a skeleton until then.
+const slackListeningKnown = ref(false);
+const slackChannelsPhase = useLoadPhase(() => slackLoadingChannels.value && !slackChannels.value.length);
 
 const slackSettingsOpen = ref(false);
 const slackTokenEditing = ref(false);
@@ -831,6 +852,7 @@ async function probeSlack(workspaceId: string): Promise<void> {
     slackIntegration.value = null;
     slackTokenPresent.value = false;
     slackListening.value = false;
+    slackListeningKnown.value = true;
     return;
   }
   const mine = ++slackGeneration;
@@ -857,6 +879,7 @@ async function refreshSlackTokenState(workspaceId = props.workspaceId, mine = sl
     slackTokenPresent.value = false;
     slackListening.value = false;
   }
+  slackListeningKnown.value = true;
 }
 
 // Saving tokens or connecting kicks the api's socket refresh without waiting for Slack's
@@ -890,6 +913,7 @@ function openSlackSettings(): void {
   slackAppTokenInput.value = '';
   slackSettingsOpen.value = true;
   // Listening is live machine state — it may have dropped since the tile was probed.
+  slackListeningKnown.value = false;
   void refreshSlackTokenState();
 }
 
@@ -902,24 +926,19 @@ async function copySlackManifest(): Promise<void> {
   }
 }
 
-async function slackTokenNext(): Promise<void> {
+function slackTokenNext(): void {
   const botToken = slackBotTokenInput.value.trim();
   const appToken = slackAppTokenInput.value.trim();
   if (!botToken || !appToken) return;
   slackFlowError.value = '';
-  slackBusy.value = true;
-  try {
+  void slackFlow.run(async () => {
     await api.slackSetToken(props.workspaceId, botToken, appToken);
     slackBotTokenInput.value = '';
     slackAppTokenInput.value = '';
     slackTokenPresent.value = true;
     await loadSlackChannels();
     slackConnectStep.value = 'channel';
-  } catch (e) {
-    slackFlowError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    slackBusy.value = false;
-  }
+  });
 }
 
 // Only channels the bot is a MEMBER of come back (it cannot read the others), so the list
@@ -944,21 +963,16 @@ async function refreshSlackChannels(): Promise<void> {
   }
 }
 
-async function slackConnectFinish(): Promise<void> {
+function slackConnectFinish(): void {
   if (!slackChannelPick.value) return;
   slackFlowError.value = '';
-  slackBusy.value = true;
-  try {
+  void slackFlow.run(async () => {
     const row = await api.slackConnect(props.workspaceId, slackChannelPick.value);
     await probeSlack(props.workspaceId);
     slackConnectOpen.value = false;
     local.notify(t('slack.notify.connected', { channel: `#${row.channelName}` }), 'info');
     recheckSlackSoon();
-  } catch (e) {
-    slackFlowError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    slackBusy.value = false;
-  }
+  });
 }
 
 // ── Slack settings actions ──────────────────────────────────────────────────────
@@ -975,8 +989,7 @@ async function saveSlackToken(): Promise<void> {
   const appToken = slackAppTokenInput.value.trim();
   if (!botToken || !appToken) return;
   slackFlowError.value = '';
-  slackBusy.value = true;
-  try {
+  void slackFlow.run(async () => {
     await api.slackSetToken(props.workspaceId, botToken, appToken);
     slackBotTokenInput.value = '';
     slackAppTokenInput.value = '';
@@ -984,11 +997,7 @@ async function saveSlackToken(): Promise<void> {
     await refreshSlackTokenState();
     local.notify(t('slack.notify.tokenSaved'), 'info');
     recheckSlackSoon();
-  } catch (e) {
-    slackFlowError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    slackBusy.value = false;
-  }
+  });
 }
 
 async function removeSlackToken(): Promise<void> {
@@ -1031,6 +1040,14 @@ onMounted(() => {
 watch(
   () => props.workspaceId,
   (id) => {
+    // The Slack row is page-local: drop the old workspace's at once (tile skeleton) and let
+    // probeSlack's generation bump discard a reply still in flight for it. Jira and Linear
+    // reset themselves inside probe().
+    slackGeneration++;
+    slackIntegration.value = undefined;
+    slackTokenPresent.value = false;
+    slackListening.value = false;
+    slackListeningKnown.value = false;
     void jira.probe(id);
     void linear.probe(id);
     void probeSlack(id);
@@ -1058,19 +1075,31 @@ type Brand = {
 
 // The tile's state line. A connected label carries a user-chosen name (board, team,
 // channel) of any length — the template truncates it to the tile and tips it whole.
-const tileState = computed<Record<BrandId, { on: boolean; label: string }>>(() => {
+// `undefined` = not probed for this workspace yet (skeleton), never «не підключено».
+const tileState = computed<Record<BrandId, { on: boolean; label: string } | undefined>>(() => {
   const off = t('management.integrations.notConnected');
   const boards = jira.integrations.length;
   return {
-    jira: { on: boards > 0, label: boards ? t('jira.connect.stateConnectedN', boards) : off },
-    linear: linear.integration
-      ? { on: true, label: t('linear.connect.stateConnected', { board: linear.integration.teamName }) }
-      : { on: false, label: off },
-    slack: slackIntegration.value
-      ? { on: true, label: t('slack.connect.stateConnected', { channel: `#${slackIntegration.value.channelName}` }) }
-      : { on: false, label: off },
+    jira: jira.integration === undefined
+      ? undefined
+      : { on: boards > 0, label: boards ? t('jira.connect.stateConnectedN', boards) : off },
+    linear: linear.integration === undefined
+      ? undefined
+      : linear.integration
+        ? { on: true, label: t('linear.connect.stateConnected', { board: linear.integration.teamName }) }
+        : { on: false, label: off },
+    slack: slackIntegration.value === undefined
+      ? undefined
+      : slackIntegration.value
+        ? { on: true, label: t('slack.connect.stateConnected', { channel: `#${slackIntegration.value.channelName}` }) }
+        : { on: false, label: off },
   };
 });
+const tilePhase = {
+  jira: useLoadPhase(() => jira.integration === undefined),
+  linear: useLoadPhase(() => linear.integration === undefined),
+  slack: useLoadPhase(() => slackIntegration.value === undefined),
+};
 
 const BRANDS: readonly Brand[] = [
   {

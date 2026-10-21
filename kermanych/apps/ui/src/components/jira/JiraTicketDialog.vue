@@ -39,17 +39,25 @@
           </button>
         </div>
 
-        <div v-if="kids?.attachments.length || canAct" class="jtd__section">
+        <div v-if="kids?.attachments.length || canAct || kidsPhase === 'skeleton'" class="jtd__section">
           <h4 class="jtd__section-title">{{ t('jira.ticketDialog.attachments') }}</h4>
+          <KSkeleton v-if="kidsPhase === 'skeleton'" variant="lines" :rows="2" />
           <div v-for="a in kids?.attachments ?? []" :key="a.attachmentId" class="jtd__attachment">
-            <button class="jtd__attachment-name" type="button" :disabled="!canAct" @click="download(a)">
+            <button
+              class="jtd__attachment-name"
+              type="button"
+              :disabled="!canAct || downloadBusy(a.attachmentId)"
+              :aria-busy="downloadBusy(a.attachmentId) || undefined"
+              @click="download(a.attachmentId, a)"
+            >
               {{ a.filename }}
             </button>
+            <KSpinner v-if="downloadBusy(a.attachmentId)" :size="10" />
             <span class="jtd__attachment-meta mono">{{ prettySize(a.size) }} · {{ a.authorName }}</span>
           </div>
           <div v-if="canAct" class="jtd__attach-row">
             <input ref="fileInput" type="file" class="jtd__file" @change="upload" />
-            <KBtn variant="ghost" :disabled="uploading" @click="fileInput?.click()">
+            <KBtn variant="ghost" :loading="uploading" @click="fileInput?.click()">
               {{ uploading ? t('jira.ticketDialog.uploading') : t('jira.ticketDialog.addFile') }}
             </KBtn>
           </div>
@@ -72,6 +80,7 @@
           </div>
 
           <template v-if="tab === 'comments'">
+            <KSkeleton v-if="kidsPhase === 'skeleton'" variant="rows" :rows="3" />
             <div v-for="c in kids?.comments ?? []" :key="c.commentId" class="jtd__comment">
               <div class="jtd__comment-head">
                 <KAvatar :name="c.authorName || '?'" :avatar-url="c.authorAvatar || undefined" :size="18" />
@@ -80,7 +89,7 @@
               </div>
               <div class="jtd__comment-body" v-html="sanitizeJiraHtml(c.bodyHtml)"></div>
             </div>
-            <p v-if="!kids?.comments.length" class="jtd__empty mono">{{ t('jira.ticketDialog.noComments') }}</p>
+            <p v-if="kidsPhase === 'ready' && !kids?.comments.length" class="jtd__empty mono">{{ t('jira.ticketDialog.noComments') }}</p>
 
             <div v-if="canAct" class="jtd__composer">
               <textarea
@@ -89,13 +98,14 @@
                 rows="3"
                 :placeholder="t('jira.ticketDialog.commentPlaceholder')"
               ></textarea>
-              <KBtn variant="secondary" :disabled="!commentDraft.trim() || commenting" @click="sendComment">
+              <KBtn variant="secondary" :disabled="!commentDraft.trim()" :loading="commenting" @click="sendComment">
                 {{ commenting ? t('jira.ticketDialog.sending') : t('jira.ticketDialog.comment') }}
               </KBtn>
             </div>
           </template>
 
           <template v-else>
+            <KSkeleton v-if="kidsPhase === 'skeleton'" variant="rows" :rows="3" />
             <div v-for="w in kids?.worklogs ?? []" :key="w.worklogId" class="jtd__worklog">
               <span class="jtd__worklog-time mono">{{ w.timeSpent }}</span>
               <span class="jtd__worklog-author">{{ w.authorName }}</span>
@@ -146,13 +156,13 @@
                 </div>
                 <div class="jtd__confirm-row">
                   <KBtn variant="ghost" :disabled="logging" @click="deletingWorklogId = null">{{ t('jira.ticketDialog.no') }}</KBtn>
-                  <KBtn variant="secondary" :disabled="logging" @click="deleteWorklog(w.worklogId)">
-                    {{ logging ? '…' : t('jira.ticketDialog.yesDelete') }}
+                  <KBtn variant="secondary" :disabled="submitting" :loading="deletingWorklog" @click="deleteWorklog(w.worklogId)">
+                    {{ t('jira.ticketDialog.yesDelete') }}
                   </KBtn>
                 </div>
               </div>
             </div>
-            <p v-if="!kids?.worklogs.length" class="jtd__empty mono">{{ t('jira.ticketDialog.noWorklogs') }}</p>
+            <p v-if="kidsPhase === 'ready' && !kids?.worklogs.length" class="jtd__empty mono">{{ t('jira.ticketDialog.noWorklogs') }}</p>
 
             <!-- Jira's «Log work», field for field: duration, when it started, what it did
                  to the remaining estimate, and an optional note. The entry lands in Jira
@@ -209,7 +219,7 @@
                 <KBtn v-if="editingWorklogId" variant="ghost" :disabled="logging" @click="resetWorkDraft">
                   {{ t('jira.ticketDialog.cancel') }}
                 </KBtn>
-                <KBtn variant="secondary" :disabled="!workTime.trim() || logging" @click="submitWork">
+                <KBtn variant="secondary" :disabled="!workTime.trim() || deletingWorklog" :loading="submitting" @click="submitWork">
                   {{ submitLabel }}
                 </KBtn>
               </div>
@@ -227,19 +237,20 @@
                 class="jtd__status"
                 type="button"
                 :disabled="!canAct || transitionsLoading"
+                :aria-busy="transitionsLoading || undefined"
                 v-tip="canAct ? t('jira.ticketDialog.transitionTip') : readOnlyHint"
                 @click="openTransition"
-              >{{ issue.statusName }}</button>
+              >{{ issue.statusName }}<KSpinner v-if="transitionsLoading" :size="10" class="jtd__spin" /></button>
             </dd>
           </div>
           <div v-if="issue.typeName"><dt>{{ t('jira.ticketDialog.type') }}</dt><dd class="jtd__fact-icon"><img v-if="issue.typeIcon" :src="issue.typeIcon" alt="" />{{ issue.typeName }}</dd></div>
           <div v-if="canAct || issue.priorityName">
             <dt>{{ t('jira.ticketDialog.priority') }}</dt>
-            <dd v-if="canAct && priorityOptions.length">
+            <dd v-if="canAct && (priorityOptions.length || listsLoading)">
               <KSelect
-                :model-value="priorityCurrent"
+                :model-value="priorityValue"
                 :options="priorityOptions"
-                :disabled="savingField === 'priority'"
+                :loading="priorityPending || listsLoading"
                 placeholder="—"
                 @update:model-value="pickPriority"
               />
@@ -259,7 +270,8 @@
                 @keydown.enter.prevent="blurTarget($event)"
                 @blur="saveEstimate"
               />
-              <span v-else>{{ issue.originalEstimate || '—' }}</span>
+              <KSpinner v-if="savingField === 'estimate'" :size="10" class="jtd__spin" />
+              <span v-else-if="!canAct">{{ issue.originalEstimate || '—' }}</span>
             </dd>
           </div>
           <!-- Jira's other two time-tracking counters, read-only because only a worklog
@@ -282,7 +294,8 @@
                 v-tip="t('jira.ticketDialog.startDateTip')"
                 @change="saveStartDate"
               />
-              <span v-else>{{ issue.startDate || '—' }}</span>
+              <KSpinner v-if="savingField === 'startDate'" :size="10" class="jtd__spin" />
+              <span v-else-if="!(canAct && editorOptions.startDateSupported)">{{ issue.startDate || '—' }}</span>
             </dd>
           </div>
           <div>
@@ -298,16 +311,17 @@
                 v-tip="overdue ? t('jira.ticketDialog.dueTipOverdue') : t('jira.ticketDialog.dueTip')"
                 @change="saveDueDate"
               />
-              <span v-else :class="{ 'jtd__date--overdue': overdue }">{{ issue.dueDate || '—' }}</span>
+              <KSpinner v-if="savingField === 'dueDate'" :size="10" class="jtd__spin" />
+              <span v-else-if="!canAct" :class="{ 'jtd__date--overdue': overdue }">{{ issue.dueDate || '—' }}</span>
             </dd>
           </div>
           <div>
             <dt>{{ t('jira.ticketDialog.assignee') }}</dt>
-            <dd v-if="canAct && assigneeOptions.length > 1">
+            <dd v-if="canAct && (assigneeOptions.length > 1 || listsLoading)">
               <KSelect
-                :model-value="assigneeCurrent"
+                :model-value="assigneeValue"
                 :options="assigneeOptions"
-                :disabled="savingField === 'assignee'"
+                :loading="assigneePending || listsLoading"
                 :placeholder="t('jira.ticketDialog.unassigned')"
                 searchable
                 @update:model-value="pickAssignee"
@@ -341,8 +355,8 @@
           <template v-else>
             <p class="jtd__confirm">{{ t('jira.ticketDialog.deleteConfirm', { key: issue.key }) }}</p>
             <div class="jtd__confirm-row">
-              <KBtn variant="ghost" @click="confirmingDelete = false">{{ t('jira.ticketDialog.no') }}</KBtn>
-              <KBtn variant="secondary" :disabled="deleting" @click="doDelete">{{ deleting ? '…' : t('jira.ticketDialog.yesDelete') }}</KBtn>
+              <KBtn variant="ghost" :disabled="deleting" @click="confirmingDelete = false">{{ t('jira.ticketDialog.no') }}</KBtn>
+              <KBtn variant="secondary" :loading="deleting" @click="doDelete">{{ t('jira.ticketDialog.yesDelete') }}</KBtn>
             </div>
           </template>
         </div>
@@ -373,6 +387,8 @@ import KBtn from 'components/kit/KBtn.vue';
 import KModal from 'components/kit/KModal.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
 import JiraStatusPickDialog from './JiraStatusPickDialog.vue';
 import {
   api,
@@ -391,6 +407,9 @@ import {
   worklogStartedInstant,
   type JiraTransitionView,
 } from '../../lib/jira-view';
+import { useAsyncAction, useKeyedAction } from '../../composables/useAsyncAction';
+import { useLoadPhase } from '../../composables/useLoadPhase';
+import { useOptimisticValue } from '../../composables/useOptimisticValue';
 import { useJira } from 'stores/jira';
 import { useOrchestrator } from 'stores/orchestrator';
 
@@ -414,16 +433,11 @@ const tab = ref<'comments' | 'worklogs'>('comments');
 // The wide mode: the same ticket at ~90% of the screen, for descriptions that need room.
 const expanded = ref(false);
 const commentDraft = ref('');
-const commenting = ref(false);
-const uploading = ref(false);
-const deleting = ref(false);
 const confirmingDelete = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 
 const transitionOpen = ref(false);
 const transitionOptions = ref<JiraTransitionView[]>([]);
-const transitioning = ref(false);
-const transitionsLoading = ref(false);
 
 // ── logging work ─────────────────────────────────────────────────────────────
 // Jira's «Log work» dialog reproduced: the duration, the moment it started, and what the
@@ -456,7 +470,6 @@ const workStarted = ref('');
 const workComment = ref('');
 const workAdjust = ref<AdjustMode>('auto');
 const workAdjustValue = ref('');
-const logging = ref(false);
 // Which existing entry the form is editing (null = it is composing a new one), and which
 // one is asking to be deleted. Separate: a delete confirm is a per-row question, while
 // the edit takes over the one form at the bottom.
@@ -481,7 +494,16 @@ const assignable = ref<JiraAssignableUser[]>([]);
 const estimateDraft = ref('');
 const startDraft = ref('');
 const dueDraft = ref('');
-const savingField = ref<'priority' | 'assignee' | 'estimate' | 'startDate' | 'dueDate' | null>(null);
+// The free-text/date fields saved on blur/change; the two selects go through
+// useOptimisticValue instead (they show the pick while it saves).
+const savingField = ref<'estimate' | 'startDate' | 'dueDate' | null>(null);
+// The editor lists (priorities, assignees, worklog permissions) are being read: the selects
+// render with a spinner instead of appearing later and shifting the facts column.
+const listsLoading = ref(false);
+// The ticket's children (comments, worklogs, attachments) are being read for this open and
+// none are cached yet: skeletons, never «Коментарів немає».
+const kidsLoading = ref(false);
+let openRun = 0;
 
 const priorityOptions = computed<KSelectOption[]>(() =>
   editorOptions.value.priorities.map((p) => ({ value: p.id, label: p.name })),
@@ -499,6 +521,7 @@ const assigneeCurrent = computed(() => props.issue.assigneeAccountId ?? '');
 
 const canAct = computed(() => jira.tokenPresent);
 const kids = computed(() => jira.children[props.issue.issueId]);
+const kidsPhase = useLoadPhase(() => kids.value === undefined && kidsLoading.value);
 const descriptionHtml = computed(() => sanitizeJiraHtml(props.issue.descriptionHtml));
 const subtasks = computed(() => subtasksOf(jira.issues, props.issue.key));
 
@@ -568,9 +591,13 @@ watch(
     dueDraft.value = props.issue.dueDate;
     resetWorkDraft();
     deletingWorklogId.value = null;
-    void jira.loadChildren(props.issue.issueId);
+    const mine = ++openRun;
+    kidsLoading.value = true;
+    void jira.loadChildren(props.issue.issueId).finally(() => {
+      if (mine === openRun) kidsLoading.value = false;
+    });
     void jira.refreshIssue(props.issue.key);
-    if (canAct.value) void loadEditorLists();
+    if (canAct.value) void loadEditorLists(mine);
   },
 );
 
@@ -587,23 +614,31 @@ watch(
 );
 
 // Failure degrades to the read-only facts — the selects render only on loaded lists.
-async function loadEditorLists(): Promise<void> {
+async function loadEditorLists(mine: number): Promise<void> {
+  listsLoading.value = true;
   try {
     const [opts, users] = await Promise.all([
       api.jiraEditorOptions(props.integrationId),
       api.jiraAssignableUsers(props.integrationId, ''),
     ]);
+    if (mine !== openRun) return;
     editorOptions.value = opts;
     assignable.value = users;
   } catch {
     /* keep static facts */
+  } finally {
+    if (mine === openRun) listsLoading.value = false;
   }
+}
+
+async function writeField(draft: JiraIssueDraftWire): Promise<void> {
+  jira.upsert(await api.jiraEditIssue(props.integrationId, props.issue.key, draft));
 }
 
 async function saveField(field: NonNullable<typeof savingField.value>, draft: JiraIssueDraftWire): Promise<void> {
   savingField.value = field;
   try {
-    jira.upsert(await api.jiraEditIssue(props.integrationId, props.issue.key, draft));
+    await writeField(draft);
   } catch (e) {
     local.notify(e instanceof Error ? e.message : String(e), 'error');
     // A refused write leaves the mirror row as the truth: every draft returns to it.
@@ -615,12 +650,25 @@ async function saveField(field: NonNullable<typeof savingField.value>, draft: Ji
   }
 }
 
+// The pick shows at once and holds until the upserted row reports it; a refusal rolls the
+// select back to the mirror's value with a toast.
+const {
+  value: priorityValue,
+  pending: priorityPending,
+  set: setPriority,
+} = useOptimisticValue(() => priorityCurrent.value, (id: string) => writeField({ priorityId: id }));
+const {
+  value: assigneeValue,
+  pending: assigneePending,
+  set: setAssignee,
+} = useOptimisticValue(() => assigneeCurrent.value, (id: string) => writeField({ assigneeAccountId: id || null }));
+
 function pickPriority(id: string): void {
-  if (id && id !== priorityCurrent.value) void saveField('priority', { priorityId: id });
+  if (id && id !== priorityCurrent.value) void setPriority(id);
 }
 
 function pickAssignee(id: string): void {
-  if (id !== assigneeCurrent.value) void saveField('assignee', { assigneeAccountId: id || null });
+  if (id !== assigneeCurrent.value) void setAssignee(id);
 }
 
 async function saveEstimate(): Promise<void> {
@@ -644,45 +692,26 @@ function blurTarget(e: Event): void {
   (e.target as HTMLElement).blur();
 }
 
-async function openTransition(): Promise<void> {
-  if (transitionsLoading.value) return;
-  transitionsLoading.value = true;
-  try {
-    transitionOptions.value = await api.jiraTransitions(props.integrationId, props.issue.key);
-    transitionOpen.value = true;
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    transitionsLoading.value = false;
-  }
-}
+// The status button spins while the transitions are read, then opens the pick.
+const { run: openTransition, busy: transitionsLoading } = useAsyncAction(async () => {
+  transitionOptions.value = await api.jiraTransitions(props.integrationId, props.issue.key);
+  transitionOpen.value = true;
+});
 
-async function applyTransition(t: JiraTransitionView): Promise<void> {
-  transitioning.value = true;
-  try {
-    const updated = await api.jiraTransition(props.integrationId, props.issue.key, t.id);
-    jira.upsert(updated);
-    transitionOpen.value = false;
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    transitioning.value = false;
-  }
-}
+const { run: applyTransition, busy: transitioning } = useAsyncAction(async (t: JiraTransitionView) => {
+  const updated = await api.jiraTransition(props.integrationId, props.issue.key, t.id);
+  jira.upsert(updated);
+  transitionOpen.value = false;
+});
 
-async function sendComment(): Promise<void> {
-  commenting.value = true;
-  try {
-    const updated = await api.jiraComment(props.integrationId, props.issue.key, commentDraft.value.trim());
-    jira.upsert(updated);
-    commentDraft.value = '';
-    await jira.loadChildren(props.issue.issueId);
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    commenting.value = false;
-  }
-}
+const { run: sendComment, busy: commenting } = useAsyncAction(async () => {
+  const body = commentDraft.value.trim();
+  if (!body) return;
+  const updated = await api.jiraComment(props.integrationId, props.issue.key, body);
+  jira.upsert(updated);
+  commentDraft.value = '';
+  await jira.loadChildren(props.issue.issueId);
+});
 
 // A fresh «Log work» form: blank duration and note, the start prefilled with now (Jira's
 // own default), the estimate left to Jira's automatic adjustment — and NOT editing
@@ -734,7 +763,7 @@ function wireAdjust(mode: AdjustMode, raw: string, needsValue: boolean): JiraWor
 // One worklog written to Jira under this member's token, then the refreshed issue into
 // the store: «Витрачено»/«Залишилось» move with the write, and the children refetch
 // brings the entry itself into the list. Creating and editing differ in one call.
-async function submitWork(): Promise<void> {
+const { run: submitWork, busy: submitting } = useAsyncAction(async () => {
   const timeSpent = workTime.value.trim();
   if (!timeSpent) return;
   // Said here rather than sent: an adjustment with nothing to adjust by would come back
@@ -759,96 +788,68 @@ async function submitWork(): Promise<void> {
     ...(comment ? { comment } : {}),
     adjust,
   };
-  logging.value = true;
-  try {
-    jira.upsert(
-      editing
-        ? await api.jiraEditWorklog(props.integrationId, props.issue.key, editing, draft)
-        : await api.jiraLogWork(props.integrationId, props.issue.key, draft),
-    );
-    resetWorkDraft();
-    await jira.loadChildren(props.issue.issueId);
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    logging.value = false;
-  }
-}
+  jira.upsert(
+    editing
+      ? await api.jiraEditWorklog(props.integrationId, props.issue.key, editing, draft)
+      : await api.jiraLogWork(props.integrationId, props.issue.key, draft),
+  );
+  resetWorkDraft();
+  await jira.loadChildren(props.issue.issueId);
+});
 
-async function deleteWorklog(worklogId: string): Promise<void> {
+const { run: deleteWorklog, busy: deletingWorklog } = useAsyncAction(async (worklogId: string) => {
   const adjust = wireAdjust(deleteAdjust.value, deleteAdjustValue.value, deleteAdjustNeedsValue.value);
   if (!adjust) {
     local.notify(t('jira.ticketDialog.notifyAdjustNeedsValue'), 'error');
     return;
   }
-  logging.value = true;
-  try {
-    jira.upsert(await api.jiraDeleteWorklog(props.integrationId, props.issue.key, worklogId, adjust));
-    deletingWorklogId.value = null;
-    // A deleted entry must not stay loaded in the form behind it.
-    if (editingWorklogId.value === worklogId) resetWorkDraft();
-    await jira.loadChildren(props.issue.issueId);
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    logging.value = false;
-  }
-}
+  jira.upsert(await api.jiraDeleteWorklog(props.integrationId, props.issue.key, worklogId, adjust));
+  deletingWorklogId.value = null;
+  // A deleted entry must not stay loaded in the form behind it.
+  if (editingWorklogId.value === worklogId) resetWorkDraft();
+  await jira.loadChildren(props.issue.issueId);
+});
 
-async function upload(e: Event): Promise<void> {
+// Either worklog write disables the whole form: they share the issue's estimate.
+const logging = computed(() => submitting.value || deletingWorklog.value);
+
+const { run: upload, busy: uploading } = useAsyncAction(async (e: Event) => {
   const input = e.target as HTMLInputElement;
   const file = input.files?.[0];
   input.value = '';
   if (!file) return;
-  uploading.value = true;
-  try {
-    const buf = await file.arrayBuffer();
-    let binary = '';
-    const bytes = new Uint8Array(buf);
-    for (const b of bytes) binary += String.fromCharCode(b);
-    const updated = await api.jiraUploadAttachment(
-      props.integrationId,
-      props.issue.key,
-      file.name,
-      btoa(binary),
-      file.type,
-    );
-    jira.upsert(updated);
-    await jira.loadChildren(props.issue.issueId);
-  } catch (err) {
-    local.notify(err instanceof Error ? err.message : String(err), 'error');
-  } finally {
-    uploading.value = false;
-  }
-}
+  const buf = await file.arrayBuffer();
+  let binary = '';
+  const bytes = new Uint8Array(buf);
+  for (const b of bytes) binary += String.fromCharCode(b);
+  const updated = await api.jiraUploadAttachment(
+    props.integrationId,
+    props.issue.key,
+    file.name,
+    btoa(binary),
+    file.type,
+  );
+  jira.upsert(updated);
+  await jira.loadChildren(props.issue.issueId);
+});
 
-async function download(a: JiraAttachment): Promise<void> {
-  try {
-    const blob = await api.jiraDownloadAttachment(props.integrationId, a.attachmentId);
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = a.filename;
-    link.click();
-    URL.revokeObjectURL(url);
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
-}
+// Per attachment: one slow download neither blocks nor spins the others.
+const { run: download, busyFor: downloadBusy } = useKeyedAction(async (_id: string, a: JiraAttachment) => {
+  const blob = await api.jiraDownloadAttachment(props.integrationId, a.attachmentId);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = a.filename;
+  link.click();
+  URL.revokeObjectURL(url);
+});
 
-async function doDelete(): Promise<void> {
-  deleting.value = true;
-  try {
-    await api.jiraDeleteIssue(props.integrationId, props.issue.key);
-    jira.drop(props.issue.issueId);
-    emit('update:modelValue', false);
-    emit('deleted');
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    deleting.value = false;
-  }
-}
+const { run: doDelete, busy: deleting } = useAsyncAction(async () => {
+  await api.jiraDeleteIssue(props.integrationId, props.issue.key);
+  jira.drop(props.issue.issueId);
+  emit('update:modelValue', false);
+  emit('deleted');
+});
 
 function prettySize(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -1437,5 +1438,11 @@ function shortTime(iso: string): string {
 .jtd__confirm-row {
   display: flex;
   gap: var(--k-sp-2);
+}
+
+// The «saving this field» mark beside an inline input / inside the status button.
+.jtd__spin {
+  margin-left: var(--k-sp-2);
+  vertical-align: middle;
 }
 </style>

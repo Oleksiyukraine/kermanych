@@ -3,7 +3,9 @@
     class="jira-card"
     role="button"
     tabindex="0"
-    :draggable="draggable"
+    :draggable="draggable && !pending"
+    :class="{ 'jira-card--pending': pending }"
+    :aria-busy="pending || undefined"
     @click="emit('click')"
     @keydown.enter="emit('click')"
     @dragstart="onDragStart"
@@ -13,6 +15,7 @@
       <img v-if="issue.typeIcon" class="jira-card__icon" :src="issue.typeIcon" :alt="issue.typeName" v-tip="issue.typeName" />
       <img v-if="issue.priorityIcon" class="jira-card__icon" :src="issue.priorityIcon" :alt="issue.priorityName" v-tip="t('jira.card.priorityTip', { name: issue.priorityName })" />
       <span class="jira-card__spacer"></span>
+      <KSpinner v-if="pending" :size="12" />
       <KStatusDot v-if="agentStatus" :status="agentStatus" />
       <KAvatar
         v-if="issue.assigneeName"
@@ -46,6 +49,7 @@ import { useI18n } from 'vue-i18n';
 import type { JiraIssue } from '@kermanych/cloud';
 import type { SessionStatus } from '@kermanych/core';
 import KAvatar from 'components/kit/KAvatar.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import { dateChip, todayIso } from '../../lib/jira-view';
 
@@ -53,6 +57,9 @@ const props = defineProps<{
   issue: JiraIssue;
   agentStatus?: SessionStatus | undefined;
   draggable: boolean;
+  // A move sent to Jira that the mirror has not reflected yet (`issue:<key>` pending):
+  // dimmed, spinning, and not draggable, so the same card cannot be dropped twice.
+  pending?: boolean | undefined;
 }>();
 
 const emit = defineEmits<{ click: []; dragstart: [] }>();
@@ -77,7 +84,7 @@ const datesHint = computed(() => {
 });
 
 function onDragStart(e: DragEvent): void {
-  if (!props.draggable) return;
+  if (!props.draggable || props.pending) return;
   // The payload rides on the component event; dataTransfer only needs to exist for
   // Chromium to allow the drag at all.
   e.dataTransfer?.setData('text/plain', props.issue.key);
@@ -96,6 +103,11 @@ function onDragStart(e: DragEvent): void {
   border-radius: var(--k-r-lg);
   cursor: pointer;
   transition: border-color 0.12s ease;
+
+  &--pending {
+    opacity: 0.55;
+    cursor: progress;
+  }
 
   &:hover {
     border-color: var(--k-line-strong);

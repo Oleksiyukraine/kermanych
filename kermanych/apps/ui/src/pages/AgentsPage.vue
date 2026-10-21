@@ -96,6 +96,7 @@
               :model="item.card.model"
               :deep-analysis="item.card.deepAnalysis"
               :selected="false"
+              :pending="cardDelete.busyFor(item.card.id)"
               removable
               :remove-title="t('agents.board.removeTask', { title: item.card.title })"
               @click="openLauncher(item.card)"
@@ -116,6 +117,7 @@
               :removable="item.session.kind === 'task'"
               :browsing="sessionBrowser.agentLive.has(item.session.id)"
               :findings="item.session.openFindings ?? 0"
+              :pending="isSessionPending(item.session.id) || deleteAction.busyFor(item.session.id)"
               :remove-title="t('agents.board.removeStranded', { name: item.session.name })"
               @click="onRowClick(item.session)"
               @remove="onDeleteStranded(item.session)"
@@ -123,7 +125,13 @@
           </div>
           <div class="agents__pad" aria-hidden="true" :style="{ height: listWindow.padBottom + 'px' }"></div>
         </div>
-        <div v-else class="agents__empty mono">{{ emptyText }}</div>
+        <!-- Before the socket snapshot (and, under «Задачі», the cloud backlog read) an empty
+             list is «not loaded», not «empty»: card skeletons, and never `emptyText`. -->
+        <KSkeleton v-else-if="boardPhase === 'skeleton'" variant="card" :rows="4" />
+        <template v-else-if="boardPhase === 'ready'">
+          <p v-if="backlogError" class="agents__error" role="alert">{{ backlogError }}</p>
+          <div v-else class="agents__empty mono">{{ emptyText }}</div>
+        </template>
       </section>
 
       <!-- RESIZER — drag the seam to widen / narrow the chat section -->
@@ -179,6 +187,7 @@
               <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
                 <KIconButton
                   v-if="selectedSession.status !== 'merged'"
+                  :disabled="selectedPending"
                   :title="selectedSession.kind === 'review' ? t('agents.merge.reviewTitle') : t('agents.actions.mergeTip')"
                   @click="openMerge(selectedSession)"
                 >⤴</KIconButton>
@@ -188,25 +197,38 @@
                      act is the visible line under this bar. -->
                 <KIconButton
                   :active="!!store.previews[selectedSession.id]"
-                  :disabled="!isBoundFor(selectedSession.projectId) || actionBusy"
+                  :loading="previewStarting(selectedSession.id) || previewStopAction.busy.value"
+                  :disabled="!isBoundFor(selectedSession.projectId) || selectedBlocked || (previewStart.busy.value && !previewStarting(selectedSession.id))"
                   :title="store.previews[selectedSession.id] ? t('agents.actions.previewStop') : t('agents.actions.previewStart')"
                   @click="togglePreview(selectedSession)"
                 >{{ store.previews[selectedSession.id] ? '◼' : '▶' }}</KIconButton>
                 <KIconButton
                   v-if="selectedSession.status !== 'merged'"
+                  :disabled="selectedPending"
                   :title="t('agents.actions.finish')"
                   @click="openFinish(selectedSession)"
                 >✓</KIconButton>
                 <KIconButton
                   v-if="selectedSession.status === 'merged'"
-                  :disabled="actionBusy"
+                  :loading="reopenAction.busy.value"
+                  :disabled="selectedBlocked"
                   :title="t('agents.actions.reopen')"
                   @click="onReopen(selectedSession)"
                 >↻</KIconButton>
-                <KIconButton :disabled="actionBusy" :title="t('agents.actions.archive')" @click="onArchive(selectedSession)">⤓</KIconButton>
+                <KIconButton
+                  :loading="archiveAction.busy.value"
+                  :disabled="selectedBlocked"
+                  :title="t('agents.actions.archive')"
+                  @click="onArchive(selectedSession)"
+                >⤓</KIconButton>
               </template>
               <template v-else>
-                <KIconButton :disabled="actionBusy" :title="t('agents.actions.unarchive')" @click="onUnarchive(selectedSession)">⤒</KIconButton>
+                <KIconButton
+                  :loading="unarchiveAction.busy.value"
+                  :disabled="selectedBlocked"
+                  :title="t('agents.actions.unarchive')"
+                  @click="onUnarchive(selectedSession)"
+                >⤒</KIconButton>
               </template>
             </div>
 
@@ -220,52 +242,52 @@
               >⋯</KIconButton>
               <div v-if="menuOpen" class="agents__menu-pop" role="menu">
                 <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
-                  <button type="button" class="agents__menu-item" role="menuitem" @click="menuEditor">
+                  <button type="button" class="agents__menu-item" role="menuitem" :disabled="selectedPending || editorAction.busy.value" @click="menuEditor">
                     <span class="agents__menu-mark" aria-hidden="true">⧉</span>
                     <span class="agents__menu-label">{{ t('agents.detail.menu.editor') }}</span>
                     <KKbd tone="muted" class="agents__menu-kbd">⌘E</KKbd>
                   </button>
                   <div class="agents__menu-sep" role="separator"></div>
-                  <button v-if="runningSelected" type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuStop">
+                  <button v-if="runningSelected" type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" :disabled="selectedBlocked" @click="menuStop">
                     <span class="agents__menu-mark" aria-hidden="true">■</span>
                     <span class="agents__menu-label">{{ t('agents.detail.menu.stop') }}</span>
                     <KKbd tone="muted" class="agents__menu-kbd">⌘.</KKbd>
                   </button>
-                  <button type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuDiscard">
+                  <button type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" :disabled="selectedBlocked" @click="menuDiscard">
                     <span class="agents__menu-mark" aria-hidden="true">✕</span>
                     <span class="agents__menu-label">{{ selectedSession.kind === 'review' ? t('agents.actions.discardReview') : t('agents.actions.discardBranch') }}</span>
                     <KKbd tone="muted" class="agents__menu-kbd">⌘⌫</KKbd>
                   </button>
                 </template>
                 <template v-else-if="!selectedSession.archived">
-                  <button v-if="canReview(selectedSession) && !selectedSession.native" type="button" class="agents__menu-item" role="menuitem" @click="menuReview">
+                  <button v-if="canReview(selectedSession) && !selectedSession.native" type="button" class="agents__menu-item" role="menuitem" :disabled="selectedBlocked" @click="menuReview">
                     <span class="agents__menu-mark" aria-hidden="true">⚖</span>
                     <span class="agents__menu-label">{{ t('agents.detail.menu.review') }}</span>
                     <KKbd tone="muted" class="agents__menu-kbd">⌘D</KKbd>
                   </button>
-                  <button v-if="selectedSession.kind === 'agent' && !selectedSession.native" type="button" class="agents__menu-item" role="menuitem" @click="menuBranch">
+                  <button v-if="selectedSession.kind === 'agent' && !selectedSession.native" type="button" class="agents__menu-item" role="menuitem" :disabled="selectedBlocked" @click="menuBranch">
                     <span class="agents__menu-mark" aria-hidden="true">⑂</span>
                     <span class="agents__menu-label">{{ t('agents.detail.menu.branch') }}</span>
                   </button>
-                  <button type="button" class="agents__menu-item" role="menuitem" @click="menuEditor">
+                  <button type="button" class="agents__menu-item" role="menuitem" :disabled="selectedPending || editorAction.busy.value" @click="menuEditor">
                     <span class="agents__menu-mark" aria-hidden="true">⧉</span>
                     <span class="agents__menu-label">{{ t('agents.detail.menu.editor') }}</span>
                     <KKbd tone="muted" class="agents__menu-kbd">⌘E</KKbd>
                   </button>
                   <div class="agents__menu-sep" role="separator"></div>
-                  <button v-if="selectedSession.kind === 'agent'" type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuStop">
+                  <button v-if="selectedSession.kind === 'agent'" type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" :disabled="selectedBlocked" @click="menuStop">
                     <span class="agents__menu-mark" aria-hidden="true">■</span>
                     <span class="agents__menu-label">{{ t('agents.detail.menu.stop') }}</span>
                     <KKbd tone="muted" class="agents__menu-kbd">⌘.</KKbd>
                   </button>
-                  <button type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuDelete">
+                  <button type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" :disabled="selectedBlocked" @click="menuDelete">
                     <span class="agents__menu-mark" aria-hidden="true">✕</span>
                     <span class="agents__menu-label">{{ t('agents.detail.menu.delete') }}</span>
                     <KKbd tone="muted" class="agents__menu-kbd">⌘⌫</KKbd>
                   </button>
                 </template>
                 <template v-else>
-                  <button type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" @click="menuDelete">
+                  <button type="button" class="agents__menu-item agents__menu-item--danger" role="menuitem" :disabled="selectedBlocked" @click="menuDelete">
                     <span class="agents__menu-mark" aria-hidden="true">✕</span>
                     <span class="agents__menu-label">{{ t('agents.detail.menu.delete') }}</span>
                     <KKbd tone="muted" class="agents__menu-kbd">⌘⌫</KKbd>
@@ -319,18 +341,33 @@
                 <KBtn
                   v-if="selectedSession.status !== 'merged' && !selectedSession.archived"
                   variant="primary"
-                  :loading="actionBusy"
+                  :loading="resumeNativeAction.busy.value"
+                  :disabled="selectedBlocked"
                   @click="onResumeNative(selectedSession)"
                 >{{ t('agents.native.resume') }}</KBtn>
               </div>
             </template>
             <KPanel
               v-else
+              ref="panelRef"
               class="agents__panel"
               :bare="true"
               :session="selectedSession"
               :refreshing="refreshingId === selectedSession.id"
               :models="store.models"
+              :branching="branchAction.busy.value"
+              :stopping="stopAction.busy.value"
+              :restarting="restartAction.busy.value || selectedPending"
+              :answering="answering"
+              :summarizing="summaryAction.busy.value"
+              :opening-editor="editorAction.busy.value"
+              :pending="selectedPending"
+              :outgoing="store.outgoing[selectedSession.id] ?? []"
+              :model-override="pickOnScreen ? modelPick.value.value : undefined"
+              :effort-override="pickOnScreen ? effortPick.value.value : undefined"
+              :model-loading="pickOnScreen && modelPick.pending.value"
+              :effort-loading="pickOnScreen && effortPick.pending.value"
+              :composer-disabled="!transcriptLoaded"
               @stop="onStop"
               @send="onSend"
               @answer="onAnswer"
@@ -344,17 +381,21 @@
               @effort="onEffort"
               @set-model="onSetModel"
             >
-              <template v-if="blocks.length">
-                <KRequestBlock
-                  v-for="(block, i) in blocks"
-                  :key="selectedSession.id + ':' + block.id"
-                  :block="block"
-                  :session-id="selectedSession.id"
-                  :open="i === blocks.length - 1"
-                  :expand-all="expandAll"
-                />
+              <!-- Not loaded yet ≠ empty: «Журнал порожній» only once the transcript answered. -->
+              <KSkeleton v-if="logPhase === 'skeleton'" variant="lines" :rows="6" />
+              <template v-else-if="logPhase === 'ready'">
+                <template v-if="blocks.length">
+                  <KRequestBlock
+                    v-for="(block, i) in blocks"
+                    :key="selectedSession.id + ':' + block.id"
+                    :block="block"
+                    :session-id="selectedSession.id"
+                    :open="i === blocks.length - 1"
+                    :expand-all="expandAll"
+                  />
+                </template>
+                <div v-else class="agents__log-empty mono">{{ t('agents.detail.logEmpty') }}</div>
               </template>
-              <div v-else class="agents__log-empty mono">{{ t('agents.detail.logEmpty') }}</div>
             </KPanel>
           </div>
           <template v-if="browserSplit && detailTab === 'log'">
@@ -375,6 +416,7 @@
                 :key="selectedSession.id"
                 :session="selectedSession"
                 :sending="sendingPicks"
+                :starting="previewStarting(selectedSession.id)"
                 :hold="resizing || splitResizing"
                 @send="onSendPicks(selectedSession)"
               />
@@ -388,6 +430,7 @@
             :key="selectedSession.id"
             :session="selectedSession"
             :sending="sendingPicks"
+            :starting="previewStarting(selectedSession.id)"
             :hold="resizing"
             @send="onSendPicks(selectedSession)"
           />
@@ -445,7 +488,11 @@
             <h3 class="agents__task-title">{{ t('agents.session.description') }}</h3>
             <p v-if="selectedSession.task" class="agents__task-desc">{{ selectedSession.task }}</p>
             <p v-else class="agents__task-empty">{{ t('agents.session.descriptionEmpty') }}</p>
-            <div v-if="taskImages.length" class="agents__task-images">
+            <!-- The card's copies are signed after the tab opens: one block per image meanwhile. -->
+            <div v-if="cardImagesSigning && !taskImages.length" class="agents__task-images">
+              <KSkeleton v-for="i in cardImagesSigning" :key="i" variant="block" width="160px" height="120px" />
+            </div>
+            <div v-else-if="taskImages.length" class="agents__task-images">
               <img
                 v-for="(src, i) in taskImages"
                 :key="i"
@@ -542,7 +589,9 @@
               @click="writeDoc(k)"
             >{{ t(`agents.docs.write.${k}`) }}</KBtn>
           </div>
-          <template v-if="usedDocs.length || changedDocs.length">
+          <KSkeleton v-if="docsPhase === 'skeleton'" variant="rows" :rows="4" />
+          <template v-else-if="docsPhase === 'blank'"></template>
+          <template v-else-if="usedDocs.length || changedDocs.length">
             <section v-if="usedDocs.length" class="agents__docs-group">
               <h3 v-tip="docsUsedHint" class="agents__docs-title">{{ t('agents.docs.usedTitle') }}</h3>
               <ul class="agents__docs-read">
@@ -618,7 +667,9 @@
              store (not the transcript) and persists past this session's archive. A brand-new
              task has none until a «Створити ПР» run generates it — hence the empty state. -->
         <div v-if="detailTab === 'qa'" class="agents__tabpane agents__docs">
-          <template v-if="qaChecklist?.items.length">
+          <KSkeleton v-if="qaPhase === 'skeleton'" variant="rows" :rows="4" />
+          <template v-else-if="qaPhase === 'blank'"></template>
+          <template v-else-if="qaChecklist?.items.length">
             <div class="agents__qa-head">
               <h3 class="agents__docs-title">{{ t('agents.qa.title') }}</h3>
               <span class="agents__qa-count mono">{{ qaDone }}/{{ qaChecklist.items.length }}</span>
@@ -641,7 +692,9 @@
     </div>
 
     <!-- NEW-TASK LAUNCHER — two columns: left = what to do, right = where it lands -->
-    <KModal v-model="launcherOpen" :title="launcherTitle" width="880px" flush>
+    <!-- Persistent while a submit or a publish runs: Esc/backdrop cannot drop the form under a
+         request that is still writing it, and `inert` holds every field still meanwhile. -->
+    <KModal v-model="launcherOpen" :title="launcherTitle" width="880px" flush :persistent="launcherLocked">
       <template #head-meta>
         <div class="agents-launcher__headmeta">
           <span class="agents-launcher__spacer"></span>
@@ -651,7 +704,7 @@
         </div>
       </template>
 
-      <div class="agents-launcher" @keydown="onLauncherKeydown">
+      <div class="agents-launcher" :inert="launcherLocked" @keydown="onLauncherKeydown">
         <!-- LEFT — what to do and which agent runs it -->
         <div class="agents-launcher__main">
           <div>
@@ -809,7 +862,7 @@
                    («feature/…», «fix/…»). Scrolling to the base is hopeless there and
                    closed-list prefix type-ahead only walks the prefix; typing «csp» has to
                    find «fix/csp-iframe». -->
-              <KSelect v-model="draftBaseBranch" :options="launchBranches" searchable />
+              <KSelect v-model="draftBaseBranch" :options="launchBranches" :loading="launchBranchesLoading" searchable />
             </div>
           </div>
 
@@ -840,7 +893,7 @@
           :options="workspaceOptions"
           :placeholder="t('agents.launcher.workspacePlaceholder')"
         />
-        <KBtn :loading="publishing" :disabled="!publishInto" @click="publishAndFile">
+        <KBtn :loading="publishing" :disabled="!publishInto || launchBusy !== null" @click="publishAndFile">
           {{ t('agents.launcher.publishBtn') }}
         </KBtn>
         <p v-if="!workspaceOptions.length" class="agents__hint mono">
@@ -854,17 +907,23 @@
                «Запустити». Only while editing: there is nothing to delete before the task
                exists, and this modal is the task's only detail view — the board's cards
                carry a ✕, but a task opened for editing must be closable from here too. -->
-          <KBtn v-if="editingTask" variant="ghost" @click="onDeleteCard(editingTask)">
+          <KBtn
+            v-if="editingTask"
+            variant="ghost"
+            :loading="cardDelete.busyFor(editingTask.id)"
+            :disabled="launcherLocked"
+            @click="onDeleteCard(editingTask)"
+          >
             {{ t('agents.launcher.delete') }}
           </KBtn>
           <span v-if="launcherError" class="agents__error" role="alert">{{ launcherError }}</span>
           <span v-else class="agents-launcher__foot-hint mono">{{ footHint }}</span>
           <span class="agents-launcher__spacer"></span>
-          <KBtn variant="ghost" :disabled="launchBusy !== null" @click="launcherOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
+          <KBtn variant="ghost" :disabled="launcherLocked" @click="launcherOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
           <KBtn
             variant="secondary"
             :loading="launchBusy === 'task'"
-            :disabled="!canLaunch || launchBusy !== null"
+            :disabled="!canLaunch || launcherLocked"
             @click="submitLauncher(true)"
           >{{ editingTaskId ? t('agents.launcher.save') : t('agents.launcher.backlog') }}</KBtn>
           <!-- No `title` here either, and for the same reason: it only ever had content while
@@ -874,7 +933,7 @@
           <KBtn
             variant="primary"
             :loading="launchBusy === 'launch'"
-            :disabled="!canLaunch || !isBound || launchBusy !== null"
+            :disabled="!canLaunch || !isBound || launcherLocked"
             @click="submitLauncher(false)"
           >
             {{ t('agents.launcher.launch') }}<KKbd class="agents-launcher__kbd">⌘⏎</KKbd>
@@ -908,7 +967,7 @@
     </KModal>
 
     <!-- PREVIEW CONFIG — how to run this project's app for a live branch preview -->
-    <KModal v-model="previewCfgOpen" :title="t('agents.preview.title')">
+    <KModal v-model="previewCfgOpen" :title="t('agents.preview.title')" :persistent="previewCfgSave.busy.value">
       <div class="agents__form">
         <label class="agents__field">
           <span class="agents__field-label">{{ t('agents.preview.webLabel') }}</span>
@@ -921,10 +980,11 @@
         <p class="agents__hint mono">
           {{ t('agents.preview.hint') }}
         </p>
+        <p v-if="previewCfgError" class="agents__error" role="alert">{{ previewCfgError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="previewCfgOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
-        <KBtn variant="primary" :disabled="!draftWebCmd.trim()" @click="submitPreviewConfig">
+        <KBtn variant="ghost" :disabled="previewCfgSave.busy.value" @click="previewCfgOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
+        <KBtn variant="primary" :loading="previewCfgSave.busy.value" :disabled="!draftWebCmd.trim()" @click="submitPreviewConfig">
           {{ t('agents.preview.run') }}
         </KBtn>
       </template>
@@ -1008,14 +1068,17 @@
           :options="docTaskProjectOptions"
           :placeholder="t('agents.docTask.projectPlaceholder')"
         />
-        <KField v-model="docTaskTitle" :label="t('agents.docTask.taskTitle')" />
+        <KSkeleton v-if="docTaskReadPhase === 'skeleton'" variant="line" :label="t('agents.docTask.taskTitle')" />
+        <KField v-else v-model="docTaskTitle" :label="t('agents.docTask.taskTitle')" />
         <KSelect
           v-model="docTaskAssignee"
           :label="t('agents.docTask.assignee')"
           :options="docTaskAssigneeOptions"
           :placeholder="t('agents.docTask.unassigned')"
+          :loading="docTaskMembersLoading"
         />
-        <KField v-model="docTaskDescription" :label="t('agents.docTask.description')" multiline :rows="12" />
+        <KSkeleton v-if="docTaskReadPhase === 'skeleton'" variant="lines" :rows="8" :label="t('agents.docTask.description')" />
+        <KField v-else v-model="docTaskDescription" :label="t('agents.docTask.description')" multiline :rows="12" />
         <p v-if="docTaskError" class="agents__error" role="alert">{{ docTaskError }}</p>
       </div>
       <template #controls>
@@ -1034,7 +1097,9 @@
     <KModal v-model="mapOpen" :title="t('agents.map.title')" width="760px">
       <div v-if="mapDetailId" class="agents__map">
         <button type="button" class="agents__map-back mono" @click="mapDetailId = undefined">← {{ t('agents.map.back') }}</button>
-        <template v-if="mapDetailEntries.length">
+        <KSkeleton v-if="mapDetailPhase === 'skeleton'" variant="lines" :rows="6" />
+        <template v-else-if="mapDetailPhase === 'blank'"></template>
+        <template v-else-if="mapDetailEntries?.length">
           <KLogBlock
             v-for="(entry, i) in mapDetailEntries"
             :key="i"
@@ -1149,6 +1214,11 @@ import KBrowserPane from 'components/kit/KBrowserPane.vue';
 import { useSessionBrowser } from 'stores/browser';
 import { composePicksMessage, picksImages } from '../lib/browser-picks';
 import { historyLoadFor } from '../lib/open-session-history';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useAsyncAction, useKeyedAction, errorText } from '../composables/useAsyncAction';
+import { useOptimisticValue } from '../composables/useOptimisticValue';
+import { useLoadPhase } from '../composables/useLoadPhase';
+import { usePending } from 'stores/pending';
 import { needsSignIn } from '../lib/session-auth';
 
 // The Агенти screen (design-system section 07): the board of session cards for whatever is
@@ -1156,11 +1226,15 @@ import { needsSignIn } from '../lib/session-auth';
 // selected session and the new-agent launcher. All mutations go through the Pinia store.
 const store = useOrchestrator();
 const { t } = useI18n();
+// Sessions waiting for the server to report an action's result (stopped, deleted, forked…).
+const pending = usePending();
 
 // ── Agent map (the subagents this session spawned) ────────────────────────
 const mapOpen = ref(false);
 const mapDetailId = ref<string | undefined>(undefined);
-const mapDetailEntries = ref<TranscriptEntry[]>([]);
+// `undefined` while the subagent's transcript is being read — a skeleton, not «порожній».
+const mapDetailEntries = ref<TranscriptEntry[] | undefined>([]);
+const mapDetailPhase = useLoadPhase(() => mapDetailEntries.value === undefined);
 const mapList = computed<SubagentNode[]>(() => store.subagents[store.selectedSessionId ?? ''] ?? []);
 
 const MAP_STATUS_KEY: Record<string, string> = {
@@ -1209,12 +1283,15 @@ async function openSubagent(s: SubagentNode): Promise<void> {
   const id = store.selectedSessionId;
   if (!id) return;
   mapDetailId.value = s.id;
-  mapDetailEntries.value = [];
+  mapDetailEntries.value = undefined;
+  let entries: TranscriptEntry[] = [];
   try {
-    mapDetailEntries.value = await api.getSubagentTranscript(id, s.id);
+    entries = await api.getSubagentTranscript(id, s.id);
   } catch {
-    mapDetailEntries.value = [];
+    // Unreadable reads as the empty state, which already says «порожній або недоступний».
   }
+  // «← назад» and another row may have been clicked meanwhile.
+  if (mapDetailId.value === s.id) mapDetailEntries.value = entries;
 }
 // Two things come from here: previewCommand/apiCommand are CLOUD config that any workspace
 // member may edit, so that write goes to Supabase and mirrors itself into the local row —
@@ -1598,6 +1675,16 @@ const previewBlocked = computed(() => {
   if (s.kind === 'discussion' || s.kind === 'review') return false;
   return !isBoundFor(s.projectId);
 });
+// A plain load that failed leaves `transcripts[id]` unset; this ends the skeleton for it.
+const transcriptFailed = ref<string | null>(null);
+// `transcripts[id]` is `undefined` until the first load answers; the derived views below fold
+// that into [] (nothing to count yet), and `logPhase` is what tells «not loaded» from «empty»,
+// so «Журнал порожній» never stands in for a log that is still on its way.
+const transcriptLoaded = computed(() => {
+  const id = store.selectedSessionId;
+  return !id || store.transcripts[id] !== undefined || transcriptFailed.value === id;
+});
+const logPhase = useLoadPhase(() => !transcriptLoaded.value);
 const entries = computed<TranscriptEntry[]>(() =>
   store.selectedSessionId
     ? store.transcripts[store.selectedSessionId] ?? []
@@ -1630,18 +1717,25 @@ const logImages = computed<string[]>(() => {
 // the card's paths change, and a reply that lands after a newer request is dropped. A failed
 // sign shows nothing: the images are a convenience beside the text, not worth an error line.
 const cardImageUrls = ref<string[]>([]);
+// How many card images are being signed — that many skeleton blocks stand in for them.
+const cardImagesSigning = ref(0);
 let cardImagesRun = 0;
 watch(
   () => [store.selectedSessionId, logImages.value.length ? '' : (linkedTask.value?.imagePaths ?? []).join('\n')] as const,
   async ([, joined]) => {
     const run = ++cardImagesRun;
     cardImageUrls.value = [];
+    cardImagesSigning.value = 0;
     if (!joined) return;
+    const paths = joined.split('\n');
+    cardImagesSigning.value = paths.length;
     try {
-      const urls = await signedTaskImageUrls(auth.client, joined.split('\n'));
+      const urls = await signedTaskImageUrls(auth.client, paths);
       if (run === cardImagesRun) cardImageUrls.value = urls;
     } catch {
       // See above: nothing to show.
+    } finally {
+      if (run === cardImagesRun) cardImagesSigning.value = 0;
     }
   },
   { immediate: true },
@@ -1715,6 +1809,15 @@ const {
 
 const bucketLabel = computed(() => t(`agents.bucket.${store.selectedBucket}`));
 
+// The list is «not loaded» until the socket snapshot has filled `store.sessions` and — under
+// «Задачі» — until the cloud backlog read answers with nothing on screen yet. Before that an
+// empty list is not an empty bucket, so it renders card skeletons rather than `emptyText`.
+const boardPhase = useLoadPhase(
+  () => !store.snapshotReceived || (showTasks.value && board.loading && !scopedCards.value.length),
+);
+// A failed backlog read is its own sentence, not «Беклог порожній».
+const backlogError = computed(() => (showTasks.value && !scopedCards.value.length ? board.loadError : null));
+
 // The empty list, per bucket. The two creatable buckets split again on scope, because
 // «Нова задача» is disabled under a workspace scope and an invitation to press it would be a
 // dead end there. The click that unblocks it is NOT repeated here — PICK_PROJECT_HINT is
@@ -1772,6 +1875,15 @@ const docsUsedHint = computed(() => t('agents.docs.usedHint'));
 // board dialog uses.
 const qaChecklist = computed(() => linkedTask.value?.qaChecklist);
 const qaDone = computed(() => qaChecklist.value?.items.filter((i) => i.checked).length ?? 0);
+// Not loaded: the session has a card the board has not read yet. A session without a card is
+// «loaded» at once — its empty state is the true answer.
+const qaNotLoaded = computed(() => !!selectedSession.value?.taskId && !linkedTask.value && board.loading);
+const qaPhase = useLoadPhase(() => qaNotLoaded.value);
+// «Документація» joins the transcript, the Зміни listing and the card; until the first two
+// have answered its lists are incomplete, so it is a skeleton rather than «немає документів».
+const docsNotLoaded = computed(
+  () => !transcriptLoaded.value || (changesLoading.value && changesInfo.value === null) || qaNotLoaded.value,
+);
 
 function onQaToggle(itemId: string, checked: boolean): void {
   const task = linkedTask.value;
@@ -1788,15 +1900,16 @@ const browserSplit = computed(() => sessionBrowser.available && sessionBrowser.s
 const detailTabs = computed(() => {
   const tabs: { value: string; label: string; count?: number; live?: boolean }[] = [
     { value: 'log', label: t('agents.tabs.log') },
-    { value: 'changes', label: t('agents.tabs.changes'), count: changesInfo.value?.files.length ?? 0 },
+    // Counts appear once their data has: a «0» on a tab still loading would be a false answer.
+    { value: 'changes', label: t('agents.tabs.changes'), ...(changesInfo.value ? { count: changesInfo.value.files.length } : {}) },
     { value: 'session', label: t('agents.tabs.session') },
-    { value: 'docs', label: t('agents.tabs.docs'), count: usedDocs.value.length + changedDocs.value.length },
+    { value: 'docs', label: t('agents.tabs.docs'), ...(docsNotLoaded.value ? {} : { count: usedDocs.value.length + changedDocs.value.length }) },
     { value: 'findings', label: t('agents.tabs.findings'), count: selectedSession.value?.openFindings ?? 0 },
   ];
   // Always present, like the other tabs — a missing tab reads as breakage. The pane shows the
   // checklist for a task-linked session and an empty state otherwise (it fills after «Створити
   // ПР»); the count is 0 until then.
-  tabs.push({ value: 'qa', label: t('agents.tabs.qa'), count: qaChecklist.value?.items.length ?? 0 });
+  tabs.push({ value: 'qa', label: t('agents.tabs.qa'), ...(qaNotLoaded.value ? {} : { count: qaChecklist.value?.items.length ?? 0 }) });
   // The session browser exists only in the desktop app. Its dot pulses while the agent is
   // driving the page (a browser tool call in the last few seconds). Beside the Лог («Поруч із
   // логом») it has no tab of its own, and the dot moves to Лог, where the page now is.
@@ -1878,11 +1991,141 @@ const runningSelected = computed(
 );
 
 const menuOpen = ref(false);
-// In-flight guard for the detail action bar's icon buttons (preview-stop, reopen, archive,
-// unarchive). KIconButton has no spinner — its designed busy affordance is `:disabled`, which
-// dims the glyph until the server answers — so one flag both greys the pressed control and
-// blocks a second click while the store call (reopen re-forks a worktree; seconds) is out.
-const actionBusy = ref(false);
+// ── Session actions ──────────────────────────────────────────────────────────
+// Each runs through useAsyncAction — one busy guard shared by the header icon, the ⋯ item and
+// the ⌘ shortcut, and a failure becomes a toast — and on success marks the session pending
+// (stores/pending) until the store shows the result: the HTTP call answers before the socket
+// echo changes the row, and that gap is what made a click look ignored. While a session is
+// pending, every action on it is blocked (header, menu, shortcuts, KPanel `pending`).
+const sessionKey = (id: string): string => `session:${id}`;
+const findSession = (id: string): Session | undefined => store.sessions.find((x) => x.id === id);
+const goneFrom = (id: string) => (): boolean => !findSession(id);
+// A child of `id` the store did not hold before the fork/review — the result being waited on.
+function childAppeared(id: string): () => boolean {
+  const before = new Set(store.sessions.map((x) => x.id));
+  return () => store.sessions.some((x) => x.parentSessionId === id && !before.has(x.id));
+}
+const RUNNING_STATUSES: readonly SessionStatus[] = ['queued', 'thinking', 'tool'];
+// A fork or a delete can run for longer than the echo window; while the call itself is still
+// out, the session stays pending at least this long.
+const CALL_PENDING_MS = 5 * 60_000;
+// The card turns pending at the click, not at the HTTP answer — a fork or delete can take
+// seconds before the server even replies. Once the call returns, the usual echo window
+// (PENDING_TIMEOUT_MS) starts over; a failed call drops the mark at once (the toast says why).
+async function pendingWhile<T>(id: string, settled: () => boolean, call: () => Promise<T>): Promise<T> {
+  const key = sessionKey(id);
+  pending.mark(key, settled, CALL_PENDING_MS);
+  try {
+    const res = await call();
+    pending.mark(key, settled);
+    return res;
+  } catch (e) {
+    pending.clear(key);
+    throw e;
+  }
+}
+
+const branchAction = useAsyncAction(async (s: Session) => {
+  const child = await pendingWhile(s.id, childAppeared(s.id), () => store.branchSession(s.id));
+  if (child?.id) store.selectSession(child.id);
+});
+const reviewAction = useAsyncAction(async (s: Session) => {
+  const review = await pendingWhile(s.id, childAppeared(s.id), () => store.reviewSession(s.id));
+  if (review?.id) store.selectSession(review.id);
+});
+const stopAction = useAsyncAction(async (s: Session) => {
+  await pendingWhile(
+    s.id,
+    () => {
+      const x = findSession(s.id);
+      return !x || (!RUNNING_STATUSES.includes(x.status) && !(x.native && x.terminalId));
+    },
+    () => store.stopSession(s.id),
+  );
+});
+// Keyed: ✕ on one stranded card must not block (or spin) the others.
+const deleteAction = useKeyedAction(async (id: string) => {
+  await pendingWhile(id, goneFrom(id), () => store.deleteSession(id));
+  if (store.selectedSessionId === id) store.selectSession(undefined);
+});
+// Reopen a merged session: the server re-forks its worktree/branch from the base (seconds);
+// jump to Активні and select it so the operator can continue and finish again.
+const reopenAction = useAsyncAction(async (s: Session) => {
+  const session = await pendingWhile(s.id, () => findSession(s.id)?.status !== 'merged', () => store.reopenSession(s.id));
+  store.setBucket('active');
+  if (session?.id) store.selectSession(session.id);
+  store.notify(t('agents.notify.reopened', { name: s.name }));
+});
+const archiveAction = useAsyncAction(async (s: Session) => {
+  await pendingWhile(
+    s.id,
+    () => { const x = findSession(s.id); return !x || x.archived === true; },
+    () => store.archiveSession(s.id),
+  );
+  if (store.selectedSessionId === s.id) store.selectSession(undefined);
+});
+const unarchiveAction = useAsyncAction(async (s: Session) => {
+  await pendingWhile(s.id, () => !findSession(s.id)?.archived, () => store.unarchiveSession(s.id));
+});
+// A native session whose harness is not running: start it again (resume) in a new pty.
+const resumeNativeAction = useAsyncAction(async (s: Session) => {
+  await pendingWhile(
+    s.id,
+    () => { const x = findSession(s.id); return !x || !!x.terminalId; },
+    () => store.resumeSession(s.id),
+  );
+});
+const editorAction = useAsyncAction((s: Session) => store.openEditor(s.id));
+// The stall banner's «Перезапустити»: settled once the agent emits again or stops running.
+const restartAction = useAsyncAction(async (s: Session) => {
+  const lastEventAt = s.lastEventAt;
+  await pendingWhile(
+    s.id,
+    () => {
+      const x = findSession(s.id);
+      return !x || x.lastEventAt !== lastEventAt || !RUNNING_STATUSES.includes(x.status);
+    },
+    () => store.restartSession(s.id),
+  );
+});
+// A decision card stays «answering» until the session drops that request, not just until the
+// POST answers — the card would otherwise come back clickable for a beat. Its own pending key
+// (`answer:<id>`), not `session:<id>`: the rest of the session's actions stay usable meanwhile,
+// and the 15 s cap frees the card if the session never reports the request gone.
+const answerKey = (id: string): string => `answer:${id}`;
+const answerAction = useAsyncAction(async (s: Session, res: RpcExtensionUIResponse) => {
+  await store.answerUi(s.id, res);
+  pending.mark(answerKey(s.id), () => findSession(s.id)?.pendingUiRequest?.id !== res.id);
+});
+const answering = computed(
+  () => answerAction.busy.value || (!!selectedSession.value && pending.isPending(answerKey(selectedSession.value.id))),
+);
+const summaryAction = useAsyncAction((s: Session) => store.sendMessage(s.id, t('agents.prompt.summary'), nextMode(s)));
+const previewStopAction = useAsyncAction((s: Session) => store.stopPreview(s.id));
+
+// Any session action in flight (the actions are page-wide, like the one header they serve).
+const actionInFlight = computed(
+  () =>
+    branchAction.busy.value ||
+    reviewAction.busy.value ||
+    stopAction.busy.value ||
+    deleteAction.anyBusy() ||
+    reopenAction.busy.value ||
+    archiveAction.busy.value ||
+    unarchiveAction.busy.value ||
+    resumeNativeAction.busy.value ||
+    restartAction.busy.value ||
+    previewStopAction.busy.value,
+);
+function isSessionPending(id: string): boolean {
+  return pending.isPending(sessionKey(id));
+}
+// Blocks every action on `s`: its own pending result, or another action still talking.
+function sessionBlocked(s: Session): boolean {
+  return isSessionPending(s.id) || actionInFlight.value;
+}
+const selectedPending = computed(() => !!selectedSession.value && isSessionPending(selectedSession.value.id));
+const selectedBlocked = computed(() => !!selectedSession.value && sessionBlocked(selectedSession.value));
 const menuEl = ref<HTMLElement | null>(null);
 // Any pointerdown outside the ⋯ cluster dismisses the menu; captured so a click on another
 // control closes the menu before that control's own handler runs.
@@ -1898,14 +2141,15 @@ watch(() => store.selectedSessionId, () => { menuOpen.value = false; });
 
 function menuReview(): void { const s = selectedSession.value; menuOpen.value = false; if (s) void onReview(s); }
 function menuBranch(): void { menuOpen.value = false; void onBranch(); }
-function menuEditor(): void { menuOpen.value = false; onEditor(); }
-function menuStop(): void { menuOpen.value = false; onStop(); }
+function menuEditor(): void { menuOpen.value = false; void onEditor(); }
+function menuStop(): void { menuOpen.value = false; void onStop(); }
 function menuDelete(): void { const s = selectedSession.value; menuOpen.value = false; if (s) void onDeleteAgent(s); }
-function menuDiscard(): void { const s = selectedSession.value; menuOpen.value = false; if (s) onDiscardRow(s); }
+function menuDiscard(): void { const s = selectedSession.value; menuOpen.value = false; if (s) void onDiscardRow(s); }
 
 // The menu's shortcuts, live whenever a session is open: ⌘ (or Ctrl) + key. Never while the
 // operator is typing, and each is guarded by the same condition that renders its menu item —
-// so a shortcut can't fire an action the header doesn't currently offer.
+// so a shortcut can't fire an action the header doesn't currently offer — and by the same
+// pending/busy check that disables the items, so a held ⌘⌫ cannot delete twice.
 function onDetailShortcut(e: KeyboardEvent): void {
   const s = selectedSession.value;
   if (!s) return;
@@ -1917,20 +2161,34 @@ function onDetailShortcut(e: KeyboardEvent): void {
   const el = e.target as HTMLElement | null;
   if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
   const branchKind = s.kind === 'discussion' || s.kind === 'review';
+  const blocked = sessionBlocked(s);
   switch (e.key.toLowerCase()) {
     case 'd':
-      if (!branchKind && !s.archived && !s.native && canReview(s)) { e.preventDefault(); menuOpen.value = false; void onReview(s); }
+      if (!branchKind && !s.archived && !s.native && canReview(s)) {
+        e.preventDefault();
+        menuOpen.value = false;
+        if (!blocked) void onReview(s);
+      }
       break;
     case 'e':
-      if (!s.archived) { e.preventDefault(); menuOpen.value = false; onEditor(); }
+      if (!s.archived) {
+        e.preventDefault();
+        menuOpen.value = false;
+        if (!isSessionPending(s.id)) void onEditor();
+      }
       break;
     case '.':
-      if (runningSelected.value || (s.native && s.terminalId)) { e.preventDefault(); menuOpen.value = false; onStop(); }
+      if (runningSelected.value || (s.native && s.terminalId)) {
+        e.preventDefault();
+        menuOpen.value = false;
+        if (!blocked) void onStop();
+      }
       break;
     case 'backspace':
       e.preventDefault();
       menuOpen.value = false;
-      if (branchKind) onDiscardRow(s);
+      if (blocked) break;
+      if (branchKind) void onDiscardRow(s);
       else void onDeleteAgent(s);
       break;
   }
@@ -1948,6 +2206,7 @@ onBeforeUnmount(() => {
 const changesInfo = ref<Awaited<ReturnType<typeof store.finishInfo>> | null>(null);
 const changesError = ref<string | null>(null);
 const changesLoading = ref(false);
+const docsPhase = useLoadPhase(() => docsNotLoaded.value);
 // Orders overlapping loads: a reply that lands after a newer request is discarded.
 let changesRun = 0;
 
@@ -2110,22 +2369,43 @@ function statusWord(s: Session): string {
 // resume replays the harness's own persisted history. `historyLoadFor` holds which sessions
 // must not be woken by a mere click (native, merged, backlog) and which are already live;
 // `resumeSession` reloads the transcript itself, so no separate load follows it.
+// Rehydration in flight for this session — the composer's ↻ spins (and stays down, so a second
+// click cannot spawn a second respawn) both for the wake below and for ↻ itself. Declared here
+// because the immediate watcher below reads it.
+const refreshingId = ref<string | null>(null);
+function loadTranscriptOf(id: string): void {
+  transcriptFailed.value = null;
+  void store.loadTranscript(id).catch((e: unknown) => {
+    store.notify(errorText(e), 'error');
+    // Ends the skeleton: the pane falls back to its empty state rather than loading forever.
+    if (store.transcripts[id] === undefined) transcriptFailed.value = id;
+  });
+}
 watch(
   () => store.selectedSessionId,
   (id) => {
+    // A failure recorded on an earlier visit must not end this visit's skeleton: the session
+    // is being loaded (or woken) again, so «Журнал порожній» waits for that answer.
+    transcriptFailed.value = null;
     if (!id || store.transcripts[id] !== undefined) return;
     const s = store.sessions.find((x) => x.id === id);
     if (s && historyLoadFor(s) === 'resume') {
-      void store.resumeSession(id).catch((e: unknown) => {
-        // A wake that fails (a worktree that will not come up, a signed-out CLI) must still
-        // leave the operator with the pane they opened, so fall back to the dormant notice
-        // the plain load serves rather than an empty log and a silent failure.
-        store.notify(e instanceof Error ? e.message : String(e), 'error');
-        void store.loadTranscript(id);
-      });
+      refreshingId.value = id;
+      void store
+        .resumeSession(id)
+        .catch((e: unknown) => {
+          // A wake that fails (a worktree that will not come up, a signed-out CLI) must still
+          // leave the operator with the pane they opened, so fall back to the dormant notice
+          // the plain load serves rather than an empty log and a silent failure.
+          store.notify(errorText(e), 'error');
+          loadTranscriptOf(id);
+        })
+        .finally(() => {
+          if (refreshingId.value === id) refreshingId.value = null;
+        });
       return;
     }
-    void store.loadTranscript(id);
+    loadTranscriptOf(id);
   },
   { immediate: true },
 );
@@ -2257,17 +2537,27 @@ function onLauncherKeydown(e: KeyboardEvent): void {
 // Load the project's branches into the fork-base picker. `preferred` is a base already
 // chosen on the task being edited; otherwise it falls back to the project default, then
 // (after the fetch) to the repo's current HEAD, so the picker always shows a sane base.
+// A reopened launcher (another project, another card) starts a newer run; the older reply is
+// dropped so it cannot fill the picker with the wrong repo's branches.
+const launchBranchesLoading = ref(false);
+let launchBranchesRun = 0;
 async function loadLaunchBranches(preferred: string | undefined): Promise<void> {
+  const run = ++launchBranchesRun;
   const projectId = launchProjectId.value;
   launchBranches.value = [];
   draftBaseBranch.value = preferred ?? launchProject.value?.defaultBranch ?? '';
+  launchBranchesLoading.value = false;
   if (!projectId || !isBound.value) return;
+  launchBranchesLoading.value = true;
   try {
     const info = await store.listBranches(projectId);
+    if (run !== launchBranchesRun) return;
     launchBranches.value = info.branches;
     if (!draftBaseBranch.value) draftBaseBranch.value = info.default ?? info.current ?? '';
   } catch {
     // Non-fatal: the picker degrades to the preferred/default value only.
+  } finally {
+    if (run === launchBranchesRun) launchBranchesLoading.value = false;
   }
 }
 
@@ -2306,10 +2596,6 @@ function openLauncher(card?: Task, deepAnalysis = false): void {
   launcherOpen.value = true;
   void nextTick(() => taskInput.value?.focus());
 }
-
-// Rehydration in flight for this session — the composer's ↻ stays down so a second click
-// cannot spawn a second respawn while the first is still talking to omp.
-const refreshingId = ref<string | null>(null);
 
 // Turn a transcript text selection into a new backlog task: prefill the launcher
 // with the selection as the task body and a name suggested from its first line,
@@ -2436,6 +2722,9 @@ const needsPublish = computed(
 );
 const publishInto = ref('');
 const publishing = ref(false);
+// The launcher is locked (persistent, fields inert, every footer button down) while a submit
+// or a publish is writing the card.
+const launcherLocked = computed(() => launchBusy.value !== null || publishing.value);
 const workspaceOptions = computed(() =>
   projects.workspaces.map((w) => ({ value: w.id, label: w.name })),
 );
@@ -2460,21 +2749,24 @@ async function publishAndFile(): Promise<void> {
 
 // Deleting a card is a cloud row and nothing else — it owns no branch, no worktree and no
 // omp child — so one confirm is the whole guard; tasks_guard refuses an active card anyway.
-async function onDeleteCard(card: Task): Promise<void> {
-  if (!window.confirm(t('agents.notify.deleteCard', { title: card.title }))) return;
-  if (!(await board.deleteTask(card.id))) return;
+// Keyed per card: the pressed card spins, the others stay usable. `board.deleteTask` reports
+// its own failure (toast) and answers false.
+const cardDelete = useKeyedAction(async (id: string) => {
+  if (!(await board.deleteTask(id))) return;
   // The editor is this card's only detail view; it must not outlive the row it edits.
-  if (editingTaskId.value === card.id) launcherOpen.value = false;
+  if (editingTaskId.value === id) launcherOpen.value = false;
+});
+function onDeleteCard(card: Task): void {
+  if (cardDelete.busyFor(card.id)) return;
+  if (!window.confirm(t('agents.notify.deleteCard', { title: card.title }))) return;
+  void cardDelete.run(card.id);
 }
 
 // A stranded pre-cutover row: local SQLite and nothing else, so this stays a plain delete.
-async function onDeleteStranded(s: Session): Promise<void> {
+function onDeleteStranded(s: Session): void {
+  if (isSessionPending(s.id) || deleteAction.busyFor(s.id)) return;
   if (!window.confirm(t('agents.notify.deleteStranded', { name: s.name }))) return;
-  try {
-    await store.deleteSession(s.id);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
+  void deleteAction.run(s.id);
 }
 
 // ── One-time publication of pre-cutover local backlog rows ────────────────
@@ -2562,6 +2854,9 @@ function nextMode(s: Session): MessageMode {
   return !hasTurn ? 'prompt' : s.status === 'done' ? 'follow_up' : 'steer';
 }
 
+// The composer clears on send and the store shows the «надсилаю…» bubble at once; the panel
+// ref is how a refused message gets its text and images back.
+const panelRef = ref<InstanceType<typeof KPanel> | null>(null);
 async function onSend(text: string, images: ImageInput[]): Promise<void> {
   const s = selectedSession.value;
   if (!s) return;
@@ -2569,8 +2864,10 @@ async function onSend(text: string, images: ImageInput[]): Promise<void> {
     await store.sendMessage(s.id, text, nextMode(s), images);
   } catch (e) {
     // A failed send (e.g. the agent's omp child died and could not be respawned) must be
-    // visible, not swallowed — otherwise the chat looks silently stuck.
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
+    // visible, not swallowed — otherwise the chat looks silently stuck — and must not cost
+    // the operator what they wrote: it goes back into the composer, if still on this session.
+    store.notify(errorText(e), 'error');
+    if (store.selectedSessionId === s.id) panelRef.value?.restoreDraft(text, images);
   }
 }
 
@@ -2612,7 +2909,7 @@ async function onRefreshChat(): Promise<void> {
   try {
     await store.resumeSession(s.id);
   } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
+    store.notify(errorText(e), 'error');
   } finally {
     refreshingId.value = null;
   }
@@ -2620,124 +2917,92 @@ async function onRefreshChat(): Promise<void> {
 
 // Composer ≡ — ask the agent itself to recap, rather than stitching a digest out of the
 // transcript locally: it has the whole session in context and can say where the work stands.
-// A canned operator message, the same shape as the server-side resolve/PR prompts.
-
+// A canned operator message, the same shape as the server-side resolve/PR prompts; the store
+// shows it as a «надсилаю…» bubble, and `summaryAction` keeps ≡ down until the POST answers.
 async function onSummary(): Promise<void> {
   const s = selectedSession.value;
-  if (!s) return;
-  try {
-    await store.sendMessage(s.id, t('agents.prompt.summary'), nextMode(s));
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
+  if (s) await summaryAction.run(s);
 }
 
 async function onBranch(): Promise<void> {
   const s = selectedSession.value;
-  if (!s) return;
-  try {
-    const child = await store.branchSession(s.id);
-    if (child?.id) store.selectSession(child.id);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
+  if (s && !sessionBlocked(s)) await branchAction.run(s);
 }
 
 async function onReview(s: Session): Promise<void> {
-  try {
-    const review = await store.reviewSession(s.id);
-    if (review?.id) store.selectSession(review.id);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
+  if (!sessionBlocked(s)) await reviewAction.run(s);
 }
 
-function onStop(): void {
+async function onStop(): Promise<void> {
   const s = selectedSession.value;
-  if (s) void store.stopSession(s.id);
+  if (s && !sessionBlocked(s)) await stopAction.run(s);
 }
 
 async function onRestart(): Promise<void> {
   const s = selectedSession.value;
-  if (!s) return;
-  try {
-    await store.restartSession(s.id);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
+  if (s && !sessionBlocked(s)) await restartAction.run(s);
 }
 
-// The composer's effort chip. omp refuses a level its provider cannot run, and the api
-// reports that refusal rather than writing the row — so a failure has to be shown, or the
-// chip would snap back with no explanation.
+// The composer's effort chip and model picker, save-on-change: the chip shows the pick (and a
+// spinner) at once and holds it until the session row reports it. omp refuses a level or a
+// model its provider cannot run, and the api reports that refusal rather than writing the row
+// — so a failure rolls the chip back with a toast. The pick belongs to the session it was made
+// on (`optimisticFor`): both the source and the overrides follow THAT session, so switching
+// sessions mid-save neither paints it onto another one nor compares it with another's row.
+const optimisticFor = ref<string | null>(null);
+let pickedProvider: string | undefined;
+const effortPick = useOptimisticValue<ThinkingLevel | undefined>(
+  () => (optimisticFor.value ? findSession(optimisticFor.value)?.effort : undefined),
+  async (level) => {
+    if (optimisticFor.value && level) await store.setEffort(optimisticFor.value, level);
+  },
+);
+const modelPick = useOptimisticValue<string | undefined>(
+  () => (optimisticFor.value ? findSession(optimisticFor.value)?.model : undefined),
+  async (model) => {
+    if (!optimisticFor.value || !model) return;
+    await store.setSessionModel(optimisticFor.value, pickedProvider ? { model, provider: pickedProvider } : { model });
+  },
+);
+const pickOnScreen = computed(() => !!selectedSession.value && optimisticFor.value === selectedSession.value.id);
+// One pick at a time: while either save runs, `optimisticFor` must keep naming the session it
+// writes to, so a pick made meanwhile (here or on another session) is refused before it can
+// re-point it. The saving chip itself is disabled by its `loading`.
+const pickSaving = computed(() => effortPick.pending.value || modelPick.pending.value);
 async function onEffort(level: ThinkingLevel): Promise<void> {
   const s = selectedSession.value;
-  if (!s) return;
-  try {
-    await store.setEffort(s.id, level);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
+  if (!s || pickSaving.value) return;
+  optimisticFor.value = s.id;
+  await effortPick.set(level);
 }
-
-// The composer's model picker on a running session — mirror of onEffort. The api's 400
-// carries omp's own refusal, so nothing is swallowed.
 async function onSetModel(patch: { model: string; provider?: string }): Promise<void> {
   const s = selectedSession.value;
-  if (!s) return;
-  try {
-    await store.setSessionModel(s.id, patch);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
+  if (!s || pickSaving.value) return;
+  optimisticFor.value = s.id;
+  pickedProvider = patch.provider;
+  await modelPick.set(patch.model);
 }
 
-// Reopen a merged session: the server re-forks its worktree/branch from the base; jump to
-// Активні and select it so the operator can continue and finish again.
 async function onReopen(s: Session): Promise<void> {
-  if (actionBusy.value) return;
-  actionBusy.value = true;
-  try {
-    const session = await store.reopenSession(s.id);
-    store.setBucket('active');
-    if (session?.id) store.selectSession(session.id);
-    store.notify(t('agents.notify.reopened', { name: s.name }));
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    actionBusy.value = false;
-  }
+  if (!sessionBlocked(s)) await reopenAction.run(s);
 }
 
-// A native session whose harness is not running: start it again (resume) in a new pty.
 async function onResumeNative(s: Session): Promise<void> {
-  if (actionBusy.value) return;
-  actionBusy.value = true;
-  try {
-    await store.resumeSession(s.id);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    actionBusy.value = false;
-  }
+  if (!sessionBlocked(s)) await resumeNativeAction.run(s);
 }
 
 // Physical delete (archive teardown + removal): stops the omp process, removes the
 // worktree/branch and the registry row, cascading to child branches. Works on any
 // status, unlike archive which refuses active agents.
 async function onDeleteAgent(s: Session): Promise<void> {
+  if (sessionBlocked(s)) return;
   if (!window.confirm(t('agents.notify.deleteAgent', { name: s.name }))) return;
-  try {
-    await store.deleteSession(s.id);
-    if (store.selectedSessionId === s.id) store.selectSession(undefined);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
+  await deleteAction.run(s.id);
 }
 
-function onAnswer(res: RpcExtensionUIResponse): void {
+async function onAnswer(res: RpcExtensionUIResponse): Promise<void> {
   const s = selectedSession.value;
-  if (s) void store.answerUi(s.id, res);
+  if (s && !answering.value) await answerAction.run(s, res);
 }
 
 // Independent review can be requested on a settled (non-active, non-merged) agent that
@@ -2753,28 +3018,11 @@ async function onArchive(s: Session): Promise<void> {
     store.notify(t('agents.notify.cannotArchive'), 'error');
     return;
   }
-  if (actionBusy.value) return;
-  actionBusy.value = true;
-  try {
-    await store.archiveSession(s.id);
-    if (store.selectedSessionId === s.id) store.selectSession(undefined);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    actionBusy.value = false;
-  }
+  if (!sessionBlocked(s)) await archiveAction.run(s);
 }
 
 async function onUnarchive(s: Session): Promise<void> {
-  if (actionBusy.value) return;
-  actionBusy.value = true;
-  try {
-    await store.unarchiveSession(s.id);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    actionBusy.value = false;
-  }
+  if (!sessionBlocked(s)) await unarchiveAction.run(s);
 }
 
 // ── Finish (retire the worktree; the branch stays for its PR) ──────────────
@@ -2821,9 +3069,10 @@ async function openFinish(s: Session): Promise<void> {
   }
 }
 
-function onEditor(): void {
+// ⧉ / ⌘E. A failure (no editor configured, a worktree gone) is a toast, not a silent no-op.
+async function onEditor(): Promise<void> {
   const s = selectedSession.value;
-  if (s) void store.openEditor(s.id).catch(() => {});
+  if (s && !isSessionPending(s.id)) await editorAction.run(s);
 }
 
 // ── Merge / discard a discussion branch ──────────────────────────────────
@@ -2862,11 +3111,10 @@ async function submitMerge(): Promise<void> {
   }
 }
 
-function onDiscardRow(s: Session): void {
+async function onDiscardRow(s: Session): Promise<void> {
+  if (sessionBlocked(s)) return;
   if (!window.confirm(t('agents.notify.discard', { kind: s.kind === 'review' ? t('agents.notify.kindReview') : t('agents.notify.kindBranch'), name: s.name }))) return;
-  void store.deleteSession(s.id).then(() => {
-    if (store.selectedSessionId === s.id) store.selectSession(undefined);
-  });
+  await deleteAction.run(s.id);
 }
 
 async function resolveAuto(): Promise<void> {
@@ -2987,6 +3235,11 @@ const docTaskAssignee = ref('');
 const docTaskDescription = ref('');
 const docTaskError = ref<string | null>(null);
 const docTaskBusy = ref(false);
+// The document text and the workspace's members are read after the dialog opens; until they
+// answer the title/description are skeletons and the assignee picker spins.
+const docTaskReading = ref(false);
+const docTaskMembersLoading = ref(false);
+const docTaskReadPhase = useLoadPhase(() => docTaskReading.value);
 const docTaskWorkspace = computed(() => projects.byId.get(docTaskSession.value?.projectId ?? '')?.workspaceId);
 const docTaskProjectOptions = computed<KSelectOption[]>(() =>
   projects.projects
@@ -3013,7 +3266,14 @@ async function openDocTask(path: string): Promise<void> {
   docTaskError.value = null;
   docTaskBusy.value = false;
   docTaskOpen.value = true;
-  if (!projects.members[home.workspaceId]) void projects.loadMembers(home.workspaceId).catch(() => undefined);
+  if (!projects.members[home.workspaceId]) {
+    docTaskMembersLoading.value = true;
+    void projects
+      .loadMembers(home.workspaceId)
+      .catch(() => undefined)
+      .finally(() => { docTaskMembersLoading.value = false; });
+  }
+  docTaskReading.value = true;
   try {
     const file = await api.sessionFile(s.id, path);
     // The operator may have closed this dialog and opened it on another document meanwhile.
@@ -3028,7 +3288,9 @@ async function openDocTask(path: string): Promise<void> {
       (path.split('/').pop() ?? path).replace(/\.[^.]+$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '');
     docTaskDescription.value = `${t('agents.docTask.origin', { project: home.name, branch: s.branch, path })}\n\n${file.content.trim()}\n`;
   } catch (e) {
-    if (docTaskPath.value === path) docTaskError.value = e instanceof Error ? e.message : String(e);
+    if (docTaskPath.value === path) docTaskError.value = errorText(e);
+  } finally {
+    if (docTaskSession.value?.id === s.id && docTaskPath.value === path) docTaskReading.value = false;
   }
 }
 
@@ -3087,8 +3349,32 @@ const previewCfgOpen = ref(false);
 const previewCfgSession = ref<Session | null>(null);
 const draftWebCmd = ref('');
 const draftApiCmd = ref('');
+// The config modal's save error, rendered inside it (the modal stays open on failure).
+const previewCfgError = ref<string | null>(null);
+
+// A preview start is long (install + build in a fresh worktree), so its progress lives on the
+// session, not in a modal: ▶ spins from the click until `store.previews[id]` is set (the store
+// sets it inside `startPreview`), the run guard refuses a second start meanwhile, and in the
+// desktop app the browser pane shows «Піднімаю превʼю гілки…» in its place (`starting`).
+const previewStartingId = ref<string | null>(null);
+const previewStart = useAsyncAction(async (win: Window | null, s: Session) => {
+  previewStartingId.value = s.id;
+  try {
+    await launchInto(win, s);
+  } finally {
+    previewStartingId.value = null;
+  }
+});
+function previewStarting(id: string): boolean {
+  return previewStart.busy.value && previewStartingId.value === id;
+}
 
 async function launchInto(win: Window | null, s: Session): Promise<void> {
+  // Desktop app: the preview goes to the session's own browser, so that is where the operator
+  // should be looking while it starts. Beside the Лог the browser is on screen already.
+  if (window.kermanych?.browser && store.selectedSessionId === s.id) {
+    detailTab.value = browserSplit.value ? 'log' : 'browser';
+  }
   try {
     const res = await store.startPreview(s.id);
     if (res.needsCommand) {
@@ -3096,35 +3382,25 @@ async function launchInto(win: Window | null, s: Session): Promise<void> {
       openPreviewConfig(s);
       return;
     }
-    // Desktop app: the preview opens in the session's own browser and the detail switches to
-    // its tab (no placeholder window was opened — `win` is null). In a browser the placeholder
-    // tab (opened inside the click, before any await, so no popup blocker bites) is pointed at
-    // the preview.
+    // Desktop app: the preview opens in the session's own browser (no placeholder window was
+    // opened — `win` is null). In a browser the placeholder tab (opened inside the click,
+    // before any await, so no popup blocker bites) is pointed at the preview.
     if (!res.url) win?.close();
-    else if (window.kermanych?.browser) {
-      // Beside the Лог the browser is on screen already; otherwise its tab opens.
-      if (store.selectedSessionId === s.id) detailTab.value = browserSplit.value ? 'log' : 'browser';
-      sessionBrowser.navigate(s.id, s.projectId, res.url);
-    } else if (win) win.location.href = res.url;
+    else if (window.kermanych?.browser) void sessionBrowser.navigate(s.id, s.projectId, res.url);
+    else if (win) win.location.href = res.url;
     else window.open(res.url, '_blank');
   } catch (e) {
     win?.close();
-    window.alert(t('agents.preview.launchFailed', { error: e instanceof Error ? e.message : String(e) }));
+    window.alert(t('agents.preview.launchFailed', { error: errorText(e) }));
     openPreviewConfig(s, true); // reopen prefilled with working defaults so the user can fix it
   }
 }
 
 async function togglePreview(s: Session): Promise<void> {
+  if (sessionBlocked(s) || previewStart.busy.value) return;
   if (store.previews[s.id]) {
-    // The stop call keeps this same bar on screen, so grey the ◼ while it runs. The start
-    // path below is exempt: it opens its preview window synchronously, which is its feedback.
-    if (actionBusy.value) return;
-    actionBusy.value = true;
-    try {
-      await store.stopPreview(s.id);
-    } finally {
-      actionBusy.value = false;
-    }
+    // The stop call keeps this same bar on screen: the ◼ spins while it runs.
+    await previewStopAction.run(s);
     return;
   }
   const p = store.projects.find((x) => x.id === s.projectId);
@@ -3133,12 +3409,13 @@ async function togglePreview(s: Session): Promise<void> {
     return;
   }
   const win = previewPlaceholder();
-  await launchInto(win, s);
+  await previewStart.run(win, s);
 }
 
 // The browser build's «loading…» tab for a preview, opened synchronously inside the click so
-// the popup blocker lets it through. None in the desktop app: the preview goes to the session
-// browser there.
+// the popup blocker lets it through. None in the desktop app (`null`): the preview goes to the
+// session browser there, and its pane shows the same «Піднімаю превʼю гілки…» while the start
+// runs (`previewStarting` → KBrowserPane `starting`).
 function previewPlaceholder(): Window | null {
   if (window.kermanych?.browser) return null;
   const win = window.open('', '_blank');
@@ -3151,12 +3428,24 @@ function openPreviewConfig(s: Session, forceDefaults = false): void {
   const p = store.projects.find((x) => x.id === s.projectId);
   draftWebCmd.value = (forceDefaults ? '' : p?.previewCommand ?? '') || DEFAULT_WEB_CMD;
   draftApiCmd.value = (forceDefaults ? '' : p?.apiCommand ?? '') || DEFAULT_API_CMD;
+  previewCfgError.value = null;
   previewCfgOpen.value = true;
 }
 
+// The save is short, so the modal stays open (persistent) with «Запустити» spinning, shows a
+// failure inside itself and closes only once the commands are saved; the start that follows
+// is long and reports on the session (`previewStart`).
+const previewCfgSave = useAsyncAction(
+  async (projectId: string, patch: { previewCommand: string; apiCommand?: string }) => {
+    await projects.patch(projectId, patch);
+    return true;
+  },
+  { onError: (e) => { previewCfgError.value = t('agents.preview.saveFailed', { error: errorText(e) }); } },
+);
+
 async function submitPreviewConfig(): Promise<void> {
   const s = previewCfgSession.value;
-  if (!s) return;
+  if (!s || previewCfgSave.busy.value) return;
   // previewCommand/apiCommand are CLOUD config, so the write needs a cloud row — and per
   // the approved role matrix ANY workspace member may make it: `projects_update_member`
   // (20260827100000_workspaces.sql:338) replaced the owner-only policy this gate used to
@@ -3166,34 +3455,30 @@ async function submitPreviewConfig(): Promise<void> {
   //
   // The pre-check itself stays. RLS is the real gate, but a refused UPDATE matches zero
   // rows and postgrest reports it as "Cannot coerce the result to a single JSON object" —
-  // unreadable. Refuse here in Ukrainian instead, and keep the modal open so the entered
-  // commands are not lost. The two false states are not the same sentence, for the same
-  // reason MainLayout's `noCloudRowHint` splits them: a claim about where a project lives
-  // must never outrun what we actually checked.
+  // unreadable. Refuse here in Ukrainian instead, inside the modal so the entered commands
+  // are not lost. The two false states are not the same sentence, for the same reason
+  // MainLayout's `noCloudRowHint` splits them: a claim about where a project lives must
+  // never outrun what we actually checked.
   if (!projects.byId.has(s.projectId)) {
-    store.notify(
-      projects.listRead
-        ? t('agents.preview.notBoundLocal')
-        : t('agents.preview.notBoundOffline'),
-      'error',
-    );
+    previewCfgError.value = projects.listRead
+      ? t('agents.preview.notBoundLocal')
+      : t('agents.preview.notBoundOffline');
     return;
   }
+  previewCfgError.value = null;
+  const patch: { previewCommand: string; apiCommand?: string } = {
+    previewCommand: draftWebCmd.value.trim(),
+  };
+  const apiCmd = draftApiCmd.value.trim();
+  if (apiCmd) patch.apiCommand = apiCmd;
+  // Opened inside the click, before the await, for the popup blocker (see previewPlaceholder).
   const win = previewPlaceholder();
-  previewCfgOpen.value = false;
-  try {
-    const patch: { previewCommand: string; apiCommand?: string } = {
-      previewCommand: draftWebCmd.value.trim(),
-    };
-    const apiCmd = draftApiCmd.value.trim();
-    if (apiCmd) patch.apiCommand = apiCmd;
-    await projects.patch(s.projectId, patch);
-  } catch (e) {
+  if (!(await previewCfgSave.run(s.projectId, patch))) {
     win?.close();
-    window.alert(t('agents.preview.saveFailed', { error: e instanceof Error ? e.message : String(e) }));
     return;
   }
-  await launchInto(win, s);
+  previewCfgOpen.value = false;
+  await previewStart.run(win, s);
 }
 </script>
 
@@ -3630,7 +3915,9 @@ async function submitPreviewConfig(): Promise<void> {
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 
-  &:hover { background: var(--k-surface2); }
+  &:hover:not(:disabled) { background: var(--k-surface2); }
+  // The session is pending a result (or another action is out): the row stays, unpressable.
+  &:disabled { opacity: 0.45; cursor: default; }
   &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: -1px; }
 }
 

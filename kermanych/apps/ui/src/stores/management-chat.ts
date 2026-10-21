@@ -147,6 +147,10 @@ export const useManagementChat = defineStore('management-chat', () => {
   // transcript the model no longer has.
   const byWorkspace = ref<Record<string, MgmtChatEntry[]>>({});
   const busy = ref(false);
+  // «Новий чат» in flight: the composer stays locked until the api has dropped the old
+  // conversation, or the next question would land in the memory being cleared. Separate from
+  // `busy`, which also drives the «Думає…» line — nothing is thinking during a reset.
+  const resetting = ref(false);
 
   const entries = computed<MgmtChatEntry[]>(() => {
     const id = store.selectedWorkspaceId;
@@ -671,7 +675,7 @@ export const useManagementChat = defineStore('management-chat', () => {
     // Nothing to say, nothing to say it about, or a turn already in flight. Silent because
     // the composer disables its own send disc in exactly these three states. A turn of
     // files alone is a legitimate message — «ось документ» often has no words.
-    if (busy.value || (!body && !attachments.length) || !workspaceId) return;
+    if (busy.value || resetting.value || (!body && !attachments.length) || !workspaceId) return;
 
     // Appended before the request, so the operator's words are on screen while the model
     // thinks — a turn that takes twenty seconds must not look like a dropped keystroke.
@@ -788,8 +792,9 @@ export const useManagementChat = defineStore('management-chat', () => {
   // turns is the opposite of a new chat.
   async function reset(): Promise<void> {
     const workspaceId = store.selectedWorkspaceId;
-    if (busy.value || !workspaceId) return;
+    if (busy.value || resetting.value || !workspaceId) return;
     byWorkspace.value[workspaceId] = [];
+    resetting.value = true;
     try {
       await api.resetManagementChat(conversationId(workspaceId));
     } catch (e) {
@@ -797,8 +802,10 @@ export const useManagementChat = defineStore('management-chat', () => {
       // that the model's memory is not — otherwise the next answer refers to a conversation
       // that visibly never happened.
       result(workspaceId, 'error', globalTr.t('management.chat.resetFailed', { error: errorText(e) }));
+    } finally {
+      resetting.value = false;
     }
   }
 
-  return { entries, busy, hasConversation, send, reset };
+  return { entries, busy, resetting, hasConversation, send, reset };
 });

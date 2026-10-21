@@ -13,7 +13,9 @@
       :class="{
         'k-session-card--selected': selected,
         'k-session-card--removable': removable,
+        'k-session-card--pending': pending,
       }"
+      :aria-busy="pending || undefined"
       @click="$emit('click')"
     >
       <div class="k-session-card__top">
@@ -33,6 +35,7 @@
           v-tip="t('kit.sessionCard.findings', { n: findings })"
           :aria-label="t('kit.sessionCard.findings', { n: findings })"
         >⚑ {{ findings }}</span>
+        <KSpinner v-if="pending" :size="10" class="k-session-card__pending" />
         <span class="k-session-card__time">{{ time }}</span>
       </div>
       <div class="k-session-card__status">
@@ -59,6 +62,7 @@
       class="k-session-card__remove"
       v-tip="removeTitleLabel"
       :aria-label="removeTitleLabel"
+      :disabled="pending"
       @click="$emit('remove')"
     >✕</button>
   </div>
@@ -71,6 +75,7 @@ import type { SessionStatus, Usage } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KHarnessMark from './KHarnessMark.vue';
 import KAnalysisMark from './KAnalysisMark.vue';
+import KSpinner from './KSpinner.vue';
 import { tokens, usageTokens, usd } from '../../lib/format';
 import type { LaunchMode } from '../../lib/native-session';
 
@@ -102,6 +107,9 @@ import type { LaunchMode } from '../../lib/native-session';
 //
 // `deepAnalysis` marks a «Глибокий аналіз» card (KAnalysisMark) in the accounting line, right
 // after the harness: it is HOW this agent works, and it must not be the field that clips.
+//
+// `pending` — an action on this session is waiting for its result (stopped, deleted,
+// archived, forked…; stores/pending): the card dims, spins before the time, and its ✕ is blocked.
 const props = withDefaults(
   defineProps<{
     branch: string;
@@ -123,8 +131,9 @@ const props = withDefaults(
     removeTitle?: string;
     browsing?: boolean;
     findings?: number;
+    pending?: boolean | undefined;
   }>(),
-  { selected: false, fork: false, removable: false, browsing: false, findings: 0 },
+  { selected: false, fork: false, removable: false, browsing: false, findings: 0, pending: false },
 );
 
 defineEmits<{ click: []; remove: [] }>();
@@ -142,6 +151,16 @@ const spend = computed(() => {
 </script>
 
 <style scoped lang="scss">
+.k-session-card--pending {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.k-session-card__pending {
+  color: var(--k-muted);
+  margin-right: 6px;
+}
+
 .k-session-card {
   display: flex;
   flex-direction: column;

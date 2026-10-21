@@ -98,13 +98,25 @@ export function toggleTheme(origin?: DOMRect | null): void {
 // Boot may re-run under HMR; a second watcher would double every write.
 let started = false;
 
+// Desktop: hand main the applied theme's canvas (the page background) so the next launch's
+// window is painted in it before the page loads. Read off the computed token rather than a
+// copy of the palette, so the colour cannot drift from tokens.css.
+function reportCanvas(): void {
+  const report = typeof window === 'undefined' ? undefined : window.kermanych?.reportTheme;
+  if (!report) return;
+  const canvas = getComputedStyle(document.documentElement).getPropertyValue('--k-canvas').trim();
+  if (canvas) report(canvas);
+}
+
 /** Paint the stored theme and keep <html> + localStorage in step with it. */
 export function initTheme(): void {
   applyTheme(theme.value);
+  reportCanvas();
   if (started) return;
   started = true;
   watch(theme, (value) => {
     applyTheme(value);
     writeTheme(typeof localStorage === 'undefined' ? null : localStorage, value);
+    reportCanvas();
   });
 }
