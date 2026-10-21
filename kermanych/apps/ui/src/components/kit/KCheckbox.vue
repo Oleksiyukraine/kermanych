@@ -1,19 +1,22 @@
 <template>
-  <label class="k-checkbox">
+  <label class="k-checkbox" :class="{ 'k-checkbox--loading': loading }" :aria-busy="loading || undefined">
     <input
       class="k-checkbox__box"
       type="checkbox"
       :checked="modelValue"
-      :disabled="disabled"
+      :disabled="disabled || loading"
       @change="onChange"
     />
     <span v-if="label" class="k-checkbox__label">{{ label }}</span>
+    <KSpinner v-if="loading" :size="10" class="k-checkbox__spinner" />
   </label>
 </template>
 
 <script setup lang="ts">
-// Checkbox: token-styled native input, radius 0, accent fill when checked.
-const props = defineProps<{ modelValue?: boolean; label?: string; disabled?: boolean }>();
+import KSpinner from './KSpinner.vue';
+// Checkbox: token-styled native input, radius 0, accent fill when checked. `loading` (a
+// save-on-change in flight, see useOptimisticValue) disables the box and shows the kit spinner.
+const props = defineProps<{ modelValue?: boolean; label?: string; disabled?: boolean | undefined; loading?: boolean | undefined }>();
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
 function onChange(e: Event) {
   const el = e.target as HTMLInputElement;
@@ -69,5 +72,11 @@ function onChange(e: Event) {
 .k-checkbox__box:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+.k-checkbox--loading {
+  cursor: progress;
+}
+.k-checkbox__spinner {
+  color: var(--k-muted);
 }
 </style>

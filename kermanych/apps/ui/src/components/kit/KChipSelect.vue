@@ -3,16 +3,18 @@
     <button
       type="button"
       class="k-chip-select__trigger"
-      :class="{ 'k-chip-select__trigger--open': open }"
-      :disabled="disabled"
+      :class="{ 'k-chip-select__trigger--open': open, 'k-chip-select__trigger--loading': loading }"
+      :disabled="disabled || loading"
       :aria-label="title"
       :aria-haspopup="'menu'"
       :aria-expanded="open"
+      :aria-busy="loading || undefined"
       @click="toggle"
     >
       <span v-if="icon" class="k-chip-select__icon" aria-hidden="true">{{ icon }}</span>
       <span class="k-chip-select__label">{{ currentLabel }}</span>
-      <span class="k-chip-select__caret" aria-hidden="true"></span>
+      <KSpinner v-if="loading" :size="10" />
+      <span v-else class="k-chip-select__caret" aria-hidden="true"></span>
     </button>
 
     <!-- Under <body>, `position: fixed`, like KSelect's listbox and lib/tip.ts's bubble:
@@ -53,6 +55,7 @@
 <script setup lang="ts" generic="T extends string">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { isAnchorOffscreen, placeMenu } from '../../lib/menu';
+import KSpinner from './KSpinner.vue';
 
 // A flat chip that opens a small menu: `⚡ Високий ▾`. The composer's control row needs a
 // picker that reads as a label rather than a form field, which is why this is not KSelect —
@@ -69,6 +72,9 @@ const props = defineProps<{
   // the current value, so without this the menu is an unlabelled list of words.
   title?: string | undefined;
   disabled?: boolean | undefined;
+  // A pick being saved (useOptimisticValue): the chip shows the picked value, a spinner in
+  // place of the caret, and is disabled so a second pick cannot race the first.
+  loading?: boolean | undefined;
   // Which way the menu PREFERS to unfold; it flips when that side cannot hold the list.
   // Defaults to 'up' — the composer's need, and the behaviour every existing caller
   // already relies on.
@@ -102,7 +108,7 @@ function toggle(): void {
 }
 
 async function openMenu(): Promise<void> {
-  if (props.disabled || open.value) return;
+  if (props.disabled || props.loading || open.value) return;
   naturalH = 0;
   open.value = true;
   placed.value = false;
@@ -176,7 +182,7 @@ onBeforeUnmount(close);
 // A chip disabled while its menu is open (the composer locks its row on submit) must not
 // leave an orphaned list on screen.
 watch(
-  () => props.disabled,
+  () => props.disabled || props.loading,
   (isDisabled) => {
     if (isDisabled) close();
   },
@@ -219,6 +225,10 @@ watch(
   &:disabled {
     cursor: default;
     opacity: 0.5;
+  }
+  &.k-chip-select__trigger--loading:disabled {
+    cursor: progress;
+    opacity: 0.85;
   }
 }
 

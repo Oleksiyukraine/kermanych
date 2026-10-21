@@ -197,6 +197,7 @@
           @click="onLangToggle"
         >{{ locale === 'uk' ? 'EN' : 'UK' }}</KIconButton>
       </div>
+      <KProgressBar :active="activity.barVisible" />
     </q-header>
 
     <!-- PAGE -->
@@ -463,6 +464,8 @@ import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KToast from 'components/kit/KToast.vue';
+import KProgressBar from 'components/kit/KProgressBar.vue';
+import { useActivity } from '../stores/activity';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KUserButton from 'components/kit/KUserButton.vue';
 import KFileManager from 'components/kit/KFileManager.vue';
@@ -483,6 +486,8 @@ const store = useOrchestrator();
 const terminal = useTerminal();
 const projects = useProjects();
 const auth = useAuth();
+// Foreground work started through useAsyncAction / trackLoad — drives the top progress bar.
+const activity = useActivity();
 const board = useBoard();
 const projectDocs = useProjectDocs();
 const onb = useOnboarding();

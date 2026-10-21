@@ -2127,7 +2127,15 @@ export const en: MessageSchema = {
       contextPct: 'context {pc}%',
       tokens: '{count} tokens',
     },
+    skeleton: {
+      loading: 'Loading…',
+    },
+    progress: {
+      label: 'Working…',
+    },
     panel: {
+      sending: 'sending…',
+      outgoingImages: 'images: {count}',
       promoting: 'Preparing worktree…',
       promoteAgent: 'Start implementing what was discussed (worktree + full access, same context)',
       promoteTask: 'Save as a task in the backlog',

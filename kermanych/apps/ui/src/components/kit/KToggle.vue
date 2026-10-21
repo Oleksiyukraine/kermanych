@@ -1,5 +1,5 @@
 <template>
-  <div class="k-toggle" role="tablist">
+  <div class="k-toggle" :class="{ 'k-toggle--busy': loading }" role="tablist" :aria-busy="loading || undefined">
     <button
       v-for="opt in options"
       :key="opt"
@@ -8,16 +8,20 @@
       class="k-toggle__seg"
       :class="{ 'k-toggle__seg--active': opt === modelValue }"
       :aria-selected="opt === modelValue"
+      :disabled="disabled || loading"
       @click="emit('update:modelValue', opt)"
     >
+      <KSpinner v-if="loading && opt === modelValue" :size="10" class="k-toggle__spinner" />
       {{ opt }}
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
-// Segmented control (OMP/zsh style). Active segment carries the single accent.
-defineProps<{ options: string[]; modelValue?: string | undefined }>();
+import KSpinner from './KSpinner.vue';
+// Segmented control (OMP/zsh style). Active segment carries the single accent. `loading` (the
+// picked segment is being saved) disables every segment and spins on the active one.
+defineProps<{ options: string[]; modelValue?: string | undefined; disabled?: boolean | undefined; loading?: boolean | undefined }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 </script>
 
@@ -50,6 +54,21 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
   &:hover:not(.k-toggle__seg--active) {
     color: var(--k-text);
   }
+}
+
+.k-toggle__seg:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.k-toggle--busy .k-toggle__seg:disabled {
+  cursor: progress;
+  opacity: 1;
+}
+
+.k-toggle__spinner {
+  margin-right: 6px;
+  vertical-align: -1px;
 }
 
 .k-toggle__seg--active {

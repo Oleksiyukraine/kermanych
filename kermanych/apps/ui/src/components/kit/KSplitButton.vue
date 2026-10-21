@@ -1,7 +1,7 @@
 <template>
   <div ref="rootEl" class="k-split-btn" :class="{ 'k-split-btn--open': open }">
     <!-- The default action: exactly what a plain primary button here would do. -->
-    <KBtn variant="primary" class="k-split-btn__main" :disabled="!!disabled" @click="emit('click')">
+    <KBtn variant="primary" class="k-split-btn__main" :disabled="!!disabled" :loading="!!loading" @click="emit('click')">
       {{ label }}
     </KBtn>
     <!-- The other ways to do it. A separate control rather than a long-press or a hover, so
@@ -9,7 +9,7 @@
     <KBtn
       variant="primary"
       class="k-split-btn__toggle"
-      :disabled="!!disabled"
+      :disabled="!!disabled || !!loading"
       :title="menuLabel"
       :aria-label="menuLabel"
       aria-haspopup="menu"
@@ -72,6 +72,8 @@ const props = defineProps<{
   // a caret, so without this it is an unlabelled control.
   menuLabel: string;
   disabled?: boolean | undefined;
+  // The default action is running: its half spins, the ▾ half is blocked.
+  loading?: boolean | undefined;
 }>();
 
 const emit = defineEmits<{ click: []; select: [value: T] }>();

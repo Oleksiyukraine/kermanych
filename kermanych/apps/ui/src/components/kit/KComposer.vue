@@ -64,6 +64,7 @@
           :options="modelChipOptions"
           :title="t('kit.composer.model')"
           :disabled="disabled"
+          :loading="modelLoading"
           @update:model-value="onModelPick"
         />
         <span v-else-if="model" class="k-composer__chip" v-tip="t('kit.composer.model')">
@@ -77,6 +78,7 @@
           icon="⚡"
           :title="t('kit.composer.effort')"
           :disabled="disabled"
+          :loading="effortLoading"
           @update:model-value="(level) => emit('effort', level)"
         />
         <span v-if="worktree" class="k-composer__chip" v-tip="t('kit.composer.worktree')">
@@ -89,7 +91,8 @@
           type="submit"
           class="k-composer__send"
           :aria-label="t('kit.composer.send')"
-          :disabled="disabled || !canSend"
+          :aria-busy="reading > 0 || undefined"
+          :disabled="disabled || !canSend || reading > 0"
         >↑</button>
       </div>
 
@@ -138,7 +141,7 @@ const props = withDefaults(
   defineProps<{
     modelValue: string;
     placeholder?: string | undefined;
-    disabled?: boolean;
+    disabled?: boolean | undefined;
     model?: string | undefined;
     // The omp catalog for this machine (empty when unreadable): with it the model chip is a
     // picker, without it it degrades to a read-only label.
@@ -147,6 +150,9 @@ const props = withDefaults(
     // level is not known yet (a child that has not answered its first state poll), and the chip
     // stays away rather than naming a level the agent may not be running at.
     effort?: ThinkingLevel | undefined;
+    // A model / effort pick being saved: the chip spins and is blocked until it settles.
+    modelLoading?: boolean | undefined;
+    effortLoading?: boolean | undefined;
     worktree?: boolean;
     // How full the model's context window is, in percent, as omp reports it. Read straight
     // from the session rather than derived from `usage`: cached reads and summarisation move
@@ -157,7 +163,7 @@ const props = withDefaults(
     // caller from re-deriving the same two figures.
     usage?: Usage | undefined;
   }>(),
-  { disabled: false, worktree: false, models: () => [] },
+  { disabled: false, worktree: false, models: () => [], modelLoading: false, effortLoading: false },
 );
 
 const emit = defineEmits<{
@@ -240,6 +246,7 @@ function onComposerKeydown(e: KeyboardEvent): void {
 const {
   images: attachImages,
   error: attachError,
+  reading,
   onPaste: onImagePaste,
   onDrop: onImageDrop,
   remove: removeImage,
@@ -253,6 +260,16 @@ function onFilePick(e: Event): void {
   if (input.files) void addImageFiles(input.files);
   input.value = '';
 }
+
+// A failed send hands its images back (KPanel.restoreDraft): rebuilt as thumbnails from the
+// same base64 bytes that went out.
+function restoreImages(list: readonly ImageInput[]): void {
+  attachImages.value = [
+    ...attachImages.value,
+    ...list.map((i, n) => ({ ...i, url: `data:${i.mimeType};base64,${i.data}`, name: `image-${n + 1}` })),
+  ];
+}
+defineExpose({ restoreImages });
 
 const canSend = computed(() => props.modelValue.trim().length > 0 || attachImages.value.length > 0);
 
@@ -279,7 +296,7 @@ const stats = computed(() => {
 });
 
 function submit(): void {
-  if (props.disabled) return;
+  if (props.disabled || reading.value > 0) return;
   const text = props.modelValue.trim();
   if (!text && !attachImages.value.length) return;
   emit('send', text, attachImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType })));

@@ -2136,7 +2136,15 @@ export const uk = {
       contextPct: 'контекст {pc}%',
       tokens: '{count} токенів',
     },
+    skeleton: {
+      loading: 'Завантаження…',
+    },
+    progress: {
+      label: 'Виконується…',
+    },
     panel: {
+      sending: 'надсилаю…',
+      outgoingImages: 'зображень: {count}',
       promoting: 'Готую worktree…',
       promoteAgent: 'Почати імплементацію обговореного (worktree + повний доступ, цей же контекст)',
       promoteTask: 'Зберегти як задачу в беклог',
