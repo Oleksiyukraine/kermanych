@@ -1,5 +1,6 @@
 // apps/api/src/supervisor/supervisor.service.ts
 import { GoneException, Injectable, Optional, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
+import { HttpAdapterHost } from "@nestjs/core";
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -7,7 +8,7 @@ import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService, type ChangedFile } from "../worktree/worktree.service";
 import type { SplitDiff } from "../worktree/split-diff";
-import { createRuntime, type AgentRuntime } from "../runtime/agent-runtime";
+import { createRuntime, type AgentRuntime, type RuntimeLaunchOpts } from "../runtime/agent-runtime";
 import { BrowserMcpService } from "../browser/browser-mcp.service";
 import { browserHost } from "../browser/browser-host";
 import { resolveRuntime } from "../runtime/resolve-runtime";
@@ -81,6 +82,7 @@ import {
   taskReportsWrite,
   type AgentFinding,
   type FindingTarget,
+  type MachineAlert,
 } from "@kermanych/core";
 import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type AiTrigger, type TaskPatch } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
@@ -89,6 +91,8 @@ import { NativeSessionService, nativeUnsupported } from "../native/native-sessio
 import { CodedError } from "../management/coded-error";
 import { PR_URL_RE } from "./pr-url";
 import { launchToolsFor } from "./chat-tools";
+import { MachineResourcesService } from "../machine/machine-resources.service";
+import { WatchdogService } from "../machine/watchdog.service";
 
 type Live = {
   rpc: AgentRuntime;
@@ -135,6 +139,14 @@ type Live = {
   // Signature of the last `subagents_update` fanned out, so a burst of progress frames that
   // moves no field does not refan an identical list to every socket.
   subagentsSig?: string;
+  // The child's pid (RuntimeLaunchOpts.onSpawn), for the memory watchdog's process tree.
+  pid?: number;
+  // The watchdog's baseline was re-taken on the child's `ready` (onRpcEvent).
+  baselined?: boolean;
+  // A message just went to this idle child and its turn has not reported yet: the child holds
+  // an agent slot from the write, not from its first event, or a second waiting session could
+  // slip into the same slot in between. Cleared by the first status change (onRpcEvent).
+  turnPending?: boolean;
   poll?: NodeJS.Timeout;
 };
 
@@ -150,6 +162,22 @@ const MATCH_MAX_CHARS = 1 << 14;
 // How many uncommitted paths an in-place refusal names: enough to recognise the work in the
 // way, short enough for the launcher's one-line error slot.
 const DIRTY_FILES_SHOWN = 5;
+
+// One agent waiting for a slot (docs/specs/2026-10-21-machine-resource-profile.md, decision 5).
+type SlotWaiter = {
+  // Enqueue time (ms), persisted as `slot_queued_at`: the FIFO order, across restarts too.
+  at: number;
+  // The parked calls, replayed in order once a slot is granted. Each replays its WHOLE original
+  // call — a launch spawns with its fork handle, images and opening prompt, «Створити ПР» re-arms
+  // its flags after the send — not just the text.
+  jobs: (() => Promise<unknown>)[];
+  // The texts it waits to send: the persisted `pending_prompt`. Images ride only in `jobs`
+  // (memory): base64 does not belong in the registry, so after a restart the text goes alone.
+  texts: string[];
+  // What the log shows meanwhile (the messages, «чекає на слот»). Never in a Live's transcript:
+  // appendEntry needs a Live, and the real rows are appended when the delivery runs.
+  entries: TranscriptEntry[];
+};
 
 @Injectable()
 export class SupervisorService implements OnModuleInit, OnModuleDestroy {
@@ -168,6 +196,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private lastStamp = 0;
   private events = new Subject<ServerEvent>();
   events$: Observable<ServerEvent> = this.events.asObservable();
+  // Agent slots (docs/specs/2026-10-21-machine-resource-profile.md, decisions 4-5). `waiting`:
+  // the sessions parked for a slot. `slotHolds`: the sessions whose start is in flight — a
+  // granted slot is held from the gate to the moment the child's own status says it runs, so
+  // the await in between cannot hand the same slot out twice. A count, because a replayed call
+  // passes the gate again inside the hold that started it.
+  private waiting = new Map<string, SlotWaiter>();
+  private slotHolds = new Map<string, number>();
+  // The pid each session is tracked under by the memory watchdog.
+  private tracked = new Map<string, number>();
+  // The pid of each native harness whose spawn was seen but which has not reported since.
+  private nativeSpawned = new Map<string, number>();
 
   // A finished session's omp child stays resident so a follow-up resumes instantly — but a
   // live `omp --mode rpc` process is by far the largest thing this service keeps alive (a big
@@ -193,10 +232,26 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // launches and resumes get its MCP binding; discussion/review forks do not. Optional so
     // specs construct the supervisor without it — then no session gets the tools.
     @Optional() private browser?: BrowserMcpService,
+    // The machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md): agent
+    // slots, in-agent limits, priority and the prompt paragraph come from it, and the memory
+    // watchdog's kills are told to the agent here. Optional so specs construct the supervisor
+    // without them — then nothing is limited.
+    @Optional() private resources?: MachineResourcesService,
+    @Optional() private watchdog?: WatchdogService,
+    // A restart's waiting sessions start once the api listens: a native harness needs its port.
+    @Optional() private http?: HttpAdapterHost,
   ) {
     this.native?.events$.subscribe((e) => {
-      if (e.type === "changed") return this.pushUpdate(e.sessionId);
+      if (e.type === "changed") {
+        // A native agent holds its slot while its TUI lives, so its start and its death both
+        // move the queue; the watchdog follows the same process.
+        this.onNativeChange(e.sessionId);
+        this.pushUpdate(e.sessionId);
+        this.drainSlots();
+        return;
+      }
       if (e.type === "settled") {
+        this.onNativeChange(e.sessionId);
         void this.checkTurnEnd(e.sessionId, e.status, false).catch((err: unknown) =>
           console.warn(`[supervisor] turn-end check skipped for session ${e.sessionId}: ${(err as Error).message}`),
         );
@@ -210,6 +265,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     });
     // «Знахідки»: a report changes the session's open counter, which the UI reads off the row.
     this.browser?.findingReported$.subscribe((id) => this.pushUpdate(id));
+    // A raised limit starts waiting sessions at once, a lowered one stops nothing (decision 5);
+    // switching priority on renices what already runs (decision 9).
+    this.resources?.onChange(() => {
+      this.drainSlots();
+      if (this.resources?.active()?.lowerPriority) this.watchdog?.reniceTracked();
+    });
+    this.watchdog?.events$.subscribe((alert) => this.onMachineAlert(alert));
   }
 
   private requireNative(): NativeSessionService {
@@ -307,6 +369,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // on-use sweep never reaches, so this one rides a timer.
     this.reaper = setInterval(() => this.reapIdleChildren(), 60_000);
     this.reaper.unref();
+    this.restoreSlotQueue();
   }
 
   onModuleDestroy(): void {
@@ -347,14 +410,304 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
   private merge(s: Session): Session {
+    let merged: Session;
     // A native row's live state (status, current tool, its pty) comes from its harness's hooks.
-    if (s.native) return { ...s, ...this.native?.live(s.id) };
-    const l: Partial<Session> = this.map.get(s.id)?.live ?? {};
-    return { ...s, ...l, status: l.status ?? s.status };
+    if (s.native) merged = { ...s, ...this.native?.live(s.id) };
+    else {
+      const l: Partial<Session> = this.map.get(s.id)?.live ?? {};
+      merged = { ...s, ...l, status: l.status ?? s.status };
+    }
+    // A session waiting for a slot reads `queued` (decision 5: no status of its own) and says
+    // where it stands; the field is simply absent once it starts.
+    return this.waiting.has(s.id) ? { ...merged, status: "queued", slotWait: this.slotWait(s.id) } : merged;
   }
   private pushUpdate(id: string) {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (s) this.events.next({ type: "session_update", session: this.merge(s) });
+  }
+
+  // ── Agent slots (docs/specs/2026-10-21-machine-resource-profile.md, decisions 4-5) ──────────
+
+  // The agents whose turn runs, and how many wait. Counted: `kind: "agent"`, managed or native,
+  // holding a slot. Not counted: chats, reviews, discussions — their tools cannot run a test
+  // suite, and making them queue behind agents would stall a conversation for nothing.
+  slotCounts(): { running: number; waiting: number } {
+    let running = 0;
+    for (const s of this.registry.listSessions()) if (s.kind === "agent" && !this.waiting.has(s.id) && this.holdsSlot(s)) running++;
+    return { running, waiting: this.waiting.size };
+  }
+
+  // A turn runs: a live child mid-turn (`queued` while starting, thinking, tool, waiting_input —
+  // the last is mid-turn too, blocked on the operator), or a native TUI that lives. A `done` child
+  // the reaper has not reached yet holds nothing.
+  private turnRunning(s: Session): boolean {
+    if (s.native) return this.native?.isRunning(s.id) === true;
+    // A plain wake (opening an old agent) respawns the child but starts no turn; its rebuilt
+    // reducer briefly reads `queued`. A wake for a message holds a slot through slotHolds instead.
+    if (this.resuming.has(s.id)) return false;
+    const l = this.map.get(s.id);
+    return !!l && l.rpc.isAlive() && (l.turnPending === true || ACTIVE_STATUSES.includes(l.live.status ?? "done"));
+  }
+
+  private holdsSlot(s: Session): boolean {
+    return this.slotHolds.has(s.id) || this.turnRunning(s);
+  }
+
+  private slotWait(id: string): NonNullable<Session["slotWait"]> {
+    const order = [...this.waiting].sort(([, a], [, b]) => a.at - b.at).map(([k]) => k);
+    return { position: order.indexOf(id) + 1, running: this.slotCounts().running, limit: this.resources?.active()?.agents ?? 0 };
+  }
+
+  // Run `op` — what starts an agent's turn or its native TUI — in an agent slot, or park
+  // `replay` until one frees up; false when parked. A session that already holds a slot (its turn
+  // runs, or this is the replay that was granted one) keeps it across `op`. Other kinds are never
+  // counted, and with no limit (decision `declined`) nothing waits.
+  private async withSlot(
+    s: Session,
+    op: () => Promise<unknown>,
+    replay: () => Promise<unknown>,
+    message?: { text: string; images?: ImageInput[] },
+  ): Promise<boolean> {
+    if (s.kind !== "agent") {
+      await op();
+      return true;
+    }
+    const limit = this.resources?.active()?.agents;
+    const free = !this.waiting.has(s.id) && (this.holdsSlot(s) || limit === undefined || this.slotCounts().running < limit);
+    if (!free) {
+      this.park(s.id, replay, message);
+      return false;
+    }
+    this.slotHolds.set(s.id, (this.slotHolds.get(s.id) ?? 0) + 1);
+    try {
+      await op();
+    } finally {
+      this.release(s.id);
+    }
+    return true;
+  }
+
+  // The start is over: from here the child's own status says whether it holds the slot (a
+  // turn that started) or not (`/compact`, a launch with no opening prompt), so the queue moves.
+  private release(id: string): void {
+    const n = (this.slotHolds.get(id) ?? 1) - 1;
+    if (n > 0) this.slotHolds.set(id, n);
+    else this.slotHolds.delete(id);
+    this.drainSlots();
+  }
+
+  // Put a call on the session's wait. Its message shows in the log at once, «надіслано, чекає
+  // на слот» (the entries are served by getTranscript, never appended to a Live), and its text is
+  // written to the row so a restart does not lose it.
+  private park(id: string, job: () => Promise<unknown>, message?: { text: string; images?: ImageInput[] }, at = Date.now()): void {
+    const first = !this.waiting.has(id);
+    const w = this.waiting.get(id) ?? { at, jobs: [], texts: [], entries: [] };
+    this.waiting.set(id, w);
+    w.jobs.push(job);
+    const added: TranscriptEntry[] = [];
+    if (message) {
+      // Only text is persisted: an image-only message has nothing a restart could replay.
+      if (message.text.trim()) w.texts.push(message.text);
+      if (message.text.trim() || message.images?.length) added.push(this.userEntry(message.text, message.images));
+    }
+    if (first) {
+      const { running } = this.slotCounts();
+      const limit = this.resources?.active()?.agents ?? 0;
+      added.push(
+        this.noticeEntry({ text: `Повідомлення чекає на вільний слот: працюють ${running} з ${limit}.`, code: "slot_wait", params: { running, limit } }),
+      );
+    }
+    w.entries.push(...added);
+    for (const entry of added) this.events.next({ type: "transcript_append", sessionId: id, entry });
+    this.registry.setPendingPrompt(id, w.texts.join("\n\n"), w.at);
+    this.pushUpdate(id);
+  }
+
+  // Take a session off the wait — it starts, stops or goes away: its pending message leaves the
+  // row, and the client's log loses the «чекає на слот» rows (the real ones follow if it runs).
+  private unpark(id: string): SlotWaiter | undefined {
+    const w = this.waiting.get(id);
+    if (!w) return undefined;
+    this.waiting.delete(id);
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) return w;
+    this.registry.setPendingPrompt(id, undefined);
+    if (s.native)
+      void this.sessionTranscript(id)
+        .then((entries) => this.events.next({ type: "transcript_reset", sessionId: id, entries }))
+        .catch(() => {});
+    // A parked launch has no conversation yet: an empty log, not the dormant notice whose
+    // «send a message» does not apply to an agent that is about to start.
+    else if (!this.map.has(id) && s.status === "queued") this.events.next({ type: "transcript_reset", sessionId: id, entries: [] });
+    else this.events.next({ type: "transcript_reset", sessionId: id, entries: this.getTranscript(id) });
+    return w;
+  }
+
+  // Start waiting sessions, oldest first, while slots are free. Called wherever a slot can free
+  // up — a settled turn, a dead child or TUI, a stop, a delete, a finish, a start that ran no
+  // turn — and when the limit changes.
+  private drainSlots(): void {
+    if (!this.waiting.size) return;
+    const limit = this.resources?.active()?.agents;
+    let { running } = this.slotCounts();
+    for (const [id] of [...this.waiting].sort(([, a], [, b]) => a.at - b.at)) {
+      if (limit !== undefined && running >= limit) break;
+      running++;
+      void this.runWaiter(id);
+    }
+    // Whoever still waits moved up the queue, or sees another running count.
+    for (const id of this.waiting.keys()) this.pushUpdate(id);
+  }
+
+  // Grant the session its slot and replay its parked calls in order. Nobody awaits them any more
+  // (the HTTP request that parked them returned long ago), so a failure is logged; the replayed
+  // call itself already put its own error state on the session.
+  private async runWaiter(id: string): Promise<void> {
+    const w = this.unpark(id);
+    if (!w) return;
+    this.slotHolds.set(id, (this.slotHolds.get(id) ?? 0) + 1);
+    this.pushUpdate(id);
+    try {
+      for (const job of w.jobs)
+        await job().catch((err: unknown) => console.warn(`[supervisor] a call that waited for a slot failed for session ${id}: ${(err as Error).message}`));
+    } finally {
+      this.release(id);
+    }
+  }
+
+  // «Запустити зараз»: start a waiting session past the limit, this once.
+  async runNow(id: string): Promise<Session> {
+    if (!this.registry.listSessions().some((x) => x.id === id)) throw new Error("session not found");
+    if (!this.waiting.has(id)) throw new Error("session is not waiting for a slot");
+    await this.runWaiter(id);
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    return this.merge(s);
+  }
+
+  // App restart: the previous process's waiting sessions wait again, in their original order —
+  // every agent row holding a pending prompt, plus a managed launch left `queued` that never got
+  // a child (no session handle: one that had a child crashed mid-turn, and is not a launch to
+  // repeat). A `queued` row is a parked launch, any other a parked message (replayed as the
+  // operator's: that is what nearly every one is, and its triggers and helpers never ran).
+  private restoreSlotQueue(): void {
+    const queuedAt = this.registry.slotQueuedAt();
+    const at = (s: Session) => queuedAt.get(s.id) ?? Date.parse(s.createdAt);
+    const rows = this.registry.listSessions().filter((s) => {
+      if (s.kind !== "agent" || this.waiting.has(s.id)) return false;
+      // A managed message with no text (its images did not survive) has nothing to send; a
+      // native one is its «Продовжити», a resume with no prompt.
+      if (s.pendingPrompt !== undefined && !s.pendingPrompt.trim() && !s.native && s.status !== "queued") {
+        this.registry.setPendingPrompt(s.id, undefined);
+        return false;
+      }
+      if (s.pendingPrompt !== undefined) return true;
+      const handle = managedRuntime(s.runtime) === "claude-code" ? s.ompSessionId : s.ompSessionFile;
+      return !s.native && s.status === "queued" && !handle && (!s.worktree || !!s.worktreePath);
+    });
+    for (const s of rows.sort((a, b) => at(a) - at(b))) {
+      const text = s.pendingPrompt ?? s.task;
+      const job = s.status === "queued" ? () => this.relaunch(s.id, text) : () => this.deliver(s.id, text, "prompt", undefined, true);
+      this.park(s.id, job, { text }, at(s));
+    }
+    // Started once the api listens, not here: a native harness is handed the api's port.
+    const server = this.http?.httpAdapter?.getHttpServer() as { listening?: boolean; once(e: "listening", cb: () => void): void } | undefined;
+    if (server && !server.listening) server.once("listening", () => this.drainSlots());
+    else this.drainSlots();
+  }
+
+  // ── Machine resource profile at spawn (decision 6) and the memory watchdog (decision 7) ──────
+
+  // The profile's part of one managed spawn, spread into createRuntime opts at every site like
+  // systemAppendOpts: the omp overlays (the project's skill library, then the machine limits —
+  // later wins), claude's CLAUDE_CODE_* limits, and right after the spawn the renice plus the pid
+  // the watchdog will follow. Every kind gets it, chats included; only agents count for slots.
+  private async spawnOpts(id: string, runtime: AgentRuntimeKind, cwd: string, skillsConfig: string | undefined): Promise<Pick<RuntimeLaunchOpts, "configPaths" | "env" | "onSpawn">> {
+    const overlay = runtime === "omp" ? await this.resources?.ompOverlay(cwd) : undefined;
+    const configPaths = [skillsConfig, overlay].filter((p): p is string => !!p);
+    const env = runtime === "claude-code" ? this.resources?.claudeEnv() : undefined;
+    return {
+      ...(configPaths.length ? { configPaths } : {}),
+      ...(env ? { env } : {}),
+      onSpawn: (pid) => {
+        this.resources?.renice(pid);
+        // wireLive ran before start(), so this is the Live of the child just spawned.
+        const l = this.map.get(id);
+        if (l) l.pid = pid;
+      },
+    };
+  }
+
+  // start() plus the watchdog's baseline: what the child runs once it is ready (MCP servers,
+  // workers, the Python kernel) is never a victim; what it starts later is a candidate.
+  private async startChild(id: string, rpc: AgentRuntime): Promise<void> {
+    await rpc.start();
+    const pid = this.map.get(id)?.pid;
+    if (pid !== undefined) this.trackChild(id, pid);
+  }
+
+  // `again`: the same child, now initialised — the watchdog takes its baseline anew, so what
+  // it started since (claude's MCP servers come up only with its first turn) is never a victim.
+  private trackChild(id: string, pid: number, again = false): void {
+    if (!this.watchdog || (!again && this.tracked.get(id) === pid)) return;
+    this.tracked.set(id, pid);
+    this.watchdog.track(id, this.registry.listSessions().find((x) => x.id === id)?.name ?? id, pid);
+  }
+
+  // A native harness is tracked once it is up, not at its spawn: the first `changed` is the pty
+  // spawn itself, before the harness started its MCP servers; any later one comes from its own
+  // hooks, so by then they run and land in the baseline.
+  private onNativeChange(id: string): void {
+    const pid = this.native?.pid(id);
+    if (pid === undefined) {
+      this.nativeSpawned.delete(id);
+      this.untrackChild(id);
+    } else if (this.nativeSpawned.get(id) !== pid) this.nativeSpawned.set(id, pid);
+    else this.trackChild(id, pid);
+  }
+
+  // `pid`: untrack only if that process is still the tracked one — a restarted session's old
+  // child reports its exit after the new one was already tracked.
+  private untrackChild(id: string, pid?: number): void {
+    if (!this.tracked.has(id) || (pid !== undefined && this.tracked.get(id) !== pid)) return;
+    this.tracked.delete(id);
+    this.watchdog?.untrack(id);
+  }
+
+  // Every watchdog finding goes to the UI; a killed command is also told to its agent, so it
+  // knows why the command died and runs it smaller (the agent itself stays alive).
+  private onMachineAlert(alert: MachineAlert): void {
+    this.events.next({ type: "machine_alert", alert });
+    if (!alert.killed || !alert.sessionId) return;
+    const id = alert.sessionId;
+    const command = alert.command ?? "";
+    const rss = alert.rssBytes ?? 0;
+    const size = rss >= 1024 ** 3 ? `${(rss / 1024 ** 3).toFixed(1)} GB` : `${Math.round(rss / 1024 ** 2)} MB`;
+    void this.tellKilled(id, command, size).catch((err: unknown) =>
+      console.warn(`[supervisor] could not tell session ${id} about the killed command: ${(err as Error).message}`),
+    );
+  }
+
+  // Model-facing, so it is plain prose the agent acts on. Managed: a steer while the turn runs,
+  // the next prompt otherwise (which takes a slot like any). Native: typed into the TUI, which
+  // queues it behind a running turn.
+  private async tellKilled(id: string, command: string, size: string): Promise<void> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) return;
+    const text = `Команду \`${command}\` зупинено: на машині закінчилась пам'ять. Повтори її з меншою кількістю воркерів або частинами.`;
+    if (s.native) {
+      this.native?.typeRaw(id, text);
+      return;
+    }
+    if (this.map.has(id))
+      this.appendEntry(
+        id,
+        this.noticeEntry(
+          { text: `Керманич зупинив команду \`${command}\` (${size}): на машині закінчилась пам'ять.`, code: "watchdog_killed", params: { command, size } },
+          "warn",
+        ),
+      );
+    await this.sendAsKermanych(id, text, this.turnRunning(s) ? "steer" : "prompt");
   }
 
   // Every project lookup used to be an inline registry find plus a hand-rolled
@@ -646,10 +999,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
     const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
     const browserMcp = this.browser?.bindingFor(session.id);
-    const rpc = createRuntime(managedRuntime(session.runtime), { cwd: project.localRepoPath, ...launchToolsFor("chat"), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
+    const runtime = managedRuntime(session.runtime);
+    const rpc = createRuntime(runtime, { cwd: project.localRepoPath, ...launchToolsFor("chat"), ...(await this.spawnOpts(session.id, runtime, project.localRepoPath, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
-      await rpc.start();
+      await this.startChild(session.id, rpc);
       // Let the startup event burst (ready/setWidget/available_commands) flow through onRpcEvent
       // first, then mark the chat idle-ready — otherwise those events reset live status to "queued".
       await this.refreshState(session.id);
@@ -835,7 +1189,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const language = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
     const project = this.registry.listProjects().find((p) => p.id === projectId);
     const docs = project?.docsRequired ? docsPolicyAppend(docsPolicy(project.docsPolicy)) : undefined;
-    const append = [language, docs].filter(Boolean).join("\n\n");
+    // The machine resource paragraph (test workers, no watch mode) while limits apply.
+    const append = [language, docs, this.resources?.promptParagraph()].filter(Boolean).join("\n\n");
     return append ? { appendSystemPrompt: append } : {};
   }
 
@@ -844,13 +1199,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // rehydrates its history; `firstPrompt` overrides the opening message sent (defaults to the
   // task), and an empty one lands the session idle — a forked agent that just continues the
   // chat. On failure it undoes any git side effects and rethrows; the caller owns the
-  // registry-row rollback (remove vs return-to-backlog).
+  // registry-row rollback (remove vs return-to-backlog). The spawn takes an agent slot
+  // (docs/specs/2026-10-21-machine-resource-profile.md, decision 5): with none free the worktree
+  // and branch still exist at once, the row stays `queued`, and this returns normally — the
+  // caller's rollback is for a launch that failed, not one that waits.
   private async launch(
     session: Session,
     project: Project,
     opts: { images?: ImageInput[]; fork?: string; firstPrompt?: string } = {},
   ): Promise<Session> {
-    const { id, branch, worktree, baseBranch, task, model, effort } = session;
+    const { id, branch, worktree, baseBranch, task } = session;
     if (!project.localRepoPath) throw new Error("project not bound");
     const { images, fork } = opts;
     const firstPrompt = opts.firstPrompt ?? task;
@@ -878,31 +1236,55 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       throw err;
     }
     const saved = worktree ? this.registry.updateSession(id, { worktreePath: wtDir }) : session;
+    const plan = { images, fork, firstPrompt, staleFrom };
+    await this.withSlot(
+      saved,
+      () => this.spawnLaunched(saved, project, plan, true),
+      // Replayed with everything this call had (fork handle, images, opening prompt) but not its
+      // git: that is done. A row restored after a restart takes the relaunch path instead.
+      () => this.deferredLaunch(id, () => this.spawnLaunched(this.registry.listSessions().find((x) => x.id === id) ?? saved, project, plan, false)),
+      { text: firstPrompt, images },
+    );
+    return this.merge(this.registry.listSessions().find((x) => x.id === id) ?? saved);
+  }
+
+  // The spawn half of launch: start the child (or the native harness) in the prepared tree and
+  // send the opening prompt. `rollback`: a failure undoes the git too — only while the launch
+  // request still waits for it; a launch replayed after waiting for a slot keeps its tree.
+  private async spawnLaunched(
+    saved: Session,
+    project: Project,
+    opts: { images?: ImageInput[]; fork?: string; firstPrompt: string; staleFrom: string },
+    rollback: boolean,
+  ): Promise<Session> {
+    const { id, worktree, baseBranch, model, effort } = saved;
+    const { images, fork, firstPrompt, staleFrom } = opts;
+    const cwd = worktree ? saved.worktreePath : project.localRepoPath;
 
     // A native session gets nothing of Kermanych's: no skills, triggers, system append or
     // directives — its harness starts in the worktree with the task text as its first prompt.
     // The one exception is a deep-analysis card's wrapped prompt: it is part of the task the
     // operator chose, not Kermanych's scaffolding.
-    if (session.native) {
+    if (saved.native) {
       try {
-        const prompt = await this.openingPrompt(session, firstPrompt, saved.worktreePath || project.localRepoPath);
+        const prompt = await this.openingPrompt(saved, firstPrompt, cwd);
         await this.requireNative().start(saved, { prompt, resume: false });
       } catch (err) {
-        await this.rollbackLaunchGit(project, saved, wtDir);
+        if (rollback) await this.rollbackLaunchGit(project, saved, saved.worktreePath);
         throw err;
       }
       this.pushUpdate(id);
       return this.merge(this.registry.listSessions().find((x) => x.id === id) ?? saved);
     }
 
-    const cwd = worktree ? wtDir : project.localRepoPath;
     const configPath = await this.ompSkills(project.id, cwd, id);
     const extensionPath = await this.ompTriggers(project.id, cwd, id);
     const browserMcp = this.browser?.bindingFor(id);
-    const rpc = createRuntime(managedRuntime(session.runtime), { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
+    const runtime = managedRuntime(saved.runtime);
+    const rpc = createRuntime(runtime, { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(await this.spawnOpts(id, runtime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
     const live = this.wireLive(id, rpc, "queued");
     try {
-      await rpc.start();
+      await this.startChild(id, rpc);
       // A forked child inherits the source conversation — surface its history before the turn.
       if (fork) {
         this.rehydrate(live, id, await rpc.getAllMessages());
@@ -927,8 +1309,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         // documentation current is deterministic, not left to the model reading the librarian
         // skill. A locally-created session with no card carries the trailer alone.
         this.appendEntry(id, this.userEntry(firstPrompt, images));
-        const directives = session.taskId ? `${COAUTHOR_DIRECTIVE}\n\n${DOC_MAINTAIN_DIRECTIVE}` : COAUTHOR_DIRECTIVE;
-        const modelPrompt = await this.openingPrompt(session, firstPrompt, cwd);
+        const directives = saved.taskId ? `${COAUTHOR_DIRECTIVE}\n\n${DOC_MAINTAIN_DIRECTIVE}` : COAUTHOR_DIRECTIVE;
+        const modelPrompt = await this.openingPrompt(saved, firstPrompt, cwd);
         rpc.prompt(`${modelPrompt}\n\n${directives}`, images);
       } else {
         // No opening message (a forked agent continuing the chat) — sit idle, ready for input.
@@ -938,14 +1320,38 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     } catch (err) {
       this.stopPoll(live);
       await rpc.stop().catch(() => {});
-      await this.rollbackLaunchGit(project, session, wtDir);
+      if (rollback) await this.rollbackLaunchGit(project, saved, saved.worktreePath);
       this.map.delete(id);
       this.toolDetails.dropSession(id);
       this.skillLabels.delete(id);
       throw err;
     }
     this.pushUpdate(id);
-    return this.merge(saved);
+    return this.merge(this.registry.listSessions().find((x) => x.id === id) ?? saved);
+  }
+
+  // A launch replayed after waiting for a slot has nobody awaiting it, so a failure lands on the
+  // row: `error`, with the worktree kept — the next message starts the agent there.
+  private async deferredLaunch(id: string, spawn: () => Promise<unknown>): Promise<void> {
+    try {
+      await spawn();
+    } catch (err) {
+      console.warn(`[supervisor] launch of session ${id} failed after waiting for a slot: ${(err as Error).message}`);
+      if (!this.registry.listSessions().some((x) => x.id === id)) return;
+      this.registry.updateSession(id, { status: "error" });
+      this.pushUpdate(id);
+    }
+  }
+
+  // A parked launch restored after an api restart: its git is done, only the spawn is left. The
+  // fork handle is the row's own — a promoted chat keeps its conversation there until the
+  // agent's first child records one; images did not survive the restart.
+  private async relaunch(id: string, firstPrompt: string): Promise<void> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) return;
+    const project = this.boundProject(s.projectId);
+    const fork = s.native ? undefined : managedRuntime(s.runtime) === "claude-code" ? s.ompSessionId : s.ompSessionFile;
+    await this.deferredLaunch(id, () => this.spawnLaunched(s, project, { firstPrompt, staleFrom: "", ...(fork ? { fork } : {}) }, false));
   }
 
   // The opening text the MODEL receives (docs/specs/2026-10-08-deep-analysis-task.md). An
@@ -1011,10 +1417,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, ...launchToolsFor("discussion"), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
+    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, ...launchToolsFor("discussion"), ...(await this.spawnOpts(child.id, parentRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
-      await rpc.start();
+      await this.startChild(child.id, rpc);
       // Both backends now re-render the parent transcript: omp forks the session file, claude
       // forks the session UUID, and getAllMessages() reads either back through the same seam.
       this.rehydrate(childLive, child.id, await rpc.getAllMessages());
@@ -1083,10 +1489,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = createRuntime(managedRuntime(child.runtime), { cwd, ...launchToolsFor("review"), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
+    const childRuntime = managedRuntime(child.runtime);
+    const rpc = createRuntime(childRuntime, { cwd, ...launchToolsFor("review"), ...(await this.spawnOpts(child.id, childRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
-      await rpc.start();
+      await this.startChild(child.id, rpc);
       this.appendEntry(child.id, this.userEntry(prompt));
       rpc.prompt(prompt);
     } catch (err) {
@@ -1260,6 +1667,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
     const before = l.state.status;
     l.state = reduceStatus(l.state, e);
+    // The child reported on the turn it was sent: its status alone says whether it holds a slot.
+    if (l.state.status !== before) l.turnPending = false;
+    // claude reports `ready` only with its first turn, when its MCP servers have started: the
+    // watchdog re-takes its baseline then (omp's comes before start() resolves, same effect).
+    // Once per child — a later baseline would spare the very commands the watchdog is for.
+    if (e.type === "ready" && l.pid !== undefined && !l.baselined) {
+      l.baselined = true;
+      this.trackChild(id, l.pid, true);
+    }
     // One reducer for the live stream and for rehydrated history, so a session that
     // streamed and the same session after a reload produce identical entries.
     const reduced = reduceRpcEvents([e], {
@@ -1378,6 +1794,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       void this.checkTurnEnd(id, settled, review).catch((err: unknown) =>
         console.warn(`[supervisor] turn-end check skipped for session ${id}: ${(err as Error).message}`),
       );
+      // A settled turn frees its agent slot.
+      this.drainSlots();
     }
     if ((l.state.status === "thinking" || l.state.status === "tool") && !l.poll)
       l.poll = setInterval(() => this.refreshState(id), 2000);
@@ -1508,8 +1926,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   async resume(id: string): Promise<{ ok: true }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (s?.native) {
-      // Starts the harness on its saved conversation; a running one is left alone.
-      await this.requireNative().start(s, { resume: true });
+      // Starts the harness on its saved conversation; a running one is left alone. «Продовжити»
+      // of a native agent starts its TUI, so it takes an agent slot.
+      await this.withSlot(s, () => this.requireNative().start(s, { resume: true }), () => this.resume(id));
       return { ok: true };
     }
     await this.liveOrResume(id);
@@ -1530,19 +1949,42 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // flag on the session: a genuine operator message arriving while this send is still in
   // flight is treated as normal, because a trigger that silently does not fire is the failure
   // this feature exists to remove.
-  private async sendAsKermanych(id: string, text: string, mode: "prompt" | "follow_up" | "steer") {
-    await this.deliver(id, text, mode, undefined, false);
+  // `replay`: see deliver.
+  private async sendAsKermanych(id: string, text: string, mode: "prompt" | "follow_up" | "steer", replay?: () => Promise<unknown>): Promise<boolean> {
+    return this.deliver(id, text, mode, undefined, false, replay);
   }
 
+  // False when the message waits for an agent slot (docs/specs/2026-10-21-machine-resource-profile.md,
+  // decision 5): an agent whose turn is not running starts one only in a free slot; a steer or
+  // follow-up into a running turn always goes through. The parked call is `replay` when the
+  // caller has more to do after the send (createPullRequest arms its flags then), else this very
+  // delivery — sent as a follow-up if an earlier parked call started a turn meanwhile.
   private async deliver(
     id: string,
     text: string,
     mode: "prompt" | "follow_up" | "steer",
     images: ImageInput[] | undefined,
     fromOperator: boolean,
-  ) {
+    replay?: () => Promise<unknown>,
+  ): Promise<boolean> {
     const row = this.registry.listSessions().find((x) => x.id === id);
-    if (row?.native) return this.deliverNative(id, text, images, fromOperator);
+    if (!row) throw new Error("session not found");
+    // Refused now, not after a wait: a parked message the harness cannot take would vanish on
+    // replay with nobody left to tell (deliverNative's own check).
+    if (row.native && (images?.length || (fromOperator && parseCommand(text)))) throw nativeUnsupported();
+    const parked = replay ?? (() => this.deliver(id, text, mode === "prompt" && this.turnRunning(row) ? "follow_up" : mode, images, fromOperator));
+    return this.withSlot(row, () => this.deliverNow(row, text, mode, images, fromOperator), parked, { text, images });
+  }
+
+  private async deliverNow(
+    row: Session,
+    text: string,
+    mode: "prompt" | "follow_up" | "steer",
+    images: ImageInput[] | undefined,
+    fromOperator: boolean,
+  ): Promise<void> {
+    const id = row.id;
+    if (row.native) return this.deliverNative(id, text, images, fromOperator);
     const l = await this.liveOrResume(id);
     try {
       this.registry.touchSession(id);
@@ -1582,6 +2024,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // transcript keeps the operator's own text as the visible row and the notices above say
     // what was prepended to it.
     const body = fired?.body ? `${fired.body}\n\n${helped.text}` : helped.text;
+    // An idle child starts a turn from this write; it holds its agent slot from now (Live.turnPending).
+    if (!ACTIVE_STATUSES.includes(l.live.status ?? "done")) l.turnPending = true;
     if (mode === "steer") l.rpc.steer(body, images);
     else if (mode === "follow_up") l.rpc.followUp(body, images);
     else l.rpc.prompt(body, images);
@@ -1872,7 +2316,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         template,
       ) + sync + block + artifacts;
 
-    await this.sendAsKermanych(id, prompt, "prompt");
+    // A send parked for an agent slot replays this whole call later, so the flags below are armed
+    // for the turn that call starts, not now on a child that is not running it.
+    if (!(await this.sendAsKermanych(id, prompt, "prompt", () => this.createPullRequest(id)))) return { ok: true };
     // After the send, never before: the flag must belong to the turn this call just started,
     // and `deliver` awaits a respawn for a dormant session — a stale `agent_end` arriving
     // during that await must not consume it. `deliver` ends in a synchronous `rpc.prompt`,
@@ -1930,7 +2376,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         template,
       ) + (base ? `\n\n${baseSyncBlock(base)}` : "") + block;
 
-    await this.sendAsKermanych(id, prompt, "prompt");
+    // Parked for an agent slot: replayed whole later, flags included (see createPullRequest).
+    if (!(await this.sendAsKermanych(id, prompt, "prompt", () => this.commitChanges(id)))) return { ok: true };
     // After the send, for the same reason createPullRequest arms its flag there: the flag must
     // belong to the turn this call just started, and a stale `agent_end` arriving during a
     // dormant-session respawn must not consume it.
@@ -1947,6 +2394,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.map.get(id)?.rpc.answerUi(res);
   }
   async stopSession(id: string) {
+    // A session waiting for a slot has nothing running: stopping it takes it off the queue and
+    // drops its pending message. A parked launch never got a child, so its row rests `stopped`.
+    if (this.unpark(id)) {
+      const row = this.registry.listSessions().find((x) => x.id === id);
+      if (row?.status === "queued" && !this.map.has(id) && !this.native?.isRunning(id)) this.registry.updateSession(id, { status: "stopped" });
+      this.pushUpdate(id);
+      this.drainSlots();
+      return;
+    }
     if (this.registry.listSessions().find((x) => x.id === id)?.native) {
       // Resolves once the harness exited; its exit already wrote `stopped`.
       await this.requireNative().stop(id);
@@ -1967,7 +2423,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   async restartSession(id: string): Promise<{ ok: true }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (s?.native) {
-      await this.requireNative().restart(s);
+      // A TUI respawn: a running agent keeps its slot across it, a stopped one waits for one.
+      const native = this.requireNative();
+      await this.withSlot(s, () => native.restart(s), () => this.restartSession(id));
       return { ok: true };
     }
     const l = this.map.get(id);
@@ -1986,6 +2444,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     for (const child of this.registry.listSessions().filter((x) => x.parentSessionId === id))
       await this.deleteSession(child.id);
 
+    // Off the slot queue first, so nothing starts it while it is being torn down.
+    this.unpark(id);
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (s?.native) await this.native?.stop(id);
     const l = this.map.get(id);
@@ -2019,6 +2479,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.browser?.revoke(id);
     this.registry.removeSession(id);
     this.events.next({ type: "session_removed", sessionId: id });
+    this.untrackChild(id);
+    this.drainSlots();
   }
 
   // Archive/unarchive is a pure hide flag: it never touches the worktree or the omp
@@ -2301,6 +2763,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // the card keeps the ones earlier turns sent.
     await this.queueTaskReport(id, this.map.get(id)?.transcript);
 
+    // A finished session waits for nothing: its parked calls and pending message go.
+    this.unpark(id);
     if (s.native) await this.native?.stop(id);
     const l = this.map.get(id);
     if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); this.toolDetails.dropSession(id); this.skillLabels.delete(id); }
@@ -2312,6 +2776,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.registry.updateSession(id, { status: "merged" });
     }
     this.pushUpdate(id);
+    this.drainSlots();
     return { finished: true, branch: s.branch };
   }
 
@@ -2370,11 +2835,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (!s?.native || !this.native) return this.getTranscript(id);
     const { entries, full } = await this.native.transcript(s);
     for (const [callId, lines] of full) this.toolDetails.put(id, callId, lines);
-    return entries;
+    // A native agent waiting for a slot shows what it waits to send after its history.
+    return [...entries, ...(this.waiting.get(id)?.entries ?? [])];
   }
 
   getTranscript(id: string): TranscriptEntry[] {
     const l = this.map.get(id);
+    // Waiting for a slot: the history it has, then the message(s) it waits to send and the
+    // «чекає на слот» notice. Without a Live there is no history yet — not the dormant notice,
+    // whose «send a message» the operator has just done.
+    const w = this.waiting.get(id);
+    if (w) return [...(l?.transcript ?? []), ...w.entries];
     if (l) return l.transcript;
     // Dormant: in the registry but no live process (e.g. after an api restart).
     const s = this.registry.listSessions().find((x) => x.id === id);
@@ -2525,6 +2996,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         this.registry.updateSession(sessionId, { status: "error" });
         this.pushUpdate(sessionId);
       }
+      live.turnPending = false;
+      this.untrackChild(sessionId, live.pid);
+      // A dead child frees its agent slot, whatever it died of.
+      this.drainSlots();
     });
     rpc.onEvent((e) => this.onRpcEvent(sessionId, e));
     return live;
@@ -2536,7 +3011,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private resumeSession(id: string): Promise<Live> {
     const inflight = this.resuming.get(id);
     if (inflight) return inflight;
-    const p = this.doResume(id).finally(() => this.resuming.delete(id));
+    // A wake holds no slot, but while it ran a waiting session may have been passed over.
+    const p = this.doResume(id).finally(() => {
+      this.resuming.delete(id);
+      this.drainSlots();
+    });
     this.resuming.set(id, p);
     return p;
   }
@@ -2574,10 +3053,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Forks (discussion/review) never get the session browser; agents and chats do.
     const browserMcp = s.kind === "discussion" || s.kind === "review" ? undefined : this.browser?.bindingFor(id);
     const handle = refork ? { fork: refork } : runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {};
-    const rpc = createRuntime(runtimeKind, { cwd: dir, ...launchToolsFor(s.kind), ...handle, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(s.projectId) });
+    const rpc = createRuntime(runtimeKind, { cwd: dir, ...launchToolsFor(s.kind), ...handle, ...(await this.spawnOpts(id, runtimeKind, dir, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(s.projectId) });
     const live = this.wireLive(id, rpc, s.status);
     try {
-      await rpc.start();
+      await this.startChild(id, rpc);
       if (resumeHandle || refork) {
         // omp loads the saved file into the freshly spawned child; claude already resumed (or
         // forked) at start(), and a fork with no id of its own reads the parent's history.

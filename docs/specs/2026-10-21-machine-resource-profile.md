@@ -136,7 +136,9 @@ Behaviour:
 - **Pending message.** A message sent to a waiting session shows in its log as «надіслано,
   чекає на слот». It is stored on the session row (`pending_prompt`), so a restart does not
   lose it.
-- **Bypass.** «Запустити зараз» on a waiting card bypasses the limit for that one session.
+- **Bypass.** «Запустити зараз» in the waiting session's header bypasses the limit for that
+  one session. It is not on the card itself: the card is one `<button>`, and a nested button is
+  invalid markup.
 - **App restart.** Agent sessions left in `queued` with no child, or holding a
   `pending_prompt`, are re-enqueued in their original order.
 - **Releasing a slot.** A turn reaching `done`/`in_review`/`error`/`stopped`, a stop, delete
@@ -157,20 +159,27 @@ reaper, restart):
 - **claude:**
   - SDK `env: { ...process.env, CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS,
     CLAUDE_CODE_DISABLE_BACKGROUND_TASKS }`;
-  - native claude gets the same variables in its pty environment.
+  - native claude gets the same variables in its pty environment. Native omp gets no overlay:
+    its TUI is launched through `omp launch`, and the slot gate, priority and watchdog still
+    cover it.
 - **Priority:**
   - `os.setPriority(pid, 10)` on the agent process right after spawn: the omp child, the
-    claude CLI (`initializationResult().pid` or `spawnClaudeCodeProcess`), the native pty
-    child;
+    claude CLI, the native pty child. The SDK exposes no CLI pid (`initializationResult()`
+    has none, and `ps eww` does not show another process's environment on macOS), so
+    `ClaudeCodeRuntime` passes `spawnClaudeCodeProcess`: the same `spawn` the SDK does, plus
+    the pid. A custom spawner leaves stderr to the caller, so the runtime drains it and
+    keeps the tail, appending it to a launch failure that lacks one (the signed-out and
+    missing-binary codes read that text);
   - descendants inherit nice;
-  - applies to every agent kind, chats included;
-  - a running child is reniced at once when the operator turns it on.
+  - applies to every session kind, chats included, and to the Менеджмент chat's child;
+  - when the operator turns it on, the tracked session trees are reniced at once. Nice cannot
+    be lowered back without root, so turning it off applies from the next spawn.
 - **Prompt:**
-  - `systemAppendOpts` adds one paragraph: «Ця машина: <RAM>. Запускай тести щонайбільше з
-    <N> воркерами (`--maxWorkers=<N>` для jest/vitest), ніколи не запускай два тест-рани
-    одночасно, не використовуй watch-режим.»;
-  - English text when the agent language is English, the same way the language directive is
-    resolved;
+  - `systemAppendOpts` adds one paragraph (`resourcesPromptParagraph` in `@kermanych/core`):
+    the machine's RAM, «run test runners with at most <N> workers (`--maxWorkers=<N>`)»,
+    never two test runs at once, no watch mode, stop dev servers when done;
+  - it is model-facing, so it is written in English, like the language directive
+    (`agentLanguageDirective`);
   - this is the only lever for jest and vitest.
 
 ### 7. Watchdog
@@ -183,15 +192,19 @@ unavailable.
   - at level ≥ 2 it also takes one `ps -axo pid,ppid,rss,command` snapshot and builds each
     agent child's process tree.
 - **Baseline:**
-  - when a session's child becomes ready, Kermanych records the pids of its descendants at
-    that moment: MCP servers, `__omp_worker_*`, the omp Python kernel;
-  - those subtrees are never victims;
-  - a process started later (a tool command, a lazily started LSP) is a candidate.
+  - when a session's child is really initialised, Kermanych records which processes are its
+    direct children at that moment: MCP servers, `__omp_worker_*`, the omp Python kernel. For
+    omp that is right after `ready`; for managed claude, after its system init (MCP servers
+    start there, not at spawn); for native, at the first hook after the pty spawn. A repeated
+    record for the same pid replaces the baseline;
+  - those subtrees are never victims, including anything they start later;
+  - a direct child started later (a tool command, a lazily started LSP) is a candidate. If the
+    baseline read fails, the session offers no candidates until a later sample reads it.
 - **Level 2 (warn):**
   - one in-app notice plus a native notification per pressure episode (an episode ends when
     the level returns to 1);
-  - it names the heaviest agent and its heaviest candidate subtree («Сесія X: `npm test` —
-    9 GB»);
+  - it names the heaviest candidate subtree across all agents and its session («Сесія X:
+    `npm test` — 9 GB»);
   - button «Зупинити команду» kills that subtree.
 - **Level 4 (critical) for two consecutive samples:**
   - Kermanych picks the heaviest candidate subtree of at least 1 GB across all agents;
@@ -239,16 +252,20 @@ It uses the screen's existing draft and save bar. «Акаунт» links to it.
 ### 10. The operator's own config wins
 
 - **omp:**
-  - before writing the resources overlay, Kermanych reads `task.maxConcurrency` and
-    `bash.autoBackground.enabled` in the session cwd the way `skills.service.ts` reads
-    `skills.customDirectories`;
-  - a key set by the project or global layer is left out of the overlay.
+  - `omp config get` prints the effective value with no layer, so "set by the operator" is
+    read by comparison: the value in the session cwd (global + project layers) against omp's
+    own default, read once per api process with `PI_CODING_AGENT_DIR` pointed at an empty
+    directory and the cwd at an empty one;
+  - a key whose effective value differs from the default is left out of the overlay. A
+    value the operator set equal to the default is indistinguishable and gets the profile.
 - **claude:**
   - nothing extra is needed: settings `env` already wins;
-  - for display, Kermanych reads the `env` blocks of `~/.claude/settings.json` and the
-    project's `.claude/settings*.json`.
-- **Display.** The section shows «перекрито вашим `~/.omp/agent/config.yml`:
-  `task.maxConcurrency = 32`» (or the claude file).
+  - for display, Kermanych reads the `env` blocks of `~/.claude/settings.json` and the managed
+    settings file.
+- **Display.** The section shows the machine-wide sources: «перекрито вашим
+  `~/.omp/agent/config.yml`: `task.maxConcurrency = 32`» (or the claude file). A project's own
+  `.omp/config.yml` / `.claude/settings*.json` still wins at spawn; the section does not list
+  it, because it differs per project.
 - **Not affected.** Agent slots, priority, the prompt paragraph and the watchdog are
   Kermanych's own and always apply.
 

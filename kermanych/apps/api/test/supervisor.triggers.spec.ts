@@ -8,7 +8,7 @@ import type { TranscriptEntry } from "@kermanych/core";
 import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AiScopeSet, SkillsService } from "../src/skills/skills.service";
 
-type SpawnOpts = { cwd: string; configPath?: string; extensionPath?: string };
+type SpawnOpts = { cwd: string; configPaths?: string[]; extensionPath?: string };
 const started: SpawnOpts[] = [];
 const sent: { kind: "prompt" | "follow_up" | "steer"; text: string }[] = [];
 // Flipped to false to force the next send down the resume path, which is the only await

@@ -16,7 +16,7 @@ export interface RpcStateData {
   todoPhases?: TodoPhase[];
 }
 
-// Normalized launch inputs. omp-only fields (configPath/extensionPath = skill overlay +
+// Normalized launch inputs. omp-only fields (configPaths/extensionPath = config overlays +
 // trigger package) are ignored by non-omp backends. `tools`/`noTools` restrict the toolset;
 // `fork` seeds a NEW session from a prior one (branch/discussion); `resume` continues an
 // existing session in place (claude reopen); `thinking` is the opening effort.
@@ -37,7 +37,9 @@ export interface RuntimeLaunchOpts {
   // a success. claude-only (omp's start() awaits its own `ready` frame and needs no window);
   // overridden in tests so they never sleep the real default.
   startGraceMs?: number;
-  configPath?: string;   // omp-only
+  // omp `--config` overlays, applied in order (later wins): the project's skill library and the
+  // machine resource limits (task.maxConcurrency, bash.autoBackground.enabled). omp-only.
+  configPaths?: string[];
   extensionPath?: string; // omp-only
   // How much of omp's subagent activity to forward (omp defaults to "off"). Ignored by
   // non-omp backends. Undefined lets the omp runtime pick its own default ("progress").
@@ -48,6 +50,13 @@ export interface RuntimeLaunchOpts {
   // and bearer in its environment. Tool names: `name` is the server's name, so claude shows
   // them as `mcp__<name>__<tool>` and omp as the bare `<tool>`.
   mcp?: { name: string; url: string; token: string };
+  // Extra environment merged over process.env for the child. The machine resource profile
+  // sends claude its CLAUDE_CODE_* limits this way (the operator's settings `env` still wins).
+  env?: Record<string, string>;
+  // Called synchronously once the agent process exists, with its pid, before it reports
+  // ready: the supervisor renices it then, so the MCP servers and workers it starts inherit
+  // the lower priority, and keeps the pid for the memory watchdog.
+  onSpawn?: (pid: number) => void;
 }
 
 // The backend-neutral session surface the supervisor drives. Method names match the current

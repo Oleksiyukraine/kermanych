@@ -40,6 +40,9 @@ export type NoticeCode =
   | "claude_binary_missing" // claude-code-runtime.ts — the SDK's platform binary is absent (params: none)
   | "omp_not_authenticated" // rpc-session.ts — the omp CLI is signed out (params: none)
   | "omp_binary_missing" // rpc-session.ts — omp is not on PATH (params: none)
+  // supervisor.service.ts — the machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md):
+  | "slot_wait" // supervisor.service.ts — a message is accepted but waits for an agent slot (params: { running, limit })
+  | "watchdog_killed" // watchdog.service.ts — the watchdog killed an agent command at critical memory pressure (params: { command, size })
   // jira-tools.service.ts — one `ManagementChatReply.jiraChanges` line per Jira write the
   // assistant made through its Jira tools during the turn:
   | "jira_issue_created" // jira-tools.service.ts — jira_create_issue filed an issue (params: { key, summary })
@@ -129,6 +132,8 @@ export const NOTICE_CODES = [
   "claude_binary_missing",
   "omp_not_authenticated",
   "omp_binary_missing",
+  "slot_wait",
+  "watchdog_killed",
   "jira_issue_created",
   "jira_issue_updated",
   "jira_issue_transitioned",

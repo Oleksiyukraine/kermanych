@@ -1,5 +1,7 @@
 // apps/api/src/runtime/claude-code-runtime.ts
-import { query as sdkQuery, getSessionMessages as sdkGetSessionMessages, getSubagentMessages as sdkGetSubagentMessages, type SDKMessage, type SDKUserMessage, type Query, type Options, type ModelInfo, type SessionMessage, type GetSessionMessagesOptions, type GetSubagentMessagesOptions } from "@anthropic-ai/claude-agent-sdk";
+import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
+import { query as sdkQuery, getSessionMessages as sdkGetSessionMessages, getSubagentMessages as sdkGetSubagentMessages, type SDKMessage, type SDKUserMessage, type Query, type Options, type ModelInfo, type SessionMessage, type GetSessionMessagesOptions, type GetSubagentMessagesOptions, type SpawnOptions, type SpawnedProcess } from "@anthropic-ai/claude-agent-sdk";
 import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, SubagentInfo, SubagentMessagesPage, SubagentNode } from "@kermanych/core";
 import type { AgentRuntime, RpcStateData, RuntimeLaunchOpts } from "./agent-runtime";
 import { initClaudeMapState, mapSdkMessage, type ClaudeMapState } from "./claude-event-map";
@@ -67,6 +69,16 @@ async function settlesWithin(p: Promise<unknown>, ms: number): Promise<boolean> 
   }
 }
 
+// The CLI's stderr ends up in the transcript notice, the exit reason and the HTTP launch error.
+// The SDK redacts its own stderr tail; ours (spawnProcess) is collected outside the SDK, so the
+// same kinds of secret are masked here: auth header values, Bearer/Basic credentials, API keys.
+function redactSecrets(text: string): string {
+  return text
+    .replace(/(authorization\s*:\s*)[^\r\n]*/gi, "$1[redacted]")
+    .replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]")
+    .replace(/\bsk-[A-Za-z0-9_-]+/g, "sk-[redacted]");
+}
+
 export class ClaudeCodeRuntime implements AgentRuntime {
   readonly droppedFrames = 0;
   private input = new InputQueue();
@@ -86,6 +98,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   // also the id listSubagents/getSubagentMessages use). The omp backend keeps this in the
   // supervisor; here it lives on the runtime because only the runtime sees the SDK stream.
   private subagents = new Map<string, SubagentNode>();
+  // The CLI's stderr, last STDERR_TAIL chars. The SDK keeps this tail itself only for its own
+  // spawn; ours (spawnProcess, needed for the pid) hands stderr to us, so a launch failure would
+  // otherwise lose the words authFailureCode classifies ("Please run /login").
+  private stderrTail = "";
+  // Settles once the CLI's stderr closed: its exit can be reported before the last stderr chunk
+  // is read, so the failure path waits for this (bounded) before reading the tail.
+  private stderrClosed?: Promise<void>;
 
   constructor(
     private opts: RuntimeLaunchOpts,
@@ -120,6 +139,36 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   // background shells included — gets before stop() returns regardless.
   private static readonly STOP_GRACE_MS = 1000;
   private static readonly STOP_KILL_MS = 3000;
+  private static readonly STDERR_TAIL = 4096;
+  // How long a failure waits for the dead CLI's stderr to close before it reports without it.
+  private static readonly STDERR_CLOSE_MS = 200;
+
+  // The SDK's own local spawn, verbatim (`spawn(command, args, { cwd, stdio, signal, env,
+  // windowsHide })`), plus the two things it does not give back: the pid, for renice and the
+  // memory watchdog (the SDK exposes no CLI pid anywhere), and the stderr tail. Not detached, like
+  // the SDK's, so close() still reaches the CLI. A missing binary still surfaces through the
+  // returned process's 'error' event, which the SDK classifies the same way as with its own spawn.
+  private spawnProcess = (o: SpawnOptions): SpawnedProcess => {
+    const child = spawn(o.command, o.args, { cwd: o.cwd, stdio: ["pipe", "pipe", "pipe"], signal: o.signal, env: o.env, windowsHide: true });
+    const dec = new StringDecoder("utf8");
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    this.stderrClosed = closed;
+    // Drained always: an unread pipe fills and blocks the CLI on its next stderr write.
+    child.stderr.on("data", (b: Buffer) => { this.stderrTail = (this.stderrTail + dec.write(b)).slice(-ClaudeCodeRuntime.STDERR_TAIL); });
+    child.stderr.on("error", () => {});
+    child.stderr.once("close", () => resolve());
+    if (child.pid !== undefined) this.opts.onSpawn?.(child.pid);
+    return child;
+  };
+
+  // A failure reason with the CLI's own stderr, the way the SDK words it for its own spawn
+  // (". stderr: …"). Left alone when the SDK already carried a tail, or there is none.
+  private async withStderr(reason: string): Promise<string> {
+    if (/stderr:/i.test(reason)) return reason;
+    if (this.stderrClosed) await settlesWithin(this.stderrClosed, ClaudeCodeRuntime.STDERR_CLOSE_MS);
+    const tail = redactSecrets(this.stderrTail.trim());
+    return tail ? `${reason}. stderr: ${tail}` : reason;
+  }
 
   async start(): Promise<void> {
     const effort = toClaudeEffort(this.thinking);
@@ -158,6 +207,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       ...(this.opts.appendSystemPrompt
         ? { systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: this.opts.appendSystemPrompt } }
         : {}),
+      // The machine resource limits (CLAUDE_CODE_* vars). The SDK's `env` replaces the child's
+      // environment, so process.env goes first; the operator's settings `env` still beats both.
+      ...(this.opts.env ? { env: { ...process.env, ...this.opts.env } } : {}),
+      spawnClaudeCodeProcess: this.spawnProcess,
     };
     const q = this.queryFn({ prompt: this.input, options });
     this.q = q;
@@ -193,7 +246,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
           for (const cb of this.exitCbs) cb(0, "claude query closed");
           return;
         }
-        const reason = (err as Error).message ?? "claude query failed";
+        const reason = await this.withStderr((err as Error).message ?? "claude query failed");
         // The notice still fires: a child that dies mid-session (after start() long returned)
         // has no launch to fail, and the transcript row is the only account of it.
         const code = authFailureCode(reason);

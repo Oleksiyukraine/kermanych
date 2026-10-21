@@ -217,6 +217,7 @@ import KStatusRow from './KStatusRow.vue';
 import KIconButton from './KIconButton.vue';
 import { useNow } from '../../composables/useNow';
 import { followAfterScroll } from '../../lib/log-follow';
+import { slotWaitLabel } from '../../lib/slot-wait';
 
 const { t } = useI18n();
 
@@ -506,7 +507,7 @@ const statusLabel = computed(() => {
 const liveActivity = computed(() => {
   switch (props.session.status) {
     case 'queued':
-      return t('kit.panel.live.launching');
+      return slotWaitLabel(props.session, t) ?? t('kit.panel.live.launching');
     case 'thinking':
       return t('kit.panel.live.thinking');
     case 'tool':

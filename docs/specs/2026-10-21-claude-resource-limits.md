@@ -22,7 +22,11 @@ Facts found:
 
 The operator chose limits outside Kermanych. The deliverable is a how-to,
 `kermanych/docs/claude-resource-limits.md`, linked from the README's «Runtime preference».
-Kermanych code does not change.
+Kermanych code does not change in this task.
+
+Follow-up: the same day the developer saw the freeze on `omp` too, and the operator asked for
+limits inside Kermanych after all. That is `2026-10-21-machine-resource-profile.md`; it does not
+replace this how-to, which still covers claude outside Kermanych.
 
 The how-to uses only Claude Code's own settings (`env` in `~/.claude/settings.json` or the
 managed settings file):

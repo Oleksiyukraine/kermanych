@@ -417,6 +417,42 @@
     />
     <KDirPicker v-model="onbPickerOpen" :start="onbPickerStart" @select="onOnboardingFolderChosen" />
 
+    <!-- MACHINE RESOURCES CONSENT (spec decision 2). Dismissible, unlike the runtime gate:
+         Керманич runs without limits, so closing it any way other than the three buttons
+         stores nothing and it simply comes back on the next start. -->
+    <KModal
+      :model-value="!!consent.offer.value"
+      :title="t('resourcesConsent.title')"
+      width="520px"
+      @update:model-value="(v: boolean) => { if (!v) consent.close(); }"
+    >
+      <div v-if="consent.offer.value" class="shell__form">
+        <p class="shell__hint">{{ t('resourcesConsent.blurb') }}</p>
+        <p class="shell__hint mono">{{ hardwareLine(t, consent.offer.value) }}</p>
+        <table class="shell__limits">
+          <tbody>
+            <tr v-for="row in consentRows" :key="row.label">
+              <td>{{ row.label }}</td>
+              <td class="mono">
+                {{ row.value }}<span v-if="row.note" class="shell__limits-note"> · {{ row.note }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" :disabled="consentBusy" @click="decideResources('declined')">
+          {{ t('resourcesConsent.notNow') }}
+        </KBtn>
+        <KBtn variant="secondary" :disabled="consentBusy" @click="configureResources">
+          {{ t('resourcesConsent.configure') }}
+        </KBtn>
+        <KBtn variant="primary" :disabled="consentBusy" @click="decideResources('applied')">
+          {{ t('resourcesConsent.apply') }}
+        </KBtn>
+      </template>
+    </KModal>
+
     <!-- TOAST STACK — transient notifications (errors etc.) -->
     <KToast :toasts="store.toasts" @dismiss="store.dismissToast" />
 
@@ -432,7 +468,7 @@
 import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import type { Session } from '@kermanych/core';
+import type { MachineResources, ResourceDecision, Session } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
@@ -455,6 +491,7 @@ import { percent, planWindow, renderWindow } from '../lib/format';
 import { until, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
+import { hardwareLine, useResourcesConsent } from '../composables/useResourcesConsent';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KWorkspaceRow from 'components/kit/KWorkspaceRow.vue';
 import KTopNav from 'components/kit/KTopNav.vue';
@@ -687,7 +724,10 @@ onMounted(async () => {
   // Now the cloud list is in, decide whether a fresh account needs the checklist. Skipped
   // while the runtime gate is still up (auth.runtime === null): the gate is answered first,
   // and its watcher above opens the checklist the moment it is.
-  if (auth.runtime !== null) onb.maybeAutoOpen();
+  if (auth.runtime !== null) {
+    onb.maybeAutoOpen();
+    void offerResources();
+  }
 });
 
 // The board store is app-wide now: Агенти renders my backlog cards from it and the sidebar
@@ -1255,9 +1295,87 @@ async function onOnboardingFolderChosen(path: string): Promise<void> {
 watch(
   () => auth.runtime,
   (kind) => {
-    if (kind !== null) onb.maybeAutoOpen();
+    if (kind !== null) {
+      onb.maybeAutoOpen();
+      void offerResources();
+    }
   },
 );
+
+// ── MACHINE RESOURCES CONSENT ───────────────────────────────────────────────
+// Asked once per window, after the runtime gate (never stacked over it: both call sites gate
+// on `auth.runtime`) and AFTER the first-run checklist: a fresh account sets up its first
+// project before being asked about limits, and two modals never stack.
+const consent = useResourcesConsent();
+const consentBusy = ref(false);
+let resourcesOffered = false;
+
+async function offerResources(): Promise<void> {
+  if (resourcesOffered) return;
+  resourcesOffered = true;
+  let r: MachineResources;
+  try {
+    r = await api.machineResources();
+  } catch {
+    return; // an older api without the endpoint, or a restart: ask on the next start
+  }
+  if (!r.askConsent) return;
+  if (!onb.open) {
+    consent.open(r);
+    return;
+  }
+  const stop = watch(
+    () => onb.open,
+    (open) => {
+      if (open) return;
+      stop();
+      consent.open(r);
+    },
+  );
+}
+
+// The EFFECTIVE values (profile ⊕ overrides kept from before), because that is what
+// «Застосувати» turns on. A row the operator once changed says so and shows the profile value.
+const consentRows = computed(() => {
+  const r = consent.offer.value;
+  if (!r) return [];
+  const e = r.effective;
+  const p = r.profile;
+  const onOff = (v: boolean) => t(v ? 'resourcesConsent.on' : 'resourcesConsent.off');
+  const row = (key: 'agents' | 'subagents' | 'background' | 'testWorkers' | 'lowerPriority' | 'watchdog') => {
+    const show = (v: number | boolean) => (typeof v === 'boolean' ? onOff(v) : String(v));
+    if (key === 'watchdog' && !r.watchdogSupported) {
+      return { label: t('settings.resources.watchdog'), value: t('resourcesConsent.unsupported'), note: '' };
+    }
+    return {
+      label: t('settings.resources.' + key),
+      value: show(e[key]),
+      note: e[key] !== p[key] ? t('resourcesConsent.yours', { profile: show(p[key]) }) : '',
+    };
+  };
+  return (['agents', 'subagents', 'background', 'testWorkers', 'lowerPriority', 'watchdog'] as const).map(row);
+});
+
+async function decideResources(decision: ResourceDecision): Promise<void> {
+  consentBusy.value = true;
+  try {
+    await api.updateMachineResources({ decision });
+    consent.close();
+    consent.markDecided();
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    consentBusy.value = false;
+  }
+}
+
+// Stores nothing: the pane opens with the profile as an unsaved draft (switch on), and the
+// operator's save there is the decision.
+function configureResources(): void {
+  consent.close();
+  void router.push({ name: 'settings', params: { section: 'app-resources' }, query: { draft: 'profile' } });
+}
+
 async function submitCreateWorkspace(): Promise<void> {
   if (!canCreateWorkspace.value) return;
   createError.value = null;
@@ -1875,6 +1993,25 @@ const pullHint = computed(() => {
   color: var(--k-muted);
 }
 
+.shell__limits {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  color: var(--k-text);
+
+  td {
+    padding: 4px 0;
+    border-bottom: 1px solid var(--k-line);
+  }
+
+  td + td {
+    padding-left: 16px;
+    text-align: right;
+  }
+}
+
+.shell__limits-note {
+  color: var(--k-faint);
+}
 
 .shell__runtime-picker {
   display: flex;

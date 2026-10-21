@@ -18,11 +18,12 @@
 // rows here; it is its own top-nav screen now (lib/ai-team.ts, pages/AiTeamPage.vue), so
 // nothing about agents, triggers or the skill library is registered below any more — the
 // pure merge those panels still share lives on in this file. Nothing here is a
-// placeholder: harness paths, provider API keys, spend caps, a parallel agent limit, a
-// context-warning threshold and remappable keys have no storage, no endpoint and no
-// column anywhere in the repo, so they get no panel.
+// placeholder: harness paths, provider API keys, spend caps, a context-warning threshold
+// and remappable keys have no storage, no endpoint and no column anywhere in the repo, so
+// they get no panel. The parallel agent limit does: it is part of «Ресурси машини», stored
+// per machine by the api (`/machine/resources`).
 
-import type { AgentDef, EnvEntry, SkillView } from '@kermanych/core';
+import type { AgentDef, EnvEntry, MachineResources, ResourceLimits, ResourcesUpdate, SkillView } from '@kermanych/core';
 import type { AiAgentSkill, TriggerSource } from '@kermanych/cloud';
 
 export type SettingsScope = 'project' | 'workspace' | 'app';
@@ -54,6 +55,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { key: 'app-general', scope: 'app' },
   { key: 'app-keymap', scope: 'app' },
   { key: 'app-runtime', scope: 'app' },
+  { key: 'app-resources', scope: 'app' },
   { key: 'app-account', scope: 'app' },
 ];
 
@@ -333,6 +335,42 @@ export function changedFields<T extends object>(draft: T, base: T): (keyof T)[] 
     if (!same) out.push(key);
   }
   return out;
+}
+
+/**
+ * The «Ресурси машини» draft: the limits plus the «Застосовувати обмеження» switch, which is
+ * the stored decision. Flat, so `changedFields` counts it like any other pane.
+ */
+export type ResourcesDraft = ResourceLimits & { applied: boolean };
+
+/**
+ * What the pane shows as saved. `fromProfile` is the consent popup's «Налаштувати»: the
+ * detected profile with the switch on, offered as an unsaved draft over this saved state.
+ */
+export function resourcesDraft(r: MachineResources, fromProfile = false): ResourcesDraft {
+  return fromProfile ? { ...r.profile, applied: true } : { ...r.effective, applied: r.decision === 'applied' };
+}
+
+/**
+ * The save body. Only values that differ from the profile become overrides, so a later
+ * hardware change (a new profile) still moves every value the operator never touched.
+ */
+export function resourcesUpdate(draft: ResourcesDraft, profile: ResourceLimits): ResourcesUpdate {
+  const overrides: Partial<ResourceLimits> = {};
+  for (const key of Object.keys(profile) as (keyof ResourceLimits)[]) {
+    if (draft[key] !== profile[key]) (overrides as Record<string, unknown>)[key] = draft[key];
+  }
+  return {
+    decision: draft.applied ? 'applied' : 'declined',
+    overrides: Object.keys(overrides).length > 0 ? overrides : null,
+  };
+}
+
+/** A count field's text as a limit the api accepts (1..64), or null while it is not a number yet. */
+export function parseLimitCount(text: string): number | null {
+  const n = Number.parseInt(text, 10);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(64, Math.max(1, n));
 }
 
 /**
