@@ -67,6 +67,12 @@ config, subscription-plan spend, and the plan/todo chip are `omp`-only; on the
 agent map (the subagents a session spawned, opened with ◈ on a session) works on
 both backends. Per-session token spend is tracked on both.
 
+Claude sessions read your own Claude Code settings: Kermanych passes no `settingSources`, so the
+SDK loads `~/.claude/settings.json` and the project's `.claude/settings*.json`, the same as a
+`claude` you start yourself. Limits on what claude runs (process priority, parallel subagents,
+background commands, MCP servers) are set there, not in Kermanych:
+[`docs/claude-resource-limits.md`](./docs/claude-resource-limits.md).
+
 ### Agent communication language
 
 The language the agent talks back in is a per-user choice too: «Мова спілкування агента» in
@@ -1045,8 +1051,8 @@ paths are defaults that user instructions override, and the policy is exactly su
 instruction, so specs and plans land in `docs/specs` / `docs/plans`. Superpowers has no notion
 of `docs/schemas`, `docs/handoffs` or `docs/api-requests` and does not add the
 `## Documentation impact` section. Those come from the policy, the skills and the gate.
-Whether the claude-code runtime loads `~/.claude` plugins at all is unverified: Kermanych sets
-no `settingSources`.
+The claude-code runtime loads the user's `~/.claude` settings, plugins included: Kermanych sets
+no `settingSources`, and the SDK then loads every settings source.
 
 **Limits.** A session that was already running when the switch or a rule changed gets the new
 policy in its system prompt on its next spawn (resume, restart). The gate applies to it
