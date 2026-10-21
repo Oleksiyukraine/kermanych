@@ -143,19 +143,27 @@ All under `kermanych/apps/ui/src`.
   completes (as `risks.byWorkspace`, `transcripts` already are); a list renders
   `KSkeleton` while `undefined`, the empty state only for `[]`. Stores without per-scope keys
   expose a `loadedFor` scope id; `orchestrator` gains `snapshotReceived`.
+- **`composables/useLoadPhase.ts`**: `useLoadPhase(notLoaded) → 'blank' | 'skeleton' | 'ready'`
+  — owns the 150 / 300 ms skeleton timing (`useDelayedTrue` with `minMs`), so the caller keeps
+  the content off screen for the whole minimum.
 - **Kit:**
-  - `KSkeleton` — `variant: 'line' | 'block' | 'rows' | 'card' | 'avatar'`, `rows?`, `width?`,
-    `height?`; owns the 150/300 ms timing via `useDelayedTrue`.
-  - `KProgressBar` — rendered once in `MainLayout` from `activity.barVisible`.
+  - `KSpinner` — the one busy glyph; `KBtn` and every new `loading` / `pending` state draw it.
+  - `KSkeleton` — `variant: 'line' | 'lines' | 'block' | 'avatar' | 'rows' | 'card'`, `rows?`,
+    `width?`, `height?`, `label?`; purely visual (timing is `useLoadPhase`).
+  - `KProgressBar` — rendered once in `MainLayout`'s header from `activity.barVisible`.
   - `loading` prop on `KIconButton` (glyph → spinner, disabled, `aria-busy`), `KSelect`,
     `KChipSelect`, `KCheckbox`, `KToggle` (also gains `disabled`), `KSplitButton` (forwards to
-    the main half).
-  - `pending` prop on `KSessionCard`, `KKanbanCard` (dimmed, spinner, actions disabled) and
-    `KChatMessage` (the «надсилаю…» bubble). Table rows use the existing `KTable.rowClass` plus
-    row-level `KIconButton :loading`.
+    the main half). Busy props are typed `?: boolean | undefined` (exactOptionalPropertyTypes).
+  - `pending` prop on `KSessionCard`, `KKanbanCard` (dimmed, spinner, actions disabled). Table
+    rows use the existing `KTable.rowClass` plus row-level `KIconButton :loading`.
   - `KPanel`: the existing `promoting` / `refreshing` / `filing` / `clearing` become spinners via
     `KIconButton :loading`; new `pending` (session-level: every session action disabled),
-    `stopping`, `branching`, `restarting`, `answering`.
+    `stopping`, `branching`, `restarting`, `answering`, `summarizing`, `openingEditor`,
+    `composerDisabled`, model / effort overrides with `modelLoading` / `effortLoading`, and
+    `outgoing` — KPanel renders the «надсилаю…» bubbles after the log slot (both «Агенти» and
+    «Чат» feed it) and exposes `restoreDraft(text, images)` for a failed send.
+  - `KComposer`: `modelLoading` / `effortLoading`; send stays blocked while attached images are
+    still being read (`useImageAttach().reading`).
 - **Electron:** `freePort` → `createWindow(apiBase)` → `bootstrap({ port })` in parallel.
   Preload exposes `backendReady(): Promise<void>` (IPC invoke, rejects on boot failure — main
   keeps its `showErrorBox` + quit) and `onBootStatus(cb)`. A new first boot file
@@ -363,11 +371,12 @@ Codes: **ACT** `useAsyncAction` + `loading` on the control (keyboard paths guard
 ## Changes
 
 - **Primitives:** `composables/useDelayedTrue.ts` (`minMs`), `composables/useAsyncAction.ts`,
-  `composables/useOptimisticValue.ts`, `stores/activity.ts`, `stores/pending.ts`;
-  `stores/orchestrator.ts` (`snapshotReceived`, outgoing bubbles per session).
-- **Kit:** new `KSkeleton`, `KProgressBar`; `loading` on `KIconButton`, `KSelect`,
+  `composables/useOptimisticValue.ts`, `composables/useLoadPhase.ts`, `stores/activity.ts`,
+  `stores/pending.ts`, `lib/outgoing.ts`; `stores/orchestrator.ts` (`snapshotReceived`,
+  outgoing bubbles per session).
+- **Kit:** new `KSpinner`, `KSkeleton`, `KProgressBar`; `loading` on `KIconButton`, `KSelect`,
   `KChipSelect`, `KCheckbox`, `KToggle`, `KSplitButton`; `pending` on `KSessionCard`,
-  `KKanbanCard`, `KChatMessage`; `KPanel` busy props; `#/kit` «Async states» section.
+  `KKanbanCard`; `KPanel` busy props and outgoing bubbles; `#/kit` «Async states» section.
 - **Stores:** `jira`, `linear` (reset on scope change, `loading` across probe), `risks`,
   `release-notes`, `passwords`, `projects`, `terminal`, `board`, `auth` (runtime read state for
   the gate), `management-chat` (reset busy).
@@ -376,8 +385,8 @@ Codes: **ACT** `useAsyncAction` + `loading` on the control (keyboard paths guard
   `boot/backend.ts`, `quasar.config.ts` boot order.
 - **i18n:** `uk` / `en` strings for the splash statuses, «надсилаю…», loading placeholders.
 
-Commits, in order: primitives + kit + tests → start-up → «Агенти» → «Чат»/«Дошка»/shell →
-settings/docs/vault → management → Jira/Linear → docs (README, AGENTS.md).
+Commits: primitives + kit + tests (one commit), then the area work (one commit — the shared
+`uk` / `en` catalogs make per-area commits non-compiling), then docs (README, AGENTS.md, `#/kit`).
 
 ## Verification
 
@@ -396,10 +405,39 @@ settings/docs/vault → management → Jira/Linear → docs (README, AGENTS.md).
     reply for the previous workspace is ignored.
   - outgoing bubble: removed when the real user entry arrives; on failure removed and the text
     returned.
+  - `jira` / `linear`, added after review: a probe in flight survives `close()` (closing the
+    board view on a workspace switch must not cancel the new workspace's probe); a probe that
+    overlaps `open()` does not stop the board load.
 - Typecheck `@kermanych/ui`.
-- Manual pass in the session preview, network throttled (Slow 3G emulation), every area of the
-  inventory, screenshots of the skeleton, bar, pending card, pending bubble and splash states.
-  The desktop start-up chain (window before backend) needs the Electron build.
+- Manual pass in a preview API (`KERMANYCH_PREVIEW=1`, seeded temp DB) behind a throwaway TCP
+  proxy that delays every API response and socket frame by 1.5–4 s.
+
+### Results (2026-10-21)
+
+- `pnpm --filter @kermanych/ui test`: 60 files, 662 passed. `vue-tsc --noEmit`: only the
+  pre-existing `test/runtime-messages.spec.ts` TS2352 (present on `a458606`).
+- A review pass (reviewer agent over the whole diff) found 14 defects: a Jira/Linear probe
+  cancelled by `close()` on a workspace switch, `open()` abandoning its feed on an overlapping
+  probe, a Slack modal held open through OAuth, skeletons that never cleared after a failed
+  load (chat resume, provider plan, terminal list), a skeleton left after a project switch during
+  «+ Новий», a reconcile flashing the empty board, an effort/model pick landing on another
+  session, an uncapped decision-card lock, out-of-order panel reloads, a doc-tree node reused
+  across projects. All fixed; the Jira/Linear ones got spec cases.
+- Observed in the slowed preview: the web splash «Входжу…»; the sidebar skeleton, with the
+  «Розпочати» count hidden until loaded; the footer branch shown before the remote fetch; a
+  selected session's log as a skeleton from ~100 ms until the transcript arrived (5.5 s), the
+  composer locked meanwhile, «Журнал порожній» never shown; ⋯ → «Зупинити» dimming and spinning
+  the card at once and blocking the header actions, the card held pending until the 15 s echo
+  window ran out (the seeded session never reports a stop); a refused fork as a toast with
+  the controls released; on «Чат» a project with no threads showing the detail skeleton while
+  the chat is created, then the error toast and no stuck skeleton; the `#/kit` «Async states»
+  section.
+- Not exercised end to end: the cloud-backed screens (Дошка, Менеджмент, Налаштування cloud
+  parts, Jira / Linear, vault) — the preview has no Supabase project; their logic is covered by
+  typecheck, the store specs and the review. The desktop start-up chain (window before backend,
+  `backgroundColor`, the IPC status) — not launched in Electron here, because a dev Electron on
+  this machine would share the operator's running Kermanych; checked by reading Quasar's
+  boot sequence and by review.
 
 ### QA checklist
 
@@ -443,4 +481,6 @@ settings/docs/vault → management → Jira/Linear → docs (README, AGENTS.md).
 - `kermanych/README.md` → «Design»: new «Async states» subsection — the primitives, the
   not-loaded convention, the timings, the modal rule, «no `void api.x()` in click handlers».
 - `kermanych/AGENTS.md` (new): points coding agents at that subsection for any UI change.
+- `kermanych/README.md` → «Desktop app (macOS)»: the start-up splash, its statuses and the
+  remembered window background.
 - `#/kit` (`pages/KitGalleryPage.vue`): «Async states» section with live samples.
