@@ -68,6 +68,11 @@ export const en: MessageSchema = {
       accountsAvg: '{count} accounts, on average',
       resetsIn: ' — resets in {time}',
       accountSettings: 'account settings',
+      // The top-bar pill (composables/useProviderSignIn.ts): the operator's AI provider CLI
+      // is signed out on this machine. Its tooltip is `errors.runtime_<code>`, which names the
+      // command; this line follows it.
+      aiLoginRequired: 'AI login required',
+      aiLoginRecheck: 'Click to check again.',
       pullDone: 'done',
       pullFailed: 'failed',
     },
@@ -340,6 +345,7 @@ export const en: MessageSchema = {
       done: 'done',
       review: 'in review',
       error: 'error',
+      signIn: 'login required',
       queued: 'queued',
       stopped: 'stopped',
       merged: 'finished',
@@ -2160,6 +2166,7 @@ export const en: MessageSchema = {
       cancel: 'Cancel',
       error: 'ERROR',
       sessionErrored: 'The session ended with an error.',
+      signInHead: 'LOGIN REQUIRED',
       stalled: '⚠ No activity for {label} — the agent may be stuck',
       restart: '⟳ Restart',
       refreshTip: 'Refresh the chat — pull in the session history',
@@ -2175,6 +2182,7 @@ export const en: MessageSchema = {
         done: 'done',
         review: 'in review',
         error: 'error',
+        signIn: 'login required',
         queued: 'queued',
         stopped: 'stopped',
         merged: 'finished',

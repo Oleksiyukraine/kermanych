@@ -263,6 +263,7 @@ import { useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { LAUNCH_MODES, nativeHarnessName, nativeRuntimeFor, sessionLaunchMode, type LaunchMode } from '../lib/native-session';
+import { needsSignIn } from '../lib/session-auth';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
@@ -463,7 +464,7 @@ function statusWord(s: Session): string {
     case 'waiting_input': return t('agents.statusWord.waiting');
     case 'done': return t('agents.statusWord.done');
     case 'in_review': return t('agents.statusWord.review');
-    case 'error': return t('agents.statusWord.error');
+    case 'error': return needsSignIn(s.errorCode) ? t('agents.statusWord.signIn') : t('agents.statusWord.error');
     case 'queued': return t('agents.statusWord.queued');
     case 'stopped': return t('agents.statusWord.stopped');
     case 'merged': return t('agents.statusWord.merged');

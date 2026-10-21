@@ -176,6 +176,18 @@
         @update:model-value="goView"
       />
       <div class="shell__actions">
+        <!-- AI LOGIN REQUIRED — the provider CLI behind the operator's runtime is signed out on
+             this machine (composables/useProviderSignIn.ts). Present only then; its tooltip
+             names the command, a click asks again after the operator has logged in. -->
+        <button
+          v-if="signInCode"
+          type="button"
+          class="shell__signin mono"
+          role="alert"
+          v-tip="signInHint"
+          :aria-label="`${t('common.nav.aiLoginRequired')}. ${signInHint}`"
+          @click="recheckSignIn"
+        ><span aria-hidden="true">⚠</span> {{ t('common.nav.aiLoginRequired') }}</button>
         <!-- ONE gear, into pages/SettingsPage.vue. It used to be three controls —
              a workspace ⚙, a project ⚙ and a `$` for the `.env` — each opening its
              own modal; the settings screen holds all three behind a scope switcher,
@@ -467,6 +479,7 @@ import { percent, planWindow, renderWindow } from '../lib/format';
 import { until, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
+import { useProviderSignIn } from '../composables/useProviderSignIn';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KWorkspaceRow from 'components/kit/KWorkspaceRow.vue';
 import KTopNav from 'components/kit/KTopNav.vue';
@@ -1397,6 +1410,13 @@ const accountName = computed(() =>
 const { usage: planUsage } = useSubscriptionUsage();
 const planNow = useNow(30_000);
 
+// AI LOGIN REQUIRED — the top-bar pill. The tooltip reuses the launch-refusal sentence, which
+// names the provider and the command that signs it back in.
+const { code: signInCode, recheck: recheckSignIn } = useProviderSignIn();
+const signInHint = computed(() =>
+  signInCode.value ? `${t(`errors.runtime_${signInCode.value}`)}. ${t('common.nav.aiLoginRecheck')}` : '',
+);
+
 const planLines = computed(() =>
   (planUsage.value?.providers ?? []).map((p) => ({
     provider: p.provider,
@@ -1899,6 +1919,33 @@ const pullHint = computed(() => {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
+}
+
+// The sign-out pill: danger-framed so it reads as a blocker next to the quiet icon cluster,
+// at the icon buttons' 28px height so the row stays one line.
+.shell__signin {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--k-danger);
+  border-radius: var(--k-r);
+  background: transparent;
+  color: var(--k-danger);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--k-danger);
+    color: var(--k-on-accent);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 1px;
+  }
 }
 
 .shell__form {
