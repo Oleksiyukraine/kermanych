@@ -35,11 +35,12 @@ export type NoticeCode =
   // runtime/*-runtime.ts — a runtime child that DIED MID-SESSION, long after its launch was
   // called a success. The launch-time twins of these live in `ApiErrorCode` below: the same
   // machine fault is a thrown error when it stops a session from starting, and a transcript
-  // notice when it kills one already running.
+  // notice when it kills one already running. They are also `Session.errorCode`, set from the
+  // runtime's exit cause (supervisor.service.ts wireLive).
   | "claude_not_authenticated" // claude-code-runtime.ts — the claude CLI is signed out (params: none)
   | "claude_binary_missing" // claude-code-runtime.ts — the SDK's platform binary is absent (params: none)
-  | "omp_not_authenticated" // rpc-session.ts — the omp CLI is signed out (params: none)
-  | "omp_binary_missing" // rpc-session.ts — omp is not on PATH (params: none)
+  | "omp_not_authenticated" // rpc-session.ts exit cause — the omp CLI is signed out (params: none)
+  | "omp_binary_missing" // rpc-session.ts exit cause — omp is not on PATH (params: none)
   // jira-tools.service.ts — one `ManagementChatReply.jiraChanges` line per Jira write the
   // assistant made through its Jira tools during the turn:
   | "jira_issue_created" // jira-tools.service.ts — jira_create_issue filed an issue (params: { key, summary })
