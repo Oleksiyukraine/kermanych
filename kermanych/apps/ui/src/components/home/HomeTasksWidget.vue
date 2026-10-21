@@ -6,9 +6,11 @@
         {{ t('management.home.capacity.gateOpen') }}
       </RouterLink>
     </p>
-    <p v-else-if="jira.integration === undefined" class="taskw__note mono">
-      {{ t('management.home.capacity.loading') }}
-    </p>
+    <!-- Not loaded for this workspace (the jira store resets on a switch and keeps `loading`
+         up through loadBoard): «нічого на сьогодні» would be a claim. -->
+    <template v-else-if="phase !== 'ready'">
+      <KSkeleton v-if="phase === 'skeleton'" variant="rows" :rows="4" />
+    </template>
     <p v-else-if="!groups.length" class="taskw__note mono">
       {{ t('management.home.tasks.empty') }}
     </p>
@@ -34,7 +36,7 @@
       </section>
     </div>
 
-    <RouterLink v-if="groups.length" class="taskw__all mono" :to="{ name: 'board' }">
+    <RouterLink v-if="phase === 'ready' && groups.length" class="taskw__all mono" :to="{ name: 'board' }">
       {{ t('management.home.tasks.open') }} →
     </RouterLink>
   </div>
@@ -53,6 +55,8 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterLink } from 'vue-router';
 import { useJira } from 'stores/jira';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useNow } from '../../composables/useNow';
 import { todayIso } from '../../lib/capacity';
 import { todayTaskGroups, type TodayGroup } from '../../lib/home-digest';
@@ -68,6 +72,8 @@ const today = computed(() => todayIso(nowMs.value));
 const groups = computed<TodayGroup[]>(() =>
   jira.integration ? todayTaskGroups(jira.issues, today.value) : [],
 );
+
+const phase = useLoadPhase(() => jira.integration === undefined || (jira.loading && !jira.issues.length));
 
 function issueUrl(key: string): string {
   const site = jira.integration?.siteUrl ?? '';

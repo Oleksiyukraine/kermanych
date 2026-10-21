@@ -7,17 +7,29 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useTerminal } from 'stores/terminal';
+import { usePending } from 'stores/pending';
 import { useResizablePanel } from '../../composables/useResizablePanel';
+import { useAsyncAction } from '../../composables/useAsyncAction';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import KTerminalView from './KTerminalView.vue';
+import KSkeleton from './KSkeleton.vue';
+import KSpinner from './KSpinner.vue';
 
 const store = useOrchestrator();
 const terminal = useTerminal();
+const pending = usePending();
 const { t } = useI18n();
 
 const project = computed(() => store.projects.find((p) => p.id === store.selectedProjectId));
 const bound = computed(() => !!project.value?.localRepoPath);
 const tabs = computed(() => terminal.projectTerminals(project.value?.id));
 const activeId = computed(() => terminal.activeFor(project.value?.id));
+// A spawn in flight for this project (from here or the footer toggle): drawn as a pending tab.
+const opening = computed(() => !!project.value && !!terminal.opening[project.value.id]);
+// Before the api's list answers, «no terminals» is unknown: skeleton, never the empty text.
+// A failed list ack ends the skeleton too (empty text + spawn link), or it would never resolve.
+const phase = useLoadPhase(() => !terminal.loaded && !terminal.listFailed);
+const activePending = computed(() => !!activeId.value && pending.isPending(`terminal:${activeId.value}`));
 
 // The page above keeps at least this much; the header and footer take 90px (MainLayout).
 const MIN_PAGE = 160;
@@ -29,12 +41,18 @@ const { size: height, resizing, startResize, onKeydown } = useResizablePanel({
   max: () => window.innerHeight - 90 - MIN_PAGE,
 });
 
-function newTerminal(): void {
-  if (project.value && bound.value) void terminal.open(project.value.id);
-}
+// The store refuses a second spawn for the same project while one is in flight.
+const { run: newTerminal } = useAsyncAction(async () => {
+  if (project.value && bound.value) await terminal.open(project.value.id);
+});
 
+// `kill` is fire-and-forget over the socket; the tab stays, dimmed, until the api's `exit`
+// removes it from the list.
 function killActive(): void {
-  if (activeId.value) terminal.kill(activeId.value);
+  const id = activeId.value;
+  if (!id || pending.isPending(`terminal:${id}`)) return;
+  terminal.kill(id);
+  pending.mark(`terminal:${id}`, () => !terminal.terminals.some((x) => x.id === id));
 }
 </script>
 
@@ -64,29 +82,38 @@ function killActive(): void {
           type="button"
           role="tab"
           class="k-term__tab mono"
-          :class="{ 'k-term__tab--on': tab.id === activeId }"
+          :class="{
+            'k-term__tab--on': tab.id === activeId,
+            'k-term__tab--pending': pending.isPending(`terminal:${tab.id}`),
+          }"
           :aria-selected="tab.id === activeId"
+          :aria-busy="pending.isPending(`terminal:${tab.id}`) || undefined"
           :title="tab.cwd"
           @click="terminal.setActive(tab.projectId, tab.id)"
-        >{{ t('terminal.tabLabel', { n: i + 1, shell: tab.shell }) }}</button>
+        ><KSpinner v-if="pending.isPending(`terminal:${tab.id}`)" :size="9" /> {{ t('terminal.tabLabel', { n: i + 1, shell: tab.shell }) }}</button>
+        <span v-if="opening" class="k-term__tab k-term__tab--pending mono" role="tab" aria-busy="true" aria-selected="false">
+          <KSpinner :size="9" /> {{ t('terminal.opening') }}
+        </span>
       </div>
       <span class="k-term__spacer"></span>
       <button
         type="button"
         class="k-term__btn"
-        :disabled="!bound"
+        :disabled="!bound || opening"
+        :aria-busy="opening || undefined"
         v-tip="t('terminal.new')"
         :aria-label="t('terminal.new')"
-        @click="newTerminal"
-      >+</button>
+        @click="newTerminal()"
+      ><KSpinner v-if="opening" :size="10" /><template v-else>+</template></button>
       <button
         type="button"
         class="k-term__btn"
-        :disabled="!activeId"
+        :disabled="!activeId || activePending"
+        :aria-busy="activePending || undefined"
         v-tip="t('terminal.kill')"
         :aria-label="t('terminal.kill')"
         @click="killActive"
-      >🗑</button>
+      ><KSpinner v-if="activePending" :size="10" /><template v-else>🗑</template></button>
       <button
         type="button"
         class="k-term__btn"
@@ -97,11 +124,14 @@ function killActive(): void {
     </header>
     <div class="k-term__body">
       <p v-if="!project" class="k-term__blank">{{ t('terminal.noProject') }}</p>
-      <p v-else-if="!tabs.length && !bound" class="k-term__blank">{{ t('terminal.notBound') }}</p>
-      <div v-else-if="!tabs.length" class="k-term__blank">
-        <span>{{ t('terminal.empty') }}</span>
-        <button type="button" class="k-term__link" @click="newTerminal">{{ t('terminal.new') }}</button>
-      </div>
+      <template v-else-if="!tabs.length">
+        <p v-if="!bound" class="k-term__blank">{{ t('terminal.notBound') }}</p>
+        <KSkeleton v-else-if="phase === 'skeleton' || opening" class="k-term__skeleton" variant="lines" :rows="4" />
+        <div v-else-if="phase === 'ready'" class="k-term__blank">
+          <span>{{ t('terminal.empty') }}</span>
+          <button type="button" class="k-term__link" :disabled="opening" @click="newTerminal()">{{ t('terminal.new') }}</button>
+        </div>
+      </template>
       <!-- Every tab of the project stays mounted, so switching tabs keeps each screen and its
            scroll position; only the active one is shown. -->
       <KTerminalView
@@ -197,6 +227,16 @@ function killActive(): void {
 .k-term__tab--on {
   border-bottom-color: var(--k-accent);
   color: var(--k-text);
+}
+// A shell being started or killed: dimmed with a spinner until the api reports it.
+.k-term__tab--pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.6;
+}
+.k-term__skeleton {
+  padding: 6px var(--k-sp-3);
 }
 
 .k-term__spacer {

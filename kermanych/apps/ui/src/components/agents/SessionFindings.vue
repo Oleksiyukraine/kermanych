@@ -1,7 +1,9 @@
 <template>
   <div class="findings">
     <p v-if="loadError" class="findings__error" role="alert">{{ loadError }}</p>
-    <ul v-if="findings.length" class="findings__list">
+    <!-- Not loaded for this session yet ≠ no findings: rows of skeleton, never «немає». -->
+    <KSkeleton v-if="phase === 'skeleton'" variant="rows" :rows="3" />
+    <ul v-else-if="findings.length" class="findings__list">
       <li
         v-for="f in findings"
         :key="f.id"
@@ -35,9 +37,10 @@
             <button
               type="button"
               class="findings__action findings__action--quiet"
-              :disabled="dismissing === f.id"
-              @click="dismiss(f)"
-            >{{ t('agents.findings.dismiss') }}</button>
+              :disabled="dismissAction.busyFor(f.id)"
+              :aria-busy="dismissAction.busyFor(f.id) || undefined"
+              @click="dismissAction.run(f.id)"
+            ><KSpinner v-if="dismissAction.busyFor(f.id)" :size="10" /> {{ t('agents.findings.dismiss') }}</button>
           </template>
           <template v-else-if="f.target?.kind === 'jira'">
             <span class="findings__state">{{ t('agents.findings.filedJira') }}</span>
@@ -53,11 +56,11 @@
         </div>
       </li>
     </ul>
-    <p v-else-if="!loading && !loadError" class="findings__empty mono">{{ t('agents.findings.empty') }}</p>
+    <p v-else-if="phase === 'ready' && !loadError" class="findings__empty mono">{{ t('agents.findings.empty') }}</p>
 
     <!-- FINDING → CARD / ISSUE — the operator files what the agent proposed. Nothing reaches
          the board or Jira without this click, and every field can be edited first. -->
-    <KModal v-model="dialogOpen" :title="t('agents.findings.dialog.title')" width="720px">
+    <KModal v-model="dialogOpen" :title="t('agents.findings.dialog.title')" width="720px" :persistent="busy">
       <div class="findings__form">
         <div class="findings__seg" role="radiogroup" :aria-label="t('agents.findings.dialog.target')">
           <button
@@ -88,15 +91,21 @@
             :label="t('agents.findings.dialog.assignee')"
             :options="assigneeOptions"
             :placeholder="t('agents.findings.dialog.unassigned')"
+            :loading="membersLoading"
           />
         </template>
         <template v-else>
-          <KSelect v-model="jiraBoard" :label="t('agents.findings.dialog.jiraBoard')" :options="jiraBoardOptions" />
+          <KSelect
+            v-model="jiraBoard"
+            :label="t('agents.findings.dialog.jiraBoard')"
+            :options="jiraBoardOptions"
+            :loading="jiraProbe === 'pending'"
+          />
           <KSelect
             v-model="issueType"
             :label="t('agents.findings.dialog.issueType')"
             :options="issueTypeOptions"
-            :disabled="issueTypesLoading"
+            :loading="issueTypesLoading"
           />
         </template>
         <KField v-model="title" :label="t('agents.findings.dialog.taskTitle')" />
@@ -104,7 +113,7 @@
         <p v-if="dialogError" class="findings__error" role="alert">{{ dialogError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="dialogOpen = false">{{ t('agents.finish.close') }}</KBtn>
+        <KBtn variant="ghost" :disabled="busy" @click="dialogOpen = false">{{ t('agents.finish.close') }}</KBtn>
         <KBtn variant="primary" :loading="busy" :disabled="!canCreate" @click="submit">{{ t('agents.findings.dialog.create') }}</KBtn>
       </template>
     </KModal>
@@ -136,6 +145,10 @@ import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
+import { errorText, useKeyedAction } from '../../composables/useAsyncAction';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 
 const props = defineProps<{ session: Session }>();
 
@@ -145,28 +158,27 @@ const projects = useProjects();
 const board = useBoard();
 const auth = useAuth();
 
-const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
 // ── The list ─────────────────────────────────────────────────────────────
 // Reloaded whenever the session's open count moves: a new report arrives as an ordinary
 // `session_update`, so the count is the only signal there is.
 const findings = ref<AgentFinding[]>([]);
-const loading = ref(false);
+// The session whose list `findings` holds; anything else means «not loaded» (a skeleton), so
+// «немає знахідок» is never said about a session whose list has not answered yet. A refresh
+// of the same session keeps the rows on screen.
+const loadedFor = ref<string | null>(null);
 const loadError = ref<string | null>(null);
-const dismissing = ref<string | null>(null);
+const phase = useLoadPhase(() => loadedFor.value !== props.session.id && !loadError.value);
 
 async function load(): Promise<void> {
   const id = props.session.id;
-  loading.value = true;
   try {
     const list = await api.sessionFindings(id);
     if (props.session.id !== id) return;
     findings.value = list;
+    loadedFor.value = id;
     loadError.value = null;
   } catch (e) {
     if (props.session.id === id) loadError.value = errorText(e);
-  } finally {
-    if (props.session.id === id) loading.value = false;
   }
 }
 
@@ -174,22 +186,19 @@ watch(
   () => props.session.id,
   () => {
     findings.value = [];
+    loadedFor.value = null;
     loadError.value = null;
   },
 );
 watch(() => [props.session.id, props.session.openFindings], () => void load(), { immediate: true });
 
-async function dismiss(f: AgentFinding): Promise<void> {
-  dismissing.value = f.id;
-  try {
-    const updated = await api.dismissFinding(props.session.id, f.id);
-    findings.value = findings.value.map((x) => (x.id === updated.id ? updated : x));
-  } catch (e) {
-    store.notify(errorText(e), 'error');
-  } finally {
-    dismissing.value = null;
-  }
-}
+// «Відхилити», per finding: the pressed row spins, a failure is a toast.
+const dismissAction = useKeyedAction(async (findingId: string) => {
+  const sessionId = props.session.id;
+  const updated = await api.dismissFinding(sessionId, findingId);
+  if (props.session.id !== sessionId) return;
+  findings.value = findings.value.map((x) => (x.id === updated.id ? updated : x));
+});
 
 // A board card is named by its title when the board store has it loaded (the current
 // workspace's cards), else by a plain word — the link goes to the board either way.
@@ -205,6 +214,8 @@ const project = ref('');
 const assignee = ref('');
 const dialogError = ref<string | null>(null);
 const busy = ref(false);
+// The workspace's members are read on the first open; the assignee picker spins meanwhile.
+const membersLoading = ref(false);
 
 const home = computed(() => projects.byId.get(props.session.projectId));
 const workspaceId = computed(() => home.value?.workspaceId);
@@ -241,6 +252,10 @@ const jiraHint = computed(() => {
       return t('agents.findings.dialog.jiraNoBoard');
     case 'noToken':
       return t('agents.findings.dialog.jiraNoToken');
+    case 'pending':
+      // Only while the dialog is open and the probe has not answered — the Jira half is
+      // disabled meanwhile, and this says why it is not offered yet.
+      return t('agents.findings.dialog.jiraProbing');
     default:
       return '';
   }
@@ -310,7 +325,13 @@ function openFile(f: AgentFinding): void {
   busy.value = false;
   dialogOpen.value = true;
   const ws = workspaceId.value;
-  if (ws && !projects.members[ws]) void projects.loadMembers(ws).catch(() => undefined);
+  if (ws && !projects.members[ws]) {
+    membersLoading.value = true;
+    void projects
+      .loadMembers(ws)
+      .catch(() => undefined)
+      .finally(() => { membersLoading.value = false; });
+  }
   void probeJira(ws);
 }
 

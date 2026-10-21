@@ -13,7 +13,9 @@
       <!-- Who owns this card, in the one spot the eye scans a Kanban column for it. Always
            rendered: a face that appears only when assigned makes «нікому» look like «не
            дочиталося», and the row would reflow as tasks get claimed. -->
+      <KSkeleton v-if="assigneeLoading" variant="avatar" />
       <KAvatar
+        v-else
         :name="assignee?.name ?? t('kit.kanbanCard.unassigned')"
         :avatar-url="assignee?.avatarUrl"
         :hint="assigneeHint"
@@ -41,6 +43,7 @@ import KStatusDot from './KStatusDot.vue';
 import KAvatar from './KAvatar.vue';
 import KAnalysisMark from './KAnalysisMark.vue';
 import KSpinner from './KSpinner.vue';
+import KSkeleton from './KSkeleton.vue';
 
 // `assignee` is the resolved person, not an id: the card cannot look one up, and the board
 // already owns that resolution for its filter and its editor. `null` is «не призначено».
@@ -55,6 +58,8 @@ const props = defineProps<{
   deepAnalysis?: boolean | undefined;
   // A move or launch of this card is waiting for its result (stores/pending): dimmed, spinning.
   pending?: boolean | undefined;
+  // The roster that resolves `assignee` is not read yet: a placeholder face, never a raw id.
+  assigneeLoading?: boolean | undefined;
 }>();
 
 const { t } = useI18n();

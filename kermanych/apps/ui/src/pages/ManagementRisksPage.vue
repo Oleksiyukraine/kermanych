@@ -7,8 +7,17 @@
     </p>
 
     <!-- The four numbers a status report opens with. Every one of them is derived from the
-         register, so none of them can quietly disagree with the rows below. -->
-    <div class="risk__summary">
+         register, so none of them can quietly disagree with the rows below. Until the register
+         for THIS workspace has arrived they would all read 0 — a claim, not a placeholder —
+         so the summary waits behind a skeleton of its own shape. -->
+    <div v-if="phase !== 'ready' && !store.loadError" class="risk__summary">
+      <template v-if="phase === 'skeleton'">
+        <KSkeleton variant="block" width="100%" height="148px" />
+        <KSkeleton variant="block" width="100%" height="148px" />
+        <KSkeleton variant="lines" :rows="5" />
+      </template>
+    </div>
+    <div v-else class="risk__summary">
       <div class="risk__stats">
         <article class="risk__stat">
           <span class="risk__stat-label mono">{{ t('management.risks.statLive') }}</span>
@@ -90,6 +99,10 @@
       {{ t('management.risks.loadError', { error: store.loadError }) }}
     </p>
 
+    <template v-else-if="phase !== 'ready'">
+      <KSkeleton v-if="phase === 'skeleton'" variant="rows" :rows="6" />
+    </template>
+
     <div v-else-if="!rows.length" class="risk__blank">
       <span class="risk__blank-eyebrow mono">{{ t('management.risks.blankEyebrow') }}</span>
       <p class="risk__blank-text">
@@ -160,7 +173,10 @@
         </template>
 
         <template #cell-owner="{ row }">
-          <span :class="{ risk__dash: !row.riskOwner }">{{ memberName(row.riskOwner) }}</span>
+          <!-- The roster is a second fetch: until it lands the owner is only a UUID, which
+               reads as a name nobody has. -->
+          <KSkeleton v-if="row.riskOwner && !membersReady" variant="line" width="80px" />
+          <span v-else :class="{ risk__dash: !row.riskOwner }">{{ memberName(row.riskOwner) }}</span>
         </template>
 
         <template #cell-review="{ row }">
@@ -179,7 +195,8 @@
                  cadence nobody keeps. -->
             <KIconButton
               :title="t('management.risks.reviewMark')"
-              :disabled="!isLive(row) || reviewing === row.id"
+              :disabled="!isLive(row) || deleteAction.busyFor(row.id)"
+              :loading="reviewAction.busyFor(row.id)"
               @click.stop="review(row)"
             >
               ✓
@@ -197,7 +214,7 @@
               v-if="canDelete"
               class="risk__danger"
               :title="t('management.risks.deleteTitle')"
-              :disabled="deleting === row.id"
+              :loading="deleteAction.busyFor(row.id)"
               @click.stop="remove(row)"
             >
               ✕
@@ -244,6 +261,9 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { RiskCategory, WorkspaceRisk } from '@kermanych/cloud';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useKeyedAction, errorText } from '../composables/useAsyncAction';
+import { useLoadPhase } from '../composables/useLoadPhase';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KField from 'components/kit/KField.vue';
@@ -331,13 +351,25 @@ const filter = reactive({ ...EMPTY_FILTER });
 const sort = ref<RiskSort>('exposure');
 const editorOpen = ref(false);
 const editing = ref<WorkspaceRisk | undefined>(undefined);
-// The row whose review is being recorded, so its tick cannot be double-clicked into two
-// writes while the first is in flight.
-const reviewing = ref('');
-// Same guard for the delete, and it matters more here: the second click of a double-click
-// would land on a row the first has already removed, and earn a postgrest error about an
-// id that no longer exists.
-const deleting = ref('');
+// Per-row busy flags: a tick or ✕ cannot be double-clicked into two writes while the first is
+// in flight (the second delete would land on a row the first already removed). Review reports
+// its own failure through the store; delete says WHY here — the likely refusal is the
+// owner-only policy, which the operator can act on.
+const reviewAction = useKeyedAction((id: string) => store.markReviewed(props.workspaceId, id));
+const deleteAction = useKeyedAction(async (id: string, code: string) => {
+  try {
+    await store.remove(props.workspaceId, id);
+  } catch (e) {
+    notify(t('management.risks.deleteFailed', { code, error: errorText(e) }), 'error');
+    return;
+  }
+  // The editor may be open on the row that no longer exists — the top-N list and the
+  // matrix both open it, and a modal bound to a deleted risk would save into nothing.
+  if (editing.value?.id === id) {
+    editorOpen.value = false;
+    editing.value = undefined;
+  }
+});
 const exportOpen = ref(false);
 // Ticked rows, by id. Kept across filter changes on purpose — search for one, tick it, search
 // for the next — and read back through `all`, so a row deleted meanwhile simply drops out.
@@ -361,10 +393,24 @@ watch(
 watch(
   () => props.workspaceId,
   (id) => {
-    if (id && !projects.members[id]) void projects.loadMembers(id);
+    if (id && !projects.members[id]) {
+      projects.loadMembers(id).catch(() => {
+        // Without a roster the owner column falls back to raw ids rather than a skeleton
+        // that never resolves.
+        membersFailed.value = id;
+      });
+    }
   },
   { immediate: true },
 );
+const membersFailed = ref('');
+const membersReady = computed(
+  () => projects.members[props.workspaceId] !== undefined || membersFailed.value === props.workspaceId,
+);
+
+// «Not loaded» is «no register for THIS workspace yet»: a refetch of one already on screen
+// keeps it, and a load error renders inline instead.
+const phase = useLoadPhase(() => store.byWorkspace[props.workspaceId] === undefined && !store.loadError);
 
 const memberOptions = computed<KSelectOption[]>(() =>
   (projects.members[props.workspaceId] ?? []).map((m) => ({
@@ -464,10 +510,8 @@ function create(): void {
   editorOpen.value = true;
 }
 
-async function review(risk: WorkspaceRisk): Promise<void> {
-  reviewing.value = risk.id;
-  await store.markReviewed(props.workspaceId, risk.id);
-  reviewing.value = '';
+function review(risk: WorkspaceRisk): void {
+  void reviewAction.run(risk.id);
 }
 
 // UX only — the owner-only RLS policy is the real gate and refuses a non-owner delete
@@ -482,31 +526,18 @@ const canDelete = computed(() => projects.isWorkspaceOwner(props.workspaceId));
 // This is also the one place the deletion's real cost is stated in the operator's own
 // language — that the event history goes with the row — because after this click there is
 // nothing left to read it from.
-async function remove(risk: WorkspaceRisk): Promise<void> {
+function remove(risk: WorkspaceRisk): void {
   const statement = risk.event.trim() || risk.code;
   if (!window.confirm(t('management.risks.deleteConfirm', { code: risk.code, event: statement })))
     return;
-  deleting.value = risk.id;
-  try {
-    await store.remove(props.workspaceId, risk.id);
-    // The editor may be open on the row that no longer exists — the top-N list and the
-    // matrix both open it, and a modal bound to a deleted risk would save into nothing.
-    if (editing.value?.id === risk.id) {
-      editorOpen.value = false;
-      editing.value = undefined;
-    }
-  } catch (e) {
-    // Verbatim, and not swallowed: the store throws so this screen can say WHY. The likely
-    // refusal is the owner-only policy, which is something the operator can act on.
-    notify(t('management.risks.deleteFailed', { code: risk.code, error: e instanceof Error ? e.message : String(e) }), 'error');
-  } finally {
-    deleting.value = '';
-  }
+  void deleteAction.run(risk.id, risk.code);
 }
 
 // Two row states worth seeing without reading a cell: over the tolerance line, and overdue
 // for its review. Escalation wins — it is the one that has to leave the room.
 function rowClass(risk: WorkspaceRisk): string | undefined {
+  // A row being deleted dims until Postgres agrees it is gone.
+  if (deleteAction.busyFor(risk.id)) return 'risk__row--pending';
   if (needsEscalation(risk)) return 'risk__row--hot';
   if (reviewOverdue(risk, now.value)) return 'risk__row--stale';
   return undefined;
@@ -869,6 +900,11 @@ function rowClass(risk: WorkspaceRisk): string | undefined {
 
 .risk__table :deep(tr.risk__row--stale td:first-child) {
   box-shadow: inset 2px 0 0 0 var(--k-warning);
+}
+
+.risk__table :deep(tr.risk__row--pending) {
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 .risk__plan {

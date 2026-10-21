@@ -148,3 +148,86 @@ describe('jira syncNow', () => {
     );
   });
 });
+
+// The cross-area contract: Management/Board/Home read `integration === undefined ||
+// (loading && !issues.length)` as «not loaded for this workspace», so a workspace switch must
+// clear the previous board before the probe answers, and a late answer must not land.
+describe('jira workspace switch', () => {
+  it('clears board state before the probe resolves and keeps loading through loadBoard', async () => {
+    const { listJiraIntegrations } = await import('@kermanych/cloud');
+    const store = board();
+    store.issues = swept.issues as never;
+    store.columns = swept.columns as never;
+    const gate = Promise.withResolvers<unknown[]>();
+    vi.mocked(listJiraIntegrations).mockReturnValueOnce(gate.promise as never);
+
+    const run = store.open('w2');
+    expect(store.integration).toBeUndefined();
+    expect(store.integrations).toEqual([]);
+    expect(store.issues).toEqual([]);
+    expect(store.columns).toEqual([]);
+    expect(store.loading).toBe(true);
+
+    gate.resolve([{ ...integration, id: 'i2', workspaceId: 'w2' }]);
+    await run;
+    expect(store.activeId).toBe('i2');
+    expect(store.loading).toBe(false);
+    store.close();
+  });
+
+  it('ignores a late reply for the previous workspace', async () => {
+    const { listJiraIntegrations } = await import('@kermanych/cloud');
+    const store = useJira();
+    const old = Promise.withResolvers<unknown[]>();
+    vi.mocked(listJiraIntegrations)
+      .mockReturnValueOnce(old.promise as never)
+      .mockResolvedValueOnce([{ ...integration, id: 'i2', workspaceId: 'w2' }] as never);
+
+    const first = store.probe('w1');
+    await store.probe('w2');
+    old.resolve([integration]);
+    await first;
+
+    expect(store.integrations.map((i) => i.id)).toEqual(['i2']);
+    expect(store.activeId).toBe('i2');
+    expect(store.loading).toBe(false);
+  });
+  // BoardPage leaves the Jira view when the new workspace reads «not loaded»; that
+  // unmount's close() must not throw away the probe that decides whether the tab exists.
+  it('keeps a probe in flight across close()', async () => {
+    const { listJiraIntegrations } = await import('@kermanych/cloud');
+    const store = useJira();
+    const gate = Promise.withResolvers<unknown[]>();
+    vi.mocked(listJiraIntegrations).mockReturnValueOnce(gate.promise as never);
+
+    const run = store.probe('w2');
+    store.close();
+    expect(store.loading).toBe(true);
+    gate.resolve([{ ...integration, id: 'i2', workspaceId: 'w2' }]);
+    await run;
+
+    expect(store.integration?.id).toBe('i2');
+    expect(store.tokenKnown).toBe(true);
+    expect(store.loading).toBe(false);
+  });
+
+  // The Менеджмент chat probes while the board's open() is still asking: the shared probe
+  // must not cost open() its board load and feed.
+  it('still loads the board when a probe overlaps open()', async () => {
+    const { listJiraIntegrations } = await import('@kermanych/cloud');
+    const store = useJira();
+    const gate = Promise.withResolvers<unknown[]>();
+    vi.mocked(listJiraIntegrations).mockClear();
+    vi.mocked(listJiraIntegrations).mockReturnValueOnce(gate.promise as never);
+
+    const opening = store.open('w2');
+    const probing = store.probe('w2');
+    gate.resolve([{ ...integration, id: 'i2', workspaceId: 'w2' }]);
+    await Promise.all([opening, probing]);
+
+    expect(listJiraIntegrations).toHaveBeenCalledTimes(1);
+    expect(store.columns).toEqual(swept.columns);
+    expect(store.loading).toBe(false);
+    store.close();
+  });
+});

@@ -1,4 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, nativeImage, shell } from 'electron';
+import { readFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,12 +36,63 @@ function freePort(preferred: number): Promise<number> {
   return promise;
 }
 
-async function startBackend(): Promise<string> {
-  const port = await freePort(4317);
-  const res = await bootstrap({ port, browser: browsers });
-  nest = res.app;
-  return `${res.url}/api`;
+// Start-up runs in parallel (docs/specs/2026-10-21-async-feedback.md, decision 10): the window
+// is created as soon as the port is chosen, so its splash covers the seconds `bootstrap()` takes
+// instead of the operator staring at nothing. The renderer's first boot file awaits
+// `kermanych:backend-ready` before anything talks to the api.
+const backend = Promise.withResolvers<void>();
+// The renderer may not have asked yet when bootstrap fails; the failure is reported by the
+// error box below, so an unobserved rejection here is not a second error.
+backend.promise.catch(() => {});
+ipcMain.handle('kermanych:backend-ready', () => backend.promise);
+
+// What the splash says. Kept so a page that loads after a change (dev reload) still gets it:
+// the status is re-sent on dom-ready, and the preload replays the latest one to late listeners.
+let bootStatus: KermanychBootStatus = 'backend';
+function setBootStatus(status: KermanychBootStatus): void {
+  bootStatus = status;
+  mainWindow?.webContents.send('kermanych:boot-status', status);
 }
+
+async function startBackend(port: number): Promise<void> {
+  try {
+    const res = await bootstrap({ port, browser: browsers });
+    nest = res.app;
+    backend.resolve();
+    setBootStatus('ready');
+  } catch (err) {
+    backend.reject(err as Error);
+    throw err;
+  }
+}
+
+// The window's own colour, painted before the page: the canvas of the theme the renderer last
+// applied (it reports it over `kermanych:theme`), so a light-theme operator gets no dark frame.
+// Stored in userData rather than read from the renderer's localStorage, which main cannot
+// reach before the page loads.
+const themeFile = path.join(app.getPath('userData'), 'window-theme.json');
+// `--k-canvas` of the dark set in @kermanych/tokens: dark is the app's default theme regardless
+// of the OS preference (lib/theme.ts DEFAULT_THEME), so a first launch paints dark too.
+const DEFAULT_BACKGROUND = '#050505';
+const COLOR = /^#[0-9a-f]{3,8}$/i;
+let windowBackground = readWindowBackground();
+
+function readWindowBackground(): string {
+  try {
+    const bg = (JSON.parse(readFileSync(themeFile, 'utf8')) as { background?: unknown }).background;
+    if (typeof bg === 'string' && COLOR.test(bg)) return bg;
+  } catch {
+    /* first launch or an unreadable file: the default theme's canvas */
+  }
+  return DEFAULT_BACKGROUND;
+}
+
+ipcMain.on('kermanych:theme', (_event, background: unknown) => {
+  if (typeof background !== 'string' || !COLOR.test(background) || background === windowBackground) return;
+  windowBackground = background;
+  mainWindow?.setBackgroundColor(background);
+  void writeFile(themeFile, JSON.stringify({ background })).catch(() => {});
+});
 
 async function createWindow(apiBase: string) {
   mainWindow = new BrowserWindow({
@@ -47,6 +100,10 @@ async function createWindow(apiBase: string) {
     width: 1400,
     height: 900,
     useContentSize: true,
+    // Shown on ready-to-show, i.e. once the splash in index.html has painted, over a
+    // background of the operator's theme — never a white or wrong-theme frame.
+    show: false,
+    backgroundColor: windowBackground,
     webPreferences: {
       contextIsolation: true,
       sandbox: false, // preload needs process.argv to read --api-base
@@ -58,6 +115,8 @@ async function createWindow(apiBase: string) {
       additionalArguments: [`--api-base=${apiBase}`],
     },
   });
+  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  mainWindow.webContents.on('dom-ready', () => mainWindow?.webContents.send('kermanych:boot-status', bootStatus));
   routeLinksToDefaultBrowser(mainWindow, (url) => shell.openExternal(url));
   browsers.attach(mainWindow);
 
@@ -119,8 +178,10 @@ void app.whenReady().then(async () => {
       );
       if (!devIcon.isEmpty()) app.dock?.setIcon(devIcon);
     }
-    const apiBase = await startBackend();
-    await createWindow(apiBase);
+    // bootstrap() listens on 127.0.0.1:<port> and serves under /api, so the api base is known
+    // before it finishes and the window need not wait for it.
+    const port = await freePort(4317);
+    await Promise.all([startBackend(port), createWindow(`http://127.0.0.1:${port}/api`)]);
   } catch (err) {
     dialog.showErrorBox('Kermanych failed to start', String((err as Error).stack ?? err));
     app.quit();

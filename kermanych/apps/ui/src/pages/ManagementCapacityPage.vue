@@ -16,9 +16,15 @@
       </KBtn>
     </div>
 
-    <p v-else-if="jira.integration === undefined || (jira.loading && !jira.issues.length)" class="cap__note mono">
-      {{ t('management.capacity.loading') }}
-    </p>
+    <!-- Not loaded for THIS workspace yet: the jira store resets on a workspace switch and
+         keeps `loading` up from probe through loadBoard, so this covers both. -->
+    <template v-else-if="phase !== 'ready'">
+      <div v-if="phase === 'skeleton'" class="cap__skeleton">
+        <KSkeleton variant="line" width="60%" />
+        <KSkeleton variant="block" width="100%" height="64px" />
+        <KSkeleton variant="block" width="100%" height="220px" />
+      </div>
+    </template>
 
     <template v-else>
       <div class="cap__toolbar">
@@ -96,7 +102,9 @@
         </article>
         <article class="cap__stat">
           <span class="cap__stat-label mono">{{ t('management.capacity.stat.logged') }}</span>
-          <strong class="cap__stat-value">{{ hours(report.summary.loggedSeconds) }}<small>{{ t('management.capacity.h') }}</small></strong>
+          <!-- Worklogs are a second fetch per range: until they land «0 h» would be a claim. -->
+          <KSkeleton v-if="worklogsPending" variant="line" width="64px" height="22px" />
+          <strong v-else class="cap__stat-value">{{ hours(report.summary.loggedSeconds) }}<small>{{ t('management.capacity.h') }}</small></strong>
         </article>
         <article class="cap__stat" :class="`cap__stat--${bandOf(report.summary.utilization)}`">
           <span class="cap__stat-label mono">{{ t('management.capacity.stat.utilization') }}</span>
@@ -197,6 +205,8 @@ import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KTag from 'components/kit/KTag.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../composables/useLoadPhase';
 import CapacityChart from 'components/capacity/CapacityChart.vue';
 import { useJira } from 'stores/jira';
 import { useNow } from '../composables/useNow';
@@ -372,19 +382,28 @@ function toggleFlagged(): void {
 // ── data ──────────────────────────────────────────────────────────────────────
 
 const worklogs = ref<JiraWorklog[]>([]);
+// Which workspace+range the worklogs on screen belong to; '' = none yet. The logged figure
+// shows a skeleton until it matches the current range, rather than «0 h».
+const worklogsFor = ref('');
+const worklogsKey = computed(() => (range.value ? `${props.workspaceId}|${range.value.from}|${range.value.to}` : ''));
+const worklogsPending = computed(() => !!worklogsKey.value && worklogsFor.value !== worklogsKey.value);
 let worklogGeneration = 0;
 
 async function loadWorklogs(): Promise<void> {
   const r = range.value;
   if (!r || !jira.integration) return;
   const mine = ++worklogGeneration;
+  const key = worklogsKey.value;
   try {
     const rows = await jira.fetchWorklogs(r);
     if (mine === worklogGeneration) worklogs.value = rows;
   } catch {
     // The chart still shows the plan; logged time is best-effort until the next tick.
   }
+  if (mine === worklogGeneration) worklogsFor.value = key;
 }
+
+const phase = useLoadPhase(() => jira.integration === undefined || (jira.loading && !jira.issues.length));
 
 // Token for the session THIS page opened — see stores/jira.ts. Kept so the unmount below
 // closes only its own session, never one an arriving view (the board, or another workspace's
@@ -393,6 +412,11 @@ let openToken: number | undefined;
 
 async function enter(id: string): Promise<void> {
   flaggedOnly.value = false;
+  // Another workspace's worklogs must not be summed against this one's issues; a late reply
+  // for the old workspace is dropped by the generation bump.
+  worklogGeneration++;
+  worklogs.value = [];
+  worklogsFor.value = '';
   const saved = readCapacityPrefs(props.workspaceId);
   // A remembered PRESET is re-resolved against today — «next 2 weeks» saved last Monday
   // means this coming fortnight, not last week's. Only custom dates are kept verbatim. The
@@ -611,6 +635,12 @@ const issueRows = computed<CapacityIssueRow[]>(() =>
   margin: 0;
   font-size: var(--k-fs-sm);
   color: var(--k-muted);
+}
+
+.cap__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-3);
 }
 
 .cap__note {

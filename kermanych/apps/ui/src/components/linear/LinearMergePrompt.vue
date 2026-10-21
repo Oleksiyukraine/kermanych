@@ -5,6 +5,7 @@
     :lead="t('linear.mergePrompt.lead')"
     :options="options"
     :busy="busy"
+    :loading="loadingOptions"
     skippable
     @update:model-value="onToggle"
     @pick="apply"
@@ -24,6 +25,7 @@ import type { Task } from '@kermanych/cloud';
 import LinearStatusPickDialog from './LinearStatusPickDialog.vue';
 import { api } from '../../lib/api';
 import type { LinearTransitionView } from '../../lib/linear-view';
+import { useAsyncAction } from '../../composables/useAsyncAction';
 import { useBoard } from 'stores/board';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useI18n } from 'vue-i18n';
@@ -35,7 +37,9 @@ const { t } = useI18n();
 // One prompt at a time; later merges queue behind it.
 const queue = ref<Task[]>([]);
 const options = ref<LinearTransitionView[]>([]);
-const busy = ref(false);
+// The current prompt's transitions are still being asked for: the dialog shows skeleton
+// options, not «no transitions».
+const loadingOptions = ref(false);
 
 const current = computed(() => queue.value[0]);
 
@@ -61,15 +65,22 @@ watch(
 // Transitions are fetched when a prompt surfaces — they are per-issue per-moment.
 watch(current, async (task) => {
   options.value = [];
+  loadingOptions.value = false;
   if (!task?.linearKey) return;
   const ws = local.projectWorkspace[task.projectId];
   if (!ws) {
     queue.value = queue.value.slice(1);
     return;
   }
+  loadingOptions.value = true;
   try {
-    options.value = await api.linearTransitions(ws, task.linearKey);
+    const answer = await api.linearTransitions(ws, task.linearKey);
+    if (current.value !== task) return; // the queue moved on meanwhile
+    options.value = answer;
+    loadingOptions.value = false;
   } catch {
+    if (current.value !== task) return;
+    loadingOptions.value = false;
     // No token or no reach: the ask cannot be honoured, and a dialog with zero options
     // would blame the workflow. Drop silently.
     queue.value = queue.value.slice(1);
@@ -77,23 +88,21 @@ watch(current, async (task) => {
 });
 
 function onToggle(open: boolean): void {
-  if (!open) queue.value = queue.value.slice(1); // «Не переносити»
+  if (!open && !busy.value) queue.value = queue.value.slice(1); // «Не переносити»
 }
 
-async function apply(transition: LinearTransitionView): Promise<void> {
+// The prompt is dequeued whatever Linear answers — the failure is a toast, and a retry
+// would need a fresh transitions read anyway.
+const { run: apply, busy } = useAsyncAction(async (transition: LinearTransitionView) => {
   const task = current.value;
   if (!task?.linearKey) return;
   const ws = local.projectWorkspace[task.projectId];
   if (!ws) return;
-  busy.value = true;
   try {
     await api.linearTransition(ws, task.linearKey, transition.id);
     local.notify(t('linear.mergePrompt.moved', { key: task.linearKey, name: transition.to.name }), 'info');
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
   } finally {
-    busy.value = false;
     queue.value = queue.value.slice(1);
   }
-}
+});
 </script>

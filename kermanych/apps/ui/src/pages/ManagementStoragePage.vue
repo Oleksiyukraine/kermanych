@@ -18,13 +18,15 @@
         <div class="vault__request-actions">
           <KBtn
             variant="primary"
-            :disabled="deciding === req.id"
-            @click="decide(req, true)"
+            :loading="deciding.busyFor(decideKey(req.id, true))"
+            :disabled="deciding.busyFor(decideKey(req.id, false))"
+            @click="deciding.run(decideKey(req.id, true), req, true)"
           >{{ t('management.storage.approve') }}</KBtn>
           <KBtn
             variant="ghost"
-            :disabled="deciding === req.id"
-            @click="decide(req, false)"
+            :loading="deciding.busyFor(decideKey(req.id, false))"
+            :disabled="deciding.busyFor(decideKey(req.id, true))"
+            @click="deciding.run(decideKey(req.id, false), req, false)"
           >{{ t('management.storage.decline') }}</KBtn>
         </div>
       </div>
@@ -41,7 +43,10 @@
       {{ t('management.storage.loadError', { error: store.loadError }) }}
     </p>
 
-    <div v-else-if="!rows.length" class="vault__blank">
+    <!-- Nothing for this workspace yet: rows-shaped placeholder, never the empty state. -->
+    <KSkeleton v-else-if="phase === 'skeleton'" variant="rows" :rows="4" />
+
+    <div v-else-if="phase === 'ready' && !rows.length" class="vault__blank">
       <span class="vault__blank-eyebrow mono">{{ t('management.storage.blankEyebrow') }}</span>
       <p class="vault__blank-text">
         {{ all.length ? t('management.storage.blankFiltered') : t('management.storage.blankEmpty') }}
@@ -49,7 +54,7 @@
     </div>
 
     <KTable
-      v-else
+      v-else-if="phase === 'ready'"
       class="vault__table"
       :columns="columns"
       :rows="rows"
@@ -86,22 +91,28 @@
         </div>
       </template>
 
+      <!-- Status and actions both hang on the caller's role, which comes off the roster: until
+           it is in, a manager would be drawn as a developer (and offered «Запитати доступ»). -->
       <template #cell-status="{ row }">
-        <KTag v-if="canManage" plain>{{ t('management.storage.youManage') }}</KTag>
-        <KTag v-else-if="statusOf(row.id) === 'approved'" plain class="vault__ok">
-          {{ t('management.storage.statusApproved') }}
-        </KTag>
-        <KTag v-else-if="statusOf(row.id) === 'pending'" plain class="vault__wait">
-          {{ t('management.storage.statusPending') }}
-        </KTag>
-        <KTag v-else-if="statusOf(row.id) === 'declined'" plain class="vault__no">
-          {{ t('management.storage.statusDeclined') }}
-        </KTag>
-        <KTag v-else plain>{{ t('management.storage.statusNone') }}</KTag>
+        <KSkeleton v-if="rolePhase === 'skeleton'" width="90px" />
+        <template v-else-if="rolePhase === 'ready'">
+          <KTag v-if="canManage" plain>{{ t('management.storage.youManage') }}</KTag>
+          <KTag v-else-if="statusOf(row.id) === 'approved'" plain class="vault__ok">
+            {{ t('management.storage.statusApproved') }}
+          </KTag>
+          <KTag v-else-if="statusOf(row.id) === 'pending'" plain class="vault__wait">
+            {{ t('management.storage.statusPending') }}
+          </KTag>
+          <KTag v-else-if="statusOf(row.id) === 'declined'" plain class="vault__no">
+            {{ t('management.storage.statusDeclined') }}
+          </KTag>
+          <KTag v-else plain>{{ t('management.storage.statusNone') }}</KTag>
+        </template>
       </template>
 
       <template #cell-actions="{ row }">
-        <div class="vault__actions">
+        <KSkeleton v-if="rolePhase === 'skeleton'" width="120px" />
+        <div v-else-if="rolePhase === 'ready'" class="vault__actions">
           <!-- The password's owner — its filer, the workspace owner or a manager: share it with
                a member directly, no request in between. -->
           <KIconButton
@@ -111,12 +122,20 @@
           >👥</KIconButton>
           <!-- Manager/owner: open, edit, delete. -->
           <template v-if="canManage">
-            <KIconButton :title="t('management.storage.view')" @click="openView(row)">👁</KIconButton>
-            <KIconButton :title="t('management.storage.edit')" @click="openEdit(row)">✎</KIconButton>
+            <KIconButton
+              :title="t('management.storage.view')"
+              :loading="viewAction.busyFor(row.id)"
+              @click="viewAction.run(row.id, row)"
+            >👁</KIconButton>
+            <KIconButton
+              :title="t('management.storage.edit')"
+              :loading="editAction.busyFor(row.id)"
+              @click="editAction.run(row.id, row)"
+            >✎</KIconButton>
             <KIconButton
               class="vault__danger"
               :title="t('management.storage.delete')"
-              :disabled="deleting === row.id"
+              :loading="deleting.busyFor(row.id)"
               @click="remove(row)"
             >✕</KIconButton>
           </template>
@@ -124,7 +143,8 @@
           <KIconButton
             v-else-if="statusOf(row.id) === 'approved'"
             :title="t('management.storage.view')"
-            @click="openView(row)"
+            :loading="viewAction.busyFor(row.id)"
+            @click="viewAction.run(row.id, row)"
           >👁</KIconButton>
           <!-- Developer awaiting a decision: the button is spent. -->
           <KBtn v-else-if="statusOf(row.id) === 'pending'" variant="ghost" disabled>
@@ -134,8 +154,8 @@
           <KBtn
             v-else
             variant="secondary"
-            :disabled="requesting === row.id"
-            @click="request(row)"
+            :loading="requesting.busyFor(row.id)"
+            @click="requesting.run(row.id, row)"
           >
             {{ statusOf(row.id) === 'declined'
               ? t('management.storage.requestAgain')
@@ -195,7 +215,7 @@
           <label class="vault__reveal-label mono">{{ t('management.storage.fileLabel') }}</label>
           <div class="vault__reveal-row">
             <span class="vault__file-name">{{ viewSecret.fileName ?? viewSecret.filePath }}</span>
-            <KBtn variant="secondary" @click="download(viewSecret.filePath)">
+            <KBtn variant="secondary" :loading="downloading" @click="runDownload(viewSecret.filePath)">
               {{ t('management.storage.download') }}
             </KBtn>
           </div>
@@ -373,6 +393,9 @@ import KIconButton from 'components/kit/KIconButton.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KAvatar from 'components/kit/KAvatar.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
+import { useLoadPhase } from '../composables/useLoadPhase';
 import { usePasswords } from 'stores/passwords';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -386,19 +409,40 @@ const { notify } = useOrchestrator();
 const { t } = useI18n();
 
 // Refetch on open and whenever the sidebar switches workspace. Members come too: the request
-// panel names people, and canManage reads the caller's own seat off the roster.
+// panel names people, and canManage reads the caller's own seat off the roster. A roster that
+// fails to load is remembered, so the row actions fall back to the developer view (RLS still
+// decides) instead of waiting on a skeleton forever.
+const rosterFailedFor = ref<string | null>(null);
 watch(
   () => props.workspaceId,
   (id) => {
     if (!id) return;
     void store.load(id);
-    if (!projects.members[id]) void projects.loadMembers(id);
+    if (!projects.members[id]) {
+      rosterFailedFor.value = null;
+      projects.loadMembers(id).catch((e: unknown) => {
+        rosterFailedFor.value = id;
+        notify(errorText(e), 'error');
+      });
+    }
   },
   { immediate: true },
 );
 
 const canManage = computed(() => projects.canManageWorkspace(props.workspaceId));
 const all = computed(() => store.byWorkspace[props.workspaceId] ?? []);
+
+// The vault for THIS workspace has not arrived yet. A refetch of a list already on screen
+// keeps it (the slot stays filled); an error is drawn by its own paragraph.
+const phase = useLoadPhase(() => !store.loadError && store.byWorkspace[props.workspaceId] === undefined);
+// The caller's role is known once the roster is in — or at once for the workspace owner,
+// whom myRole reads off the workspace row.
+const rolePhase = useLoadPhase(
+  () =>
+    !canManage.value &&
+    projects.members[props.workspaceId] === undefined &&
+    rosterFailedFor.value !== props.workspaceId,
+);
 
 const query = ref('');
 const rows = computed(() => {
@@ -466,32 +510,29 @@ function overflowNames(passwordId: string): string {
 }
 
 // ── request / decide ────────────────────────────────────────────────────────
-const requesting = ref('');
-const deciding = ref('');
-
-async function request(row: WorkspacePassword): Promise<void> {
-  requesting.value = row.id;
+// One busy flag per row: asking for one password neither spins nor blocks the others.
+const requesting = useKeyedAction(async (_id: string, row: WorkspacePassword) => {
   try {
     await store.requestAccess(props.workspaceId, row.id);
-    notify(t('management.storage.requestSent', { title: row.title }), 'info');
   } catch (e) {
-    notify(t('management.storage.requestFailed', { error: errText(e) }), 'error');
-  } finally {
-    requesting.value = '';
+    throw new Error(t('management.storage.requestFailed', { error: errorText(e) }));
   }
-}
+  notify(t('management.storage.requestSent', { title: row.title }), 'info');
+});
 
-async function decide(req: { id: string; passwordId: string }, approve: boolean): Promise<void> {
-  deciding.value = req.id;
+// Keyed per request AND verdict, so the pressed button spins while its sibling is only
+// disabled.
+function decideKey(requestId: string, approve: boolean): string {
+  return `${requestId}:${approve ? 'approve' : 'decline'}`;
+}
+const deciding = useKeyedAction(async (_key: string, req: { id: string }, approve: boolean) => {
   try {
     await store.decideAccess(props.workspaceId, req.id, approve);
   } catch (e) {
     const key = approve ? 'management.storage.approveFailed' : 'management.storage.declineFailed';
-    notify(t(key, { error: errText(e) }), 'error');
-  } finally {
-    deciding.value = '';
+    throw new Error(t(key, { error: errorText(e) }));
   }
-}
+});
 
 // ── share / remove access ───────────────────────────────────────────────────
 // Mirrors can_share_password: the filer of the password while still on the roster, or anyone
@@ -552,7 +593,7 @@ async function confirmShare(): Promise<void> {
   try {
     await store.share(props.workspaceId, row.id, userIds);
   } catch (e) {
-    shareError.value = t('management.storage.shareFailed', { error: errText(e) });
+    shareError.value = t('management.storage.shareFailed', { error: errorText(e) });
     return;
   } finally {
     shareBusy.value = false;
@@ -572,7 +613,7 @@ async function revoke(h: PasswordHolder): Promise<void> {
     await store.revoke(props.workspaceId, row.id, h.userId);
     notify(t('management.storage.revoked', { title: row.title, who: holderName(h) }), 'info');
   } catch (e) {
-    shareError.value = t('management.storage.revokeFailed', { error: errText(e) });
+    shareError.value = t('management.storage.revokeFailed', { error: errorText(e) });
   } finally {
     revoking.value = '';
   }
@@ -587,11 +628,13 @@ const revealedFields = ref(new Set<number>());
 const copied = ref(false);
 const viewSecret = computed(() => (viewing.value ? store.secretByPassword[viewing.value.id] : undefined));
 
-async function openView(row: WorkspacePassword): Promise<void> {
-  showSecret.value = false;
-  revealedFields.value = new Set();
-  copied.value = false;
-  try {
+// Reveal can be a round trip (the cached secret is instant): the row's 👁 / ✎ spins until the
+// dialog opens or the refusal arrives.
+const viewAction = useKeyedAction(
+  async (_id: string, row: WorkspacePassword) => {
+    showSecret.value = false;
+    revealedFields.value = new Set();
+    copied.value = false;
     const secret = await store.reveal(row.id);
     if (!secret) {
       notify(t('management.storage.noAccess'), 'error');
@@ -599,10 +642,9 @@ async function openView(row: WorkspacePassword): Promise<void> {
     }
     viewing.value = row;
     viewOpen.value = true;
-  } catch (e) {
-    notify(t('management.storage.revealFailed', { error: errText(e) }), 'error');
-  }
-}
+  },
+  { onError: (e) => notify(t('management.storage.revealFailed', { error: errorText(e) }), 'error') },
+);
 function closeView(open: boolean): void {
   if (open) return;
   viewOpen.value = false;
@@ -621,11 +663,14 @@ async function copy(secret: string): Promise<void> {
   await navigator.clipboard.writeText(secret);
   copied.value = true;
 }
-async function download(filePath: string): Promise<void> {
-  const url = await store.fileUrl(filePath);
-  if (url) window.open(url, '_blank', 'noopener');
-  else notify(t('management.storage.downloadFailed'), 'error');
-}
+const { run: runDownload, busy: downloading } = useAsyncAction(
+  async (filePath: string) => {
+    const url = await store.fileUrl(filePath);
+    if (url) window.open(url, '_blank', 'noopener');
+    else notify(t('management.storage.downloadFailed'), 'error');
+  },
+  { onError: () => notify(t('management.storage.downloadFailed'), 'error') },
+);
 
 // ── create / edit ─────────────────────────────────────────────────────────────
 const editorOpen = ref(false);
@@ -714,11 +759,11 @@ function openCreate(): void {
   editorOpen.value = true;
 }
 
-async function openEdit(row: WorkspacePassword): Promise<void> {
-  resetDraft();
-  // A manager can always read the secret; load it so the form is prefilled with real values
-  // rather than a masked placeholder that a blank save would then wipe.
-  try {
+const editAction = useKeyedAction(
+  async (_id: string, row: WorkspacePassword) => {
+    resetDraft();
+    // A manager can always read the secret; load it so the form is prefilled with real values
+    // rather than a masked placeholder that a blank save would then wipe.
     const secret = await store.reveal(row.id);
     draft.id = row.id;
     draft.title = row.title;
@@ -735,10 +780,9 @@ async function openEdit(row: WorkspacePassword): Promise<void> {
     existingFile.path = secret?.filePath;
     existingFile.name = secret?.fileName;
     editorOpen.value = true;
-  } catch (e) {
-    notify(t('management.storage.revealFailed', { error: errText(e) }), 'error');
-  }
-}
+  },
+  { onError: (e) => notify(t('management.storage.revealFailed', { error: errorText(e) }), 'error') },
+);
 
 function closeEditor(open: boolean): void {
   if (open || saving.value) return;
@@ -787,7 +831,7 @@ async function save(): Promise<void> {
     editorOpen.value = false;
     resetDraft();
   } catch (e) {
-    editorError.value = errText(e);
+    editorError.value = errorText(e);
   } finally {
     saving.value = false;
   }
@@ -814,22 +858,19 @@ async function saveEdit(
 }
 
 // ── delete ──────────────────────────────────────────────────────────────────
-const deleting = ref('');
-async function remove(row: WorkspacePassword): Promise<void> {
-  if (!window.confirm(t('management.storage.deleteConfirm', { title: row.title }))) return;
-  deleting.value = row.id;
+// The confirm stays outside the action: the ✕ spins for the delete, not while the operator
+// reads the question.
+const deleting = useKeyedAction(async (_id: string, row: WorkspacePassword) => {
   try {
     await store.remove(props.workspaceId, row.id);
-    if (viewing.value?.id === row.id) closeView(false);
   } catch (e) {
-    notify(t('management.storage.deleteFailed', { title: row.title, error: errText(e) }), 'error');
-  } finally {
-    deleting.value = '';
+    throw new Error(t('management.storage.deleteFailed', { title: row.title, error: errorText(e) }));
   }
-}
-
-function errText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  if (viewing.value?.id === row.id) closeView(false);
+});
+function remove(row: WorkspacePassword): void {
+  if (!window.confirm(t('management.storage.deleteConfirm', { title: row.title }))) return;
+  void deleting.run(row.id, row);
 }
 </script>
 

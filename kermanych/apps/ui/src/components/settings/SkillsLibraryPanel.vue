@@ -10,14 +10,25 @@
 
     <p v-if="error" class="sk__error mono">{{ error }}</p>
 
-    <ul v-if="rows.length" class="sk__list">
-      <li v-for="row in rows" :key="row.name" class="sk__row" :class="{ 'sk__row--off': row.off }">
+    <!-- Skeleton cards until the first read for this owner lands, so the wait is not a blank
+         pane — and never the empty-state line, which is only true once the read succeeded. -->
+    <KSkeleton v-if="phase === 'skeleton'" variant="card" :rows="3" />
+    <ul v-else-if="phase === 'ready' && rows.length" class="sk__list">
+      <li
+        v-for="row in rows"
+        :key="row.name"
+        class="sk__row"
+        :class="{ 'sk__row--off': row.off, 'sk__row--pending': rowAction.busyFor(row.name) }"
+        :aria-busy="rowAction.busyFor(row.name) || undefined"
+      >
         <div class="sk__head">
           <span class="sk__name mono">{{ row.name }}</span>
           <span class="sk__badge" :class="`sk__badge--${badgeKind(row)}`">{{ badgeLabel(row) }}</span>
         </div>
         <p class="sk__desc">{{ row.description }}</p>
         <p v-if="row.shadowedByRepo" class="sk__shadow mono">{{ row.shadowedByRepo }}</p>
+        <!-- Keyed per row and held through the reload: a second press on «Видалити» used to send
+             a second delete, which then failed because the first had already removed the row. -->
         <div class="sk__actions">
           <!-- A tombstone offers exactly one action: switching the default back on. Editing
                the body of a skill the session does not get would be theatre. -->
@@ -25,19 +36,40 @@
             v-if="row.off"
             type="button"
             class="sk__btn"
-            :disabled="!canWrite"
-            @click="dropRow(row.name)"
-          >{{ t('settings.skillsLibrary.enable') }}</button>
+            :disabled="!canWrite || rowAction.busyFor(row.name)"
+            :aria-busy="rowAction.busyFor(row.name) || undefined"
+            @click="rowAction.run(row.name, 'drop')"
+          >
+            <KSpinner v-if="rowAction.busyFor(row.name)" :size="10" />
+            {{ t('settings.skillsLibrary.enable') }}
+          </button>
           <template v-else>
-            <button type="button" class="sk__btn" :disabled="!canWrite" @click="edit(row)">{{ t('settings.skillsLibrary.edit') }}</button>
+            <button
+              type="button"
+              class="sk__btn"
+              :disabled="!canWrite || rowAction.busyFor(row.name)"
+              @click="edit(row)"
+            >{{ t('settings.skillsLibrary.edit') }}</button>
             <button
               v-if="row.source === 'project'"
               type="button"
               class="sk__btn"
-              :disabled="!canWrite"
-              @click="dropRow(row.name)"
-            >{{ t('settings.skillsLibrary.delete') }}</button>
-            <button v-else type="button" class="sk__btn" :disabled="!canWrite" @click="disable(row.name)">
+              :disabled="!canWrite || rowAction.busyFor(row.name)"
+              :aria-busy="rowAction.busyFor(row.name) || undefined"
+              @click="rowAction.run(row.name, 'drop')"
+            >
+              <KSpinner v-if="rowAction.busyFor(row.name)" :size="10" />
+              {{ t('settings.skillsLibrary.delete') }}
+            </button>
+            <button
+              v-else
+              type="button"
+              class="sk__btn"
+              :disabled="!canWrite || rowAction.busyFor(row.name)"
+              :aria-busy="rowAction.busyFor(row.name) || undefined"
+              @click="rowAction.run(row.name, 'disable')"
+            >
+              <KSpinner v-if="rowAction.busyFor(row.name)" :size="10" />
               {{ t('settings.skillsLibrary.disable') }}
             </button>
           </template>
@@ -54,13 +86,18 @@
     </ul>
     <!-- Only when the read actually succeeded: after a failure the error line stands alone,
          because «бібліотека порожня» under a failed read is a lie about the project. -->
-    <p v-else-if="!error && !loading" class="sk__empty mono">{{ t('settings.skillsLibrary.empty') }}</p>
+    <p v-else-if="phase === 'ready' && !error" class="sk__empty mono">{{ t('settings.skillsLibrary.empty') }}</p>
 
     <button type="button" class="sk__btn sk__btn--primary" :disabled="!canWrite" @click="create">
       {{ t('settings.skillsLibrary.add') }}
     </button>
 
-    <KModal v-model="editorOpen" :title="editing ? t('settings.skillsLibrary.editTitle', { name: draftName }) : t('settings.skillsLibrary.newTitle')">
+    <!-- Persistent while the save runs: closing mid-write would hide its refusal. -->
+    <KModal
+      v-model="editorOpen"
+      :title="editing ? t('settings.skillsLibrary.editTitle', { name: draftName }) : t('settings.skillsLibrary.newTitle')"
+      :persistent="saving"
+    >
       <!-- The name is a directory name under ~/.kermanych/skills/<project>/, so it is fixed
            once the row exists: renaming would orphan the materialised directory. -->
       <KField
@@ -74,10 +111,17 @@
         :label="t('settings.skillsLibrary.descLabel')"
         :placeholder="t('settings.skillsLibrary.descPlaceholder')"
       />
-      <KField v-model="draftBody" :label="t('settings.skillsLibrary.bodyLabel')" multiline :disabled="bodyPending" />
+      <!-- The stored body is read when an existing skill opens; until it lands the field is a
+           skeleton under its label rather than an empty box that looks like the skill's text.
+           A failed read leaves the disabled field and the reason on the error line below. -->
+      <div v-if="bodyPhase !== 'ready'" class="sk__body-wait">
+        <span class="sk__body-label">{{ t('settings.skillsLibrary.bodyLabel') }}</span>
+        <KSkeleton v-if="bodyPhase === 'skeleton'" variant="lines" :rows="5" />
+      </div>
+      <KField v-else v-model="draftBody" :label="t('settings.skillsLibrary.bodyLabel')" multiline :disabled="bodyPending" />
       <p v-if="formError" class="sk__error mono">{{ formError }}</p>
       <template #controls>
-        <button type="button" class="sk__btn" @click="editorOpen = false">{{ t('settings.modal.cancel') }}</button>
+        <button type="button" class="sk__btn" :disabled="saving" @click="editorOpen = false">{{ t('settings.modal.cancel') }}</button>
         <!-- Saving while the stored body has not been read would write the empty draft over
              it, so the editor is not savable until that read lands — and stays unsavable if
              it failed, with the reason on the form's error line. `canWrite` is checked here
@@ -87,8 +131,12 @@
           type="button"
           class="sk__btn sk__btn--primary"
           :disabled="saving || bodyPending || !canWrite"
+          :aria-busy="saving || undefined"
           @click="save"
-        >{{ t('settings.skillsLibrary.save') }}</button>
+        >
+          <KSpinner v-if="saving" :size="10" />
+          {{ t('settings.skillsLibrary.save') }}
+        </button>
       </template>
     </KModal>
   </section>
@@ -109,6 +157,10 @@ import { useProjects } from 'stores/projects';
 import { ownerLibraryView } from '../../lib/ai-team';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
+import { errorText, useAsyncAction, useKeyedAction } from '../../composables/useAsyncAction';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import AiProvenance from './AiProvenance.vue';
 
 const { t } = useI18n();
@@ -128,10 +180,11 @@ const rows = ref<Row[]>([]);
 // author and last editor — the resolved SkillView carries no audit, the AiSkill row does.
 const storedRows = ref<AiSkill[]>([]);
 const error = ref('');
-const loading = ref(true);
+// The owner whose read last finished, either way. Anything else means «not loaded for the owner
+// on screen», which is what the skeleton stands for; a refresh of the same owner keeps the list.
+const loadedFor = ref('');
 const editorOpen = ref(false);
 const editing = ref(false);
-const saving = ref(false);
 const formError = ref('');
 const draftName = ref('');
 const draftDescription = ref('');
@@ -149,6 +202,13 @@ const bodyPending = ref(false);
 // started for one skill (or one project) would land in whatever draft the operator opened
 // next, making it savable with another skill's body under a different name.
 let draftToken = 0;
+
+function ownerKeyNow(): string {
+  return props.owner.scope + ':' + props.owner.id;
+}
+const phase = useLoadPhase(() => loadedFor.value !== ownerKeyNow());
+// A failed body read sets `formError` and leaves `bodyPending` up: that is a reason, not a wait.
+const bodyPhase = useLoadPhase(() => bodyPending.value && !formError.value);
 
 const canWrite = computed(() =>
   props.owner.scope === 'user'
@@ -198,13 +258,17 @@ function tombstones(stored: readonly AiSkill[]): Row[] {
   return off;
 }
 
+// Bumped per read: row actions each end in a reload, and those can overlap within one owner —
+// only the newest read may paint, or an older reply would put back a dropped or toggled row.
+let loadRun = 0;
 async function load(): Promise<void> {
   // Pinned for the whole read: the prop can change mid-flight (see the watcher below), which
   // also means two loads can overlap. A load that finishes after the project moved on drops
   // its result — the list must never show a library the header does not name.
   const ownerKey = props.owner.scope + ':' + props.owner.id;
+  const run = ++loadRun;
+  const stale = (): boolean => run !== loadRun || ownerKey !== props.owner.scope + ':' + props.owner.id;
   error.value = '';
-  loading.value = true;
   try {
     // Both reads, together: the resolved view is what the session gets, the cloud rows are
     // the only place a switched-off default is still recorded. The payload's `repo` half is
@@ -214,7 +278,7 @@ async function load(): Promise<void> {
       libraryView(props.owner),
       listAiSkills(auth.client, props.owner),
     ]);
-    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
+    if (stale()) return;
     // Workspace is the base: it shows the system defaults (with a «Вимкнути») plus its own
     // skills. Project and user show ONLY their OWN skills in the editable list — the defaults
     // and the workspace's skills are inherited, and live read-only in the «Успадковано» block
@@ -225,13 +289,13 @@ async function load(): Promise<void> {
         : library.view.filter((v) => v.source !== 'default');
     storedRows.value = stored;
   } catch (e) {
-    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
+    if (stale()) return;
     // The endpoint refuses rather than degrade to the defaults, so a failed read must not
     // leave a list on screen either: what is shown would not be this project's library.
     rows.value = [];
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    if (ownerKey === props.owner.scope + ':' + props.owner.id) loading.value = false;
+    if (!stale()) loadedFor.value = ownerKey;
   }
 }
 
@@ -254,8 +318,8 @@ watch(
     resetDraft();
     // The previous project's rows must not stay on screen under the new project's name for the
     // length of the reload: every row action pins the LIVE prop, so a click in that window
-    // would write the old project's data into the new one. The empty-state line is gated on
-    // `!error && !loading`, so nothing misleading renders while the read is in flight.
+    // would write the old project's data into the new one. `loadedFor` still names the old
+    // owner, so the skeleton — never the empty-state line — renders while the read is in flight.
     rows.value = [];
     void load();
   },
@@ -311,10 +375,19 @@ async function edit(row: Row): Promise<void> {
   }
 }
 
+// The modal's one write path, guarded and spun by `useAsyncAction`; the modal is persistent
+// while it runs, so «Скасувати», Esc and the backdrop cannot drop a draft mid-write. The reload
+// runs after the modal shut, so a skill opened meanwhile does not see a spinning «Зберегти».
+const { run: runSave, busy: saving } = useAsyncAction(saveSkill);
 async function save(): Promise<void> {
+  if (await runSave()) await load();
+}
+
+// True when the editor closed on a stored skill.
+async function saveSkill(): Promise<boolean | undefined> {
   // Pinned with the draft token: the write must target the project whose library the operator
   // was looking at when the button was pressed, and a message from this attempt must not be
-  // painted onto a draft that has since been replaced.
+  // painted onto a draft that has since been replaced (a project switch shuts the editor).
   const owner = props.owner;
   const token = draftToken;
   formError.value = '';
@@ -326,7 +399,6 @@ async function save(): Promise<void> {
     formError.value = t('settings.skillsLibrary.errNoDesc');
     return;
   }
-  saving.value = true;
   try {
     await upsertAiSkill(auth.client, {
       owner,
@@ -335,18 +407,24 @@ async function save(): Promise<void> {
       body: draftBody.value,
       enabled: draftEnabled.value,
     });
-    // «Скасувати» is clickable while the upsert is in flight, so this draft may already have
-    // been replaced by a fresh one. Closing then would fire the `editorOpen` watcher and wipe
-    // that new draft — so only the draft that started this save may close the editor.
-    if (token === draftToken) editorOpen.value = false;
-    await load();
   } catch (e) {
-    if (token !== draftToken) return;
-    formError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    saving.value = false;
+    if (token === draftToken) formError.value = errorText(e);
+    return;
   }
+  // Only the draft that started this save may close the editor: closing fires the `editorOpen`
+  // watcher, which would wipe a draft that replaced it.
+  if (token !== draftToken) return;
+  editorOpen.value = false;
+  return true;
 }
+
+// The row actions, keyed by skill name and awaited through the reload: the pressed button
+// spins, the row dims and takes no second press until the re-read shows the result. Before
+// this a second «Видалити» sent a second delete, which failed on the already-gone row.
+const rowAction = useKeyedAction(async (name: string, kind: 'drop' | 'disable') => {
+  if (kind === 'drop') await dropRow(name);
+  else await disable(name);
+});
 
 // Both list actions that delete the project's row for a name. What differs is only what the
 // row MEANS: «Видалити» drops a skill the project added, while «Увімкнути» drops the
@@ -370,7 +448,7 @@ async function dropRow(name: string): Promise<void> {
     error.value = e instanceof Error ? e.message : String(e);
     return;
   }
-  await load();
+  if (ownerKey === ownerKeyNow()) await load();
 }
 
 // Turning a Kermanych default off is a row with enabled:false — the resolver drops the name.
@@ -392,7 +470,7 @@ async function disable(name: string): Promise<void> {
     error.value = e instanceof Error ? e.message : String(e);
     return;
   }
-  await load();
+  if (ownerKey === ownerKeyNow()) await load();
 }
 </script>
 
@@ -405,6 +483,8 @@ async function disable(name: string): Promise<void> {
    project emptied rather than a skill the session has. Its «Увімкнути» stays full strength. */
 .sk__row--off { border-style: dashed; background: transparent; }
 .sk__row--off .sk__name, .sk__row--off .sk__desc { color: var(--k-muted); }
+/* A row whose delete / switch is in flight: dimmed until the reload shows the result. */
+.sk__row--pending { opacity: 0.55; }
 .sk__head { display: flex; align-items: center; gap: 8px; }
 .sk__name { font-size: 12.5px; }
 .sk__badge { font-size: 10.5px; padding: 1px 6px; border: 1px solid var(--k-line-strong); border-radius: var(--k-r); color: var(--k-muted); }
@@ -415,6 +495,12 @@ async function disable(name: string): Promise<void> {
 .sk__actions { display: flex; gap: 6px; margin-top: 8px; }
 .sk__btn { font: inherit; font-size: 12px; padding: 3px 10px; background: transparent; color: var(--k-text); border: 1px solid var(--k-line-strong); border-radius: var(--k-r); cursor: pointer; }
 .sk__btn:disabled { opacity: 0.45; cursor: default; }
+/* Room for the inline spinner an in-flight write puts in front of the label. */
+.sk__btn { display: inline-flex; align-items: center; gap: 6px; }
+/* The body field's place while its stored text loads: KField's label over a skeleton, laid out
+   like the field so the modal does not jump when the textarea arrives. */
+.sk__body-wait { display: flex; flex-direction: column; gap: 6px; min-height: 120px; font-family: var(--k-font-ui); }
+.sk__body-label { font-size: 13px; color: var(--k-text); }
 .sk__btn--primary { border-color: var(--k-accent); color: var(--k-accent); }
 .sk__error { font-size: 11.5px; color: var(--k-accent); }
 .sk__empty { font-size: 12px; color: var(--k-muted); margin-bottom: 12px; }

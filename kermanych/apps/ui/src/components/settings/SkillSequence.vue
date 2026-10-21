@@ -3,7 +3,7 @@
     <!-- Numbered, and the number is not decoration: the launcher pastes the assigned bodies in
          exactly this order (SkillsService.assignedFor sorts by position), so the list IS the
          delivery order and the note under it says so. -->
-    <ol v-if="items.length" class="ss__list">
+    <ol v-if="items.length" class="ss__list" :aria-busy="loading || undefined">
       <li
         v-for="(item, i) in items"
         :key="item.name"
@@ -26,7 +26,7 @@
           <button
             type="button"
             class="ss__btn ss__btn--move"
-            :disabled="disabled || i === 0"
+            :disabled="locked || i === 0"
             :aria-label="t('settings.skillSeq.up')"
             :title="t('settings.skillSeq.up')"
             @click="move(i, -1)"
@@ -34,12 +34,12 @@
           <button
             type="button"
             class="ss__btn ss__btn--move"
-            :disabled="disabled || i === items.length - 1"
+            :disabled="locked || i === items.length - 1"
             :aria-label="t('settings.skillSeq.down')"
             :title="t('settings.skillSeq.down')"
             @click="move(i, 1)"
           >↓</button>
-          <button type="button" class="ss__btn" :disabled="disabled" @click="remove(i)">
+          <button type="button" class="ss__btn" :disabled="locked" @click="remove(i)">
             {{ t('settings.skillSeq.remove') }}
           </button>
         </span>
@@ -68,15 +68,18 @@
         :model-value="picked"
         :options="left"
         :placeholder="pickPlaceholder"
-        :disabled="disabled || !left.length"
+        :disabled="locked || !left.length"
         @update:model-value="picked = $event"
       />
       <button
         type="button"
         class="ss__btn ss__btn--primary"
-        :disabled="disabled || !picked"
+        :disabled="locked || !picked"
         @click="add"
       >{{ t('settings.skillSeq.add') }}</button>
+      <!-- The host is writing the order the list already shows (it is optimistic): one spinner
+           for the whole sequence, since every gesture here replaces the whole list. -->
+      <KSpinner v-if="loading" :size="10" class="ss__spinner" />
     </div>
   </div>
 </template>
@@ -128,6 +131,7 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SkillView } from '@kermanych/core';
 import KSelect from 'components/kit/KSelect.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
 import { assignmentBadge, ASSIGNED_BYTES_WARN, type AssignedSkill } from '../../lib/settings';
 
 const props = defineProps<{
@@ -141,6 +145,9 @@ const props = defineProps<{
   // the merge needs it to tell a dangling name from a repository one.
   repo: Record<string, string>;
   disabled?: boolean;
+  // The host is saving the list on screen. Locks every control, so a second gesture cannot
+  // race the write of the first, and shows the spinner.
+  loading?: boolean;
 }>();
 
 const emit = defineEmits<{ 'update:names': [names: string[]] }>();
@@ -148,6 +155,7 @@ const emit = defineEmits<{ 'update:names': [names: string[]] }>();
 const { t } = useI18n();
 
 const picked = ref('');
+const locked = computed(() => !!props.disabled || !!props.loading);
 
 // Each name as the list shows it: where its text comes from, or that it comes from nowhere.
 //
@@ -288,6 +296,7 @@ function move(i: number, delta: number): void {
 .ss__btn { font: inherit; font-size: 12px; padding: 3px 10px; background: transparent; color: var(--k-text); border: 1px solid var(--k-line-strong); border-radius: var(--k-r); cursor: pointer; }
 .ss__btn:disabled { opacity: 0.45; cursor: default; }
 .ss__btn--primary { border-color: var(--k-accent); color: var(--k-accent); }
+.ss__spinner { align-self: center; color: var(--k-muted); }
 /* Square, so the two arrows read as one control pair rather than two short words. */
 .ss__btn--move { padding: 3px 7px; line-height: 1.2; }
 </style>

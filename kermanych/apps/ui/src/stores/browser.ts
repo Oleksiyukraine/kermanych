@@ -116,12 +116,18 @@ export const useSessionBrowser = defineStore('sessionBrowser', () => {
   // as a panel in place of the page, so it is not toasted twice. Chromium's net errors carry
   // their `ERR_…` name (Electron rejects loadURL with «ERR_CONNECTION_REFUSED (-102) loading
   // …»); anything else — a refused scheme, a session without a project — is not on the page
-  // and still gets a toast.
-  function navigate(sessionId: string, projectId: string, url: string): void {
-    bridge?.navigate(sessionId, projectId, url).catch((e: unknown) => {
-      const message = e instanceof Error ? e.message : String(e);
-      if (!/\bERR_[A-Z_]+\b/.test(message)) orchestrator.notify(message, 'error');
-    });
+  // and still gets a toast. Resolves (never rejects) once main has answered the load — true
+  // when the page loaded — so a pane's «Відкрити знову» / «Спробувати ще» can spin until then.
+  function navigate(sessionId: string, projectId: string, url: string): Promise<boolean> {
+    if (!bridge) return Promise.resolve(false);
+    return bridge.navigate(sessionId, projectId, url).then(
+      () => true,
+      (e: unknown) => {
+        const message = e instanceof Error ? e.message : String(e);
+        if (!/\bERR_[A-Z_]+\b/.test(message)) orchestrator.notify(message, 'error');
+        return false;
+      },
+    );
   }
 
   function setSplit(on: boolean): void {

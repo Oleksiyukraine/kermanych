@@ -73,11 +73,22 @@ export const usePasswords = defineStore('passwords', () => {
     accessByWorkspace.value = { ...accessByWorkspace.value, [workspaceId]: rows };
   }
 
+  // Only the newest load owns `loading`/`loadError`: a slow reply for the workspace the
+  // operator just left still lands in its own cache slot, but must neither clear the spinner
+  // nor paint its error over the workspace now on screen.
+  let loadSeq = 0;
+
   async function load(workspaceId: string): Promise<void> {
+    const seq = ++loadSeq;
     await auth.ready;
+    if (seq !== loadSeq || !workspaceId) return;
     // A preview signs in against a cloudless api (lib/preview.ts): there is no Supabase
-    // project behind it, so there is no vault to read.
-    if (IS_PREVIEW || !auth.user || !workspaceId) return;
+    // project behind it, so there is no vault to read — an empty one, so the screen reaches
+    // its empty state instead of waiting on a load that never comes.
+    if (IS_PREVIEW || !auth.user) {
+      if (!byWorkspace.value[workspaceId]) byWorkspace.value = { ...byWorkspace.value, [workspaceId]: [] };
+      return;
+    }
     loading.value = true;
     loadError.value = null;
     try {
@@ -90,9 +101,9 @@ export const usePasswords = defineStore('passwords', () => {
       accessByWorkspace.value = { ...accessByWorkspace.value, [workspaceId]: access };
       holdersByWorkspace.value = { ...holdersByWorkspace.value, [workspaceId]: holders };
     } catch (e) {
-      loadError.value = e instanceof Error ? e.message : String(e);
+      if (seq === loadSeq) loadError.value = e instanceof Error ? e.message : String(e);
     } finally {
-      loading.value = false;
+      if (seq === loadSeq) loading.value = false;
     }
   }
 

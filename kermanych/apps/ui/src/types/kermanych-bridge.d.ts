@@ -106,10 +106,19 @@ declare global {
     // A download the page started finished saving.
     onDownload: (cb: (sessionId: string, file: { name: string; path: string }) => void) => () => void;
   }
+  // Start-up progress main reports to the splash: the local api is starting, then it listens.
+  type KermanychBootStatus = 'backend' | 'ready';
   interface Window {
     kermanych?: {
       apiBase: string;
       focus: () => void;
+      // Electron only (optional like the rest: a stale preload must not break the web path).
+      // Resolves once main's local api listens; rejects when it failed to start.
+      backendReady?: () => Promise<void>;
+      // Every boot status, the latest replayed at once; returns the unsubscribe.
+      onBootStatus?: (cb: (status: KermanychBootStatus) => void) => () => void;
+      // The applied theme's canvas colour, kept by main as the next launch's window background.
+      reportTheme?: (background: string) => void;
       // Electron only. The renderer cannot receive a browser redirect, so main
       // runs a one-shot loopback listener and resolves with the PKCE code.
       // Optional so a stale packaged preload degrades to the browser flow
