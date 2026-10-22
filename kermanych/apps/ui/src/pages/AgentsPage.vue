@@ -180,7 +180,7 @@
             <KBtn
               v-if="selectedSession.slotWait"
               variant="secondary"
-              :loading="actionBusy"
+              :loading="runNowAction.busy.value"
               @click="onRunNow(selectedSession)"
             >{{ t('agents.slotWait.runNow') }}</KBtn>
             <!-- Primary session actions — one column that outlives the tab choice, so preview,
@@ -2999,16 +2999,10 @@ async function onResumeNative(s: Session): Promise<void> {
   if (!sessionBlocked(s)) await resumeNativeAction.run(s);
 }
 
+// «Запустити зараз»: one session past the slot limit.
+const runNowAction = useAsyncAction((s: Session) => store.runSessionNow(s.id));
 async function onRunNow(s: Session): Promise<void> {
-  if (actionBusy.value) return;
-  actionBusy.value = true;
-  try {
-    await store.runSessionNow(s.id);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    actionBusy.value = false;
-  }
+  await runNowAction.run(s);
 }
 
 // Physical delete (archive teardown + removal): stops the omp process, removes the
