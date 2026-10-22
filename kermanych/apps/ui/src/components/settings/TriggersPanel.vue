@@ -270,7 +270,7 @@
 // editor and leaves every trigger on screen exactly as true as it was.
 import { computed, effectScope, onScopeDispose, reactive, ref, watch, type EffectScope } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AGENTS, SKILL_NAME_RE, type SkillView } from '@kermanych/core';
+import { AGENTS, SKILL_NAME_RE, type ProjectSkillsPayload, type RepoSkill, type SkillView } from '@kermanych/core';
 import {
   deleteAiTrigger,
   listAiSkills,
@@ -325,9 +325,9 @@ const REPEAT_OPTIONS = computed(() => [
 const triggers = ref<AiTrigger[]>([]);
 const view = ref<SkillView[]>([]);
 // The names the bound checkout's own skill directories define, keyed to the file that owns
-// each. Never offered in the sequence editor — they are not this project's library — but a name
-// in here does resolve at launch, so the editor needs it to tell a dangling name from a repo one.
-const repo = ref<Record<string, string>>({});
+// each. The sequence editor offers the ones the library does not hold, and needs all of them
+// to tell a dangling name from a repo one.
+const repo = ref<Record<string, RepoSkill>>({});
 // What each library name costs a trigger that carries it, keyed by name. Read together with the
 // library view (see `load`): both come from the same pair of reads, and neither is any use to the
 // sequence editor without the other.
@@ -360,7 +360,7 @@ const canWrite = computed(() =>
 // The resolved library view for this owner. Only a project has a checkout, so only it can be
 // shadowed by repo files and only it has the api endpoint that sees them; every other scope
 // resolves the view from its own cloud rows, with no repo shadow.
-async function libraryView(owner: AiOwner): Promise<{ view: SkillView[]; repo: Record<string, string> }> {
+async function libraryView(owner: AiOwner): Promise<ProjectSkillsPayload> {
   if (owner.scope === 'project') return await api.projectSkills(owner.id);
   return { view: ownerLibraryView(await listAiSkills(auth.client, owner)), repo: {} };
 }

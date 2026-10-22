@@ -87,10 +87,16 @@ export {
   SKILL_NAME_RE,
   assignedBlock,
   isSkillName,
+  normaliseSkillName,
   renderSkillFile,
   skillsUsed,
   type ProjectSkillsPayload,
+  type RepoSkill,
   type SkillDef,
+  type SkillImportCandidate,
+  type SkillImportRead,
+  type SkillImportRoot,
+  type SkillImportScan,
   type SkillView,
 } from "./skills";
 export { isDocPath, isDocImagePath, isMarkupPath, docsRead } from "./docs";

@@ -25,7 +25,8 @@ export type Project = { id: string; name: string; localRepoPath: string; workspa
 export type EnvEntry = { key: string; value: string };
 export type EnvFileView = { entries: EnvEntry[]; ignored: boolean };
 
-export type DirEntry = { name: string; isRepo: boolean };
+// `hasSkill` is set only by a skills-mode listing (`?hidden=1`): the folder holds a SKILL.md.
+export type DirEntry = { name: string; isRepo: boolean; hasSkill?: boolean };
 export type DirListing = { path: string; parent: string | null; entries: DirEntry[] };
 
 // A file-manager entry — one level of a session's worktree. `type` is all the tree needs

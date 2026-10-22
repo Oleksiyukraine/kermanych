@@ -106,7 +106,7 @@
           <AiInherited v-if="scope !== 'workspace'" kind="triggers" :scope="scope" :workspace="inheritedWorkspace" />
         </div>
         <div v-else-if="section.key === 'skills'" class="ait__form ait__form--wide">
-          <SkillsLibraryPanel :owner="owner" :owner-name="ownerName" />
+          <SkillsLibraryPanel :owner="owner" :owner-name="ownerName" :workspace="inheritedWorkspace" />
           <AiInherited v-if="scope !== 'workspace'" kind="skills" :scope="scope" :workspace="inheritedWorkspace" />
         </div>
       </div>

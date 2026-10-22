@@ -155,6 +155,8 @@ import {
   effectiveInstruction,
   instructionErrors,
   type AgentDef,
+  type ProjectSkillsPayload,
+  type RepoSkill,
   type SkillView,
 } from '@kermanych/core';
 import {
@@ -193,7 +195,7 @@ const view = ref<SkillView[]>([]);
 const bodyBytes = ref<Record<string, number>>({});
 // The names the bound checkout's own skill directories define, keyed to the file that owns each.
 // Handed to the sequence editor so it can tell a dangling name from a repository one.
-const repo = ref<Record<string, string>>({});
+const repo = ref<Record<string, RepoSkill>>({});
 const overrides = ref<AiAgent[]>([]);
 // Each agent's sequence, by agent id, in delivery order. Kept as plain name lists because that
 // is what `setAgentSkills` takes and what the editor emits — positions are the array's indices
@@ -301,7 +303,7 @@ function seed(): void {
 // The resolved library view for this owner. Only a project has a checkout, so only it can be
 // shadowed by repo files and only it has the api endpoint that sees them; every other scope
 // resolves the view from its own cloud rows, with no repo shadow.
-async function libraryView(owner: AiOwner): Promise<{ view: SkillView[]; repo: Record<string, string> }> {
+async function libraryView(owner: AiOwner): Promise<ProjectSkillsPayload> {
   if (owner.scope === 'project') return await api.projectSkills(owner.id);
   return { view: ownerLibraryView(await listAiSkills(auth.client, owner)), repo: {} };
 }

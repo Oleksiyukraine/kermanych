@@ -15,9 +15,14 @@ export type SkillView = {
 };
 
 /**
+ * One skill the bound checkout's own skill directories define: the absolute path of its
+ * SKILL.md and its frontmatter description ('' when there is none or it does not parse).
+ */
+export type RepoSkill = { path: string; description: string };
+
+/**
  * What `GET /projects/:id/skills` answers: the resolved library, and the names the bound
- * checkout's own skill directories define, keyed by name to the absolute path of the file
- * that owns them.
+ * checkout's own skill directories define, keyed by name to the file that owns them.
  *
  * The two lists are NOT interchangeable and neither subsumes the other. `view` is the
  * LIBRARY — Kermanych's defaults plus the project's rows, with `shadowedByRepo` set on the
@@ -28,8 +33,44 @@ export type SkillView = {
  */
 export type ProjectSkillsPayload = {
   view: SkillView[];
-  repo: Record<string, string>;
+  repo: Record<string, RepoSkill>;
 };
+
+/**
+ * A skill found on this machine's disk that the «Навички» pane can import (copy) into a
+ * library row. `name` is what the file calls itself (frontmatter `name`, else the folder
+ * name); `suggestedName` is that name made legal under SKILL_NAME_RE. `extraFiles` are the
+ * skill folder's other files, relative and capped — they are NOT copied, and the UI says so;
+ * `extraCount` is their full number.
+ */
+export type SkillImportCandidate = {
+  name: string;
+  suggestedName: string;
+  description: string;
+  // The skill's folder (the one holding SKILL.md), absolute.
+  dir: string;
+  // SKILL.md's size in bytes.
+  bytes: number;
+  extraFiles: string[];
+  extraCount: number;
+  // The frontmatter is there but is not valid YAML: the description is then empty.
+  frontmatterError?: true;
+};
+
+// The same skill with its body, read when the operator picks it.
+export type SkillImportRead = SkillImportCandidate & { body: string };
+
+// One of the standard home-directory skill roots, as the import picker lists it.
+export type SkillImportRoot = {
+  // `~/.agents/skills` — for display.
+  label: string;
+  path: string;
+  skills: SkillImportCandidate[];
+  error?: string;
+};
+
+// A folder the operator chose with «Інша тека…»: itself one skill, or a root of several.
+export type SkillImportScan = { path: string; skills: SkillImportCandidate[] };
 
 // A skill name is also a directory name under ~/.kermanych/skills/<projectId>/, so this
 // pattern is a security boundary rather than cosmetics: no separators, no dots, no
@@ -38,6 +79,19 @@ export const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export function isSkillName(v: string): boolean {
   return SKILL_NAME_RE.test(v);
+}
+
+// A name taken from a file on disk, made legal for the library: lowercase, every run of
+// characters outside [a-z0-9-] becomes one `-`, no leading or trailing `-`, at most 64
+// characters. '' when nothing usable is left — the editor then refuses it like any bad name.
+export function normaliseSkillName(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 64)
+    .replace(/-+$/, "");
 }
 
 // omp reads `<dir>/<name>/SKILL.md` and needs BOTH keys — a custom-directory skill without

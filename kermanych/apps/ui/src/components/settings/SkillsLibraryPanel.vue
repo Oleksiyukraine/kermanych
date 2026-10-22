@@ -88,9 +88,36 @@
          because «бібліотека порожня» under a failed read is a lie about the project. -->
     <p v-else-if="phase === 'ready' && !error" class="sk__empty mono">{{ t('settings.skillsLibrary.empty') }}</p>
 
-    <button type="button" class="sk__btn sk__btn--primary" :disabled="!canWrite" @click="create">
-      {{ t('settings.skillsLibrary.add') }}
-    </button>
+    <!-- The checkout's own skills, read-only (spec 2026-10-22-skill-import, decision 2): a session
+         gets them anyway, and «Агенти» / «Тригери» can assign them. Project scope only — no
+         other owner has a checkout. A name already listed above as a shadowed own row is not
+         repeated here. -->
+    <section v-if="repoRows.length" class="sk__repo">
+      <h4 class="sk__repo-title">{{ t('settings.skillsLibrary.repoTitle') }}</h4>
+      <p class="sk__lead">{{ t('settings.skillsLibrary.repoLead') }}</p>
+      <ul class="sk__list">
+        <li v-for="r in repoRows" :key="r.name" class="sk__row sk__row--repo">
+          <div class="sk__head">
+            <span class="sk__name mono">{{ r.name }}</span>
+            <span class="sk__badge sk__badge--repo">{{ t('settings.skillStatus.repo') }}</span>
+            <span v-if="r.overridesDefault" class="sk__badge">{{ t('settings.skillsLibrary.repoOverridesDefault') }}</span>
+          </div>
+          <p v-if="r.description" class="sk__desc">{{ r.description }}</p>
+          <p class="sk__shadow mono">{{ r.path }}</p>
+        </li>
+      </ul>
+    </section>
+
+    <div class="sk__add">
+      <button type="button" class="sk__btn sk__btn--primary" :disabled="!canWrite" @click="create">
+        {{ t('settings.skillsLibrary.add') }}
+      </button>
+      <button type="button" class="sk__btn" :disabled="!canWrite" @click="importOpen = true">
+        {{ t('settings.skillsLibrary.importBtn') }}
+      </button>
+    </div>
+
+    <SkillImportPicker v-model="importOpen" :existing="storedRows.map((s) => s.name)" @pick="startImport" />
 
     <!-- Persistent while the save runs: closing mid-write would hide its refusal. -->
     <KModal
@@ -119,6 +146,17 @@
         <KSkeleton v-if="bodyPhase === 'skeleton'" variant="lines" :rows="5" />
       </div>
       <KField v-else v-model="draftBody" :label="t('settings.skillsLibrary.bodyLabel')" multiline :disabled="bodyPending" />
+      <!-- An import: what the copy leaves behind, and what its name would collide with. -->
+      <div v-if="importing && importExtras.count" class="sk__extra">
+        <p class="sk__extra-note">{{ t('settings.skillsLibrary.extraNote') }}</p>
+        <ul class="sk__extra-list mono">
+          <li v-for="f in importExtras.files" :key="f">{{ f }}</li>
+          <li v-if="importExtras.count > importExtras.files.length">
+            {{ t('settings.skillsLibrary.extraMore', { n: importExtras.count - importExtras.files.length }) }}
+          </li>
+        </ul>
+      </div>
+      <p v-if="importMessage" class="mono" :class="importCheck.error ? 'sk__error' : 'sk__warn'">{{ importMessage }}</p>
       <p v-if="formError" class="sk__error mono">{{ formError }}</p>
       <template #controls>
         <button type="button" class="sk__btn" :disabled="saving" @click="editorOpen = false">{{ t('settings.modal.cancel') }}</button>
@@ -130,7 +168,7 @@
         <button
           type="button"
           class="sk__btn sk__btn--primary"
-          :disabled="saving || bodyPending || !canWrite"
+          :disabled="saving || bodyPending || !canWrite || !!importCheck.error"
           :aria-busy="saving || undefined"
           @click="save"
         >
@@ -149,12 +187,19 @@
 // uses for values-vs-names.
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { DEFAULT_SKILLS, SKILL_NAME_RE, type SkillView } from '@kermanych/core';
+import {
+  DEFAULT_SKILLS,
+  SKILL_NAME_RE,
+  type ProjectSkillsPayload,
+  type RepoSkill,
+  type SkillImportRead,
+  type SkillView,
+} from '@kermanych/core';
 import { deleteAiSkill, listAiSkills, upsertAiSkill, type AiOwner, type AiSkill } from '@kermanych/cloud';
 import { api } from '../../lib/api';
 import { useAuth } from 'stores/auth';
 import { useProjects } from 'stores/projects';
-import { ownerLibraryView } from '../../lib/ai-team';
+import { importNameProblem, ownerLibraryView } from '../../lib/ai-team';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
@@ -162,10 +207,13 @@ import KSpinner from 'components/kit/KSpinner.vue';
 import { errorText, useAsyncAction, useKeyedAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import AiProvenance from './AiProvenance.vue';
+import SkillImportPicker from './SkillImportPicker.vue';
 
 const { t } = useI18n();
 
-const props = defineProps<{ owner: AiOwner; ownerName: string }>();
+// `workspace` is the project's workspace, at project scope only: an import under one of its
+// skill names is warned about, since it overrides that skill for this project.
+const props = defineProps<{ owner: AiOwner; ownerName: string; workspace?: AiOwner | undefined }>();
 
 // What the list renders. The endpoint answers "what the session gets", which by design does
 // NOT include a Kermanych default this project switched off — so those rows are added here,
@@ -180,6 +228,15 @@ const rows = ref<Row[]>([]);
 // author and last editor — the resolved SkillView carries no audit, the AiSkill row does.
 const storedRows = ref<AiSkill[]>([]);
 const error = ref('');
+// The checkout's own skills, keyed by name (project scope; empty elsewhere).
+const repo = ref<Record<string, RepoSkill>>({});
+const importOpen = ref(false);
+// The draft in the editor came from the import picker: the name checks and the extra-files note
+// apply, and only to it — an ordinary «Додати» keeps its own behaviour.
+const importing = ref(false);
+const importExtras = ref<{ files: string[]; count: number }>({ files: [], count: 0 });
+// The project's workspace skill names, read when an import opens at project scope.
+const workspaceNames = ref<string[]>([]);
 // The owner whose read last finished, either way. Anything else means «not loaded for the owner
 // on screen», which is what the skeleton stands for; a refresh of the same owner keeps the list.
 const loadedFor = ref('');
@@ -224,10 +281,40 @@ function provenanceOf(name: string): AiSkill | undefined {
   return storedRows.value.find((s) => s.name === name);
 }
 
+// The repository block: every checkout skill not already on screen as a shadowed own row.
+const repoRows = computed(() => {
+  if (props.owner.scope !== 'project') return [];
+  const shown = new Set(rows.value.filter((r) => r.shadowedByRepo).map((r) => r.name));
+  return Object.entries(repo.value)
+    .filter(([name]) => !shown.has(name))
+    .map(([name, r]) => ({ name, ...r, overridesDefault: DEFAULT_SKILLS.some((d) => d.name === name) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+});
+
+const importCheck = computed(() =>
+  importing.value
+    ? importNameProblem(draftName.value, {
+        scope: props.owner.scope,
+        stored: storedRows.value.map((s) => s.name),
+        workspace: workspaceNames.value,
+        repo: repo.value,
+      })
+    : {},
+);
+const importMessage = computed(() => {
+  const c = importCheck.value;
+  const name = draftName.value;
+  if (c.error === 'exists') return t('settings.skillsLibrary.errExists', { name });
+  if (c.error === 'repo') return t('settings.skillsLibrary.errRepo');
+  if (c.warn === 'default') return t('settings.skillsLibrary.warnDefault', { name });
+  if (c.warn === 'workspace') return t('settings.skillsLibrary.warnWorkspace', { name });
+  return '';
+});
+
 // The resolved library view for this owner. Only a project has a checkout, so only it can be
 // shadowed by repo files and only it has the api endpoint that sees them; every other scope
 // resolves the view from its own cloud rows, with no repo shadow.
-async function libraryView(owner: AiOwner): Promise<{ view: SkillView[]; repo: Record<string, string> }> {
+async function libraryView(owner: AiOwner): Promise<ProjectSkillsPayload> {
   if (owner.scope === 'project') return await api.projectSkills(owner.id);
   return { view: ownerLibraryView(await listAiSkills(auth.client, owner)), repo: {} };
 }
@@ -271,9 +358,9 @@ async function load(): Promise<void> {
   error.value = '';
   try {
     // Both reads, together: the resolved view is what the session gets, the cloud rows are
-    // the only place a switched-off default is still recorded. The payload's `repo` half is
-    // deliberately ignored here — a name only the repository defines is not in this
-    // project's library, and listing it would invite an edit that cannot take effect.
+    // the only place a switched-off default is still recorded. The payload's `repo` half feeds
+    // the read-only «З репозиторію» block — a name only the repository defines is not in this
+    // project's library, so it is never listed as an editable row.
     const [library, stored] = await Promise.all([
       libraryView(props.owner),
       listAiSkills(auth.client, props.owner),
@@ -288,11 +375,13 @@ async function load(): Promise<void> {
         ? [...library.view, ...tombstones(stored)]
         : library.view.filter((v) => v.source !== 'default');
     storedRows.value = stored;
+    repo.value = library.repo;
   } catch (e) {
     if (stale()) return;
     // The endpoint refuses rather than degrade to the defaults, so a failed read must not
     // leave a list on screen either: what is shown would not be this project's library.
     rows.value = [];
+    repo.value = {};
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
     if (!stale()) loadedFor.value = ownerKey;
@@ -321,6 +410,7 @@ watch(
     // would write the old project's data into the new one. `loadedFor` still names the old
     // owner, so the skeleton — never the empty-state line — renders while the read is in flight.
     rows.value = [];
+    repo.value = {};
     void load();
   },
   { immediate: true },
@@ -338,6 +428,8 @@ function resetDraft(): number {
   draftBody.value = '';
   draftEnabled.value = true;
   bodyPending.value = false;
+  importing.value = false;
+  importExtras.value = { files: [], count: 0 };
   formError.value = '';
   return draftToken;
 }
@@ -348,6 +440,29 @@ watch(editorOpen, (open) => {
 function create(): void {
   resetDraft();
   editorOpen.value = true;
+}
+
+// A skill picked from disk: the editor opens on its text, under the suggested name, with the
+// import checks on. The workspace names are read here, at project scope only; a failed read
+// only costs the «overrides the workspace» warning, never the import.
+function startImport(skill: SkillImportRead): void {
+  resetDraft();
+  importing.value = true;
+  draftName.value = skill.suggestedName;
+  draftDescription.value = skill.description;
+  draftBody.value = skill.body;
+  importExtras.value = { files: skill.extraFiles, count: skill.extraCount };
+  editorOpen.value = true;
+  workspaceNames.value = [];
+  const ws = props.workspace;
+  if (props.owner.scope === 'project' && ws) {
+    const token = draftToken;
+    listAiSkills(auth.client, ws)
+      .then((list) => {
+        if (token === draftToken) workspaceNames.value = list.filter((s) => s.enabled).map((s) => s.name);
+      })
+      .catch(() => {});
+  }
 }
 
 async function edit(row: Row): Promise<void> {
@@ -397,6 +512,11 @@ async function saveSkill(): Promise<boolean | undefined> {
   }
   if (!draftDescription.value.trim()) {
     formError.value = t('settings.skillsLibrary.errNoDesc');
+    return;
+  }
+  // An import never overwrites a row and never lands under a name the checkout owns.
+  if (importCheck.value.error) {
+    formError.value = importMessage.value;
     return;
   }
   try {
@@ -502,6 +622,14 @@ async function disable(name: string): Promise<void> {
 .sk__body-wait { display: flex; flex-direction: column; gap: 6px; min-height: 120px; font-family: var(--k-font-ui); }
 .sk__body-label { font-size: 13px; color: var(--k-text); }
 .sk__btn--primary { border-color: var(--k-accent); color: var(--k-accent); }
+.sk__add { display: flex; gap: 8px; }
+.sk__repo { margin: 4px 0 14px; }
+.sk__repo-title { font-size: 12.5px; font-weight: 600; margin: 0 0 4px; }
+.sk__row--repo { background: transparent; border-style: dashed; }
+.sk__warn { font-size: 11.5px; color: var(--k-muted); }
+.sk__extra { margin-top: 8px; }
+.sk__extra-note { font-size: 11.5px; color: var(--k-muted); margin: 0 0 4px; }
+.sk__extra-list { font-size: 11px; color: var(--k-faint); margin: 0; padding-left: 16px; max-height: 120px; overflow: auto; }
 .sk__error { font-size: 11.5px; color: var(--k-accent); }
 .sk__empty { font-size: 12px; color: var(--k-muted); margin-bottom: 12px; }
 </style>

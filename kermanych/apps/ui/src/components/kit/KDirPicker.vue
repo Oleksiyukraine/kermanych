@@ -28,6 +28,7 @@
         >
           <span class="k-dirpicker__name">{{ e.name }}</span>
           <span v-if="e.isRepo" class="k-dirpicker__repo" v-tip="t('kit.dirPicker.repo')">⑂</span>
+          <span v-if="e.hasSkill" class="k-dirpicker__repo mono" v-tip="t('kit.dirPicker.skill')">SKILL.md</span>
         </button>
         <div v-if="listing && !listing.entries.length" class="k-dirpicker__empty mono">
           {{ t('kit.dirPicker.empty') }}
@@ -53,8 +54,13 @@ import KSkeleton from './KSkeleton.vue';
 
 // Directory browser. Two callers, one contract: it stacks over whatever modal opened it
 // (QDialog handles the layering) and emits the chosen absolute path. In MainLayout it picks
-// THIS machine's binding for a cloud project; `⑂` marks the git repos.
-const props = withDefaults(defineProps<{ modelValue: boolean; start?: string }>(), { start: '' });
+// THIS machine's binding for a cloud project; `⑂` marks the git repos. With `skills` it is the
+// «Навички» import picker's «Інша тека…»: dot-folders are listed (skills live under `~/.claude`,
+// `~/.agents`) and a folder holding a SKILL.md is marked.
+const props = withDefaults(defineProps<{ modelValue: boolean; start?: string; skills?: boolean }>(), {
+  start: '',
+  skills: false,
+});
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; select: [path: string] }>();
 
 const { t } = useI18n();
@@ -73,7 +79,7 @@ async function load(path: string): Promise<void> {
   error.value = null;
   loading.value = true;
   try {
-    const next = await api.listDirs(path);
+    const next = await api.listDirs(path, { hidden: props.skills });
     if (run === runId) listing.value = next;
   } catch (e) {
     if (run === runId) error.value = e instanceof Error ? e.message : String(e);

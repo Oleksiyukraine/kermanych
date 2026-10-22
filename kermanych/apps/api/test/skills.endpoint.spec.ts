@@ -19,7 +19,10 @@ test("returns the resolved view and the repository's own names for a bound proje
       // The scan is NOT filtered by the library: `repo-only` has no row and no default, so
       // it appears here and nowhere else. The assignment board needs it to tell an
       // assignment to a deleted skill from one the repository still provides.
-      repo: { mine: path, "repo-only": join(repo, ".omp/skills/repo-only/SKILL.md") },
+      repo: {
+        mine: { path, description: "" },
+        "repo-only": { path: join(repo, ".omp/skills/repo-only/SKILL.md"), description: "d" },
+      },
     }),
   } as unknown as SkillsService;
   const out = await new SkillsController(skills, registry).list("p1");

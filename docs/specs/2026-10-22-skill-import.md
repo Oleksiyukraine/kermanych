@@ -169,7 +169,7 @@ The operator asked for a way to pick such a skill in Kermanych, in the way a fil
     query is set.
   - `SkillsService.view()` fills `repo` with `{ path, description }` through `parseSkillFile`.
 - **ui**
-  - `components/settings/SkillImportPicker.vue` (new modal): the roots and their skills
+  - `components/settings/SkillImportPicker.vue` (new modal, one `SkillImportRow.vue` per skill): the roots and their skills
     (name, description, size, «N файлів не скопіюються», «уже є»), «Інша тека…» →
     `KDirPicker` skills mode → scan result in the same list, the delivery footnote. A pick reads
     the skill and hands `{ name: suggestedName, description, body, extraFiles }` to the pane.
@@ -177,10 +177,10 @@ The operator asked for a way to pick such a skill in Kermanych, in the way a fil
     `SKILL.md` mark, and the empty-folder message on choose.
   - `SkillsLibraryPanel.vue`: an «Імпортувати з диска…» button next to «Додати». The editor is
     opened pre-filled, shows the extra-files note, and runs checks 6.2–6.4 through a pure
-    `importNameProblem(name, { stored, defaults, workspace, repo })` in `lib/ai-team.ts`. The
+    `importNameProblem(name, { scope, stored, workspace, repo })` in `lib/ai-team.ts`. The
     «З репозиторію» block appears at project scope.
-  - `SkillSequence.vue`: `left` adds repository-only names, which are rendered with the «репо»
-    badge.
+  - `SkillSequence.vue`: the picker's options come from `sequenceCandidates(view, repo, names)`
+    (`lib/settings.ts`): library names first, then repository-only names labelled «репо».
   - i18n keys (uk/en) for every new string; the i18n completeness suite covers them.
 - **docs**: `kermanych/README.md` gets a short `### Skills («ШІ-команда → Навички»)` section
   before «Project documentation»: where skills come from, import and its limits (snapshot, files
@@ -211,6 +211,31 @@ No migration and no cloud changes.
      first prompt contains `x`'s body.
   4. «Інша тека…» → `~/.claude/skills/synced/<bucket>` lists `pdf`, `docx`, …
 - **Typecheck**: `apps/api`, `apps/ui`.
+
+### Results (2026-10-22)
+
+- `@kermanych/core` 217 passed. `@kermanych/api` `tsc --noEmit` is clean, and the suite gives
+  1020 passed and 4 skipped (`skill-import.spec.ts` adds 7). `@kermanych/ui` 681 passed;
+  `vue-tsc` shows only errors that predate this change: `test/runtime-messages.spec.ts` TS2352,
+  and `src-electron` cannot resolve `@kermanych/api` when the api is not built.
+- Smoke used a preview api (`KERMANYCH_PREVIEW=1`, temp DB) and `quasar dev` against the real
+  home directory:
+  - `GET /skills/import/roots` listed `dev-report` (`~/.claude/skills`, 1 other file), and
+    `find-skills` plus `humanizer` (`~/.agents/skills`, 8 other files, the block-scalar
+    description collapsed). `~/.codex/skills` came back empty. The absent `~/.omp/agent/skills`
+    was left out.
+  - `scan` on `~/.claude/skills/synced/<bucket>` listed `docs`, `docx`, `pdf`, `xlsx` and the
+    rest. `read` on `$HOME` answered 400 «no SKILL.md».
+  - UI at «Користувач»: the picker showed both roots. «Інша тека…» browsed into `.agents/skills`,
+    where both folders were marked `SKILL.md`, and choosing that folder listed its two skills.
+    Picking `humanizer` opened the editor with its name, description and body filled in and
+    listed the files that are not copied. Renaming it `task-spec` showed the default-override
+    warning.
+  - What the preview could not do: it has no cloud, so the library read fails («invalid input
+    syntax for type uuid»). Saving, the «уже є» / `exists` refusal and the project-scope
+    «З репозиторію» block (which needs `GET /projects/:id/skills`, and that endpoint reads the
+    cloud) were not exercised live. They are covered by `importNameProblem`, `sequenceCandidates`
+    and the `view()` repo-description test.
 
 ## Documentation impact
 
