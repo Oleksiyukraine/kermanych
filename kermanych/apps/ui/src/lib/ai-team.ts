@@ -86,3 +86,38 @@ export function ownerLibraryView(rows: readonly AiSkill[]): SkillView[] {
   }
   return [...out.values()].filter((s) => s.description.trim() !== '');
 }
+
+/**
+ * WHAT STANDS IN THE WAY OF SAVING AN IMPORTED SKILL under `name` at `scope` (spec
+ * 2026-10-22-skill-import, decision 6). Two refusals and two warnings, in this order:
+ *
+ * - `exists`: the owner already has a row by that name. An import never overwrites it.
+ * - `repo` (project scope): the bound checkout's standard skill folders own the name, so the
+ *   copy would be shadowed and never delivered.
+ * - `default`: the name is one of Kermanych's defaults. Allowed — that is how an override works.
+ * - `workspace` (project scope): the project's workspace has a skill by that name. Allowed, same.
+ *
+ * The name's own legality (SKILL_NAME_RE) is the editor's ordinary check and is not repeated.
+ */
+export type ImportNameProblem = { error?: 'exists' | 'repo'; warn?: 'default' | 'workspace' };
+
+export function importNameProblem(
+  name: string,
+  ctx: {
+    scope: AiScope;
+    // The owner's own row names, enabled or not: a tombstone is a row too, and upserting over it
+    // would silently switch the default back on under the imported text.
+    stored: readonly string[];
+    // The project's workspace row names (enabled ones); ignored outside project scope.
+    workspace: readonly string[];
+    // The checkout's standard skill folders, by name; ignored outside project scope.
+    repo: Readonly<Record<string, unknown>>;
+  },
+): ImportNameProblem {
+  if (ctx.stored.includes(name)) return { error: 'exists' };
+  const project = ctx.scope === 'project';
+  if (project && Object.hasOwn(ctx.repo, name)) return { error: 'repo' };
+  if (DEFAULT_SKILLS.some((d) => d.name === name)) return { warn: 'default' };
+  if (project && ctx.workspace.includes(name)) return { warn: 'workspace' };
+  return {};
+}

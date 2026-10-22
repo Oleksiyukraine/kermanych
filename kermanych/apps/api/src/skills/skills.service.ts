@@ -33,6 +33,7 @@ import {
   type SupabaseClient,
 } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
+import { skillFileDescription } from "./skill-files";
 
 // Every project-level skill directory omp itself discovers in the session cwd. One level
 // deep, no ancestor walk: a Kermanych session's cwd is always a repository root (a worktree
@@ -489,7 +490,12 @@ export class SkillsService {
       source,
       ...(repo.has(def.name) ? { shadowedByRepo: repo.get(def.name)! } : {}),
     }));
-    return { view, repo: Object.fromEntries(repo) };
+    // Each repository skill with its own description, for the pane's «З репозиторію» block and
+    // the assignment pickers' labels. Off the launch path, so reading each file here is fine.
+    const repoSkills = await Promise.all(
+      [...repo].map(async ([name, path]) => [name, { path, description: await skillFileDescription(path) }] as const),
+    );
+    return { view, repo: Object.fromEntries(repoSkills) };
   }
 
   // Never blocks a launch: every filesystem, cloud or config failure degrades to

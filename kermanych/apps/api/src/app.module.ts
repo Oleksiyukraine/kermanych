@@ -7,6 +7,7 @@ import { SessionsController } from "./http/sessions.controller";
 import { FsController } from "./http/fs.controller";
 import { UsageController } from "./http/usage.controller";
 import { SkillsController } from "./http/skills.controller";
+import { SkillImportController } from "./http/skill-import.controller";
 import { ManagementController } from "./http/management.controller";
 import { ModelsController } from "./http/models.controller";
 import { RegistryService } from "./registry/registry.service";
@@ -48,7 +49,7 @@ import { MachineResourcesService } from "./machine/machine-resources.service";
 import { WatchdogService } from "./machine/watchdog.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,

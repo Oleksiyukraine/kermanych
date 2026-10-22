@@ -1068,6 +1068,35 @@ problems in its reply.
   If the card or issue is created but recording it fails, the finding stays open with the error
   shown in the dialog. The card or issue already exists then: check before filing again.
 
+### Skills («ШІ-команда → Навички»)
+
+A skill is a named instruction pack an agent can use. A session can get skills from three
+places:
+
+| Source | managed `omp` | managed `claude-code` | native session |
+| --- | --- | --- | --- |
+| the repository's `.omp/skills`, `.claude/skills`, `.agent(s)/skills`, `.codex/skills`, `.github/skills` | finds all of them itself | only `.claude/skills` | whatever the harness finds |
+| your home folders (`~/.omp/agent/skills`, `~/.claude/skills`, `~/.agents/skills`, `~/.codex/skills`) | finds them itself | only `~/.claude/skills` and plugins | whatever the harness finds |
+| the Kermanych library (user, project and workspace rows plus the defaults) | as a library the model picks from | only when the skill is assigned | no |
+
+A skill **assigned** in «Агенти» or «Тригери» is pasted into the agent's instruction on both
+managed runtimes. A repository skill with the same name always wins over a library skill.
+
+- **Import from disk.** «Імпортувати з диска…» lists the skills in the four home folders on this
+  machine. «Інша тека…» browses any folder, hidden ones included, and takes either one skill
+  folder or a folder of skills. Picking a skill opens the usual editor with its name, description
+  and text filled in. Saving stores a **copy** at the scope you are on. The copy is a snapshot:
+  later edits to the file do not reach it, and the skill's other files (`scripts/`, references)
+  are not copied. The editor lists them. An import never overwrites a skill you already have.
+  At project scope it refuses a name a repository skill owns, because that copy would never be
+  used.
+- **From the repository.** At project scope the pane shows a read-only «З репозиторію» block for
+  the bound checkout's skills. «Агенти» and «Тригери» offer those names for assignment. That is
+  how a `claude-code` session gets, say, an `.agents/skills` skill it would not find by itself.
+- **Routes.** `GET /api/skills/import/roots`, `GET /api/skills/import/scan?path=`,
+  `GET /api/skills/import/read?dir=` (reads only `SKILL.md`), and `GET /api/fs/list?hidden=1`.
+  Spec: `docs/specs/2026-10-22-skill-import.md`.
+
 ### Project documentation
 
 A project can require that its tasks are documented in its repository. The rules live in the

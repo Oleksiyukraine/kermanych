@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 import { AGENTS, DEFAULT_SKILLS, type SkillView } from '@kermanych/core';
 import type { AiAgentSkill } from '@kermanych/cloud';
-import { ASSIGNED_BYTES_WARN, assignmentBadge, assignmentRows } from '../src/lib/settings';
+import { ASSIGNED_BYTES_WARN, assignmentBadge, assignmentRows, sequenceCandidates } from '../src/lib/settings';
 
 // The pure half of the assignment board. Four reads meet here — the agent registry, the
 // project's assignments, the RESOLVED library view and the names the bound repository itself
@@ -21,6 +21,8 @@ const V = (name: string, over: Partial<SkillView> = {}): SkillView => ({
   source: 'project',
   ...over,
 });
+// One checkout skill as the endpoint reports it.
+const R = (path: string) => ({ path, description: '' });
 
 test('only instruction-bearing agents can be assigned to', () => {
   const rows = assignmentRows(AGENTS, [], [], {}, {});
@@ -53,7 +55,7 @@ test('a name the resolved view does not contain is marked broken, not dropped', 
 // still passes: absence from the view alone must not be enough.
 test('a name only the repository defines is live, not broken', () => {
   const rows = assignmentRows(AGENTS, [A('repo-only')], [], {}, {
-    'repo-only': '/repo/.omp/skills/repo-only/SKILL.md',
+    'repo-only': R('/repo/.omp/skills/repo-only/SKILL.md'),
   });
   const skill = rows[0]!.skills[0]!;
   expect(skill.broken).toBeUndefined();
@@ -67,7 +69,7 @@ test('a name only the repository defines is live, not broken', () => {
 // the launch pastes; the row reports it as unmeasured and the total becomes a lower bound.
 test('a repository-only name is reported as unmeasured rather than counted as zero', () => {
   const rows = assignmentRows(AGENTS, [A('mine', 0), A('repo-only', 1)], [V('mine')], { mine: 500 }, {
-    'repo-only': '/repo/.omp/skills/repo-only/SKILL.md',
+    'repo-only': R('/repo/.omp/skills/repo-only/SKILL.md'),
   });
   expect(rows[0]!.bytes).toBe(500);
   expect(rows[0]!.unmeasured).toEqual(['repo-only']);
@@ -81,7 +83,7 @@ test('a repository-only name is reported as unmeasured rather than counted as ze
 // is still broken, and still visible.
 test('a name in neither the library nor the repository is broken', () => {
   const rows = assignmentRows(AGENTS, [A('gone')], [V('other')], { other: 10 }, {
-    'something-else': '/repo/.omp/skills/something-else/SKILL.md',
+    'something-else': R('/repo/.omp/skills/something-else/SKILL.md'),
   });
   expect(rows[0]!.skills).toEqual([{ name: 'gone', broken: true }]);
   expect(assignmentBadge(rows[0]!.skills[0]!)).toEqual({ kind: 'broken' });
@@ -98,7 +100,7 @@ test('a name in neither the library nor the repository is broken', () => {
 //
 // Reverting the `Object.hasOwn` guard on that read must fail this test.
 test('a dangling assignment named constructor is broken, not a repository skill', () => {
-  for (const repo of [{}, { 'other-skill': '/repo/.omp/skills/other-skill/SKILL.md' }]) {
+  for (const repo of [{}, { 'other-skill': R('/repo/.omp/skills/other-skill/SKILL.md') }]) {
     const rows = assignmentRows(AGENTS, [A('constructor')], [], {}, repo);
     expect(rows[0]!.skills).toEqual([{ name: 'constructor', broken: true }]);
     expect(assignmentBadge(rows[0]!.skills[0]!)).toEqual({ kind: 'broken' });
@@ -108,7 +110,7 @@ test('a dangling assignment named constructor is broken, not a repository skill'
   }
   // A repository that really does define it still wins, exactly like any other name.
   const real = assignmentRows(AGENTS, [A('constructor')], [], {}, {
-    constructor: '/repo/.omp/skills/constructor/SKILL.md',
+    constructor: R('/repo/.omp/skills/constructor/SKILL.md'),
   });
   expect(real[0]!.skills).toEqual([
     { name: 'constructor', shadowedByRepo: '/repo/.omp/skills/constructor/SKILL.md' },
@@ -191,4 +193,17 @@ test('the byte warning clears both harness skills assigned at once', () => {
   expect(harness.map((d) => d.name).sort()).toEqual([...HARNESS_SKILLS].sort());
   const total = harness.reduce((sum, d) => sum + new TextEncoder().encode(d.body).length, 0);
   expect(total).toBeLessThan(ASSIGNED_BYTES_WARN);
+});
+
+// What a sequence's picker offers (spec 2026-10-22-skill-import, decision 2): the library, then
+// the names only the checkout defines — both deliverable — and nothing already in the sequence.
+test('the picker offers repository-only names after the library, and never an assigned one', () => {
+  const repo = { zeta: R('/r/.agents/skills/zeta/SKILL.md'), alpha: R('/r/.claude/skills/alpha/SKILL.md'), x: R('/r/x') };
+  expect(sequenceCandidates([V('x'), V('y')], repo, [])).toEqual([
+    { name: 'x', repoOnly: false },
+    { name: 'y', repoOnly: false },
+    { name: 'alpha', repoOnly: true },
+    { name: 'zeta', repoOnly: true },
+  ]);
+  expect(sequenceCandidates([V('x')], repo, ['alpha', 'x']).map((c) => c.name)).toEqual(['zeta']);
 });

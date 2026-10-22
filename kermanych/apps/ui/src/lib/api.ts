@@ -12,6 +12,9 @@ import type {
   ReleaseNotesReply,
   SubscriptionUsage,
   ProjectSkillsPayload,
+  SkillImportRead,
+  SkillImportRoot,
+  SkillImportScan,
   TranscriptEntry,
   SubagentNode,
   ThinkingLevel,
@@ -618,8 +621,21 @@ export const api = {
   getSubagentTranscript: (id: string, subagentId: string): Promise<TranscriptEntry[]> =>
     get<TranscriptEntry[]>(`/sessions/${id}/subagents/${encodeURIComponent(subagentId)}/transcript`),
 
-  listDirs: (path?: string): Promise<DirListing> =>
-    get<DirListing>(`/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+  // `hidden` is the skill import picker's mode: dot-folders listed, skill folders marked.
+  listDirs: (path?: string, opts?: { hidden?: boolean }): Promise<DirListing> => {
+    const q = new URLSearchParams();
+    if (path) q.set('path', path);
+    if (opts?.hidden) q.set('hidden', '1');
+    const qs = q.toString();
+    return get<DirListing>(`/fs/list${qs ? `?${qs}` : ''}`);
+  },
+
+  // The «Навички» import picker: this machine's skill folders, read by the local api.
+  skillImportRoots: (): Promise<SkillImportRoot[]> => get<SkillImportRoot[]>('/skills/import/roots'),
+  skillImportScan: (path: string): Promise<SkillImportScan> =>
+    get<SkillImportScan>(`/skills/import/scan?path=${encodeURIComponent(path)}`),
+  skillImportRead: (dir: string): Promise<SkillImportRead> =>
+    get<SkillImportRead>(`/skills/import/read?dir=${encodeURIComponent(dir)}`),
 
   listBranches: (id: string): Promise<{ branches: string[]; current: string; default: string | null }> =>
     get<{ branches: string[]; current: string; default: string | null }>(`/projects/${id}/branches`),

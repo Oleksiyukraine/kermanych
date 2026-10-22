@@ -23,7 +23,7 @@
 // they get no panel. The parallel agent limit does: it is part of «Ресурси машини», stored
 // per machine by the api (`/machine/resources`).
 
-import type { AgentDef, EnvEntry, MachineResources, ResourceLimits, ResourcesUpdate, SkillView } from '@kermanych/core';
+import type { AgentDef, EnvEntry, MachineResources, RepoSkill, ResourceLimits, ResourcesUpdate, SkillView } from '@kermanych/core';
 import type { AiAgentSkill, TriggerSource } from '@kermanych/cloud';
 
 export type SettingsScope = 'project' | 'workspace' | 'app';
@@ -129,7 +129,7 @@ export function assignmentRows(
   assignments: readonly AiAgentSkill[],
   view: readonly SkillView[],
   bodyBytes: Readonly<Record<string, number>>,
-  repo: Readonly<Record<string, string>>,
+  repo: Readonly<Record<string, RepoSkill>>,
 ): AssignmentRow[] {
   const byName = new Map(view.map((v) => [v.name, v]));
   return agents
@@ -154,7 +154,7 @@ export function assignmentRows(
         // `valueOf` carry capitals and so cannot be skill names at all; `constructor` is the
         // one member of the prototype that can.) The api-side mirror of this rule is safe for
         // free because it reads a Map (assignedForNames).
-        const repoPath = Object.hasOwn(repo, r.skillName) ? repo[r.skillName] : undefined;
+        const repoPath = Object.hasOwn(repo, r.skillName) ? repo[r.skillName]!.path : undefined;
         // A broken name contributes no bytes and counts as measured: there is no body to
         // pay for, so the total stays an honest figure rather than an open question.
         if (!hit && !repoPath) return { name: r.skillName, broken: true };
@@ -175,6 +175,28 @@ export function assignmentRows(
       });
       return { agent, skills, bytes, unmeasured };
     });
+}
+
+/**
+ * WHAT A SKILL SEQUENCE CAN STILL ADD: the resolved library's names in its order, then the names
+ * only the checkout defines, alphabetically (spec 2026-10-22-skill-import, decision 2). Both are
+ * deliverable — `assignedForNames` reads the repository's file for the latter — and anything
+ * else would reach the launcher as `missing`. A name already in the sequence is not offered.
+ */
+export function sequenceCandidates(
+  view: readonly SkillView[],
+  repo: Readonly<Record<string, RepoSkill>>,
+  taken: readonly string[],
+): { name: string; repoOnly: boolean }[] {
+  const library = new Set(view.map((v) => v.name));
+  const used = new Set(taken);
+  const repoOnly = Object.keys(repo)
+    .filter((name) => !library.has(name))
+    .sort((a, b) => a.localeCompare(b));
+  return [
+    ...view.map((v) => ({ name: v.name, repoOnly: false })),
+    ...repoOnly.map((name) => ({ name, repoOnly: true })),
+  ].filter((c) => !used.has(c.name));
 }
 
 /**
