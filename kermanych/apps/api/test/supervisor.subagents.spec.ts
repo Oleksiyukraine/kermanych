@@ -92,6 +92,28 @@ describe("subagent tree", () => {
     expect(updates(seen)[0]!.subagents[0]).toMatchObject({ id: "Task.Child", parentId: "Task" });
   });
 
+  it("the socket snapshot carries each live session's tree, and only non-empty ones", async () => {
+    const { sup, registry, seen } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const busy = await sup.createChat(g.id);
+    // A second live session whose emitter we never drive: it has no subagents.
+    const busyEmit = emit;
+    await sup.createChat(g.id);
+    expect(sup.snapshot().subagents).toEqual({});
+
+    registrySnapshot = [{ id: "Task", index: 0, status: "running" }, { id: "Task.Child", index: 1, status: "running" }];
+    busyEmit({ type: "subagent_lifecycle", subagentId: "Task" });
+    await vi.waitFor(() => expect(updates(seen)).toHaveLength(1));
+
+    // A UI that connects now (or reloads) gets the tree without waiting for another frame.
+    expect(sup.snapshot().subagents).toEqual({
+      [busy.id]: [
+        { id: "Task", index: 0, status: "running" },
+        { id: "Task.Child", index: 1, status: "running", parentId: "Task" },
+      ],
+    });
+  });
+
   it("a finished task tool enriches the node with tokens, duration, model and label", async () => {
     const { sup, registry, seen } = make();
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
@@ -160,16 +182,6 @@ describe("subagent tree", () => {
 });
 
 describe("subagent endpoints", () => {
-  it("getSubagents returns the merged tree for a live session and empty for an unknown one", async () => {
-    const { sup, registry } = make();
-    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
-    const chat = await sup.createChat(g.id);
-
-    registrySnapshot = [{ id: "Task", index: 0, status: "idle" }];
-    expect(await sup.getSubagents(chat.id)).toEqual([{ id: "Task", index: 0, status: "idle" }]);
-    expect(await sup.getSubagents("nope")).toEqual([]);
-  });
-
   it("getSubagentTranscript renders the subagent's messages and files its tool output under the parent id", async () => {
     const { sup, registry } = make();
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
@@ -193,11 +205,9 @@ describe("subagent endpoints", () => {
 });
 
 describe("controller delegation", () => {
-  test("forwards subagents and subagentTranscript to the supervisor", () => {
-    const sup = { getSubagents: vi.fn().mockResolvedValue([]), getSubagentTranscript: vi.fn().mockResolvedValue([]) };
+  test("forwards subagentTranscript to the supervisor", () => {
+    const sup = { getSubagentTranscript: vi.fn().mockResolvedValue([]) };
     const c = new SessionsController(sup as never, {} as never, {} as never);
-    c.subagents("s1");
-    expect(sup.getSubagents).toHaveBeenCalledWith("s1");
     c.subagentTranscript("s1", "Task");
     expect(sup.getSubagentTranscript).toHaveBeenCalledWith("s1", "Task");
   });

@@ -258,7 +258,9 @@ export type RpcEvent =
 
 // Server -> client WebSocket messages
 export type ServerEvent =
-  | { type: "snapshot"; projects: Project[]; sessions: Session[] }
+  // `subagents`: every live session's subagent tree (non-empty only), so a reloaded UI has the
+  // agent map without waiting for the next `subagents_update`.
+  | { type: "snapshot"; projects: Project[]; sessions: Session[]; subagents: Record<string, SubagentNode[]> }
   | { type: "session_update"; session: Session }
   | { type: "transcript_append"; sessionId: string; entry: TranscriptEntry }
   | { type: "transcript_reset"; sessionId: string; entries: TranscriptEntry[] }

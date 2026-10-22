@@ -16,7 +16,6 @@ import type {
   SkillImportRoot,
   SkillImportScan,
   TranscriptEntry,
-  SubagentNode,
   ThinkingLevel,
   ToolLine,
   RpcExtensionUIResponse,
@@ -604,9 +603,6 @@ export const api = {
 
   getToolDetail: (sessionId: string, callId: string): Promise<{ lines: ToolLine[]; totalLines: number }> =>
     get<{ lines: ToolLine[]; totalLines: number }>(`/sessions/${sessionId}/tools/${encodeURIComponent(callId)}`),
-
-  getSubagents: (id: string): Promise<SubagentNode[]> =>
-    get<SubagentNode[]>(`/sessions/${id}/subagents`),
 
   // «Знахідки»: what the session's agent reported outside its task, in creation order. The
   // two writes only move the finding's local state — the card or issue itself is created
