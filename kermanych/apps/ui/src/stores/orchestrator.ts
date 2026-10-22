@@ -14,6 +14,7 @@ import type {
   RpcExtensionUIResponse,
   ModelOption,
   DocsWriteKind,
+  MachineAlert,
 } from '@kermanych/core';
 // Import from core's status module directly (not the barrel): @kermanych/core is a CJS
 // workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
@@ -22,12 +23,20 @@ import { shouldNotify } from '@kermanych/core/status';
 import { connectSocket } from '../lib/socket';
 import { api, type MessageMode } from '../lib/api';
 import { applyTranscriptUpdate } from './transcript-update';
+import { machineAlertView } from '../lib/machine-alert';
 import { globalTr } from '../boot/i18n';
 import type { Bucket } from '../lib/buckets';
 import { unsettledOutgoing, type OutgoingMessage } from '../lib/outgoing';
 import { PENDING_TIMEOUT_MS } from './pending';
 
-export type Toast = { id: string; message: string; kind: 'error' | 'info' };
+// `action`: one button on the toast (the watchdog's «Зупинити команду»); pressing it runs
+// `run` and dismisses the toast.
+export type Toast = {
+  id: string;
+  message: string;
+  kind: 'error' | 'info';
+  action?: { label: string; run: () => void | Promise<void> };
+};
 
 // i18n keys for the attention-worthy statuses shouldNotify() fires on. Resolved through
 // globalTr at notification time (point-in-time copy), the same adapter the api client uses.
@@ -181,6 +190,44 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       }
     } else if (e.type === 'subagents_update') {
       subagents.value = { ...subagents.value, [e.sessionId]: e.subagents };
+    } else if (e.type === 'machine_alert') {
+      onMachineAlert(e.alert);
+    }
+  }
+
+  // A watchdog finding (spec decision 7): an in-app toast, plus a native notification while
+  // the window is unfocused — the operator is likely in the very app eating the memory.
+  function onMachineAlert(alert: MachineAlert): void {
+    const view = machineAlertView(alert, (k, named) => globalTr.t(k, named ?? {}));
+    const { sessionId, pid } = alert;
+    const action =
+      view.killable && sessionId && pid !== undefined
+        ? { label: globalTr.t('machineAlert.kill'), run: () => killAgentCommand(sessionId, pid) }
+        : undefined;
+    // Long enough to read a command name and reach for the button.
+    notify(view.message, view.kind, 15_000, action);
+    // A warn-level kill is the echo of the operator's own click: they are looking already.
+    const ownKill = alert.killed && alert.level === 'warn';
+    if (!ownKill && typeof document !== 'undefined' && !document.hasFocus() && typeof Notification !== 'undefined') {
+      const n = new Notification(globalTr.t('machineAlert.title'), { body: view.message });
+      n.onclick = () => {
+        window.kermanych?.focus();
+        const s = sessionId ? sessions.value.find((x) => x.id === sessionId) : undefined;
+        if (s) {
+          selectProject(s.projectId);
+          selectSession(s.id);
+        }
+      };
+    }
+  }
+
+  // Success needs no toast here: the api echoes it as a `machine_alert` with `killed`.
+  async function killAgentCommand(sessionId: string, pid: number): Promise<void> {
+    try {
+      const { ok } = await api.killAgentCommand(sessionId, pid);
+      if (!ok) notify(globalTr.t('machineAlert.killGone'), 'error');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : String(err), 'error');
     }
   }
 
@@ -367,6 +414,13 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return loadTranscript(id);
   }
 
+  // «Запустити зараз» on a session waiting for an agent slot: the api starts it past the
+  // limit and returns the row, which also arrives as `session_update`.
+  async function runSessionNow(id: string) {
+    const s = await api.runSessionNow(id);
+    sessions.value = [...sessions.value.filter((x) => x.id !== s.id), s];
+  }
+
   async function startPreview(id: string) {
     const res = await api.startPreview(id);
     if (res.url) previews.value = { ...previews.value, [id]: res.url };
@@ -449,9 +503,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
 
   // Minimal transient notifications. notify() pushes a toast that auto-dismisses;
   // components read `toasts` and may dismiss one early.
-  function notify(message: string, kind: Toast['kind'] = 'info', ms = 4000) {
+  function notify(message: string, kind: Toast['kind'] = 'info', ms = 4000, action?: Toast['action']) {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    toasts.value = [...toasts.value, { id, message, kind }];
+    toasts.value = [...toasts.value, { id, message, kind, ...(action ? { action } : {}) }];
     setTimeout(() => dismissToast(id), ms);
   }
 
@@ -521,6 +575,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     subagents,
     loadSubagents,
     resumeSession,
+    runSessionNow,
     previews,
     startPreview,
     stopPreview,

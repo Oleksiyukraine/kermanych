@@ -376,6 +376,16 @@ export class SessionsController {
     }
   }
 
+  // «Запустити зараз» on a card waiting for an agent slot: starts it past the limit, this once.
+  @Post(":id/run-now")
+  async runNow(@Param("id") id: string) {
+    try {
+      return await this.sup.runNow(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
   @Post(":id/reopen")
   async reopen(@Param("id") id: string) {
     try {

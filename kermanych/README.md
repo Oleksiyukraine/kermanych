@@ -73,9 +73,51 @@ both backends. Per-session token spend is tracked on both.
 
 Claude sessions read your own Claude Code settings: Kermanych passes no `settingSources`, so the
 SDK loads `~/.claude/settings.json` and the project's `.claude/settings*.json`, the same as a
-`claude` you start yourself. Limits on what claude runs (process priority, parallel subagents,
-background commands, MCP servers) are set there, not in Kermanych:
-[`docs/claude-resource-limits.md`](./docs/claude-resource-limits.md).
+`claude` you start yourself. What you set there beats what Kermanych sets (next section); the
+same knobs without Kermanych: [`docs/claude-resource-limits.md`](./docs/claude-resource-limits.md).
+
+### Machine resources («Ресурси машини»)
+
+Kermanych sizes its own load to the machine it runs on (spec:
+`docs/specs/2026-10-21-machine-resource-profile.md`). On start the API reads the RAM, the cores and
+the performance cores and picks a profile:
+
+| RAM | Profile | Agents at once | Subagents per session | Background commands | Test workers |
+|---|---|---|---|---|---|
+| ≤ 8 GB | Мінімальна | 1 | 1 | off | 1 |
+| ≤ 16 GB | Базова | 2 | 2 | off | 2 |
+| ≤ 32 GB | Середня | 3 | 4 | on | 2 |
+| ≤ 64 GB | Потужна | 5 | 6 | on | min(4, perf cores / 2) |
+| > 64 GB | Максимальна | 8 | 8 | on | min(6, perf cores / 2) |
+
+Nothing is limited until you agree. A popup shows the detected machine and the profile on the
+first start, after the hardware changes, and after «Визначити заново»: «Застосувати» turns the
+limits on, «Налаштувати» opens the section with the profile as an unsaved draft, «Не зараз»
+keeps today's behaviour and does not ask again until the hardware changes. Everything lives in
+Settings → Застосунок → «Ресурси машини», stored on this machine only (SQLite
+`machine_resources`), never in the cloud account.
+
+With the limits on:
+
+- **Agent slots.** Only agent sessions whose turn runs count; chats, reviews, discussions and
+  finished sessions do not. A new launch, a message to a finished agent or «Продовжити» of a
+  native agent beyond the limit waits in `queued` («чекає на слот · 2 з 2»), first in first
+  out; the worktree is created at once, only the agent process waits. A waiting message is kept
+  across a restart. «Запустити зараз» starts one session past the limit.
+- **Inside each agent** (applied when its process starts): omp gets a second `--config` overlay
+  with `task.maxConcurrency` and `bash.autoBackground.enabled`; claude gets
+  `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` and `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`. A value you set
+  yourself wins: a key your `~/.omp/agent/config.yml` or the project's `.omp/config.yml` changes
+  is left out of the overlay, and claude's settings `env` beats the process environment anyway.
+- **Priority.** Every agent process runs at nice 10, and so does everything it starts.
+- **Prompt.** The system prompt asks for at most N test workers (`--maxWorkers=N`), one test
+  run at a time, no watch mode. Jest and vitest have no environment variable for this.
+- **Watchdog (macOS).** Every 5 s it reads `kern.memorystatus_vm_pressure_level`. At warn it
+  names the heaviest command an agent started, with «Зупинити команду». At critical, twice in a
+  row, it kills that command's process tree if it holds at least 1 GB, and tells the agent to
+  rerun it with fewer workers; the agent itself keeps running. MCP servers and other processes
+  the agent had when it became ready are never killed. A process that detached from its agent
+  (a daemon) is invisible to it.
 
 #### Signed out
 

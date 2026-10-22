@@ -44,7 +44,7 @@
           <p class="set__blurb">{{ t('settings.categories.' + section.key + '.blurb') }}</p>
         </div>
         <span
-          v-if="section.scope !== 'app'"
+          v-if="section.scope !== 'app' || section.key === 'app-resources'"
           class="set__saved"
           :class="{ 'set__saved--dirty': dirtyCount > 0 }"
         >{{ dirtyCount > 0 ? t('settings.head.unsaved') : t('settings.head.saved') }}</span>
@@ -605,6 +605,14 @@
             </p>
           </div>
 
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.categories.app-resources.label') }}</span>
+            <p class="set__note">
+              {{ t('settings.account.resourcesNote') }}
+              <a href="#" class="set__link" @click.prevent="goSection('app-resources')">{{ t('settings.account.resourcesLink') }}</a>
+            </p>
+          </div>
+
           <div class="set__rule"></div>
 
           <div class="set__danger">
@@ -614,6 +622,102 @@
             </span>
             <KBtn variant="ghost" class="set__danger-btn" @click="signOutOpen = true">{{ t('settings.account.signOut') }}</KBtn>
           </div>
+        </div>
+
+        <!-- ── APP · РЕСУРСИ МАШИНИ ─────────────────────────────────────────── -->
+        <div v-else-if="section.key === 'app-resources'" class="set__form">
+          <p v-if="!resources || !resDraft" class="set__note">{{ t('settings.resources.loading') }}</p>
+          <template v-else>
+            <div class="set__group">
+              <span class="set__label">{{ t('settings.resources.detected') }}</span>
+              <p class="set__note mono">{{ hardwareLine(t, resources) }}</p>
+              <p class="set__note">{{ t('settings.resources.pressureLine', { level: pressureText }) }}</p>
+              <p class="set__note">
+                {{ t('settings.resources.slots', { running: resources.running, waiting: resources.waiting }) }}
+              </p>
+              <div class="set__row">
+                <KBtn variant="ghost" :disabled="resBusy" @click="redetectResources">
+                  {{ t('settings.resources.redetect') }}
+                </KBtn>
+                <KBtn
+                  variant="ghost"
+                  :disabled="resBusy || Object.keys(resources.overrides).length === 0"
+                  @click="resetResources"
+                >{{ t('settings.resources.reset') }}</KBtn>
+              </div>
+            </div>
+
+            <div class="set__rule"></div>
+
+            <div class="set__group">
+              <KCheckbox v-model="resDraft.applied" :label="t('settings.resources.apply')" />
+              <p class="set__note">{{ t('settings.resources.applyNote') }}</p>
+            </div>
+
+            <div class="set__group">
+              <span class="set__label">{{ t('settings.resources.agents') }}</span>
+              <KField
+                type="number"
+                :model-value="String(resDraft.agents)"
+                @update:model-value="(v: string) => setCount('agents', v)"
+              />
+              <p class="set__note">{{ t('settings.resources.agentsNote') }}</p>
+            </div>
+
+            <div class="set__group">
+              <span class="set__label">{{ t('settings.resources.subagents') }}</span>
+              <KField
+                type="number"
+                :model-value="String(resDraft.subagents)"
+                @update:model-value="(v: string) => setCount('subagents', v)"
+              />
+              <p v-for="o in resources.overriddenBy.subagents ?? []" :key="o.source" class="set__note mono">
+                {{ t('settings.resources.overridden', { source: o.source, value: o.value }) }}
+              </p>
+            </div>
+
+            <div class="set__group">
+              <KCheckbox v-model="resDraft.background" :label="t('settings.resources.background')" />
+              <p v-for="o in resources.overriddenBy.background ?? []" :key="o.source" class="set__note mono">
+                {{ t('settings.resources.overridden', { source: o.source, value: o.value }) }}
+              </p>
+            </div>
+
+            <div class="set__group">
+              <span class="set__label">{{ t('settings.resources.testWorkers') }}</span>
+              <KField
+                type="number"
+                :model-value="String(resDraft.testWorkers)"
+                @update:model-value="(v: string) => setCount('testWorkers', v)"
+              />
+              <p class="set__note">{{ t('settings.resources.nextStart') }}</p>
+            </div>
+
+            <div class="set__rule"></div>
+
+            <div class="set__group">
+              <KCheckbox v-model="resDraft.lowerPriority" :label="t('settings.resources.lowerPriority')" />
+              <p class="set__note">{{ t('settings.resources.lowerPriorityNote') }}</p>
+            </div>
+
+            <div class="set__group">
+              <KCheckbox
+                v-model="resDraft.watchdog"
+                :disabled="!resources.watchdogSupported"
+                :label="t('settings.resources.watchdog')"
+              />
+              <p v-if="!resources.watchdogSupported" class="set__note">{{ t('settings.resources.watchdogUnsupported') }}</p>
+              <template v-else>
+                <span class="set__label">{{ t('settings.resources.watchdogActionLabel') }}</span>
+                <KSelect
+                  :model-value="resDraft.watchdogAction"
+                  :options="WATCHDOG_ACTION_OPTIONS"
+                  :disabled="!resDraft.watchdog"
+                  @update:model-value="(v: string) => resDraft && (resDraft.watchdogAction = v === 'notify' ? 'notify' : 'kill')"
+                />
+              </template>
+            </div>
+          </template>
         </div>
 
         <p v-if="paneError" class="set__error" role="alert">{{ paneError }}</p>
@@ -703,14 +807,14 @@
 // and a dialog cannot be left open beside the work it describes, cannot be deep
 // linked, and has no Back button.
 // WHAT IS DELIBERATELY ABSENT. Everything drawn here is backed by a real read and
-// a real write. Provider API keys, spend caps, a parallel-agent limit, a
-// context-warning threshold, harness paths and remappable keys
-// have no storage, no endpoint and no column anywhere in this repo — see
-// lib/settings.ts. A panel for them would be a control that silently forgets.
+// a real write. Provider API keys, spend caps, a context-warning threshold, harness
+// paths and remappable keys have no storage, no endpoint and no column anywhere in
+// this repo — see lib/settings.ts. A panel for them would be a control that silently
+// forgets. (The parallel-agent limit is real now: «Ресурси машини», `/machine/resources`.)
 import { computed, effectScope, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule } from '@kermanych/core';
+import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources } from '@kermanych/core';
 import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, DEFAULT_DOCS_POLICY, DOCS_LAYOUT, DOCS_RULES } from '@kermanych/core';
 import type { AssignableRole, WorkspaceMember, WorkspaceRole } from '@kermanych/cloud';
 import type { KTheme } from '@kermanych/tokens';
@@ -725,6 +829,7 @@ import { percent, planWindow, renderWindow } from '../lib/format';
 import { until, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
+import { hardwareLine, useResourcesConsent } from '../composables/useResourcesConsent';
 import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
@@ -735,12 +840,16 @@ import {
   envEdits,
   envKeysChange,
   envRequiredKeys,
+  parseLimitCount,
+  resourcesDraft,
+  resourcesUpdate,
   setEnvValue,
   settingsScopeEntry,
   settingsSection,
   SETTINGS_CATEGORIES,
   SETTINGS_SCOPES,
   type EnvRow,
+  type ResourcesDraft,
   type SettingsScope,
 } from '../lib/settings';
 import KTopNav from 'components/kit/KTopNav.vue';
@@ -1246,12 +1355,12 @@ function roleControl(m: WorkspaceMember): RoleControl {
 }
 
 // ── DIRTY / SAVE ────────────────────────────────────────────────────────────
-// App-scope controls apply on click and queue nothing, so the bar belongs to the
-// two scopes that write to Supabase.
+// Most app-scope controls apply on click and queue nothing; «Ресурси машини» is the one
+// app pane with a draft, because its values only make sense saved together with the switch.
 const dirtyCount = computed(() => {
   if (section.value.scope === 'project') return configDirty.value.length + (envDirty.value ? 1 : 0);
   if (section.value.scope === 'workspace') return wsDirty.value.length;
-  return 0;
+  return resDirty.value.length;
 });
 
 function discard(): void {
@@ -1259,6 +1368,10 @@ function discard(): void {
   if (section.value.scope === 'project') {
     seedProject();
     envRows.value = envBase.value.map((r) => ({ ...r }));
+    return;
+  }
+  if (section.value.scope === 'app') {
+    if (resBase.value) resDraft.value = { ...resBase.value };
     return;
   }
   wsDraft.value = { ...wsBase.value };
@@ -1343,6 +1456,8 @@ async function doSave(): Promise<void> {
       await projects.patchWorkspace(ws.id, { name, color: wsDraft.value.color, icon });
       wsBase.value = { name, color: wsDraft.value.color, icon };
       wsDraft.value = { ...wsBase.value };
+    } else if (scope === 'app') {
+      await saveResources();
     }
     store.notify(t('settings.save.saved'));
   } catch (e) {
@@ -1627,6 +1742,126 @@ watch(
   { immediate: true },
 );
 
+// ── RESOURCES ───────────────────────────────────────────────────────────────
+// This machine's profile (spec decision 8). The saved state is the api's effective values plus
+// the decision; the draft goes through the same bar as the cloud scopes, and save sends only
+// what differs from the profile as overrides (lib/settings.ts `resourcesUpdate`).
+const consent = useResourcesConsent();
+const resources = ref<MachineResources | null>(null);
+const resBase = ref<ResourcesDraft | null>(null);
+const resDraft = ref<ResourcesDraft | null>(null);
+const resDirty = computed(() =>
+  resDraft.value && resBase.value ? changedFields(resDraft.value, resBase.value) : [],
+);
+const resBusy = ref(false);
+
+// A fresh read replaces the saved side always, and the draft only when nothing is pending:
+// the 5 s pressure poll must not wipe what the operator is typing.
+function takeResources(r: MachineResources, reseed: boolean): void {
+  resources.value = r;
+  resBase.value = resourcesDraft(r);
+  if (reseed || !resDraft.value || resDirty.value.length === 0) resDraft.value = resourcesDraft(r);
+}
+
+async function loadResources(reseed: boolean): Promise<void> {
+  try {
+    takeResources(await api.machineResources(), reseed);
+  } catch {
+    /* api down or restarting — keep the last known figures, like the plan chip */
+  }
+}
+
+let resTimer: ReturnType<typeof setInterval> | undefined;
+// Bumped on every section change and on unmount. A run that awaited past a newer one (or past
+// unmount) sees a stale number and starts no timer, so at most one poll ever exists.
+let resGen = 0;
+watch(
+  () => section.value.key,
+  async (key) => {
+    const gen = ++resGen;
+    clearInterval(resTimer);
+    resTimer = undefined;
+    if (key !== 'app-resources') return;
+    await auth.ready;
+    await loadResources(false);
+    if (gen !== resGen) return;
+    seedProfileDraft();
+    // Pressure changes on its own; 5 s matches the watchdog's own sampling.
+    clearInterval(resTimer);
+    resTimer = setInterval(() => void loadResources(false), 5000);
+  },
+  { immediate: true },
+);
+
+// The popup can also open while this pane is already showing (redetect), so the flag is
+// watched on its own and not only on section entry.
+watch(
+  () => route.query.draft,
+  () => {
+    if (section.value.key === 'app-resources') seedProfileDraft();
+  },
+);
+
+// «Налаштувати» in the consent popup: the detected profile with the switch on, as an UNSAVED
+// draft. The flag is dropped at once so a reload does not re-seed over a save.
+function seedProfileDraft(): void {
+  if (route.query.draft !== 'profile' || !resources.value) return;
+  resDraft.value = resourcesDraft(resources.value, true);
+  void router.replace({ name: 'settings', params: { section: 'app-resources' } });
+}
+
+onBeforeUnmount(() => {
+  resGen += 1;
+  clearInterval(resTimer);
+});
+watch(consent.decided, () => void loadResources(true));
+
+const pressureText = computed(() => {
+  const p = resources.value?.pressure;
+  if (p == null) return t('settings.resources.pressure.unavailable');
+  return t('settings.resources.pressure.' + (p === 1 ? 'normal' : p === 2 ? 'warn' : 'critical'));
+});
+
+const WATCHDOG_ACTION_OPTIONS = computed<KSelectOption[]>(() => [
+  { value: 'kill', label: t('settings.resources.watchdogAction.kill') },
+  { value: 'notify', label: t('settings.resources.watchdogAction.notify') },
+]);
+
+function setCount(key: 'agents' | 'subagents' | 'testWorkers', text: string): void {
+  const n = parseLimitCount(text);
+  if (n !== null && resDraft.value) resDraft.value[key] = n;
+}
+
+async function redetectResources(): Promise<void> {
+  resBusy.value = true;
+  try {
+    const r = await api.redetectMachineResources();
+    takeResources(r, true);
+    if (r.askConsent) consent.open(r);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    resBusy.value = false;
+  }
+}
+
+// Not a draft edit: it clears every override on the server at once, like the spec's button.
+async function resetResources(): Promise<void> {
+  resBusy.value = true;
+  try {
+    takeResources(await api.updateMachineResources({ overrides: null }), true);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    resBusy.value = false;
+  }
+}
+
+async function saveResources(): Promise<void> {
+  if (!resDraft.value || !resources.value) return;
+  takeResources(await api.updateMachineResources(resourcesUpdate(resDraft.value, resources.value.profile)), true);
+}
+
 const signOutOpen = ref(false);
 const signOutError = ref<string | null>(null);
 
@@ -1899,6 +2134,12 @@ const badges = computed<Record<string, number | undefined>>(() => ({
   font-size: var(--k-fs-sm);
   line-height: 1.5;
   color: var(--k-faint);
+}
+
+.set__link {
+  color: var(--k-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 // «перевіряю» under the runtime select: the spinner sits on the text's baseline.

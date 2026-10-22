@@ -8,7 +8,7 @@ import type { SkillsService } from "../src/skills/skills.service";
 // callback: the two halves of the skill wiring — what the child is launched with, and how the
 // rows it reports are labelled. The other supervisor specs pass `stubSkills()`, whose empty
 // view exercises neither half.
-type SpawnOpts = { cwd: string; tools?: string[]; configPath?: string };
+type SpawnOpts = { cwd: string; tools?: string[]; configPaths?: string[] };
 const started: SpawnOpts[] = [];
 let emit: (e: RpcEvent) => void = () => {};
 vi.mock("../src/rpc/rpc-session", () => {
@@ -42,6 +42,7 @@ vi.mock("../src/rpc/rpc-session", () => {
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
 import { offlineAuth } from "./offline-auth";
+import type { MachineResourcesService } from "../src/machine/machine-resources.service";
 
 // Only `materialize` is on the path under test; the DI seam is cast once, as the other
 // supervisor specs do for WorktreeService. The two trigger members answer "this project has
@@ -50,14 +51,14 @@ function skillsStub(materialize: (scope: AiScopeSet, cwd: string) => Promise<Mat
   return { materialize, materializeTriggers: async () => ({}), operatorTriggers: async () => [] } as unknown as SkillsService;
 }
 
-function make(skills: SkillsService) {
+function make(skills: SkillsService, resources?: MachineResourcesService) {
   const registry = new RegistryService(":memory:");
   const worktree = {
     isGitRepo: vi.fn().mockResolvedValue(true),
     currentBranch: vi.fn().mockResolvedValue("main"),
     hasUncommitted: vi.fn().mockResolvedValue(false),
   } as unknown as WorktreeService;
-  const sup = new SupervisorService(registry, worktree, offlineAuth(), skills);
+  const sup = new SupervisorService(registry, worktree, offlineAuth(), skills, undefined as never, undefined, undefined, resources);
   const project = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
   return { sup, registry, project };
 }
@@ -73,7 +74,7 @@ afterEach(() => {
 });
 
 describe("the overlay reaches the omp child", () => {
-  it("is passed as configPath, scanned in the session's own directory", async () => {
+  it("is passed in configPaths, scanned in the session's own directory", async () => {
     const seen: { projectId: string; cwd: string }[] = [];
     const { sup, project } = make(
       skillsStub(async (scope, cwd) => {
@@ -84,7 +85,7 @@ describe("the overlay reaches the omp child", () => {
 
     await sup.createChat(project.id);
 
-    expect(started.at(-1)).toMatchObject({ cwd: "/tmp/proj", configPath: "/tmp/p1.config.yml" });
+    expect(started.at(-1)).toMatchObject({ cwd: "/tmp/proj", configPaths: ["/tmp/p1.config.yml"] });
     // A chat runs in the bound repository, so that is the directory scanned for the
     // repository skills that would shadow the library.
     expect(seen).toEqual([{ projectId: "p1", cwd: "/tmp/proj" }]);
@@ -97,7 +98,7 @@ describe("the overlay reaches the omp child", () => {
 
     await sup.createChat(project.id);
 
-    expect(started.at(-1)).not.toHaveProperty("configPath");
+    expect(started.at(-1)).not.toHaveProperty("configPaths");
   });
 
   it("does not block the launch when the library fails outright", async () => {
@@ -110,7 +111,30 @@ describe("the overlay reaches the omp child", () => {
     const chat = await sup.createChat(project.id);
 
     expect(chat.status).toBe("done");
-    expect(started.at(-1)).not.toHaveProperty("configPath");
+    expect(started.at(-1)).not.toHaveProperty("configPaths");
+  });
+
+  // omp's later --config wins, and the machine limits are written around the operator's own
+  // values (decision 10), so the resource overlay goes last.
+  it("is followed by the machine resource overlay, read in the same directory", async () => {
+    const asked: string[] = [];
+    const resources = {
+      ompOverlay: async (cwd: string) => {
+        asked.push(cwd);
+        return "/tmp/resources.yml";
+      },
+      claudeEnv: () => undefined,
+      promptParagraph: () => undefined,
+      renice: () => {},
+      active: () => null,
+      onChange: () => {},
+    } as unknown as MachineResourcesService;
+    const { sup, project } = make(skillsStub(async () => ({ configPath: "/tmp/p1.config.yml", view: [] })), resources);
+
+    await sup.createChat(project.id);
+
+    expect(started.at(-1)?.configPaths).toEqual(["/tmp/p1.config.yml", "/tmp/resources.yml"]);
+    expect(asked).toEqual(["/tmp/proj"]);
   });
 });
 

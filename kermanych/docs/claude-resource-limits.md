@@ -17,6 +17,11 @@ apply everywhere claude runs: your terminal, your IDE, and both Kermanych modes 
 and `claude`). Kermanych passes no `settingSources` to the Agent SDK, so its claude sessions
 read the same settings files as a claude you start yourself.
 
+Kermanych also has its own limits (Settings → Застосунок → «Ресурси машини», see the README):
+once you apply them, it passes `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` and
+`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` to its claude sessions and runs them at nice 10. The `env`
+block in your `settings.json` still wins over what Kermanych passes.
+
 ## 1. Run everything claude starts at a lower priority
 
 macOS has no per-process memory or process-count limit for a group of processes. What it

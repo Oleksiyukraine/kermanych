@@ -8,14 +8,20 @@
       :role="t.kind === 'error' ? 'alert' : 'status'"
       @click="emit('dismiss', t.id)"
     >
-      {{ t.message }}
+      <span>{{ t.message }}</span>
+      <!-- `.stop`: the action consumes the toast itself, so the host's dismiss-on-click must
+           not fire a second time around it. -->
+      <button v-if="t.action" type="button" class="k-toast__action" @click.stop="act(t)">
+        {{ t.action.label }}
+      </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 // Transient notification stack (bottom-right). Presentational for the queue: the store owns
-// it and the auto-dismiss; here we render it and emit a dismiss on click.
+// it and the auto-dismiss; here we render it and emit a dismiss on click. A toast may carry
+// one action (the watchdog's «Зупинити команду»); pressing it runs it and dismisses.
 //
 // The one thing it reads on its own is where the session browser's view is shown
 // (stores/browser.ts `shownRect`): that view is a native layer painted above the whole DOM, so
@@ -28,6 +34,11 @@ import { useSessionBrowser } from 'stores/browser';
 
 defineProps<{ toasts: Toast[] }>();
 const emit = defineEmits<{ dismiss: [id: string] }>();
+
+function act(t: Toast): void {
+  void t.action?.run();
+  emit('dismiss', t.id);
+}
 
 // The stack's own geometry (see the styles): 20px from the window edge, toasts 240–360px wide.
 const EDGE = 20;
@@ -82,6 +93,23 @@ const placement = computed<CSSProperties | undefined>(() => {
   line-height: 1.5;
   cursor: pointer;
   box-shadow: var(--k-shadow-toast);
+}
+
+.k-toast__action {
+  display: block;
+  margin-top: 8px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  color: var(--k-text);
+  font: inherit;
+  font-weight: var(--k-fw-medium);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--k-accent);
+  }
 }
 
 // error — accent rail; info — neutral rail.

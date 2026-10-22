@@ -35,6 +35,7 @@ import { CodedError } from "./coded-error";
 import { RegistryService } from "../registry/registry.service";
 import { reduceRpcEvents, sumTurnUsage } from "../supervisor/transcript-reducer";
 import { ManagementMcpService } from "./management-mcp.service";
+import { MachineResourcesService } from "../machine/machine-resources.service";
 import type { JiraToolScope } from "../jira/jira-tools.service";
 import {
   buildManagementTurn,
@@ -170,6 +171,9 @@ export class ManagementChatService implements OnModuleDestroy {
     // without them simply has no Jira tools, which the prompt's board lines still describe.
     @Optional() private mcp?: ManagementMcpService,
     @Optional() private http?: HttpAdapterHost,
+    // The machine resource profile lowers this child's priority like every agent's
+    // (docs/specs/2026-10-21-machine-resource-profile.md, decision 6). Optional for specs.
+    @Optional() private resources?: MachineResourcesService,
   ) {}
 
   // Per-user preference (Inc 2/3): env override → cached cloud preference → omp. These
@@ -373,6 +377,7 @@ export class ManagementChatService implements OnModuleDestroy {
       ...(model ? { model } : {}),
       ...(append ? { appendSystemPrompt: append } : {}),
       ...(tools ? { mcp: tools.mcp } : {}),
+      onSpawn: (pid) => this.resources?.renice(pid),
     });
     const live: Live = { rpc, greeted: false, lastAt: Date.now(), ...(tools ? { tools: tools.binding } : {}) };
     rpc.onEvent((e) => live.turn?.on(e));

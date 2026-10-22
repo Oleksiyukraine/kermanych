@@ -10,6 +10,7 @@ import { useI18n } from 'vue-i18n';
 import type { Session } from '@kermanych/core';
 import { dur, renderTime } from '../../lib/time';
 import { useNow } from '../../composables/useNow';
+import { slotWaitLabel } from '../../lib/slot-wait';
 
 // The live lane: what the agent is doing right now, pinned between the plan lane and the
 // composer. Everything countable about the session — model, effort, isolation, context
@@ -26,7 +27,7 @@ const { t } = useI18n();
 const live = computed(() =>
   props.session.status === 'tool' ? (props.session.currentTool ?? t('kit.statusRow.tool'))
   : props.session.status === 'thinking' ? t('kit.statusRow.thinking')
-  : props.session.status === 'queued' ? t('kit.statusRow.queued')
+  : props.session.status === 'queued' ? (slotWaitLabel(props.session, t) ?? t('kit.statusRow.queued'))
   : '',
 );
 // `lastEventAt` is a silence heartbeat, not a turn clock — every streaming delta resets

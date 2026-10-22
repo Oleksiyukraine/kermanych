@@ -108,7 +108,7 @@
               :title="item.session.name"
               :time="renderTime(t, relativeTime(item.session.lastActivityAt, now))"
               :status="item.session.status"
-              :status-line="activityOf(item.session) || statusWord(item.session)"
+              :status-line="slotWaitLabel(item.session, t) ?? (activityOf(item.session) || statusWord(item.session))"
               :model="item.session.model"
               :harness="item.session.kind === 'task' ? undefined : sessionLaunchMode(item.session)"
               :deep-analysis="item.session.deepAnalysis"
@@ -176,6 +176,13 @@
 
           <div class="agents__detail-controls">
             <span class="agents__detail-status mono">{{ harnessLabel }} · {{ statusWord(selectedSession) }}</span>
+            <!-- Waiting for an agent slot: one way past the limit for this session only. -->
+            <KBtn
+              v-if="selectedSession.slotWait"
+              variant="secondary"
+              :loading="runNowAction.busy.value"
+              @click="onRunNow(selectedSession)"
+            >{{ t('agents.slotWait.runNow') }}</KBtn>
             <!-- Primary session actions — one column that outlives the tab choice, so preview,
                  finish and defer are on screen in Лог, Зміни and Сесія alike. -->
             <div class="agents__actions">
@@ -1214,6 +1221,7 @@ import KBrowserPane from 'components/kit/KBrowserPane.vue';
 import { useSessionBrowser } from 'stores/browser';
 import { composePicksMessage, picksImages } from '../lib/browser-picks';
 import { historyLoadFor } from '../lib/open-session-history';
+import { slotWaitLabel } from '../lib/slot-wait';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import { useAsyncAction, useKeyedAction, errorText } from '../composables/useAsyncAction';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
@@ -2348,7 +2356,7 @@ function statusWord(s: Session): string {
     case 'error':
       return needsSignIn(s.errorCode) ? t('agents.statusWord.signIn') : t('agents.statusWord.error');
     case 'queued':
-      return t('agents.statusWord.queued');
+      return slotWaitLabel(s, t) ?? t('agents.statusWord.queued');
     case 'stopped':
       return t('agents.statusWord.stopped');
     case 'merged':
@@ -2989,6 +2997,12 @@ async function onReopen(s: Session): Promise<void> {
 
 async function onResumeNative(s: Session): Promise<void> {
   if (!sessionBlocked(s)) await resumeNativeAction.run(s);
+}
+
+// «Запустити зараз»: one session past the slot limit.
+const runNowAction = useAsyncAction((s: Session) => store.runSessionNow(s.id));
+async function onRunNow(s: Session): Promise<void> {
+  await runNowAction.run(s);
 }
 
 // Physical delete (archive teardown + removal): stops the omp process, removes the

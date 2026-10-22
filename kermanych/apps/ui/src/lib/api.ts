@@ -32,6 +32,8 @@ import type {
   DocsPolicy,
   AgentFinding,
   FindingTarget,
+  MachineResources,
+  ResourcesUpdate,
 } from '@kermanych/core';
 import type {
   CloudProject,
@@ -523,6 +525,23 @@ export const api = {
   cloudOutbox: (): Promise<{ pending: number }> =>
     get<{ pending: number }>('/cloud/outbox'),
 
+  // This machine's hardware, resource profile and the operator's decision about it. Local-only
+  // like the outbox: the profile never goes to the cloud (one user, two machines).
+  machineResources: (): Promise<MachineResources> =>
+    get<MachineResources>('/machine/resources'),
+
+  updateMachineResources: (u: ResourcesUpdate): Promise<MachineResources> =>
+    put<MachineResources>('/machine/resources', u),
+
+  // Re-reads the hardware and clears the decision, so `askConsent` comes back true.
+  redetectMachineResources: (): Promise<MachineResources> =>
+    post<MachineResources>('/machine/resources/redetect', {}),
+
+  // The watchdog's «Зупинити команду»: the api kills only a subtree that session started
+  // after it became ready, never the agent or its MCP servers.
+  killAgentCommand: (sessionId: string, pid: number): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>('/machine/kill', { sessionId, pid }),
+
   // What the provider plan behind this machine's agents has left (percent of each rolling
   // rate-limit window). Local-only, like the outbox above: only this process can ask omp.
   subscriptionUsage: (): Promise<SubscriptionUsage> =>
@@ -715,6 +734,10 @@ export const api = {
 
   resumeSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/resume`, {}),
+
+  // Starts a session waiting for an agent slot past the limit, for that one session only.
+  runSessionNow: (id: string): Promise<Session> =>
+    post<Session>(`/sessions/${id}/run-now`, {}),
 
   reopenSession: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/reopen`, {}),

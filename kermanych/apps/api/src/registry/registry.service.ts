@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
 import { isThinkingLevel, isAgentRuntime, isNativeHarness, isAgentLanguage, isFindingKind, parseFindingTarget, docsPolicy, combineReportWrites } from "@kermanych/core";
-import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, Project, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite } from "@kermanych/core";
+import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, Project, ResourceDecision, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -19,6 +19,10 @@ export type AuthSessionRow = {
   agentRuntime?: AgentRuntimeKind;
   agentLanguage?: AgentLanguage;
 };
+
+// This machine's resource-profile row. `overrides` stays JSON text here; the profile service
+// owns its shape (and tolerates a row written by another version).
+export type MachineResourcesRow = { fingerprint: string; decision: ResourceDecision | null; overrides: string };
 
 // A queued cloud status push. One row per task — the outbox is a latest-wins mailbox, not a
 // log: if a session goes thinking → tool → thinking while offline, only the newest status is
@@ -370,6 +374,16 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: an agent waiting for a slot (docs/specs/2026-10-21-machine-resource-profile.md,
+    // decision 5). `pending_prompt` is the message it will be sent (text only); `slot_queued_at`
+    // the enqueue time in ms, so a restart re-enqueues in the original FIFO order.
+    for (const col of ["pending_prompt TEXT", "slot_queued_at INTEGER"]) {
+      try {
+        this.db.exec(`ALTER TABLE sessions ADD COLUMN ${col}`);
+      } catch {
+        /* column already exists */
+      }
+    }
     // The first index in this schema: listSessions(projectId) filters on project_id on
     // every board render and every supervisor lookup.
     this.db.exec(`CREATE INDEX IF NOT EXISTS sessions_project_idx ON sessions (project_id)`);
@@ -433,6 +447,13 @@ export class RegistryService {
       `CREATE TABLE IF NOT EXISTS session_findings (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', kind TEXT NOT NULL, title TEXT NOT NULL, context TEXT NOT NULL, evidence TEXT NOT NULL, acceptance_criteria TEXT NOT NULL, suggested_fix TEXT, target TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
     );
     this.db.exec(`CREATE INDEX IF NOT EXISTS session_findings_session_idx ON session_findings (session_id)`);
+    // The machine resource profile's consent and operator overrides
+    // (docs/specs/2026-10-21-machine-resource-profile.md, decision 3). Single-row like
+    // auth_session, and never synced: the same user's second machine has its own hardware.
+    // `overrides` is a JSON Partial<ResourceLimits> holding only the keys the operator changed.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS machine_resources (id INTEGER PRIMARY KEY CHECK (id = 1), fingerprint TEXT NOT NULL, decision TEXT, overrides TEXT NOT NULL DEFAULT '{}')`,
+    );
   }
 
   // v1 (2026-08-21, team cloud): `groups` becomes `projects`, its id becomes the CLOUD
@@ -665,12 +686,12 @@ export class RegistryService {
   }
 
   listSessions(projectId?: string): Session[] {
-    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, runtime, native, deep_analysis, effort, status, pr_opened as prOpened, archived, usage, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
+    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, runtime, native, deep_analysis, effort, status, pr_opened as prOpened, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
     const rows = (
       projectId
         ? this.db.prepare(sql + ` WHERE project_id = ? ORDER BY created_at`).all(projectId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "native" | "deepAnalysis" | "openFindings"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; native: number; deep_analysis: number; open_findings: number })[];
+    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "native" | "deepAnalysis" | "openFindings" | "pendingPrompt"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; native: number; deep_analysis: number; open_findings: number; pending_prompt: string | null })[];
     // SQLite stores the flag as 0/1; hand callers a real boolean. `effort` is validated rather
     // than cast: a row written by an older build (or by hand) must degrade to "not known" —
     // typing an unknown word as a ThinkingLevel would send it straight back into omp's argv.
@@ -678,7 +699,8 @@ export class RegistryService {
     // valid) so invalid values degrade to undefined.
     // `native` and `deep_analysis` are 0/1 flags too, surfaced only when set so an ordinary row
     // stays as it was; `open_findings` likewise appears only when something waits.
-    return rows.map(({ native, deep_analysis, open_findings, ...r }) => ({ ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(open_findings ? { openFindings: open_findings } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) }));
+    // `pending_prompt` likewise appears only while a message waits for a slot.
+    return rows.map(({ native, deep_analysis, open_findings, pending_prompt, ...r }) => ({ ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) }));
   }
 
   createSession(
@@ -770,6 +792,23 @@ export class RegistryService {
   // because it runs on the high-frequency agent-event path.
   touchSession(id: string): void {
     this.db.prepare(`UPDATE sessions SET last_activity_at = ? WHERE id = ?`).run(new Date().toISOString(), id);
+  }
+
+  // The slot queue's durable half (docs/specs/2026-10-21-machine-resource-profile.md, decision 5).
+  // Targeted writes, like touchSession: updateSession never touches these columns, so a whole-row
+  // update from a stale read cannot drop a waiting message. `undefined` clears both.
+  setPendingPrompt(id: string, text: string | undefined, queuedAt?: number): void {
+    this.db
+      .prepare(`UPDATE sessions SET pending_prompt = ?, slot_queued_at = ? WHERE id = ?`)
+      .run(text ?? null, text === undefined ? null : (queuedAt ?? Date.now()), id);
+  }
+
+  // When each session holding a pending prompt was queued (ms), for re-enqueueing in order.
+  slotQueuedAt(): Map<string, number> {
+    const rows = this.db
+      .prepare(`SELECT id, slot_queued_at FROM sessions WHERE slot_queued_at IS NOT NULL`)
+      .all() as { id: string; slot_queued_at: number }[];
+    return new Map(rows.map((r) => [r.id, r.slot_queued_at]));
   }
 
   // Fold one turn's accounting into the session's lifetime total and hand back the new total.
@@ -993,5 +1032,23 @@ export class RegistryService {
 
   clearAuthSession(): void {
     this.db.prepare(`DELETE FROM auth_session WHERE id = 1`).run();
+  }
+
+  getMachineResources(): MachineResourcesRow | undefined {
+    const row = this.db.prepare(`SELECT fingerprint, decision, overrides FROM machine_resources WHERE id = 1`).get() as
+      | { fingerprint: string; decision: string | null; overrides: string }
+      | undefined;
+    if (!row) return undefined;
+    return {
+      fingerprint: row.fingerprint,
+      decision: row.decision === "applied" || row.decision === "declined" ? row.decision : null,
+      overrides: row.overrides,
+    };
+  }
+
+  setMachineResources(row: MachineResourcesRow): void {
+    this.db
+      .prepare(`INSERT OR REPLACE INTO machine_resources (id, fingerprint, decision, overrides) VALUES (1,?,?,?)`)
+      .run(row.fingerprint, row.decision, row.overrides);
   }
 }

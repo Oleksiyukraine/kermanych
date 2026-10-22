@@ -40,7 +40,7 @@ export class RpcSession implements AgentRuntime {
   // otherwise liveOrResume's fast path hands a caller the dying child and the write to its
   // already-ended stdin vanishes, the exact silent loss the resume-on-dead contract prevents.
   private stopping = false;
-  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; appendSystemPrompt?: string; commandTimeoutMs?: number; configPath?: string; extensionPath?: string; subagentSubscription?: SubagentSubscriptionLevel; mcp?: RuntimeLaunchOpts["mcp"] }) {}
+  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; appendSystemPrompt?: string; commandTimeoutMs?: number; configPaths?: string[]; extensionPath?: string; subagentSubscription?: SubagentSubscriptionLevel; mcp?: RuntimeLaunchOpts["mcp"]; env?: RuntimeLaunchOpts["env"]; onSpawn?: RuntimeLaunchOpts["onSpawn"] }) {}
 
   onEvent(cb: (e: RpcEvent) => void) { this.eventCbs.push(cb); }
   onExit(cb: (code: number | null, reason: string, cause?: AuthFailureCode) => void) { this.exitCbs.push(cb); }
@@ -49,9 +49,10 @@ export class RpcSession implements AgentRuntime {
 
   async start(): Promise<void> {
     const argv = ["omp", "--mode", "rpc", "--cwd", this.opts.cwd];
-    // The project's skill-library overlay (skills.customDirectories). Launch-time only:
-    // no RPC command can add skills to a running child.
-    if (this.opts.configPath) argv.push("--config", this.opts.configPath);
+    // Config overlays, in order (omp accepts the flag repeated; later files win): the project's
+    // skill library and the machine resource limits. Launch-time only: no RPC command can add
+    // skills or change task.maxConcurrency for a running child.
+    for (const path of this.opts.configPaths ?? []) argv.push("--config", path);
     // The session's trigger package (TTSR rules). Launch-time only, like --config: no RPC
     // command can register a rule with a running child.
     if (this.opts.extensionPath) argv.push("-e", this.opts.extensionPath);
@@ -68,12 +69,15 @@ export class RpcSession implements AgentRuntime {
     if (this.opts.ompPath) argv[0] = this.opts.ompPath;
     // The MCP server rides a bridge extension (omp reads MCP only from config files); its
     // address and bearer go in the child's environment so the secret never touches disk.
-    let env: NodeJS.ProcessEnv | undefined;
+    let env: NodeJS.ProcessEnv | undefined = this.opts.env ? { ...process.env, ...this.opts.env } : undefined;
     if (this.opts.mcp) {
       argv.push("-e", await ompMcpBridgePath());
-      env = { ...process.env, [MCP_URL_ENV]: this.opts.mcp.url, [MCP_TOKEN_ENV]: this.opts.mcp.token };
+      env = { ...process.env, ...this.opts.env, [MCP_URL_ENV]: this.opts.mcp.url, [MCP_TOKEN_ENV]: this.opts.mcp.token };
     }
     this.proc = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"], ...(env ? { env } : {}) });
+    // Before `ready`: omp starts its MCP servers and workers during boot, and they inherit the
+    // priority only if the renice lands first. A failed spawn has no pid (the 'error' event follows).
+    if (this.proc.pid !== undefined) this.opts.onSpawn?.(this.proc.pid);
     // Persistent decoders buffer partial multibyte (UTF-8) sequences split across chunk boundaries.
     const outDec = new StringDecoder("utf8");
     const errDec = new StringDecoder("utf8");

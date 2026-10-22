@@ -260,6 +260,73 @@ describe("ClaudeCodeRuntime tool options", () => {
   });
 });
 
+// The machine resource profile reaches claude through two options (docs/specs/2026-10-21-machine-resource-profile.md,
+// decision 6): its CLAUDE_CODE_* limits in `env`, and the runtime's own spawner, which renices the
+// CLI by pid and keeps the stderr the SDK no longer collects for a custom spawn.
+describe("ClaudeCodeRuntime machine resource options", () => {
+  it("passes env merged over the api's own environment, and none when not given", async () => {
+    const withEnv = captureQuery();
+    await new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0, env: { CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: "2" } }, withEnv.queryFn as never).start();
+    const env = withEnv.captured.options?.env as Record<string, string | undefined>;
+    expect(env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS).toBe("2");
+    // The SDK's `env` replaces the child's environment: dropping PATH would lose the CLI itself.
+    expect(env.PATH).toBe(process.env.PATH);
+
+    const without = captureQuery();
+    await new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0 }, without.queryFn as never).start();
+    expect("env" in (without.captured.options ?? {})).toBe(false);
+  });
+
+  // What the SDK does with a custom spawner: it runs it, and on a non-zero exit reports only
+  // "exited with code N" — the stderr tail it appends for its own spawn is missing.
+  function spawningQuery(script: string) {
+    return (params: { prompt: AsyncIterable<SDKUserMessage>; options?: unknown }) => {
+      const options = params.options as { spawnClaudeCodeProcess: (o: unknown) => { on(e: "exit", cb: (code: number | null) => void): void } };
+      const gen = (async function* (): AsyncGenerator<SDKMessage, void> {
+        const child = options.spawnClaudeCodeProcess({ command: process.execPath, args: ["-e", script], cwd: process.cwd(), env: process.env, signal: new AbortController().signal });
+        const exited = Promise.withResolvers<number | null>();
+        child.on("exit", exited.resolve);
+        const code = await exited.promise;
+        throw new Error(`Claude Code process exited with code ${code}`);
+      })() as AsyncGenerator<SDKMessage, void> & Record<string, unknown>;
+      gen.interrupt = async () => undefined;
+      return gen;
+    };
+  }
+
+  it("hands the CLI's pid to onSpawn and appends its stderr to a launch failure", async () => {
+    const pids: number[] = [];
+    const rt = new ClaudeCodeRuntime(
+      { cwd: "/tmp/x", startGraceMs: 10_000, onSpawn: (pid) => pids.push(pid) },
+      spawningQuery(`process.stderr.write("Invalid API key · Please run /login"); process.exit(1)`) as never,
+    );
+    rt.onEvent(() => {});
+    const err = await rt.start().catch((e: unknown) => e as Error & { code?: string });
+    expect(err.message).toBe("Claude Code process exited with code 1. stderr: Invalid API key · Please run /login");
+    // The signed-out code still classifies, as it did when the SDK spawned the CLI itself.
+    expect(err.code).toBe("claude_not_authenticated");
+    expect(pids).toHaveLength(1);
+    expect(pids[0]).toBeGreaterThan(0);
+  });
+
+  it("leaves a failure with no stderr as the SDK worded it", async () => {
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 10_000 }, spawningQuery("process.exit(3)") as never);
+    rt.onEvent(() => {});
+    await expect(rt.start()).rejects.toThrow(/^Claude Code process exited with code 3$/);
+  });
+
+  // The tail reaches the transcript and the HTTP error; the SDK redacted it when it collected it.
+  it("redacts keys and credentials in the stderr it appends", async () => {
+    const rt = new ClaudeCodeRuntime(
+      { cwd: "/tmp/x", startGraceMs: 10_000 },
+      spawningQuery(`process.stderr.write("key sk-ant-abc123 rejected; sent Authorization: Bearer tok.123"); process.exit(1)`) as never,
+    );
+    rt.onEvent(() => {});
+    const err = await rt.start().catch((e: unknown) => e as Error);
+    expect(err.message).toBe("Claude Code process exited with code 1. stderr: key sk-[redacted] rejected; sent Authorization: [redacted]");
+  });
+});
+
 describe("ClaudeCodeRuntime.supportedModels", () => {
   it("runs a throwaway query, returns its catalog, and tears it down", async () => {
     const script = [

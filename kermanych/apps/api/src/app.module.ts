@@ -43,9 +43,12 @@ import { NativeSessionService } from "./native/native-session.service";
 import { NativeController } from "./http/native.controller";
 import { BrowserMcpController } from "./http/browser-mcp.controller";
 import { BrowserMcpService } from "./browser/browser-mcp.service";
+import { MachineController } from "./http/machine.controller";
+import { MachineResourcesService } from "./machine/machine-resources.service";
+import { WatchdogService } from "./machine/watchdog.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -110,6 +113,12 @@ import { BrowserMcpService } from "./browser/browser-mcp.service";
     // bearer per session; the supervisor and NativeSessionService hand its binding to each
     // launch. The browser itself is the desktop app's (`bootstrap({ browser })`).
     BrowserMcpService,
+    // The machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md): this
+    // machine's limits and consent (RegistryService), and the memory watchdog over the agent
+    // trees the supervisor tracks. The supervisor depends on both; neither knows it, so its
+    // alerts reach the UI through the supervisor's `events$` like every other event.
+    MachineResourcesService,
+    WatchdogService,
     // Global by design: the api binds 127.0.0.1 but was previously drivable by
     // anything on the machine, including GET /fs/list (arbitrary local directory
     // enumeration). Opt out per route with @Public(), never per module.

@@ -31,7 +31,7 @@ describe.skipIf(!gated)("skill library reaches a real omp child", () => {
   });
 
   async function systemPrompt(configPath: string, cwd: string): Promise<string> {
-    const rpc = new RpcSession({ cwd, configPath });
+    const rpc = new RpcSession({ cwd, configPaths: [configPath] });
     rpc.onExit(() => {});
     await rpc.start();
     try {
@@ -174,7 +174,7 @@ describe.skipIf(!gated)("a Kermanych trigger fires inside a real omp child", () 
     if (!packagePath) throw new Error("materializeTriggers wrote no package");
     expect(packagePath.startsWith(triggersRoot())).toBe(true);
 
-    const rpc = new RpcSession({ cwd: repo, configPath, extensionPath: packagePath });
+    const rpc = new RpcSession({ cwd: repo, configPaths: [configPath], extensionPath: packagePath });
     rpc.onExit(() => {});
     await rpc.start();
     let blob: string;

@@ -4,6 +4,7 @@ import type { Platform } from "./platform";
 import type { ThinkingLevel } from "./thinking";
 import type { NoticeCode, NoticeParams } from "./i18n-codes";
 import type { NativeHarness } from "./runtime";
+import type { MachineAlert } from "./machine-profile";
 
 // `in_review` is the PR hand-off state: the operator asked for a pull request, the agent
 // pushed it, and the work now waits on a HUMAN reviewer. It is settled (nothing moves on
@@ -69,6 +70,13 @@ export type Session = {
   openFindings?: number;
   // Live-only: the pty (`TerminalInfo.id`) a native session's harness runs in, while it runs.
   terminalId?: string;
+  // Live-only: this agent waits for a slot of the machine resource profile
+  // (docs/specs/2026-10-21-machine-resource-profile.md). `position` is 1-based in the queue;
+  // `running`/`limit` are the slots in use and the limit. Absent once it starts.
+  slotWait?: { position: number; running: number; limit: number };
+  // A message accepted while the session waits for a slot. Persisted, delivered when the
+  // session gets one, then cleared.
+  pendingPrompt?: string;
   // "task" is no longer produced: a task is a cloud card and `from-task` is the only way an
   // agent is born. Rows with this kind are pre-cutover backlog leftovers whose project is
   // not in the cloud, so lib/publish-backlog.ts could not move them; AgentsPage lists them
@@ -265,7 +273,9 @@ export type ServerEvent =
   | { type: "subagents_update"; sessionId: string; subagents: SubagentNode[] }
   | { type: "project_update"; project: Project }
   | { type: "session_removed"; sessionId: string }
-  | { type: "project_removed"; projectId: string };
+  | { type: "project_removed"; projectId: string }
+  // The memory-pressure watchdog found something (docs/specs/2026-10-21-machine-resource-profile.md).
+  | { type: "machine_alert"; alert: MachineAlert };
 
 // How much of omp's subagent activity a session subscribes to. "progress" streams lifecycle
 // + coalesced progress (enough for the agent map); "events" adds every subagent tool/message
