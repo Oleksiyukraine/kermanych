@@ -8,9 +8,15 @@
         {{ t('management.home.capacity.gateOpen') }}
       </RouterLink>
     </p>
-    <p v-else-if="jira.integration === undefined" class="capw__note mono">
-      {{ t('management.home.capacity.loading') }}
-    </p>
+    <!-- Not loaded for this workspace: the jira store resets on a workspace switch and keeps
+         `loading` up from probe through loadBoard. -->
+    <template v-else-if="phase !== 'ready'">
+      <div v-if="phase === 'skeleton'" class="capw__skeleton">
+        <KSkeleton variant="line" width="50%" />
+        <KSkeleton variant="block" width="100%" height="48px" />
+        <KSkeleton variant="line" width="100%" />
+      </div>
+    </template>
     <template v-else>
       <!-- The period this snapshot covers, picked on the tile itself: the whole point of the
            tile is answering «how loaded are we THIS/NEXT week» at a glance, so the selector is
@@ -36,7 +42,8 @@
         </article>
         <article class="capw__stat">
           <span class="capw__stat-label mono">{{ t('management.capacity.stat.logged') }}</span>
-          <strong class="capw__stat-value">{{ hours(report.summary.loggedSeconds) }}<small>{{ t('management.capacity.h') }}</small></strong>
+          <KSkeleton v-if="worklogsPending" variant="line" width="48px" height="18px" />
+          <strong v-else class="capw__stat-value">{{ hours(report.summary.loggedSeconds) }}<small>{{ t('management.capacity.h') }}</small></strong>
         </article>
       </div>
 
@@ -74,6 +81,8 @@ import { useI18n } from 'vue-i18n';
 import { RouterLink } from 'vue-router';
 import type { JiraWorklog } from '@kermanych/cloud';
 import KChipSelect from 'components/kit/KChipSelect.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useJira } from 'stores/jira';
 import { useNow } from '../../composables/useNow';
 import { hours } from '../../lib/format';
@@ -103,23 +112,36 @@ const presetOptions = computed(() =>
 const range = computed(() => presetRange(preset.value, today.value));
 
 const worklogs = ref<JiraWorklog[]>([]);
+// The integration+range the worklogs belong to; the logged figure is a skeleton until it
+// matches, never another workspace's (or range's) hours.
+const worklogsFor = ref('');
+const worklogsKey = computed(() => `${jira.integration?.id ?? ''}|${range.value.from}|${range.value.to}`);
+const worklogsPending = computed(() => worklogsFor.value !== worklogsKey.value);
 let generation = 0;
 
 async function loadWorklogs(): Promise<void> {
   if (!jira.integration) return;
   const mine = ++generation;
+  const key = worklogsKey.value;
   try {
     const rows = await jira.fetchWorklogs(range.value);
     if (mine === generation) worklogs.value = rows;
   } catch {
     // The plan still renders from the estimates; logged time is best-effort.
   }
+  if (mine === generation) worklogsFor.value = key;
 }
+
+const phase = useLoadPhase(() => jira.integration === undefined || (jira.loading && !jira.issues.length));
 
 watch(range, () => void loadWorklogs());
 watch(
   () => jira.integration?.id,
   (id) => {
+    // A workspace switch: drop the old workspace's worklogs and any reply still in flight.
+    generation++;
+    worklogs.value = [];
+    worklogsFor.value = '';
     if (id) void loadWorklogs();
   },
   { immediate: true },
@@ -161,6 +183,12 @@ const barWidth = computed(() => `${Math.min(100, Math.round(report.value.summary
   flex-direction: column;
   gap: var(--k-sp-3);
   height: 100%;
+}
+
+.capw__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
 }
 
 .capw__note {

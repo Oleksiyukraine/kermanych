@@ -484,6 +484,45 @@
         {{ t('kit.gallery.cap.diff') }}
       </div>
     </section>
+
+    <!-- async states — README «Design → Async states» -->
+    <section class="kit__section">
+      <div class="kit__label">{{ t('kit.gallery.sec.async') }}</div>
+      <div class="kit__row">
+        <KBtn variant="primary" loading>{{ t('kit.gallery.btn.launch') }}</KBtn>
+        <KIconButton loading :title="t('kit.gallery.iconTip.run')">▶</KIconButton>
+        <KChipSelect model-value="high" :options="asyncChipOptions" icon="⚡" :title="t('kit.composer.effort')" loading placement="down" />
+        <KCheckbox :model-value="true" :label="t('kit.gallery.async.checkbox')" loading />
+        <KToggle :options="['omp', 'claude']" model-value="claude" loading />
+      </div>
+      <div class="kit__row kit__row--fields" style="margin-top: var(--k-sp-3)">
+        <KSelect :label="t('kit.gallery.async.select')" model-value="" :options="[]" :placeholder="t('kit.gallery.async.selectPlaceholder')" loading />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.asyncControls') }}</div>
+
+      <div class="kit__async-grid" style="margin-top: var(--k-sp-3)">
+        <KSkeleton variant="rows" :rows="3" />
+        <KSkeleton variant="card" :rows="2" />
+        <KSkeleton variant="lines" :rows="3" />
+        <div class="kit__row">
+          <KSkeleton variant="avatar" />
+          <KSkeleton variant="line" width="120px" />
+          <KSkeleton variant="block" width="96px" height="48px" />
+        </div>
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.asyncSkeleton') }}</div>
+
+      <div class="kit__async-grid" style="margin-top: var(--k-sp-3)">
+        <KSessionCard branch="feature/add-loading-states" time="2 хв" status="thinking" pending />
+        <KKanbanCard title="Прелоадери" branch="feature/add-loading-states" project="kermanych" time="2 хв" status="thinking" :assignee="null" pending />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.asyncPending') }}</div>
+
+      <div class="kit__async-bar">
+        <KProgressBar :active="true" />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.asyncBar') }}</div>
+    </section>
   </main>
 </template>
 
@@ -523,6 +562,10 @@ import KThoughtToggle from 'components/kit/KThoughtToggle.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KSubNav from 'components/kit/KSubNav.vue';
 import KComposer from 'components/kit/KComposer.vue';
+import KChipSelect from 'components/kit/KChipSelect.vue';
+import KCheckbox from 'components/kit/KCheckbox.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import KProgressBar from 'components/kit/KProgressBar.vue';
 import KDiffView from 'components/kit/KDiffView.vue';
 import type { FileDiff } from '../lib/api';
 import type { LaunchMode } from '../lib/native-session';
@@ -834,6 +877,11 @@ const splitItems = [
   { value: 'task', label: t('agents.board.newTaskModes.task'), caption: t('agents.board.newTaskModes.taskCaption'), icon: 'plus' as const },
   { value: 'deepAnalysis', label: t('agents.board.newTaskModes.deepAnalysis'), caption: t('agents.board.newTaskModes.deepAnalysisCaption'), icon: 'analysis' as const },
 ];
+// The «Async states» chip sample: the composer's effort ladder, frozen mid-save.
+const asyncChipOptions = [
+  { value: 'medium', label: t('kit.gallery.async.chipMedium') },
+  { value: 'high', label: t('kit.gallery.async.chipHigh') },
+];
 // The gallery panels carry the real detail toolbar, so it drives a real command here too
 // — a showcase with a dead button showcases the wrong thing.
 const galleryExpandAll = ref<ExpandAllCommand>(EXPAND_ALL_NONE);
@@ -934,6 +982,21 @@ function onPanelEffort(level: ThinkingLevel) { lastAction.value = `effort: ${lev
   margin-top: 14px;
   font-size: 11px;
   color: var(--k-muted);
+}
+
+.kit__async-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--k-sp-4);
+  align-items: start;
+}
+
+// The real bar sits along the header's bottom edge; here a framed strip stands in for it.
+.kit__async-bar {
+  position: relative;
+  height: 34px;
+  margin-top: var(--k-sp-3);
+  border: 1px solid var(--k-line);
 }
 
 .kit__status {

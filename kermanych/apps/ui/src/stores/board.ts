@@ -38,6 +38,9 @@ export const useBoard = defineStore('board', () => {
   const tasks = ref<Task[]>([]);
   const loading = ref(false);
   const loadError = ref<string | null>(null);
+  // A task read has answered (rows or an error) for the signed-in user. Before that an empty
+  // `tasks` is «not read», not «no tasks» — the columns show a skeleton, never «—» / 0.
+  const loaded = ref(false);
   // The raw channel state, 'CLOSED' until a subscription reports otherwise. Nothing may
   // read it on its own as "the board is stale" — see `offline` for why.
   const channelState = ref<TaskChannelState>('CLOSED');
@@ -107,7 +110,11 @@ export const useBoard = defineStore('board', () => {
     // A preview signs itself in against a cloudless api (lib/preview.ts), so `auth.user`
     // is set but there are no tasks to read — and cloud.load() below would prune the
     // previewed registry against an empty project list. Nothing to load, so: nothing.
-    if (IS_PREVIEW || !auth.user) return;
+    if (IS_PREVIEW || !auth.user) {
+      // Nothing will be read, so the empty board is the answer, not a pending one.
+      if (IS_PREVIEW) loaded.value = true;
+      return;
+    }
     loading.value = true;
     loadError.value = null;
     try {
@@ -120,6 +127,7 @@ export const useBoard = defineStore('board', () => {
       loadError.value = e instanceof Error ? e.message : String(e);
     } finally {
       loading.value = false;
+      loaded.value = true;
     }
   }
 
@@ -365,6 +373,7 @@ export const useBoard = defineStore('board', () => {
       unsubscribe();
       tasks.value = [];
       loadError.value = null;
+      loaded.value = false;
     },
   );
 
@@ -391,6 +400,7 @@ export const useBoard = defineStore('board', () => {
     tasks,
     loading,
     loadError,
+    loaded,
     channelState,
     offline,
     load,

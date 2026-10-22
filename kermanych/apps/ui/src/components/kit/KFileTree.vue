@@ -30,6 +30,9 @@ async function onClick(entry: TreeEntry): Promise<void> {
     emit('open', path);
     return;
   }
+  // A second click while the folder is still loading is ignored: collapsing here would let the
+  // in-flight fetch land afterwards and re-expand the folder on its own.
+  if (children.value[path] === 'loading') return;
   if (children.value[path]) {
     delete children.value[path];
     return;

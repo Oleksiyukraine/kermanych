@@ -22,14 +22,17 @@
          a failed read is a claim about the project this pane could not read, and it is the
          claim that would keep an operator from looking for the trigger that did fire. A refused
          WRITE leaves the list up — the error line says what was refused, and every row on
-         screen is still true. -->
-    <template v-if="loaded">
+         screen is still true. Until the first read for this owner lands, a skeleton shaped
+         like the trigger cards stands in, so the wait is not a blank pane. -->
+    <KSkeleton v-if="phase === 'skeleton'" variant="card" :rows="3" />
+    <template v-else-if="phase === 'ready' && loaded">
       <ul v-if="triggers.length" class="tg__list">
         <li
           v-for="t in triggers"
           :key="t.id"
           class="tg__row"
-          :class="{ 'tg__row--off': !t.enabled }"
+          :class="{ 'tg__row--off': !enabledValue(t), 'tg__row--pending': removing.busyFor(t.id) }"
+          :aria-busy="removing.busyFor(t.id) || undefined"
         >
           <div class="tg__head">
             <span class="tg__name">{{ t.label }}</span>
@@ -66,17 +69,33 @@
                the editor's sequence list — this row would have nowhere to act on it. -->
           <p v-if="danglingAgent(t)" class="tg__warn">{{ danglingAgent(t) }}</p>
 
+          <!-- Every control on the row waits while that row is being written: an edit opened
+               mid-toggle would carry the old `enabled` back, and a toggle on a row being deleted
+               writes a row that is about to vanish. Other rows stay live. -->
           <div class="tg__actions">
             <KCheckbox
-              :model-value="t.enabled"
+              :model-value="enabledValue(t)"
               :label="translate('settings.triggers.enabledLabel')"
-              :disabled="!canWrite || busy"
-              @update:model-value="toggle(t)"
+              :loading="enabledPending(t)"
+              :disabled="!canWrite || removing.busyFor(t.id)"
+              @update:model-value="(v: boolean) => enabledOf(t).set(v)"
             />
-            <button type="button" class="tg__btn" :disabled="!canWrite || busy" @click="edit(t)">
+            <button
+              type="button"
+              class="tg__btn"
+              :disabled="!canWrite || rowBusy(t)"
+              @click="edit(t)"
+            >
               {{ translate('settings.triggers.edit') }}
             </button>
-            <button type="button" class="tg__btn" :disabled="!canWrite || busy" @click="drop(t.id)">
+            <button
+              type="button"
+              class="tg__btn"
+              :disabled="!canWrite || rowBusy(t)"
+              :aria-busy="removing.busyFor(t.id) || undefined"
+              @click="removing.run(t.id)"
+            >
+              <KSpinner v-if="removing.busyFor(t.id)" :size="10" />
               {{ translate('settings.triggers.delete') }}
             </button>
           </div>
@@ -94,15 +113,19 @@
       <!-- Only with the list on screen: a trigger is saved with an upsert on (проєкт, id), so
            creating one against a list that failed to load could silently overwrite a trigger
            the operator cannot see. -->
-      <button type="button" class="tg__btn tg__btn--primary" :disabled="!canWrite || busy" @click="create">
+      <button type="button" class="tg__btn tg__btn--primary" :disabled="!canWrite" @click="create">
         {{ translate('settings.triggers.add') }}
       </button>
     </template>
 
+    <!-- Persistent while the save runs: the row write and the sequence write are two calls, and
+         a modal dismissed between them would hide the one error that says the trigger now
+         fires with the wrong body. -->
     <KModal
       v-model="editorOpen"
       :title="editing ? translate('settings.triggers.editTitle', { id: draft.slug }) : translate('settings.triggers.newTitle')"
       width="560px"
+      :persistent="saving"
     >
       <div class="tg__form">
         <!-- The id names the rule file the session loads (`rules/<id>.md`), so it is fixed
@@ -218,15 +241,19 @@
         <p v-if="formError" class="tg__error mono">{{ formError }}</p>
       </div>
       <template #controls>
-        <button type="button" class="tg__btn" @click="editorOpen = false">{{ translate('settings.modal.cancel') }}</button>
+        <button type="button" class="tg__btn" :disabled="saving" @click="editorOpen = false">{{ translate('settings.modal.cancel') }}</button>
         <!-- `canWrite` here as well as on every list action: the modal must not be the one
              surface where a non-owner's write reaches postgrest only to be refused there. -->
         <button
           type="button"
           class="tg__btn tg__btn--primary"
           :disabled="saving || !canWrite"
+          :aria-busy="saving || undefined"
           @click="save"
-        >{{ translate('settings.triggers.save') }}</button>
+        >
+          <KSpinner v-if="saving" :size="10" />
+          {{ translate('settings.triggers.save') }}
+        </button>
       </template>
     </KModal>
   </section>
@@ -241,7 +268,7 @@
 // The two reads are NOT merged, and that is deliberate: the list is the cloud rows alone, while
 // the library only fills the editor's skill sequence — so losing the library costs the sequence
 // editor and leaves every trigger on screen exactly as true as it was.
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, effectScope, onScopeDispose, reactive, ref, watch, type EffectScope } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AGENTS, SKILL_NAME_RE, type SkillView } from '@kermanych/core';
 import {
@@ -261,6 +288,11 @@ import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
+import { errorText, useAsyncAction, useKeyedAction } from '../../composables/useAsyncAction';
+import { useOptimisticValue } from '../../composables/useOptimisticValue';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import SkillSequence, { measureSkillBytes } from './SkillSequence.vue';
 import AiProvenance from './AiProvenance.vue';
 import {
@@ -308,10 +340,8 @@ const loaded = ref(false);
 // The library read fails on its own terms (the local api is down, the project is unbound) and
 // costs only the editor's skill sequence, so it gets its own line there.
 const libraryError = ref('');
-const busy = ref(false);
 const editorOpen = ref(false);
 const editing = ref(false);
-const saving = ref(false);
 const formError = ref('');
 // Editor-only, never stored: the sample the operator pastes to see whether the pattern bites.
 const sample = ref('');
@@ -402,10 +432,14 @@ function danglingAgent(t: AiTrigger): string {
   return translate('settings.triggers.danglingAgent', { target: t.agentId });
 }
 
+// Bumped per read: row actions each end in a reload, and those can overlap within one owner —
+// only the newest read may paint, or an older reply would put back a stale «Увімкнено».
+let loadRun = 0;
 async function load(): Promise<void> {
   // Pinned for the whole read: the prop is live (see the watcher), so two loads can overlap and
   // a late one must not paint another project's triggers.
   const ownerKey = props.owner.scope + ':' + props.owner.id;
+  const run = ++loadRun;
   error.value = '';
   libraryError.value = '';
   const [rows, library] = await Promise.allSettled([
@@ -415,7 +449,7 @@ async function load(): Promise<void> {
     // come from. Splitting them would leave the editor listing names it could not price.
     Promise.all([libraryView(props.owner), listAiSkills(auth.client, props.owner)]),
   ]);
-  if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
+  if (run !== loadRun || ownerKey !== props.owner.scope + ':' + props.owner.id) return;
   if (rows.status === 'fulfilled') {
     triggers.value = rows.value;
     loaded.value = true;
@@ -438,6 +472,20 @@ async function load(): Promise<void> {
   }
 }
 
+// One optimistic «Увімкнено» per row, made on the row's first render. They live in a scope of
+// their own that is thrown away with the owner (`resetRowSwitches`): a pick still held for one
+// project's trigger must never paint onto the next project's list, and a refusal that lands
+// after the switch is not news about the project now on screen.
+type Switch = ReturnType<typeof useOptimisticValue<boolean>>;
+let switchScope: EffectScope = effectScope(true);
+let switches = new Map<string, Switch>();
+function resetRowSwitches(): void {
+  switchScope.stop();
+  switchScope = effectScope(true);
+  switches = new Map();
+}
+onScopeDispose(() => switchScope.stop());
+
 // `projectId` is a LIVE prop: SettingsPage renders its panes with no `:key` and the sidebar
 // only moves the selection, so picking another project swaps the prop under a component that
 // stays mounted. The editor is shut synchronously with it — a draft left open across the
@@ -452,6 +500,7 @@ watch(
     repo.value = {};
     bodyBytes.value = {};
     loaded.value = false;
+    resetRowSwitches();
     void load();
   },
   { immediate: true },
@@ -541,7 +590,16 @@ function edit(t: AiTrigger): void {
   editorOpen.value = true;
 }
 
+// The modal's one write path, guarded and spun by `useAsyncAction`. The modal stays open,
+// persistent, until both writes land; the reload runs after it has shut, so a trigger opened
+// meanwhile is not left looking at a spinning «Зберегти».
+const { run: runSave, busy: saving } = useAsyncAction(saveTrigger);
 async function save(): Promise<void> {
+  if (await runSave()) await load();
+}
+
+// True when the editor closed on a stored trigger for the owner still on screen.
+async function saveTrigger(): Promise<boolean | undefined> {
   // Pinned like every write on this pane: the row belongs to the project the operator was
   // looking at when the button went down.
   const ownerKey = props.owner.scope + ':' + props.owner.id;
@@ -579,7 +637,6 @@ async function save(): Promise<void> {
     formError.value = translate('settings.triggers.errNoBody');
     return;
   }
-  saving.value = true;
   try {
     const saved = await upsertAiTrigger(auth.client, {
       owner: props.owner,
@@ -617,12 +674,10 @@ async function save(): Promise<void> {
     );
     if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
     editorOpen.value = false;
-    await load();
+    return true;
   } catch (e) {
     if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
-    formError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    saving.value = false;
+    formError.value = errorText(e);
   }
 }
 
@@ -635,54 +690,85 @@ function parseGlobs(text: string): string[] {
 
 // The switch on the row. A disabled trigger keeps its row — it is still the operator's rule,
 // and materializeTriggers simply stops writing a file for it — so this is an upsert of the
-// same row with one bit flipped, never a delete.
-async function toggle(t: AiTrigger): Promise<void> {
-  const ownerKey = props.owner.scope + ':' + props.owner.id;
+// same row with one bit flipped, never a delete. Throws on failure: the optimistic checkbox
+// (see `enabledOf`) rolls back on a throw, and only on a throw.
+async function setEnabled(id: string, enabled: boolean, ownerKey: string): Promise<void> {
+  const t = triggers.value.find((x) => x.id === id);
+  if (!t) return;
   error.value = '';
-  busy.value = true;
-  try {
-    await upsertAiTrigger(auth.client, {
-      owner: props.owner,
-      slug: t.slug,
-      label: t.label,
-      source: t.source,
-      pattern: t.pattern,
-      pathGlobs: t.pathGlobs,
-      action: t.action,
-      instruction: t.instruction,
-      agentId: t.agentId,
-      mode: t.mode,
-      repeat: t.repeat,
-      skills: t.skills,
-      enabled: !t.enabled,
-    });
-    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
-    await load();
-  } catch (e) {
-    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
+  await upsertAiTrigger(auth.client, {
+    owner: props.owner,
+    slug: t.slug,
+    label: t.label,
+    source: t.source,
+    pattern: t.pattern,
+    pathGlobs: t.pathGlobs,
+    action: t.action,
+    instruction: t.instruction,
+    agentId: t.agentId,
+    mode: t.mode,
+    repeat: t.repeat,
+    skills: t.skills,
+    enabled,
+  });
+  // The reload is what settles the checkbox: the picked value is held until the re-read row
+  // reports it, so the box never flicks back to the old state between the write and the read.
+  if (ownerKey === ownerKeyNow()) await load();
+}
+
+function ownerKeyNow(): string {
+  return props.owner.scope + ':' + props.owner.id;
+}
+
+function enabledOf(t: AiTrigger): Switch {
+  let s = switches.get(t.id);
+  if (!s) {
+    const id = t.id;
+    const ownerKey = ownerKeyNow();
+    s = switchScope.run(() =>
+      useOptimisticValue(
+        () => triggers.value.find((x) => x.id === id)?.enabled ?? false,
+        (next: boolean) => setEnabled(id, next, ownerKey),
+        {
+          onError: (e) => {
+            if (ownerKey === ownerKeyNow()) error.value = errorText(e);
+          },
+        },
+      ),
+    )!;
+    switches.set(id, s);
   }
+  return s;
+}
+function enabledValue(t: AiTrigger): boolean {
+  return enabledOf(t).value.value;
+}
+function enabledPending(t: AiTrigger): boolean {
+  return enabledOf(t).pending.value;
 }
 
 // `deleteAiTrigger` throws when it removed nothing — an RLS refusal on a DELETE reports no error
-// otherwise. Nothing is dropped locally: the reload is what the screen reflects.
-async function drop(id: string): Promise<void> {
-  const ownerKey = props.owner.scope + ':' + props.owner.id;
+// otherwise. Nothing is dropped locally: the reload is what the screen reflects. Keyed per row
+// and awaited through the reload, so the row stays dimmed and inert until it is actually gone
+// from the list — a second press cannot send a second delete.
+const removing = useKeyedAction(async (id: string) => {
+  const ownerKey = ownerKeyNow();
   error.value = '';
-  busy.value = true;
   try {
     await deleteAiTrigger(auth.client, id);
-    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
-    await load();
   } catch (e) {
-    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
+    if (ownerKey === ownerKeyNow()) error.value = errorText(e);
+    return;
   }
+  if (ownerKey === ownerKeyNow()) await load();
+});
+
+// A row being toggled or deleted takes no other write until that one settles.
+function rowBusy(t: AiTrigger): boolean {
+  return removing.busyFor(t.id) || enabledPending(t);
 }
+
+const phase = useLoadPhase(() => !loaded.value && !error.value);
 </script>
 
 <style scoped lang="scss">
@@ -697,6 +783,8 @@ async function drop(id: string): Promise<void> {
    default a project turned off. The row is still the operator's rule — it just fires nothing. */
 .tg__row--off { border-style: dashed; background: transparent; }
 .tg__row--off .tg__name, .tg__row--off .tg__pattern, .tg__row--off .tg__does { color: var(--k-muted); }
+/* A row whose delete is in flight: dimmed until the reload drops it, so the press reads as taken. */
+.tg__row--pending { opacity: 0.55; }
 .tg__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tg__name { font-size: 12.5px; }
 .tg__id { font-size: 11px; color: var(--k-faint); }
@@ -720,6 +808,8 @@ async function drop(id: string): Promise<void> {
 .tg__actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .tg__btn { font: inherit; font-size: 12px; padding: 3px 10px; background: transparent; color: var(--k-text); border: 1px solid var(--k-line-strong); border-radius: var(--k-r); cursor: pointer; }
 .tg__btn:disabled { opacity: 0.45; cursor: default; }
+/* Room for the inline spinner an in-flight write puts in front of the label. */
+.tg__btn { display: inline-flex; align-items: center; gap: 6px; }
 .tg__btn--primary { border-color: var(--k-accent); color: var(--k-accent); }
 /* «Видалити» and «Редагувати» sit against the right edge so they line up in one column
    whatever the checkbox label did, mirroring the board's «Прибрати». */

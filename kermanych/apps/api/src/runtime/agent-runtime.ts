@@ -2,6 +2,7 @@
 import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, TodoPhase, AgentRuntimeKind, SubagentSubscriptionLevel, SubagentInfo, SubagentMessagesPage } from "@kermanych/core";
 import { RpcSession } from "../rpc/rpc-session";
 import { ClaudeCodeRuntime } from "./claude-code-runtime";
+import type { AuthFailureCode } from "./auth-failure";
 
 // The state contract a runtime reports through getState(). Moved here from rpc-session.ts
 // because it is backend-neutral: omp fills it from its `get_state` frame, claude from
@@ -85,7 +86,9 @@ export interface AgentRuntime {
   getSubagentMessages(sel: { subagentId?: string; sessionFile?: string; fromByte?: number }): Promise<SubagentMessagesPage>;
   stop(): Promise<void>;
   onEvent(cb: (e: RpcEvent) => void): void;
-  onExit(cb: (code: number | null, reason: string) => void): void;
+  // `cause` is the auth-failure code (auth-failure.ts) when the runtime recognised why the
+  // child died — a signed-out CLI, a missing binary — so callers need not re-read `reason`.
+  onExit(cb: (code: number | null, reason: string, cause?: AuthFailureCode) => void): void;
 }
 
 export function createRuntime(kind: AgentRuntimeKind, opts: RuntimeLaunchOpts): AgentRuntime {

@@ -35,8 +35,9 @@ board, transcripts, worktrees, the RPC bridge — is shared.
   ~200 MB) that `pnpm install` fetches. What must come from your machine is the
   **authentication**: the same credentials `claude /login` writes. A signed-out
   machine, or one where that 200 MB package did not install, cannot start
-  `claude-code` sessions — the app now names which of the two it is, both when you
-  pick the backend and when a session fails to launch.
+  `claude-code` sessions — the app names which of the two it is when you pick
+  the backend, when a session fails to launch, and when a running session's
+  turn is refused (see «Signed out» below).
 - **pnpm** (the repo pins its version via `packageManager` in
   `package.json`).
 
@@ -50,11 +51,14 @@ created with, and resuming or branching a session never switches its backend.
 
 Picking a backend runs a preflight against it — `GET /account/runtime/check?runtime=<kind>`
 — so an unusable one is named where the choice is made rather than surfacing later
-as a session that never answers. It asks the backend for its model catalog, which
-only succeeds if that backend is both installed and signed in, and reports either
-`{ ok: true }` or `{ ok: false, code }` where `code` names the fix (signed out vs
-binary missing). The check never blocks the choice: you may be about to run
-`claude /login`.
+as a session that never answers. For `claude-code` it asks the SDK for the signed-in
+account (a signed-out claude still lists every model, so the catalog proves nothing);
+only a first-party setup with no OAuth login and no `ANTHROPIC_API_KEY` counts as signed
+out, so Bedrock/Vertex/gateway setups are never flagged. For `omp` it asks for the model
+catalog, which omp fills only from providers it holds credentials for, so an empty one
+means signed out. It reports either `{ ok: true }` or `{ ok: false, code }` where `code`
+names the fix (signed out vs binary missing). The check never blocks the choice: you may
+be about to run `claude /login`.
 
 If sessions on a backend refuse to start, that same code is what the error names.
 To see the raw reason directly, the api logs it at `warn` — including the one line
@@ -114,6 +118,25 @@ With the limits on:
   rerun it with fewer workers; the agent itself keeps running. MCP servers and other processes
   the agent had when it became ready are never killed. A process that detached from its agent
   (a daemon) is invisible to it.
+
+#### Signed out
+
+A signed-out provider CLI does not always stop a session from launching: claude starts
+fine and refuses only the first turn (`Not logged in · Please run /login`). Kermanych
+shows it in two places:
+
+- **The session.** Its status reads «login required» instead of «error» or
+  «Launching…», and the panel's banner names the command (`claude /login` or
+  `omp login`). The child is stopped. Log in in a terminal and send the message
+  again: the next send respawns the session on the new credentials. A chat or a
+  session in review that is signed out mid-conversation gets the same state.
+- **The top bar.** An «AI login required» pill appears beside the settings gear while
+  the backend you chose is signed out. Its tooltip names the command. The app runs the
+  preflight again every 5 minutes while the window is visible, when the window regains
+  focus, and when you click the pill, so it clears on its own once you have logged in.
+
+Native sessions (the harness's own TUI) show the CLI's login screen in their terminal.
+They get only the top-bar pill. codex is not checked.
 
 ### Agent communication language
 
@@ -639,6 +662,13 @@ pnpm dev:app      # run the desktop app in dev
 pnpm build:app    # build a macOS .dmg (unsigned)
 ```
 
+The window opens as soon as the API's port is chosen, while the API is still starting. A
+splash shows the app mark and what is happening («Запускаю локальний сервіс…», then
+«Входжу…»), and it fades out when the app has mounted. The window background follows the
+last theme you used (`window-theme.json` in Electron's `userData`), so a light-theme user
+does not get a dark frame first. The `backend` boot file holds every request until the API
+is listening; the web build shows the same splash with «Входжу…» only.
+
 Links never open inside the desktop window: every `http(s)`/`mailto` link — Jira
 and Linear tickets, attachments, storage downloads and markdown links — opens in your
 default browser (Chrome, Arc, Safari, …). The session live preview opens in the session's
@@ -868,6 +898,47 @@ The visual source of truth lives in [`design/`](./design/):
 
 Custom `K*` components implement this look; Quasar is used only for the
 framework, layout, build, and state plumbing.
+
+### Async states
+
+Every wait in the UI must be visible, and nothing may look empty while it is still loading.
+An async operation without feedback reads as a bug or a frozen app. Spec:
+`docs/specs/2026-10-21-async-feedback.md`. The primitives live in `apps/ui/src`:
+
+- **An action the operator starts** (click, Enter, ⌘ shortcut, menu item) goes through
+  `useAsyncAction(fn)` (`composables/useAsyncAction.ts`), or `useKeyedAction` for per-row
+  actions. Bind `busy` to the control's `:loading`. `KBtn`, `KIconButton`, `KSelect`,
+  `KChipSelect`, `KCheckbox`, `KToggle` and `KSplitButton` all take `loading`: a spinner, a
+  disabled control and `aria-busy`. `run` ignores a second press while the first is running,
+  counts as foreground work for the top progress bar, and turns a failure into an error toast
+  (or `onError`, when a modal renders the error itself). Never `void api.x()` or
+  `.catch(() => {})` in a click handler.
+- **Data that has not arrived** renders `KSkeleton` through `useLoadPhase(notLoaded)`. The
+  skeleton appears after 150 ms and, once shown, stays at least 300 ms. Before that the area is
+  blank. An empty-state text («Немає …», «Порожньо») renders only once the data for the
+  current scope has loaded: keep «not loaded» (`undefined`) apart from «empty» (`[]`).
+- **Switching workspace or project** clears the dependent state at once and shows the
+  skeleton. Late replies for the previous scope are dropped. A refresh within the same scope
+  keeps the data on screen.
+- **Save-on-change controls** (a select, checkbox or chip that writes on change) use
+  `useOptimisticValue`. The picked value shows at once, the control spins and is locked, and a
+  failure rolls back with a toast.
+- **Results that arrive with a socket or realtime echo** (stop, delete, archive, fork, rename,
+  moving a ticket) mark the entity in `usePending()` (`stores/pending.ts`) until the store shows
+  the result, for at most 15 s. Cards take `pending`, and every action on a pending entity is
+  blocked, menu items and ⌘ shortcuts included.
+- **Modals.** A short operation keeps the modal open and `persistent` while it runs, with
+  `:loading` on the primary button. The modal closes only on success, and the error shows
+  inside it. A long operation (starting a preview) closes the modal and shows progress on the
+  entity instead.
+- **The top progress bar** (`KProgressBar`, `stores/activity.ts`) shows only foreground work:
+  actions and the loads the operator triggered (`activity.trackLoad`). It appears after 300 ms.
+  Polling, tickers, reconcile and realtime never light it.
+- **Composer.** A sent message shows at once in the log as a muted «надсилаю…» bubble until
+  the transcript records it (`orchestrator.outgoing`). A failed send returns the text and the
+  images to the composer.
+
+The `#/kit` gallery shows each of these states live.
 
 ## Cloud tasks and local sessions
 

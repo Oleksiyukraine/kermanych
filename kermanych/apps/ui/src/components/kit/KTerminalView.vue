@@ -9,6 +9,8 @@ import '@xterm/xterm/css/xterm.css';
 import { TERMINAL_SCROLLBACK } from '@kermanych/core';
 import { useTerminal } from 'stores/terminal';
 import { theme } from '../../lib/theme';
+import { useLoadPhase } from '../../composables/useLoadPhase';
+import KSkeleton from './KSkeleton.vue';
 
 const props = defineProps<{ terminalId: string; active: boolean }>();
 
@@ -17,6 +19,10 @@ const host = ref<HTMLElement | null>(null);
 let term: Terminal | undefined;
 let fit: FitAddon | undefined;
 let observer: ResizeObserver | undefined;
+// False until the api's attach replay (or the first streamed chunk) paints the screen: an
+// empty black box until then reads as a dead shell.
+const replayed = ref(false);
+const phase = useLoadPhase(() => !replayed.value);
 
 // Colours come from the design tokens, so the terminal follows the app theme. The ANSI
 // palette stays xterm's; minimumContrastRatio keeps it legible on the light background.
@@ -67,9 +73,11 @@ onMounted(() => {
     reset(replay) {
       term?.reset();
       if (replay) term?.write(replay);
+      replayed.value = true;
     },
     data(chunk) {
       term?.write(chunk);
+      replayed.value = true;
     },
   });
   // The shell was started at a guessed size; tell it the real one even if fit changed nothing.
@@ -103,11 +111,13 @@ onBeforeUnmount(() => {
   <!-- The padding lives on the frame: FitAddon measures the host's box as the grid area. -->
   <div class="k-term-view">
     <div ref="host" class="k-term-view__host"></div>
+    <KSkeleton v-if="phase === 'skeleton'" class="k-term-view__skeleton" variant="lines" :rows="4" />
   </div>
 </template>
 
 <style scoped lang="scss">
 .k-term-view {
+  position: relative;
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -119,5 +129,9 @@ onBeforeUnmount(() => {
 .k-term-view__host {
   width: 100%;
   height: 100%;
+}
+.k-term-view__skeleton {
+  position: absolute;
+  inset: 6px var(--k-sp-3) auto var(--k-sp-3);
 }
 </style>

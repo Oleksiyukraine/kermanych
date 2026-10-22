@@ -155,7 +155,7 @@
               <span class="set__path mono" :class="{ 'set__path--empty': !boundPath }">
                 {{ boundPath || t('settings.project.notBound') }}
               </span>
-              <KBtn variant="secondary" @click="pickerOpen = true">{{ t('settings.project.choose') }}</KBtn>
+              <KBtn variant="secondary" :loading="binding" @click="pickerOpen = true">{{ t('settings.project.choose') }}</KBtn>
             </div>
             <p class="set__note">{{ t('settings.project.folderNote') }}</p>
           </div>
@@ -173,6 +173,7 @@
             :label="t('settings.git.defaultBranch')"
             :options="branches"
             :disabled="cloudLocked || !isBound"
+            :loading="branchesLoading"
             :placeholder="t('settings.git.branchPlaceholder')"
             searchable
           />
@@ -225,7 +226,10 @@
           <div class="set__group">
             <span class="set__label">{{ t('settings.git.secrets') }}</span>
             <template v-if="isBound">
-              <div class="set__row">
+              <!-- Not editable before the `.env` is read: a token typed now would be replaced
+                   by the late load (the same rule as the table in «Змінні середовища»). -->
+              <KSkeleton v-if="envPhase === 'skeleton'" variant="block" height="52px" />
+              <div v-else-if="envPhase === 'ready'" class="set__row">
                 <KField
                   v-model="gitToken"
                   class="set__grow"
@@ -329,7 +333,7 @@
             </i18n-t>
           </p>
           <template v-else>
-            <KEnvEditor v-model="envRows" :ignored="envFile.ignored" :flags-locked="cloudLocked" />
+            <KEnvEditor v-model="envRows" :ignored="envFile.ignored" :flags-locked="cloudLocked" :loading="envNotLoaded" />
             <p v-if="missingRequired.length" class="set__error" role="alert">
               {{ t('settings.env.missingRequired', { keys: missingRequired.join(', ') }) }}
             </p>
@@ -415,17 +419,19 @@
               <KSelect
                 v-else-if="isOwnerOfWorkspace"
                 class="set__role"
-                :model-value="m.role"
+                :model-value="roleControl(m).value"
                 :options="ROLE_OPTIONS"
-                :disabled="roleBusy === m.userId || removingMember === m.userId"
-                @update:model-value="(role: string) => changeRole(m, role as AssignableRole)"
+                :loading="roleControl(m).pending"
+                :disabled="removeAction.busyFor(m.userId)"
+                @update:model-value="(role: string) => roleControl(m).set(role)"
               />
               <KTag v-else>{{ ROLE_LABELS[m.role] }}</KTag>
               <KIconButton
                 v-if="isOwnerOfWorkspace && !isOwnerSeat(m.userId)"
                 :title="t('settings.members.remove')"
-                :disabled="removingMember === m.userId"
-                @click="removeMember(m)"
+                :loading="removeAction.busyFor(m.userId)"
+                :disabled="roleControl(m).pending"
+                @click="removeAction.run(m.userId, m)"
               >✕</KIconButton>
             </div>
             <div v-if="!membersLoading && !members.length" class="set__empty">
@@ -507,10 +513,14 @@
                  immediately and affects new sessions. Existing sessions keep their
                  backend as noted. -->
             <KSelect
-              :model-value="auth.runtime ?? 'omp'"
+              :model-value="runtimePick.value"
               :options="RUNTIME_OPTIONS"
-              @update:model-value="pickRuntime"
+              :loading="runtimePick.pending"
+              @update:model-value="runtimePick.set"
             />
+            <p v-if="runtimeChecking" class="set__note set__checking" role="status">
+              <KSpinner :size="11" />{{ t('settings.runtime.checking') }}
+            </p>
             <p class="set__note">{{ t('settings.runtime.note') }}</p>
           </div>
 
@@ -521,9 +531,10 @@
             <!-- Applies on selection: the language is written to the cloud immediately and
                  injected into the system prompt of sessions launched afterwards. -->
             <KSelect
-              :model-value="auth.language ?? ''"
+              :model-value="languagePick.value"
               :options="LANGUAGE_OPTIONS"
-              @update:model-value="pickLanguage"
+              :loading="languagePick.pending"
+              @update:model-value="languagePick.set"
             />
             <p class="set__note">{{ t('settings.language.note') }}</p>
           </div>
@@ -564,20 +575,26 @@
                  provider meters a plan in. There is no token figure to show here
                  and none is invented; the cap itself lives with the provider, not
                  with Керманич, so nothing on this screen can change it. -->
-            <div v-if="!planLines.length" class="set__note">
-              {{ t('settings.plan.noWindows') }}
-            </div>
-            <div v-for="p in planLines" :key="p.provider" class="set__plan">
-              <span class="set__plan-prov">{{ p.provider }}</span>
-              <span v-for="w in p.windows" :key="w.id" class="set__plan-win mono">
-                {{ w.label }} · {{ w.percent }}<template v-if="w.resets"> · {{ w.resets }}</template>
-              </span>
-            </div>
+            <!-- Nothing until the first poll answers: «no windows» before it would be a claim
+                 about the plan made without reading it. -->
+            <KSkeleton v-if="planPhase === 'skeleton'" variant="lines" :rows="2" />
+            <template v-else-if="planPhase === 'ready'">
+              <div v-if="!planLines.length" class="set__note">
+                {{ t('settings.plan.noWindows') }}
+              </div>
+              <div v-for="p in planLines" :key="p.provider" class="set__plan">
+                <span class="set__plan-prov">{{ p.provider }}</span>
+                <span v-for="w in p.windows" :key="w.id" class="set__plan-win mono">
+                  {{ w.label }} · {{ w.percent }}<template v-if="w.resets"> · {{ w.resets }}</template>
+                </span>
+              </div>
+            </template>
           </div>
 
           <div class="set__group">
             <span class="set__label">{{ t('settings.account.outboxLabel') }}</span>
-            <p class="set__note">
+            <KSkeleton v-if="outboxPhase === 'skeleton'" variant="line" width="60%" />
+            <p v-else-if="outboxPhase === 'ready'" class="set__note">
               {{
                 outbox === null
                   ? t('settings.account.outboxNoService')
@@ -713,7 +730,7 @@
           {{ dirtyCount === 1 ? t('settings.bar.oneField') : t('settings.bar.manyFields', { count: dirtyCount }) }}
         </span>
         <KBtn variant="ghost" :disabled="saving" @click="discard">{{ t('settings.bar.discard') }}</KBtn>
-        <KBtn variant="primary" :disabled="saving" @click="save">
+        <KBtn variant="primary" :loading="saving" @click="save">
           {{ saving ? t('settings.bar.saving') : t('settings.bar.save') }}
         </KBtn>
       </div>
@@ -723,40 +740,52 @@
          machine's binding for the selected project. -->
     <KDirPicker v-model="pickerOpen" :start="boundPath" @select="bindTo" />
 
-    <KModal v-model="deleteProjectOpen" :title="t('settings.deleteProject.title', { name: projectName })">
+    <!-- The three confirmations below are short cloud writes: each stays open and cannot be
+         dismissed while its write runs, and closes only on success — a failure is shown
+         inside, beside the button that caused it. -->
+    <KModal
+      v-model="deleteProjectOpen"
+      :title="t('settings.deleteProject.title', { name: projectName })"
+      :persistent="deletingProject"
+    >
       <div class="set__modal">
         <p class="set__error" role="alert">{{ t('settings.deleteProject.warn', { name: projectName }) }}</p>
         <p class="set__note">{{ t('settings.deleteProject.note') }}</p>
         <p v-if="deleteError" class="set__error" role="alert">{{ deleteError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="deleteProjectOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
-        <KBtn variant="primary" :disabled="deleteBusy" @click="confirmDeleteProject">{{ t('settings.danger.delete') }}</KBtn>
+        <KBtn variant="ghost" :disabled="deletingProject" @click="deleteProjectOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
+        <KBtn variant="primary" :loading="deletingProject" @click="confirmDeleteProject">{{ t('settings.danger.delete') }}</KBtn>
       </template>
     </KModal>
 
-    <KModal v-model="deleteWorkspaceOpen" :title="t('settings.deleteWorkspace.title', { name: workspaceName })">
+    <KModal
+      v-model="deleteWorkspaceOpen"
+      :title="t('settings.deleteWorkspace.title', { name: workspaceName })"
+      :persistent="deletingWorkspace"
+    >
       <div class="set__modal">
         <p class="set__error" role="alert">{{ t('settings.deleteWorkspace.warn', { name: workspaceName }) }}</p>
         <p v-if="deleteError" class="set__error" role="alert">{{ deleteError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="deleteWorkspaceOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
-        <KBtn variant="primary" :disabled="deleteBusy" @click="confirmDeleteWorkspace">
+        <KBtn variant="ghost" :disabled="deletingWorkspace" @click="deleteWorkspaceOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
+        <KBtn variant="primary" :loading="deletingWorkspace" @click="confirmDeleteWorkspace">
           {{ t('settings.danger.delete') }}
         </KBtn>
       </template>
     </KModal>
 
-    <KModal v-model="signOutOpen" :title="t('settings.signOutModal.title')">
+    <KModal v-model="signOutOpen" :title="t('settings.signOutModal.title')" :persistent="signOutBusy">
       <div class="set__modal">
         <i18n-t keypath="settings.signOutModal.body" tag="p" class="set__note">
           <template #name><span class="mono">{{ accountName }}</span></template>
         </i18n-t>
+        <p v-if="signOutError" class="set__error" role="alert">{{ signOutError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="signOutOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
-        <KBtn variant="primary" :disabled="signOutBusy" @click="confirmSignOut">{{ t('settings.account.signOut') }}</KBtn>
+        <KBtn variant="ghost" :disabled="signOutBusy" @click="signOutOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
+        <KBtn variant="primary" :loading="signOutBusy" @click="confirmSignOut">{{ t('settings.account.signOut') }}</KBtn>
       </template>
     </KModal>
   </main>
@@ -782,7 +811,7 @@
 // paths and remappable keys have no storage, no endpoint and no column anywhere in
 // this repo — see lib/settings.ts. A panel for them would be a control that silently
 // forgets. (The parallel-agent limit is real now: «Ресурси машини», `/machine/resources`.)
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, effectScope, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources } from '@kermanych/core';
@@ -801,6 +830,9 @@ import { until, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
 import { hardwareLine, useResourcesConsent } from '../composables/useResourcesConsent';
+import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
+import { useOptimisticValue } from '../composables/useOptimisticValue';
+import { useLoadPhase } from '../composables/useLoadPhase';
 import { isMoveRefusal, memberErrorText, moveRefusalText, NO_ROWS } from '../lib/cloud-errors';
 import {
   buildEnvRows,
@@ -834,6 +866,8 @@ import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KTag from 'components/kit/KTag.vue';
 import KLangToggle from 'components/kit/KLangToggle.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
 import SteGuide from 'components/settings/SteGuide.vue';
 
 const store = useOrchestrator();
@@ -853,7 +887,6 @@ const scopeOptions = computed(() =>
 const scopeLabel = computed(() => t('settings.scope.' + section.value.scope));
 
 const paneError = ref<string | null>(null);
-const saving = ref(false);
 
 function goSection(key: string): void {
   paneError.value = null;
@@ -908,12 +941,6 @@ const ROLE_OPTIONS = computed<KSelectOption[]>(() => [
   { value: 'developer', label: t('settings.roles.developer') },
   { value: 'manager', label: t('settings.roles.manager') },
 ]);
-// The user id whose role change is in flight, so its select disables without freezing
-// the whole roster.
-const roleBusy = ref<string | null>(null);
-// The user id whose removal is in flight, so its row controls disable without
-// freezing the whole roster.
-const removingMember = ref<string | null>(null);
 
 // The FK from projects.workspace_id is `on delete restrict`, so a group still
 // holding projects cannot go. Read off the same array useProjects.removeWorkspace
@@ -1053,17 +1080,34 @@ watch(
   { immediate: true },
 );
 
+// Whose repo `branches` lists. A project switch empties the list at once and a reply for
+// the project just left is dropped, so the picker never offers another repo's branches;
+// re-opening the section refetches without blanking the list it already shows.
+const branchesFor = ref<string | null>(null);
+const branchesLoading = computed(
+  () => isBound.value && !!projectId.value && branchesFor.value !== projectId.value,
+);
+
+watch(projectId, () => {
+  branches.value = [];
+  branchesFor.value = null;
+});
+
 // GET /projects/:id/branches answers `project not bound` without a binding, so do
 // not ask. Non-fatal either way: the picker degrades to the value already chosen.
 watch(
   [() => section.value.key, projectId, isBound],
   async ([key, id, bound]) => {
     if (key !== 'project-git' || !id || !bound) return;
+    let next: string[];
     try {
-      branches.value = (await store.listBranches(id)).branches;
+      next = (await store.listBranches(id)).branches;
     } catch {
-      branches.value = [];
+      next = [];
     }
+    if (projectId.value !== id) return;
+    branches.value = next;
+    branchesFor.value = id;
   },
   { immediate: true },
 );
@@ -1133,37 +1177,54 @@ const missingRequired = computed(() =>
 // silently replace typed secrets.
 const ENV_SECTIONS = new Set(['project-env', 'project-git']);
 
-watch(
-  [() => section.value.key, projectId, isBound],
-  async ([key, id, bound]) => {
-    if (!ENV_SECTIONS.has(key) || !id || !bound || envDirty.value) return;
-    try {
-      envFile.value = await store.getEnv(id);
-      envLoaded.value = true;
-      paneError.value = null;
-    } catch (e) {
-      envFile.value = { entries: [], ignored: true };
-      envLoaded.value = false;
-      paneError.value = e instanceof Error ? e.message : String(e);
-    }
-    seedEnvRows();
-  },
-  { immediate: true },
+// The project whose `.env` the table holds (read, or tried and failed). Until it is the
+// selected one the table and the GIT_TOKEN field are a skeleton and take no input — a
+// row typed into the empty table would be replaced by the late load.
+const envReadFor = ref<string | null>(null);
+const envNotLoaded = computed(
+  () => isBound.value && !!projectId.value && envReadFor.value !== projectId.value,
 );
+const envPhase = useLoadPhase(() => envNotLoaded.value);
 
 const GIT_TOKEN_KEY = 'GIT_TOKEN';
 const tokenRevealed = ref(false);
 
 // A project switch invalidates the loaded file immediately, so the table cannot
-// show one project's secrets under another's name while the fetch above is in
-// flight.
+// show one project's secrets under another's name while the fetch below is in
+// flight. Declared BEFORE the load watcher so it runs first on a switch: the
+// load's «skip while dirty» check must see the cleared table, not the edits left
+// behind in the project just left.
 watch(projectId, () => {
   envFile.value = { entries: [], ignored: true };
   envLoaded.value = false;
+  envReadFor.value = null;
   seedEnvRows();
   // Nor may a revealed token stay revealed under another project's name.
   tokenRevealed.value = false;
 });
+
+watch(
+  [() => section.value.key, projectId, isBound],
+  async ([key, id, bound]) => {
+    if (!ENV_SECTIONS.has(key) || !id || !bound || envDirty.value) return;
+    let file: EnvFileView | null = null;
+    let error: string | null = null;
+    try {
+      file = await store.getEnv(id);
+    } catch (e) {
+      error = errorText(e);
+    }
+    // Dropped: a reply for a project already left, and one that would replace rows
+    // typed while a refresh was in flight.
+    if (projectId.value !== id || envDirty.value) return;
+    envFile.value = file ?? { entries: [], ignored: true };
+    envLoaded.value = file !== null;
+    paneError.value = error;
+    envReadFor.value = id;
+    seedEnvRows();
+  },
+  { immediate: true },
+);
 
 // THE «Секрети» FIELD of «Git Налаштування»: one row of the table above, not a
 // store of its own. A token is a VALUE, and values live in the bound repo's `.env`
@@ -1237,12 +1298,12 @@ async function invite(): Promise<void> {
   }
 }
 
-async function removeMember(m: WorkspaceMember): Promise<void> {
-  const ws = workspace.value;
-  if (!ws || removingMember.value === m.userId) return;
-  const who = m.profile?.githubUsername ?? m.userId;
-  removingMember.value = m.userId;
-  try {
+// Per member: ✕ on one row neither blocks nor spins the others.
+const removeAction = useKeyedAction(
+  async (_userId: string, m: WorkspaceMember) => {
+    const ws = workspace.value;
+    if (!ws) return;
+    const who = m.profile?.githubUsername ?? m.userId;
     await projects.removeMember(ws.id, m.userId);
     // A DELETE the owner-only policy refuses does NOT error — it matches zero rows,
     // while the store has already dropped the row locally. Re-read so the roster
@@ -1253,29 +1314,44 @@ async function removeMember(m: WorkspaceMember): Promise<void> {
       return;
     }
     store.notify(t('settings.members.removed', { handle: who }));
-  } catch (e) {
-    store.notify(memberErrorText(e), 'error', 6000);
-  } finally {
-    removingMember.value = null;
-  }
-}
+  },
+  { onError: (e) => store.notify(memberErrorText(e), 'error', 6000) },
+);
 
-async function changeRole(m: WorkspaceMember, role: AssignableRole): Promise<void> {
-  const ws = workspace.value;
-  if (!ws || m.role === role) return;
-  const who = m.profile?.githubUsername ?? m.userId;
-  roleBusy.value = m.userId;
-  try {
-    // The rpc RAISES on refusal (unlike the silent zero-rows delete), and the store
-    // updates the roster only on success — so a failure leaves the select showing the
-    // old role with nothing to roll back.
-    await projects.setMemberRole(ws.id, m.userId, role);
-    store.notify(t('settings.members.roleChanged', { handle: who, role: ROLE_LABELS.value[role] }));
-  } catch (e) {
-    store.notify(memberErrorText(e), 'error', 6000);
-  } finally {
-    roleBusy.value = null;
+// The role select of each member row is save-on-change: it shows the pick at once and spins
+// until the rpc answers. The rpc RAISES on refusal (unlike the silent zero-rows delete), and
+// the store updates the roster only on success — so a failure drops the pick and the select
+// returns to the stored role. One optimistic control per (workspace, member), created on
+// first render inside a scope this page owns, so they stop with the page.
+const roleScope = effectScope();
+type RoleControl = { value: string; pending: boolean; set: (next: string) => Promise<void> };
+const roleControls = new Map<string, RoleControl>();
+
+function roleControl(m: WorkspaceMember): RoleControl {
+  const wsId = workspace.value?.id ?? '';
+  const key = `${wsId}:${m.userId}`;
+  let control = roleControls.get(key);
+  if (!control) {
+    const current = () => projects.members[wsId]?.find((x) => x.userId === m.userId);
+    control = roleScope.run(() =>
+      reactive(
+        useOptimisticValue<string>(
+          () => current()?.role ?? '',
+          async (next) => {
+            const member = current();
+            if (!wsId || !member || member.role === next) return;
+            const role = next as AssignableRole;
+            await projects.setMemberRole(wsId, member.userId, role);
+            const who = member.profile?.githubUsername ?? member.userId;
+            store.notify(t('settings.members.roleChanged', { handle: who, role: ROLE_LABELS.value[role] }));
+          },
+          { onError: (e) => store.notify(memberErrorText(e), 'error', 6000) },
+        ),
+      ),
+    )!;
+    roleControls.set(key, control);
   }
+  return control;
 }
 
 // ── DIRTY / SAVE ────────────────────────────────────────────────────────────
@@ -1359,10 +1435,9 @@ async function saveProject(): Promise<void> {
   seedEnvRows();
 }
 
-async function save(): Promise<void> {
-  if (dirtyCount.value === 0 || saving.value) return;
+async function doSave(): Promise<void> {
+  if (dirtyCount.value === 0) return;
   paneError.value = null;
-  saving.value = true;
   const scope = section.value.scope;
   try {
     if (scope === 'project') {
@@ -1411,10 +1486,11 @@ async function save(): Promise<void> {
     } else {
       paneError.value = raw;
     }
-  } finally {
-    saving.value = false;
   }
 }
+
+// One guard for the button and ⌘S: a second press while the write runs does nothing.
+const { run: save, busy: saving } = useAsyncAction(doSave);
 
 // ⌘S / Ctrl+S. On `window` because the bar is at the foot of the pane and the
 // focus is wherever the operator was typing; `preventDefault` keeps the browser's
@@ -1451,77 +1527,80 @@ const BIND_ERRORS = computed<Record<string, string>>(() => ({
   'project not found': t('settings.binding.projectNotFound'),
 }));
 
-async function bindTo(path: string): Promise<void> {
-  const id = projectId.value;
-  if (!id) return;
-  try {
+// Runs after the folder picker closes; «Обрати» spins until the binding is written.
+const { run: bindTo, busy: binding } = useAsyncAction(
+  async (path: string) => {
+    const id = projectId.value;
+    if (!id) return;
     const bound = await store.setProjectBinding(id, path);
     // project_update streams back over the socket, so the path above and the
     // sidebar tile refresh themselves.
     store.notify(t('settings.binding.bound', { path: bound.localRepoPath }));
-  } catch (e) {
-    const raw = e instanceof Error ? e.message : String(e);
-    store.notify(BIND_ERRORS.value[raw] ?? raw, 'error', 6000);
-  }
-}
+  },
+  {
+    onError: (e) => {
+      const raw = errorText(e);
+      store.notify(BIND_ERRORS.value[raw] ?? raw, 'error', 6000);
+    },
+  },
+);
 
 // ── DANGER ──────────────────────────────────────────────────────────────────
 const deleteProjectOpen = ref(false);
 const deleteWorkspaceOpen = ref(false);
 const deleteError = ref<string | null>(null);
-const deleteBusy = ref(false);
 
-async function confirmDeleteProject(): Promise<void> {
-  const id = projectId.value;
-  if (!id) return;
-  deleteError.value = null;
-  deleteBusy.value = true;
-  try {
+const { run: confirmDeleteProject, busy: deletingProject } = useAsyncAction(
+  async () => {
+    const id = projectId.value;
+    if (!id) return;
+    deleteError.value = null;
     await projects.remove(id);
     deleteProjectOpen.value = false;
     // The prune emits project_removed over the socket, which clears the selection;
     // this pane then falls back to its «виберіть проєкт» state on its own.
     store.notify(t('settings.deleteProject.done'));
-  } catch (e) {
-    const raw = e instanceof Error ? e.message : String(e);
-    if (raw.startsWith('cloud delete unconfirmed')) {
-      // The delete itself did not error; only the confirming re-read did. Do not
-      // accuse the user of a refusal for something that most likely landed.
-      deleteError.value = t('settings.deleteProject.unconfirmed');
-    } else if (raw.startsWith('cloud refused the delete')) {
-      deleteError.value = t('settings.deleteProject.refused');
-    } else {
-      deleteError.value = raw;
-    }
-  } finally {
-    deleteBusy.value = false;
-  }
-}
+  },
+  {
+    onError: (e) => {
+      const raw = errorText(e);
+      if (raw.startsWith('cloud delete unconfirmed')) {
+        // The delete itself did not error; only the confirming re-read did. Do not
+        // accuse the user of a refusal for something that most likely landed.
+        deleteError.value = t('settings.deleteProject.unconfirmed');
+      } else if (raw.startsWith('cloud refused the delete')) {
+        deleteError.value = t('settings.deleteProject.refused');
+      } else {
+        deleteError.value = raw;
+      }
+    },
+  },
+);
 
-async function confirmDeleteWorkspace(): Promise<void> {
-  const ws = workspace.value;
-  if (!ws) return;
-  deleteError.value = null;
-  deleteBusy.value = true;
-  try {
+const { run: confirmDeleteWorkspace, busy: deletingWorkspace } = useAsyncAction(
+  async () => {
+    const ws = workspace.value;
+    if (!ws) return;
+    deleteError.value = null;
     // removeWorkspace confirms the delete with a re-read and clears the scope when
     // it was this group's, so nothing here navigates.
     await projects.removeWorkspace(ws.id);
     deleteWorkspaceOpen.value = false;
     store.notify(t('settings.deleteWorkspace.done', { name: ws.name }));
-  } catch (e) {
-    const raw = e instanceof Error ? e.message : String(e);
-    // The pre-check above and `workspaceHasProjects` both read the last cloud list
-    // THIS session read, so a project a teammate added since then is invisible to
-    // both: the button renders enabled and the `on delete restrict` FK is what
-    // says no — in English. The database is the authority; translate it.
-    deleteError.value = raw.includes('violates foreign key constraint')
-      ? t('settings.deleteWorkspace.hasProjects')
-      : raw;
-  } finally {
-    deleteBusy.value = false;
-  }
-}
+  },
+  {
+    onError: (e) => {
+      const raw = errorText(e);
+      // The pre-check above and `workspaceHasProjects` both read the last cloud list
+      // THIS session read, so a project a teammate added since then is invisible to
+      // both: the button renders enabled and the `on delete restrict` FK is what
+      // says no — in English. The database is the authority; translate it.
+      deleteError.value = raw.includes('violates foreign key constraint')
+        ? t('settings.deleteWorkspace.hasProjects')
+        : raw;
+    },
+  },
+);
 
 // ── APP SCOPE ───────────────────────────────────────────────────────────────
 const THEMES = computed<readonly { value: KTheme; label: string }[]>(() => [
@@ -1544,24 +1623,20 @@ const RUNTIME_OPTIONS = computed<readonly KSelectOption[]>(() => [
   { value: 'claude-code', label: t('settings.runtime.claude') },
 ]);
 
-async function pickRuntime(next: string): Promise<void> {
-  if (auth.runtime === next) return;
+// The CLI self-check after a runtime switch. Deliberately AFTER the write and never
+// blocking it: the operator owns the preference, and this only spares them discovering a
+// signed-out CLI through a session that silently never answers. It can take a while (it
+// runs the CLI), so the pane says «перевіряю» meanwhile. Not a guarded action: a second pick
+// while the first check runs must check the NEW runtime, and the older check's verdict (about
+// a runtime no longer chosen) is dropped — the latest pick wins.
+const runtimeChecking = ref(false);
+let runtimeCheckRun = 0;
+async function checkRuntime(kind: 'omp' | 'claude-code'): Promise<void> {
+  const run = ++runtimeCheckRun;
+  runtimeChecking.value = true;
   try {
-    await auth.chooseRuntime(next as 'omp' | 'claude-code');
-  } catch (e) {
-    store.notify(
-      `Failed to change runtime: ${e instanceof Error ? e.message : String(e)}`,
-      'error'
-    );
-    return;
-  }
-  // The switch already applied — now say whether the backend just chosen can actually run
-  // anything here. Deliberately AFTER the write and never blocking it: the operator owns the
-  // preference, and this only spares them discovering a signed-out CLI through a session that
-  // silently never answers.
-  try {
-    const verdict = await api.checkAccountRuntime(next as 'omp' | 'claude-code');
-    if (verdict.ok) return;
+    const verdict = await api.checkAccountRuntime(kind);
+    if (run !== runtimeCheckRun || verdict.ok) return;
     const key = `errors.runtime_${verdict.code ?? ''}`;
     store.notify(
       verdict.code && te(key) ? t(key) : verdict.reason || t('onboarding.runtime.checkFailed'),
@@ -1570,8 +1645,22 @@ async function pickRuntime(next: string): Promise<void> {
   } catch {
     // The check could not run (api restarting). The preference is saved either way, and a
     // failed self-test is not something to report as a backend fault.
+  } finally {
+    if (run === runtimeCheckRun) runtimeChecking.value = false;
   }
 }
+
+const runtimePick = reactive(
+  useOptimisticValue<string>(
+    () => auth.runtime ?? 'omp',
+    async (next) => {
+      if (auth.runtime === next) return;
+      const kind = next as 'omp' | 'claude-code';
+      await auth.chooseRuntime(kind);
+      void checkRuntime(kind);
+    },
+  ),
+);
 
 // Endonym labels come from core so the picker reads the same in every app locale. The list is
 // the frozen AGENT_LANGUAGES tuple; there is no '' row, so a pick always sets a real language.
@@ -1579,17 +1668,15 @@ const LANGUAGE_OPTIONS = computed<readonly KSelectOption[]>(() =>
   AGENT_LANGUAGES.map((code) => ({ value: code, label: AGENT_LANGUAGE_LABELS[code] })),
 );
 
-async function pickLanguage(next: string): Promise<void> {
-  if (!next || auth.language === next) return;
-  try {
-    await auth.chooseLanguage(next as AgentLanguage);
-  } catch (e) {
-    store.notify(
-      `Failed to change language: ${e instanceof Error ? e.message : String(e)}`,
-      'error'
-    );
-  }
-}
+const languagePick = reactive(
+  useOptimisticValue<string>(
+    () => auth.language ?? '',
+    async (next) => {
+      if (!next || auth.language === next) return;
+      await auth.chooseLanguage(next as AgentLanguage);
+    },
+  ),
+);
 
 // Every binding the app actually listens to, and the file that owns it. A
 // read-only sheet is the honest shape: none of these is stored anywhere, so there
@@ -1613,8 +1700,12 @@ const accountName = computed(() => {
   return handle ? `@${handle}` : (p?.displayName ?? auth.user?.id.slice(0, 8) ?? '');
 });
 
-const planUsage = useSubscriptionUsage();
+const { usage: planUsage, failed: planFailed } = useSubscriptionUsage();
 const planNow = useNow(30_000);
+// The usage poll stays `undefined` until its first answer; until then the plan lines are a
+// skeleton, never «no windows». A failed poll with nothing to show ends the skeleton (the
+// api is down — the poll keeps retrying each minute) and the pane says «no windows».
+const planPhase = useLoadPhase(() => planUsage.value === undefined && !planFailed.value);
 
 const planLines = computed(() =>
   (planUsage.value?.providers ?? []).map((p) => ({
@@ -1633,8 +1724,10 @@ const planLines = computed(() =>
 
 // How many status pushes THIS machine still owes the cloud. Only the local process
 // can see that, so it is a fetch rather than a store field. `null` means the local
-// api did not answer, which is a different statement from «нічого не чекає».
-const outbox = ref<number | null>(null);
+// api did not answer, which is a different statement from «нічого не чекає»;
+// `undefined` means it has not been asked yet — a skeleton, not «не відповів».
+const outbox = ref<number | null | undefined>(undefined);
+const outboxPhase = useLoadPhase(() => outbox.value === undefined);
 
 watch(
   () => section.value.key,
@@ -1770,23 +1863,20 @@ async function saveResources(): Promise<void> {
 }
 
 const signOutOpen = ref(false);
-const signOutBusy = ref(false);
+const signOutError = ref<string | null>(null);
 
-async function confirmSignOut(): Promise<void> {
-  signOutBusy.value = true;
-  try {
-    // signOut() ends the Supabase session and, through apply(null), drops the local
-    // api's token; the router's watcher on `auth.user` performs the navigation to
-    // /login. It only rejects on an unexpected fault (the sign-out's own network
-    // failure is swallowed by supabase-js), and then the modal must stay open.
+// signOut() ends the Supabase session and, through apply(null), drops the local
+// api's token; the router's watcher on `auth.user` performs the navigation to
+// /login. It only rejects on an unexpected fault (the sign-out's own network
+// failure is swallowed by supabase-js), and then the modal stays open with the error.
+const { run: confirmSignOut, busy: signOutBusy } = useAsyncAction(
+  async () => {
+    signOutError.value = null;
     await auth.signOut();
     signOutOpen.value = false;
-  } catch (e) {
-    store.notify(t('settings.account.signOutError', { error: e instanceof Error ? e.message : String(e) }), 'error');
-  } finally {
-    signOutBusy.value = false;
-  }
-}
+  },
+  { onError: (e) => (signOutError.value = t('settings.account.signOutError', { error: errorText(e) })) },
+);
 
 // ── RAIL FURNITURE ──────────────────────────────────────────────────────────
 const scopeHint = computed(() => {
@@ -2050,6 +2140,13 @@ const badges = computed<Record<string, number | undefined>>(() => ({
   color: var(--k-accent);
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+// «перевіряю» under the runtime select: the spinner sits on the text's baseline.
+.set__checking {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--k-sp-1);
 }
 
 .set__error {

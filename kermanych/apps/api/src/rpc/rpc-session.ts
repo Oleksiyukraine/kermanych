@@ -5,6 +5,7 @@ import { LineSplitter, ChunkReassembler } from "@kermanych/core";
 import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, SubagentSubscriptionLevel, SubagentInfo, SubagentMessagesPage } from "@kermanych/core";
 import type { AgentRuntime, RpcStateData, RuntimeLaunchOpts } from "../runtime/agent-runtime";
 import { MCP_TOKEN_ENV, MCP_URL_ENV, ompMcpBridgePath } from "../runtime/omp-mcp-bridge";
+import { AuthFailure, authFailureCode, type AuthFailureCode } from "../runtime/auth-failure";
 
 interface RpcResponseFrame {
   type: "response"; id?: string; command: string; success: boolean; data?: unknown; error?: string;
@@ -26,7 +27,7 @@ export class RpcSession implements AgentRuntime {
   private splitter = new LineSplitter();
   private reassembler = new ChunkReassembler();
   private eventCbs: ((e: RpcEvent) => void)[] = [];
-  private exitCbs: ((code: number | null, reason: string) => void)[] = [];
+  private exitCbs: ((code: number | null, reason: string, cause?: AuthFailureCode) => void)[] = [];
   private pending = new Map<string, { resolve: (r: RpcResponseFrame) => void; reject: (e: Error) => void }>();
   private stderr = "";
   // Frames omp sent that we could not decode. Silent loss is the exact failure class the
@@ -42,7 +43,7 @@ export class RpcSession implements AgentRuntime {
   constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; appendSystemPrompt?: string; commandTimeoutMs?: number; configPaths?: string[]; extensionPath?: string; subagentSubscription?: SubagentSubscriptionLevel; mcp?: RuntimeLaunchOpts["mcp"]; env?: RuntimeLaunchOpts["env"]; onSpawn?: RuntimeLaunchOpts["onSpawn"] }) {}
 
   onEvent(cb: (e: RpcEvent) => void) { this.eventCbs.push(cb); }
-  onExit(cb: (code: number | null, reason: string) => void) { this.exitCbs.push(cb); }
+  onExit(cb: (code: number | null, reason: string, cause?: AuthFailureCode) => void) { this.exitCbs.push(cb); }
 
   private write(o: unknown) { this.proc!.stdin.write(JSON.stringify(o) + "\n"); }
 
@@ -110,11 +111,14 @@ export class RpcSession implements AgentRuntime {
   // Shared failure path for both 'exit' and 'error': reject start() if not yet ready, reject+clear all
   // outstanding command promises, then notify exit callbacks. Callers pass the live `ready_` at fire time;
   // rejectBeforeReady is a no-op once start() has already settled, so a post-ready failure only fans out.
+  // A signed-out omp exits before `ready` ("No models available. Use /login…"), so the cause is
+  // classified here and rides the launch rejection as `.code`, the way ClaudeCodeRuntime's does.
   private failAll(e: Error, code: number | null, ready_: boolean, rejectBeforeReady: (e: Error) => void) {
-    if (!ready_) rejectBeforeReady(e);
+    const cause = authFailureCode(e.message);
+    if (!ready_) rejectBeforeReady(cause ? new AuthFailure(cause, e.message) : e);
     for (const p of this.pending.values()) p.reject(e);
     this.pending.clear();
-    this.exitCbs.forEach((cb) => cb(code, e.message));
+    this.exitCbs.forEach((cb) => cb(code, e.message, cause));
   }
 
   private exitMessage(code: number | null): string {

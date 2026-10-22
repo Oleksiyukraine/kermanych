@@ -31,7 +31,7 @@
               :title="t('chat.page.modeTitle')"
               placement="down"
             />
-            <KBtn variant="primary" @click="newChat">{{ t('chat.page.newChat') }}</KBtn>
+            <KBtn variant="primary" :loading="creating" @click="newChat">{{ t('chat.page.newChat') }}</KBtn>
           </div>
         </header>
 
@@ -42,13 +42,14 @@
             v-for="s in threads"
             :key="s.id"
             :branch="''"
-            :title="threadTitle(s)"
+            :title="displayTitle(s)"
             :time="renderTime(t, relativeTime(s.lastActivityAt, now))"
             :status="s.status"
             :model="s.model"
             :harness="sessionLaunchMode(s)"
             :usage="s.usage"
             :selected="s.id === chatId"
+            :pending="pending.isPending('session:' + s.id) || archivingThread(s.id)"
             removable
             :remove-title="t('chat.page.archiveThread', { title: threadTitle(s) })"
             @click="selectThread(s.id)"
@@ -94,7 +95,7 @@
                 class="chat__detail-name"
                 v-tip="t('chat.page.renameHint')"
                 @dblclick="startRename"
-              >{{ threadTitle(chatSession) }}</span>
+              >{{ displayTitle(chatSession) }}</span>
             </div>
             <div class="chat__detail-controls">
               <span class="chat__detail-status mono">{{ harnessLabel }} · {{ statusWord(chatSession) }}</span>
@@ -104,27 +105,32 @@
                      promote with, so it has no ▶. -->
                 <KIconButton
                   v-if="!chatSession.native"
-                  :disabled="promoting"
+                  :loading="promoting"
+                  :disabled="sessionPending"
                   :title="promoting ? t('kit.panel.promoting') : t('kit.panel.promoteAgent')"
                   @click="promote"
                 >▶</KIconButton>
                 <KIconButton
-                  :disabled="filing"
+                  :loading="filing"
                   :title="t('kit.panel.promoteTask')"
                   @click="toBacklog"
                 >⊕</KIconButton>
                 <KIconButton
                   v-if="running || nativeLive"
+                  :loading="stopping"
+                  :disabled="sessionPending"
                   :title="t('kit.panel.stop')"
                   @click="onStop"
                 >■</KIconButton>
                 <KIconButton
+                  :loading="openingEditor"
                   :title="t('kit.panel.editor')"
                   @click="onEditor"
                 >⧉</KIconButton>
                 <KIconButton
                   class="chat__close"
-                  :disabled="clearing"
+                  :loading="clearing"
+                  :disabled="sessionPending"
                   :title="t('chat.page.closeSession')"
                   @click="clearChat"
                 >✕</KIconButton>
@@ -164,10 +170,23 @@
             </template>
             <KPanel
               v-else
+              ref="panelEl"
               class="chat__panel"
               :bare="true"
               :session="chatSession"
-              :refreshing="refreshing"
+              :refreshing="refreshing || resumingId === chatSession.id"
+              :stopping="stopping"
+              :restarting="restarting"
+              :summarizing="summarizing"
+              :opening-editor="openingEditor"
+              :pending="sessionPending"
+              :answering="answering"
+              :outgoing="store.outgoing[chatSession.id] ?? []"
+              :model-override="modelPick.value.value"
+              :effort-override="effortPick.value.value"
+              :model-loading="modelPick.pending.value"
+              :effort-loading="effortPick.pending.value"
+              :composer-disabled="logPhase !== 'ready'"
               :models="store.models"
               :placeholder="t('chat.page.placeholder')"
               @stop="onStop"
@@ -179,27 +198,38 @@
               @summary="onSummary"
               @newTask="onNewTask"
               @expand-all="onExpandAll"
-              @effort="onEffort"
+              @effort="effortPick.set"
               @set-model="onSetModel"
             >
-              <template v-if="blocks.length">
-                <KRequestBlock
-                  v-for="(block, i) in blocks"
-                  :key="chatSession.id + ':' + block.id"
-                  :block="block"
-                  :session-id="chatSession.id"
-                  :open="i === blocks.length - 1"
-                  :expand-all="expandAll"
-                />
+              <!-- The log of this thread has not arrived yet: a skeleton, never «Порожній чат»,
+                   which would claim a history-less chat. -->
+              <KSkeleton v-if="logPhase === 'skeleton'" variant="rows" :rows="4" class="chat__log-skeleton" />
+              <template v-else-if="logPhase === 'ready'">
+                <template v-if="blocks.length">
+                  <KRequestBlock
+                    v-for="(block, i) in blocks"
+                    :key="chatSession.id + ':' + block.id"
+                    :block="block"
+                    :session-id="chatSession.id"
+                    :open="i === blocks.length - 1"
+                    :expand-all="expandAll"
+                  />
+                </template>
+                <div v-else class="chat__log-empty mono">{{ t('chat.page.empty') }}</div>
               </template>
-              <div v-else class="chat__log-empty mono">{{ t('chat.page.empty') }}</div>
             </KPanel>
           </div>
           <div v-if="detailTab === 'findings'" class="chat__tabpane chat__findings">
             <SessionFindings :session="chatSession" />
           </div>
         </template>
-        <div v-else class="chat__detail-blank mono">{{ t('chat.page.detailBlank') }}</div>
+        <!-- The project's chat is being found or created (first open, project switch): a
+             skeleton of the detail, not «no chat» text for a chat that is on its way. -->
+        <div v-else-if="detailPhase === 'skeleton'" class="chat__detail-skeleton">
+          <KSkeleton variant="line" width="40%" />
+          <KSkeleton variant="rows" :rows="5" />
+        </div>
+        <div v-else-if="detailPhase === 'ready'" class="chat__detail-blank mono">{{ t('chat.page.detailBlank') }}</div>
       </aside>
     </div>
   </main>
@@ -213,7 +243,7 @@
 // my-message navigation and the composer's model/effort/rehydrate chips all come for free.
 // A native thread (omp / claude / codex in its own TUI) shows its harness's terminal there instead,
 // exactly as a native agent's Лог tab does (docs/specs/2026-10-06-native-chats.md).
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { buildChatBlocks, taskNameFromText } from '@kermanych/core';
@@ -222,13 +252,18 @@ import { useOrchestrator } from 'stores/orchestrator';
 import { useBoard } from 'stores/board';
 import { useAuth } from 'stores/auth';
 import { useProjects } from 'stores/projects';
+import { PENDING_TIMEOUT_MS, usePending } from 'stores/pending';
 import type { MessageMode } from '../lib/api';
 import { taskInsertFromDraft } from '../lib/tasks-view';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import { relativeTime, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useResizablePanel } from '../composables/useResizablePanel';
+import { useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
+import { useOptimisticValue } from '../composables/useOptimisticValue';
+import { useLoadPhase } from '../composables/useLoadPhase';
 import { LAUNCH_MODES, nativeHarnessName, nativeRuntimeFor, sessionLaunchMode, type LaunchMode } from '../lib/native-session';
+import { needsSignIn } from '../lib/session-auth';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
@@ -239,25 +274,53 @@ import KTabs from 'components/kit/KTabs.vue';
 import SessionFindings from 'components/agents/SessionFindings.vue';
 import KChipSelect from 'components/kit/KChipSelect.vue';
 import KTerminalView from 'components/kit/KTerminalView.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
 
 const store = useOrchestrator();
 const board = useBoard();
 const auth = useAuth();
 const projects = useProjects();
+const pending = usePending();
 const router = useRouter();
 const { t } = useI18n();
 const now = useNow();
 
 const chatId = ref<string | undefined>(undefined);
-// Promotion spins up a worktree and respawns omp; the ▶ stays down until the server answers.
-const promoting = ref(false);
-// A session resume (on select, or the composer's ↻) is in flight; the ↻ stays down until the
-// server answers so a second click cannot spawn a competing respawn.
+// Promotion spins up a worktree and respawns omp; the ▶ spins until the server answers.
+const { run: promote, busy: promoting } = useAsyncAction(promoteChat);
+// A composer ↻ resume is in flight; the ↻ stays down until the server answers so a second
+// click cannot spawn a competing respawn.
 const refreshing = ref(false);
-// «В беклог» files a cloud card; the ⊕ stays down until the write returns.
-const filing = ref(false);
-// The panel ✕ archives the current thread; it stays down until the write returns.
-const clearing = ref(false);
+// The thread whose select-time resume is running. Kept apart from `refreshing` (the composer
+// ↻'s gate, see selectThread) but shown the same way on the panel.
+const resumingId = ref<string | undefined>(undefined);
+// «В беклог» files a cloud card; the ⊕ spins until the write returns.
+const { run: toBacklog, busy: filing } = useAsyncAction(fileToBacklog);
+// The panel ✕ archives the current thread; it spins until the write returns.
+const { run: clearChat, busy: clearing } = useAsyncAction(archiveOpen);
+// «+ Новий» creates a session; the button spins until it exists.
+const { run: newChat, busy: creating } = useAsyncAction(openNewChat);
+// The project's chat is being found or created (mount, project switch) — the detail skeleton.
+const ensuringChat = ref(false);
+const detailPhase = useLoadPhase(() => ensuringChat.value && !store.sessions.some((s) => s.id === chatId.value));
+// The open thread's log has not arrived: skeleton instead of «Порожній чат», composer locked.
+// A thread whose log could not be read at all counts as loaded (empty log, usable composer):
+// otherwise a failed resume would leave the skeleton and the lock up forever.
+const logFailed = ref<Set<string>>(new Set());
+const logPhase = useLoadPhase(
+  () => !!chatId.value && store.transcripts[chatId.value] === undefined && !logFailed.value.has(chatId.value),
+);
+// Read a thread's log; a failure releases the skeleton (see logFailed) instead of hanging it.
+async function loadLog(id: string): Promise<void> {
+  try {
+    await store.loadTranscript(id);
+  } catch {
+    logFailed.value = new Set(logFailed.value).add(id);
+  }
+}
+// Every session action is blocked while the open thread waits on an echo (stop, archive…).
+const sessionPending = computed(() => !!chatId.value && pending.isPending('session:' + chatId.value));
+const panelEl = ref<(ComponentPublicInstance & { restoreDraft: (text: string, images: readonly ImageInput[]) => void }) | null>(null);
 // «розгорнути / стиснути все» is per-session detail state — reset on a chat switch so a
 // stale command is not adopted by the newly opened session's rows.
 const expandAll = ref<ExpandAllCommand>(EXPAND_ALL_NONE);
@@ -320,6 +383,18 @@ function threadTitle(s: Session): string {
   return taskNameFromText(s.task) || s.name;
 }
 
+// A rename the server has accepted but the socket has not echoed yet, per session: the new name
+// shows at once (rail and bar) instead of the old one flicking back until `session_update`.
+const pendingNames = ref<Record<string, string>>({});
+function displayTitle(s: Session): string {
+  return pendingNames.value[s.id] ?? threadTitle(s);
+}
+function dropPendingName(id: string, name: string): void {
+  if (pendingNames.value[id] !== name) return; // a newer rename owns the slot
+  const { [id]: _dropped, ...rest } = pendingNames.value;
+  pendingNames.value = rest;
+}
+
 // Inline rename of the open thread (double-click the bar name). Edits stay local until
 // committed; Enter and blur commit, Esc discards. `renaming` also gates the blur handler so a
 // commit on Enter does not fire a second save on the blur that follows.
@@ -330,7 +405,7 @@ const renameInput = ref<HTMLInputElement | null>(null);
 function startRename(): void {
   const s = chatSession.value;
   if (!s) return;
-  renameDraft.value = threadTitle(s);
+  renameDraft.value = displayTitle(s);
   renaming.value = true;
   void nextTick(() => renameInput.value?.select());
 }
@@ -344,12 +419,32 @@ async function commitRename(): Promise<void> {
   renaming.value = false;
   const s = chatSession.value;
   const name = renameDraft.value.trim();
-  if (!s || !name || name === threadTitle(s)) return;
+  if (!s || !name || name === displayTitle(s)) return;
+  const id = s.id;
+  pendingNames.value = { ...pendingNames.value, [id]: name };
   try {
-    await store.renameSession(s.id, name);
+    await store.renameSession(id, name);
   } catch (e) {
+    dropPendingName(id, name);
     store.notify(e instanceof Error ? e.message : String(e), 'error');
+    return;
   }
+  // Hold the new name until the session row reports it (or the echo is clearly lost).
+  const echoed = () => store.sessions.find((x) => x.id === id)?.name?.trim() === name;
+  if (echoed()) {
+    dropPendingName(id, name);
+    return;
+  }
+  const timer = setTimeout(() => {
+    stop();
+    dropPendingName(id, name);
+  }, PENDING_TIMEOUT_MS);
+  const stop = watch(echoed, (done) => {
+    if (!done) return;
+    clearTimeout(timer);
+    stop();
+    dropPendingName(id, name);
+  });
 }
 
 // A thread nobody has spoken in yet. Uses the loaded transcript when present, else the
@@ -369,7 +464,7 @@ function statusWord(s: Session): string {
     case 'waiting_input': return t('agents.statusWord.waiting');
     case 'done': return t('agents.statusWord.done');
     case 'in_review': return t('agents.statusWord.review');
-    case 'error': return t('agents.statusWord.error');
+    case 'error': return needsSignIn(s.errorCode) ? t('agents.statusWord.signIn') : t('agents.statusWord.error');
     case 'queued': return t('agents.statusWord.queued');
     case 'stopped': return t('agents.statusWord.stopped');
     case 'merged': return t('agents.statusWord.merged');
@@ -411,6 +506,8 @@ function nextMode(s: Session): MessageMode {
   return !hasTurn ? 'prompt' : s.status === 'done' ? 'follow_up' : 'steer';
 }
 
+// The bubble («надсилаю…») is the store's (`store.outgoing`); a failed send puts the text back
+// in the composer so nothing typed is lost, and the toast says why.
 async function onSend(text: string, images: ImageInput[]): Promise<void> {
   const s = chatSession.value;
   if (!s) return;
@@ -420,32 +517,53 @@ async function onSend(text: string, images: ImageInput[]): Promise<void> {
     // A failed send (e.g. the omp child died and could not be respawned) must be visible,
     // not swallowed — otherwise the chat looks silently stuck.
     store.notify(e instanceof Error ? e.message : String(e), 'error');
+    if (chatId.value === s.id) panelEl.value?.restoreDraft(text, images);
   }
 }
 
+// ■ — the HTTP call returns before the status turns terminal; the session stays pending (every
+// action blocked, row dimmed) until the store reports it stopped.
+const { run: runStop, busy: stopping } = useAsyncAction(async (id: string) => {
+  await store.stopSession(id);
+  pending.mark('session:' + id, () => {
+    const x = store.sessions.find((y) => y.id === id);
+    return !x || (x.status !== 'thinking' && x.status !== 'tool' && !(x.native && x.terminalId));
+  });
+});
 function onStop(): void {
   const s = chatSession.value;
-  if (s) void store.stopSession(s.id);
+  if (s && !sessionPending.value) void runStop(s.id);
 }
 
+// A decision answer: the card's buttons spin and stay blocked until the POST returns, and a
+// failure is a toast instead of an unhandled rejection.
+const { run: runAnswer, busy: answering } = useAsyncAction((id: string, res: RpcExtensionUIResponse) =>
+  store.answerUi(id, res),
+);
 function onAnswer(res: RpcExtensionUIResponse): void {
   const s = chatSession.value;
-  if (s) void store.answerUi(s.id, res);
+  if (s) void runAnswer(s.id, res);
 }
 
+const { run: runEditor, busy: openingEditor } = useAsyncAction((id: string) => store.openEditor(id));
 function onEditor(): void {
   const s = chatSession.value;
-  if (s) void store.openEditor(s.id).catch(() => {});
+  if (s) void runEditor(s.id);
 }
 
-async function onRestart(): Promise<void> {
+// Stall banner «Перезапустити» — spins while the call runs, then the session stays pending
+// until it shows life again (new activity or another status).
+const { run: runRestart, busy: restarting } = useAsyncAction(async (s: Session) => {
+  const { id, status, lastActivityAt } = s;
+  await store.restartSession(id);
+  pending.mark('session:' + id, () => {
+    const x = store.sessions.find((y) => y.id === id);
+    return !x || x.status !== status || x.lastActivityAt !== lastActivityAt;
+  });
+});
+function onRestart(): void {
   const s = chatSession.value;
-  if (!s) return;
-  try {
-    await store.restartSession(s.id);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
+  if (s && !sessionPending.value) void runRestart(s);
 }
 
 // Wake a dormant chat so its history comes back. After an app restart — or simply a chat the
@@ -471,15 +589,14 @@ async function onRefresh(): Promise<void> {
 }
 
 // Composer ≡ — ask the chat itself to recap. The same canned operator message as the Агенти
-// panel, so the summary reads the same wherever it is asked for.
-async function onSummary(): Promise<void> {
+// panel, so the summary reads the same wherever it is asked for. The guard keeps a double
+// click from asking twice; the bubble comes from `store.outgoing`.
+const { run: runSummary, busy: summarizing } = useAsyncAction(async (s: Session) => {
+  await store.sendMessage(s.id, t('agents.prompt.summary'), nextMode(s));
+});
+function onSummary(): void {
   const s = chatSession.value;
-  if (!s) return;
-  try {
-    await store.sendMessage(s.id, t('agents.prompt.summary'), nextMode(s));
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
+  if (s) void runSummary(s);
 }
 
 function onExpandAll(on: boolean): void {
@@ -487,32 +604,37 @@ function onExpandAll(on: boolean): void {
 }
 
 // The composer's effort chip. omp refuses a level its provider cannot run and the api reports
-// that refusal rather than writing the row — so a failure surfaces, or the chip snaps back
-// with no explanation.
-async function onEffort(level: ThinkingLevel): Promise<void> {
-  const s = chatSession.value;
-  if (!s) return;
-  try {
-    await store.setEffort(s.id, level);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
-}
+// that refusal rather than writing the row — useOptimisticValue shows the pick at once, spins
+// until the session reports it, and on a refusal snaps back with the toast.
+const effortPick = useOptimisticValue<ThinkingLevel | undefined>(
+  () => chatSession.value?.effort,
+  async (level) => {
+    const s = chatSession.value;
+    if (s && level) await store.setEffort(s.id, level);
+  },
+);
 
-// The composer's model picker — mirror of onEffort.
-async function onSetModel(patch: { model: string; provider?: string }): Promise<void> {
-  const s = chatSession.value;
-  if (!s) return;
-  try {
-    await store.setSessionModel(s.id, patch);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
+// The composer's model picker — mirror of the effort chip. The provider rides along with the
+// pick; only the model id is the optimistic value.
+let pickedProvider: string | undefined;
+const modelPick = useOptimisticValue<string | undefined>(
+  () => chatSession.value?.model,
+  async (model) => {
+    const s = chatSession.value;
+    if (!s || !model) return;
+    await store.setSessionModel(s.id, pickedProvider ? { model, provider: pickedProvider } : { model });
+  },
+);
+function onSetModel(patch: { model: string; provider?: string }): void {
+  pickedProvider = patch.provider;
+  void modelPick.set(patch.model);
 }
 
 // A text selection in the transcript → a backlog card: the same «В беклог» path as the
-// header ⊕, but seeded from the picked passage instead of the opening ask.
-async function onNewTask(text: string): Promise<void> {
+// header ⊕, but seeded from the picked passage instead of the opening ask. Guarded, so a
+// repeated pick while the card is being written cannot file it twice.
+const { run: onNewTask } = useAsyncAction(fileSelection);
+async function fileSelection(text: string): Promise<void> {
   const pid = store.selectedProjectId;
   const userId = auth.user?.id;
   const seed = text.trim();
@@ -521,28 +643,24 @@ async function onNewTask(text: string): Promise<void> {
     store.notify(t('chat.page.notifyNotCloudTask'), 'error');
     return;
   }
-  try {
-    const card = await board.createTask(
-      taskInsertFromDraft(
-        {
-          name: taskNameFromText(seed),
-          task: seed,
-          model: chatSession.value?.model,
-          prefix: 'feature',
-          worktree: true,
-          hidden: false,
-          deepAnalysis: false,
-        },
-        pid,
-        userId,
-      ),
-    );
-    if (!card) return; // the store has already said why
-    store.setBucket('tasks');
-    void router.push({ name: 'agents' });
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
+  const card = await board.createTask(
+    taskInsertFromDraft(
+      {
+        name: taskNameFromText(seed),
+        task: seed,
+        model: chatSession.value?.model,
+        prefix: 'feature',
+        worktree: true,
+        hidden: false,
+        deepAnalysis: false,
+      },
+      pid,
+      userId,
+    ),
+  );
+  if (!card) return; // the store has already said why
+  store.setBucket('tasks');
+  void router.push({ name: 'agents' });
 }
 
 // Open a thread and auto-resume it: a chat the api has idle-reaped reads as a dead "dormant"
@@ -551,17 +669,24 @@ async function onNewTask(text: string): Promise<void> {
 // is safe for a live child (the server's liveOrResume never respawns a running turn) and is
 // de-duplicated per id, and it reloads the transcript, so no separate load is needed. Kept off
 // the `refreshing` gate on purpose: that gate is the composer ↻'s, and sharing it made a second
-// switch mid-resume silently skip. A NATIVE thread is not started on a click: its harness is a
+// switch mid-resume silently skip — the panel still shows the resume through `resumingId`. A
+// NATIVE thread is not started on a click: its harness is a
 // TUI process no reaper stops, so browsing threads would leave one running per thread looked
 // at — the detail shows «Продовжити» instead. Its history is still loaded (from the harness's
 // own session file) for «В беклог».
 async function selectThread(id: string): Promise<void> {
   chatId.value = id;
+  resumingId.value = id;
   try {
     if (store.sessions.find((s) => s.id === id)?.native) await store.loadTranscript(id);
     else await store.resumeSession(id);
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
+    // resumeSession fails before it reloads the log; read whatever log there is so the thread
+    // is not stuck on a skeleton with a locked composer.
+    if (store.transcripts[id] === undefined) await loadLog(id);
+  } finally {
+    if (resumingId.value === id) resumingId.value = undefined;
   }
 }
 
@@ -571,31 +696,39 @@ async function ensureChat(): Promise<void> {
   const pid = store.selectedProjectId;
   if (!pid) {
     chatId.value = undefined;
+    ensuringChat.value = false;
     return;
   }
   if (ensuring) return;
   ensuring = true;
+  ensuringChat.value = true;
   try {
     const existing = threads.value[0];
     if (existing) {
       await selectThread(existing.id);
     } else {
       const chat = await store.createChat(pid, nativeRuntimeFor(chatMode.value));
+      // A reply for the project the operator already left must not open in the new one.
+      if (store.selectedProjectId !== pid) return;
       chatId.value = chat?.id;
-      if (chat && store.transcripts[chat.id] === undefined) void store.loadTranscript(chat.id);
+      if (chat && store.transcripts[chat.id] === undefined) void loadLog(chat.id);
     }
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   } finally {
     ensuring = false;
+    // The project changed while this ran (its own early-returning ensureChat was refused by
+    // the `ensuring` guard): find the new project's chat now, keeping the skeleton up.
+    if (store.selectedProjectId !== pid) void ensureChat();
+    else ensuringChat.value = false;
   }
 }
 
 // «+ Новий» — open a fresh thread in the chosen «Режим». A blank thread of that mode is reused
 // rather than duplicated, so the rail does not fill with empty `чат N` rows nobody typed in. A
 // brand-new chat is live and has no history, so it is not resumed — its (empty) transcript is
-// loaded instead.
-async function newChat(): Promise<void> {
+// loaded instead. Runs through `newChat` (useAsyncAction): the button spins, errors toast.
+async function openNewChat(): Promise<void> {
   const pid = store.selectedProjectId;
   if (!pid || ensuring) return;
   const blank = threads.value.find((s) => sessionLaunchMode(s) === chatMode.value && isEmptyThread(s));
@@ -606,27 +739,29 @@ async function newChat(): Promise<void> {
   ensuring = true;
   try {
     const chat = await store.createChat(pid, nativeRuntimeFor(chatMode.value));
-    if (chat) {
+    if (chat && store.selectedProjectId === pid) {
       chatId.value = chat.id;
-      if (store.transcripts[chat.id] === undefined) void store.loadTranscript(chat.id);
+      if (store.transcripts[chat.id] === undefined) void loadLog(chat.id);
     }
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
   } finally {
     ensuring = false;
+    // A project switch during the create was refused by the `ensuring` guard; run it now so
+    // the new project's detail skeleton resolves.
+    if (store.selectedProjectId !== pid) void ensureChat();
+    else ensuringChat.value = false;
   }
 }
 
 // Archive a thread — a non-destructive hide, not a delete: the transcript and omp session
-// survive, so a chat parked here is recoverable rather than gone. If it was the open one,
-// advance to the next thread or spin up a fresh one so the detail column is never empty.
-async function archiveThread(id: string): Promise<void> {
-  try {
-    await store.archiveSession(id);
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-    return;
-  }
+// survive, so a chat parked here is recoverable rather than gone. The row stays (dimmed,
+// actions blocked) until the store reports it archived. If it was the open one, advance to
+// the next thread or spin up a fresh one so the detail column is never empty.
+const { run: archiveThread, busyFor: archivingThread } = useKeyedAction(async (id: string) => {
+  await store.archiveSession(id);
+  pending.mark('session:' + id, () => {
+    const s = store.sessions.find((x) => x.id === id);
+    return !s || s.archived === true;
+  });
   if (chatId.value === id) {
     const next = threads.value.find((s) => s.id !== id);
     if (next) {
@@ -636,19 +771,18 @@ async function archiveThread(id: string): Promise<void> {
       await newChat();
     }
   }
-}
+});
 
 // Promotion grows a worktree and starts building, so it is agent work and needs a card —
 // otherwise its status mirrors nowhere and the team never sees the run. The card is minted
-// first and its id travels into the promotion, which stamps it on the row.
-async function promote(): Promise<void> {
-  // The button's `:disabled` is not a guarantee: keyboard and programmatic activation reach
-  // here regardless, and a second run would mint a second card.
-  if (promoting.value) return;
+// first and its id travels into the promotion, which stamps it on the row. Runs through
+// `promote` (useAsyncAction): keyboard and programmatic activation hit the same busy guard,
+// so a second run cannot mint a second card.
+async function promoteChat(): Promise<void> {
   const id = chatId.value;
   const pid = store.selectedProjectId;
   const userId = auth.user?.id;
-  if (!id || !pid || !userId) return;
+  if (!id || !pid || !userId || sessionPending.value) return;
   const seed = chatSession.value?.task?.trim() ?? '';
   if (!projects.byId.has(pid)) {
     store.notify(t('chat.page.notifyNotCloudAgent'), 'error');
@@ -660,34 +794,26 @@ async function promote(): Promise<void> {
     store.notify(BIND_HINT.value, 'error');
     return;
   }
-  promoting.value = true;
-  try {
-    const card = await board.createTask({
-      projectId: pid,
-      title: taskNameFromText(seed) || chatSession.value?.name || t('chat.page.defaultTaskName'),
-      description: seed,
-      ...(chatSession.value?.model ? { model: chatSession.value.model } : {}),
-      prefix: 'feature',
-      worktree: true,
-      assigneeId: userId,
-    });
-    if (!card) return; // the store has already said why
-    await store.promoteChat(id, card.id);
-    store.setBucket('active');
-    store.selectSession(id);
-    void router.push({ name: 'agents' });
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    promoting.value = false;
-  }
+  const card = await board.createTask({
+    projectId: pid,
+    title: taskNameFromText(seed) || chatSession.value?.name || t('chat.page.defaultTaskName'),
+    description: seed,
+    ...(chatSession.value?.model ? { model: chatSession.value.model } : {}),
+    prefix: 'feature',
+    worktree: true,
+    assigneeId: userId,
+  });
+  if (!card) return; // the store has already said why
+  await store.promoteChat(id, card.id);
+  store.setBucket('active');
+  store.selectSession(id);
+  void router.push({ name: 'agents' });
 }
 
 // «В беклог» files a CLOUD card assigned to me, so a thought parked in a chat is visible to
 // the team exactly like anything else on the board. The card's name comes from the opening
 // ask's first line and can be refined later from the Агенти backlog.
-async function toBacklog(): Promise<void> {
-  if (filing.value) return;
+async function fileToBacklog(): Promise<void> {
   const id = chatId.value;
   const pid = store.selectedProjectId;
   const userId = auth.user?.id;
@@ -706,44 +832,32 @@ async function toBacklog(): Promise<void> {
     store.notify(t('chat.page.notifyNotCloudTask'), 'error');
     return;
   }
-  filing.value = true;
-  try {
-    const card = await board.createTask(
-      taskInsertFromDraft(
-        {
-          name: taskNameFromText(seed),
-          task: seed,
-          model: chatSession.value?.model,
-          prefix: 'feature',
-          worktree: true,
-          hidden: false,
-          deepAnalysis: false,
-        },
-        pid,
-        userId,
-      ),
-    );
-    if (!card) return; // the store has already said why
-    store.setBucket('tasks');
-    void router.push({ name: 'agents' });
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    filing.value = false;
-  }
+  const card = await board.createTask(
+    taskInsertFromDraft(
+      {
+        name: taskNameFromText(seed),
+        task: seed,
+        model: chatSession.value?.model,
+        prefix: 'feature',
+        worktree: true,
+        hidden: false,
+        deepAnalysis: false,
+      },
+      pid,
+      userId,
+    ),
+  );
+  if (!card) return; // the store has already said why
+  store.setBucket('tasks');
+  void router.push({ name: 'agents' });
 }
 
-// Bar ✕ — archive the open thread. Non-destructive (see archiveThread); the ✕ stays down
-// until the write returns so a second click cannot race it.
-async function clearChat(): Promise<void> {
+// Bar ✕ — archive the open thread. Non-destructive (see archiveThread); the ✕ spins until the
+// write returns so a second click cannot race it.
+async function archiveOpen(): Promise<void> {
   const id = chatId.value;
-  if (!id || clearing.value) return;
-  clearing.value = true;
-  try {
-    await archiveThread(id);
-  } finally {
-    clearing.value = false;
-  }
+  if (!id || sessionPending.value) return;
+  await archiveThread(id);
 }
 
 onMounted(() => {
@@ -753,6 +867,10 @@ onMounted(() => {
 watch(
   () => store.selectedProjectId,
   () => {
+    // The previous project's thread must not stay on screen while this one's chat is found
+    // or created: drop it now and let the detail skeleton cover the wait.
+    chatId.value = undefined;
+    if (store.selectedProjectId) ensuringChat.value = true;
     void ensureChat();
     void nextTick(refreshHistoryWidth);
   },
@@ -1067,6 +1185,18 @@ watch(chatId, () => {
   font-size: var(--k-fs-sm);
   line-height: 1.55;
   color: var(--k-faint);
+}
+
+.chat__detail-skeleton {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-3);
+  padding: var(--k-sp-3);
+}
+
+.chat__log-skeleton {
+  padding: var(--k-sp-3);
 }
 
 .chat__detail-blank {

@@ -2985,14 +2985,20 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private wireLive(sessionId: string, rpc: AgentRuntime, status: Session["status"]): Live {
     const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status, lastEventAt: Date.now() }, textBuf: "", thinkBuf: "", toolStarted: new Map(), toolArgs: new Map(), subagents: new Map() };
     this.map.set(sessionId, live);
-    rpc.onExit((_code, reason) => {
+    rpc.onExit((_code, reason, cause) => {
       this.stopPoll(live);
+      // A sign-out is never a clean end, whatever the row said a moment ago: a chat sits at
+      // `done` between turns, so its first turn on a signed-out CLI died «done» and the operator
+      // saw nothing. Only `stopped` (the operator's own stop) outranks it.
+      const signedOut = cause === "claude_not_authenticated" || cause === "omp_not_authenticated";
       // `in_review` counts as ended cleanly: the PR turn finished, and the reaper stops that
       // child on purpose (a review takes as long as a human takes). Without it here, every
       // reaped review session would flip to `error` on its own child's exit.
-      if (live.live.status !== "stopped" && live.live.status !== "done" && live.live.status !== "in_review") {
+      const settled = live.live.status === "stopped" || live.live.status === "done" || live.live.status === "in_review";
+      if (live.live.status !== "stopped" && (signedOut || !settled)) {
         live.live.status = "error";
         live.live.error = reason;
+        if (cause) live.live.errorCode = cause;
         this.registry.updateSession(sessionId, { status: "error" });
         this.pushUpdate(sessionId);
       }

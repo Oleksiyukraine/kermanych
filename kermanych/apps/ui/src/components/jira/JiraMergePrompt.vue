@@ -5,6 +5,7 @@
     :lead="t('jira.mergePrompt.lead')"
     :options="options"
     :busy="busy"
+    :loading="loadingOptions"
     skippable
     @update:model-value="onToggle"
     @pick="apply"
@@ -25,6 +26,7 @@ import { listJiraIntegrations } from '@kermanych/cloud';
 import JiraStatusPickDialog from './JiraStatusPickDialog.vue';
 import { api } from '../../lib/api';
 import type { JiraTransitionView } from '../../lib/jira-view';
+import { useAsyncAction } from '../../composables/useAsyncAction';
 import { useAuth } from 'stores/auth';
 import { useBoard } from 'stores/board';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -38,7 +40,9 @@ const { t } = useI18n();
 // One prompt at a time; later merges queue behind it.
 const queue = ref<Task[]>([]);
 const options = ref<JiraTransitionView[]>([]);
-const busy = ref(false);
+// The current prompt's transitions are still being asked for: the dialog shows skeleton
+// options, not «Jira не пропонує переходів».
+const loadingOptions = ref(false);
 // The board the current ticket belongs to, resolved from its key's project prefix — a
 // workspace may mirror several boards, and «KAN-42» belongs to whichever integration has
 // project key «KAN». Null while unresolved (no matching board = nothing to move).
@@ -81,21 +85,30 @@ async function resolveIntegration(ws: string, jiraKey: string): Promise<string |
 watch(current, async (task) => {
   options.value = [];
   integrationId.value = null;
+  loadingOptions.value = false;
   if (!task?.jiraKey) return;
   const ws = local.projectWorkspace[task.projectId];
   if (!ws) {
     queue.value = queue.value.slice(1);
     return;
   }
+  loadingOptions.value = true;
   const intg = await resolveIntegration(ws, task.jiraKey);
+  if (current.value !== task) return; // the queue moved on meanwhile
   if (!intg) {
+    loadingOptions.value = false;
     queue.value = queue.value.slice(1);
     return;
   }
   integrationId.value = intg;
   try {
-    options.value = await api.jiraTransitions(intg, task.jiraKey);
+    const answer = await api.jiraTransitions(intg, task.jiraKey);
+    if (current.value !== task) return;
+    options.value = answer;
+    loadingOptions.value = false;
   } catch {
+    if (current.value !== task) return;
+    loadingOptions.value = false;
     // No token or no reach: the ask cannot be honoured, and a dialog with zero options
     // saying «Jira не пропонує переходів» would blame the workflow. Drop silently.
     queue.value = queue.value.slice(1);
@@ -103,22 +116,20 @@ watch(current, async (task) => {
 });
 
 function onToggle(open: boolean): void {
-  if (!open) queue.value = queue.value.slice(1); // «Не переносити»
+  if (!open && !busy.value) queue.value = queue.value.slice(1); // «Не переносити»
 }
 
-async function apply(transition: JiraTransitionView): Promise<void> {
+// The prompt is dequeued whatever Jira answers — the failure is a toast, and a retry would
+// need a fresh transitions read anyway.
+const { run: apply, busy } = useAsyncAction(async (transition: JiraTransitionView) => {
   const task = current.value;
   const intg = integrationId.value;
   if (!task?.jiraKey || !intg) return;
-  busy.value = true;
   try {
     await api.jiraTransition(intg, task.jiraKey, transition.id);
     local.notify(t('jira.mergePrompt.moved', { key: task.jiraKey, name: transition.to.name }), 'info');
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
   } finally {
-    busy.value = false;
     queue.value = queue.value.slice(1);
   }
-}
+});
 </script>

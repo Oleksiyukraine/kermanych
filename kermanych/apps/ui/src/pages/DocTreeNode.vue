@@ -6,6 +6,9 @@ import { computed } from 'vue';
 import type { TreeEntry } from '@kermanych/core';
 import { useProjectDocs } from 'stores/project-docs';
 import { useI18n } from 'vue-i18n';
+import { useAsyncAction } from '../composables/useAsyncAction';
+import { useLoadPhase } from '../composables/useLoadPhase';
+import KSkeleton from 'components/kit/KSkeleton.vue';
 
 export type DocNode = {
   folder: string;
@@ -26,21 +29,36 @@ const isSelected = computed(
   () => props.node.type === 'file' && docs.openFolder === props.node.folder && docs.openPath === props.node.path,
 );
 
-async function onClick(): Promise<void> {
+// The first open of a folder fetches its level: a loading row stands under the folder until it
+// lands, and a failure folds the folder back (the error is a toast) so the next click retries.
+const expand = useAsyncAction(async (node: DocNode): Promise<void> => {
+  try {
+    const entries: TreeEntry[] = await docs.treeOf(props.projectId, node.folder, node.path);
+    node.children = entries.map((e) => ({
+      folder: node.folder,
+      path: node.path ? `${node.path}/${e.name}` : e.name,
+      name: e.name,
+      type: e.type,
+    }));
+  } catch (e) {
+    node.open = false;
+    throw e;
+  }
+});
+const expandPhase = useLoadPhase(() => expand.busy.value);
+
+function onClick(): void {
   const node = props.node;
   if (node.type === 'file') {
     void docs.openFile(props.projectId, node.folder, node.path);
     return;
   }
+  // A second click while the level is loading is ignored: folding now would let the fetch
+  // land afterwards and leave a closed folder holding children it never showed.
+  if (expand.busy.value) return;
   node.open = !node.open;
   if (node.children || !node.open) return;
-  const entries: TreeEntry[] = await docs.treeOf(props.projectId, node.folder, node.path);
-  node.children = entries.map((e) => ({
-    folder: node.folder,
-    path: node.path ? `${node.path}/${e.name}` : e.name,
-    name: e.name,
-    type: e.type,
-  }));
+  void expand.run(node);
 }
 </script>
 
@@ -50,6 +68,7 @@ async function onClick(): Promise<void> {
       class="doc-tree__row"
       :class="{ 'doc-tree__row--selected': isSelected }"
       type="button"
+      :aria-busy="expand.busy.value || undefined"
       @click="onClick"
     >
       <span class="doc-tree__twist" aria-hidden="true">
@@ -62,6 +81,9 @@ async function onClick(): Promise<void> {
       <span class="doc-tree__icon" aria-hidden="true">{{ node.type === 'dir' ? '📁' : '📄' }}</span>
       <span class="doc-tree__name">{{ node.name }}</span>
     </button>
+    <ul v-if="node.type === 'dir' && node.open && !node.children && expandPhase === 'skeleton'" class="doc-tree__children">
+      <li class="doc-tree__loading"><KSkeleton variant="line" width="60%" /></li>
+    </ul>
     <ul v-if="node.type === 'dir' && node.open && node.children" class="doc-tree__children">
       <DocTreeNode
         v-for="child in node.children"
@@ -142,5 +164,9 @@ async function onClick(): Promise<void> {
   color: var(--k-muted);
   font-size: 12px;
   padding: 2px var(--k-sp-2) 2px 18px;
+}
+.doc-tree__loading {
+  list-style: none;
+  padding: 6px var(--k-sp-2) 6px 18px;
 }
 </style>

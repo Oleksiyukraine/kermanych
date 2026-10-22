@@ -29,7 +29,15 @@ export const useTerminal = defineStore('terminal', () => {
   // False until the first `list` answers: before that «no terminals» is unknown, not true,
   // and the panel must not start a shell on the strength of an empty initial array.
   const loaded = ref(false);
+  // The last `list` ack failed (timeout, api down). The panel then stops its skeleton and
+  // offers the empty text plus the spawn link — the operator can still start a shell — while
+  // `loaded` stays false, so nothing spawns on its own on the strength of an unknown list.
+  const listFailed = ref(false);
   const activeByProject = ref<Record<string, string>>({});
+  // Projects with a spawn in flight. The panel's «+», its «Новий термінал» link and the
+  // footer toggle all start shells; one guard here means none of them can start a second
+  // while the first is still being acked, and the panel draws a pending tab for it.
+  const opening = ref<Record<string, true>>({});
 
   let socket: Socket | undefined;
   const sinks = new Map<string, TerminalSink>();
@@ -74,6 +82,7 @@ export const useTerminal = defineStore('terminal', () => {
     const list = (await s.timeout(ACK_MS).emitWithAck('list')) as TerminalInfo[];
     terminals.value = list;
     loaded.value = true;
+    listFailed.value = false;
     // A view whose shell is gone from the list unmounts with its tab; the rest re-attach.
     for (const id of sinks.keys()) {
       if (list.some((t) => t.id === id)) void join(s, id);
@@ -110,7 +119,12 @@ export const useTerminal = defineStore('terminal', () => {
     // Every (re)connect, not just the first: an api restart ends every shell, and a plain
     // reconnect drops this socket's room memberships, so both the list and the attached
     // views are re-established from the server.
-    s.on('connect', () => void sync(s).catch(() => notifyError('unreachable')));
+    s.on('connect', () =>
+      void sync(s).catch(() => {
+        listFailed.value = true;
+        notifyError('unreachable');
+      }),
+    );
     s.on('opened', (t: TerminalInfo) => add(t));
     s.on('exit', (m: { id: string }) => remove(m.id));
     s.on('data', (m: { id: string; data: string }) => {
@@ -139,21 +153,29 @@ export const useTerminal = defineStore('terminal', () => {
 
   // Start a shell in the project's checkout. Size is a first guess; the view fits it on mount.
   async function open(projectId: string, cols = 80, rows = 24): Promise<TerminalInfo | undefined> {
-    const s = connect();
-    let reply: TerminalOpenReply;
+    if (opening.value[projectId]) return undefined;
+    opening.value = { ...opening.value, [projectId]: true };
     try {
-      reply = (await s.timeout(ACK_MS).emitWithAck('open', { projectId, cols, rows })) as TerminalOpenReply;
-    } catch {
-      notifyError('unreachable');
-      return undefined;
+      const s = connect();
+      let reply: TerminalOpenReply;
+      try {
+        reply = (await s.timeout(ACK_MS).emitWithAck('open', { projectId, cols, rows })) as TerminalOpenReply;
+      } catch {
+        notifyError('unreachable');
+        return undefined;
+      }
+      if ('error' in reply) {
+        notifyError(reply.error, reply.message);
+        return undefined;
+      }
+      add(reply.terminal);
+      setActive(projectId, reply.terminal.id);
+      return reply.terminal;
+    } finally {
+      const rest = { ...opening.value };
+      delete rest[projectId];
+      opening.value = rest;
     }
-    if ('error' in reply) {
-      notifyError(reply.error, reply.message);
-      return undefined;
-    }
-    add(reply.terminal);
-    setActive(projectId, reply.terminal.id);
-    return reply.terminal;
   }
 
   function attach(id: string, sink: TerminalSink): void {
@@ -184,6 +206,7 @@ export const useTerminal = defineStore('terminal', () => {
     panelVisible,
     terminals,
     loaded,
+    listFailed,
     activeByProject,
     setPanel,
     connect,
@@ -191,6 +214,7 @@ export const useTerminal = defineStore('terminal', () => {
     activeFor,
     setActive,
     open,
+    opening,
     attach,
     detach,
     input,

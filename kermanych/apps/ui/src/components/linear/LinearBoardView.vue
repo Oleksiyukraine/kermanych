@@ -18,9 +18,10 @@
       <span v-if="filtering" class="lbv__count mono">{{ t('linear.boardView.searchCount', { n: matched.length, total: linear.issues.length, board: boardName }) }}</span>
       <span v-else class="lbv__count mono">{{ t('linear.boardView.count', { n: linear.issues.length, board: boardName }, linear.issues.length) }}</span>
       <span class="lbv__spacer"></span>
-      <span v-if="!linear.tokenPresent" class="lbv__readonly mono" v-tip="readOnlyHint">{{ t('linear.boardView.readOnly') }}</span>
+      <span v-if="linear.tokenKnown && !linear.tokenPresent" class="lbv__readonly mono" v-tip="readOnlyHint">{{ t('linear.boardView.readOnly') }}</span>
       <KBtn
-        :disabled="!linear.tokenPresent || linear.syncing"
+        :disabled="!linear.tokenPresent"
+        :loading="linear.syncing"
         :title="linear.tokenPresent ? syncHint : readOnlyHint"
         @click="linear.syncNow(workspaceId)"
       >
@@ -39,7 +40,13 @@
       {{ query.trim() ? t('linear.boardView.searchEmpty', { q: query.trim() }) : t('linear.boardView.filterEmpty') }}
     </p>
 
-    <div v-if="linear.columns.length" class="lbv__columns" :style="{ '--cols': linear.columns.length }">
+    <div v-if="phase === 'skeleton'" class="lbv__columns" :style="{ '--cols': 3 }">
+      <div v-for="i in 3" :key="i" class="lbv__column">
+        <KSkeleton variant="card" :rows="3" />
+      </div>
+    </div>
+
+    <div v-else-if="phase === 'ready' && linear.columns.length" class="lbv__columns" :style="{ '--cols': linear.columns.length }">
       <div
         v-for="col in linear.columns"
         :key="col.position"
@@ -56,6 +63,7 @@
             :issue="issue"
             :agent-status="agentStatusOf(issue)"
             :draggable="linear.tokenPresent"
+            :pending="pending.isPending(`issue:${issue.key}`)"
             @click="openIssue(issue)"
             @dragstart="dragged = issue"
           />
@@ -64,7 +72,7 @@
       </div>
     </div>
 
-    <p v-else-if="!linear.loading" class="lbv__error mono">
+    <p v-else-if="phase === 'ready'" class="lbv__error mono">
       {{ t('linear.boardView.emptyBoard') }}
     </p>
 
@@ -128,6 +136,7 @@ import type { Session, SessionStatus } from '@kermanych/core';
 import KBtn from 'components/kit/KBtn.vue';
 import KChipSelect from 'components/kit/KChipSelect.vue';
 import KField from 'components/kit/KField.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import LinearCard from './LinearCard.vue';
 import LinearIssueEditor from './LinearIssueEditor.vue';
@@ -135,6 +144,8 @@ import LinearLaunchDialog from './LinearLaunchDialog.vue';
 import LinearStatusPickDialog from './LinearStatusPickDialog.vue';
 import LinearTicketDialog from './LinearTicketDialog.vue';
 import { api } from '../../lib/api';
+import { useAsyncAction } from '../../composables/useAsyncAction';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import {
   assigneeOptions,
   filterByAssignee,
@@ -147,6 +158,7 @@ import {
 import { useBoard } from 'stores/board';
 import { useLinear } from 'stores/linear';
 import { useOrchestrator } from 'stores/orchestrator';
+import { usePending } from 'stores/pending';
 import { useI18n } from 'vue-i18n';
 
 const { t } = useI18n();
@@ -158,6 +170,11 @@ const props = defineProps<{ workspaceId: string }>();
 const linear = useLinear();
 const board = useBoard();
 const local = useOrchestrator();
+const pending = usePending();
+
+// Not loaded = no answer for this workspace yet, or a first load with no columns on
+// screen. A sync of a board already shown keeps the columns.
+const phase = useLoadPhase(() => linear.integration === undefined || (linear.loading && !linear.columns.length));
 
 // The search box filters the cards, never the columns: an empty column under a query
 // still says which column it is, so the board keeps its shape while you type.
@@ -233,25 +250,40 @@ const dropPickOpen = ref(false);
 const dropIssue = ref<LinearIssue | null>(null);
 const dropColumn = ref<LinearColumn | null>(null);
 const dropOptions = ref<LinearTransitionView[]>([]);
-const dropBusy = ref(false);
+
+// The card waits on Linear from the drop until the mirror shows it in another state — the
+// HTTP answer and the realtime echo both land through the store, so the condition is on the
+// store's copy of the issue, not on the call.
+function markMoving(issue: LinearIssue): void {
+  const key = issue.key;
+  const from = issue.stateId;
+  pending.mark(`issue:${key}`, () => {
+    const now = linear.issues.find((i) => i.key === key);
+    return !now || now.stateId !== from;
+  });
+}
 
 async function onDrop(column: LinearColumn): Promise<void> {
   dragOver.value = null;
   const issue = dragged.value;
   dragged.value = null;
   if (!issue || !linear.tokenPresent) return;
+  if (pending.isPending(`issue:${issue.key}`)) return; // a move is already in flight
   if (column.stateIds.includes(issue.stateId)) return; // dropped where it already is
 
+  markMoving(issue);
   let transitions: LinearTransitionView[];
   try {
     transitions = await api.linearTransitions(props.workspaceId, issue.key);
   } catch (e) {
+    pending.clear(`issue:${issue.key}`);
     local.notify(e instanceof Error ? e.message : String(e), 'error');
     return;
   }
 
   const decision = transitionChoiceForDrop(column, transitions);
   if (decision.kind === 'none') {
+    pending.clear(`issue:${issue.key}`);
     local.notify(t('linear.boardView.dropRefused', { key: issue.key, column: column.name }), 'error');
     return;
   }
@@ -259,26 +291,28 @@ async function onDrop(column: LinearColumn): Promise<void> {
     await transitionIssue(issue, decision.transition.id);
     return;
   }
+  // The pick dialog is the feedback while the human chooses; the card waits again on pick.
+  pending.clear(`issue:${issue.key}`);
   dropIssue.value = issue;
   dropColumn.value = column;
   dropOptions.value = decision.options;
   dropPickOpen.value = true;
 }
 
-async function applyDrop(tr: LinearTransitionView): Promise<void> {
+const { run: applyDrop, busy: dropBusy } = useAsyncAction(async (tr: LinearTransitionView) => {
   const issue = dropIssue.value;
   if (!issue) return;
-  dropBusy.value = true;
+  markMoving(issue);
   await transitionIssue(issue, tr.id);
-  dropBusy.value = false;
   dropPickOpen.value = false;
-}
+});
 
 async function transitionIssue(issue: LinearIssue, transitionId: string): Promise<void> {
   try {
     const updated = await api.linearTransition(props.workspaceId, issue.key, transitionId);
     linear.upsert(updated);
   } catch (e) {
+    pending.clear(`issue:${issue.key}`);
     // The stale-mirror case: Linear refused because the ticket moved meanwhile. Refresh the
     // one issue so the board shows where it actually is.
     local.notify(e instanceof Error ? e.message : String(e), 'error');

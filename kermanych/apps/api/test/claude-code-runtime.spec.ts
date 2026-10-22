@@ -163,6 +163,45 @@ describe("ClaudeCodeRuntime start() over a child that cannot launch", () => {
   });
 });
 
+// A signed-out account does NOT kill the child (measured against the real SDK 0.3.259): the
+// first turn is answered with the CLI's synthetic assistant message below, the stream then
+// idles, and it rejects only once the input closes — which a live session never does. The
+// session used to end that turn empty, with nothing telling the operator to log in.
+describe("ClaudeCodeRuntime over a signed-out account", () => {
+  const signedOut: SDKMessage[] = [
+    { type: "system", subtype: "init", session_id: "sess-1" } as unknown as SDKMessage,
+    {
+      type: "assistant",
+      message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text: "Not logged in · Please run /login" }] },
+      parent_tool_use_id: null,
+      error: "authentication_failed",
+      is_api_error_message: true,
+    } as unknown as SDKMessage,
+    { type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login", modelUsage: {} } as unknown as SDKMessage,
+  ];
+
+  it("ends the child and reports the sign-out as its exit cause and a coded notice", async () => {
+    const { queryFn } = fakeQuery(signedOut);
+    let closes = 0;
+    const closingQuery = (params: Parameters<typeof queryFn>[0]) => Object.assign(queryFn(params), { close: () => { closes++; } });
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0 }, closingQuery as never);
+    const events: RpcEvent[] = [];
+    const exits: { code: number | null; reason: string; cause?: string }[] = [];
+    rt.onEvent((e) => events.push(e));
+    rt.onExit((code, reason, cause) => exits.push({ code, reason, cause }));
+    await rt.start();
+
+    rt.prompt("do it");
+
+    await vi.waitFor(() => expect(exits).toHaveLength(1));
+    expect(exits[0]).toMatchObject({ code: null, cause: "claude_not_authenticated" });
+    expect(exits[0].reason).toMatch(/Please run \/login/);
+    expect(events).toContainEqual(expect.objectContaining({ type: "notice", level: "warn", code: "claude_not_authenticated" }));
+    expect(rt.isAlive()).toBe(false);
+    expect(closes).toBe(1);
+  });
+});
+
 // Captures the Options handed to query() so tool-restriction wiring can be asserted directly.
 function captureQuery() {
   const captured = { options: undefined as Record<string, unknown> | undefined };
@@ -306,6 +345,38 @@ describe("ClaudeCodeRuntime.supportedModels", () => {
     const models = await ClaudeCodeRuntime.supportedModels(queryFn as never);
     expect(models).toEqual(script);
     expect(interrupts).toBe(1);
+  });
+});
+
+// The preflight cannot use the catalog to tell a signed-out claude: that child lists every model.
+// The account shapes below are what the real accountInfo() returned (SDK 0.3.259): signed in
+// names no tokenSource at all, signed out says "none", an API key in the env adds apiKeySource.
+describe("ClaudeCodeRuntime.probe", () => {
+  function accountQuery(account: Record<string, unknown>) {
+    return (params: { prompt: AsyncIterable<SDKUserMessage>; options?: unknown }) => {
+      const gen = (async function* () {
+        for await (const _ of params.prompt) { /* drain */ }
+      })() as AsyncGenerator<SDKMessage, void> & Record<string, unknown>;
+      gen.accountInfo = async () => account;
+      gen.supportedModels = async () => [{ value: "default" }];
+      gen.interrupt = async () => undefined;
+      return gen;
+    };
+  }
+
+  it("reads a first-party account with no token as signed out", async () => {
+    const r = await ClaudeCodeRuntime.probe(accountQuery({ tokenSource: "none", apiProvider: "firstParty" }) as never);
+    expect(r.signedIn).toBe(false);
+  });
+
+  it("counts an OAuth login, an API key, and a third-party provider as signed in", async () => {
+    for (const account of [
+      { email: "a@b.c", subscriptionType: "Claude Max", apiProvider: "firstParty" },
+      { tokenSource: "none", apiKeySource: "ANTHROPIC_API_KEY", apiProvider: "firstParty" },
+      { tokenSource: "none", apiProvider: "bedrock" },
+    ]) {
+      expect((await ClaudeCodeRuntime.probe(accountQuery(account) as never)).signedIn).toBe(true);
+    }
   });
 });
 

@@ -72,6 +72,10 @@ export const uk = {
       accountsAvg: '{count} акаунти, у середньому',
       resetsIn: ' — оновиться за {time}',
       accountSettings: 'налаштування акаунта',
+      // Пігулка у верхній панелі (composables/useProviderSignIn.ts): CLI AI-провайдера на цій
+      // машині розлогінений. Її підказка — `errors.runtime_<code>` з командою; цей рядок іде після.
+      aiLoginRequired: 'Потрібен вхід в AI',
+      aiLoginRecheck: 'Натисніть, щоб перевірити ще раз.',
       pullDone: 'готово',
       pullFailed: 'не вдалося',
     },
@@ -145,6 +149,7 @@ export const uk = {
   terminal: {
     title: 'Термінал',
     tabLabel: '{n}: {shell}',
+    opening: 'Запускаємо…',
     new: 'Новий термінал',
     kill: 'Завершити термінал',
     hide: 'Згорнути панель терміналу',
@@ -349,6 +354,7 @@ export const uk = {
       done: 'готово',
       review: 'на ревʼю',
       error: 'помилка',
+      signIn: 'потрібен вхід',
       queued: 'у черзі',
       stopped: 'зупинено',
       merged: 'завершено',
@@ -609,6 +615,7 @@ export const uk = {
         jiraNoBoard: 'До цього воркспейсу не підключено дошку Jira — підключіть її в Менеджмент → Integrations',
         jiraNoToken: 'Додайте свій Jira-токен у Менеджмент → Integrations, щоб створювати задачі в Jira',
         jiraUnavailable: 'Jira тут недоступна: немає звʼязку з хмарою',
+        jiraProbing: 'Перевіряю Jira…',
         notCloud: 'Проєкт цієї сесії не опубліковано у воркспейсі — задачу нікуди створити.',
       },
     },
@@ -1251,6 +1258,7 @@ export const uk = {
       omp: 'omp',
       claude: 'claude-code',
       note: 'Наявні сесії лишаються на своєму бекенді.',
+      checking: 'Перевіряю, чи CLI готовий…',
     },
     language: {
       label: 'Мова спілкування агента',
@@ -1681,7 +1689,6 @@ export const uk = {
         period: 'Період',
         gateJira: 'Місткість читається з Jira — підключіть дошку, щоб побачити її.',
         gateOpen: 'Інтеграції',
-        loading: 'Читаю дзеркало Jira…',
         empty: 'У цей період немає оціненої роботи.',
       },
       releases: {
@@ -1930,6 +1937,7 @@ export const uk = {
       branchFor: 'Гілка · {project}',
       branchPlaceholderFailed: 'гілки недоступні — проєкт не привʼязаний тут',
       branchPlaceholderEmpty: '— гілок не знайдено —',
+      branchPlaceholderLoading: 'читаю гілки…',
       multiHint: 'Нотатка матиме окремий розділ на кожен проєкт — у тому порядку, в якому ви їх обрали, — і кожен розділ пишеться лише з комітів цього проєкту на його гілці.',
       rangeFromLabel: 'Період з',
       rangeToLabel: 'по',
@@ -1958,7 +1966,6 @@ export const uk = {
       gateTitle: 'Навантаження читається з Jira',
       gateText: 'Team Capacity додає оцінки й ворклоги дошки Jira цього воркспейсу. У власної дошки оцінок немає, тож показувати нічого, доки не підключено дошку Jira.',
       gateButton: 'Відкрити Інтеграції',
-      loading: 'Читаємо дзеркало Jira…',
       loadError: 'Не вдалося прочитати дзеркало Jira: {error}',
       from: 'Від',
       to: 'До',
@@ -2210,7 +2217,15 @@ export const uk = {
       contextPct: 'контекст {pc}%',
       tokens: '{count} токенів',
     },
+    skeleton: {
+      loading: 'Завантаження…',
+    },
+    progress: {
+      label: 'Виконується…',
+    },
     panel: {
+      sending: 'надсилаю…',
+      outgoingImages: 'зображень: {count}',
       promoting: 'Готую worktree…',
       promoteAgent: 'Почати імплементацію обговореного (worktree + повний доступ, цей же контекст)',
       promoteTask: 'Зберегти як задачу в беклог',
@@ -2233,6 +2248,7 @@ export const uk = {
       cancel: 'Скасувати',
       error: 'ПОМИЛКА',
       sessionErrored: 'Сесію завершено з помилкою.',
+      signInHead: 'ПОТРІБЕН ВХІД',
       stalled: '⚠ Немає активності {label} — агент міг зависнути',
       restart: '⟳ Перезапустити',
       refreshTip: 'Оновити чат — підтягнути історію сесії',
@@ -2248,6 +2264,7 @@ export const uk = {
         done: 'готово',
         review: 'на ревʼю',
         error: 'помилка',
+        signIn: 'потрібен вхід',
         queued: 'у черзі',
         stopped: 'зупинено',
         merged: 'завершено',
@@ -2448,6 +2465,7 @@ export const uk = {
         chat: '08 · Чат',
         composer: '09 · Композер',
         diff: '10 · Diff файлу',
+        async: '11 · Асинхронні стани',
       },
       btn: {
         newAgent: '+ Новий агент',
@@ -2458,6 +2476,13 @@ export const uk = {
         cancel: 'Скасувати',
         launch: 'Запустити',
         showDiff: 'Показати diff',
+      },
+      async: {
+        checkbox: 'Увімкнено',
+        select: 'Гілка',
+        selectPlaceholder: 'читаю гілки…',
+        chipMedium: 'Середній',
+        chipHigh: 'Високий',
       },
       iconTip: {
         run: 'Запустити',
@@ -2514,6 +2539,10 @@ export const uk = {
         save: 'Зберегти',
       },
       cap: {
+        asyncControls: 'loading — спінер замість гліфа чи каретки, контрол заблокований, aria-busy. Кнопка, на яку натиснули, крутиться одразу; select / chip / checkbox / toggle показують вибране значення, поки воно зберігається (useOptimisticValue).',
+        asyncSkeleton: 'KSkeleton — «ще не завантажено»: рядки, картки, абзац, аватар, рядок, блок. Зʼявляється через 150 мс і тримається щонайменше 300 мс (useLoadPhase); empty-state — лише коли дані справді прийшли.',
+        asyncPending: 'pending — дія над сутністю чекає результату через сокет (зупинка, видалення, форк, перенос тікета): картка приглушена, крутиться, дії над нею заблоковані до 15 с.',
+        asyncBar: 'KProgressBar — 2 px акценту під верхньою навігацією для роботи, яку запустив оператор (useAsyncAction / trackLoad), після 300 мс. Фонові полінги її не вмикають.',
         actionButtons: '28×28 · щільний контроль для груп глиф-дій: рядок таблиці й хедер панелі (компактніший за KBtn variant="icon" 34×34). active = акцент. Підказка — власний тултіп (v-tip), не нативний title.',
         kbd: 'KKbd · ⌘ і ⏎ несуть значно менше фарби, ніж літера того самого кегля, тому чип міряється ІКОНКОВОЮ шкалою (--k-icon-sm), а не --k-fs-*, і ніколи не гаситься через opacity. tone="on-accent" успадковує колір контрола — для чипа всередині залитої кнопки; tone="muted" — самостійна підказка. aria-hidden: скорочення належить підпису контрола, а не цьому span.',
         fields: 'branch={branch} · select(рядки)={branchSel} · select(пари)={wsSel} · select(пошук)={modelSel} · date={date} — праворуч у списку видно назву, а модель тримає id: фільтр за назвою ламається, щойно зʼявиться другий воркспейс із такою самою назвою. Дата живе в моделі як YYYY-MM-DD, а показує себе як дд.мм.рррр — і те й те можна вписати руками.',

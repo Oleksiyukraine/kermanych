@@ -11,9 +11,29 @@ function subscribe<A extends unknown[]>(channel: string, cb: (...args: A) => voi
   return () => ipcRenderer.removeListener(channel, listener);
 }
 
+// The splash status from main. Listened to from the preload's first tick, before any page
+// script, and the latest one is replayed to a late subscriber: the index.html splash script and
+// main's sends do not otherwise agree on an order.
+let bootStatus: KermanychBootStatus | undefined;
+const bootListeners = new Set<(status: KermanychBootStatus) => void>();
+ipcRenderer.on('kermanych:boot-status', (_event, status: KermanychBootStatus) => {
+  bootStatus = status;
+  for (const cb of bootListeners) cb(status);
+});
+
 contextBridge.exposeInMainWorld('kermanych', {
   apiBase,
   focus: () => ipcRenderer.send('kermanych:focus'),
+  // Main starts the local api in parallel with the window; resolves once it listens, rejects
+  // when it failed to start (main then shows the error and quits).
+  backendReady: (): Promise<void> => ipcRenderer.invoke('kermanych:backend-ready'),
+  onBootStatus: (cb: (status: KermanychBootStatus) => void): (() => void) => {
+    bootListeners.add(cb);
+    if (bootStatus) cb(bootStatus);
+    return () => bootListeners.delete(cb);
+  },
+  // The applied theme's canvas colour, for the next launch's window background.
+  reportTheme: (background: string) => ipcRenderer.send('kermanych:theme', background),
   // Resolves { code } once the loopback listener in main catches the redirect.
   // Its presence is how stores/auth.ts detects the desktop build.
   startOAuth: (authorizeUrl: string): Promise<{ code: string }> =>

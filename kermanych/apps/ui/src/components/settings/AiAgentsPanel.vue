@@ -20,8 +20,10 @@
          per agent whatever the cloud says, so after a failed read it would render four agents
          with the compile-time defaults in their boxes and nothing assigned — a confident claim
          about a project it could not read, and one the operator could then SAVE. A refused write
-         leaves the list up: the error line says what was refused and every row is still true. -->
-    <ul v-if="loaded" class="ai__list">
+         leaves the list up: the error line says what was refused and every row is still true.
+         Until the first read for this owner lands, agent-card skeletons hold the place. -->
+    <KSkeleton v-if="phase === 'skeleton'" variant="card" :rows="4" />
+    <ul v-else-if="phase === 'ready' && loaded" class="ai__list">
       <li
         v-for="a in AGENTS"
         :key="a.id"
@@ -78,8 +80,12 @@
               type="button"
               class="ai__btn ai__btn--primary"
               :disabled="!canWrite || busy || !dirty(a.id)"
-              @click="saveInstruction(a)"
-            >{{ t('settings.aiAgents.save') }}</button>
+              :aria-busy="saving.busyFor(a.id) || undefined"
+              @click="saving.run(a.id, a)"
+            >
+              <KSpinner v-if="saving.busyFor(a.id)" :size="10" />
+              {{ t('settings.aiAgents.save') }}
+            </button>
             <button
               type="button"
               class="ai__btn"
@@ -93,8 +99,12 @@
               type="button"
               class="ai__btn ai__btn--reset"
               :disabled="!canWrite || busy"
-              @click="resetToDefault(a.id)"
-            >{{ t('settings.aiAgents.resetDefault') }}</button>
+              :aria-busy="resetting.busyFor(a.id) || undefined"
+              @click="resetting.run(a.id)"
+            >
+              <KSpinner v-if="resetting.busyFor(a.id)" :size="10" />
+              {{ t('settings.aiAgents.resetDefault') }}
+            </button>
           </div>
           <AiProvenance
             v-if="overrideOf(a.id)"
@@ -106,12 +116,15 @@
           />
 
           <p class="ai__caption">{{ t('settings.aiAgents.skillsCaption') }}</p>
+          <!-- Optimistic: the reordered list shows at once and the editor locks with a spinner
+               until the replace-all lands; a refusal puts the stored order back. -->
           <SkillSequence
-            :names="sequences[a.id] ?? []"
+            :names="sequenceNames(a.id)"
             :view="view"
             :body-bytes="bodyBytes"
             :repo="repo"
             :disabled="!canWrite || busy"
+            :loading="sequencePending(a.id)"
             @update:names="setSequence(a.id, $event)"
           />
         </template>
@@ -133,7 +146,7 @@
 // default», which is why the editor is seeded through `effectiveInstruction` and why saving text
 // that equals the default deletes the row rather than storing a copy of it: a stored duplicate
 // would silently stop tracking the harness the next time a default is improved.
-import { computed, ref, watch } from 'vue';
+import { computed, effectScope, onScopeDispose, ref, shallowRef, watch, type EffectScope } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   AGENTS,
@@ -160,6 +173,11 @@ import { useAuth } from 'stores/auth';
 import { useProjects } from 'stores/projects';
 import { ownerLibraryView } from '../../lib/ai-team';
 import KField from 'components/kit/KField.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
+import { errorText, useKeyedAction } from '../../composables/useAsyncAction';
+import { useOptimisticValue } from '../../composables/useOptimisticValue';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import SkillSequence, { measureSkillBytes } from './SkillSequence.vue';
 import AiProvenance from './AiProvenance.vue';
 
@@ -193,9 +211,15 @@ const savedRow = ref<Record<string, boolean>>({});
 
 const error = ref('');
 const loaded = ref(false);
-// One flag for every write on the pane: a second click while an upsert is in flight would race
-// the read that follows it.
-const busy = ref(false);
+// Every write on the pane holds every other: a second click while an upsert is in flight would
+// race the read that follows it. The spinner, though, is only on the control that was pressed.
+const busy = computed(
+  () =>
+    saving.anyBusy() ||
+    resetting.anyBusy() ||
+    Object.values(sequenceSaves.value).some((s) => s.pending.value),
+);
+const phase = useLoadPhase(() => !loaded.value && !error.value);
 
 const canWrite = computed(() =>
   props.owner.scope === 'user'
@@ -282,10 +306,15 @@ async function libraryView(owner: AiOwner): Promise<{ view: SkillView[]; repo: R
   return { view: ownerLibraryView(await listAiSkills(auth.client, owner)), repo: {} };
 }
 
+// Bumped per read: saves, resets and sequence edits each end in a reload, and those can overlap
+// within one owner — only the newest read may paint, or an older reply would undo a newer write.
+let loadRun = 0;
 async function load(): Promise<void> {
   // Pinned for the whole read: the prop is live (see the watcher), so two loads can overlap and a
   // late one must not paint another project's team.
   const ownerKey = props.owner.scope + ':' + props.owner.id;
+  const run = ++loadRun;
+  const stale = (): boolean => run !== loadRun || ownerKey !== props.owner.scope + ':' + props.owner.id;
   error.value = '';
   try {
     const [library, stored, assignments, rows] = await Promise.all([
@@ -294,7 +323,7 @@ async function load(): Promise<void> {
       listAiAgentSkills(auth.client, props.owner),
       listAiAgents(auth.client, props.owner),
     ]);
-    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
+    if (stale()) return;
     view.value = library.view;
     repo.value = library.repo;
     bodyBytes.value = measureSkillBytes(library.view, stored);
@@ -303,7 +332,7 @@ async function load(): Promise<void> {
     seed();
     loaded.value = true;
   } catch (e) {
-    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
+    if (stale()) return;
     // Everything, not just the failed half: a pane built from three of four reads would show the
     // harness defaults as this project's texts, or mark every assigned name broken. `loaded` goes
     // back to false with it — that, and not the emptiness of the data, is what takes the list off
@@ -318,6 +347,55 @@ async function load(): Promise<void> {
     loaded.value = false;
     error.value = e instanceof Error ? e.message : String(e);
   }
+}
+
+function ownerKeyNow(): string {
+  return props.owner.scope + ':' + props.owner.id;
+}
+
+// Each agent's sequence as an optimistic value over `sequences`: a reorder shows at once and
+// rolls back on a refusal. Made per owner in a scope of their own and thrown away with it, so a
+// pick still held for one project can never paint onto the next project's team, and a refusal
+// landing after the switch says nothing on the new project's error line.
+type SequenceSave = ReturnType<typeof useOptimisticValue<string[]>>;
+let sequenceScope: EffectScope | undefined;
+const sequenceSaves = shallowRef<Record<string, SequenceSave>>({});
+function resetSequenceSaves(): void {
+  sequenceScope?.stop();
+  const scope = effectScope(true);
+  sequenceScope = scope;
+  const owner = props.owner;
+  const ownerKey = ownerKeyNow();
+  const next: Record<string, SequenceSave> = {};
+  scope.run(() => {
+    for (const agent of AGENTS) {
+      if (!agent.instruction) continue;
+      const agentId = agent.id;
+      next[agentId] = useOptimisticValue(
+        () => sequences.value[agentId] ?? NO_NAMES,
+        (names: string[]) => saveSequence(owner, ownerKey, agentId, names),
+        {
+          onError: (e) => {
+            if (ownerKey === ownerKeyNow()) error.value = errorText(e);
+          },
+        },
+      );
+    }
+  });
+  sequenceSaves.value = next;
+}
+onScopeDispose(() => sequenceScope?.stop());
+// One shared empty list, so «no sequence yet» compares equal to itself across reads.
+const NO_NAMES: string[] = [];
+
+function sequenceNames(agentId: string): string[] {
+  return sequenceSaves.value[agentId]?.value.value ?? sequences.value[agentId] ?? NO_NAMES;
+}
+function sequencePending(agentId: string): boolean {
+  return sequenceSaves.value[agentId]?.pending.value ?? false;
+}
+function setSequence(agentId: string, names: string[]): void {
+  void sequenceSaves.value[agentId]?.set(names);
 }
 
 // `projectId` is a LIVE prop: SettingsPage renders its panes with no `:key` and the sidebar only
@@ -337,6 +415,7 @@ watch(
     rowError.value = {};
     savedRow.value = {};
     loaded.value = false;
+    resetSequenceSaves();
     void load();
   },
   { immediate: true },
@@ -354,16 +433,18 @@ function validate(def: AgentDef, text: string): string {
   return '';
 }
 
-async function saveInstruction(def: AgentDef): Promise<void> {
+// Keyed per agent: the spinner sits on the «Зберегти» that was pressed, and a second press on
+// it sends nothing. «Збережено» is shown only once the reload has brought the stored text back,
+// so it is a receipt for what the box now holds rather than for the request.
+const saving = useKeyedAction(async (_agentId: string, def: AgentDef) => {
   // Pinned like every write on this pane: the row belongs to the project the operator was looking
   // at when the button went down.
-  const ownerKey = props.owner.scope + ':' + props.owner.id;
+  const ownerKey = ownerKeyNow();
   const text = drafts.value[def.id] ?? '';
   savedRow.value = { ...savedRow.value, [def.id]: false };
   const bad = validate(def, text);
   rowError.value = { ...rowError.value, [def.id]: bad };
   if (bad) return;
-  busy.value = true;
   try {
     // Byte-for-byte the harness default: the honest way to store «no change» is no row. Keeping
     // one would freeze this project on today's wording of a text that is maintained in the
@@ -373,44 +454,45 @@ async function saveInstruction(def: AgentDef): Promise<void> {
     } else {
       await upsertAiAgent(auth.client, { owner: props.owner, agentId: def.id, instruction: text });
     }
-    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
-    // Dropped so the re-read owns this editor again: `seed` preserves a dirty draft, and after a
-    // successful write the stored text — not the string this function happened to send — is what
-    // the box must show.
-    forget(def.id);
-    savedRow.value = { ...savedRow.value, [def.id]: true };
-    await load();
   } catch (e) {
-    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
-    rowError.value = { ...rowError.value, [def.id]: e instanceof Error ? e.message : String(e) };
-  } finally {
-    busy.value = false;
+    if (ownerKey !== ownerKeyNow()) return;
+    rowError.value = { ...rowError.value, [def.id]: errorText(e) };
+    return;
   }
-}
+  if (ownerKey !== ownerKeyNow()) return;
+  // Dropped so the re-read owns this editor again: `seed` preserves a dirty draft, and after a
+  // successful write the stored text — not the string this function happened to send — is what
+  // the box must show.
+  forget(def.id);
+  await load();
+  // A failed re-read takes the list off screen with its own error line; there is then no box
+  // for «Збережено» to describe.
+  if (ownerKey === ownerKeyNow() && loaded.value) {
+    savedRow.value = { ...savedRow.value, [def.id]: true };
+  }
+});
 
 // Reset IS the delete: with no row the effective instruction falls back to the compile-time
 // default, so there is nothing to write. `deleteProjectAgent` throws when it matched nothing — an
 // RLS refusal reads identically to success on a DELETE otherwise — and nothing is changed
-// locally: the reload is what the screen reflects.
-async function resetToDefault(agentId: string): Promise<void> {
-  const ownerKey = props.owner.scope + ':' + props.owner.id;
+// locally: the reload is what the screen reflects, and the spinner stays until it has.
+const resetting = useKeyedAction(async (agentId: string) => {
+  const ownerKey = ownerKeyNow();
   rowError.value = { ...rowError.value, [agentId]: '' };
   savedRow.value = { ...savedRow.value, [agentId]: false };
-  busy.value = true;
   try {
     await deleteAiAgent(auth.client, props.owner, agentId);
-    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
-    // Unconditionally, unlike a save: the operator's text is what they just asked to throw away,
-    // so it must not survive the reload as a preserved dirty draft.
-    forget(agentId);
-    await load();
   } catch (e) {
-    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
-    rowError.value = { ...rowError.value, [agentId]: e instanceof Error ? e.message : String(e) };
-  } finally {
-    busy.value = false;
+    if (ownerKey !== ownerKeyNow()) return;
+    rowError.value = { ...rowError.value, [agentId]: errorText(e) };
+    return;
   }
-}
+  if (ownerKey !== ownerKeyNow()) return;
+  // Unconditionally, unlike a save: the operator's text is what they just asked to throw away,
+  // so it must not survive the reload as a preserved dirty draft.
+  forget(agentId);
+  await load();
+});
 
 function forget(agentId: string): void {
   const nextDrafts = { ...drafts.value };
@@ -424,22 +506,14 @@ function forget(agentId: string): void {
 // `setAgentSkills` is a replace-all of exactly this list, so on success the local state IS what
 // the cloud holds and there is nothing a re-read would add. Deliberately not a reload: this pane
 // keeps four instruction editors open, and re-reading on every reorder would be four chances to
-// disturb them for no new information. A failure changes nothing locally — the sequence on screen
-// is still the one in the cloud — and says so on the pane's error line.
-async function setSequence(agentId: string, names: string[]): Promise<void> {
-  const ownerKey = props.owner.scope + ':' + props.owner.id;
+// disturb them for no new information. Throws on failure: the optimistic sequence (see
+// `resetSequenceSaves`) puts the stored order back on a throw and reports it on the pane's
+// error line. Storing `names` itself is what settles the optimistic value.
+async function saveSequence(owner: AiOwner, ownerKey: string, agentId: string, names: string[]): Promise<void> {
   error.value = '';
-  busy.value = true;
-  try {
-    await setAiAgentSkills(auth.client, props.owner, agentId, names);
-    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
-    sequences.value = { ...sequences.value, [agentId]: names };
-  } catch (e) {
-    if (ownerKey !== props.owner.scope + ':' + props.owner.id) return;
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
-  }
+  await setAiAgentSkills(auth.client, owner, agentId, names);
+  if (ownerKey !== ownerKeyNow()) return;
+  sequences.value = { ...sequences.value, [agentId]: names };
 }
 </script>
 
@@ -486,6 +560,8 @@ async function setSequence(agentId: string, names: string[]): Promise<void> {
 .ai__btn--reset { margin-left: auto; }
 .ai__btn { font: inherit; font-size: 12px; padding: 3px 10px; background: transparent; color: var(--k-text); border: 1px solid var(--k-line-strong); border-radius: var(--k-r); cursor: pointer; }
 .ai__btn:disabled { opacity: 0.45; cursor: default; }
+/* Room for the inline spinner an in-flight write puts in front of the label. */
+.ai__btn { display: inline-flex; align-items: center; gap: 6px; }
 .ai__btn--primary { border-color: var(--k-accent); color: var(--k-accent); }
 .ai__error { margin: 6px 0 0; font-size: 11.5px; color: var(--k-accent); overflow-wrap: anywhere; }
 /* Muted, not accent: a save that worked is a receipt, not something to look at. */

@@ -45,6 +45,10 @@ export const useProjects = defineStore('projects', () => {
   const members = ref<Record<string, WorkspaceMember[]>>({});
   const loading = ref(false);
   const offlineError = ref<string | null>(null);
+  // Has the FIRST load() finished (either way)? `loading` is false before load() starts too —
+  // MainLayout awaits auth.ready first — so the sidebar skeleton and the onboarding count
+  // need this to tell «not asked yet» from «answered».
+  const loadSettled = ref(false);
 
   // Has a cloud project list been READ on this run? The sidebar needs this to know whether
   // it holds an authoritative picture of what exists in the cloud, and it cannot be inferred
@@ -227,6 +231,7 @@ export const useProjects = defineStore('projects', () => {
       return projects.value;
     } finally {
       loading.value = false;
+      loadSettled.value = true;
     }
   }
 
@@ -483,6 +488,7 @@ export const useProjects = defineStore('projects', () => {
     members,
     loading,
     listRead,
+    loadSettled,
     offlineError,
     byId,
     workspaceById,

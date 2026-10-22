@@ -21,7 +21,7 @@
           v-if="onb.sidebarVisible"
           :label="t('onboarding.checklist.navLabel')"
           icon="start"
-          :hint="t('onboarding.checklist.stepCount', { done: onb.doneCount, total: onb.totalCount })"
+          :hint="onbCountKnown ? t('onboarding.checklist.stepCount', { done: onb.doneCount, total: onb.totalCount }) : '\u00a0'"
           :tip="minified ? t('onboarding.checklist.navLabel') : undefined"
           :active="onb.open"
           @click="onb.show()"
@@ -44,7 +44,8 @@
              does not say whose. KWorkspaceRow's chevron cannot carry aria-controls
              (fallthrough attributes land on the row's root element, not on the button),
              so the containment is what supplies the relationship. -->
-        <ul class="shell__projects">
+        <KSkeleton v-if="sidebarPhase === 'skeleton'" class="shell__projects-skeleton" variant="rows" :rows="4" />
+        <ul v-else-if="sidebarPhase === 'ready'" class="shell__projects">
           <!-- The drop target is the whole GROUP, not just its header row. Groups are
                expanded by default, so an open workspace's projects occupy most of what the
                user reads as «that workspace» and the thin header is the smaller part of it;
@@ -80,13 +81,18 @@
               class="shell__group-items"
               :aria-label="t('common.nav.workspaceProjects', { name: group.workspace.name })"
             >
-              <li v-for="p in sidebarProjects.byWorkspace.get(group.workspace.id) ?? []" :key="p.id">
+              <li
+                v-for="p in sidebarProjects.byWorkspace.get(group.workspace.id) ?? []"
+                :key="p.id"
+                :class="{ 'shell__item--pending': moving.busyFor(p.id) }"
+                :aria-busy="moving.busyFor(p.id) || undefined"
+              >
                 <KRailItem
                   :project="p"
                   indent
                   :active="p.id === store.selectedProjectId"
                   :attention="attentionOf(p.id)"
-                  :draggable="hasCloudList"
+                  :draggable="hasCloudList && !moving.busyFor(p.id)"
                   @click="selectProject(p.id)"
                   @dragstart="draggingProjectId = $event"
                   @dragend="onDragEnd"
@@ -170,6 +176,18 @@
         @update:model-value="goView"
       />
       <div class="shell__actions">
+        <!-- AI LOGIN REQUIRED — the provider CLI behind the operator's runtime is signed out on
+             this machine (composables/useProviderSignIn.ts). Present only then; its tooltip
+             names the command, a click asks again after the operator has logged in. -->
+        <button
+          v-if="signInCode"
+          type="button"
+          class="shell__signin mono"
+          role="alert"
+          v-tip="signInHint"
+          :aria-label="`${t('common.nav.aiLoginRequired')}. ${signInHint}`"
+          @click="recheckSignIn"
+        ><span aria-hidden="true">⚠</span> {{ t('common.nav.aiLoginRequired') }}</button>
         <!-- ONE gear, into pages/SettingsPage.vue. It used to be three controls —
              a workspace ⚙, a project ⚙ and a `$` for the `.env` — each opening its
              own modal; the settings screen holds all three behind a scope switcher,
@@ -197,6 +215,7 @@
           @click="onLangToggle"
         >{{ locale === 'uk' ? 'EN' : 'UK' }}</KIconButton>
       </div>
+      <KProgressBar :active="activity.barVisible" />
     </q-header>
 
     <!-- PAGE -->
@@ -252,10 +271,11 @@
         type="button"
         class="shell__foot-btn"
         :disabled="!isBound || syncing"
+        :aria-busy="syncing || undefined"
         v-tip="pullHint"
         :aria-label="isBound && incoming > 0 ? `Pull — ${t('common.nav.pullIncoming', { count: incoming })}` : 'Pull'"
-        @click="gitPull"
-      ><span class="k-glyph" aria-hidden="true">↓</span> Pull<span
+        @click="gitPull()"
+      ><KSpinner v-if="syncing" :size="10" /><span v-else class="k-glyph" aria-hidden="true">↓</span> Pull<span
         v-if="isBound && incoming > 0"
         class="shell__foot-badge"
         aria-hidden="true"
@@ -275,10 +295,11 @@
         type="button"
         class="shell__foot-btn"
         :disabled="!isBound || refreshing"
+        :aria-busy="refreshing || fetchingGit || undefined"
         v-tip="t('common.nav.refreshTip')"
         :aria-label="t('common.nav.refreshTip')"
-        @click="refreshGitNow"
-      ><span class="k-glyph" aria-hidden="true">↻</span></button>
+        @click="refreshGitNow()"
+      ><span class="k-glyph" :class="{ 'shell__foot-spin': refreshing || fetchingGit }" aria-hidden="true">↻</span></button>
       <span class="shell__foot-spacer"></span>
       <!-- The path is a STATUS read-out that doubles as the way to change it. It
            used to open the directory picker straight from here, which put the
@@ -311,7 +332,7 @@
     <!-- CREATE-WORKSPACE MODAL — the sidebar's two «+» buttons create different things, so
          they get two modals. A workspace is the group AND the team: membership hangs off it,
          which is what the hint below says out loud. -->
-    <KModal v-model="createWorkspaceOpen" :title="t('common.nav.newWorkspace')">
+    <KModal v-model="createWorkspaceOpen" :title="t('common.nav.newWorkspace')" :persistent="createWorkspaceBusy">
       <div class="shell__form">
         <KField v-model="createWorkspaceName" :label="t('common.nav.nameLabel')" placeholder="AAA" />
         <p class="shell__hint">
@@ -320,13 +341,14 @@
         <p v-if="createError" class="shell__error" role="alert">{{ createError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="createWorkspaceOpen = false">{{ t('common.nav.cancel') }}</KBtn>
+        <KBtn variant="ghost" :disabled="createWorkspaceBusy" @click="createWorkspaceOpen = false">{{ t('common.nav.cancel') }}</KBtn>
         <KBtn
           variant="primary"
-          :disabled="!canCreateWorkspace || createBusy"
-          @click="submitCreateWorkspace"
+          :disabled="!canCreateWorkspace"
+          :loading="createWorkspaceBusy"
+          @click="submitCreateWorkspace()"
         >
-          {{ createBusy ? t('common.nav.creating') : t('common.nav.create') }}
+          {{ createWorkspaceBusy ? t('common.nav.creating') : t('common.nav.create') }}
         </KBtn>
       </template>
     </KModal>
@@ -338,7 +360,8 @@
     <KModal
       :model-value="createProjectFor !== undefined"
       :title="t('common.nav.newProjectIn', { name: projects.workspaceById.get(createProjectFor ?? '')?.name ?? '' })"
-      @update:model-value="createProjectFor = undefined"
+      :persistent="createProjectBusy"
+      @update:model-value="createProjectBusy || (createProjectFor = undefined)"
     >
       <div class="shell__form">
         <KField v-model="createName" :label="t('common.nav.nameLabel')" placeholder="my-project" />
@@ -353,9 +376,9 @@
         <p v-if="createError" class="shell__error" role="alert">{{ createError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="createProjectFor = undefined">{{ t('common.nav.cancel') }}</KBtn>
-        <KBtn variant="primary" :disabled="!canCreate || createBusy" @click="submitCreate">
-          {{ createBusy ? t('common.nav.creating') : t('common.nav.create') }}
+        <KBtn variant="ghost" :disabled="createProjectBusy" @click="createProjectFor = undefined">{{ t('common.nav.cancel') }}</KBtn>
+        <KBtn variant="primary" :disabled="!canCreate" :loading="createProjectBusy" @click="submitCreate()">
+          {{ createProjectBusy ? t('common.nav.creating') : t('common.nav.create') }}
         </KBtn>
       </template>
     </KModal>
@@ -399,8 +422,9 @@
       <template #controls>
         <KBtn
           variant="primary"
-          :disabled="!onboardingChoice || onboardingBusy"
-          @click="submitOnboarding"
+          :disabled="!onboardingChoice"
+          :loading="onboardingBusy"
+          @click="submitOnboarding()"
         >
           {{ t('onboarding.runtime.confirm') }}
         </KBtn>
@@ -415,7 +439,7 @@
       @create-project="onOnboardingCreateProject"
       @bind-folder="onOnboardingBindFolder"
     />
-    <KDirPicker v-model="onbPickerOpen" :start="onbPickerStart" @select="onOnboardingFolderChosen" />
+    <KDirPicker v-model="onbPickerOpen" :start="onbPickerStart" @select="onOnboardingFolderChosen($event)" />
 
     <!-- MACHINE RESOURCES CONSENT (spec decision 2). Dismissible, unlike the runtime gate:
          Керманич runs without limits, so closing it any way other than the three buttons
@@ -492,6 +516,7 @@ import { until, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
 import { hardwareLine, useResourcesConsent } from '../composables/useResourcesConsent';
+import { useProviderSignIn } from '../composables/useProviderSignIn';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KWorkspaceRow from 'components/kit/KWorkspaceRow.vue';
 import KTopNav from 'components/kit/KTopNav.vue';
@@ -500,11 +525,17 @@ import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KToast from 'components/kit/KToast.vue';
+import KProgressBar from 'components/kit/KProgressBar.vue';
+import { useActivity } from '../stores/activity';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KUserButton from 'components/kit/KUserButton.vue';
 import KFileManager from 'components/kit/KFileManager.vue';
 import KTerminalPanel from 'components/kit/KTerminalPanel.vue';
 import KIcon from 'components/kit/KIcon.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
+import { useAsyncAction, useKeyedAction, errorText } from '../composables/useAsyncAction';
+import { useLoadPhase } from '../composables/useLoadPhase';
 import { useTerminal } from 'stores/terminal';
 import JiraMergePrompt from 'components/jira/JiraMergePrompt.vue';
 import LinearMergePrompt from 'components/linear/LinearMergePrompt.vue';
@@ -520,6 +551,8 @@ const store = useOrchestrator();
 const terminal = useTerminal();
 const projects = useProjects();
 const auth = useAuth();
+// Foreground work started through useAsyncAction / trackLoad — drives the top progress bar.
+const activity = useActivity();
 const board = useBoard();
 const projectDocs = useProjectDocs();
 const onb = useOnboarding();
@@ -693,6 +726,17 @@ function onWorkspaceSelect(id: string): void {
 // leaving an authoritative list in hand and unusable.
 const hasCloudList = computed(() => projects.listRead);
 
+// SIDEBAR LOAD PHASE. Local rows arrive with the socket snapshot and the cloud tree with
+// projects.load(); until both have answered, an empty or half-built tree would read as «no
+// projects». A cached tree is shown as soon as the snapshot is in (refresh, not a load). A
+// preview never calls load(), so only the snapshot counts there.
+const sidebarPhase = useLoadPhase(
+  () => !store.snapshotReceived || (!IS_PREVIEW && !projects.loadSettled && !projects.projectsByWorkspace.length),
+);
+// «Розпочати» done/total: both inputs (cloud list, local rows) must be in, or the count
+// would start low and climb as the reads land.
+const onbCountKnown = computed(() => store.snapshotReceived && (IS_PREVIEW || projects.loadSettled));
+
 onMounted(async () => {
   // Socket first: the snapshot, and the project_update events the sync inside load() emits,
   // are how LOCAL rows reach the rail. Connecting afterwards would race those events.
@@ -763,9 +807,12 @@ function toggleTerminal(): void {
   terminal.setPanel(true);
   const p = selectedProject.value;
   if (p?.localRepoPath && terminal.loaded && !terminal.projectTerminals(p.id).length) {
-    void terminal.open(p.id);
+    void spawnFromToggle(p.id);
   }
 }
+// Through the store's per-project spawn guard, so the toggle and the panel's «+» never start
+// two shells; the panel draws the pending tab while this runs.
+const { run: spawnFromToggle } = useAsyncAction((projectId: string) => terminal.open(projectId));
 
 // Ctrl+` — VS Code's terminal toggle, on every platform (⌘` is macOS's window cycling).
 // Matched on the physical key, so it works on a Ukrainian layout too. Not skipped inside
@@ -1098,13 +1145,20 @@ async function onDrop(workspaceId: string): Promise<void> {
     return;
   }
   if (!projectId || !canDropProject(projectId, workspaceId, projects.projects)) return;
+  await moving.run(projectId, workspaceId);
+}
+
+// The moved row stays dimmed (and undraggable) until the cloud patch — or, on a refusal,
+// the re-read — resolves: the tile does not move until then, and without this the drop read
+// as ignored. The refusal is handled inside, so the keyed action's own toast never fires.
+const moving = useKeyedAction(async (projectId: string, workspaceId: string) => {
   const name = projects.byId.get(projectId)?.name ?? projectId;
   const target = projects.workspaceById.get(workspaceId)?.name ?? '';
   try {
     await projects.moveProject(projectId, workspaceId);
     store.notify(t('common.nav.notifyMoved', { name, target }));
   } catch (e) {
-    const raw = e instanceof Error ? e.message : String(e);
+    const raw = errorText(e);
     // 6000 like every other full-sentence refusal here (the bind error, both member
     // errors): moveRefusalText() is a full sentence, and it is the one message a user
     // reads mid-gesture, with their attention on the pointer rather than on the corner of
@@ -1116,7 +1170,7 @@ async function onDrop(workspaceId: string): Promise<void> {
     // into offlineError rather than throwing, so this cannot reject.
     await projects.load();
   }
-}
+});
 
 // The LOCAL row carries this machine's binding and the offline config cache; the CLOUD
 // project is the source of truth for config. Same id, two lookups.
@@ -1155,7 +1209,8 @@ const contextLabel = computed(() => {
 // Two create modals, because the sidebar's two «+» buttons create different things. The
 // project one is keyed by the workspace it will create INSIDE — an id rather than a
 // boolean, since «new project» is not a question that can be asked without a group — and
-// `createError` / `createBusy` are shared: only one of the two can be open at a time.
+// `createError` is shared: only one of the two can be open at a time. Each has its own busy
+// (submitCreateWorkspace / submitCreate below).
 //
 // Neither has a directory field: creating a project and binding a repo are different acts
 // on different machines (Requirement 3).
@@ -1165,7 +1220,6 @@ const createProjectFor = ref<string | undefined>(undefined);
 const createName = ref('');
 const createRemote = ref('');
 const createError = ref<string | null>(null);
-const createBusy = ref(false);
 
 const canCreateWorkspace = computed(() => createWorkspaceName.value.trim() !== '');
 const canCreate = computed(() => createName.value.trim() !== '');
@@ -1173,7 +1227,6 @@ const canCreate = computed(() => createName.value.trim() !== '');
 function openCreateWorkspace(): void {
   createWorkspaceName.value = '';
   createError.value = null;
-  createBusy.value = false;
   createWorkspaceOpen.value = true;
 }
 
@@ -1181,7 +1234,6 @@ function openCreateProject(workspaceId: string): void {
   createName.value = '';
   createRemote.value = '';
   createError.value = null;
-  createBusy.value = false;
   createProjectFor.value = workspaceId;
 }
 
@@ -1190,9 +1242,10 @@ function openCreateProject(workspaceId: string): void {
 // picks which backend their agents run on (omp or claude-code), and the choice is persisted
 // through auth.chooseRuntime. Not dismissible: the modal has no cancel, and the
 // @update:model-value handler is a no-op, so the only way out is to make a choice.
-const showOnboarding = computed(() => !!auth.user && auth.runtime === null);
+// Held back while the account's runtime is still being read: for a returning user `runtime`
+// is null only until that read lands, and the gate must not flash up in between.
+const showOnboarding = computed(() => !!auth.user && !auth.runtimeLoading && auth.runtime === null);
 const onboardingChoice = ref<'omp' | 'claude-code' | null>(null);
-const onboardingBusy = ref(false);
 
 // PREFLIGHT state for the picked backend. The whole point is timing: the operator learns their
 // claude is signed out while they are choosing it, instead of after creating a chat that never
@@ -1203,13 +1256,18 @@ const runtimeChecking = ref(false);
 const runtimeOk = ref(false);
 const runtimeProblem = ref('');
 
+// Bumped on every pick: a slow check for the previous option must not overwrite the verdict
+// (or clear «перевіряю») of the one the operator picked after it.
+let pickGeneration = 0;
 async function pickRuntime(kind: 'omp' | 'claude-code'): Promise<void> {
+  const mine = ++pickGeneration;
   onboardingChoice.value = kind;
   runtimeChecking.value = true;
   runtimeOk.value = false;
   runtimeProblem.value = '';
   try {
     const verdict = await api.checkAccountRuntime(kind);
+    if (mine !== pickGeneration) return;
     if (verdict.ok) {
       runtimeOk.value = true;
       return;
@@ -1224,26 +1282,18 @@ async function pickRuntime(kind: 'omp' | 'claude-code'): Promise<void> {
   } catch {
     // The check itself could not run (api still booting). Not the operator's problem to solve,
     // and not a reason to claim the backend is broken — say nothing and let them proceed.
-    runtimeProblem.value = '';
+    if (mine === pickGeneration) runtimeProblem.value = '';
   } finally {
-    runtimeChecking.value = false;
+    if (mine === pickGeneration) runtimeChecking.value = false;
   }
 }
 
-async function submitOnboarding(): Promise<void> {
-  if (!onboardingChoice.value || onboardingBusy.value) return;
-  onboardingBusy.value = true;
-  try {
-    await auth.chooseRuntime(onboardingChoice.value);
-    // Runtime is now set, showOnboarding becomes false, modal auto-hides.
-  } catch (e) {
-    // If chooseRuntime throws, the error surfaces through auth or as a network failure;
-    // we keep the modal open and the operator can retry. No local error display needed.
-    console.error('Failed to set runtime:', e);
-  } finally {
-    onboardingBusy.value = false;
-  }
-}
+// A failure keeps the modal open for a retry and toasts the reason.
+const { run: submitOnboarding, busy: onboardingBusy } = useAsyncAction(async () => {
+  if (!onboardingChoice.value) return;
+  // Runtime is now set, showOnboarding becomes false, modal auto-hides.
+  await auth.chooseRuntime(onboardingChoice.value);
+});
 
 // FIRST-RUN CHECKLIST — the open/dismiss/ack state lives in stores/onboarding.ts; this layout
 // only supplies the three setup acts (create workspace, create project, bind a folder) that
@@ -1275,19 +1325,17 @@ function onOnboardingBindFolder(): void {
   onbPickerOpen.value = true;
 }
 
-async function onOnboardingFolderChosen(path: string): Promise<void> {
+// Through useAsyncAction: the picker has already closed, so the top bar is the feedback that
+// the binding is being written, and a failure toasts.
+const { run: onOnboardingFolderChosen } = useAsyncAction(async (path: string) => {
   const projectId = onbBindProjectId.value;
   const trimmed = path.trim();
   if (!projectId || !trimmed) return;
-  try {
-    // The api emits a project_update over the socket, so the local row — and the checklist's
-    // «folder» tick, which reads it — refresh on their own.
-    await store.setProjectBinding(projectId, trimmed);
-    store.notify(t('settings.binding.bound', { path: trimmed }));
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
-}
+  // The api emits a project_update over the socket, so the local row — and the checklist's
+  // «folder» tick, which reads it — refresh on their own.
+  await store.setProjectBinding(projectId, trimmed);
+  store.notify(t('settings.binding.bound', { path: trimmed }));
+});
 
 // Auto-open once the runtime gate is answered (null → chosen). A returning account whose
 // runtime is already set sees no change here and is handled by the onMounted call below,
@@ -1376,29 +1424,29 @@ function configureResources(): void {
   void router.push({ name: 'settings', params: { section: 'app-resources' }, query: { draft: 'profile' } });
 }
 
-async function submitCreateWorkspace(): Promise<void> {
-  if (!canCreateWorkspace.value) return;
-  createError.value = null;
-  createBusy.value = true;
-  try {
+// One busy per modal; the error renders inside the modal (onError), which stays open and
+// persistent until the create returns.
+const { run: submitCreateWorkspace, busy: createWorkspaceBusy } = useAsyncAction(
+  async () => {
+    if (!canCreateWorkspace.value) return;
+    createError.value = null;
     const created = await projects.createWorkspace(createWorkspaceName.value.trim());
     createWorkspaceOpen.value = false;
     // Scope moves to the new group, so the next «+» on its row is the obvious next step.
     store.selectWorkspace(created.id);
     store.notify(t('common.nav.notifyWorkspaceCreated', { name: created.name }));
-  } catch (e) {
-    createError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    createBusy.value = false;
-  }
-}
+  },
+  { onError: (e) => (createError.value = errorText(e)) },
+);
 
-async function submitCreate(): Promise<void> {
-  const workspaceId = createProjectFor.value;
-  if (!workspaceId || !canCreate.value) return;
-  createError.value = null;
-  createBusy.value = true;
-  try {
+// Keep the modal open on failure. The two real refusals are `not signed in` (the session
+// expired between the router guard and this click) and an RLS refusal on a workspace this
+// user has just lost access to; both are fixable without retyping the name.
+const { run: submitCreate, busy: createProjectBusy } = useAsyncAction(
+  async () => {
+    const workspaceId = createProjectFor.value;
+    if (!workspaceId || !canCreate.value) return;
+    createError.value = null;
     const remote = createRemote.value.trim();
     // create() inserts under the user's JWT (projects_insert_member checks membership of
     // the destination workspace) and mirrors the one new project into the local registry,
@@ -1407,15 +1455,9 @@ async function submitCreate(): Promise<void> {
     createProjectFor.value = undefined;
     store.selectProject(created.id);
     store.notify(t('common.nav.notifyProjectCreated', { name: created.name }));
-  } catch (e) {
-    // Keep the modal open. The two real refusals are `not signed in` (the session expired
-    // between the router guard and this click) and an RLS refusal on a workspace this user
-    // has just lost access to; both are fixable without retyping the name.
-    createError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    createBusy.value = false;
-  }
-}
+  },
+  { onError: (e) => (createError.value = errorText(e)) },
+);
 
 // SETTINGS ENTRY. Five modals used to live in this layout — the workspace's name,
 // colour and team, the project's config, its `.env`, the project delete and the
@@ -1483,8 +1525,15 @@ const accountName = computed(() =>
 // PLAN SPEND — what the provider subscription behind this machine's agents has left. The
 // figure is a percent of a rolling window (`5h`, `7d`), because that is the only unit
 // providers meter a plan in; there is no token count to show and none is invented.
-const planUsage = useSubscriptionUsage();
+const { usage: planUsage } = useSubscriptionUsage();
 const planNow = useNow(30_000);
+
+// AI LOGIN REQUIRED — the top-bar pill. The tooltip reuses the launch-refusal sentence, which
+// names the provider and the command that signs it back in.
+const { code: signInCode, recheck: recheckSignIn } = useProviderSignIn();
+const signInHint = computed(() =>
+  signInCode.value ? `${t(`errors.runtime_${signInCode.value}`)}. ${t('common.nav.aiLoginRecheck')}` : '',
+);
 
 const planLines = computed(() =>
   (planUsage.value?.providers ?? []).map((p) => ({
@@ -1519,13 +1568,12 @@ const accountHint = computed(() => {
   return [accountName.value, ...(spend ? [spend] : []), t('common.nav.accountSettings')].join(' · ');
 });
 
-// Footer git pull for the selected project's bound repo. `syncing` gates the button so a
-// double-click cannot fire two operations; git's own output (or refusal) surfaces as a toast.
-const syncing = ref(false);
-async function gitPull(): Promise<void> {
+// Footer git pull for the selected project's bound repo, through useAsyncAction so a
+// double-click cannot fire two operations and the button spins; git's own output (or
+// refusal) surfaces as a toast — caught here, because it carries the «Pull:» prefix.
+const { run: gitPull, busy: syncing } = useAsyncAction(async () => {
   const id = store.selectedProjectId;
-  if (!id || !isBound.value || syncing.value) return;
-  syncing.value = true;
+  if (!id || !isBound.value) return;
   try {
     const r = await store.pullProject(id);
     if (r.ok) {
@@ -1533,13 +1581,11 @@ async function gitPull(): Promise<void> {
       projectDocs.refreshIfActive(id);
     } else store.notify(`Pull: ${r.out.trim() || t('common.nav.pullFailed')}`, 'error', 7000);
   } catch (e) {
-    store.notify(`Pull: ${e instanceof Error ? e.message : String(e)}`, 'error', 7000);
-  } finally {
-    syncing.value = false;
+    store.notify(`Pull: ${errorText(e)}`, 'error', 7000);
   }
   // The pull fetched on its own, so a local recount is enough to clear (or keep) the badge.
   void refreshGitStatus(false);
-}
+});
 
 // Footer git read-out for the selected project: its current branch, and the Pull badge —
 // commits waiting upstream for that branch, GitHub Desktop-style. The api fetches the remote
@@ -1566,12 +1612,23 @@ async function refreshGitStatus(fetch: boolean): Promise<void> {
     // Local API unreachable or the binding just went away: keep the last known values.
   }
 }
+// The remote fetch on a project switch can take seconds, and the branch is a purely local
+// read: ask fetch-less first so the branch shows at once, then fetch for the Pull badge.
+// `fetchingGit` spins the footer ↻ for that fetch; the generation keeps a fetch for the
+// previous project from stopping the spin of the current one.
+const fetchingGit = ref(false);
+let fetchGeneration = 0;
 watch(
   () => [store.selectedProjectId, selectedProject.value?.localRepoPath] as const,
-  () => {
+  async () => {
     incoming.value = 0;
     branch.value = null;
-    void refreshGitStatus(true);
+    const mine = ++fetchGeneration;
+    fetchingGit.value = isBound.value;
+    await refreshGitStatus(false);
+    if (mine !== fetchGeneration) return;
+    await refreshGitStatus(true);
+    if (mine === fetchGeneration) fetchingGit.value = false;
   },
   { immediate: true },
 );
@@ -1599,18 +1656,9 @@ onUnmounted(() => {
   stopBranchPoll?.();
 });
 
-// Footer refresh: the same local read the branch poll does, on demand. `refreshing` gates
-// the button against piling up requests on a double-click.
-const refreshing = ref(false);
-async function refreshGitNow(): Promise<void> {
-  if (refreshing.value) return;
-  refreshing.value = true;
-  try {
-    await refreshGitStatus(false);
-  } finally {
-    refreshing.value = false;
-  }
-}
+// Footer refresh: the same local read the branch poll does, on demand. useAsyncAction gates
+// the button against piling up requests on a double-click. refreshGitStatus never throws.
+const { run: refreshGitNow, busy: refreshing } = useAsyncAction(() => refreshGitStatus(false));
 
 const pullHint = computed(() => {
   if (!isBound.value) return BIND_HINT.value;
@@ -1758,6 +1806,24 @@ const pullHint = computed(() => {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--k-faint);
+}
+.shell__projects-skeleton {
+  padding: 0 var(--k-sp-2);
+}
+// A project being moved to another workspace, until the cloud patch resolves.
+.shell__item--pending {
+  opacity: 0.55;
+  pointer-events: none;
+}
+// The footer ↻ while a git status read / remote fetch is in flight.
+.shell__foot-spin {
+  display: inline-block;
+  animation: shell-foot-spin 0.9s linear infinite;
+}
+@keyframes shell-foot-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 // Both levels are real <ul>s now (the grouping semantics), so both need the list chrome
@@ -1971,6 +2037,33 @@ const pullHint = computed(() => {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
+}
+
+// The sign-out pill: danger-framed so it reads as a blocker next to the quiet icon cluster,
+// at the icon buttons' 28px height so the row stays one line.
+.shell__signin {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--k-danger);
+  border-radius: var(--k-r);
+  background: transparent;
+  color: var(--k-danger);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--k-danger);
+    color: var(--k-on-accent);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 1px;
+  }
 }
 
 .shell__form {

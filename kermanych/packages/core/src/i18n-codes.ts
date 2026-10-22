@@ -35,11 +35,12 @@ export type NoticeCode =
   // runtime/*-runtime.ts — a runtime child that DIED MID-SESSION, long after its launch was
   // called a success. The launch-time twins of these live in `ApiErrorCode` below: the same
   // machine fault is a thrown error when it stops a session from starting, and a transcript
-  // notice when it kills one already running.
+  // notice when it kills one already running. They are also `Session.errorCode`, set from the
+  // runtime's exit cause (supervisor.service.ts wireLive).
   | "claude_not_authenticated" // claude-code-runtime.ts — the claude CLI is signed out (params: none)
   | "claude_binary_missing" // claude-code-runtime.ts — the SDK's platform binary is absent (params: none)
-  | "omp_not_authenticated" // rpc-session.ts — the omp CLI is signed out (params: none)
-  | "omp_binary_missing" // rpc-session.ts — omp is not on PATH (params: none)
+  | "omp_not_authenticated" // rpc-session.ts exit cause — the omp CLI is signed out (params: none)
+  | "omp_binary_missing" // rpc-session.ts exit cause — omp is not on PATH (params: none)
   // supervisor.service.ts — the machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md):
   | "slot_wait" // supervisor.service.ts — a message is accepted but waits for an agent slot (params: { running, limit })
   | "watchdog_killed" // watchdog.service.ts — the watchdog killed an agent command at critical memory pressure (params: { command, size })

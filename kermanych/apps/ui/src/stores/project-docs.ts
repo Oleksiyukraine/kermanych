@@ -58,6 +58,9 @@ export const useProjectDocs = defineStore('project-docs', () => {
   const activeWorkspaceId = ref('');
   const links = ref<WorkspaceDocLink[]>([]);
   const linksLoading = ref(false);
+  // The workspace whose list has answered (rows or nothing to read). Until it equals the
+  // active workspace the screen shows a skeleton and no count, never «no links yet».
+  const linksLoadedFor = ref('');
   // Inline on the screen, never a toast: an unreachable cloud must not greet someone who came
   // to read the repository docs (same call as stores/risks.ts).
   const linksError = ref<string | null>(null);
@@ -89,6 +92,7 @@ export const useProjectDocs = defineStore('project-docs', () => {
     activeWorkspaceId.value = workspaceId;
     openLinkId.value = '';
     links.value = [];
+    linksLoadedFor.value = '';
     linksError.value = null;
     linksLoading.value = false;
     void loadLinks(workspaceId);
@@ -159,12 +163,18 @@ export const useProjectDocs = defineStore('project-docs', () => {
   async function loadLinks(workspaceId: string): Promise<void> {
     await auth.ready;
     // A preview signs in against a cloudless api (lib/preview.ts): there are no links to read.
-    if (IS_PREVIEW || !auth.user || !workspaceId) return;
+    if (IS_PREVIEW || !auth.user || !workspaceId) {
+      if (workspaceId === activeWorkspaceId.value) linksLoadedFor.value = workspaceId;
+      return;
+    }
     linksLoading.value = true;
     linksError.value = null;
     try {
       const rows = await listWorkspaceDocLinks(auth.client, workspaceId);
-      if (workspaceId === activeWorkspaceId.value) links.value = rows;
+      if (workspaceId === activeWorkspaceId.value) {
+        links.value = rows;
+        linksLoadedFor.value = workspaceId;
+      }
     } catch (e) {
       if (workspaceId === activeWorkspaceId.value) linksError.value = e instanceof Error ? e.message : String(e);
     } finally {
@@ -219,7 +229,7 @@ export const useProjectDocs = defineStore('project-docs', () => {
 
   return {
     source, activeProjectId, activeWorkspaceId, openFolder, openPath, file, imageUrl, loadingFile, fileError, refreshNonce,
-    links, linksLoading, linksError, openLinkId, embedChecks,
+    links, linksLoading, linksLoadedFor, linksError, openLinkId, embedChecks,
     setActive, setWorkspace, treeOf, openFile, rawUrl, refreshIfActive, releaseUrls,
     loadLinks, openLink, addLink, saveLink, removeLink, checkEmbed,
   };

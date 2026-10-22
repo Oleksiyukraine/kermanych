@@ -10,7 +10,7 @@
       <span class="rel__count mono">{{ notes.length ? t('management.releases.count', { count: notes.length }) : '' }}</span>
       <!-- The section's Slack settings: the channel notes are sent to, and the member's
            Slack account they are sent as. The label names the channel once it is set. -->
-      <KBtn variant="secondary" @click="slackOpen = true">
+      <KBtn variant="secondary" :loading="slackRow === undefined" @click="slackOpen = true">
         {{ slackRow ? t('releaseSlack.toolbarSet', { channel: slackRow.channelName }) : t('releaseSlack.toolbarUnset') }}
       </KBtn>
       <KBtn variant="primary" @click="openGenerate">{{ t('management.releases.generate') }}</KBtn>
@@ -19,6 +19,12 @@
     <p v-if="store.loadError" class="rel__error">
       {{ t('management.releases.loadError', { error: store.loadError }) }}
     </p>
+
+    <!-- Not loaded for THIS workspace: no «ще немає нотаток» until the history has arrived.
+         A running job is local state and still shows below while it loads. -->
+    <template v-else-if="phase !== 'ready' && !jobs.length">
+      <KSkeleton v-if="phase === 'skeleton'" variant="rows" :rows="4" />
+    </template>
 
     <div v-else-if="!notes.length && !jobs.length" class="rel__blank">
       <span class="rel__blank-eyebrow mono">{{ t('management.releases.blankEyebrow') }}</span>
@@ -97,6 +103,7 @@
             :label="t('management.releases.branchFor', { project: p.name })"
             :options="branchLists[p.id]?.branches ?? []"
             :placeholder="branchPlaceholder(p.id)"
+            :loading="!branchLists[p.id] || branchLists[p.id]!.loading"
             :disabled="!branchLists[p.id]?.branches.length"
             searchable
             @update:model-value="(v: string) => (gen.branches[p.id] = v)"
@@ -155,9 +162,15 @@
                controlled tag set — the same guarantee the assistant transcript relies on. -->
           <div class="k-log__markdown" v-html="renderMarkdown(current.bodyMd)"></div>
           <p class="rel__doc-audit mono">
-            {{ t('management.releases.auditGenerated') }} {{ memberName(current.createdBy) }} · {{ renderTime(t, relativeTime(current.createdAt, now)) }}
+            {{ t('management.releases.auditGenerated') }}
+            <KSkeleton v-if="!membersReady" variant="line" width="96px" />
+            <template v-else>{{ memberName(current.createdBy) }}</template>
+            · {{ renderTime(t, relativeTime(current.createdAt, now)) }}
             <template v-if="current.updatedAt !== current.createdAt">
-              · {{ t('management.releases.auditEdited') }} {{ memberName(current.updatedBy) }} · {{ renderTime(t, relativeTime(current.updatedAt, now)) }}
+              · {{ t('management.releases.auditEdited') }}
+              <KSkeleton v-if="!membersReady" variant="line" width="96px" />
+              <template v-else>{{ memberName(current.updatedBy) }}</template>
+              · {{ renderTime(t, relativeTime(current.updatedAt, now)) }}
             </template>
           </p>
         </div>
@@ -179,11 +192,12 @@
         <template v-if="!editing">
           <KBtn variant="secondary" @click="startEdit">{{ t('management.releases.edit') }}</KBtn>
           <!-- Posted under the pressing member's own Slack name. Without a channel it opens
-               the Slack settings, which say who sets one. -->
+               the Slack settings, which say who sets one. Spinning until the setting has been
+               read: before that the press could not tell «send» from «set a channel first». -->
           <KBtn
             v-tip="slackRow ? t('releaseSlack.sendTip', { channel: slackRow.channelName }) : ''"
             variant="secondary"
-            :loading="sending"
+            :loading="sending || slackRow === undefined"
             @click="sendToSlack"
           >
             {{ sent ? t('releaseSlack.sent') : t('releaseSlack.send') }}
@@ -192,7 +206,7 @@
         </template>
         <template v-else>
           <KBtn variant="ghost" :disabled="saving" @click="cancelEdit">{{ t('management.releases.cancel') }}</KBtn>
-          <KBtn variant="primary" :disabled="saving || !draftTitle.trim() || !draftBody.trim()" @click="saveEdit">
+          <KBtn variant="primary" :loading="saving" :disabled="!draftTitle.trim() || !draftBody.trim()" @click="saveEdit">
             {{ saving ? t('management.releases.saving') : t('management.releases.save') }}
           </KBtn>
         </template>
@@ -225,6 +239,9 @@ import KField from 'components/kit/KField.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KTag from 'components/kit/KTag.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../composables/useLoadPhase';
+import { useAsyncAction } from '../composables/useAsyncAction';
 import { useReleaseNotes, type ReleaseNotesJob } from 'stores/release-notes';
 import { useReleaseSlack } from 'stores/release-slack';
 import ReleaseSlackModal from 'components/releases/ReleaseSlackModal.vue';
@@ -258,15 +275,25 @@ watch(
 );
 
 // Author names for the audit line. Same source the risks page uses.
+const membersFailed = ref('');
 watch(
   () => props.workspaceId,
   (id) => {
-    if (id && !projects.members[id]) void projects.loadMembers(id);
+    if (id && !projects.members[id]) {
+      projects.loadMembers(id).catch(() => {
+        // No roster: the audit line falls back to raw ids rather than a skeleton forever.
+        membersFailed.value = id;
+      });
+    }
   },
   { immediate: true },
 );
+const membersReady = computed(
+  () => projects.members[props.workspaceId] !== undefined || membersFailed.value === props.workspaceId,
+);
 
 const notes = computed<WorkspaceReleaseNote[]>(() => store.byWorkspace[props.workspaceId] ?? []);
+const phase = useLoadPhase(() => store.byWorkspace[props.workspaceId] === undefined && !store.loadError);
 
 function memberName(id: string | undefined): string {
   if (!id) return '—';
@@ -319,28 +346,34 @@ const projectSummary = computed(() =>
 // Branches of each picked project's local clone. The DEFAULT selection is the project's
 // default branch from its settings — the user's requirement — falling back to the repo's
 // current HEAD; each picker then lets the operator switch to any local branch.
-const branchLists = ref<Record<string, { branches: string[]; failed: boolean }>>({});
+const branchLists = ref<Record<string, { branches: string[]; failed: boolean; loading: boolean }>>({});
 
 function branchPlaceholder(projectId: string): string {
-  return branchLists.value[projectId]?.failed
-    ? t('management.releases.branchPlaceholderFailed')
-    : t('management.releases.branchPlaceholderEmpty');
+  const list = branchLists.value[projectId];
+  // While the clone is being read, «гілок не знайдено» would be a false empty state.
+  if (!list || list.loading) return t('management.releases.branchPlaceholderLoading');
+  return list.failed ? t('management.releases.branchPlaceholderFailed') : t('management.releases.branchPlaceholderEmpty');
 }
 
 // A newly picked project reads its branches fresh — the clone may have grown a release
 // branch since the form was last open — and keeps the branch already chosen for it if that
-// branch still exists.
+// branch still exists. The previous list stays visible (spinning) during the re-read.
 async function loadBranches(projectId: string): Promise<void> {
+  const prev = branchLists.value[projectId];
+  branchLists.value = {
+    ...branchLists.value,
+    [projectId]: { branches: prev?.branches ?? [], failed: false, loading: true },
+  };
   try {
     const info = await local.listBranches(projectId);
-    branchLists.value = { ...branchLists.value, [projectId]: { branches: info.branches, failed: false } };
+    branchLists.value = { ...branchLists.value, [projectId]: { branches: info.branches, failed: false, loading: false } };
     const kept = gen.branches[projectId];
     gen.branches[projectId] =
       kept && info.branches.includes(kept) ? kept : (info.default ?? info.current ?? info.branches[0] ?? '');
   } catch {
     // GET /projects/:id/branches answers `project not bound` without a binding — the
     // placeholder says so, and the generate button stays disabled without a branch.
-    branchLists.value = { ...branchLists.value, [projectId]: { branches: [], failed: true } };
+    branchLists.value = { ...branchLists.value, [projectId]: { branches: [], failed: true, loading: false } };
     gen.branches[projectId] = '';
   }
 }
@@ -466,31 +499,29 @@ async function copy(): Promise<void> {
 // ── Slack ─────────────────────────────────────────────────────────────────────
 
 const slackOpen = ref(false);
-const slackRow = computed(() => slack.settings[props.workspaceId] ?? null);
-const sending = ref(false);
+// `undefined` = the setting has not been read for this workspace yet; `null` = no channel.
+const slackRow = computed(() => slack.settings[props.workspaceId]);
 const sent = ref(false);
 
 // The store connects the member's Slack account first when there is none on this machine,
 // so this is one press whoever presses it. Feedback on the button, like Copy, plus a toast
 // naming the channel — the post is public and under the member's name.
-async function sendToSlack(): Promise<void> {
+const sendAction = useAsyncAction(async (noteId: string, title: string) => {
+  const res = await slack.send(props.workspaceId, noteId);
+  sent.value = true;
+  setTimeout(() => (sent.value = false), 2000);
+  local.notify(t('releaseSlack.notify.sent', { title, channel: `#${res.channelName}` }), 'info');
+});
+const sending = sendAction.busy;
+
+function sendToSlack(): void {
   const note = current.value;
-  if (!note || sending.value) return;
+  if (!note || slackRow.value === undefined) return;
   if (!slackRow.value) {
     slackOpen.value = true;
     return;
   }
-  sending.value = true;
-  try {
-    const res = await slack.send(props.workspaceId, note.id);
-    sent.value = true;
-    setTimeout(() => (sent.value = false), 2000);
-    local.notify(t('releaseSlack.notify.sent', { title: note.title, channel: `#${res.channelName}` }), 'info');
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    sending.value = false;
-  }
+  void sendAction.run(note.id, note.title);
 }
 
 function startEdit(): void {
