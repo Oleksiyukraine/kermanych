@@ -68,8 +68,8 @@ backend.
 Not every feature is available on both. TTSR triggers, the skill-overlay
 config, subscription-plan spend, and the plan/todo chip are `omp`-only; on the
 `claude-code` backend, skills reach the agent inline through the prompt. The
-agent map (the subagents a session spawned, opened with ◈ on a session) works on
-both backends. Per-session token spend is tracked on both.
+agent map («Карта агентів», see below) shows the subagents of sessions on both backends.
+Per-session token spend is tracked on both.
 
 Claude sessions read your own Claude Code settings: Kermanych passes no `settingSources`, so the
 SDK loads `~/.claude/settings.json` and the project's `.claude/settings*.json`, the same as a
@@ -765,7 +765,8 @@ ChatGPT app is not used. A missing binary shows `command not found` in the «Л�
   post-PR warning (see «Cloud tasks and local sessions») are managed-only.
 - **Not available** for native sessions: changing model or effort from Kermanych, harness
   commands from a composer, answering prompts outside the terminal, discussion branches,
-  review, images and the subagent map. Launches from «Дошка» and «В беклог» stay managed.
+  review and images. On the agent map a native session appears without subagents. Launches
+  from «Дошка» and «В беклог» stay managed.
 - **codex specifics.** codex trusts hooks only after review and asks about every new folder;
   Kermanych passes both answers on the command line for that launch — the session's folder as
   trusted (`-c projects={…}`) and a `trusted_hash` for exactly its own hooks
@@ -800,6 +801,34 @@ each turn the first message becomes the thread's name, as for a managed chat.
 - **Not available** for native chats: «Почати імплементацію» (▶) — promotion forks the
   conversation into a worktree, and a native conversation cannot be forked. «В беклог» (⊕)
   works.
+
+## Agent map («Карта агентів»)
+
+Every agent on this machine as one tree (spec: `docs/specs/2026-10-22-agent-map.md`):
+workspace → project → session → its discussion / review branches and the subagents it
+spawned → their nested subagents.
+
+- **Opening it.** The «◈ Карта агентів» button under the search on «Агенти» (its right side
+  counts the agents active on the whole machine) swaps the chat pane for the map, pressed
+  while open; press it again to go back. It opens fitted to the project or workspace selected
+  in the sidebar. ◈ in a session's header (shown once it has subagents) opens it on that
+  session, unfolded.
+- **What is on it.** Chips choose the buckets: «Активні», «Очікують», «Помилки» by default,
+  «Завершені» on demand; the choice is remembered. A fork follows its parent's bucket, as in
+  the sidebar. Chats and backlog cards are never on the map. A project with nothing under the
+  chips is not drawn; projects outside any workspace you can see hang under «Без
+  воркспейсу».
+- **Reading it.** Dashed lines mean «belongs to», solid ones «spawned». A working agent has a
+  breathing accent frame, and the path down to it flows. A session or subagent whose subtree
+  has finished starts folded (▸ +N hidden); ▾/▸ under a card folds it by hand until the window
+  closes. Scroll pans, pinch or ⌘-scroll zooms; ⤢ fits everything; a minimap sits in the
+  corner.
+- **Clicks.** A session card opens its chat (the map closes); so does any card in the list. A
+  subagent card opens its transcript and figures in a drawer over the map. Esc closes the
+  drawer, then the map.
+- **Limit.** Subagent trees live in the api's memory while the session is live: they survive
+  a UI reload (the socket snapshot carries them) but not an api or app restart, «Завершити»
+  or deleting the session. A subagent's transcript opens only while its session is live.
 
 ## Session browser
 

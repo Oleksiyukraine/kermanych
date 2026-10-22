@@ -51,12 +51,24 @@
           </span>
         </div>
 
-        <!-- Muted lines about the SCOPE, above the cards the scope decided. Both state
-             something the operator can act on; the rule beneath keeps the cards reading as a
-             separate list rather than as their continuation. -->
-        <div v-if="!store.selectedProjectId || outsideScopeNote" class="agents__notes mono">
-          <p v-if="!store.selectedProjectId" class="agents__note">{{ t('agents.hints.pickProject') }}</p>
-          <p v-if="outsideScopeNote" class="agents__note">{{ outsideScopeNote }}</p>
+        <!-- «Карта агентів»: every agent on this machine and what it spawned, in place of the
+             chat (spec docs/specs/2026-10-22-agent-map.md). The count is machine-wide, so an
+             agent working outside this scope is never quiet. A toggle: pressed while open. -->
+        <button
+          type="button"
+          class="agents__map-btn"
+          :class="{ 'agents__map-btn--on': mapOpen }"
+          :aria-pressed="mapOpen"
+          @click="toggleAgentMap()"
+        >
+          <span class="agents__map-btn-label"><span aria-hidden="true">◈</span> {{ t('agents.map.title') }}</span>
+          <span class="agents__map-btn-count mono">{{ t('agents.map.activeCount', activeAgents) }}</span>
+        </button>
+
+        <!-- Why «Нова задача» cannot act — a muted line above the cards the scope decided; the
+             rule beneath keeps the cards reading as a separate list. -->
+        <div v-if="!store.selectedProjectId" class="agents__notes mono">
+          <p class="agents__note">{{ t('agents.hints.pickProject') }}</p>
         </div>
 
         <!-- THE LIST — one flat, windowed run of rows: under «Задачі» my cloud backlog cards
@@ -108,7 +120,7 @@
               :title="item.session.name"
               :time="renderTime(t, relativeTime(item.session.lastActivityAt, now))"
               :status="item.session.status"
-              :status-line="slotWaitLabel(item.session, t) ?? (activityOf(item.session) || statusWord(item.session))"
+              :status-line="cardLine(item.session)"
               :model="item.session.model"
               :harness="item.session.kind === 'task' ? undefined : sessionLaunchMode(item.session)"
               :deep-analysis="item.session.deepAnalysis"
@@ -150,7 +162,16 @@
 
       <!-- DETAIL — the full panel for the selected session -->
       <aside class="agents__detail">
-        <template v-if="selectedSession">
+        <AgentMap
+          v-if="mapOpen"
+          :focus-id="mapFocus.id"
+          :unfold-focus="mapFocus.unfold"
+          :selected-session-id="store.selectedSessionId"
+          :session-line="cardLine"
+          @open-session="onMapOpenSession"
+          @close="mapOpen = false"
+        />
+        <template v-else-if="selectedSession">
         <!-- CONSOLIDATED HEADER — identity on the left, live status + controls on the right.
              One bar for the whole chat column: the embedded KPanel runs `bare`, so this is the
              only place the session's dot, name, branch, harness and actions appear. -->
@@ -189,7 +210,7 @@
               <KIconButton
                 v-if="(store.subagents[selectedSession.id]?.length ?? 0) > 0"
                 :title="t('agents.actions.agentMap')"
-                @click="openAgentMap()"
+                @click="openAgentMapAt(selectedSession.id)"
               >◈</KIconButton>
               <template v-if="selectedSession.kind === 'discussion' || selectedSession.kind === 'review'">
                 <KIconButton
@@ -1099,41 +1120,6 @@
         >{{ t('agents.docTask.create') }}</KBtn>
       </template>
     </KModal>
-
-    <!-- AGENT MAP — the subagents this session spawned; drill into one's transcript -->
-    <KModal v-model="mapOpen" :title="t('agents.map.title')" width="760px">
-      <div v-if="mapDetailId" class="agents__map">
-        <button type="button" class="agents__map-back mono" @click="mapDetailId = undefined">← {{ t('agents.map.back') }}</button>
-        <KSkeleton v-if="mapDetailPhase === 'skeleton'" variant="lines" :rows="6" />
-        <template v-else-if="mapDetailPhase === 'blank'"></template>
-        <template v-else-if="mapDetailEntries?.length">
-          <KLogBlock
-            v-for="(entry, i) in mapDetailEntries"
-            :key="i"
-            :entry="entry"
-            :session-id="store.selectedSessionId ?? ''"
-            :expand-all="EXPAND_ALL_NONE"
-          />
-        </template>
-        <div v-else class="agents__map-empty mono">{{ t('agents.map.transcriptEmpty') }}</div>
-      </div>
-      <ul v-else class="agents__map-list">
-        <li v-if="!mapList.length" class="agents__map-empty mono">{{ t('agents.map.empty') }}</li>
-        <li
-          v-for="s in mapList"
-          :key="s.id"
-          class="agents__map-row"
-          :class="{ 'agents__map-row--nested': !!s.parentId }"
-          @click="openSubagent(s)"
-        >
-          <span class="agents__map-name">{{ s.description || s.id }}</span>
-          <span class="agents__map-meta mono">{{ mapMeta(s) }}</span>
-        </li>
-      </ul>
-      <template #controls>
-        <KBtn variant="ghost" @click="mapOpen = false">{{ t('agents.map.close') }}</KBtn>
-      </template>
-    </KModal>
   </main>
 </template>
 
@@ -1155,7 +1141,6 @@ import {
   type Session,
   type SessionStatus,
   type TranscriptEntry,
-  type SubagentNode,
   type ThinkingLevel,
   type RpcExtensionUIResponse,
 } from '@kermanych/core';
@@ -1171,6 +1156,7 @@ import { api, type FileDiff, type MessageMode } from '../lib/api';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import { sessionScopedProjectIds } from '../lib/scope';
 import type { Bucket } from '../lib/buckets';
+import { activeAgentCount, projectNodeId, sessionNodeId, workspaceNodeId } from '../lib/agentMap';
 import { changedDocsView, ownReports, unionInOrder } from '../lib/session-reports';
 import { imageToFile } from '../lib/images';
 import { myBacklogTasks, taskInsertFromDraft, taskPatchFromDraft } from '../lib/tasks-view';
@@ -1187,7 +1173,7 @@ import {
 } from '../lib/agents-board';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
-import KLogBlock from 'components/kit/KLogBlock.vue';
+import AgentMap from 'components/agents/AgentMap.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KTag from 'components/kit/KTag.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
@@ -1237,70 +1223,46 @@ const { t } = useI18n();
 // Sessions waiting for the server to report an action's result (stopped, deleted, forked…).
 const pending = usePending();
 
-// ── Agent map (the subagents this session spawned) ────────────────────────
+// ── Agent map (spec docs/specs/2026-10-22-agent-map.md) ───────────────────
+// Open: the map stands in for the chat pane. Not persisted — a reload shows the usual screen.
 const mapOpen = ref(false);
-const mapDetailId = ref<string | undefined>(undefined);
-// `undefined` while the subagent's transcript is being read — a skeleton, not «порожній».
-const mapDetailEntries = ref<TranscriptEntry[] | undefined>([]);
-const mapDetailPhase = useLoadPhase(() => mapDetailEntries.value === undefined);
-const mapList = computed<SubagentNode[]>(() => store.subagents[store.selectedSessionId ?? ''] ?? []);
+// What the map fits into view when it opens: the button aims at the rail's selection, ◈ at its
+// session (unfolded, so the subagents it was pressed for are on screen).
+const mapFocus = ref<{ id: string | undefined; unfold: boolean }>({ id: undefined, unfold: false });
+const activeAgents = computed(() => activeAgentCount(store.sessions));
 
-const MAP_STATUS_KEY: Record<string, string> = {
-  running: 'agents.map.status.running',
-  idle: 'agents.map.status.idle',
-  parked: 'agents.map.status.parked',
-  aborted: 'agents.map.status.aborted',
-  done: 'agents.map.status.done',
-  error: 'agents.map.status.error',
-};
-
-// ms as a compact wall-clock: `42s`, `21m 35s`, `1h 04m` — the figure the map row shows.
-function fmtDuration(ms: number): string {
-  const total = Math.round(ms / 1000);
-  if (total < 60) return `${total}s`;
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  if (m < 60) return `${m}m ${String(s).padStart(2, '0')}s`;
-  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
-}
-
-// The `·`-joined subtitle: status · agent · model · duration · tokens, each dropped when the
-// node has not learned it yet (a running subagent has a status long before a token count).
-function mapMeta(s: SubagentNode): string {
-  const parts: string[] = [];
-  if (s.status) {
-    const key = MAP_STATUS_KEY[s.status];
-    parts.push(key ? t(key) : s.status);
+function toggleAgentMap(): void {
+  if (mapOpen.value) {
+    mapOpen.value = false;
+    return;
   }
-  if (s.agent) parts.push(s.agent);
-  if (s.model) parts.push(s.model);
-  if (typeof s.durationMs === 'number') parts.push(fmtDuration(s.durationMs));
-  if (typeof s.tokens === 'number') parts.push(t('agents.map.tokens', { n: tokens(s.tokens) }));
-  return parts.join(' · ');
-}
-
-function openAgentMap(): void {
-  mapDetailId.value = undefined;
-  mapDetailEntries.value = [];
+  const scope = store.selectedProjectId
+    ? projectNodeId(store.selectedProjectId)
+    : store.selectedWorkspaceId
+      ? workspaceNodeId(store.selectedWorkspaceId)
+      : undefined;
+  mapFocus.value = { id: scope, unfold: false };
   mapOpen.value = true;
-  const id = store.selectedSessionId;
-  if (id) void store.loadSubagents(id);
 }
 
-async function openSubagent(s: SubagentNode): Promise<void> {
-  const id = store.selectedSessionId;
-  if (!id) return;
-  mapDetailId.value = s.id;
-  mapDetailEntries.value = undefined;
-  let entries: TranscriptEntry[] = [];
-  try {
-    entries = await api.getSubagentTranscript(id, s.id);
-  } catch {
-    // Unreadable reads as the empty state, which already says «порожній або недоступний».
-  }
-  // «← назад» and another row may have been clicked meanwhile.
-  if (mapDetailId.value === s.id) mapDetailEntries.value = entries;
+function openAgentMapAt(sessionId: string): void {
+  mapFocus.value = { id: sessionNodeId(sessionId), unfold: true };
+  mapOpen.value = true;
 }
+
+// A session card on the map, like a card in the list, means «go to this agent».
+function onMapOpenSession(id: string): void {
+  mapOpen.value = false;
+  store.selectSession(id);
+}
+// Anything else that opens a session — a notification, the parent ↑ — shows its chat too.
+watch(
+  () => store.selectedSessionId,
+  (id) => {
+    if (id) mapOpen.value = false;
+  },
+);
+
 // Two things come from here: previewCommand/apiCommand are CLOUD config that any workspace
 // member may edit, so that write goes to Supabase and mirrors itself into the local row —
 // a local-only edit would not survive the next sync — and the cloud project list, which is
@@ -1322,8 +1284,7 @@ const router = useRouter();
 const WAITING_STATUSES: readonly SessionStatus[] = ['done', 'in_review', 'stopped'];
 const ERROR_STATUSES: readonly SessionStatus[] = ['error', 'conflict'];
 // Active = an agent whose process is alive or is blocked on the operator. Shared: archiving
-// refuses these (the API re-checks with core's ACTIVE_STATUSES) and the out-of-scope note
-// counts exactly them.
+// refuses these (the API re-checks with core's ACTIVE_STATUSES).
 const ACTIVE_STATUSES: readonly SessionStatus[] = ['queued', 'thinking', 'tool', 'waiting_input'];
 // The one bucket whose ACTIONS differ (unarchive vs. the full control set) keys off the
 // session's own `archived` flag, not this — a merged agent shares the «Завершені» view but
@@ -1546,34 +1507,6 @@ watch([query, () => store.selectedBucket], () => {
   if (boardEl.value) boardEl.value.scrollTop = 0;
 });
 
-// Active agents the current scope hides — an agent that is running, or waiting for an answer,
-// and left the screen because the operator clicked elsewhere in the rail. The page must not
-// do that quietly, and it does not widen the scope by itself either (the rail owns
-// selection): it names the projects to click.
-//
-// Named rather than merely counted. The rail's marks (lib/attention.ts) do flag a waiting or
-// running agent now, but a mark on a folded workspace, or on a row scrolled out of the
-// sidebar, still leaves the operator hunting for it; a project name is the direct pointer.
-const outsideScopeProjects = computed(() => {
-  const names = new Map<string, string>();
-  for (const s of store.sessions) {
-    if (inScope.value.has(s.projectId)) continue;
-    if (s.archived || s.kind === 'chat' || !ACTIVE_STATUSES.includes(s.status)) continue;
-    if (!names.has(s.projectId)) names.set(s.projectId, projectName(s.projectId));
-  }
-  return [...names.values()];
-});
-const outsideScopeNote = computed(() => {
-  const names = outsideScopeProjects.value;
-  if (!names.length) return '';
-  // Capped, and no trailing instruction: this line sits directly above the cards in a 324px
-  // column, where the fuller «виберіть проєкт у лівій панелі, щоб їх побачити» measured four
-  // lines and pushed the first card most of a card-height down — for a sentence the blank and
-  // empty states already teach. The names ARE the affordance: they are the rail's own labels.
-  const rest = names.length - 3;
-  const shown = names.slice(0, 3).join(', ') + (rest > 0 ? ` ${t('agents.board.outsideMore', { n: rest })}` : '');
-  return t('agents.board.outsideScope', { names: shown });
-});
 // Which project the launcher acts ON. Creating: the selected project. Editing a backlog task
 // or spinning one out of a transcript: the SESSION's own project — a workspace scope can list
 // a task from a project other than the selection, and editing it must not read another
@@ -2157,10 +2090,11 @@ function menuDiscard(): void { const s = selectedSession.value; menuOpen.value =
 // The menu's shortcuts, live whenever a session is open: ⌘ (or Ctrl) + key. Never while the
 // operator is typing, and each is guarded by the same condition that renders its menu item —
 // so a shortcut can't fire an action the header doesn't currently offer — and by the same
-// pending/busy check that disables the items, so a held ⌘⌫ cannot delete twice.
+// pending/busy check that disables the items, so a held ⌘⌫ cannot delete twice. Never while
+// the agent map covers the chat either: ⌘⌫ must not delete a session that is not on screen.
 function onDetailShortcut(e: KeyboardEvent): void {
   const s = selectedSession.value;
-  if (!s) return;
+  if (!s || mapOpen.value) return;
   if (e.key === 'Escape') {
     if (menuOpen.value) { menuOpen.value = false; e.preventDefault(); }
     return;
@@ -2339,6 +2273,11 @@ function activityOf(s: Session): string {
     if (task) return task.content;
   }
   return '';
+}
+
+// The whole sub-line a session card shows — on the board and on the agent map alike.
+function cardLine(s: Session): string {
+  return slotWaitLabel(s, t) ?? (activityOf(s) || statusWord(s));
 }
 
 function statusWord(s: Session): string {
@@ -2849,6 +2788,8 @@ function onRowClick(s: Session): void {
   // A stranded backlog row has no chat to open and no cloud card to edit — the note above
   // the list says what to do with it (publish its project).
   if (s.kind === 'task') return;
+  // The list always means «go to this agent», even to the one already selected under the map.
+  mapOpen.value = false;
   store.selectSession(s.id);
 }
 
@@ -3671,11 +3612,57 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-muted);
 }
 
-// The scope notices — why «Нова задача» cannot act, and which projects hold active agents
-// this scope hides. Muted like every other hint on this screen, because both report a fact
-// the operator may act on rather than a warning. The rule and the spacing live on the
-// container so that one line or two cost the same frame, and so the cards below read as a
-// separate list rather than as a continuation of the prose.
+// «Карта агентів» — one full-width row under the search: the name on the left, the
+// machine-wide active count on the right, pressed (accent frame) while the map is open.
+.agents__map-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--k-sp-2);
+  width: 100%;
+  margin: 0 0 var(--k-sp-3);
+  padding: var(--k-sp-2) var(--k-sp-3);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-r);
+  background: var(--k-surface);
+  color: var(--k-text);
+  font-size: var(--k-fs-sm);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+
+  &:hover {
+    border-color: var(--k-line-strong);
+    background: var(--k-surface2);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 1px;
+  }
+}
+
+.agents__map-btn--on {
+  border-color: var(--k-accent);
+  background: var(--k-surface2);
+}
+
+.agents__map-btn-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents__map-btn-count {
+  flex: none;
+  font-size: var(--k-fs-xs);
+  color: var(--k-faint);
+}
+
+// The scope notice — why «Нова задача» cannot act. Muted like every other hint on this
+// screen, because it reports a fact the operator may act on rather than a warning. The rule
+// and the spacing live on the container so the cards below read as a separate list rather
+// than as a continuation of the prose.
 .agents__notes {
   margin: 0 0 var(--k-sp-3);
   padding-bottom: var(--k-sp-3);
@@ -4645,51 +4632,5 @@ async function submitPreviewConfig(): Promise<void> {
 // into a shortcut nobody could read on the accent fill.
 .agents-launcher__kbd {
   margin-left: var(--k-sp-2);
-}
-.agents__map {
-  max-height: 60vh;
-  overflow-y: auto;
-}
-.agents__map-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 60vh;
-  overflow-y: auto;
-}
-.agents__map-row {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.agents__map-row:hover {
-  background: rgba(127, 127, 127, 0.1);
-}
-.agents__map-row--nested {
-  margin-left: 18px;
-}
-.agents__map-meta {
-  font-size: var(--k-fs-xs);
-  color: var(--k-muted);
-}
-.agents__map-empty {
-  padding: 16px;
-  text-align: center;
-  color: var(--k-muted);
-}
-.agents__map-back {
-  display: block;
-  background: none;
-  border: none;
-  color: var(--k-muted);
-  cursor: pointer;
-  padding: 4px 0 10px;
-  font-size: var(--k-fs-xs);
 }
 </style>

@@ -403,9 +403,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
   snapshot() {
+    const subagents: Record<string, SubagentNode[]> = {};
+    for (const [id, l] of this.map) {
+      if (l.subagents?.size) subagents[id] = this.subagentList(l);
+    }
     return {
       projects: this.registry.listProjects(),
       sessions: this.registry.listSessions().map((s) => this.merge(s)),
+      subagents,
     };
   }
 
@@ -2872,20 +2877,6 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const lines = this.toolDetails.get(id, callId);
     if (!lines) throw new GoneException("вивід більше недоступний");
     return { lines, totalLines: lines.length };
-  }
-
-  // omp's subagent registry, merged with the task-tool details captured from the stream, as
-  // the agent map lists it. A fresh open re-snapshots the live registry so status is current.
-  async getSubagents(sessionId: string): Promise<SubagentNode[]> {
-    const l = this.map.get(sessionId);
-    if (!l) return [];
-    try {
-      this.mergeRegistry(l, await l.rpc.getSubagents());
-      this.emitSubagents(sessionId, l);
-    } catch {
-      // Dead/dormant child: return whatever the stream already captured rather than fail.
-    }
-    return this.subagentList(l);
   }
 
   // One subagent's transcript, rendered through the SAME reducer as the main one. The full

@@ -158,11 +158,6 @@ export class SessionsController {
     return this.sup.getToolDetail(id, callId);
   }
 
-  @Get(":id/subagents")
-  subagents(@Param("id") id: string) {
-    return this.sup.getSubagents(id);
-  }
-
   // Unwrapped like toolDetail: getSubagentTranscript throws GoneException for a dormant
   // session, and the UI's "session inactive" branch relies on that 410 reaching it.
   @Get(":id/subagents/:subagentId/transcript")

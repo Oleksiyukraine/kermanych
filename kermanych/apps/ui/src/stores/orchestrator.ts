@@ -61,8 +61,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // The socket's first `snapshot` has arrived. Until then an empty `sessions` / `projects`
   // means «not loaded», not «none», and the board / sidebar show a skeleton.
   const snapshotReceived = ref(false);
-  // Per-session subagent tree for the agent map, streamed over `subagents_update` and primed
-  // by loadSubagents(). Keyed by session id, same as `transcripts`.
+  // Per-session subagent tree for the agent map: the socket snapshot carries every live
+  // session's tree, `subagents_update` keeps each fresh. Keyed by session id, as `transcripts`.
   const subagents = ref<Record<string, SubagentNode[]>>({});
   const selectedProjectId = ref<string | undefined>(undefined);
   const selectedWorkspaceId = ref<string | undefined>(undefined);
@@ -110,6 +110,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     if (e.type === 'snapshot') {
       projects.value = e.projects;
       sessions.value = e.sessions;
+      // The snapshot is the whole truth on (re)connect: trees of sessions gone meanwhile go too.
+      subagents.value = e.subagents;
       snapshotReceived.value = true;
     } else if (e.type === 'project_update') {
       projects.value = [
@@ -529,14 +531,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.reopenSession(id);
   }
 
-  // A one-shot snapshot of a session's subagent tree for the agent map. The socket keeps it
-  // fresh afterwards (subagents_update); this primes it the moment the modal opens.
-  async function loadSubagents(id: string) {
-    const list = await api.getSubagents(id);
-    subagents.value = { ...subagents.value, [id]: list };
-    return list;
-  }
-
   return {
     projects,
     sessions,
@@ -573,7 +567,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     reopenSession,
     loadTranscript,
     subagents,
-    loadSubagents,
     resumeSession,
     runSessionNow,
     previews,
