@@ -34,6 +34,7 @@ function card(over: Partial<Task> & { id: string }): Task {
     worktree: true,
     hidden: false,
     deepAnalysis: false,
+    autoRun: false,
     createdAt: '2026-08-30T10:00:00.000Z',
     updatedAt: '2026-08-30T10:00:00.000Z',
     ...over,

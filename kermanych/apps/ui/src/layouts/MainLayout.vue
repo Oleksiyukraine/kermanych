@@ -499,6 +499,7 @@ import { useAuth } from 'stores/auth';
 import { useBoard } from 'stores/board';
 import { useProjectDocs } from 'stores/project-docs';
 import { useSeen } from 'stores/seen';
+import { useMinion } from 'stores/minion';
 import { IS_PREVIEW } from '../lib/preview';
 import { api } from '../lib/api';
 import { MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
@@ -556,6 +557,10 @@ const activity = useActivity();
 const board = useBoard();
 const projectDocs = useProjectDocs();
 const onb = useOnboarding();
+// Created with the shell, before the socket connects: it listens for the first `snapshot` to
+// read «Посіпака»'s state, and for every `minion_update` after it (a pause is announced from any
+// screen, so the store cannot wait for the map or «ШІ-команда» to be opened).
+useMinion();
 const route = useRoute();
 const router = useRouter();
 const { t, te } = useI18n();

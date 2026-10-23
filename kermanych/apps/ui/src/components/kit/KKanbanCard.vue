@@ -27,6 +27,10 @@
     <div class="k-kanban-card__meta">
       <!-- A teammate's ▶ on this card launches the deep analysis too, so the board says so. -->
       <KAnalysisMark v-if="deepAnalysis" />
+      <!-- «Посіпака» on the author's machine may take it; and when its run stopped on a choice,
+           the card says so «На ревʼю», where cards wait on a person. -->
+      <KMinionMark v-if="autoRun" kind="allowed" />
+      <KDecisionMark v-if="needsDecision" :reason="needsDecision" />
       <KSpinner v-if="pending" :size="10" class="k-kanban-card__pending" />
       <span class="k-kanban-card__where">{{ project }} · {{ time }}</span>
     </div>
@@ -42,6 +46,8 @@ import type { SessionStatus } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KAvatar from './KAvatar.vue';
 import KAnalysisMark from './KAnalysisMark.vue';
+import KMinionMark from './KMinionMark.vue';
+import KDecisionMark from './KDecisionMark.vue';
 import KSpinner from './KSpinner.vue';
 import KSkeleton from './KSkeleton.vue';
 
@@ -56,6 +62,10 @@ const props = defineProps<{
   assignee?: { name: string; avatarUrl?: string | undefined } | null;
   // A «Глибокий аналіз» card (KAnalysisMark): whoever launches it gets the interview first.
   deepAnalysis?: boolean | undefined;
+  // «Дозволити автовиконання» (KMinionMark).
+  autoRun?: boolean | undefined;
+  // «Потрібне рішення», worded (lib/minion.ts minionReasonText); absent when nothing waits.
+  needsDecision?: string | undefined;
   // A move or launch of this card is waiting for its result (stores/pending): dimmed, spinning.
   pending?: boolean | undefined;
   // The roster that resolves `assignee` is not read yet: a placeholder face, never a raw id.

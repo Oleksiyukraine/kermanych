@@ -36,6 +36,7 @@ import type {
   FindingTarget,
   MachineResources,
   ResourcesUpdate,
+  MinionState,
 } from '@kermanych/core';
 import type {
   CloudProject,
@@ -538,6 +539,18 @@ export const api = {
   // Re-reads the hardware and clears the decision, so `askConsent` comes back true.
   redetectMachineResources: (): Promise<MachineResources> =>
     post<MachineResources>('/machine/resources/redetect', {}),
+
+  // «Посіпака» on this machine (docs/specs/2026-10-23-minion-auto-run.md, decisions 6 and 8).
+  // Local-only like the resource profile: which projects it works for, its cap and its pause
+  // never reach the cloud. Every write answers with the whole state, as `minion_update` does.
+  minion: (): Promise<MinionState> => get<MinionState>('/minion'),
+
+  // `paused: true` pauses it as the operator; `paused: false` resumes and clears the failures.
+  setMinion: (body: { cap?: number; paused?: boolean }): Promise<MinionState> =>
+    put<MinionState>('/minion', body),
+
+  setMinionProject: (projectId: string, active: boolean): Promise<MinionState> =>
+    put<MinionState>(`/minion/projects/${projectId}`, { active }),
 
   // The watchdog's «Зупинити команду»: the api kills only a subtree that session started
   // after it became ready, never the agent or its MCP servers.

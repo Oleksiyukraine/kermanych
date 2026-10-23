@@ -70,6 +70,8 @@
             <span class="agent-map__meta mono">
               <KHarnessMark v-if="data.node.session.kind !== 'task'" :harness="sessionLaunchMode(data.node.session)" />
               <KAnalysisMark v-if="data.node.session.deepAnalysis" />
+              <KMinionMark v-if="data.node.session.minion" kind="running" />
+              <KDecisionMark v-if="sessionDecisionReason(t, data.node.session)" :reason="sessionDecisionReason(t, data.node.session)!" />
               <span v-if="data.node.session.model" class="agent-map__model">{{ data.node.session.model }}</span>
               <span v-if="spendOf(data.node.session)" class="agent-map__spend">{{ spendOf(data.node.session) }}</span>
             </span>
@@ -99,17 +101,29 @@
         </template>
       </VueFlow>
 
-      <!-- The chips: which buckets are on the map. Same words and counts as the sidebar. -->
-      <div class="agent-map__chips" role="group" :aria-label="t('agents.map.filter')">
-        <button
-          v-for="b in MAP_BUCKETS"
-          :key="b"
-          type="button"
-          class="agent-map__chip mono"
-          :class="{ 'agent-map__chip--on': buckets.includes(b) }"
-          :aria-pressed="buckets.includes(b)"
-          @click="toggleBucket(b)"
-        >{{ t(`agents.bucket.${b}`) }} <span class="agent-map__chip-count">{{ bucketCounts[b] }}</span></button>
+      <div class="agent-map__overlay">
+        <!-- The chips: which buckets are on the map. Same words and counts as the sidebar. -->
+        <div class="agent-map__chips" role="group" :aria-label="t('agents.map.filter')">
+          <button
+            v-for="b in MAP_BUCKETS"
+            :key="b"
+            type="button"
+            class="agent-map__chip mono"
+            :class="{ 'agent-map__chip--on': buckets.includes(b) }"
+            :aria-pressed="buckets.includes(b)"
+            @click="toggleBucket(b)"
+          >{{ t(`agents.bucket.${b}`) }} <span class="agent-map__chip-count">{{ bucketCounts[b] }}</span></button>
+        </div>
+        <!-- «Посіпака» on this machine: working (N of the cap, the queue, the projects) or paused
+             with the reason, with ⏸ / ▶. Hidden while no project is active here — nothing to say. -->
+        <div v-if="minionStrip" class="agent-map__minion mono" :class="{ 'agent-map__minion--paused': minion.state?.pause }">
+          <span class="agent-map__minion-text">{{ minionStrip }}</span>
+          <KIconButton
+            :title="minion.state?.pause ? t('minion.strip.resume') : t('minion.strip.pause')"
+            :loading="minionToggling"
+            @click="toggleMinion(!minion.state?.pause)"
+          >{{ minion.state?.pause ? '▶' : '⏸' }}</KIconButton>
+        </div>
       </div>
 
       <div class="agent-map__tools">
@@ -168,11 +182,14 @@ import '@vue-flow/minimap/dist/style.css';
 import type { Session, SessionStatus, SubagentNode, TranscriptEntry } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
+import { useMinion } from 'stores/minion';
 import { api } from '../../lib/api';
 import { bucketOf } from '../../lib/buckets';
 import { EXPAND_ALL_NONE } from '../../lib/expand-all';
 import { tokens, usageTokens, usd } from '../../lib/format';
 import { sessionLaunchMode } from '../../lib/native-session';
+import { minionStripText, sessionDecisionReason } from '../../lib/minion';
+import { useAsyncAction } from '../../composables/useAsyncAction';
 import {
   MAP_BUCKETS,
   NODE_SIZE,
@@ -189,6 +206,8 @@ import { useLoadPhase } from '../../composables/useLoadPhase';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KHarnessMark from 'components/kit/KHarnessMark.vue';
 import KAnalysisMark from 'components/kit/KAnalysisMark.vue';
+import KMinionMark from 'components/kit/KMinionMark.vue';
+import KDecisionMark from 'components/kit/KDecisionMark.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import KLogBlock from 'components/kit/KLogBlock.vue';
@@ -223,6 +242,16 @@ function toggleBucket(b: MapBucket): void {
   buckets.value = MAP_BUCKETS.filter((x) => on.has(x));
   localStorage.setItem(BUCKETS_KEY, JSON.stringify(buckets.value));
 }
+
+// ── «Посіпака» strip ─────────────────────────────────────────────────────
+const minion = useMinion();
+const minionStrip = computed(() =>
+  minion.state
+    ? minionStripText(t, minion.state, (id) => projects.byId.get(id)?.name ?? store.projects.find((p) => p.id === id)?.name)
+    : undefined,
+);
+// ⏸ pauses as the operator, ▶ resumes (and clears the failure count); the echo is the new state.
+const { run: toggleMinion, busy: minionToggling } = useAsyncAction((paused: boolean) => minion.setPaused(paused));
 const bucketCounts = computed(() => {
   const counts: Record<MapBucket, number> = { active: 0, waiting: 0, errors: 0, completed: 0 };
   const byId = new Map(store.sessions.map((s) => [s.id, s]));
@@ -711,14 +740,44 @@ const FoldToggle = defineComponent({
 }
 
 // ── Overlays ────────────────────────────────────────────────────────────
-.agent-map__chips {
+// The chips and, under them, the «Посіпака» strip: one column in the top-left corner.
+.agent-map__overlay {
   position: absolute;
   top: var(--k-sp-3);
   left: var(--k-sp-3);
   z-index: 5;
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--k-sp-2);
+}
+
+.agent-map__chips {
+  display: flex;
   flex-wrap: wrap;
   gap: var(--k-sp-1);
+}
+
+.agent-map__minion {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+  padding: 2px 2px 2px 8px;
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-r);
+  background: var(--k-surface);
+  color: var(--k-muted);
+  font-size: var(--k-fs-xs);
+}
+
+// A pause stops the queue: the strip says so in the accent until the operator resumes it.
+.agent-map__minion--paused {
+  border-color: var(--k-accent);
+  color: var(--k-accent);
+}
+
+.agent-map__minion-text {
+  white-space: nowrap;
 }
 
 .agent-map__chip {

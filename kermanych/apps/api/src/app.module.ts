@@ -47,9 +47,11 @@ import { BrowserMcpService } from "./browser/browser-mcp.service";
 import { MachineController } from "./http/machine.controller";
 import { MachineResourcesService } from "./machine/machine-resources.service";
 import { WatchdogService } from "./machine/watchdog.service";
+import { MinionController } from "./http/minion.controller";
+import { MinionService } from "./minion/minion.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -120,6 +122,11 @@ import { WatchdogService } from "./machine/watchdog.service";
     // alerts reach the UI through the supervisor's `events$` like every other event.
     MachineResourcesService,
     WatchdogService,
+    // «Посіпака» (docs/specs/2026-10-23-minion-auto-run.md): the poll that takes this user's own
+    // auto-run cards, and the machine's cap, pause and activated projects. It drives the
+    // supervisor (launchMinion) and counts its runs' results (minionResult$); the supervisor
+    // never knows it, and its `minion_update` rides the supervisor's `events$` to the socket.
+    MinionService,
     // Global by design: the api binds 127.0.0.1 but was previously drivable by
     // anything on the machine, including GET /fs/list (arbitrary local directory
     // enumeration). Opt out per route with @Public(), never per module.

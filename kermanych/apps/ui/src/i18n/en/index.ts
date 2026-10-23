@@ -172,6 +172,7 @@ export const en: MessageSchema = {
       'resolve-conflict': 'Conflict Resolver',
       finish: 'Finish',
       summary: 'Summary',
+      minion: 'Minion',
     },
     blank: {
       eyebrow: 'KERMANYCH',
@@ -645,6 +646,65 @@ export const en: MessageSchema = {
     stopped: 'Command {command} in session {name} stopped',
     kill: 'Stop command',
     killGone: 'The command has already finished.',
+  },
+  // «Посіпака» (docs/specs/2026-10-23-minion-auto-run.md): the card switch, its reasons and
+  // pauses as the operator reads them, the map strip and the «ШІ-команда» card.
+  minion: {
+    autoRun: {
+      label: 'Allow auto-run',
+      caption: 'The Minion on the author’s machine may take the task by itself',
+      authorOnly: 'Only the task’s author can allow auto-run',
+      notWithDeep: 'Not with deep analysis: that agent interviews you, and the Minion works with nobody there',
+    },
+    needsDecision: 'Decision needed',
+    reason: {
+      no_outcome: 'finished without a verdict',
+      no_pr: 'no PR was opened',
+      time_cap: 'the run ran out of time',
+      docs_gate: 'the documentation check failed',
+      session_error: 'the session ended with an error',
+      launch_failed: 'the launch failed',
+    },
+    pause: {
+      operator: 'paused by you',
+      failures: 'two failed runs in a row',
+      signed_out: 'AI sign-in needed',
+    },
+    notify: {
+      title: 'Minion paused',
+      paused: 'Minion paused: {reason}',
+    },
+    strip: {
+      running: 'running {running} of {cap}',
+      waiting: '{n} queued',
+      paused: 'Minion paused: {reason}',
+      pause: 'Pause',
+      resume: 'Resume',
+    },
+    panel: {
+      lead: 'Takes your own tasks marked «Allow auto-run» in this project and brings them to a PR on this machine by itself: it does not ask, it decides within the task, and whatever needs your decision it leaves «In review».',
+      active: 'active on this machine',
+      activate: 'Activate on this machine',
+      deactivate: 'Deactivate',
+      deactivateHint: 'Deactivating only stops taking new tasks: a run in progress goes on — stop it from its chat or from the agent map.',
+      notBound: 'The project is not bound to a local repository on this machine — bind it first by launching any task.',
+      machineTitle: 'On this machine',
+      cap: 'At once on this machine',
+      capHint: 'From 1 to {max}, for all active projects together.',
+      working: 'Running {running} of {cap} · {waiting} queued',
+      paused: 'Paused: {reason}',
+      projects: 'Projects active on this machine',
+      noProjects: 'None — the Minion takes nothing here.',
+      pollError: 'Could not ask the cloud: {error}',
+      loadFailed: 'Could not read the Minion’s state: {error}',
+      instructionTitle: 'Workspace instruction and skills',
+      instructionDefault: 'Kermanych’s default instruction',
+      instructionOverride: 'Instruction rewritten in the workspace',
+      skills: 'Skills, in order',
+      noSkills: 'No skills assigned.',
+      noWorkspace: 'The project belongs to no cloud workspace — there is no workspace instruction or skills.',
+      editInWorkspace: 'Change at the workspace level →',
+    },
   },
   onboarding: {
     runtime: {
@@ -2425,6 +2485,14 @@ export const en: MessageSchema = {
       label: 'analysis',
       tip: 'Deep analysis: discussion and documentation first, then code',
     },
+    minionMark: {
+      label: 'minion',
+      allowed: 'Auto-run allowed',
+      running: 'Run by the Minion',
+    },
+    decisionMark: {
+      label: 'decision needed',
+    },
     railItem: {
       unbound: ' · not linked',
       orphan: ' · outside the cloud',
@@ -2577,6 +2645,8 @@ export const en: MessageSchema = {
         sessionRemove: 'removed in place: ✕ on card hover',
         sessionFindings: 'findings: ⚑ with the open count — the agent noticed problems outside its task, and they await a decision',
         sessionDeep: 'deep analysis: the «analysis» mark — the agent asks and documents first, and codes once approved',
+        sessionMinion: 'minion: the «minion» mark — the Minion runs the session by itself; «decision needed» — it stopped on a choice that is yours (the reason is in the tooltip)',
+        kanbanMinion: 'auto-run: «minion» — the Minion on the author’s machine may take the task by itself; «decision needed» in review — the run awaits your answer',
         splitButton: 'split: a click runs the default action, ▾ lists the other ways, each with a caption',
       },
       userTitle: '@oleksii-motornyi · sign out',
@@ -2589,6 +2659,7 @@ export const en: MessageSchema = {
       kanbanCol: {
         backlog: 'Backlog',
         inProgress: 'In progress',
+        review: 'In review',
       },
       chat: {
         user: 'Why does drag sometimes drop into the wrong cell?',
@@ -2684,6 +2755,13 @@ export const en: MessageSchema = {
         findingsTitle: 'migrate to pnpm 10',
         findingsTime: '9 min',
         findingsStatus: 'working · 31 steps',
+        minionTitle: 'finding: stale token in the logs',
+        minionTime: '6 min',
+        minionStatus: 'working · 12 steps',
+        decisionTitle: 'unify the date format',
+        decisionTime: '1 h',
+        decisionStatus: 'in review',
+        decisionReason: 'The card contradicts the code: the API returns dates in UTC, and the task asks for local time',
       },
       kanbanCard: {
         keychainTitle: 'key rotation in Keychain',
@@ -2692,6 +2770,8 @@ export const en: MessageSchema = {
         pathTime: '4 d',
         rateTitle: 'rate limiting on /v1/messages',
         rateTime: '2 min',
+        autoTitle: 'remove dead code in billing',
+        autoTime: '5 h',
         assignee: 'Daria Kovalchuk',
       },
     },

@@ -20,8 +20,43 @@ export type LauncherDraft = {
   // «Глибокий аналіз»: the card runs its agent through the interview and the task document
   // before any code. A card field, not a launch choice, so a later launch keeps it.
   deepAnalysis: boolean;
+  // «Дозволити автовиконання»: «Посіпака» on the author's machine may take the card by itself
+  // (docs/specs/2026-10-23-minion-auto-run.md, decision 3). Never together with deepAnalysis:
+  // that agent interviews the operator, and nobody is there.
+  autoRun: boolean;
   baseBranch?: string | undefined;
 };
+
+// The two card modes that exclude each other, as one pair so every form flips them the same way.
+export type CardModes = { deepAnalysis: boolean; autoRun: boolean };
+
+// Checking one mode clears the other; unchecking touches only itself.
+export function withDeepAnalysis(modes: CardModes, on: boolean): CardModes {
+  return { deepAnalysis: on, autoRun: on ? false : modes.autoRun };
+}
+
+export function withAutoRun(modes: CardModes, on: boolean): CardModes {
+  return { autoRun: on, deepAnalysis: on ? false : modes.deepAnalysis };
+}
+
+// A card → the launcher's or the board form's pair. `deepAnalysis` seeds a NEW card (the
+// «Нова задача» menu); a stored card keeps its own. A stored card that somehow carries both
+// (an older client wrote one of them) shows deep analysis: the minion skips such a card anyway.
+export function cardModesFromCard(card: Task | undefined, deepAnalysis = false): CardModes {
+  const deep = card ? card.deepAnalysis : deepAnalysis;
+  return { deepAnalysis: deep, autoRun: !deep && !!card?.autoRun };
+}
+
+// tasks_guard(): only the author switches auto-run ON; anyone may switch it off. A new card is
+// the operator's own. The mirror greys the switch out before the refusal.
+export function canAllowAutoRun(card: Task | undefined, userId: string): boolean {
+  return !card || (!!userId && card.createdBy === userId);
+}
+
+// The switch is locked only in the direction the guard refuses: an ON switch stays clickable.
+export function autoRunSwitchLocked(on: boolean, card: Task | undefined, userId: string): boolean {
+  return !on && !canAllowAutoRun(card, userId);
+}
 
 // Two renamings live here and nowhere else: name/task are the card's title/description,
 // and the fork base is `tasks.branch` (the board labels that field «Базова гілка», and
@@ -43,6 +78,7 @@ export function taskInsertFromDraft(
     worktree: draft.worktree,
     hidden: draft.hidden,
     deepAnalysis: draft.deepAnalysis,
+    autoRun: draft.autoRun && !draft.deepAnalysis,
     ...(base ? { branch: base } : {}),
     assigneeId,
   };
@@ -50,8 +86,12 @@ export function taskInsertFromDraft(
 
 // Unlike the insert, a patch sends every editable field: an absent key means «leave the
 // column alone», so clearing the platform in the editor has to travel as an empty string,
-// which toTaskRow turns into NULL.
-export function taskPatchFromDraft(draft: LauncherDraft): TaskPatch {
+// which toTaskRow turns into NULL. The one exception is `autoRun`, sent only when this form
+// changed it (`openedAutoRun` is the switch as the form opened): the author may flip it while a
+// colleague's form is open, and a stale copy would either undo the author's change or — sent as
+// `true` by a non-author — make tasks_guard() refuse the whole save.
+export function taskPatchFromDraft(draft: LauncherDraft, openedAutoRun: boolean): TaskPatch {
+  const autoRun = draft.autoRun && !draft.deepAnalysis;
   return {
     title: draft.name.trim(),
     description: draft.task.trim(),
@@ -62,6 +102,7 @@ export function taskPatchFromDraft(draft: LauncherDraft): TaskPatch {
     worktree: draft.worktree,
     hidden: draft.hidden,
     deepAnalysis: draft.deepAnalysis,
+    ...(autoRun !== openedAutoRun ? { autoRun } : {}),
     branch: (draft.worktree ? draft.baseBranch?.trim() : '') ?? '',
   };
 }

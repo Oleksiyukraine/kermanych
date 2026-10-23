@@ -14,7 +14,8 @@
 // The same server carries the session's «Знахідки» tools (findings/findings-tools.ts,
 // docs/specs/2026-10-13-agent-findings.md), because a child gets exactly one MCP server. Those
 // need no desktop app, so the server is handed out without one, and the browser tools are
-// listed only while a browser host exists.
+// listed only while a browser host exists. A «Посіпака» run gets one more, `report_outcome`
+// (minion/outcome-tool.ts, docs/specs/2026-10-23-minion-auto-run.md), listed only for it.
 import { Injectable, Optional } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { randomBytes } from "node:crypto";
@@ -23,6 +24,8 @@ import { isAbsolute } from "node:path";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
 import { FINDING_TOOLS, FINDING_TOOL_NAMES, callFindingTool } from "../findings/findings-tools";
+import { OUTCOME_TOOL, callOutcomeTool } from "../minion/outcome-tool";
+import type { MinionVerdictReport } from "@kermanych/core";
 import {
   browserHost,
   type BrowserActionResult,
@@ -325,6 +328,8 @@ export class BrowserMcpService {
   // A session whose agent just reported a finding — the supervisor re-sends the session so its
   // open-findings counter reaches the UI while the agent keeps working.
   readonly findingReported$ = new Subject<string>();
+  // A «Посіпака» run reported its verdict — the supervisor holds it for the turn's end.
+  readonly outcomeReported$ = new Subject<{ sessionId: string; report: MinionVerdictReport }>();
   // The tail of each session's tool-call chain. Agents fire calls in parallel (a snapshot
   // beside the navigate it depends on — observed with omp), and one page cannot serve two
   // actions at once, so a session's calls run one after another in arrival order.
@@ -391,14 +396,19 @@ export class BrowserMcpService {
         });
       case "ping":
         return result({});
-      case "tools/list":
-        return result({ tools: browserHost() ? [...TOOLS, ...FINDING_TOOLS] : FINDING_TOOLS });
+      case "tools/list": {
+        const minion = this.registry.listSessions().find((s) => s.id === sessionId)?.minion === true;
+        const tools = browserHost() ? [...TOOLS, ...FINDING_TOOLS] : FINDING_TOOLS;
+        return result({ tools: minion ? [...tools, OUTCOME_TOOL] : tools });
+      }
       case "tools/call": {
         const name = typeof params.name === "string" ? params.name : "";
         const args = (params.arguments && typeof params.arguments === "object" ? params.arguments : {}) as Record<string, unknown>;
         let run: Promise<ToolResult>;
         if (FINDING_TOOL_NAMES.has(name))
           run = Promise.resolve().then(() => this.callFinding(sessionId, name, args));
+        else if (name === OUTCOME_TOOL.name)
+          run = Promise.resolve().then(() => callOutcomeTool(this.registry, sessionId, args, (report) => this.outcomeReported$.next({ sessionId, report })));
         else if (UNQUEUED.has(name)) run = this.call(sessionId, name, args);
         else {
           run = (this.queues.get(sessionId) ?? Promise.resolve()).then(() => this.call(sessionId, name, args));

@@ -6,8 +6,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
-import { isThinkingLevel, isAgentRuntime, isNativeHarness, isAgentLanguage, isFindingKind, parseFindingTarget, docsPolicy, combineReportWrites } from "@kermanych/core";
-import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, Project, ResourceDecision, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite } from "@kermanych/core";
+import { isThinkingLevel, isAgentRuntime, isNativeHarness, isAgentLanguage, isFindingKind, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT } from "@kermanych/core";
+import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, Project, ResourceDecision, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -23,6 +23,10 @@ export type AuthSessionRow = {
 // This machine's resource-profile row. `overrides` stays JSON text here; the profile service
 // owns its shape (and tolerates a row written by another version).
 export type MachineResourcesRow = { fingerprint: string; decision: ResourceDecision | null; overrides: string };
+
+// «Посіпака» on this machine, as stored: the cap, the pause (absent while it works) and the
+// consecutive failures (docs/specs/2026-10-23-minion-auto-run.md, decisions 8-9).
+export type MinionSettingsRow = { cap: number; pause?: MinionPause; failures: number };
 
 // A queued cloud status push. One row per task — the outbox is a latest-wins mailbox, not a
 // log: if a session goes thinking → tool → thinking while offline, only the newest status is
@@ -82,6 +86,28 @@ function readUsage(raw: string | null): Usage | undefined {
     const u = JSON.parse(raw) as Partial<Usage>;
     if (typeof u?.cost !== "number") return undefined;
     return { input: u.input ?? 0, output: u.output ?? 0, cacheRead: u.cacheRead ?? 0, cacheWrite: u.cacheWrite ?? 0, cost: u.cost };
+  } catch {
+    return undefined;
+  }
+}
+
+// The `minion_result` column, back into a shape — tolerant like readUsage.
+function readMinionColumn(raw: string | null): MinionResult | undefined {
+  if (!raw) return undefined;
+  try {
+    return readMinionResult(JSON.parse(raw));
+  } catch {
+    return undefined;
+  }
+}
+
+// The `minion_settings.pause` column: a MinionPause, or nothing for a row another version wrote.
+function readMinionPause(raw: string | null): MinionPause | undefined {
+  if (!raw) return undefined;
+  try {
+    const p = JSON.parse(raw) as Partial<MinionPause> | null;
+    if (!p || !isMinionPauseCode(p.code) || typeof p.at !== "string") return undefined;
+    return { code: p.code, at: p.at, ...(typeof p.detail === "string" && p.detail ? { detail: p.detail } : {}) };
   } catch {
     return undefined;
   }
@@ -384,6 +410,16 @@ export class RegistryService {
         /* column already exists */
       }
     }
+    // Additive migration: a «Посіпака» run (docs/specs/2026-10-23-minion-auto-run.md). `minion`
+    // is fixed at creation, like `native`; `minion_result` is the JSON MinionResult of the run so
+    // far, rewritten whenever a turn of it ends differently.
+    for (const col of ["minion INTEGER NOT NULL DEFAULT 0", "minion_result TEXT"]) {
+      try {
+        this.db.exec(`ALTER TABLE sessions ADD COLUMN ${col}`);
+      } catch {
+        /* column already exists */
+      }
+    }
     // The first index in this schema: listSessions(projectId) filters on project_id on
     // every board render and every supervisor lookup.
     this.db.exec(`CREATE INDEX IF NOT EXISTS sessions_project_idx ON sessions (project_id)`);
@@ -454,6 +490,14 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS machine_resources (id INTEGER PRIMARY KEY CHECK (id = 1), fingerprint TEXT NOT NULL, decision TEXT, overrides TEXT NOT NULL DEFAULT '{}')`,
     );
+    // «Посіпака» on this machine (docs/specs/2026-10-23-minion-auto-run.md, decisions 6 and 8):
+    // never synced, like machine_resources — whether a machine may work alone depends on that
+    // machine. `minion_settings` is single-row: the cap, the pause (JSON MinionPause, NULL while
+    // it works) and the consecutive failures. `minion_projects` lists the projects activated here.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS minion_settings (id INTEGER PRIMARY KEY CHECK (id = 1), cap INTEGER NOT NULL, pause TEXT, failures INTEGER NOT NULL DEFAULT 0)`,
+    );
+    this.db.exec(`CREATE TABLE IF NOT EXISTS minion_projects (project_id TEXT PRIMARY KEY, activated_at TEXT NOT NULL)`);
   }
 
   // v1 (2026-08-21, team cloud): `groups` becomes `projects`, its id becomes the CLOUD
@@ -682,16 +726,17 @@ export class RegistryService {
   removeProject(id: string): void {
     this.db.prepare(`DELETE FROM session_findings WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?)`).run(id);
     this.db.prepare(`DELETE FROM sessions WHERE project_id = ?`).run(id);
+    this.db.prepare(`DELETE FROM minion_projects WHERE project_id = ?`).run(id);
     this.db.prepare(`DELETE FROM projects WHERE id = ?`).run(id);
   }
 
   listSessions(projectId?: string): Session[] {
-    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, runtime, native, deep_analysis, effort, status, pr_opened as prOpened, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
+    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, runtime, native, deep_analysis, minion, minion_result, effort, status, pr_opened as prOpened, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
     const rows = (
       projectId
         ? this.db.prepare(sql + ` WHERE project_id = ? ORDER BY created_at`).all(projectId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "native" | "deepAnalysis" | "openFindings" | "pendingPrompt"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; native: number; deep_analysis: number; open_findings: number; pending_prompt: string | null })[];
+    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "native" | "deepAnalysis" | "minion" | "minionResult" | "openFindings" | "pendingPrompt"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; native: number; deep_analysis: number; minion: number; minion_result: string | null; open_findings: number; pending_prompt: string | null })[];
     // SQLite stores the flag as 0/1; hand callers a real boolean. `effort` is validated rather
     // than cast: a row written by an older build (or by hand) must degrade to "not known" —
     // typing an unknown word as a ThinkingLevel would send it straight back into omp's argv.
@@ -700,7 +745,11 @@ export class RegistryService {
     // `native` and `deep_analysis` are 0/1 flags too, surfaced only when set so an ordinary row
     // stays as it was; `open_findings` likewise appears only when something waits.
     // `pending_prompt` likewise appears only while a message waits for a slot.
-    return rows.map(({ native, deep_analysis, open_findings, pending_prompt, ...r }) => ({ ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) }));
+    // `minion` likewise; `minion_result` is validated like `effort`, so a hand-edited row degrades.
+    return rows.map(({ native, deep_analysis, minion, minion_result, open_findings, pending_prompt, ...r }) => {
+      const minionResult = readMinionColumn(minion_result);
+      return { ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(minion ? { minion: true } : {}), ...(minionResult ? { minionResult } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) };
+    });
   }
 
   createSession(
@@ -723,7 +772,7 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, platform, runtime, native, deep_analysis, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, platform, runtime, native, deep_analysis, minion, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id,
@@ -745,6 +794,7 @@ export class RegistryService {
         row.runtime ?? null,
         row.native ? 1 : 0,
         row.deepAnalysis ? 1 : 0,
+        row.minion ? 1 : 0,
         row.effort ?? null,
         row.status,
         row.createdAt,
@@ -761,7 +811,7 @@ export class RegistryService {
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, platform=?, runtime=?, effort=?, status=?, pr_opened=?, archived=? WHERE id=?`,
+        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, platform=?, runtime=?, effort=?, status=?, pr_opened=?, archived=?, minion_result=? WHERE id=?`,
       )
       .run(
         next.projectId,
@@ -783,6 +833,7 @@ export class RegistryService {
         next.status,
         next.prOpened ? 1 : 0,
         next.archived ? 1 : 0,
+        next.minionResult ? JSON.stringify(next.minionResult) : null,
         id,
       );
     return next;
@@ -1050,5 +1101,31 @@ export class RegistryService {
     this.db
       .prepare(`INSERT OR REPLACE INTO machine_resources (id, fingerprint, decision, overrides) VALUES (1,?,?,?)`)
       .run(row.fingerprint, row.decision, row.overrides);
+  }
+
+  // No row yet reads as the defaults: cap 1, working, no failures.
+  getMinionSettings(): MinionSettingsRow {
+    const row = this.db.prepare(`SELECT cap, pause, failures FROM minion_settings WHERE id = 1`).get() as
+      | { cap: number; pause: string | null; failures: number }
+      | undefined;
+    const pause = readMinionPause(row?.pause ?? null);
+    return { cap: clampMinionCap(row?.cap) ?? MINION_CAP_DEFAULT, ...(pause ? { pause } : {}), failures: row?.failures ?? 0 };
+  }
+
+  setMinionSettings(row: MinionSettingsRow): void {
+    this.db
+      .prepare(`INSERT OR REPLACE INTO minion_settings (id, cap, pause, failures) VALUES (1,?,?,?)`)
+      .run(row.cap, row.pause ? JSON.stringify(row.pause) : null, row.failures);
+  }
+
+  // The projects «Посіпака» is activated for on this machine, in activation order.
+  listMinionProjects(): string[] {
+    const rows = this.db.prepare(`SELECT project_id FROM minion_projects ORDER BY activated_at, project_id`).all() as { project_id: string }[];
+    return rows.map((r) => r.project_id);
+  }
+
+  setMinionProject(projectId: string, active: boolean): void {
+    if (active) this.db.prepare(`INSERT OR IGNORE INTO minion_projects (project_id, activated_at) VALUES (?,?)`).run(projectId, new Date().toISOString());
+    else this.db.prepare(`DELETE FROM minion_projects WHERE project_id = ?`).run(projectId);
   }
 }

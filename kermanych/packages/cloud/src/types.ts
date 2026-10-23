@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { AgentLanguage, AgentRuntimeKind, DocsPolicy, DocsReport, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionReport, SessionStatus, ThinkingLevel } from "@kermanych/core";
+import type { AgentLanguage, AgentRuntimeKind, DocsPolicy, DocsReport, FindingKind, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionReport, SessionStatus, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same eleven labels.
@@ -105,6 +105,14 @@ export type Task = {
   // present. `true` means the card was filed as «Глибокий аналіз»: whoever launches it, the
   // agent interviews the operator and writes the task document before any code.
   deepAnalysis: boolean;
+  // `tasks.auto_run` is `not null default false`, so like `hidden` this key is always present.
+  // `true` means «Дозволити автовиконання»: «Посіпака» on its author's machine may take the card
+  // by itself (docs/specs/2026-10-23-minion-auto-run.md). Only the author can switch it on, and
+  // anyone else's edit of the card's content switches it off — both enforced by tasks_guard().
+  autoRun: boolean;
+  // The kind of the «Знахідка» the card was filed from; absent for every other card. Set once by
+  // the filing dialog and frozen by tasks_guard(), so finding-born cards can be counted.
+  findingKind?: FindingKind;
   kind?: string;
   branch?: string;
   // Storage object paths in the `task-images` bucket (private). The board mints signed
@@ -145,6 +153,8 @@ export type TaskInsert = {
   worktree?: boolean;
   hidden?: boolean;
   deepAnalysis?: boolean;
+  autoRun?: boolean;
+  findingKind?: FindingKind;
   kind?: string;
   branch?: string;
   imagePaths?: string[];
@@ -163,6 +173,8 @@ export type TaskPatch = {
   worktree?: boolean;
   hidden?: boolean;
   deepAnalysis?: boolean;
+  // No `findingKind`: it is a fact of the insert, and tasks_guard() would ignore a change anyway.
+  autoRun?: boolean;
   kind?: string;
   branch?: string;
   imagePaths?: string[];

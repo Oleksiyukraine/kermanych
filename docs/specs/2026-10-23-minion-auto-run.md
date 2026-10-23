@@ -146,6 +146,11 @@ caption «Посіпака на машині автора може взяти з
   cards.
 - **The flag stays** on the card after the run: «allowed» is the fact the operator wants to count
   later.
+- **A form sends the switch only when the operator changed it there.** The author may flip it
+  while a colleague's form is open; a stale copy would either undo that or, sent as `true` by a
+  non-author, get the colleague's whole save refused by `tasks_guard()`. The board form has no
+  «Глибокий аналіз» control, so on a deep-analysis card it shows the switch disabled with the
+  reason instead.
 - **A manual ▶** on an auto-run card starts an ordinary session, not a minion run.
 - Rejected earlier in the interview, then superseded by this switch: «Технік» as an entry in the
   «Виконавець» picker.
@@ -212,8 +217,11 @@ Rejected:
 
 ### 7. Which card, and exactly once
 
-**Polling.** The api polls the cloud every 60 s. It also polls at once on activation, on resume and
-when a minion run ends. It asks for the oldest card that is:
+**Polling.** The api polls the cloud every 60 s. It also polls at once on activation, on resume, on
+a cap change and when a minion run ends. It does not poll at boot: the first poll is the first
+tick, because a launch before the api listens gets no `kermanych` MCP server and so no
+`report_outcome`. The listing runs even while nothing can start (paused, at the cap, no free
+slot), so the waiting count stays current. It asks for the oldest card that is:
 
 - in a project active on this machine and bound here;
 - `status = backlog` with `auto_run` on, and `created_by` = the signed-in user;
@@ -237,7 +245,10 @@ while the card is active:
 2. no assignee, if this launch claimed the card.
 
 For a minion launch the previous status is `backlog`, and the failure counts toward the pause
-(decision 9).
+(decision 9). A child that dies while its launch is still starting (both runtimes fire their exit
+callbacks before the start rejects) is that launch's failure: it counts once, and no `error` is
+pushed to the card, which would race the release and lose to `tasks_guard()` once the card is
+unassigned again.
 
 ### 8. Capacity
 
@@ -283,13 +294,19 @@ decisions for the PR.
 sessions. The api validates the call and answers at once. When the turn ends, Kermanych acts on
 the last outcome:
 
-- `ready` → decision 10.
+- `ready` → decision 10. Until the docs or PR turn starts, the session rests at `queued`, not
+  `done`: the card never flashes to the closed lane, and it stays active for every machine, so no
+  ▶ elsewhere can start it again in between.
 - `needs_decision` → the card settles at `in_review`, the lane for cards that wait on a person,
   with «потрібне рішення» and the summary as its reason. The session stays in «Агенти». The
   operator answers it like any session. The minion then continues, and its next `ready` leads to
   the PR.
 - No outcome → treated like `needs_decision` with the reason «завершив без підсумку», and it
-  counts as a failure.
+  counts as a failure. A turn the operator started by writing to the run is theirs: when it ends
+  without a verdict it settles like any turn and counts for nothing.
+- A PR the operator opens on a minion session («Створити ПР» on the finish sheet) becomes the
+  card's result `pr`. Counted as a success during the run's own work, neither way once the run
+  already waited on a person.
 
 **Failures.** These count as failures:
 
@@ -300,21 +317,26 @@ the last outcome:
 - the time cap.
 
 Two failures in a row pause the minion on this machine until the operator resumes it. A run that
-ends in a PR, or in the agent's own `needs_decision`, resets the count. If the operator stops or
-deletes a minion session, that changes nothing in the count, and the minion does not take that card
-again: it is no longer in `backlog`.
+ends in a PR, or in the agent's own `needs_decision`, resets the count. If the operator stops,
+deletes or restarts a minion session, that changes nothing in the count, and the minion does not
+take that card again: it is no longer in `backlog`.
 
 **Signed out.** Before each claim the minion runs the existing runtime preflight, cached for 5
 minutes. A signed-out provider pauses it at once with «потрібен вхід в AI», and no card is taken. So
-does a minion session that dies with `*_not_authenticated`.
+does a minion session that dies with `*_not_authenticated`, or a launch that the provider refuses
+signed out. The preflight runs only when there is a card to take, so an idle minion does not probe
+the provider every minute.
 
 **Time cap.** 2 hours from the spawn to the first outcome.
 
 1. At the cap, Kermanych tells the session to stop and report `needs_decision` with where it
    stands.
-2. 10 minutes later, Kermanych stops the turn.
+2. 10 minutes later, Kermanych stops the turn. The runtimes have no «abort this turn», so the
+   session is settled at `in_review` first and its child stopped, the way the idle reaper stops a
+   settled child; the operator's next message respawns it on the same conversation.
 
-The cap counts as a failure. Once the operator has answered the session, it has no cap.
+The cap counts as a failure, even when a verdict or a PR follows it. Once the operator has
+answered the session, it has no cap.
 
 Rejected:
 
@@ -402,7 +424,8 @@ minion shows only through its cards.
 
 **Notifications.** The existing ones stay: a session reaching `in_review` or `error` while the
 window is unfocused. A pause adds a toast and, when the window is unfocused, a native
-notification.
+notification. A pause the minion already had when the app started is shown by the strip and the
+«Посіпака» card, not announced again.
 
 ### 13. An unattended machine keeps working
 
@@ -443,40 +466,51 @@ notification.
 - **Cloud** (`packages/cloud`):
   - `autoRun` and `findingKind` on `Task`, `TaskInsert` and `TaskPatch` (`types.ts`), mapped in
     `tasks.ts` and added to `TASK_COLUMNS`.
-  - `claimTaskForLaunch(client, id, userId)` replaces `claimTask`. It claims with `queued`, and
-    `releaseLaunchClaim` undoes it. The api test fakes and `test/tasks.spec.ts` move with it.
+  - `claimTaskForLaunch(client, id, userId, from)` replaces `claimTask`: it claims with `queued`,
+    guarded by the status the launch read (`from`), and `releaseLaunchClaim` undoes it. The api
+    test fakes and `test/tasks.spec.ts` move with it.
   - `claimMinionTask(client, id, userId)` and `listMinionCandidates(client, projectIds, userId)`.
 - **Core** (`packages/core`):
   - the `minion` agent, its default instruction, and the outcome contract text;
-  - `Session.minion` and `Session.minionOutcome`;
+  - `Session.minion` and `Session.minionResult` (persisted as `sessions.minion_result`);
   - `SessionReport.minion` (`task-reports.ts`), read and merged like the other fields;
   - the `MINION_*` constants: poll interval, failure limit, time cap, grace;
   - the `report_outcome` argument validator;
   - the `ServerEvent` `minion_update`.
 - **API:**
-  - `minion/minion.service.ts`: the poll and eligibility, the claim and launch, the cap and slot
-    check, outcome handling (docs gate, PR, settle), the failure count and pause, the preflight,
-    and the time cap. Its state lives in SQLite: `minion_settings` (one row with the cap, paused,
-    the pause reason and the failure count) and `minion_projects`.
+  - `minion/minion.service.ts`: the poll and eligibility, the preflight, the claim and launch, the
+    cap and slot check, the failure count and the pause, the state and its `minion_update`, and
+    keep-awake. Its state lives in SQLite: `minion_settings` (one row with the cap, the pause and
+    the failure count) and `minion_projects`.
+  - `minion/outcome-tool.ts` (`report_outcome`), `minion/ask-overlay.ts` (the omp overlay),
+    `minion/keep-awake.ts` (the desktop hook).
   - `http/minion.controller.ts`: `GET /api/minion`, `PUT /api/minion` (`{ cap?, paused? }`) and
     `PUT /api/minion/projects/:id` (`{ active }`).
   - `SupervisorService`:
-    - the launch claim of decision 7;
-    - a minion launch path: the `minion` flag, always a worktree, the ask overlay or
-      `disallowedTools`, and the outcome tool;
-    - a turn-end hook that settles `needs_decision` at `in_review`;
+    - one shared `launchTask` behind `createSessionFromTask` and `launchMinion`, with the launch
+      claim of decision 7;
+    - a minion launch path: the `minion` flag, always a worktree, never native, started at once
+      without the slot FIFO, the ask overlay or `disallowedTools` on every spawn and wake;
+    - the run protocol at a minion turn's end (verdict, docs turn, PR, the `queued` hold, the
+      `in_review` settles), the time cap, and the result on the row, the card report and
+      `minionResult$`;
+    - `queueTaskReport` reads the session's facts after its diff, so the last write queued carries
+      the latest result;
     - `runTriggerAgent` refuses `minion`.
   - `BrowserMcpService`: lists and serves `report_outcome` only for minion sessions.
-  - `ClaudeCodeRuntime` passes `disallowedTools` from the launch options. `RpcSession` takes the
-    extra overlay path.
-  - Registry: `sessions.minion` and the two tables.
+  - `ClaudeCodeRuntime` passes `disallowedTools` from the launch options. The omp spawn gets the
+    ask overlay among its `--config` paths, which `RpcSession` already takes as a list.
+  - Registry: `sessions.minion`, `sessions.minion_result` and the two tables.
   - `main.ts` `bootstrap`: an optional keep-awake hook.
 - **UI:**
   - The switch in the launcher (`LauncherDraft.autoRun`, `taskInsertFromDraft` in
     `lib/tasks-view.ts`), the board form, and `SessionFindings.vue`, which also sets `findingKind`.
     Only the author can use it; others see it disabled, with the reason.
-  - `KMinionMark` and the «потрібне рішення» mark on `KKanbanCard`, `KSessionCard` and the map
-    node, with kit samples.
+  - `KMinionMark` and `KDecisionMark` (the «потрібне рішення» mark) on `KKanbanCard`,
+    `KSessionCard` and the map node, with kit samples; their predicates and wording in
+    `lib/minion.ts`.
+  - `stores/minion.ts`: the machine's minion state from `GET /api/minion` and `minion_update`, its
+    writes, and the pause toast and notification.
   - The «Посіпака» card on `AiTeamPage.vue` at project scope: a new
     `components/settings/MinionPanel.vue`.
   - The strip in `AgentMap.vue`.
@@ -488,36 +522,71 @@ notification.
 
 ## Verification
 
-Planned. This section is replaced with the results after implementation.
-
-- **Unit, core:** the outcome validator; reading and merging `SessionReport.minion`; the minion
-  agent's holes; the trigger options exclude it.
-- **Unit, api** (`apps/api/test/minion.spec.ts`, real in-memory registry, stubbed cloud):
-  - the oldest eligible card is taken across two active projects. Nothing is taken while paused,
-    at the cap, with no free slot, or while an operator session is waiting for a slot;
-  - a lost claim takes nothing. A failed launch returns the card to `backlog` and counts;
-  - `ready` → one docs turn → PR → `in_review` with outcome `pr`. `needs_decision` and a missing
-    outcome → `in_review` with the reason. No PR → a failure;
-  - two failures pause; a success resets the count; the operator's stop changes nothing. Sign-out
-    pauses without a claim. The time cap;
-  - the manual launch claim sets `queued`, and on failure restores the previous status and the
-    assignee.
-- **RLS and guard** (`packages/cloud/test/rls.spec.ts`, needs the local stack):
-  - `created_by` and `finding_kind` stay frozen;
-  - a non-author cannot switch `auto_run` on;
-  - a non-author content edit clears it; a status push or a QA tick does not;
-  - the minion claim's predicate;
-  - rule 2's two-step release.
-- **UI:** draft ↔ card mapping of `autoRun`; the findings dialog sets `findingKind`; the map strip
-  and the marks in the kit.
-- **Smoke:** the desktop app against the local Supabase stack, with two bound throwaway repos and
-  real omp:
-  - two auto-run cards in two projects run one after the other at cap 1 and land on «На ревʼю»
-    with a PR;
-  - without a token they land with «PR не відкрито», and then the minion pauses;
-  - a blocked card shows «потрібне рішення», and an answer leads to the PR;
-  - a colleague's edit clears the switch;
-  - with the window minimised past the token lifetime, the minion keeps taking cards.
+- **Suites** (vitest, `--maxWorkers=4`):
+  - `packages/core`: 23 files, 226 passed. New `test/minion.spec.ts`: the verdict validator (both
+    verdicts, a refused verdict or blank summary named, an essay cut to the limit), the cap's
+    range, reading a stored result, and the card report carrying the result for minion sessions
+    only.
+  - `packages/cloud`: 13 files, 235 passed, with the RLS suite run against a local Supabase stack
+    (`supabase start`, the new migration applied with `supabase migration up --local`). New RLS
+    cases: `created_by` and `finding_kind` stay as inserted; a colleague cannot switch `auto_run`
+    on but can switch it off; a colleague's content edit clears it while the author's edit, a
+    `hidden` change and a QA tick do not; the minion claim takes only the author's card, once,
+    against a second claim and a `claimTaskForLaunch`; a one-statement release is refused with
+    `task is active` and the two-step release works. Unit cases pin the claim and listing
+    predicates and the release order.
+  - `apps/api`: 114 files, 1051 passed, 4 skipped. New `test/minion.spec.ts` (28): the oldest
+    eligible card across projects; nothing claimed while paused, at the cap, without a free slot
+    or behind a waiting operator session; a lost claim; a failed launch back to `backlog`, two in a
+    row pausing; a child dying during its launch counted once with no `error` pushed; the signed
+    out preflight; `ready` → docs turn → PR → `pr`, resting at `queued` in between; the agent's
+    `needs_decision` and an answer resuming the flow; a PR the operator opens after «потрібне
+    рішення»; no verdict; no PR; the time cap and its grace; the operator's takeover and stop;
+    `report_outcome` listed and served only for minion sessions; the routes. The two regression
+    cases found in review and smoke (the launch-time death, the late report write) fail without
+    their fixes. `sessions.from-task.spec.ts` covers the manual claim with `queued` and its
+    release.
+  - `apps/ui`: 63 files, 712 passed: the `autoRun` draft ↔ card mapping (never with deep
+    analysis, sent on a patch only when changed, author-only), the needs-decision predicates and
+    the reason, pause and strip wording against the real catalogues, `findingKind` from the
+    filing dialog, the registry and trigger-picker counts.
+- **Typecheck:** `apps/api` `tsc --noEmit` clean. `apps/ui` `vue-tsc --noEmit`: only the
+  pre-existing `test/runtime-messages.spec.ts` TS2352.
+- **Review:** a reviewer pass found eight issues; all are fixed in this change: the refresh
+  keep-alive started before auth-js finished initialising (it re-registered its visibility
+  handling), a launch-time death counted twice, a PR opened by hand after «потрібне рішення» left
+  the mark, stale forms sending `autoRun`, a verdict surviving a dead child, `ready` resting at
+  `done`, a capped run counting its PR as a success, and a write reply overwriting a newer
+  `minion_update` in the UI store.
+- **Smoke:** the built api (`node dist/main.js`, temp SQLite, `KERMANYCH_RUNTIME=omp`) against the
+  local Supabase stack, a password user minted through the admin API, one workspace and project
+  bound to a throwaway git repo with a local bare `origin`, a `gh` stand-in on `PATH` that answers
+  `pr create` with a PR URL, and real omp (`claude-opus-5-5`):
+  - activation polled at once; the card «Fix the off-by-one in average()» was claimed, run, the
+    agent fixed and tested it, called `report_outcome` `ready`, Kermanych sent «Створити ПР», the
+    branch reached `origin` and `gh pr create` was called; the card ended `in_review`, assigned to
+    its author, `auto_run` still on, `session_report.minion = { outcome: "pr" }`;
+  - an ambiguous card («the format finance agreed on») ended `in_review` with `needs_decision`
+    and a precise question, without counting a failure; an answer through
+    `POST /api/sessions/:id/message` resumed the run, which opened its PR (`pr`);
+  - a colleague's own auto-run card in the same project stayed in `backlog`, unassigned;
+  - two more cards ended `needs_decision` for real reasons (the base still had the unfixed bug the
+    card's checks depend on); one of them also reported that bug through `report_finding`;
+  - a trivial card's cloud status, sampled every 300 ms: `backlog → queued → thinking → tool →
+    thinking → tool → thinking → in_review` with `pr`, never `done`;
+  - the UI dev server pointed at that api and stack, signed in by injecting the user's session:
+    the «посіпака» and «потрібне рішення» marks on «Дошка» cards and «Агенти» sessions, the
+    «Карта агентів» nodes and strip («Посіпака · працює 0 з 1 · у черзі 0 · smoke-repo»), ⏸
+    pausing with a toast and ▶ resuming, the «Посіпака» card on «ШІ-команда» → Проєкт (activation
+    state, cap, active projects, the default instruction read-only), and the board form's switch
+    locking for a non-author once switched off.
+  - Before its fix, the smoke run showed one card keeping «потрібне рішення» after its PR: the turn's
+    own report write finished last with the old result. Fixed in `queueTaskReport`, covered by a
+    test.
+- **Not exercised:** the desktop app itself (`startAutoRefresh` with a hidden window and
+  `powerSaveBlocker`; the browser-tab build keeps the default refresh), the claude-code runtime
+  with `disallowedTools` against the real CLI, a real GitHub PR, and pushing the migration to the
+  team's project.
 
 ## Documentation impact
 

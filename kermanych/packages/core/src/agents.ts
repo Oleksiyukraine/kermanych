@@ -91,6 +91,29 @@ const RESOLVE_CONFLICT = [
   `are resolved, run \`git add -A && git commit --no-edit --trailer "Co-Authored-By: ${KERMANYCH_COAUTHOR}"\` to complete the merge. Do only this.`,
 ].join("");
 
+// «Посіпака» (docs/specs/2026-10-23-minion-auto-run.md): the one agent that does a card's main
+// work, unattended. Kermanych appends MINION_OUTCOME_CONTRACT (minion.ts) after this text — the
+// default or a workspace's rewrite — so how a run ends never depends on the editable part. The
+// repository's own rules still reach it as in any session (CLAUDE.md / AGENTS.md, skills, the
+// docs policy), and the machine's resource paragraph rides the system prompt.
+const MINION = [
+  "You are «Посіпака» (Minion), Kermanych's unattended executor. Nobody is watching this session: ",
+  "work the card below from start to finish on your own.\n\n",
+  "- Stay inside the card's scope. Do not ask the operator anything — nobody is there to answer. ",
+  "When the card leaves a choice open, take the option that best fits the repository's existing ",
+  "patterns and write the choice down: the pull request description will list these decisions under ",
+  "a `## Decisions` heading.\n",
+  "- Follow the repository's own instructions (CLAUDE.md / AGENTS.md, conventions, documentation ",
+  "rules) exactly as a session a person drives would.\n",
+  "- Before you call the work done, check it: go through the card's acceptance criteria one by one, ",
+  "and run the project's checks for what you changed (typecheck, tests) within the test worker limit ",
+  "you were given.\n",
+  "- Problems you notice outside the card go to `report_finding`, not into this branch.\n",
+  "- Commit on this branch as you go, but do not push and do not open the pull request yourself: ",
+  "Kermanych runs that step after you report the outcome.\n\n",
+  "## Card\n{{task}}",
+].join("");
+
 // The auth block is the load-bearing part: `gh pr create` and `git push` otherwise pick up
 // whatever ambient credential the machine has (a stored `gh` login, an ssh key, a credential
 // helper), which is often the wrong account. Kermanych copies the project's configured Git
@@ -188,12 +211,17 @@ export function baseSyncBlock(base: string): string {
   ].join("");
 }
 
+// The minion's id, named because the api, the trigger picker and «ШІ-команда» all special-case it:
+// it is the one agent a trigger cannot run (it needs a card, not a message).
+export const MINION_AGENT_ID = "minion";
+
 export const AGENTS: readonly AgentDef[] = [
   { id: "review", labelKey: "agents.role.review", kind: "session", instruction: REVIEW, holes: ["task", "base", "branch", "diff"] },
   { id: "promote", labelKey: "agents.role.promote", kind: "session", instruction: PROMOTE, holes: ["branch"] },
   { id: "pull-request", labelKey: "agents.role.pull-request", kind: "procedure", instruction: PULL_REQUEST, holes: ["branch", "conventions", "baseLine"] },
   { id: "commit", labelKey: "agents.role.commit", kind: "procedure", instruction: COMMIT, holes: ["branch", "conventions"] },
   { id: "resolve-conflict", labelKey: "agents.role.resolve-conflict", kind: "procedure", instruction: RESOLVE_CONFLICT, holes: ["files"] },
+  { id: MINION_AGENT_ID, labelKey: "agents.role.minion", kind: "session", instruction: MINION, holes: ["task"] },
   { id: "finish", labelKey: "agents.role.finish", kind: "automation" },
   { id: "summary", labelKey: "agents.role.summary", kind: "automation" },
 ];

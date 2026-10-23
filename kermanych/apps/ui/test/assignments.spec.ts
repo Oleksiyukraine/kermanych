@@ -26,7 +26,7 @@ const R = (path: string) => ({ path, description: '' });
 
 test('only instruction-bearing agents can be assigned to', () => {
   const rows = assignmentRows(AGENTS, [], [], {}, {});
-  expect(rows.map((r) => r.agent.id)).toEqual(['review', 'promote', 'pull-request', 'commit', 'resolve-conflict']);
+  expect(rows.map((r) => r.agent.id)).toEqual(['review', 'promote', 'pull-request', 'commit', 'resolve-conflict', 'minion']);
 });
 
 test('assigned skills come back in position then name order', () => {

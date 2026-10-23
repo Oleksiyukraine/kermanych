@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, nativeImage, powerSaveBlocker, shell } from 'electron';
 import { readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -54,9 +54,26 @@ function setBootStatus(status: KermanychBootStatus): void {
   mainWindow?.webContents.send('kermanych:boot-status', status);
 }
 
+// While a «Посіпака» run is in progress the api holds the machine awake
+// (docs/specs/2026-10-23-minion-auto-run.md, decision 13): `prevent-app-suspension` keeps the
+// Mac out of idle sleep and the app from being suspended, while the screen may still turn off.
+// The api reports every change of «any run in progress», so the hook is idempotent: one blocker
+// at most, released when the last run ends.
+let awakeBlocker: number | undefined;
+function keepAwake(hold: boolean): void {
+  if (hold) {
+    if (awakeBlocker === undefined || !powerSaveBlocker.isStarted(awakeBlocker)) {
+      awakeBlocker = powerSaveBlocker.start('prevent-app-suspension');
+    }
+  } else if (awakeBlocker !== undefined) {
+    powerSaveBlocker.stop(awakeBlocker);
+    awakeBlocker = undefined;
+  }
+}
+
 async function startBackend(port: number): Promise<void> {
   try {
-    const res = await bootstrap({ port, browser: browsers });
+    const res = await bootstrap({ port, browser: browsers, keepAwake });
     nest = res.app;
     backend.resolve();
     setBootStatus('ready');

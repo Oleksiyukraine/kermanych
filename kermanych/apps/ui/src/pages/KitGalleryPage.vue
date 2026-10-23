@@ -422,22 +422,45 @@
         />
       </div>
       <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionDeep') }}</div>
+
+      <!-- «ПОСІПАКА» — a session the minion runs (KMinionMark), and one whose run stopped on a
+           choice for the operator (KDecisionMark, the reason in its tooltip). -->
+      <div class="kit__cards">
+        <KSessionCard
+          branch="fix/stale-token-log" :title="t('kit.gallery.sessionCard.minionTitle')" :time="t('kit.gallery.sessionCard.minionTime')"
+          status="tool" :status-line="t('kit.gallery.sessionCard.minionStatus')" model="opus-5" harness="managed" minion
+          :usage="{ input: 4300, output: 1600, cacheRead: 72000, cacheWrite: 6100, cost: 0.27 }"
+        />
+        <KSessionCard
+          branch="feature/date-format" :title="t('kit.gallery.sessionCard.decisionTitle')" :time="t('kit.gallery.sessionCard.decisionTime')"
+          status="in_review" :status-line="t('kit.gallery.sessionCard.decisionStatus')" model="opus-5" harness="managed" minion
+          :needs-decision="t('kit.gallery.sessionCard.decisionReason')"
+        />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionMinion') }}</div>
     </section>
 
     <!-- kanban -->
     <section class="kit__section">
       <div class="kit__label">{{ t('kit.gallery.sec.kanban') }}</div>
       <div class="kit__kanban">
-        <KKanbanColumn :label="t('kit.gallery.kanbanCol.backlog')" :count="2">
+        <KKanbanColumn :label="t('kit.gallery.kanbanCol.backlog')" :count="3">
           <KKanbanCard :title="t('kit.gallery.kanbanCard.keychainTitle')" branch="feature/keychain-rotate" project="Backend-core" :time="t('kit.gallery.kanbanCard.keychainTime')" status="backlog" :assignee="{ name: 'oleksii-motornyi' }" />
           <KKanbanCard :title="t('kit.gallery.kanbanCard.pathTitle')" branch="chore/path-ellipsis" project="FE-kit" :time="t('kit.gallery.kanbanCard.pathTime')" status="backlog" />
+          <KKanbanCard :title="t('kit.gallery.kanbanCard.autoTitle')" branch="chore/billing-dead-code" project="Backend-core" :time="t('kit.gallery.kanbanCard.autoTime')" status="backlog" auto-run />
         </KKanbanColumn>
         <KKanbanColumn :label="t('kit.gallery.kanbanCol.inProgress')" :count="1">
           <KKanbanCard :title="t('kit.gallery.kanbanCard.rateTitle')" branch="feature/rate-limit" project="Backend-core" :time="t('kit.gallery.kanbanCard.rateTime')" status="thinking" :assignee="{ name: t('kit.gallery.kanbanCard.assignee'), avatarUrl: sampleAvatar }" deep-analysis />
         </KKanbanColumn>
+        <KKanbanColumn :label="t('kit.gallery.kanbanCol.review')" :count="1">
+          <KKanbanCard :title="t('kit.gallery.sessionCard.decisionTitle')" branch="feature/date-format" project="FE-kit" :time="t('kit.gallery.sessionCard.decisionTime')" status="in_review" :assignee="{ name: 'oleksii-motornyi' }" auto-run :needs-decision="t('kit.gallery.sessionCard.decisionReason')" />
+        </KKanbanColumn>
       </div>
       <div class="kit__caption mono">
         {{ t('kit.gallery.cap.kanban') }}
+      </div>
+      <div class="kit__caption mono">
+        {{ t('kit.gallery.cap.kanbanMinion') }}
       </div>
     </section>
 

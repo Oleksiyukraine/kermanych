@@ -36,6 +36,7 @@ const card: Task = {
   worktree: true,
   hidden: false,
   deepAnalysis: false,
+  autoRun: false,
   imagePaths: ['p1/from-board.png'],
   createdAt: '2026-10-12T09:00:00.000Z',
   updatedAt: '2026-10-12T09:00:00.000Z',

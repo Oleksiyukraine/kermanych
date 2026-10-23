@@ -5,6 +5,7 @@ import type { ThinkingLevel } from "./thinking";
 import type { NoticeCode, NoticeParams } from "./i18n-codes";
 import type { NativeHarness } from "./runtime";
 import type { MachineAlert } from "./machine-profile";
+import type { MinionResult, MinionState } from "./minion";
 
 // `in_review` is the PR hand-off state: the operator asked for a pull request, the agent
 // pushed it, and the work now waits on a HUMAN reviewer. It is settled (nothing moves on
@@ -65,6 +66,14 @@ export type Session = {
   // opening turn asked for the interview and the task document before any code. Stamped from
   // the card when the session is created and never changed. Absent means an ordinary task.
   deepAnalysis?: boolean;
+  // Run by «Посіпака» (docs/specs/2026-10-23-minion-auto-run.md): the minion took the card and
+  // runs it with nobody watching — no ask tool, a `report_outcome` verdict, a PR at the end.
+  // Stamped when the session is created and never changed. Absent means a session a person
+  // started, even when its card allows auto-run.
+  minion?: boolean;
+  // How the minion's run ended so far: `needs_decision` keeps the «потрібне рішення» mark until
+  // a later turn ends differently. Persisted; absent until the first turn of a minion run ends.
+  minionResult?: MinionResult;
   // «Знахідки» (docs/specs/2026-10-13-agent-findings.md): how many of this session's findings
   // still wait for the operator (status `open`). Counted by the registry on every read, never
   // written through updateSession. Absent or 0 means nothing waits.
@@ -278,7 +287,9 @@ export type ServerEvent =
   | { type: "session_removed"; sessionId: string }
   | { type: "project_removed"; projectId: string }
   // The memory-pressure watchdog found something (docs/specs/2026-10-21-machine-resource-profile.md).
-  | { type: "machine_alert"; alert: MachineAlert };
+  | { type: "machine_alert"; alert: MachineAlert }
+  // «Посіпака» on this machine changed: its cap, pause, running and waiting counts, projects.
+  | { type: "minion_update"; state: MinionState };
 
 // How much of omp's subagent activity a session subscribes to. "progress" streams lifecycle
 // + coalesced progress (enough for the agent map); "events" adds every subagent tool/message

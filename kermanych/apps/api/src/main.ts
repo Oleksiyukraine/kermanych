@@ -6,6 +6,7 @@ import { AppModule } from "./app.module";
 import { RegistryService } from "./registry/registry.service";
 import { seedDemo } from "./preview/seed";
 import { setBrowserHost, type BrowserHost } from "./browser/browser-host";
+import { setKeepAwake, type KeepAwake } from "./minion/keep-awake";
 
 export type {
   BrowserActionResult,
@@ -17,13 +18,17 @@ export type {
   BrowserTarget,
   BrowserViewport,
 } from "./browser/browser-host";
+export type { KeepAwake } from "./minion/keep-awake";
 
 // Build + start the Kermanych API. Exported so the Electron main process can host
 // it in-process; still self-runs for standalone `node dist/main.js` / `pnpm dev:api`.
 // `browser` is the desktop app's session browser (browser/browser-host.ts); without it no
-// session gets the browser tools.
-export async function bootstrap(opts: { port?: number; browser?: BrowserHost } = {}): Promise<{ app: INestApplication; url: string }> {
+// session gets the browser tools. `keepAwake` is its power-save blocker
+// (minion/keep-awake.ts), held while a «Посіпака» run is in progress; without it the machine
+// sleeps as usual.
+export async function bootstrap(opts: { port?: number; browser?: BrowserHost; keepAwake?: KeepAwake } = {}): Promise<{ app: INestApplication; url: string }> {
   setBrowserHost(opts.browser);
+  setKeepAwake(opts.keepAwake);
   // Images ride message/create payloads as base64 (omp caps each at 20 MiB),
   // so lift the body limit well past Express's 100 KB default.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
