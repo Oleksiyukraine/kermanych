@@ -167,7 +167,7 @@
           <rect x="636" y="726" width="300" height="84" fill="#f3f2f2" />
         </svg>
         <span class="shell__logo">{{ t('common.nav.logo') }}</span>
-        <span class="shell__ver mono">v1.0</span>
+        <span class="shell__ver mono">v1.1.0</span>
       </div>
       <KTopNav
         class="shell__nav"
