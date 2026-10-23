@@ -83,8 +83,15 @@ import {
   type AgentFinding,
   type FindingTarget,
   type MachineAlert,
+  MINION_AGENT_ID,
+  MINION_OUTCOME_CONTRACT,
+  MINION_TIME_CAP_PROMPT,
+  MINION_TIME_CAP_MS,
+  MINION_GRACE_MS,
+  type MinionResult,
+  type MinionVerdictReport,
 } from "@kermanych/core";
-import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type AiTrigger, type TaskPatch } from "@kermanych/cloud";
+import { claimTaskForLaunch, createTask, getTask, listProjects, patchTask, releaseLaunchClaim, type CloudProject, type AiTrigger, type Task, type TaskPatch } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
 import { NativeSessionService, nativeUnsupported } from "../native/native-session.service";
@@ -93,6 +100,7 @@ import { PR_URL_RE } from "./pr-url";
 import { launchToolsFor } from "./chat-tools";
 import { MachineResourcesService } from "../machine/machine-resources.service";
 import { WatchdogService } from "../machine/watchdog.service";
+import { noAskOverlay } from "../minion/ask-overlay";
 
 type Live = {
   rpc: AgentRuntime;
@@ -179,6 +187,46 @@ type SlotWaiter = {
   entries: TranscriptEntry[];
 };
 
+// A «Посіпака» run's place in the protocol of docs/specs/2026-10-23-minion-auto-run.md
+// (decisions 9-10). Kept beside the Live map, not on a Live: a run outlives its child (the reaper,
+// the time cap's stop, a wake for the operator's answer) and its phase must survive the respawn.
+// Memory-only: after an api restart a run starts over at `work`, attended, with no clock.
+type MinionRun = {
+  // `work`: the card's own work, ended by a verdict. `docs`: the one «Доповнити документацію»
+  // turn after `ready`. `pr`: the «Створити ПР» turn. `idle`: the run waits on a person (its
+  // own needs_decision, a failure, a stop) until the operator writes to it.
+  phase: "work" | "docs" | "pr" | "idle";
+  // The last verdict report_outcome recorded; the turn's end consumes it.
+  verdict?: MinionVerdictReport;
+  // The operator wrote to the run: no time cap from then on, and a turn they started that ends
+  // without a verdict is an ordinary turn, not a failed run.
+  attended?: boolean;
+  // The docs turn went out: a gate still failing afterwards hands the run to a person.
+  docsSent?: boolean;
+  // The time cap was reached: the run counts as failed, whatever verdict follows.
+  capped?: boolean;
+  // Between a turn's end and the send of the docs or PR turn it leads to: still running.
+  advancing?: boolean;
+  // The launch has not returned yet: a child that dies now is the launch's failure, which
+  // launchTask undoes and MinionService counts — not a run to fail a second time.
+  starting?: boolean;
+  capTimer?: NodeJS.Timeout;
+  graceTimer?: NodeJS.Timeout;
+};
+
+// A minion run's result as MinionService counts it toward the pause (decision 9).
+export type MinionRunResult = {
+  sessionId: string;
+  // The card's title, for the pause's detail.
+  title: string;
+  result: MinionResult;
+  // `success` resets the consecutive failures, `failure` adds one, `neutral` (an operator's
+  // stop, delete or finish) neither.
+  effect: "success" | "failure" | "neutral";
+  // The child died signed out of its provider: the minion pauses at once.
+  signedOut?: boolean;
+};
+
 @Injectable()
 export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private map = new Map<string, Live>();
@@ -207,6 +255,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private tracked = new Map<string, number>();
   // The pid of each native harness whose spawn was seen but which has not reported since.
   private nativeSpawned = new Map<string, number>();
+  // «Посіпака» runs on this machine, by session id, and the results MinionService counts. The
+  // supervisor never knows MinionService (it depends on this service, not the other way round).
+  private minionRuns = new Map<string, MinionRun>();
+  private minionResults = new Subject<MinionRunResult>();
+  readonly minionResult$: Observable<MinionRunResult> = this.minionResults.asObservable();
 
   // A finished session's omp child stays resident so a follow-up resumes instantly — but a
   // live `omp --mode rpc` process is by far the largest thing this service keeps alive (a big
@@ -265,6 +318,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     });
     // «Знахідки»: a report changes the session's open counter, which the UI reads off the row.
     this.browser?.findingReported$.subscribe((id) => this.pushUpdate(id));
+    // «Посіпака»: a run's verdict waits for the end of its turn (onMinionTurnEnd).
+    this.browser?.outcomeReported$.subscribe(({ sessionId, report }) => this.onMinionVerdict(sessionId, report));
     // A raised limit starts waiting sessions at once, a lowered one stops nothing (decision 5);
     // switching priority on renices what already runs (decision 9).
     this.resources?.onChange(() => {
@@ -374,6 +429,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy(): void {
     clearInterval(this.reaper);
+    for (const run of this.minionRuns.values()) this.clearMinionClock(run);
     for (const live of this.map.values()) {
       this.stopPoll(live);
       void live.rpc.stop();
@@ -442,6 +498,37 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return { running, waiting: this.waiting.size };
   }
 
+  // «Посіпака» (docs/specs/2026-10-23-minion-auto-run.md, decision 8): a minion run starts only
+  // in a free agent slot and only while no session waits for one, so it never gets ahead of the
+  // operator's own launches. With no limit (the profile declined) there are no slots at all.
+  minionSlotFree(): boolean {
+    const limit = this.resources?.active()?.agents;
+    if (limit === undefined) return true;
+    const { running, waiting } = this.slotCounts();
+    return waiting === 0 && running < limit;
+  }
+
+  // The minion runs whose turn runs now — starting, mid-turn, or just sent a message the child
+  // has not answered yet — or which are between a turn and the docs or PR turn it leads to: the
+  // count the minion's cap is measured against.
+  minionRunning(): number {
+    let n = 0;
+    for (const s of this.registry.listSessions())
+      if (s.minion && (ACTIVE_STATUSES.includes(this.merge(s).status) || this.holdsSlot(s) || this.minionRuns.get(s.id)?.advancing)) n++;
+    return n;
+  }
+
+  // Whether a session of THIS machine runs the card now. The cloud status says the same for the
+  // other machines, but this machine's own push may not have landed yet.
+  runsTask(taskId: string): boolean {
+    return this.registry.listSessions().some((s) => s.taskId === taskId && ACTIVE_STATUSES.includes(this.merge(s).status));
+  }
+
+  // An event of another service on the same stream the socket forwards (MinionService's state).
+  publish(e: ServerEvent): void {
+    this.events.next(e);
+  }
+
   // A turn runs: a live child mid-turn (`queued` while starting, thinking, tool, waiting_input —
   // the last is mid-turn too, blocked on the operator), or a native TUI that lives. A `done` child
   // the reaper has not reached yet holds nothing.
@@ -483,13 +570,19 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.park(s.id, replay, message);
       return false;
     }
-    this.slotHolds.set(s.id, (this.slotHolds.get(s.id) ?? 0) + 1);
+    await this.inSlot(s.id, op);
+    return true;
+  }
+
+  // Hold an agent slot for the session across `op`: the granted half of withSlot, and a minion
+  // launch's start, which never waits (MinionService checked the slot before claiming the card).
+  private async inSlot(id: string, op: () => Promise<unknown>): Promise<void> {
+    this.slotHolds.set(id, (this.slotHolds.get(id) ?? 0) + 1);
     try {
       await op();
     } finally {
-      this.release(s.id);
+      this.release(id);
     }
-    return true;
   }
 
   // The start is over: from here the child's own status says whether it holds the slot (a
@@ -627,13 +720,19 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // systemAppendOpts: the omp overlays (the project's skill library, then the machine limits —
   // later wins), claude's CLAUDE_CODE_* limits, and right after the spawn the renice plus the pid
   // the watchdog will follow. Every kind gets it, chats included; only agents count for slots.
-  private async spawnOpts(id: string, runtime: AgentRuntimeKind, cwd: string, skillsConfig: string | undefined): Promise<Pick<RuntimeLaunchOpts, "configPaths" | "env" | "onSpawn">> {
+  // A «Посіпака» run also loses its ask tool here, on its first spawn and on every wake alike
+  // (docs/specs/2026-10-23-minion-auto-run.md, decision 9): omp through a third overlay,
+  // claude through `disallowedTools`.
+  private async spawnOpts(id: string, runtime: AgentRuntimeKind, cwd: string, skillsConfig: string | undefined): Promise<Pick<RuntimeLaunchOpts, "configPaths" | "env" | "onSpawn" | "disallowedTools">> {
+    const minion = this.registry.listSessions().find((x) => x.id === id)?.minion === true;
     const overlay = runtime === "omp" ? await this.resources?.ompOverlay(cwd) : undefined;
-    const configPaths = [skillsConfig, overlay].filter((p): p is string => !!p);
+    const noAsk = minion && runtime === "omp" ? await noAskOverlay() : undefined;
+    const configPaths = [skillsConfig, overlay, noAsk].filter((p): p is string => !!p);
     const env = runtime === "claude-code" ? this.resources?.claudeEnv() : undefined;
     return {
       ...(configPaths.length ? { configPaths } : {}),
       ...(env ? { env } : {}),
+      ...(minion && runtime === "claude-code" ? { disallowedTools: ["AskUserQuestion"] } : {}),
       onSpawn: (pid) => {
         this.resources?.renice(pid);
         // wireLive ran before start(), so this is the Live of the child just spawned.
@@ -884,18 +983,43 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // status push may not have landed yet. Terminal and backlog cards stay launchable —
     // retrying an errored or stopped task is the point of the board.
     if (ACTIVE_STATUSES.includes(task.status)) throw new Error("task is already running");
-    const mine = this.registry.listSessions().some((s) => s.taskId === taskId && ACTIVE_STATUSES.includes(this.merge(s).status));
-    if (mine) throw new Error("task is already running");
-    // Did THIS call take the assignment? Only a claim we made may be rolled back below.
-    let claimed = false;
-    if (!task.assigneeId) {
-      // Atomic self-assign (`update … where assignee_id is null`). A lost race is not a DB
-      // error, it is zero updated rows — hence `undefined` rather than a throw.
-      const won = await claimTask(client, taskId, userId);
-      if (!won) throw new Error("task already claimed");
-      claimed = true;
+    if (this.runsTask(taskId)) throw new Error("task is already running");
+    // The launch claim (docs/specs/2026-10-23-minion-auto-run.md, decision 7): `queued` and the
+    // assignee in one UPDATE guarded by the status just read, so a ▶ here and «Посіпака» on
+    // another machine cannot both start the card. A lost race is not a DB error, it is zero
+    // updated rows — hence `undefined` rather than a throw — and the card as it is now says why.
+    const won = await claimTaskForLaunch(client, taskId, userId, task.status);
+    if (!won) {
+      const now = await getTask(client, taskId).catch(() => undefined);
+      throw new Error(now && ACTIVE_STATUSES.includes(now.status) ? "task is already running" : "task already claimed");
     }
+    try {
+      return await this.launchTask(task, userId, { images, native });
+    } catch (err) {
+      // A launch that never started must not leave the card `queued`, nor pinned to whoever
+      // failed to start it. The previous status comes back first; the assignee is cleared only
+      // when this launch took it — a pre-existing assignment is somebody's deliberate state.
+      await releaseLaunchClaim(client, taskId, { status: task.status, assigneeId: task.assigneeId }).catch((e: unknown) =>
+        console.warn(`[supervisor] could not release the claim on task ${taskId}: ${(e as Error).message}`),
+      );
+      throw err;
+    }
+  }
 
+  // «Посіпака» starts a card it has just claimed (MinionService, which also checked the cap and
+  // the slot, and releases the claim when this throws). The ordinary task launch with four
+  // differences (docs/specs/2026-10-23-minion-auto-run.md, decision 9): the row is a minion run,
+  // it always gets a worktree, it is never native, and it starts at once instead of queueing for
+  // a slot. Its opening prompt is the minion's instruction (openingPrompt).
+  launchMinion(task: Task, userId: string): Promise<Session> {
+    return this.launchTask(task, userId, { minion: true });
+  }
+
+  // The one launch of a claimed card, shared by the operator's ▶ and the minion: the binding,
+  // the project refresh, the launch parameters, the row, and its removal when the launch fails.
+  private async launchTask(task: Task, userId: string, opts: { images?: ImageInput[]; native?: NativeHarness; minion?: boolean }): Promise<Session> {
+    const { images, native, minion } = opts;
+    const client = this.auth.cloudClient();
     const local = this.registry.listProjects().find((p) => p.id === task.projectId);
     if (!local?.localRepoPath) throw new Error("project not bound");
 
@@ -930,8 +1054,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // A shared card must never commandeer another developer's checkout, which is what the
     // hardcoded `true` here used to guarantee. The in-place option is personal, so it
     // survives exactly for the person who filed the card — for anybody else the card is
-    // isolated, whatever it says.
-    const inPlace = task.worktree === false && task.createdBy === userId;
+    // isolated, whatever it says. A minion run is always isolated: the operator works in that
+    // checkout.
+    const inPlace = !minion && task.worktree === false && task.createdBy === userId;
     const worktree = !inPlace;
 
     const { branch, baseBranch } = await this.resolveLaunchParams(
@@ -966,23 +1091,22 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       platform,
       runtime,
       ...(native ? { native: true } : {}),
-      // A «Глибокий аналіз» card opens with the wrapped prompt (launch → openingPrompt).
-      ...(task.deepAnalysis ? { deepAnalysis: true } : {}),
+      // A «Глибокий аналіз» card opens with the wrapped prompt (launch → openingPrompt). The
+      // minion never takes one: that agent interviews a person.
+      ...(task.deepAnalysis && !minion ? { deepAnalysis: true } : {}),
+      ...(minion ? { minion: true } : {}),
     });
+    if (minion) this.minionRuns.set(session.id, { phase: "work", starting: true });
     try {
-      return await this.launch(session, project, { images });
+      const launched = await this.launch(session, project, { images, ...(minion ? { direct: true } : {}) });
+      const run = this.minionRuns.get(session.id);
+      if (run) run.starting = false;
+      return launched;
     } catch (err) {
+      this.forgetMinionRun(session.id);
       this.browser?.revoke(session.id);
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
-      // A launch that never started must not leave the card pinned to whoever failed to
-      // start it — nobody else could then pick it up. Release ONLY a claim we just made;
-      // a pre-existing assignment is somebody's deliberate state and stays. The cloud
-      // status is still `backlog` here, so `tasks_guard()` permits the write.
-      if (claimed)
-        await patchTask(client, taskId, { assigneeId: null }).catch((e: unknown) =>
-          console.warn(`[supervisor] could not release the claim on task ${taskId}: ${(e as Error).message}`),
-        );
       throw err;
     }
   }
@@ -1207,11 +1331,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // registry-row rollback (remove vs return-to-backlog). The spawn takes an agent slot
   // (docs/specs/2026-10-21-machine-resource-profile.md, decision 5): with none free the worktree
   // and branch still exist at once, the row stays `queued`, and this returns normally — the
-  // caller's rollback is for a launch that failed, not one that waits.
+  // caller's rollback is for a launch that failed, not one that waits. `direct` (a minion run)
+  // starts in a slot at once and never waits: its caller already found one free.
   private async launch(
     session: Session,
     project: Project,
-    opts: { images?: ImageInput[]; fork?: string; firstPrompt?: string } = {},
+    opts: { images?: ImageInput[]; fork?: string; firstPrompt?: string; direct?: boolean } = {},
   ): Promise<Session> {
     const { id, branch, worktree, baseBranch, task } = session;
     if (!project.localRepoPath) throw new Error("project not bound");
@@ -1242,14 +1367,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
     const saved = worktree ? this.registry.updateSession(id, { worktreePath: wtDir }) : session;
     const plan = { images, fork, firstPrompt, staleFrom };
-    await this.withSlot(
-      saved,
-      () => this.spawnLaunched(saved, project, plan, true),
-      // Replayed with everything this call had (fork handle, images, opening prompt) but not its
-      // git: that is done. A row restored after a restart takes the relaunch path instead.
-      () => this.deferredLaunch(id, () => this.spawnLaunched(this.registry.listSessions().find((x) => x.id === id) ?? saved, project, plan, false)),
-      { text: firstPrompt, images },
-    );
+    if (opts.direct) await this.inSlot(id, () => this.spawnLaunched(saved, project, plan, true));
+    else
+      await this.withSlot(
+        saved,
+        () => this.spawnLaunched(saved, project, plan, true),
+        // Replayed with everything this call had (fork handle, images, opening prompt) but not its
+        // git: that is done. A row restored after a restart takes the relaunch path instead.
+        () => this.deferredLaunch(id, () => this.spawnLaunched(this.registry.listSessions().find((x) => x.id === id) ?? saved, project, plan, false)),
+        { text: firstPrompt, images },
+      );
     return this.merge(this.registry.listSessions().find((x) => x.id === id) ?? saved);
   }
 
@@ -1317,6 +1444,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         const directives = saved.taskId ? `${COAUTHOR_DIRECTIVE}\n\n${DOC_MAINTAIN_DIRECTIVE}` : COAUTHOR_DIRECTIVE;
         const modelPrompt = await this.openingPrompt(saved, firstPrompt, cwd);
         rpc.prompt(`${modelPrompt}\n\n${directives}`, images);
+        // A minion run's time cap counts from this spawn to its first verdict (decision 9).
+        if (saved.minion) this.startMinionClock(id);
       } else {
         // No opening message (a forked agent continuing the chat) — sit idle, ready for input.
         live.live.status = "done";
@@ -1363,7 +1492,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // ordinary session gets `firstPrompt` unchanged; a deep-analysis one gets it wrapped in the
   // deep-analysis instruction plus the resolved `deep-analysis` skill, so a project, workspace
   // or repository override wins. Degrades like completeDocs: the wrapper alone is a complete ask.
+  // A «Посіпака» run gets the minion's instruction around the card — the «ШІ-команда» override
+  // and assigned skills like every agent — and Kermanych's outcome contract after it, which no
+  // override can drop (docs/specs/2026-10-23-minion-auto-run.md, decision 11).
   private async openingPrompt(session: Session, firstPrompt: string, cwd: string): Promise<string> {
+    if (session.minion && firstPrompt.trim()) {
+      const { template, block } = await this.agentPrompt(session.projectId, MINION_AGENT_ID, cwd);
+      const card = firstPrompt.trim() === session.name.trim() ? session.name : `${session.name}\n\n${firstPrompt}`;
+      return `${renderInstruction(agentById(MINION_AGENT_ID)!, { task: card }, template)}${block}\n\n${MINION_OUTCOME_CONTRACT}`;
+    }
     if (!session.deepAnalysis || !firstPrompt.trim()) return firstPrompt;
     let block = "";
     try {
@@ -1779,9 +1916,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // more work onto that PR (reviewPending). Reading the durable flag (not the transient
       // live one, cleared on the previous settle) is what keeps EVERY follow-up turn on review
       // rather than dropping the card to `done` after the first PR turn.
-      const hasPr = this.registry.listSessions().find((x) => x.id === id)?.prOpened === true;
-      const review = hasPr || l.reviewPending === true;
-      const settled: Session["status"] = review ? "in_review" : "done";
+      const row = this.registry.listSessions().find((x) => x.id === id);
+      const hasPr = row?.prOpened === true;
+      // A «Посіпака» run decides from its verdict whether this turn waits on a person (decided
+      // before the settle, so the row, the session_update and the card all read `in_review`).
+      const minionStep = row?.minion ? this.onMinionTurnEnd(id, hasPr) : undefined;
+      const review = hasPr || l.reviewPending === true || minionStep?.review === true;
+      // A minion run that goes on with its docs or PR turn holds `queued` instead (onMinionTurnEnd).
+      const settled: Session["status"] = review ? "in_review" : minionStep?.hold ? "queued" : "done";
       if (review) {
         l.prRequested = false;
         l.prOpened = false;
@@ -1790,6 +1932,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       l.state = { status: settled };
       l.live.status = settled;
       this.registry.updateSession(id, { status: settled });
+      // …and then records the result, or sends the docs or PR turn the verdict leads to.
+      minionStep?.after();
       this.refreshState(id);
       this.stopPoll(l);
       // A turn cannot end with a tool still running, so anything left here belongs to a call
@@ -1943,6 +2087,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // The OPERATOR's own message. Everything Kermanych sends itself goes through
   // `sendAsKermanych`, which is the same delivery with the operator's own affordances off.
   async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
+    // The operator took over a «Посіпака» run: it works again, with no clock from here on.
+    this.attendMinionRun(id);
     await this.deliver(id, text, mode, images, true);
   }
 
@@ -2167,6 +2313,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       else if (trigger.agentId === "promote") await this.promoteChatToAgent(id, await this.promotionCard(id));
       else if (trigger.agentId === "pull-request") await this.createPullRequest(id);
       else if (trigger.agentId === "resolve-conflict") await this.resolveConflict(id);
+      // «Посіпака» (MINION_AGENT_ID) is not runnable from here: it needs a card, not a message,
+      // so a trigger naming it is refused like an unknown agent.
       else throw new Error(`агента «${trigger.agentId}» не існує`);
       return true;
     } catch (err) {
@@ -2399,6 +2547,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.map.get(id)?.rpc.answerUi(res);
   }
   async stopSession(id: string) {
+    // The operator's stop ends a «Посіпака» run; the result is written while the turn still runs.
+    await this.endMinionRun(id);
     // A session waiting for a slot has nothing running: stopping it takes it off the queue and
     // drops its pending message. A parked launch never got a child, so its row rests `stopped`.
     if (this.unpark(id)) {
@@ -2433,6 +2583,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       await this.withSlot(s, () => native.restart(s), () => this.restartSession(id));
       return { ok: true };
     }
+    // A restart is the operator stepping in: the old child's exit is not the run failing.
+    this.attendMinionRun(id, "idle");
     const l = this.map.get(id);
     if (l) {
       this.stopPoll(l);
@@ -2451,6 +2603,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     // Off the slot queue first, so nothing starts it while it is being torn down.
     this.unpark(id);
+    await this.endMinionRun(id);
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (s?.native) await this.native?.stop(id);
     const l = this.map.get(id);
@@ -2483,6 +2636,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     browserHost()?.close(id);
     this.browser?.revoke(id);
     this.registry.removeSession(id);
+    this.forgetMinionRun(id);
     this.events.next({ type: "session_removed", sessionId: id });
     this.untrackChild(id);
     this.drainSlots();
@@ -2592,7 +2746,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           });
         }
       }
-      const write = taskReportsWrite({ session: this.merge(row), at: new Date().toISOString(), entries, changedFiles });
+      // The facts are read again after the diff: two writes queued close together (a turn's end,
+      // then the minion result it produced) can finish their diffs in either order, and the one
+      // that enqueues last must carry the session as it is now — not as it was when it started.
+      const now = this.registry.listSessions().find((x) => x.id === id) ?? row;
+      const write = taskReportsWrite({ session: this.merge(now), at: new Date().toISOString(), entries, changedFiles });
       this.registry.enqueueTaskReport(row.taskId, write);
     } catch (err) {
       console.warn(`[supervisor] could not queue the card report of ${id}: ${(err as Error).message}`);
@@ -2766,6 +2924,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // in-place checkout handed back to its base) and the Live with its transcript dropped. A
     // session dormant after a restart has no Live; its write carries no reads or skills and
     // the card keeps the ones earlier turns sent.
+    // A «Посіпака» run still in flight ends `stopped`; one that already ended keeps its result.
+    await this.endMinionRun(id);
     await this.queueTaskReport(id, this.map.get(id)?.transcript);
 
     // A finished session waits for nothing: its parked calls and pending message go.
@@ -2971,6 +3131,246 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  // ── «Посіпака» runs (docs/specs/2026-10-23-minion-auto-run.md, decisions 9-10) ─────────────
+  //
+  // A minion run works its card, reports a verdict through `report_outcome`, and Kermanych acts
+  // on that verdict when the turn ends: `ready` → one «Доповнити документацію» turn when the
+  // gate fails → «Створити ПР» → `in_review` with the PR; `needs_decision`, no verdict, a PR turn
+  // without a PR, the time cap, a dead child → `in_review` (or `error`) with the reason. Every
+  // result is persisted on the row, sent to the card's session report and told to MinionService
+  // (minionResult$), which counts the failures and pauses.
+
+  // The run of a minion session. A run this process did not launch (an api restart) starts over
+  // at `work`, attended: nobody knows when it was spawned, and the operator is the one to act.
+  private minionRun(id: string): MinionRun | undefined {
+    let run = this.minionRuns.get(id);
+    if (!run && this.registry.listSessions().find((x) => x.id === id)?.minion) {
+      run = { phase: "work", attended: true };
+      this.minionRuns.set(id, run);
+    }
+    return run;
+  }
+
+  private forgetMinionRun(id: string): void {
+    const run = this.minionRuns.get(id);
+    if (run) this.clearMinionClock(run);
+    this.minionRuns.delete(id);
+  }
+
+  private clearMinionClock(run: MinionRun): void {
+    clearTimeout(run.capTimer);
+    clearTimeout(run.graceTimer);
+    run.capTimer = undefined;
+    run.graceTimer = undefined;
+  }
+
+  // report_outcome accepted a verdict: it waits for the end of the turn, and the clock stops —
+  // the time cap runs from the spawn to the first verdict.
+  private onMinionVerdict(id: string, report: MinionVerdictReport): void {
+    const run = this.minionRun(id);
+    if (!run) return;
+    run.verdict = report;
+    this.clearMinionClock(run);
+  }
+
+  private startMinionClock(id: string): void {
+    const run = this.minionRuns.get(id);
+    if (!run || run.attended) return;
+    this.clearMinionClock(run);
+    run.capTimer = setTimeout(() => void this.minionTimeCap(id), MINION_TIME_CAP_MS);
+    run.capTimer.unref();
+  }
+
+  // The cap: tell the run to stop and report where it stands, the way the watchdog tells a
+  // session — a steer into a running turn, a prompt otherwise — and stop the turn after the grace.
+  private async minionTimeCap(id: string): Promise<void> {
+    const run = this.minionRuns.get(id);
+    if (!run) return;
+    run.capTimer = undefined;
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s || run.attended || run.verdict || run.phase !== "work") return;
+    run.capped = true;
+    run.graceTimer = setTimeout(() => void this.minionAbort(id), MINION_GRACE_MS);
+    run.graceTimer.unref();
+    await this.sendAsKermanych(id, MINION_TIME_CAP_PROMPT, this.turnRunning(s) ? "steer" : "prompt").catch((err: unknown) =>
+      console.warn(`[supervisor] could not tell minion session ${id} its time is up: ${(err as Error).message}`),
+    );
+  }
+
+  // Still no verdict after the grace: the turn is stopped the way the reaper stops a settled
+  // child — the row rests on review first, so the child's exit reads as a clean end, and the Live
+  // stays for the operator, whose next message respawns it on the same conversation.
+  private async minionAbort(id: string): Promise<void> {
+    const run = this.minionRuns.get(id);
+    if (!run) return;
+    run.graceTimer = undefined;
+    if (run.attended || run.verdict || !this.registry.listSessions().some((x) => x.id === id)) return;
+    run.phase = "idle";
+    const l = this.map.get(id);
+    if (l) {
+      this.stopPoll(l);
+      l.state = { status: "in_review" };
+      l.live.status = "in_review";
+      l.turnPending = false;
+    }
+    this.registry.updateSession(id, { status: "in_review" });
+    const recorded = this.recordMinionResult(id, { outcome: "needs_decision", code: "time_cap" }, "failure");
+    if (l) await l.rpc.stop().catch(() => {});
+    this.drainSlots();
+    await recorded;
+  }
+
+  // The operator wrote to the run (`work`: its next verdict drives the same flow) or restarted
+  // it (`idle`: the old child's exit is theirs, not a failed run). Either way no clock any more.
+  private attendMinionRun(id: string, phase: "work" | "idle" = "work"): void {
+    const run = this.minionRun(id);
+    if (!run) return;
+    run.attended = true;
+    run.phase = phase;
+    this.clearMinionClock(run);
+  }
+
+  // At a minion turn's end, before the settle: whether the turn waits on a person (`review`),
+  // whether the run goes on with a docs or PR turn (`hold`: it settles `queued`, not `done`, so
+  // the card never flashes to the closed lane and stays active for every machine meanwhile),
+  // and what to do once it has settled (`after`). Consumes the turn's verdict.
+  private onMinionTurnEnd(id: string, hasPr: boolean): { review: boolean; hold?: boolean; after: () => void } {
+    const run = this.minionRun(id);
+    if (!run) return { review: false, after: () => {} };
+    const verdict = run.verdict;
+    run.verdict = undefined;
+    const record = (result: MinionResult, effect: MinionRunResult["effect"]) => () => void this.recordMinionResult(id, result, effect);
+    const advance = () => {
+      run.advancing = true;
+      return { review: false, hold: true, after: () => void this.advanceMinion(id, run) };
+    };
+    switch (run.phase) {
+      // Waiting on a person already (a stopped or capped turn's late end): stay on review. A PR
+      // the operator opened from here («Створити ПР» on the finish sheet) is still the card's
+      // result; it was the operator's doing, so it counts neither way.
+      case "idle":
+        if (hasPr && this.registry.listSessions().find((x) => x.id === id)?.minionResult?.outcome !== "pr")
+          return { review: true, after: record({ outcome: "pr" }, "neutral") };
+        return { review: true, after: () => {} };
+      case "docs":
+        return advance();
+      case "pr":
+        run.phase = "idle";
+        // The agent's own words, when it reported why the PR did not open, are the reason. A run
+        // that reached the time cap counts as failed even when its PR opened (decision 9).
+        return hasPr
+          ? { review: true, after: record({ outcome: "pr" }, run.capped ? "failure" : "success") }
+          : { review: true, after: record({ outcome: "needs_decision", code: "no_pr", ...(verdict ? { reason: verdict.summary } : {}) }, "failure") };
+      case "work":
+        if (verdict?.outcome === "ready") return advance();
+        if (verdict) {
+          run.phase = "idle";
+          // The agent's own call resets the failures — unless the time cap made it.
+          return {
+            review: true,
+            after: record({ outcome: "needs_decision", ...(run.capped ? { code: "time_cap" as const } : {}), reason: verdict.summary }, run.capped ? "failure" : "success"),
+          };
+        }
+        // A PR this turn opened is the run's result even without a verdict — the operator may
+        // have pressed «Створити ПР» themselves.
+        if (hasPr && this.registry.listSessions().find((x) => x.id === id)?.minionResult?.outcome !== "pr") {
+          run.phase = "idle";
+          return { review: true, after: record({ outcome: "pr" }, "success") };
+        }
+        // A turn the operator started that ends without a verdict is theirs: an ordinary settle.
+        if (run.attended) return { review: false, after: () => {} };
+        run.phase = "idle";
+        return { review: true, after: record({ outcome: "needs_decision", code: run.capped ? "time_cap" : "no_outcome" }, "failure") };
+    }
+  }
+
+  // After a `ready` (or the docs turn): one docs turn while the gate fails, then the PR. Called
+  // once the turn has settled, so both sends start a fresh turn.
+  private async advanceMinion(id: string, run: MinionRun): Promise<void> {
+    try {
+      let { failures } = await this.docsGate(id);
+      if (failures.length && !run.docsSent) {
+        run.docsSent = true;
+        run.phase = "docs";
+        const docs = await this.completeDocs(id);
+        if (docs.sent) return;
+        // The gate passed meanwhile: nothing was missing any more.
+        failures = docs.failures;
+      }
+      if (failures.length) {
+        run.phase = "idle";
+        this.settleMinionReview(id);
+        await this.recordMinionResult(id, { outcome: "needs_decision", code: "docs_gate", reason: failures.join(", ") }, "failure");
+        return;
+      }
+      run.phase = "pr";
+      await this.createPullRequest(id);
+    } catch (err) {
+      run.phase = "idle";
+      this.settleMinionReview(id);
+      await this.recordMinionResult(id, { outcome: "failed", code: "session_error", reason: (err as Error).message }, "failure");
+    } finally {
+      run.advancing = false;
+      this.pushUpdate(id);
+    }
+  }
+
+  // A run that rests between turns (`queued` while it advanced after `ready`) and then turns out
+  // to wait on a person moves to review — unless a turn has started meanwhile. `turnRunning`
+  // cannot tell: the `queued` hold itself reads as a running turn.
+  private settleMinionReview(id: string): void {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) return;
+    const status = this.merge(s).status;
+    if (status !== "queued" && status !== "done") return;
+    const l = this.map.get(id);
+    if (l && (l.turnPending || l.state.status === "thinking" || l.state.status === "tool" || l.state.status === "waiting_input")) return;
+    if (l) {
+      l.state = { status: "in_review" };
+      l.live.status = "in_review";
+    }
+    this.registry.updateSession(id, { status: "in_review" });
+    this.pushUpdate(id);
+  }
+
+  // Persist a run's result, show it, send it to the card, and tell MinionService how it counts.
+  private async recordMinionResult(id: string, result: MinionResult, effect: MinionRunResult["effect"], signedOut = false): Promise<void> {
+    const row = this.registry.listSessions().find((x) => x.id === id);
+    if (!row?.minion) return;
+    const run = this.minionRuns.get(id);
+    if (run) this.clearMinionClock(run);
+    this.registry.updateSession(id, { minionResult: result });
+    this.pushUpdate(id);
+    this.minionResults.next({ sessionId: id, title: row.name, result, effect, ...(signedOut ? { signedOut } : {}) });
+    await this.queueTaskReport(id, this.map.get(id)?.transcript);
+  }
+
+  // The child died (wireLive's onExit flipped the row to `error`). A run that already waits on
+  // a person, or that the operator is restarting, does not fail by it.
+  private onMinionDeath(id: string, reason: string, signedOut: boolean): void {
+    const run = this.minionRun(id);
+    if (!run || run.phase === "idle") return;
+    run.phase = "idle";
+    // A verdict the dead turn reported never reached its end: the operator's next turn starts clean.
+    run.verdict = undefined;
+    void this.recordMinionResult(id, { outcome: "failed", code: "session_error", ...(reason ? { reason } : {}) }, "failure", signedOut);
+  }
+
+  // The operator stops, deletes or finishes a minion session. A run still in flight — a turn
+  // running, a docs or PR turn on its way, or no result yet — ends `stopped`, which counts for
+  // nothing; a run that already ended keeps its result.
+  private async endMinionRun(id: string): Promise<void> {
+    const row = this.registry.listSessions().find((x) => x.id === id);
+    const run = row?.minion ? this.minionRun(id) : undefined;
+    if (!row || !run) return;
+    const inFlight = !row.minionResult || run.advancing === true || ACTIVE_STATUSES.includes(this.merge(row).status) || this.turnRunning(row);
+    run.phase = "idle";
+    run.attended = true;
+    run.verdict = undefined;
+    this.clearMinionClock(run);
+    if (inFlight) await this.recordMinionResult(id, { outcome: "stopped" }, "neutral");
+  }
+
   // Shared live-session wiring (fresh create + resume): build the Live, register it,
   // and route exit + events. onExit marks error unless the session ended cleanly.
   private wireLive(sessionId: string, rpc: AgentRuntime, status: Session["status"]): Live {
@@ -2982,16 +3382,23 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // `done` between turns, so its first turn on a signed-out CLI died «done» and the operator
       // saw nothing. Only `stopped` (the operator's own stop) outranks it.
       const signedOut = cause === "claude_not_authenticated" || cause === "omp_not_authenticated";
+      // A minion child that dies before its launch returned is that launch's failure: launchTask
+      // removes the row and MinionService puts the card back in the backlog. An `error` pushed
+      // from here would race that release to the card (and lose to tasks_guard once the card is
+      // unassigned again), so the row is left for the launch to remove.
+      const launchFailure = this.minionRuns.get(sessionId)?.starting === true;
       // `in_review` counts as ended cleanly: the PR turn finished, and the reaper stops that
       // child on purpose (a review takes as long as a human takes). Without it here, every
       // reaped review session would flip to `error` on its own child's exit.
       const settled = live.live.status === "stopped" || live.live.status === "done" || live.live.status === "in_review";
-      if (live.live.status !== "stopped" && (signedOut || !settled)) {
+      if (!launchFailure && live.live.status !== "stopped" && (signedOut || !settled)) {
         live.live.status = "error";
         live.live.error = reason;
         if (cause) live.live.errorCode = cause;
         this.registry.updateSession(sessionId, { status: "error" });
         this.pushUpdate(sessionId);
+        // A minion run that dies is a failed run; a signed-out one also pauses the minion.
+        this.onMinionDeath(sessionId, reason, signedOut);
       }
       live.turnPending = false;
       this.untrackChild(sessionId, live.pid);

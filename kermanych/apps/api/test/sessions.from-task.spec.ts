@@ -43,26 +43,31 @@ vi.mock("../src/rpc/rpc-session", () => {
 
 // Fake cloud: an in-memory `tasks` map + the project list. Mocked wholesale (no
 // importOriginal) so this unit test never needs packages/cloud built and can flip the
-// claim race by hand. `claimTask` reproduces the DB's `assignee_id is null` predicate:
-// losing the race is zero rows, i.e. `undefined`, not an exception.
+// claim race by hand. `claimTaskForLaunch` reproduces the DB's predicate (the status read
+// before, assignee null or the caller) and sets `queued` + the assignee in one go: losing the
+// race is zero rows, i.e. `undefined`, not an exception. `rival` is what the winner of a lost
+// race did to the card. `releaseLaunchClaim` puts the status back, then frees the assignee only
+// when the card had none.
 const cloudTasks = new Map<string, Task>();
 const cloudProjects: CloudProject[] = [];
 let claimWins = true;
+let rival: Partial<Task> | undefined;
+const releases: { taskId: string; previous: { status: Task["status"]; assigneeId?: string } }[] = [];
 vi.mock("@kermanych/cloud", () => ({
   getTask: async (_client: unknown, taskId: string) => cloudTasks.get(taskId),
-  claimTask: async (_client: unknown, taskId: string, userId: string) => {
+  claimTaskForLaunch: async (_client: unknown, taskId: string, userId: string, from: Task["status"]) => {
     const t = cloudTasks.get(taskId);
-    if (!t || t.assigneeId || !claimWins) return undefined;
-    const next: Task = { ...t, assigneeId: userId };
+    if (t && rival) cloudTasks.set(taskId, { ...t, ...rival });
+    if (!t || rival || !claimWins || t.status !== from || (t.assigneeId && t.assigneeId !== userId)) return undefined;
+    const next: Task = { ...t, status: "queued", assigneeId: userId };
     cloudTasks.set(taskId, next);
     return next;
   },
-  patchTask: async (_client: unknown, taskId: string, patch: { assigneeId?: string | null }) => {
+  releaseLaunchClaim: async (_client: unknown, taskId: string, previous: { status: Task["status"]; assigneeId?: string }) => {
+    releases.push({ taskId, previous });
     const t = cloudTasks.get(taskId);
     if (!t) throw new Error("task not found");
-    const next: Task = { ...t, assigneeId: patch.assigneeId ?? undefined };
-    cloudTasks.set(taskId, next);
-    return next;
+    cloudTasks.set(taskId, { ...t, status: previous.status, ...(previous.assigneeId ? {} : { assigneeId: undefined }) });
   },
   listProjects: async () => cloudProjects,
 }));
@@ -113,6 +118,7 @@ function task(over: Partial<Task> = {}): Task {
     createdAt: NOW,
     updatedAt: NOW,
     worktree: true,
+    autoRun: false,
     ...over,
   };
   cloudTasks.set(t.id, t);
@@ -147,6 +153,8 @@ beforeEach(() => {
   cloudTasks.clear();
   cloudProjects.length = 0;
   claimWins = true;
+  rival = undefined;
+  releases.length = 0;
 });
 
 describe("createSessionFromTask", () => {
@@ -167,18 +175,30 @@ describe("createSessionFromTask", () => {
     expect(started).toHaveLength(0);
   });
 
-  it("self-assigns an unassigned task and launches it", async () => {
+  it("claims an unassigned task — queued and self-assigned in one update — and launches it", async () => {
     const { sup, registry } = make();
     bind(registry);
     task();
 
     const session = await sup.createSessionFromTask("task-1", USER);
 
-    expect(cloudTasks.get("task-1")!.assigneeId).toBe(USER);
+    expect(cloudTasks.get("task-1")).toMatchObject({ assigneeId: USER, status: "queued" });
     expect(session.taskId).toBe("task-1");
     expect(session.projectId).toBe(PROJECT);
     expect(started).toHaveLength(1);
     expect(registry.listSessions()).toHaveLength(1);
+  });
+
+  // docs/specs/2026-10-23-minion-auto-run.md, decision 7: a card already assigned to the runner
+  // takes the same claim, so a ▶ here and «Посіпака» on another machine cannot both start it.
+  it("claims the runner's own card too: its status goes to queued", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, status: "stopped" });
+
+    await sup.createSessionFromTask("task-1", USER);
+
+    expect(cloudTasks.get("task-1")).toMatchObject({ assigneeId: USER, status: "queued" });
   });
 
   it("refuses when the atomic claim loses the race", async () => {
@@ -188,6 +208,19 @@ describe("createSessionFromTask", () => {
     claimWins = false;
 
     await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("task already claimed");
+    expect(started).toHaveLength(0);
+    expect(registry.listSessions()).toHaveLength(0);
+    expect(releases).toHaveLength(0);
+  });
+
+  it("says the card is running when the race was lost to a start elsewhere", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER });
+    // The minion on another machine of the same user claimed it between the read and the claim.
+    rival = { status: "queued" };
+
+    await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("task is already running");
     expect(started).toHaveLength(0);
     expect(registry.listSessions()).toHaveLength(0);
   });
@@ -305,7 +338,7 @@ describe("createSessionFromTask", () => {
     expect(started).toHaveLength(0);
   });
 
-  it("releases a claim it made itself when the launch fails", async () => {
+  it("releases a claim it made itself when the launch fails: backlog again, unassigned", async () => {
     const { sup, registry, worktree } = make();
     bind(registry);
     task();
@@ -313,19 +346,29 @@ describe("createSessionFromTask", () => {
 
     await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("fatal: invalid reference");
     // Nobody could pick the card up again if the failed claim stuck to us.
-    expect(cloudTasks.get("task-1")!.assigneeId).toBeUndefined();
+    expect(cloudTasks.get("task-1")).toMatchObject({ status: "backlog", assigneeId: undefined });
+    expect(releases).toEqual([{ taskId: "task-1", previous: { status: "backlog", assigneeId: undefined } }]);
     expect(registry.listSessions()).toHaveLength(0);
     expect(started).toHaveLength(0);
   });
 
-  it("leaves a pre-existing assignment alone when the launch fails", async () => {
+  it("restores the previous status and leaves a pre-existing assignment alone when the launch fails", async () => {
     const { sup, registry, worktree } = make();
     bind(registry);
-    task({ assigneeId: USER });
+    task({ assigneeId: USER, status: "stopped" });
     worktree.addWorktree.mockRejectedValueOnce(new Error("fatal: invalid reference"));
 
     await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("fatal: invalid reference");
-    expect(cloudTasks.get("task-1")!.assigneeId).toBe(USER);
+    expect(cloudTasks.get("task-1")).toMatchObject({ status: "stopped", assigneeId: USER });
+  });
+
+  it("releases the claim when the project turns out not to be bound here", async () => {
+    const { sup, registry } = make();
+    bind(registry, "");
+    task();
+
+    await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("project not bound");
+    expect(cloudTasks.get("task-1")).toMatchObject({ status: "backlog", assigneeId: undefined });
   });
 
   it("runs in place when the card's own author asks for it", async () => {

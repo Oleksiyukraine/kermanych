@@ -105,6 +105,19 @@ export const useOrchestrator = defineStore('orchestrator', () => {
 
   let socket: Socket | undefined;
 
+  // Stores that keep a slice of the api's state of their own (stores/minion.ts) listen here
+  // rather than being imported: they need `notify` from this store, and an import both ways
+  // would make the two modules circular. Called after `reduce` has applied the event.
+  const listeners = new Set<(e: ServerEvent) => void>();
+  function onServerEvent(fn: (e: ServerEvent) => void): () => void {
+    listeners.add(fn);
+    return () => listeners.delete(fn);
+  }
+  function dispatch(e: ServerEvent): void {
+    reduce(e);
+    for (const fn of listeners) fn(e);
+  }
+
   // Reduce a ServerEvent into state — mirrors the legacy MVP store exactly.
   function reduce(e: ServerEvent): void {
     if (e.type === 'snapshot') {
@@ -235,7 +248,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
 
   function connect(): void {
     if (socket) return;
-    socket = connectSocket(reduce);
+    socket = connectSocket(dispatch);
     // The catalog describes this machine's omp install, not registry state, so the connect
     // that warms the store pulls it too.
     void loadModels();
@@ -549,6 +562,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     fileManagerSide,
     toggleFileManager,
     connect,
+    onServerEvent,
     selectProject,
     selectSession,
     createChat,

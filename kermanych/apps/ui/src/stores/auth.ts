@@ -179,6 +179,16 @@ export const useAuth = defineStore('auth', () => {
       client.auth.onAuthStateChange((_event, session) => {
         void apply(session);
       });
+      // The desktop app keeps the session refreshing while its window is hidden
+      // (docs/specs/2026-10-23-minion-auto-run.md, decision 13). auth-js 2.112.3 stops its
+      // refresh ticker while `document.visibilityState` is `hidden`; a minimised or covered
+      // window would then let the token the local api holds expire within the hour, and with it
+      // the status pushes of every session and the «Посіпака» claims. `startAutoRefresh()` keeps
+      // the ticker running and drops that visibility handling — only once `initialize()` has
+      // finished, which `getSession()` awaits: its last step registers the visibility handling
+      // again. A browser tab keeps the default: there the minion works only while the tab is
+      // visible.
+      if (window.kermanych) await client.auth.startAutoRefresh();
     } catch (e) {
       // boot/supabase.ts awaits init(); rethrowing would take the whole app
       // down over a storage hiccup. A signed-out app that still renders /login

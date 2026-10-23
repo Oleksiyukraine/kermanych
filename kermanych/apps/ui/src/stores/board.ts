@@ -201,6 +201,9 @@ export const useBoard = defineStore('board', () => {
     if (patch.worktree !== undefined) next.worktree = patch.worktree;
     if (patch.hidden !== undefined) next.hidden = patch.hidden;
     if (patch.deepAnalysis !== undefined) next.deepAnalysis = patch.deepAnalysis;
+    // tasks_guard() may still answer otherwise (a colleague's content edit clears it); the
+    // Realtime echo of the stored row corrects the optimistic one then.
+    if (patch.autoRun !== undefined) next.autoRun = patch.autoRun;
     // '' is the «за замовчуванням» clear (toTaskRow nulls it), so drop the key rather than
     // storing a blank that is not a valid ThinkingLevel.
     if (patch.effort !== undefined) {

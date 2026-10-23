@@ -87,10 +87,18 @@
              the narrowing here turns the possibly-undefined subject into one. Not keyed — the
              panels watch the owner and reload in place, dropping any unsaved draft with it. -->
         <!-- Агенти кастомізуються лише на рівні воркспейсу (override інструкції + призначені
-             навички діють на всю команду). Проєкт і користувач поки не мають власного шару
-             агентів — заглушка, а не порожній редактор, який нічого не збереже. -->
+             навички діють на всю команду). На рівні проєкту — картка «Посіпаки»: його вмикають
+             для проєкту на цій машині, а інструкцію й навички воркспейсу показано лише для
+             читання. Користувач поки не має власного шару агентів — заглушка, а не порожній
+             редактор, який нічого не збереже. -->
         <div v-else-if="section.key === 'agents'" class="ait__form ait__form--wide">
           <AiAgentsPanel v-if="owner.scope === 'workspace'" :owner="owner" :owner-name="ownerName" />
+          <MinionPanel
+            v-else-if="owner.scope === 'project'"
+            :project-id="owner.id"
+            :workspace-id="cloudRow?.workspaceId"
+            @open-workspace="setScope('workspace')"
+          />
           <div v-else class="ait__blank">
             <span class="ait__blank-eyebrow mono">{{ t('aiTeam.blank.eyebrow') }}</span>
             <p>{{ t('aiTeam.agentsUnavailable') }}</p>
@@ -139,6 +147,7 @@ import { useAuth } from 'stores/auth';
 import { AI_TEAM_SCOPES, AI_TEAM_SECTIONS, aiTeamSection } from '../lib/ai-team';
 import KTopNav from 'components/kit/KTopNav.vue';
 import AiAgentsPanel from 'components/settings/AiAgentsPanel.vue';
+import MinionPanel from 'components/settings/MinionPanel.vue';
 import TriggersPanel from 'components/settings/TriggersPanel.vue';
 import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
 import HelpersCatalogPanel from 'components/settings/HelpersCatalogPanel.vue';

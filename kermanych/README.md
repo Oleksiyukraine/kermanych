@@ -321,6 +321,16 @@ selects it, so apply it before shipping a client that knows it
 ([Applying a migration](#applying-a-migration-to-the-teams-project)). Spec:
 `docs/specs/2026-10-08-deep-analysis-task.md`.
 
+**«Дозволити автовиконання» lets «Посіпака» take a card by itself.** The switch is in the
+launcher, in the board's create/edit form and in the findings dialog, and it is stored on the
+card (`tasks.auto_run`). Only the card's author can switch it on; anyone can switch it off; and
+when anyone but the author changes what the card asks for (title, description, project, base
+branch, model, effort, prefix, platform, worktree, images, «Глибокий аналіз»), the database
+switches it off. It does not combine with «Глибокий аналіз», which needs a person to interview.
+Such cards carry the «Посіпака» mark on «Дошка» and in «Задачі». What the minion does with them
+is described under [Cloud tasks and local sessions](#cloud-tasks-and-local-sessions) →
+«Посіпака».
+
 ### Jira
 
 A workspace can mirror **up to ten Jira Cloud boards** onto «Дошка». The owner connects
@@ -527,6 +537,12 @@ has the «Cloud answers» section on the Slack card calls them. Delete the Edge 
 switched its Slack app to the cloud manifest must paste the desktop manifest back («Copy
 manifest» on the Slack tile), or Slack keeps sending events to the deleted URL and no machine
 gets the questions.
+
+`20261023090000_task_auto_run.sql` adds `tasks.auto_run` and `tasks.finding_kind` and teaches
+`tasks_guard()` the authorship rules «Посіпака» relies on: `created_by` and `finding_kind` keep
+their inserted values, only the author switches `auto_run` on, and anyone else's edit of a card's
+content switches it off. It only adds, but every task read selects the two columns, so push it
+before shipping a client that knows them.
 
 ### Running against a local stack or your own project
 
@@ -826,6 +842,10 @@ spawned → their nested subagents.
 - **Clicks.** A session card opens its chat (the map closes); so does any card in the list. A
   subagent card opens its transcript and figures in a drawer over the map. Esc closes the
   drawer, then the map.
+- **«Посіпака».** Its sessions carry the minion mark, and «потрібне рішення» when they wait for
+  you. A strip above the map shows the minion on this machine — working N of its cap, the cards
+  waiting, the activated projects — or why it is paused, with ⏸ / ▶. It is hidden while no
+  project is activated here.
 - **Limit.** Subagent trees live in the api's memory while the session is live: they survive
   a UI reload (the socket snapshot carries them) but not an api or app restart, «Завершити»
   or deleting the session. A subagent's transcript opens only while its session is live.
@@ -983,7 +1003,9 @@ developer's machine. The direction is always task → session.
    It starts in `backlog`, which exists only in the cloud.
 2. **Assign** — the assignee may hand a card over or release it, and the workspace owner
    may take one back from someone who is gone. Anyone may claim an UNASSIGNED card, and
-   pressing «Запустити» on one self-assigns it atomically. Taking a card assigned to
+   pressing «Запустити» on one self-assigns it atomically — in the same write that moves it
+   to `queued`, guarded by the status the launch read, so two machines can never both start
+   one card. Taking a card assigned to
    somebody else is refused by the database, not just by the UI — which is why the control
    is greyed out before the attempt rather than explaining afterwards. An active task
    (`queued`, `thinking`, `tool`, `waiting_input`) can be neither reassigned nor deleted.
@@ -1078,7 +1100,9 @@ problems in its reply.
   agent.
 - **Створити задачу →** opens one dialog for both targets, prefilled and editable: the title,
   and a description with Context, Acceptance criteria, Evidence, Suggested fix and the origin
-  (project, branch, session).
+  (project, branch, session). A board card also records that it came from a finding and of
+  which kind (`tasks.finding_kind`, kept as created, for later counts), and the dialog offers
+  «Дозволити автовиконання», so «Посіпака» (below) can take the card.
   - **Дошка** creates a card under your account in any project of the session's workspace
     (the session's own by default). The assignee is optional, model and effort come from the
     project's defaults, and the branch prefix is `fix` for bugs and vulnerabilities, otherwise
@@ -1096,6 +1120,58 @@ problems in its reply.
   An unknown session or finding answers 404, and a finding that is no longer open answers 400.
   If the card or issue is created but recording it fails, the finding stays open with the error
   shown in the dialog. The card or issue already exists then: check before filing again.
+
+### «Посіпака» (autonomous runs)
+
+«Посіпака» (code id `minion`) works your backlog while you do something else (spec:
+`docs/specs/2026-10-23-minion-auto-run.md`). On a machine where you activated it for a project,
+it takes **your own** cards that allow automatic execution and brings each one to a pull
+request with nobody watching.
+
+- **What it takes.** A card of an activated project, in `backlog`, with «Дозволити
+  автовиконання», created by the account signed in on this machine, unassigned or assigned to
+  it, neither a «Глибокий аналіз» nor a Jira/Linear ticket. The oldest one first, across all
+  activated projects. Only your own cards, because the minion runs them with your account, your
+  `.env` and your `GIT_TOKEN`: the database keeps a card's author as created, lets only the
+  author switch automatic execution on, and switches it off when anyone else edits what the
+  card asks for.
+- **Activation.** «ШІ-команда» → project → «Агенти» → «Посіпака» → «Активувати на цій машині».
+  It is stored on this machine only (SQLite `minion_projects`), for any number of projects, and
+  needs the project bound to a local repository. Deactivating stops taking new cards; a run in
+  progress goes on.
+- **How many at once.** One cap for the whole machine, across its projects: 1 by default, up
+  to 8, set on the same card. A minion run starts only on a free agent slot and only while none
+  of your own sessions waits for one («Ресурси машини»), so your launches never queue behind it.
+- **A run.** An ordinary agent session of the card's project in a fresh worktree, on your
+  runtime, with the card's model and effort and every rule of the repository and the project
+  (CLAUDE.md / AGENTS.md, skills, docs policy, `.env`). Its instruction and assigned skills are
+  the «Посіпака» agent's in «ШІ-команда» → workspace → «Агенти». It cannot ask questions — the
+  ask tool is off — so it decides within the card, checks its work against the card's
+  acceptance criteria and the project's checks, and ends with a verdict through the
+  `report_outcome` tool of its `kermanych` MCP server:
+  - `ready`: Kermanych completes the documentation once if the project requires it and it is
+    missing, then runs «Створити ПР» as usual — the PR is opened with the project's
+    `GIT_TOKEN` from this machine — and the card lands on «На ревʼю»;
+  - `needs_decision`: the card lands on «На ревʼю» with «потрібне рішення» and the reason.
+    Answer the session in «Агенти» like any other; the minion goes on and opens the PR when it
+    is done.
+- **When it pauses.** Two failed runs in a row pause it on this machine: a launch that fails,
+  a crash, a turn that ends without a verdict, a `ready` that ends without a PR, or a card that
+  runs past 2 hours. A signed-out AI provider pauses it at once, before it takes a card.
+  «Продовжити» on the «Посіпака» card or ▶ on «Карта агентів» resumes it. Stopping a minion
+  session yourself is not a failure, and the minion does not take that card again.
+- **Where you see it.** The «Посіпака» mark on its cards and sessions, «потрібне рішення» on
+  the cards that wait for you, the outcome in the card's session report
+  (`session_report.minion`, readable from every machine), and the strip above «Карта агентів».
+  Routes: `GET /api/minion`, `PUT /api/minion` (`{ cap?, paused? }`),
+  `PUT /api/minion/projects/:id` (`{ active }`); the socket event `minion_update`.
+- **An always-on machine.** Install Kermanych there, sign in with **your own** account (a
+  separate account would find no cards of its own), bind the projects, put `GIT_TOKEN` into
+  their `.env`, log the AI provider in, and activate the minion. Keep the window open: closing
+  it quits Kermanych, and its runs end as `stopped`. While a run is in progress the app keeps
+  the Mac from idle sleep (the screen may turn off); otherwise the machine sleeps as usual, so
+  set macOS not to sleep on a dedicated box. The desktop app keeps its sign-in fresh while the
+  window is hidden. Signing out on one machine currently signs you out on all of them.
 
 ### Skills («ШІ-команда → Навички»)
 

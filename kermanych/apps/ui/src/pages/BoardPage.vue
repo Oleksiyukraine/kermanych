@@ -155,6 +155,8 @@
           :assignee="resolveAssignee(task.assigneeId, membersOf(task.projectId))"
           :assignee-loading="!!task.assigneeId && rosterPending(task.projectId)"
           :deep-analysis="task.deepAnalysis"
+          :auto-run="task.autoRun"
+          :needs-decision="cardDecisionReason(t, task)"
           @click="openEdit(task)"
         />
 
@@ -234,6 +236,19 @@
           />
         </div>
         <KField v-model="draftBranch" :label="t('board.editor.branch')" :placeholder="t('board.editor.branchPlaceholder')" />
+        <!-- «Дозволити автовиконання». Only the author switches it on (tasks_guard() refuses
+             anyone else), so for a colleague's card the box is locked while it is off — and stays
+             clickable while on, because anyone may switch it off. This form does not show «Глибокий
+             аналіз», so a deep-analysis card keeps the box off rather than losing its mode unseen. -->
+        <div class="board__check">
+          <KCheckbox
+            :model-value="draftAutoRun"
+            :label="t('minion.autoRun.label')"
+            :disabled="!!autoRunLockReason"
+            @update:model-value="draftAutoRun = $event"
+          />
+          <p class="board__check-desc">{{ autoRunLockReason ?? t('minion.autoRun.caption') }}</p>
+        </div>
         <!-- The label is hoisted OUT of KSelect so the avatar can be centred on the
              control itself: inside the component the label and the input are one column,
              and centring the face on that column parks it in the gap between them. -->
@@ -391,7 +406,8 @@ import { api } from '../lib/api';
 import { installReconcile } from '../lib/reconcile';
 import { UNASSIGNED, filterTasks, scopedProjectIds } from '../lib/scope';
 import { ASSIGNMENT_REFUSALS } from '../lib/cloud-errors';
-import { boardTasks, canAssignTask, canRunTask } from '../lib/tasks-view';
+import { autoRunSwitchLocked, boardTasks, canAssignTask, canRunTask, cardModesFromCard } from '../lib/tasks-view';
+import { cardDecisionReason } from '../lib/minion';
 import JiraBoardView from 'components/jira/JiraBoardView.vue';
 import LinearBoardView from 'components/linear/LinearBoardView.vue';
 import { useJira } from 'stores/jira';
@@ -1191,6 +1207,17 @@ const draftBranch = ref('');
 // Creation only: while editing, the select writes through onAssign and the card itself is
 // the value. '' is «не призначено».
 const draftAssignee = ref('');
+// «Дозволити автовиконання», sent on both create and save.
+const draftAutoRun = ref(false);
+// Why the box cannot be switched on, or undefined when it can: a colleague's card (only its
+// author may allow it), or a «Глибокий аналіз» card (that agent interviews, nobody is there).
+const autoRunLockReason = computed(() => {
+  if (autoRunSwitchLocked(draftAutoRun.value, editingTask.value, auth.user?.id ?? '')) return t('minion.autoRun.authorOnly');
+  if (!draftAutoRun.value && editingTask.value?.deepAnalysis) return t('minion.autoRun.notWithDeep');
+  return undefined;
+});
+// The switch as the form opened on a card.
+let openedAutoRun = false;
 
 // Images attached at task creation (paste ⌘V, drag-drop, or the ⛶ file-pick). Create only:
 // `board.createTask` uploads them to the task-images bucket and writes their paths onto the
@@ -1246,6 +1273,7 @@ function openCreate(): void {
   draftPlatform.value = '';
   draftBranch.value = '';
   draftAssignee.value = '';
+  draftAutoRun.value = false;
   clearDraftImages();
   editorOpen.value = true;
 }
@@ -1264,6 +1292,8 @@ function openEdit(task: Task): void {
   // Reset with the rest of the draft set rather than left over from a previous dialog: only
   // the create branch reads it, and a half-reset draft set is a trap for the next edit here.
   draftAssignee.value = task.assigneeId ?? '';
+  draftAutoRun.value = cardModesFromCard(task).autoRun;
+  openedAutoRun = draftAutoRun.value;
   clearDraftImages();
   editorOpen.value = true;
 }
@@ -1282,6 +1312,9 @@ async function submitEditor(): Promise<void> {
     prefix: draftPrefix.value,
     platform: draftPlatform.value,
     branch: draftBranch.value,
+    // Sent only when this form changed it (lib/tasks-view taskPatchFromDraft says why); a new
+    // card always carries it.
+    ...(!editingId.value || draftAutoRun.value !== openedAutoRun ? { autoRun: draftAutoRun.value } : {}),
   };
 
   // The title is the ONE field nothing downstream defends: `tasks.title` is `text not null`
@@ -1504,6 +1537,14 @@ function onDelete(task: Task): void {
 .board__stale-note {
   font-size: 11.5px;
   color: var(--k-warning);
+}
+
+/* A card switch with its caption under the label, the launcher's layout (agents-launcher__check). */
+.board__check-desc {
+  margin: 3px 0 0;
+  padding-left: 24px;
+  font-size: 11.5px;
+  color: var(--k-muted);
 }
 
 /* QA checklist: a bordered block inside the form so it reads as the card's own artifact, not

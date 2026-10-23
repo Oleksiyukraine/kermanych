@@ -41,19 +41,17 @@ const cloudTasks = new Map<string, Task>();
 const cloudProjects: CloudProject[] = [];
 vi.mock("@kermanych/cloud", () => ({
   getTask: async (_client: unknown, taskId: string) => cloudTasks.get(taskId),
-  claimTask: async (_client: unknown, taskId: string, userId: string) => {
+  claimTaskForLaunch: async (_client: unknown, taskId: string, userId: string, from: Task["status"]) => {
     const t = cloudTasks.get(taskId);
-    if (!t || t.assigneeId) return undefined;
-    const next: Task = { ...t, assigneeId: userId };
+    if (!t || t.status !== from || (t.assigneeId && t.assigneeId !== userId)) return undefined;
+    const next: Task = { ...t, status: "queued", assigneeId: userId };
     cloudTasks.set(taskId, next);
     return next;
   },
-  patchTask: async (_client: unknown, taskId: string, patch: { assigneeId?: string | null }) => {
+  releaseLaunchClaim: async (_client: unknown, taskId: string, previous: { status: Task["status"]; assigneeId?: string }) => {
     const t = cloudTasks.get(taskId);
     if (!t) throw new Error("task not found");
-    const next: Task = { ...t, assigneeId: patch.assigneeId ?? undefined };
-    cloudTasks.set(taskId, next);
-    return next;
+    cloudTasks.set(taskId, { ...t, status: previous.status, ...(previous.assigneeId ? {} : { assigneeId: undefined }) });
   },
   listProjects: async () => cloudProjects,
 }));
@@ -85,6 +83,7 @@ function cloudTask(over: Partial<Task> = {}): Task {
     createdAt: NOW,
     updatedAt: NOW,
     worktree: true,
+    autoRun: false,
     ...over,
   };
   cloudTasks.set(t.id, t);

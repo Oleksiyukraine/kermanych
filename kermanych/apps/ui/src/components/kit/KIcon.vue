@@ -36,7 +36,9 @@ export type KIconName =
   | 'worktree'
   | 'plus'
   | 'analysis'
-  | 'start';
+  | 'start'
+  | 'minion'
+  | 'decision';
 </script>
 
 <script setup lang="ts">
@@ -139,6 +141,19 @@ const ICONS: Record<KIconName, readonly string[]> = {
     'M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0',
     'M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5',
   ],
+  // «Посіпака» — a bot (Lucide's): the agent that takes cards by itself. KMinionMark carries it
+  // on the cards it may take and on the sessions it runs.
+  minion: [
+    'M12 8V4H8',
+    'M6 8h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z',
+    'M2 14h2',
+    'M20 14h2',
+    'M15 13v2',
+    'M9 13v2',
+  ],
+  // «Потрібне рішення» — a question in a disc (Lucide's circle-help): the run stopped on a choice
+  // that is the operator's to make (KDecisionMark).
+  decision: ['M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0', 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3', 'M12 17h.01'],
 };
 
 const props = defineProps<{ name: KIconName }>();

@@ -23,7 +23,7 @@
 // they get no panel. The parallel agent limit does: it is part of «Ресурси машини», stored
 // per machine by the api (`/machine/resources`).
 
-import type { AgentDef, EnvEntry, MachineResources, RepoSkill, ResourceLimits, ResourcesUpdate, SkillView } from '@kermanych/core';
+import { MINION_AGENT_ID, type AgentDef, type EnvEntry, type MachineResources, type RepoSkill, type ResourceLimits, type ResourcesUpdate, type SkillView } from '@kermanych/core';
 import type { AiAgentSkill, TriggerSource } from '@kermanych/cloud';
 
 export type SettingsScope = 'project' | 'workspace' | 'app';
@@ -300,14 +300,17 @@ export function triggerActionOptions(source: TriggerSource): { value: 'prompt' |
 /**
  * THE AGENTS A TRIGGER CAN RUN, derived from the registry rather than listed.
  *
- * The filter is the presence of an `instruction`, which is exactly what separates the four
- * agents SupervisorService.runTriggerAgent can start from `finish` and `summary`: those are
+ * The filter is the presence of an `instruction`, which is exactly what separates the agents
+ * SupervisorService.runTriggerAgent can start from `finish` and `summary`: those are
  * automations with no model and no session of their own, and naming one produces the error
  * notice «агента … не існує» and nothing else. Same filter as `assignmentRows`, and for the
- * same reason — a seventh agent must not be able to drift out of this list.
+ * same reason — a new agent must not be able to drift out of this list.
+ *
+ * «Посіпака» is the one exception by id: it carries an instruction, but it runs a CARD, not a
+ * message, and runTriggerAgent refuses it (docs/specs/2026-10-23-minion-auto-run.md, decision 11).
  */
 export function triggerAgentOptions(agents: readonly AgentDef[]): { value: string; labelKey: string }[] {
-  return agents.filter((a) => a.instruction).map((a) => ({ value: a.id, labelKey: a.labelKey }));
+  return agents.filter((a) => a.instruction && a.id !== MINION_AGENT_ID).map((a) => ({ value: a.id, labelKey: a.labelKey }));
 }
 
 /**

@@ -107,6 +107,8 @@
               :status-line="item.card.description ?? ''"
               :model="item.card.model"
               :deep-analysis="item.card.deepAnalysis"
+              :auto-run="item.card.autoRun"
+              :needs-decision="cardDecisionReason(t, item.card)"
               :selected="false"
               :pending="cardDelete.busyFor(item.card.id)"
               removable
@@ -124,6 +126,8 @@
               :model="item.session.model"
               :harness="item.session.kind === 'task' ? undefined : sessionLaunchMode(item.session)"
               :deep-analysis="item.session.deepAnalysis"
+              :minion="item.session.minion"
+              :needs-decision="sessionDecisionReason(t, item.session)"
               :usage="item.session.usage"
               :selected="store.selectedSessionId === item.session.id"
               :removable="item.session.kind === 'task'"
@@ -193,6 +197,8 @@
             <span class="agents__detail-name">{{ selectedSession.name }}</span>
             <KTag v-if="selectedSession.branch" class="agents__detail-branch">⑂ {{ selectedSession.branch }}</KTag>
             <KAnalysisMark v-if="selectedSession.deepAnalysis" />
+            <KMinionMark v-if="selectedSession.minion" kind="running" />
+            <KDecisionMark v-if="selectedDecision" :reason="selectedDecision" />
           </div>
 
           <div class="agents__detail-controls">
@@ -811,11 +817,31 @@
                «Нова задача» menu or from the card being edited, and switchable here either way,
                so a mis-picked menu item or a backlog card's mode is one click to change. Not
                conditional on «Режим»: a native harness gets the same opening prompt. -->
-          <div class="agents-launcher__block">
+          <div class="agents-launcher__block agents-launcher__block--stack">
             <div class="agents-launcher__check">
-              <KCheckbox v-model="draftDeep" :label="t('agents.launcher.deepLabel')" />
+              <KCheckbox
+                :model-value="draftDeep"
+                :label="t('agents.launcher.deepLabel')"
+                :disabled="draftAutoRun"
+                @update:model-value="onDraftModes(withDeepAnalysis, $event)"
+              />
               <p class="agents-launcher__check-desc">
                 {{ t('agents.launcher.deepDesc') }}
+              </p>
+            </div>
+            <!-- «Дозволити автовиконання»: «Посіпака» on the author's machine may take the card
+                 by itself. It takes effect for «В беклог»; «Запустити» is a manual run and only
+                 stores the flag. Not with «Глибокий аналіз» (nobody is there to interview), and
+                 only the author may switch it on — tasks_guard() refuses anyone else. -->
+            <div class="agents-launcher__check">
+              <KCheckbox
+                :model-value="draftAutoRun"
+                :label="t('minion.autoRun.label')"
+                :disabled="draftDeep || draftAutoRunLocked"
+                @update:model-value="onDraftModes(withAutoRun, $event)"
+              />
+              <p class="agents-launcher__check-desc">
+                {{ draftAutoRunLocked ? t('minion.autoRun.authorOnly') : t('minion.autoRun.caption') }}
               </p>
             </div>
           </div>
@@ -1159,7 +1185,16 @@ import type { Bucket } from '../lib/buckets';
 import { activeAgentCount, projectNodeId, sessionNodeId, workspaceNodeId } from '../lib/agentMap';
 import { changedDocsView, ownReports, unionInOrder } from '../lib/session-reports';
 import { imageToFile } from '../lib/images';
-import { myBacklogTasks, taskInsertFromDraft, taskPatchFromDraft } from '../lib/tasks-view';
+import {
+  autoRunSwitchLocked,
+  cardModesFromCard,
+  myBacklogTasks,
+  taskInsertFromDraft,
+  taskPatchFromDraft,
+  withAutoRun,
+  withDeepAnalysis,
+  type CardModes,
+} from '../lib/tasks-view';
 import { planBacklogPublication } from '../lib/publish-backlog';
 import {
   byNewestLaunch,
@@ -1179,6 +1214,9 @@ import KTag from 'components/kit/KTag.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
 import SessionFindings from 'components/agents/SessionFindings.vue';
 import KAnalysisMark from 'components/kit/KAnalysisMark.vue';
+import KMinionMark from 'components/kit/KMinionMark.vue';
+import KDecisionMark from 'components/kit/KDecisionMark.vue';
+import { cardDecisionReason, sessionDecisionReason } from '../lib/minion';
 import KSplitButton from 'components/kit/KSplitButton.vue';
 import { type KIconName } from 'components/kit/KIcon.vue';
 import KTabs from 'components/kit/KTabs.vue';
@@ -1570,6 +1608,7 @@ function isBoundFor(projectId: string): boolean {
 const selectedSession = computed(() =>
   store.sessions.find((s) => s.id === store.selectedSessionId),
 );
+const selectedDecision = computed(() => (selectedSession.value ? sessionDecisionReason(t, selectedSession.value) : undefined));
 
 // The open session is READ, as it stands, for the sidebar's unread-result mark
 // (stores/seen.ts). Re-marked whenever it moves while open, so a result that lands under the
@@ -2386,6 +2425,13 @@ const draftHidden = ref(false);
 // «Глибокий аналіз»: the card's agent interviews, documents and only then codes. Seeded from
 // the «Нова задача» menu (a new card) or from the card being edited.
 const draftDeep = ref(false);
+// «Дозволити автовиконання» — excludes «Глибокий аналіз»: checking either clears the other.
+const draftAutoRun = ref(false);
+function onDraftModes(flip: (m: CardModes, on: boolean) => CardModes, on: boolean): void {
+  const next = flip({ deepAnalysis: draftDeep.value, autoRun: draftAutoRun.value }, on);
+  draftDeep.value = next.deepAnalysis;
+  draftAutoRun.value = next.autoRun;
+}
 const nameEdited = ref(false);
 const draftBaseBranch = ref('');
 // «Режим»: a launch choice, not a card field — «В беклог» and board launches stay managed.
@@ -2398,6 +2444,10 @@ const editingTaskId = ref<string | null>(null);
 const editingTask = computed<Task | undefined>(() =>
   editingTaskId.value ? board.tasks.find((t) => t.id === editingTaskId.value) : undefined,
 );
+// A colleague's card (one assigned to me from «Задачі») cannot be switched to auto-run by me.
+const draftAutoRunLocked = computed(() => autoRunSwitchLocked(draftAutoRun.value, editingTask.value, auth.user?.id ?? ''));
+// The switch as the launcher opened, so a save sends `autoRun` only when this form changed it.
+let openedAutoRun = false;
 const branchPreview = computed(() =>
   draftName.value.trim()
     ? branchName(slugify(draftName.value), draftPrefix.value)
@@ -2533,7 +2583,10 @@ function openLauncher(card?: Task, deepAnalysis = false): void {
     : undefined;
   draftWorktree.value = card?.worktree ?? true;
   draftHidden.value = card?.hidden ?? false;
-  draftDeep.value = card?.deepAnalysis ?? deepAnalysis;
+  const modes = cardModesFromCard(card, deepAnalysis);
+  draftDeep.value = modes.deepAnalysis;
+  draftAutoRun.value = modes.autoRun;
+  openedAutoRun = modes.autoRun;
   // `tasks.branch` IS the base branch (the board labels it «Базова гілка»).
   void loadLaunchBranches(card?.branch);
   nameEdited.value = !!card;
@@ -2563,6 +2616,7 @@ function openTaskFromText(text: string): void {
   draftWorktree.value = true;
   draftHidden.value = false;
   draftDeep.value = false;
+  draftAutoRun.value = false;
   void loadLaunchBranches(undefined);
   nameEdited.value = true;
   launcherError.value = null;
@@ -2608,6 +2662,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     worktree: draftWorktree.value,
     hidden: draftHidden.value,
     deepAnalysis: draftDeep.value,
+    autoRun: draftAutoRun.value,
     baseBranch: draftBaseBranch.value || undefined,
   };
   const images = launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));
@@ -2616,7 +2671,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
   try {
     let cardId: string;
     if (editingTaskId.value) {
-      if (!(await board.updateTaskFields(editingTaskId.value, taskPatchFromDraft(draft)))) return;
+      if (!(await board.updateTaskFields(editingTaskId.value, taskPatchFromDraft(draft, openedAutoRun)))) return;
       cardId = editingTaskId.value;
     } else {
       const created = await board.createTask(taskInsertFromDraft(draft, projectId, userId));

@@ -43,9 +43,12 @@
         <span v-if="statusLine" class="k-session-card__status-line">{{ statusLine }}</span>
       </div>
       <!-- who is running it, how, on what, and what it has cost — absent whenever we know none -->
-      <div v-if="harness || deepAnalysis || model || spend" class="k-session-card__meta mono">
+      <div v-if="harness || deepAnalysis || minion || autoRun || needsDecision || model || spend" class="k-session-card__meta mono">
         <KHarnessMark v-if="harness" :harness="harness" />
         <KAnalysisMark v-if="deepAnalysis" />
+        <KMinionMark v-if="minion" kind="running" />
+        <KMinionMark v-else-if="autoRun" kind="allowed" />
+        <KDecisionMark v-if="needsDecision" :reason="needsDecision" />
         <span v-if="model" class="k-session-card__model">{{ model }}</span>
         <span v-if="model && spend">·</span>
         <span v-if="spend" class="k-session-card__spend">{{ spend }}</span>
@@ -75,6 +78,8 @@ import type { SessionStatus, Usage } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KHarnessMark from './KHarnessMark.vue';
 import KAnalysisMark from './KAnalysisMark.vue';
+import KMinionMark from './KMinionMark.vue';
+import KDecisionMark from './KDecisionMark.vue';
 import KSpinner from './KSpinner.vue';
 import { tokens, usageTokens, usd } from '../../lib/format';
 import type { LaunchMode } from '../../lib/native-session';
@@ -108,6 +113,11 @@ import type { LaunchMode } from '../../lib/native-session';
 // `deepAnalysis` marks a «Глибокий аналіз» card (KAnalysisMark) in the accounting line, right
 // after the harness: it is HOW this agent works, and it must not be the field that clips.
 //
+// `minion` marks a session «Посіпака» runs, `autoRun` a card it may take (KMinionMark, the same
+// shape, a different tooltip); `needsDecision` is the worded reason of a run that stopped on a
+// choice for the operator (KDecisionMark). All three sit with the analysis mark, for the same
+// reason: they say how this agent works.
+//
 // `pending` — an action on this session is waiting for its result (stopped, deleted,
 // archived, forked…; stores/pending): the card dims, spins before the time, and its ✕ is blocked.
 const props = withDefaults(
@@ -125,6 +135,12 @@ const props = withDefaults(
     harness?: LaunchMode | undefined;
     // A «Глибокий аналіз» task or session: the agent interviews before it codes.
     deepAnalysis?: boolean | undefined;
+    // Run by «Посіпака».
+    minion?: boolean | undefined;
+    // A card with «Дозволити автовиконання».
+    autoRun?: boolean | undefined;
+    // «Потрібне рішення», worded (lib/minion.ts minionReasonText); absent when nothing waits.
+    needsDecision?: string | undefined;
     selected?: boolean;
     fork?: boolean;
     removable?: boolean;

@@ -196,6 +196,8 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       ...(this.opts.tools ? { tools: this.opts.tools.map(claudeToolName), allowedTools: this.opts.tools.map(claudeToolName) } : {}),
       // noTools wins over a stray `tools` allowlist: an empty base set = no built-in tools.
       ...(this.opts.noTools ? { tools: [], allowedTools: [] } : {}),
+      // Denied outright, whatever the allowlists say: a «Посіпака» run's AskUserQuestion.
+      ...(this.opts.disallowedTools?.length ? { disallowedTools: this.opts.disallowedTools } : {}),
       // MCP tools are not built-ins, so the restriction above leaves them available.
       ...(this.opts.mcp
         ? {

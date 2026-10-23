@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  claimTask,
+  claimMinionTask,
+  claimTaskForLaunch,
   createTask,
   deleteTask,
   forceStopTask,
   getTask,
+  listMinionCandidates,
   listTasks,
   patchTask,
   pushTaskStatus,
   REALTIME_IN_FILTER_MAX,
+  releaseLaunchClaim,
   subscribeTasks,
   tasksFilter,
 } from "../src/tasks";
@@ -31,7 +34,7 @@ function fakeClient(...results: Result[]) {
       const builder: Record<string, unknown> = {
         then: (resolve: (v: Result) => unknown) => Promise.resolve(result).then(resolve),
       };
-      for (const op of ["select", "insert", "update", "delete", "eq", "in", "is", "order", "single", "maybeSingle"]) {
+      for (const op of ["select", "insert", "update", "delete", "eq", "in", "is", "or", "order", "limit", "single", "maybeSingle"]) {
         builder[op] = (...args: unknown[]) => {
           q.ops.push([op, ...args]);
           return builder;
@@ -59,6 +62,8 @@ const taskRow = {
   worktree: true,
   hidden: false,
   deep_analysis: false,
+  auto_run: false,
+  finding_kind: null,
   created_at: "2026-08-21T00:00:00.000Z",
   updated_at: "2026-08-21T00:10:00.000Z",
 };
@@ -81,6 +86,7 @@ describe("listTasks", () => {
       worktree: true,
       hidden: false,
       deepAnalysis: false,
+      autoRun: false,
       createdAt: "2026-08-21T00:00:00.000Z",
       updatedAt: "2026-08-21T00:10:00.000Z",
     });
@@ -346,30 +352,113 @@ describe("patchTask", () => {
   });
 });
 
-describe("claimTask", () => {
-  it("builds the atomic `assignee_id is null` predicate and maps the winner", async () => {
-    const { client, queries } = fakeClient({ data: { ...taskRow, assignee_id: "u2" }, error: null });
+// The launch claim carries the status, so two machines that read the same idle card cannot both
+// start it (docs/specs/2026-10-23-minion-auto-run.md, decision 7).
+describe("claimTaskForLaunch", () => {
+  it("moves the card to queued only while it still has the status the launcher read", async () => {
+    const { client, queries } = fakeClient({ data: { ...taskRow, status: "queued", assignee_id: "u2" }, error: null });
 
-    const t = await claimTask(client, "t1", "u2");
+    const t = await claimTaskForLaunch(client, "t1", "u2", "error");
 
-    expect(queries[0]!.ops[0]).toEqual(["update", { assignee_id: "u2" }]);
-    expect(queries[0]!.ops[1]).toEqual(["eq", "id", "t1"]);
-    expect(queries[0]!.ops[2]).toEqual(["is", "assignee_id", null]);
-    expect(queries[0]!.ops.at(-1)).toEqual(["maybeSingle"]);
-    expect(t!.assigneeId).toBe("u2");
+    expect(queries[0]!.ops).toContainEqual(["update", { status: "queued", assignee_id: "u2" }]);
+    expect(queries[0]!.ops).toContainEqual(["eq", "status", "error"]);
+    // Unassigned or already the caller's: a colleague's card is never taken over.
+    expect(queries[0]!.ops).toContainEqual(["or", "assignee_id.is.null,assignee_id.eq.u2"]);
+    expect(t!.status).toBe("queued");
   });
 
   it("treats zero matched rows as a lost race, not an error", async () => {
-    // This is the exact PostgREST answer for `UPDATE … WHERE id = $1 AND assignee_id IS
-    // NULL` matching nothing: no data, NO error. Anything else here would make the losing
-    // machine report a failure instead of "someone else got it".
+    // The exact PostgREST answer for a guarded UPDATE matching nothing: no data, NO error.
+    // Anything else would make the losing machine report a failure instead of «already started».
     const { client } = fakeClient({ data: null, error: null });
-    await expect(claimTask(client, "t1", "u2")).resolves.toBeUndefined();
+    await expect(claimTaskForLaunch(client, "t1", "u2", "backlog")).resolves.toBeUndefined();
   });
 
   it("still throws a genuine postgrest error", async () => {
     const { client } = fakeClient({ data: null, error: { message: "permission denied for table tasks" } });
-    await expect(claimTask(client, "t1", "u2")).rejects.toThrow(/permission denied/);
+    await expect(claimTaskForLaunch(client, "t1", "u2", "backlog")).rejects.toThrow(/permission denied/);
+  });
+});
+
+describe("releaseLaunchClaim", () => {
+  it("restores the status before freeing the assignee, which the guard refuses while active", async () => {
+    const { client, queries } = fakeClient({ data: null, error: null }, { data: null, error: null });
+    await releaseLaunchClaim(client, "t1", { status: "backlog" });
+    expect(queries.map((q) => q.ops[0])).toEqual([
+      ["update", { status: "backlog" }],
+      ["update", { assignee_id: null }],
+    ]);
+  });
+
+  it("keeps an assignee the card already had", async () => {
+    const { client, queries } = fakeClient({ data: null, error: null });
+    await releaseLaunchClaim(client, "t1", { status: "error", assigneeId: "u2" });
+    expect(queries.map((q) => q.ops[0])).toEqual([["update", { status: "error" }]]);
+  });
+
+  it("stops at a refused status write instead of freeing a card that is still queued", async () => {
+    const { client, queries } = fakeClient({ data: null, error: { message: "only the assignee can change status" } });
+    await expect(releaseLaunchClaim(client, "t1", { status: "backlog" })).rejects.toThrow(/assignee/);
+    expect(queries).toHaveLength(1);
+  });
+});
+
+describe("minion candidates and claim", () => {
+  // Every condition is part of the trust rule: only the caller's own backlog cards that allow
+  // auto-run, never a deep analysis, a Jira/Linear shadow card, or a colleague's assignment.
+  const predicate = (ops: Op[]) => [
+    ["eq", "status", "backlog"],
+    ["eq", "auto_run", true],
+    ["eq", "created_by", "u1"],
+    ["eq", "deep_analysis", false],
+    ["is", "jira_key", null],
+    ["is", "linear_key", null],
+    ["or", "assignee_id.is.null,assignee_id.eq.u1"],
+  ].every((op) => ops.some((o) => JSON.stringify(o) === JSON.stringify(op)));
+
+  it("lists the caller's eligible cards oldest first", async () => {
+    const { client, queries } = fakeClient({ data: [{ ...taskRow, auto_run: true }], error: null });
+    const [t] = await listMinionCandidates(client, ["p1", "p2"], "u1");
+    expect(predicate(queries[0]!.ops)).toBe(true);
+    expect(queries[0]!.ops).toContainEqual(["in", "project_id", ["p1", "p2"]]);
+    expect(queries[0]!.ops).toContainEqual(["order", "created_at", { ascending: true }]);
+    expect(t!.autoRun).toBe(true);
+  });
+
+  it("asks nothing for no active project", async () => {
+    const { client, queries } = fakeClient();
+    await expect(listMinionCandidates(client, [], "u1")).resolves.toEqual([]);
+    expect(queries).toHaveLength(0);
+  });
+
+  it("claims under the same predicate and reads a lost race as undefined", async () => {
+    const won = fakeClient({ data: { ...taskRow, status: "queued", assignee_id: "u1", auto_run: true }, error: null });
+    expect((await claimMinionTask(won.client, "t1", "u1"))!.status).toBe("queued");
+    expect(predicate(won.queries[0]!.ops)).toBe(true);
+    expect(won.queries[0]!.ops).toContainEqual(["update", { status: "queued", assignee_id: "u1" }]);
+
+    const lost = fakeClient({ data: null, error: null });
+    await expect(claimMinionTask(lost.client, "t1", "u1")).resolves.toBeUndefined();
+  });
+});
+
+describe("auto-run and finding origin on a task", () => {
+  it("maps both columns, and an unknown finding kind as no finding", async () => {
+    const { client } = fakeClient(
+      { data: { ...taskRow, auto_run: true, finding_kind: "security" }, error: null },
+      { data: { ...taskRow, finding_kind: "rumour" }, error: null },
+    );
+    const t = await getTask(client, "t1");
+    expect(t).toMatchObject({ autoRun: true, findingKind: "security" });
+    expect(await getTask(client, "t1")).not.toHaveProperty("findingKind");
+  });
+
+  it("inserts the finding kind and patches auto_run alone", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null }, { data: taskRow, error: null });
+    await createTask(client, { projectId: "p1", title: "T", autoRun: true, findingKind: "bug", createdBy: "u1" });
+    expect(queries[0]!.ops[0]).toEqual(["insert", { project_id: "p1", created_by: "u1", title: "T", auto_run: true, finding_kind: "bug" }]);
+    await patchTask(client, "t1", { autoRun: false });
+    expect(queries[1]!.ops[0]).toEqual(["update", { auto_run: false }]);
   });
 });
 

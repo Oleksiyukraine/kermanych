@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from '@kermanych/cloud';
 import {
+  autoRunSwitchLocked,
   boardTasks,
+  canAllowAutoRun,
   canAssignTask,
   canRunTask,
+  cardModesFromCard,
   myBacklogTasks,
   taskInsertFromDraft,
   taskPatchFromDraft,
+  withAutoRun,
+  withDeepAnalysis,
   type LauncherDraft,
 } from '../src/lib/tasks-view';
 
@@ -21,6 +26,7 @@ function task(over: Partial<Task> & { id: string }): Task {
     worktree: true,
     hidden: false,
     deepAnalysis: false,
+    autoRun: false,
     createdAt: '2026-08-30T10:00:00.000Z',
     updatedAt: '2026-08-30T10:00:00.000Z',
     ...over,
@@ -37,6 +43,7 @@ const draft: LauncherDraft = {
   worktree: true,
   hidden: false,
   deepAnalysis: false,
+  autoRun: false,
   baseBranch: 'develop',
 };
 
@@ -56,6 +63,7 @@ describe('taskInsertFromDraft', () => {
       worktree: true,
       hidden: false,
       deepAnalysis: false,
+      autoRun: false,
       branch: 'develop',
       assigneeId: ME,
     });
@@ -71,19 +79,19 @@ describe('taskInsertFromDraft', () => {
 
   it('omits absent optional params instead of sending undefined keys', () => {
     const insert = taskInsertFromDraft(
-      { name: 'T', task: 'body', prefix: 'fix', worktree: true, hidden: false, deepAnalysis: false },
+      { name: 'T', task: 'body', prefix: 'fix', worktree: true, hidden: false, deepAnalysis: false, autoRun: false },
       'p1',
       ME,
     );
     expect(Object.keys(insert).sort()).toEqual(
-      ['assigneeId', 'deepAnalysis', 'description', 'hidden', 'prefix', 'projectId', 'title', 'worktree'].sort(),
+      ['assigneeId', 'autoRun', 'deepAnalysis', 'description', 'hidden', 'prefix', 'projectId', 'title', 'worktree'].sort(),
     );
   });
 });
 
 describe('taskPatchFromDraft', () => {
   it('sends every editable field, so clearing one clears the column', () => {
-    expect(taskPatchFromDraft({ ...draft, platform: undefined })).toEqual({
+    expect(taskPatchFromDraft({ ...draft, platform: undefined }, false)).toEqual({
       title: 'Add login',
       description: 'wire GitHub OAuth',
       model: 'opus-5',
@@ -107,8 +115,8 @@ describe('hidden on a launcher draft', () => {
   });
 
   it('sends hidden on every patch, in both directions', () => {
-    expect(taskPatchFromDraft({ ...draft, hidden: true }).hidden).toBe(true);
-    expect(taskPatchFromDraft({ ...draft, hidden: false }).hidden).toBe(false);
+    expect(taskPatchFromDraft({ ...draft, hidden: true }, false).hidden).toBe(true);
+    expect(taskPatchFromDraft({ ...draft, hidden: false }, false).hidden).toBe(false);
   });
 });
 
@@ -120,8 +128,53 @@ describe('deepAnalysis on a launcher draft', () => {
   });
 
   it('sends deepAnalysis on every patch, in both directions', () => {
-    expect(taskPatchFromDraft({ ...draft, deepAnalysis: true }).deepAnalysis).toBe(true);
-    expect(taskPatchFromDraft({ ...draft, deepAnalysis: false }).deepAnalysis).toBe(false);
+    expect(taskPatchFromDraft({ ...draft, deepAnalysis: true }, false).deepAnalysis).toBe(true);
+    expect(taskPatchFromDraft({ ...draft, deepAnalysis: false }, false).deepAnalysis).toBe(false);
+  });
+});
+
+// «Дозволити автовиконання» (docs/specs/2026-10-23-minion-auto-run.md, decision 3): a card field
+// on both writes, never together with «Глибокий аналіз», and switched on only by the author.
+describe('autoRun on a launcher draft', () => {
+  it('sends autoRun on create, and on a patch only when the form changed it', () => {
+    expect(taskInsertFromDraft({ ...draft, autoRun: true }, 'p1', ME).autoRun).toBe(true);
+    expect(taskPatchFromDraft({ ...draft, autoRun: true }, false).autoRun).toBe(true);
+    expect(taskPatchFromDraft({ ...draft, autoRun: false }, true).autoRun).toBe(false);
+    // Untouched: a stale copy must neither undo the author's switch nor be refused by the guard.
+    expect(taskPatchFromDraft({ ...draft, autoRun: false }, false)).not.toHaveProperty('autoRun');
+    expect(taskPatchFromDraft({ ...draft, autoRun: true }, true)).not.toHaveProperty('autoRun');
+  });
+
+  it('never writes autoRun beside deepAnalysis', () => {
+    const both = { ...draft, deepAnalysis: true, autoRun: true };
+    expect(taskInsertFromDraft(both, 'p1', ME)).toMatchObject({ deepAnalysis: true, autoRun: false });
+    expect(taskPatchFromDraft(both, true)).toMatchObject({ deepAnalysis: true, autoRun: false });
+  });
+
+  it('checking one mode clears the other; unchecking leaves the other alone', () => {
+    expect(withAutoRun({ deepAnalysis: true, autoRun: false }, true)).toEqual({ deepAnalysis: false, autoRun: true });
+    expect(withDeepAnalysis({ deepAnalysis: false, autoRun: true }, true)).toEqual({ deepAnalysis: true, autoRun: false });
+    expect(withAutoRun({ deepAnalysis: false, autoRun: true }, false)).toEqual({ deepAnalysis: false, autoRun: false });
+    expect(withDeepAnalysis({ deepAnalysis: true, autoRun: false }, false)).toEqual({ deepAnalysis: false, autoRun: false });
+  });
+
+  it('reads the pair from a card, and seeds a new one from the menu', () => {
+    expect(cardModesFromCard(task({ id: 'a', autoRun: true }))).toEqual({ deepAnalysis: false, autoRun: true });
+    expect(cardModesFromCard(task({ id: 'b', deepAnalysis: true, autoRun: true }))).toEqual({ deepAnalysis: true, autoRun: false });
+    expect(cardModesFromCard(undefined, true)).toEqual({ deepAnalysis: true, autoRun: false });
+    expect(cardModesFromCard(undefined)).toEqual({ deepAnalysis: false, autoRun: false });
+  });
+
+  it('lets only the author switch it on, and anyone switch it off', () => {
+    const mine = task({ id: 'a', createdBy: ME });
+    const theirs = task({ id: 'b', createdBy: OTHER, autoRun: true });
+    expect(canAllowAutoRun(undefined, ME)).toBe(true);
+    expect(canAllowAutoRun(mine, ME)).toBe(true);
+    expect(canAllowAutoRun(theirs, ME)).toBe(false);
+    expect(canAllowAutoRun(task({ id: 'c' }), ME)).toBe(false);
+    expect(autoRunSwitchLocked(false, theirs, ME)).toBe(true);
+    expect(autoRunSwitchLocked(true, theirs, ME)).toBe(false);
+    expect(autoRunSwitchLocked(false, mine, ME)).toBe(false);
   });
 });
 

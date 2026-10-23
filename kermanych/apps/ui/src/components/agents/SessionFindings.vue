@@ -93,6 +93,12 @@
             :placeholder="t('agents.findings.dialog.unassigned')"
             :loading="membersLoading"
           />
+          <!-- «Дозволити автовиконання»: off by default, the operator's own decision per card.
+               The card is theirs (they file it), so the author rule never locks it here. -->
+          <div class="findings__check">
+            <KCheckbox v-model="autoRun" :label="t('minion.autoRun.label')" />
+            <p class="findings__check-desc">{{ t('minion.autoRun.caption') }}</p>
+          </div>
         </template>
         <template v-else>
           <KSelect
@@ -139,12 +145,13 @@ import { useAuth } from 'stores/auth';
 import { api, type JiraEditorOptions } from '../../lib/api';
 import { IS_PREVIEW } from '../../lib/preview';
 import { handleOf } from '../../lib/members';
-import { pickFindingIssueType } from '../../lib/findings';
+import { findingTaskInsert, pickFindingIssueType } from '../../lib/findings';
 import KTag from 'components/kit/KTag.vue';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
+import KCheckbox from 'components/kit/KCheckbox.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import KSpinner from 'components/kit/KSpinner.vue';
 import { errorText, useKeyedAction } from '../../composables/useAsyncAction';
@@ -212,6 +219,7 @@ const title = ref('');
 const description = ref('');
 const project = ref('');
 const assignee = ref('');
+const autoRun = ref(false);
 const dialogError = ref<string | null>(null);
 const busy = ref(false);
 // The workspace's members are read on the first open; the assignee picker spins meanwhile.
@@ -321,6 +329,7 @@ function openFile(f: AgentFinding): void {
   });
   project.value = home.value?.id ?? '';
   assignee.value = '';
+  autoRun.value = false;
   dialogError.value = null;
   busy.value = false;
   dialogOpen.value = true;
@@ -348,18 +357,14 @@ async function createTarget(f: AgentFinding): Promise<FindingTarget | undefined>
   if (target.value === 'board') {
     const dest = projects.byId.get(project.value);
     if (!dest) return undefined;
-    // A card like the board's own «Нова задача»: the target project's default model and
-    // effort, a worktree, no platform. A bug or a vulnerability is a fix; the rest is new work.
-    const card = await board.createTask({
-      projectId: dest.id,
-      title: title.value.trim(),
-      description: description.value,
-      prefix: f.kind === 'bug' || f.kind === 'security' ? 'fix' : 'feature',
-      worktree: true,
-      ...(dest.defaultModel ? { model: dest.defaultModel } : {}),
-      ...(dest.defaultEffort ? { effort: dest.defaultEffort } : {}),
-      ...(assignee.value ? { assigneeId: assignee.value } : {}),
-    });
+    const card = await board.createTask(
+      findingTaskInsert(f, dest, {
+        title: title.value,
+        description: description.value,
+        assigneeId: assignee.value,
+        autoRun: autoRun.value,
+      }),
+    );
     if (!card) {
       // The store has already toasted the reason; the dialog keeps the operator's edits.
       dialogError.value = t('agents.findings.dialog.boardFailed');
@@ -536,6 +541,14 @@ async function submit(): Promise<void> {
   margin: 0;
   font-size: 11px;
   line-height: 1.5;
+  color: var(--k-muted);
+}
+
+/* A card switch with its caption under the label, the launcher's layout. */
+.findings__check-desc {
+  margin: 3px 0 0;
+  padding-left: 24px;
+  font-size: 11px;
   color: var(--k-muted);
 }
 

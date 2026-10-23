@@ -4,10 +4,10 @@
 // are the authorization surface; refusals surface as thrown postgrest messages.
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import type { Task, TaskInsert, TaskPatch, TaskStatus } from "./types";
-import { readDocsReport, readSessionReport, type QaChecklist } from "@kermanych/core";
+import { isFindingKind, readDocsReport, readSessionReport, type QaChecklist } from "@kermanych/core";
 
 const TASK_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, deep_analysis, image_paths, jira_key, linear_key, qa_checklist, docs_report, session_report, created_at, updated_at";
+  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, deep_analysis, auto_run, finding_kind, image_paths, jira_key, linear_key, qa_checklist, docs_report, session_report, created_at, updated_at";
 
 type TaskRow = {
   id: string;
@@ -25,6 +25,8 @@ type TaskRow = {
   worktree: boolean;
   hidden: boolean;
   deep_analysis: boolean;
+  auto_run: boolean;
+  finding_kind: string | null;
   kind: string | null;
   branch: string | null;
   image_paths: string[] | null;
@@ -48,6 +50,8 @@ export function toTask(row: TaskRow): Task {
     worktree: row.worktree,
     hidden: row.hidden,
     deepAnalysis: row.deep_analysis,
+    // `not null default false`; `=== true` keeps a row from a pre-migration select an ordinary card.
+    autoRun: row.auto_run === true,
   };
   // Optional keys are omitted rather than set to undefined, so a mapped task deep-equals a
   // hand-written literal in tests and carries no null noise into Vue's reactivity.
@@ -60,6 +64,9 @@ export function toTask(row: TaskRow): Task {
   if (row.platform !== null) t.platform = row.platform;
   if (row.kind !== null) t.kind = row.kind;
   if (row.branch !== null) t.branch = row.branch;
+  // The column's check constraint names the same four kinds; anything else reads as «not from a
+  // finding» rather than a value the UI cannot word.
+  if (isFindingKind(row.finding_kind)) t.findingKind = row.finding_kind;
   // Present only on a shadow task minted by a Jira-ticket launch; the native board
   // filters these rows out and the Jira view joins them for its agent chip.
   if (row.jira_key !== null) t.jiraKey = row.jira_key;
@@ -100,6 +107,7 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   if (patch.worktree !== undefined) row.worktree = patch.worktree;
   if (patch.hidden !== undefined) row.hidden = patch.hidden;
   if (patch.deepAnalysis !== undefined) row.deep_analysis = patch.deepAnalysis;
+  if (patch.autoRun !== undefined) row.auto_run = patch.autoRun;
   if (patch.kind !== undefined) row.kind = patch.kind.trim() || null;
   if (patch.branch !== undefined) row.branch = patch.branch.trim() || null;
   if (patch.jiraKey !== undefined) row.jira_key = patch.jiraKey.trim() || null;
@@ -165,10 +173,13 @@ export async function createTask(
       worktree: input.worktree,
       hidden: input.hidden,
       deepAnalysis: input.deepAnalysis,
+      autoRun: input.autoRun,
       imagePaths: input.imagePaths,
       jiraKey: input.jiraKey,
       linearKey: input.linearKey,
     }),
+    // Insert-only, so not part of toTaskRow: tasks_guard() keeps it frozen on every update.
+    ...(input.findingKind ? { finding_kind: input.findingKind } : {}),
   };
   const { data, error } = await client.from("tasks").insert(row).select(TASK_COLUMNS).single();
   if (error) throw new Error(error.message);
@@ -242,19 +253,89 @@ export async function signedTaskImageUrls(
   return (data ?? []).map((d) => d.signedUrl).filter((u): u is string => u !== null);
 }
 
-// Atomic self-assign: one `UPDATE tasks SET assignee_id = $1 WHERE id = $2 AND assignee_id
-// IS NULL`. Zero matched rows come back as `{ data: null, error: null }` — that is what
-// maybeSingle means — and it is the "someone else claimed it first" signal, NOT an error.
-export async function claimTask(
+// The launch claim (docs/specs/2026-10-23-minion-auto-run.md, decision 7): one UPDATE that takes
+// the card AND moves it to `queued`, guarded by the status the launcher just read. Until the claim
+// carried the status, a second machine could read the same idle card in the seconds before the
+// first one's status push landed, and start it too. Zero matched rows come back as `{ data: null,
+// error: null }` — that is what maybeSingle means — and it is the «someone else started it first»
+// signal, NOT an error. tasks_guard() rule 1 admits the status change because the caller becomes
+// the assignee in the same statement.
+export async function claimTaskForLaunch(
   client: SupabaseClient,
   id: string,
   userId: string,
+  from: TaskStatus,
 ): Promise<Task | undefined> {
   const { data, error } = await client
     .from("tasks")
-    .update({ assignee_id: userId })
+    .update({ status: "queued", assignee_id: userId })
     .eq("id", id)
-    .is("assignee_id", null)
+    .eq("status", from)
+    .or(`assignee_id.is.null,assignee_id.eq.${userId}`)
+    .select(TASK_COLUMNS)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? toTask(data as TaskRow) : undefined;
+}
+
+// Undo a launch claim after the launch failed: the status first, then — only when the card had no
+// assignee before — the assignee. Two statements, because tasks_guard() rule 2 refuses an assignee
+// change while the card is still active (`queued`).
+export async function releaseLaunchClaim(
+  client: SupabaseClient,
+  id: string,
+  previous: { status: TaskStatus; assigneeId?: string },
+): Promise<void> {
+  const back = await client.from("tasks").update({ status: previous.status }).eq("id", id);
+  if (back.error) throw new Error(back.error.message);
+  if (previous.assigneeId) return;
+  const free = await client.from("tasks").update({ assignee_id: null }).eq("id", id);
+  if (free.error) throw new Error(free.error.message);
+}
+
+// The cards «Посіпака» may take on this machine, oldest first across the given projects: the
+// caller's own (`created_by`), allowed to run by themselves, waiting in the backlog, unassigned or
+// already the caller's, and neither a deep analysis (it interviews a person) nor a Jira/Linear
+// shadow card (those launch through their own flow).
+export async function listMinionCandidates(
+  client: SupabaseClient,
+  projectIds: string[],
+  userId: string,
+  limit = 50,
+): Promise<Task[]> {
+  if (projectIds.length === 0) return [];
+  const { data, error } = await client
+    .from("tasks")
+    .select(TASK_COLUMNS)
+    .in("project_id", projectIds)
+    .eq("status", "backlog")
+    .eq("auto_run", true)
+    .eq("created_by", userId)
+    .eq("deep_analysis", false)
+    .is("jira_key", null)
+    .is("linear_key", null)
+    .or(`assignee_id.is.null,assignee_id.eq.${userId}`)
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return (data as TaskRow[]).map(toTask);
+}
+
+// The minion's claim: claimTaskForLaunch's UPDATE, guarded by the whole candidate predicate again,
+// so a card its author switched off, edited into a deep analysis or handed to someone else between
+// the listing and the claim is not taken.
+export async function claimMinionTask(client: SupabaseClient, id: string, userId: string): Promise<Task | undefined> {
+  const { data, error } = await client
+    .from("tasks")
+    .update({ status: "queued", assignee_id: userId })
+    .eq("id", id)
+    .eq("status", "backlog")
+    .eq("auto_run", true)
+    .eq("created_by", userId)
+    .eq("deep_analysis", false)
+    .is("jira_key", null)
+    .is("linear_key", null)
+    .or(`assignee_id.is.null,assignee_id.eq.${userId}`)
     .select(TASK_COLUMNS)
     .maybeSingle();
   if (error) throw new Error(error.message);

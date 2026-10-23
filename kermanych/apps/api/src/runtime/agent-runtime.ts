@@ -29,6 +29,10 @@ export interface RuntimeLaunchOpts {
   resume?: string;
   noTools?: boolean;
   tools?: string[];
+  // Built-in tools the child may not call at all, in the backend's own spelling. claude-only:
+  // a «Посіпака» run gets `AskUserQuestion` here (nobody is there to answer); omp turns its ask
+  // tool off through a `--config` overlay instead (configPaths).
+  disallowedTools?: string[];
   // Extra text appended to the system prompt (backend-neutral). omp maps it to
   // `--append-system-prompt`, claude to `systemPrompt.append`. Used to inject the user's
   // agent communication language directive.

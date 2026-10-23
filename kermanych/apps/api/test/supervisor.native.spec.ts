@@ -28,14 +28,17 @@ const cloudTasks = new Map<string, Task>();
 const cloudProjects: CloudProject[] = [];
 vi.mock("@kermanych/cloud", () => ({
   getTask: async (_c: unknown, id: string) => cloudTasks.get(id),
-  claimTask: async (_c: unknown, id: string, userId: string) => {
+  claimTaskForLaunch: async (_c: unknown, id: string, userId: string, from: Task["status"]) => {
     const t = cloudTasks.get(id);
-    if (!t || t.assigneeId) return undefined;
-    const next = { ...t, assigneeId: userId };
+    if (!t || t.status !== from || (t.assigneeId && t.assigneeId !== userId)) return undefined;
+    const next = { ...t, status: "queued" as const, assigneeId: userId };
     cloudTasks.set(id, next);
     return next;
   },
-  patchTask: async (_c: unknown, id: string) => cloudTasks.get(id),
+  releaseLaunchClaim: async (_c: unknown, id: string, previous: { status: Task["status"]; assigneeId?: string }) => {
+    const t = cloudTasks.get(id);
+    if (t) cloudTasks.set(id, { ...t, status: previous.status, ...(previous.assigneeId ? {} : { assigneeId: undefined }) });
+  },
   listProjects: async () => cloudProjects,
 }));
 
