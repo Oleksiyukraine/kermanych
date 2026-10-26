@@ -89,6 +89,8 @@ describe("createPullRequest", () => {
     expect(p).toMatch(/prefer it over any/i); // GIT_TOKEN preferred over ambient creds
     expect(p).toMatch(/fall back/i); // ambient gh/git credentials only as the fallback
     expect(p).toMatch(/Co-Authored-By: Kermanych </); // credits Kermanych as a commit co-author
+    // Only a «Посіпака» session's PR title carries the minion prefix.
+    expect(p).not.toContain("[Minion]");
   });
 
   it("prefers the project's own convention fallback over the built-in default", async () => {

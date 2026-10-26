@@ -364,9 +364,18 @@ Rejected:
 2. If the project requires documentation and the gate fails, Kermanych sends one «Доповнити
    документацію» turn (`completeDocs`). If the gate still fails, the card goes to `needs_decision`
    with the gate's failures.
-3. Kermanych runs «Створити ПР» (`createPullRequest`) unchanged: the PR instruction, the base sync,
+3. Kermanych runs «Створити ПР» (`createPullRequest`): the PR instruction, the base sync,
    the QA checklist, and `GIT_TOKEN` from the project's `.env` on this machine. The PR is
    therefore opened in the name of that token's owner.
+   - **The title.** After the base sync, a minion session's PR turn gets `MINION_PR_TITLE_RULE`
+     (`packages/core/src/minion.ts`): the title starts with `[Minion] `, then the title the
+     conventions give (`[Minion] fix(api): handle an empty list`), whatever the PR agent's
+     override or the repository's conventions say. The author is the token's owner, so the title
+     is what tells a minion PR apart in the PR list and in search. It holds for every PR turn of
+     a `Session.minion` session, a «Створити ПР» the operator presses after «потрібне рішення»
+     included. Rejected: a GitHub label — `gh pr create --label` fails on a label the repository
+     lacks, creating it needs triage rights, and GitLab/Bitbucket have no `gh`; a separate bot
+     account — a second token per project, against the design that the run uses the author's.
 4. A detected PR URL settles the card at `in_review`, as today. A PR turn without a PR URL settles
    at `in_review` with «потрібне рішення» («PR не відкрито») and counts as a failure. A machine
    without `GIT_TOKEN` therefore pauses after two cards instead of failing the whole queue.
