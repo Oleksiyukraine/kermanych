@@ -1041,7 +1041,10 @@ developer's machine. The direction is always task → session.
    board's «На ревʼю» column — settled, but waiting on a human reviewer rather than
    closed. «Завершити» itself is the other exit: it retires the session — commits loose work,
    stops the agent, removes the worktree — and lands on `merged`; nothing is merged into the
-   base branch, the branch stays for its PR. Once a session's branch has an open PR, that fact is
+   base branch, the branch stays for its PR. The moment a session lands on `merged` — from
+   «Завершити» here, a merged discussion or review, or a finish in another window — its chat
+   pane closes if it was open; an already finished session opened later from «Завершені»
+   stays open. Once a session's branch has an open PR, that fact is
    durable: the finish sheet's secondary action stays «Закоміти» (never «Створити ПР», which
    would try to open a second PR and find nothing to push), and EVERY later turn settles the
    card back on «На ревʼю» — even the plain follow-up prompts you send to fix review findings,
