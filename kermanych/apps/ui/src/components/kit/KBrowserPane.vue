@@ -522,6 +522,8 @@ watch(
   () => !!state.value,
   (has) => {
     if (has) return;
+    // Its find bar went with the page (the ✕ on the tab closes the page while it is shown).
+    findOpen.value = false;
     lastUrlKnown.value = false;
     void bridge
       .lastUrl(props.session.id)

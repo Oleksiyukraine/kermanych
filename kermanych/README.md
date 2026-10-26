@@ -913,9 +913,11 @@ live. The web build has no session browser.
 - **The browser sits above the app's own UI**, so while a menu or dialog is open it is
   replaced by a still frame of the page, and toasts move beside it. A failed load or a crashed
   page shows a panel with **Спробувати ще**. A hidden session browser keeps running — the
-  agent can work in it while you look elsewhere. At most 6 stay alive (and none idle for 20
-  minutes); a closed one remembers its last address, and the empty tab offers
-  **Відкрити знову**. It is deleted with its session.
+  agent can work in it while you look elsewhere. **✕** beside «Браузер» on the tab (shown
+  while a page is open) closes it; the tab stays. Otherwise at most 6 stay alive (and none
+  idle for 20 minutes). A closed one remembers its last address, and the empty tab offers
+  **Відкрити знову**; the agent's `browser_navigate` opens a new page, its other browser tools
+  refuse until then and name the last address. It is deleted with its session.
 
 ## Monorepo layout
 

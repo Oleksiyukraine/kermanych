@@ -94,13 +94,15 @@ declare global {
     // Highlight matches of `query` (next/previous with `forward`); empty query or stopFind clears.
     find: (sessionId: string, query: string, forward: boolean) => void;
     stopFind: (sessionId: string) => void;
+    // Close the session's page (no-op without one). Its last URL stays, as after an idle close.
+    close: (sessionId: string) => void;
     // Current state, or null when the session has no browser yet.
     state: (sessionId: string) => Promise<KermanychBrowserState | null>;
     // The URL the session's browser was last at (kept across restarts and idle closes), or null.
     lastUrl: (sessionId: string) => Promise<string | null>;
     // Every state change of every session's browser; returns the unsubscribe.
     onState: (cb: (state: KermanychBrowserState) => void) => () => void;
-    // A session's browser was closed (deleted session, idle close); its state is gone.
+    // A session's browser was closed (deleted session, idle close, the operator's ✕); its state is gone.
     onClosed: (cb: (sessionId: string) => void) => () => void;
     onShortcut: (cb: (sessionId: string, shortcut: KermanychBrowserShortcut) => void) => () => void;
     // A download the page started finished saving.
