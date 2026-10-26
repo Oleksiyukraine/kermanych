@@ -913,9 +913,11 @@ live. The web build has no session browser.
 - **The browser sits above the app's own UI**, so while a menu or dialog is open it is
   replaced by a still frame of the page, and toasts move beside it. A failed load or a crashed
   page shows a panel with **Спробувати ще**. A hidden session browser keeps running — the
-  agent can work in it while you look elsewhere. At most 6 stay alive (and none idle for 20
-  minutes); a closed one remembers its last address, and the empty tab offers
-  **Відкрити знову**. It is deleted with its session.
+  agent can work in it while you look elsewhere. **✕** beside «Браузер» on the tab (shown
+  while a page is open) closes it; the tab stays. Otherwise at most 6 stay alive (and none
+  idle for 20 minutes). A closed one remembers its last address, and the empty tab offers
+  **Відкрити знову**; the agent's `browser_navigate` opens a new page, its other browser tools
+  refuse until then and name the last address. It is deleted with its session.
 
 ## Monorepo layout
 
@@ -1041,7 +1043,10 @@ developer's machine. The direction is always task → session.
    board's «На ревʼю» column — settled, but waiting on a human reviewer rather than
    closed. «Завершити» itself is the other exit: it retires the session — commits loose work,
    stops the agent, removes the worktree — and lands on `merged`; nothing is merged into the
-   base branch, the branch stays for its PR. Once a session's branch has an open PR, that fact is
+   base branch, the branch stays for its PR. The moment a session lands on `merged` — from
+   «Завершити» here, a merged discussion or review, or a finish in another window — its chat
+   pane closes if it was open; an already finished session opened later from «Завершені»
+   stays open. Once a session's branch has an open PR, that fact is
    durable: the finish sheet's secondary action stays «Закоміти» (never «Створити ПР», which
    would try to open a second PR and find nothing to push), and EVERY later turn settles the
    card back on «На ревʼю» — even the plain follow-up prompts you send to fix review findings,
@@ -1173,9 +1178,10 @@ request with nobody watching.
   `report_outcome` tool of its `kermanych` MCP server:
   - `ready`: Kermanych completes the documentation once if the project requires it and it is
     missing, then runs «Створити ПР» as usual — the PR is opened with the project's
-    `GIT_TOKEN` from this machine — and the card lands on «На ревʼю». A `ready` with nothing
-    changed on the branch lands there with «потрібне рішення: немає змін» instead, before any
-    PR turn;
+    `GIT_TOKEN` from this machine, and its title starts with `[Minion]` (e.g.
+    `[Minion] fix(api): handle an empty list`) — and the card lands on «На ревʼю». A `ready`
+    with nothing changed on the branch lands there with «потрібне рішення: немає змін» instead,
+    before any PR turn;
   - `not_needed`: the problem is already fixed, the card repeats another one, or the code it
     names is gone. The agent changes nothing and gives the evidence; when the branch has no
     changes, the card closes in «Завершені» with «не потрібно» and the evidence in its tooltip.
@@ -1202,7 +1208,9 @@ request with nobody watching.
   pauses it at once, before it takes a card. «Продовжити» on the «Посіпака» card or ▶ on «Карта
   агентів» resumes it. Stopping a minion session yourself is not a failure, and the minion does
   not take that card again.
-- **Where you see it.** The «Посіпака» mark on its cards and sessions, «потрібне рішення» on
+- **Where you see it.** The «Посіпака» mark on its cards and sessions, the `[Minion]` prefix of
+  its PR titles (any PR opened from its session, «Створити ПР» by hand too; on GitHub,
+  `is:pr Minion in:title` finds them), «потрібне рішення» on
   the cards that wait for you and «не потрібно» on the ones it closed, the outcome in the card's
   session report (`session_report.minion`, readable from every machine), the strip above «Карта
   агентів», and its bot icon beside each project in the left sidebar it is activated for on this

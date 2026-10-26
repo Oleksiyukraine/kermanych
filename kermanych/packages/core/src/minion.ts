@@ -149,6 +149,22 @@ export const MINION_OUTCOME_CONTRACT = [
   "counts as a failed run.",
 ].join("");
 
+/** What a minion run's pull-request title starts with, so a reviewer or a PR search tells it apart. */
+export const MINION_PR_TITLE_PREFIX = "[Minion]";
+
+/**
+ * Appended to the PR turn of a minion session (SupervisorService.createPullRequest), after the
+ * base sync, whatever the pull-request agent's instruction or the repository's conventions say:
+ * the title is the one mark every Git host shows in its PR list without labels or permissions.
+ */
+export const MINION_PR_TITLE_RULE = [
+  "The pull request's title — this rule is Kermanych's own and applies whatever the instruction above ",
+  "and the repository's conventions say: this branch was worked by «Посіпака», Kermanych's unattended ",
+  `agent, so the title starts with \`${MINION_PR_TITLE_PREFIX} \` followed by the title the conventions `,
+  `give, e.g. \`${MINION_PR_TITLE_PREFIX} fix(api): handle an empty list\`. Pass it to \`gh pr create --title\`; `,
+  "if this branch already has a pull request whose title lacks it, add it with `gh pr edit --title`.",
+].join("");
+
 /**
  * Kermanych's own line in a run of a card filed from a «Знахідка», right after the card: what kind
  * of finding it is, which the description does not say. The per-kind rules follow it as the

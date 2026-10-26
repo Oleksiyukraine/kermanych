@@ -443,6 +443,7 @@ export const en: MessageSchema = {
       forward: 'Forward',
       reload: 'Reload',
       stop: 'Stop',
+      close: 'Close the browser — the page can be opened again',
       addressPlaceholder: 'Address, e.g. localhost:5173',
       viewportTitle: 'Page width',
       viewport: {

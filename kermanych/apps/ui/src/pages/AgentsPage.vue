@@ -345,7 +345,7 @@
         <!-- The reason the ▶ above is down, on its own strip so it shows in every tab the
              disabled button is — a disabled control carries no reachable tooltip. -->
         <p v-if="previewBlocked" class="agents__detail-note">{{ previewBindHint }}</p>
-        <KTabs v-model="detailTab" :tabs="detailTabs" class="agents__detail-tabs">
+        <KTabs v-model="detailTab" :tabs="detailTabs" class="agents__detail-tabs" @close="onDetailTabClose">
           <template #end>
             <template v-if="detailTab === 'log' && !selectedSession.native">
               <button type="button" class="agents__log-ctl" @click="onExpandAll(true)">{{ t('agents.detail.expandAll') }}</button>
@@ -1939,7 +1939,7 @@ const sessionBrowser = useSessionBrowser();
 // Beside the Лог instead of its own tab — see «Session browser beside the Лог» below.
 const browserSplit = computed(() => sessionBrowser.available && sessionBrowser.split);
 const detailTabs = computed(() => {
-  const tabs: { value: string; label: string; count?: number; live?: boolean }[] = [
+  const tabs: { value: string; label: string; count?: number; live?: boolean; closeLabel?: string }[] = [
     { value: 'log', label: t('agents.tabs.log') },
     // Counts appear once their data has: a «0» on a tab still loading would be a false answer.
     { value: 'changes', label: t('agents.tabs.changes'), ...(changesInfo.value ? { count: changesInfo.value.files.length } : {}) },
@@ -1953,12 +1953,19 @@ const detailTabs = computed(() => {
   tabs.push({ value: 'qa', label: t('agents.tabs.qa'), ...(qaNotLoaded.value ? {} : { count: qaChecklist.value?.items.length ?? 0 }) });
   // The session browser exists only in the desktop app. Its dot pulses while the agent is
   // driving the page (a browser tool call in the last few seconds). Beside the Лог («Поруч із
-  // логом») it has no tab of its own, and the dot moves to Лог, where the page now is.
+  // логом») it has no tab of its own, and the dot moves to Лог, where the page now is. Its ✕
+  // closes the page and is there only while one is open: the tab itself always stays.
   if (sessionBrowser.available) {
     const id = store.selectedSessionId;
     const live = !!id && sessionBrowser.agentLive.has(id);
     if (browserSplit.value) tabs[0]!.live = live;
-    else tabs.push({ value: 'browser', label: t('agents.tabs.browser'), live });
+    else
+      tabs.push({
+        value: 'browser',
+        label: t('agents.tabs.browser'),
+        live,
+        ...(id && sessionBrowser.states[id] ? { closeLabel: t('agents.browser.close') } : {}),
+      });
   }
   return tabs;
 });
@@ -1979,6 +1986,11 @@ watch(detailTab, (t) => {
   const id = store.selectedSessionId;
   if (id) localStorage.setItem(`kermanych.agents.tab.${id}`, t);
 });
+// The Браузер tab's ✕: the page closes and the tab stays where it is, showing «Відкрити знову».
+function onDetailTabClose(tab: string): void {
+  const id = store.selectedSessionId;
+  if (tab === 'browser' && id) sessionBrowser.close(id);
+}
 
 // ── Session browser beside the Лог («Поруч із логом») ────────────────────────
 // One app-wide preference, toggled from the browser's own toolbar — so the operator is looking

@@ -19,6 +19,7 @@ import {
   MINION_POLL_MS,
   MINION_TIME_CAP_MS,
   MINION_TIME_CAP_PROMPT,
+  MINION_PR_TITLE_RULE,
   agentById,
   minionFindingLine,
   renderInstruction,
@@ -554,6 +555,8 @@ describe("the run protocol", () => {
     turn(child);
     await vi.waitFor(() => expect(child.prompts).toHaveLength(3));
     expect(child.prompts[2]).toMatch(/gh pr create/);
+    // The PR is told apart by its title, whatever the PR agent's instruction says.
+    expect(child.prompts[2]).toContain(MINION_PR_TITLE_RULE);
     await flush();
 
     turn(child, ...prReply);

@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('kermanych', {
     setViewport: (sessionId, projectId, viewport) => ipcRenderer.send('kermanych:browser:set-viewport', sessionId, projectId, viewport),
     find: (sessionId, query, forward) => ipcRenderer.send('kermanych:browser:find', sessionId, query, forward),
     stopFind: (sessionId) => ipcRenderer.send('kermanych:browser:stop-find', sessionId),
+    close: (sessionId) => ipcRenderer.send('kermanych:browser:close', sessionId),
     state: (sessionId) => ipcRenderer.invoke('kermanych:browser:state', sessionId),
     lastUrl: (sessionId) => ipcRenderer.invoke('kermanych:browser:last-url', sessionId),
     onState: (cb) => subscribe<[KermanychBrowserState]>('kermanych:browser:state-changed', cb),
