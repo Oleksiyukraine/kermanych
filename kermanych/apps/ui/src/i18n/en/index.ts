@@ -657,6 +657,7 @@ export const en: MessageSchema = {
       notWithDeep: 'Not with deep analysis: that agent interviews you, and the Minion works with nobody there',
     },
     needsDecision: 'Decision needed',
+    notNeeded: 'Not needed',
     reason: {
       no_outcome: 'finished without a verdict',
       no_pr: 'no PR was opened',
@@ -664,6 +665,8 @@ export const en: MessageSchema = {
       docs_gate: 'the documentation check failed',
       session_error: 'the session ended with an error',
       launch_failed: 'the launch failed',
+      no_changes: 'the Minion said «ready», but the branch has no changes',
+      has_changes: 'the Minion marked the task not needed, but the branch has changes',
     },
     pause: {
       operator: 'paused by you',
@@ -702,6 +705,7 @@ export const en: MessageSchema = {
       instructionOverride: 'Instruction rewritten in the workspace',
       skills: 'Skills, in order',
       noSkills: 'No skills assigned.',
+      findingsSkill: 'Cards from «Findings» also get the {name} skill — rules for bug, security, tech-debt and docs; «Library» can override or switch it off.',
       noWorkspace: 'The project belongs to no cloud workspace — there is no workspace instruction or skills.',
       editInWorkspace: 'Change at the workspace level →',
     },
@@ -2503,6 +2507,9 @@ export const en: MessageSchema = {
     decisionMark: {
       label: 'decision needed',
     },
+    notNeededMark: {
+      label: 'not needed',
+    },
     railItem: {
       unbound: ' · not linked',
       orphan: ' · outside the cloud',
@@ -2655,8 +2662,8 @@ export const en: MessageSchema = {
         sessionRemove: 'removed in place: ✕ on card hover',
         sessionFindings: 'findings: ⚑ with the open count — the agent noticed problems outside its task, and they await a decision',
         sessionDeep: 'deep analysis: the «analysis» mark — the agent asks and documents first, and codes once approved',
-        sessionMinion: 'minion: the «minion» mark — the Minion runs the session by itself; «decision needed» — it stopped on a choice that is yours (the reason is in the tooltip)',
-        kanbanMinion: 'auto-run: «minion» — the Minion on the author’s machine may take the task by itself; «decision needed» in review — the run awaits your answer',
+        sessionMinion: 'minion: the «minion» mark — the Minion runs the session by itself; «decision needed» — it stopped on a choice that is yours (the reason is in the tooltip); «not needed» — nothing to change, the card is closed (the evidence is in the tooltip)',
+        kanbanMinion: 'auto-run: «minion» — the Minion on the author’s machine may take the task by itself; «decision needed» in review — the run awaits your answer; «not needed» in done — the problem is already fixed, the card repeats another, or the code is gone',
         splitButton: 'split: a click runs the default action, ▾ lists the other ways, each with a caption',
       },
       userTitle: '@oleksii-motornyi · sign out',
@@ -2670,6 +2677,7 @@ export const en: MessageSchema = {
         backlog: 'Backlog',
         inProgress: 'In progress',
         review: 'In review',
+        done: 'Done',
       },
       chat: {
         user: 'Why does drag sometimes drop into the wrong cell?',
@@ -2772,6 +2780,10 @@ export const en: MessageSchema = {
         decisionTime: '1 h',
         decisionStatus: 'in review',
         decisionReason: 'The card contradicts the code: the API returns dates in UTC, and the task asks for local time',
+        notNeededTitle: 'remove the legacy cache flag',
+        notNeededTime: '2 h',
+        notNeededStatus: 'done',
+        notNeededReason: 'The flag is already gone: src/cache/config.ts no longer reads LEGACY_CACHE (removed in #412)',
       },
       kanbanCard: {
         keychainTitle: 'key rotation in Keychain',

@@ -76,6 +76,9 @@
             <li v-for="name in team.skills" :key="name">{{ name }}</li>
           </ol>
           <p v-else class="mn__hint">{{ t('minion.panel.noSkills') }}</p>
+          <!-- Cards filed from «Знахідки» get one more default skill, pasted by Kermanych itself
+               (decision 14) — not part of the sequence above, so said separately. -->
+          <p class="mn__hint">{{ t('minion.panel.findingsSkill', { name: MINION_FINDINGS_SKILL }) }}</p>
         </template>
         <button type="button" class="mn__link" @click="emit('open-workspace')">{{ t('minion.panel.editInWorkspace') }}</button>
       </template>
@@ -91,7 +94,7 @@
 // at the workspace scope, where AiAgentsPanel lists the minion like every other agent.
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { MINION_AGENT_ID, MINION_CAP_MAX, agentById, effectiveInstruction } from '@kermanych/core';
+import { MINION_AGENT_ID, MINION_CAP_MAX, MINION_FINDINGS_SKILL, agentById, effectiveInstruction } from '@kermanych/core';
 import { listAiAgentSkills, listAiAgents } from '@kermanych/cloud';
 import { useAuth } from 'stores/auth';
 import { useMinion } from 'stores/minion';

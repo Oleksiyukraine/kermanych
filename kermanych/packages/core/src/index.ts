@@ -327,6 +327,8 @@ export {
   clampMinionCap,
   validateOutcomeReport,
   readMinionResult,
+  minionFindingLine,
+  MINION_FINDINGS_SKILL,
   type MinionVerdict,
   type MinionVerdictReport,
   type MinionOutcome,

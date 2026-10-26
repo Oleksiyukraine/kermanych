@@ -8,6 +8,8 @@
 // other agents in agents.ts; the outcome contract below is Kermanych's own and is appended after
 // whatever that instruction says, so a rewritten instruction cannot break it.
 
+import type { FindingKind } from "./findings";
+
 /** How often the api asks the cloud for the next card while the minion is on. */
 export const MINION_POLL_MS = 60_000;
 /** Consecutive failed runs that pause the minion on this machine. */
@@ -26,23 +28,43 @@ export const MINION_SUMMARY_MAX = 4000;
 
 export const MINION_OUTCOME_TOOL = "report_outcome";
 
-/** What the agent reports through `report_outcome`. */
-export const MINION_VERDICTS = ["ready", "needs_decision"] as const;
+/**
+ * What the agent reports through `report_outcome`. `not_needed` (decision 14): nothing to change —
+ * the problem is already fixed, the card repeats another one, or the code it names is gone.
+ */
+export const MINION_VERDICTS = ["ready", "needs_decision", "not_needed"] as const;
 export type MinionVerdict = (typeof MINION_VERDICTS)[number];
 export type MinionVerdictReport = { outcome: MinionVerdict; summary: string };
 
 /** How a minion run ended, as the card (`session_report.minion`) and the session record it. */
-export const MINION_OUTCOMES = ["pr", "needs_decision", "failed", "stopped"] as const;
+export const MINION_OUTCOMES = ["pr", "needs_decision", "not_needed", "failed", "stopped"] as const;
 export type MinionOutcome = (typeof MINION_OUTCOMES)[number];
 
 /**
  * Kermanych's own reasons, which the UI words. `reason` beside one carries the free text: the
- * agent's summary for its own `needs_decision`, or an error message.
+ * agent's summary for its own `needs_decision` or `not_needed`, or an error message.
+ * `no_changes`: a `ready` with nothing changed on the branch. `has_changes`: a `not_needed` that
+ * left changes on it.
  */
-export const MINION_REASON_CODES = ["no_outcome", "no_pr", "time_cap", "docs_gate", "session_error", "launch_failed"] as const;
+export const MINION_REASON_CODES = [
+  "no_outcome",
+  "no_pr",
+  "time_cap",
+  "docs_gate",
+  "session_error",
+  "launch_failed",
+  "no_changes",
+  "has_changes",
+] as const;
 export type MinionReasonCode = (typeof MINION_REASON_CODES)[number];
 
 export type MinionResult = { outcome: MinionOutcome; code?: MinionReasonCode; reason?: string };
+
+/**
+ * The default skill with the per-kind rules for a card filed from a «Знахідка» (decision 14). The
+ * supervisor pastes it into such a run's opening prompt only; skills.ts ships its default body.
+ */
+export const MINION_FINDINGS_SKILL = "minion-findings";
 
 /** Why the minion is paused on this machine. */
 export const MINION_PAUSE_CODES = ["operator", "failures", "signed_out"] as const;
@@ -110,16 +132,34 @@ export function readMinionResult(v: unknown): MinionResult | undefined {
  */
 export const MINION_OUTCOME_CONTRACT = [
   "How this run ends — this step is Kermanych's own and applies whatever the instruction above says:\n",
-  `- When the work is done and checked, call the \`${MINION_OUTCOME_TOOL}\` tool with \`outcome: "ready"\` `,
-  "and a short summary of what you changed and the decisions you took, then end your turn. Kermanych ",
-  "then completes the documentation if the project requires it and has you open the pull request.\n",
+  `- When the work is done, committed on this branch and checked, call the \`${MINION_OUTCOME_TOOL}\` tool `,
+  `with \`outcome: "ready"\` and a short summary of what you changed and the decisions you took, then end `,
+  "your turn. Kermanych then completes the documentation if the project requires it and has you open the ",
+  "pull request.\n",
+  "- When there is nothing to change — the problem is already fixed on this branch, the card repeats another ",
+  "one, or the code it names is gone — change nothing, remove anything you created to check it, and call ",
+  `\`${MINION_OUTCOME_TOOL}\` with \`outcome: "not_needed"\` and a summary with the evidence: \`path:line\` on `,
+  "this branch, a command's output, or the card it repeats. Kermanych then closes the card. A problem you ",
+  "cannot reproduce and cannot show fixed is not this case.\n",
   "- When you cannot finish without a human decision — the card contradicts the code, a product choice ",
-  "that is not yours to make, missing access or data — stop. Call ",
+  "that is not yours to make, missing access or data, a problem you cannot reproduce — stop. Call ",
   `\`${MINION_OUTCOME_TOOL}\` with \`outcome: "needs_decision"\` and a summary that names exactly what `,
   "blocks you and which decision is needed, then end your turn. Do not guess past such a blocker.\n",
   `- Call \`${MINION_OUTCOME_TOOL}\` once, as the last action of your turn. A turn that ends without it `,
   "counts as a failed run.",
 ].join("");
+
+/**
+ * Kermanych's own line in a run of a card filed from a «Знахідка», right after the card: what kind
+ * of finding it is, which the description does not say. The per-kind rules follow it as the
+ * `minion-findings` skill, unless a team switched that skill off.
+ */
+export function minionFindingLine(kind: FindingKind): string {
+  return (
+    `Kermanych: this card was filed from a «Знахідка» of kind \`${kind}\` — a problem another agent ` +
+    "noticed outside its own task, possibly on another branch and some time ago."
+  );
+}
 
 /** Sent into a run that reached MINION_TIME_CAP_MS without a verdict. */
 export const MINION_TIME_CAP_PROMPT = [

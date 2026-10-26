@@ -27,10 +27,12 @@
     <div class="k-kanban-card__meta">
       <!-- A teammate's ▶ on this card launches the deep analysis too, so the board says so. -->
       <KAnalysisMark v-if="deepAnalysis" />
-      <!-- «Посіпака» on the author's machine may take it; and when its run stopped on a choice,
-           the card says so «На ревʼю», where cards wait on a person. -->
+      <!-- «Посіпака» on the author's machine may take it; when its run stopped on a choice, the
+           card says so «На ревʼю», where cards wait on a person; when it found nothing to change,
+           «Завершені» says so, muted. The predicates exclude each other: one mark at most. -->
       <KMinionMark v-if="autoRun" kind="allowed" />
       <KDecisionMark v-if="needsDecision" :reason="needsDecision" />
+      <KNotNeededMark v-else-if="notNeeded" :reason="notNeeded" />
       <KSpinner v-if="pending" :size="10" class="k-kanban-card__pending" />
       <span class="k-kanban-card__where">{{ project }} · {{ time }}</span>
     </div>
@@ -48,6 +50,7 @@ import KAvatar from './KAvatar.vue';
 import KAnalysisMark from './KAnalysisMark.vue';
 import KMinionMark from './KMinionMark.vue';
 import KDecisionMark from './KDecisionMark.vue';
+import KNotNeededMark from './KNotNeededMark.vue';
 import KSpinner from './KSpinner.vue';
 import KSkeleton from './KSkeleton.vue';
 
@@ -66,6 +69,8 @@ const props = defineProps<{
   autoRun?: boolean | undefined;
   // «Потрібне рішення», worded (lib/minion.ts minionReasonText); absent when nothing waits.
   needsDecision?: string | undefined;
+  // «Не потрібно», the agent's evidence (lib/minion.ts cardNotNeededReason); absent otherwise.
+  notNeeded?: string | undefined;
   // A move or launch of this card is waiting for its result (stores/pending): dimmed, spinning.
   pending?: boolean | undefined;
   // The roster that resolves `assignee` is not read yet: a placeholder face, never a raw id.
@@ -139,10 +144,13 @@ const emit = defineEmits<{ click: [] }>();
   color: var(--k-faint);
 }
 
+// Wraps: two marks («посіпака» with «потрібне рішення» or «не потрібно») and the project/time
+// line are wider than a board column, and an unwrapped row pushes the card out of its column.
 .k-kanban-card__meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--k-sp-2);
+  gap: var(--k-sp-1) var(--k-sp-2);
   min-width: 0;
   font-size: var(--k-fs-xs);
   color: var(--k-faint);

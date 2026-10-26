@@ -3,7 +3,7 @@ import { GoneException, Injectable, Optional, type OnModuleDestroy, type OnModul
 import { HttpAdapterHost } from "@nestjs/core";
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService, type ChangedFile } from "../worktree/worktree.service";
@@ -86,6 +86,8 @@ import {
   MINION_AGENT_ID,
   MINION_OUTCOME_CONTRACT,
   MINION_TIME_CAP_PROMPT,
+  MINION_FINDINGS_SKILL,
+  minionFindingLine,
   MINION_TIME_CAP_MS,
   MINION_GRACE_MS,
   type MinionResult,
@@ -383,16 +385,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // Never throws, for the same reason as ompSkills: the service degrades on its own for a
   // project reason (offline cloud, unreadable repository file, an override gone stale) and
   // throws for a caller error (an invalid project id), and neither may cost an agent its run.
-  // No template and an empty block is "this project customised nothing".
+  // No template and an empty block is "this project customised nothing". `extra` are skills
+  // Kermanych adds to this one launch, after the assigned sequence (SkillsService.assignedFor).
   private async agentPrompt(
     projectId: string,
     agentId: string,
     cwd: string,
+    extra: readonly string[] = [],
   ): Promise<{ template?: string; block: string }> {
     try {
       const scope = this.aiScope(projectId);
       const [assigned, template] = await Promise.all([
-        this.skills.assignedFor(scope, agentId, cwd),
+        this.skills.assignedFor(scope, agentId, cwd, extra),
         this.skills.instructionFor(scope, agentId),
       ]);
       return { ...(template !== undefined ? { template } : {}), block: assigned.block };
@@ -1095,6 +1099,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // minion never takes one: that agent interviews a person.
       ...(task.deepAnalysis && !minion ? { deepAnalysis: true } : {}),
       ...(minion ? { minion: true } : {}),
+      // A minion run of a finding card carries the kind for its opening prompt (decision 14).
+      ...(minion && task.findingKind ? { findingKind: task.findingKind } : {}),
     });
     if (minion) this.minionRuns.set(session.id, { phase: "work", starting: true });
     try {
@@ -1494,12 +1500,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // or repository override wins. Degrades like completeDocs: the wrapper alone is a complete ask.
   // A «Посіпака» run gets the minion's instruction around the card — the «ШІ-команда» override
   // and assigned skills like every agent — and Kermanych's outcome contract after it, which no
-  // override can drop (docs/specs/2026-10-23-minion-auto-run.md, decision 11).
+  // override can drop (docs/specs/2026-10-23-minion-auto-run.md, decision 11). A card filed from
+  // a «Знахідка» also gets, right after the card, Kermanych's line naming the kind, and the
+  // `minion-findings` skill after the assigned ones (decision 14): a repository, project,
+  // workspace or user skill of that name wins, and a team that switched it off gets the line alone.
   private async openingPrompt(session: Session, firstPrompt: string, cwd: string): Promise<string> {
     if (session.minion && firstPrompt.trim()) {
-      const { template, block } = await this.agentPrompt(session.projectId, MINION_AGENT_ID, cwd);
+      const kind = session.findingKind;
+      const { template, block } = await this.agentPrompt(session.projectId, MINION_AGENT_ID, cwd, kind ? [MINION_FINDINGS_SKILL] : []);
       const card = firstPrompt.trim() === session.name.trim() ? session.name : `${session.name}\n\n${firstPrompt}`;
-      return `${renderInstruction(agentById(MINION_AGENT_ID)!, { task: card }, template)}${block}\n\n${MINION_OUTCOME_CONTRACT}`;
+      const about = kind ? `\n\n${minionFindingLine(kind)}` : "";
+      return `${renderInstruction(agentById(MINION_AGENT_ID)!, { task: card }, template)}${about}${block}\n\n${MINION_OUTCOME_CONTRACT}`;
     }
     if (!session.deepAnalysis || !firstPrompt.trim()) return firstPrompt;
     let block = "";
@@ -3221,28 +3232,31 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
   // The operator wrote to the run (`work`: its next verdict drives the same flow) or restarted
-  // it (`idle`: the old child's exit is theirs, not a failed run). Either way no clock any more.
+  // it (`idle`: the old child's exit is theirs, not a failed run). Either way no clock any more,
+  // and nothing Kermanych was about to do after the last verdict (`advancing`) goes ahead.
   private attendMinionRun(id: string, phase: "work" | "idle" = "work"): void {
     const run = this.minionRun(id);
     if (!run) return;
     run.attended = true;
     run.phase = phase;
+    run.advancing = false;
     this.clearMinionClock(run);
   }
 
   // At a minion turn's end, before the settle: whether the turn waits on a person (`review`),
-  // whether the run goes on with a docs or PR turn (`hold`: it settles `queued`, not `done`, so
-  // the card never flashes to the closed lane and stays active for every machine meanwhile),
-  // and what to do once it has settled (`after`). Consumes the turn's verdict.
+  // whether the run goes on (`hold`: it settles `queued`, not `done`, so the card never flashes to
+  // the closed lane and stays active for every machine while Kermanych checks the branch and
+  // sends the docs or PR turn), and what to do once it has settled (`after`). Consumes the turn's
+  // verdict.
   private onMinionTurnEnd(id: string, hasPr: boolean): { review: boolean; hold?: boolean; after: () => void } {
     const run = this.minionRun(id);
     if (!run) return { review: false, after: () => {} };
     const verdict = run.verdict;
     run.verdict = undefined;
     const record = (result: MinionResult, effect: MinionRunResult["effect"]) => () => void this.recordMinionResult(id, result, effect);
-    const advance = () => {
+    const hold = (next: () => Promise<void>) => {
       run.advancing = true;
-      return { review: false, hold: true, after: () => void this.advanceMinion(id, run) };
+      return { review: false, hold: true, after: () => void next() };
     };
     switch (run.phase) {
       // Waiting on a person already (a stopped or capped turn's late end): stay on review. A PR
@@ -3253,7 +3267,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           return { review: true, after: record({ outcome: "pr" }, "neutral") };
         return { review: true, after: () => {} };
       case "docs":
-        return advance();
+        return hold(() => this.advanceMinion(id, run));
       case "pr":
         run.phase = "idle";
         // The agent's own words, when it reported why the PR did not open, are the reason. A run
@@ -3262,7 +3276,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           ? { review: true, after: record({ outcome: "pr" }, run.capped ? "failure" : "success") }
           : { review: true, after: record({ outcome: "needs_decision", code: "no_pr", ...(verdict ? { reason: verdict.summary } : {}) }, "failure") };
       case "work":
-        if (verdict?.outcome === "ready") return advance();
+        if (verdict?.outcome === "ready") return hold(() => this.advanceMinion(id, run, verdict.summary));
+        if (verdict?.outcome === "not_needed") return hold(() => this.closeNotNeeded(id, run, verdict.summary));
         if (verdict) {
           run.phase = "idle";
           // The agent's own call resets the failures — unless the time cap made it.
@@ -3284,11 +3299,24 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // After a `ready` (or the docs turn): one docs turn while the gate fails, then the PR. Called
-  // once the turn has settled, so both sends start a fresh turn.
-  private async advanceMinion(id: string, run: MinionRun): Promise<void> {
+  // After a `ready` (or the docs turn): a branch with nothing on it goes to a person (decision
+  // 14), then one docs turn while the gate fails, then the PR. Called once the turn has settled,
+  // so both sends start a fresh turn. `summary` is the `ready`'s, for the no-changes reason.
+  private async advanceMinion(id: string, run: MinionRun, summary?: string): Promise<void> {
     try {
+      // Only right after the `ready`: once the docs turn ran, the branch holds at least the docs.
+      if (run.phase === "work") {
+        const changes = await this.minionChanges(id);
+        if (!run.advancing) return;
+        if (!changes.length) {
+          run.phase = "idle";
+          this.settleMinionRest(id, "in_review");
+          await this.recordMinionResult(id, { outcome: "needs_decision", code: "no_changes", ...(summary ? { reason: summary } : {}) }, "failure");
+          return;
+        }
+      }
       let { failures } = await this.docsGate(id);
+      if (!run.advancing) return;
       if (failures.length && !run.docsSent) {
         run.docsSent = true;
         run.phase = "docs";
@@ -3299,7 +3327,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       }
       if (failures.length) {
         run.phase = "idle";
-        this.settleMinionReview(id);
+        this.settleMinionRest(id, "in_review");
         await this.recordMinionResult(id, { outcome: "needs_decision", code: "docs_gate", reason: failures.join(", ") }, "failure");
         return;
       }
@@ -3307,7 +3335,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       await this.createPullRequest(id);
     } catch (err) {
       run.phase = "idle";
-      this.settleMinionReview(id);
+      this.settleMinionRest(id, "in_review");
       await this.recordMinionResult(id, { outcome: "failed", code: "session_error", reason: (err as Error).message }, "failure");
     } finally {
       run.advancing = false;
@@ -3315,10 +3343,51 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // A run that rests between turns (`queued` while it advanced after `ready`) and then turns out
-  // to wait on a person moves to review — unless a turn has started meanwhile. `turnRunning`
-  // cannot tell: the `queued` hold itself reads as a running turn.
-  private settleMinionReview(id: string): void {
+  // After a `not_needed` (decision 14): the card closes at `done` only when the branch holds
+  // nothing. Changes left on it hand the run to a person, as a failure: the agent said there was
+  // nothing to change, and did change something.
+  private async closeNotNeeded(id: string, run: MinionRun, summary: string): Promise<void> {
+    try {
+      const changes = await this.minionChanges(id);
+      if (!run.advancing) return;
+      run.phase = "idle";
+      if (changes.length) {
+        this.settleMinionRest(id, "in_review");
+        await this.recordMinionResult(id, { outcome: "needs_decision", code: "has_changes", reason: summary }, "failure");
+        return;
+      }
+      this.settleMinionRest(id, "done");
+      // A run that reached the time cap counts as failed, whatever it reported (decision 9).
+      await this.recordMinionResult(id, { outcome: "not_needed", reason: summary }, run.capped ? "failure" : "success");
+    } catch (err) {
+      run.phase = "idle";
+      this.settleMinionRest(id, "in_review");
+      await this.recordMinionResult(id, { outcome: "failed", code: "session_error", reason: (err as Error).message }, "failure");
+    } finally {
+      run.advancing = false;
+      this.pushUpdate(id);
+    }
+  }
+
+  // What a minion run has left on its branch (decision 14): what finishInfo lists, against the
+  // same base, without the project's carry files — Kermanych copied those into the worktree
+  // itself, and one the repository does not ignore would read as the agent's change. A carry
+  // entry names a repository-relative file the way git lists it once normalised (`./.env`).
+  private async minionChanges(id: string): Promise<ChangedFile[]> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    const g = this.boundProject(s.projectId);
+    if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
+    const { dir, from } = await this.branchBase(s, g);
+    const carried = new Set((g.carryFiles ?? [".env"]).map((f) => posix.normalize(f.replaceAll("\\", "/"))));
+    return (await this.worktree.changedFiles(dir, from)).filter((f) => !carried.has(f.path));
+  }
+
+  // A run that rests between turns (`queued` while Kermanych checks its branch or sends its next
+  // turn) settles where it ended: on review when it waits on a person, at `done` when a
+  // `not_needed` closed it — unless a turn has started meanwhile. `turnRunning` cannot tell: the
+  // `queued` hold itself reads as a running turn. The hold held an agent slot, which is free now.
+  private settleMinionRest(id: string, to: "in_review" | "done"): void {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) return;
     const status = this.merge(s).status;
@@ -3326,11 +3395,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const l = this.map.get(id);
     if (l && (l.turnPending || l.state.status === "thinking" || l.state.status === "tool" || l.state.status === "waiting_input")) return;
     if (l) {
-      l.state = { status: "in_review" };
-      l.live.status = "in_review";
+      l.state = { status: to };
+      l.live.status = to;
     }
-    this.registry.updateSession(id, { status: "in_review" });
+    this.registry.updateSession(id, { status: to });
     this.pushUpdate(id);
+    this.drainSlots();
   }
 
   // Persist a run's result, show it, send it to the card, and tell MinionService how it counts.
@@ -3357,8 +3427,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
   // The operator stops, deletes or finishes a minion session. A run still in flight — a turn
-  // running, a docs or PR turn on its way, or no result yet — ends `stopped`, which counts for
-  // nothing; a run that already ended keeps its result.
+  // running, a branch check or a docs or PR turn on its way, or no result yet — ends `stopped`,
+  // which counts for nothing, and what was on its way does not go ahead; a run that already ended
+  // keeps its result.
   private async endMinionRun(id: string): Promise<void> {
     const row = this.registry.listSessions().find((x) => x.id === id);
     const run = row?.minion ? this.minionRun(id) : undefined;
@@ -3366,6 +3437,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const inFlight = !row.minionResult || run.advancing === true || ACTIVE_STATUSES.includes(this.merge(row).status) || this.turnRunning(row);
     run.phase = "idle";
     run.attended = true;
+    run.advancing = false;
     run.verdict = undefined;
     this.clearMinionClock(run);
     if (inFlight) await this.recordMinionResult(id, { outcome: "stopped" }, "neutral");

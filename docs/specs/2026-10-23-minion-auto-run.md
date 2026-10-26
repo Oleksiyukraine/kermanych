@@ -28,6 +28,10 @@ first version down to four points:
    Its own skill set is settled later.
 4. Once on, it takes only cards the user created, as a guard against prompt injection.
 
+After the first delivery (PR #187) the operator added one more ask: most of what the minion will
+run is findings, leftovers and old backlog cards («хлам»), so it should get special instructions
+for that work. Decision 14 settles them; it is the skill set point 3 left for later.
+
 ## Context
 
 **Starting a card.** One method starts every card-born agent:
@@ -290,9 +294,9 @@ The instruction tells the minion to decide within the card's scope and keep a li
 decisions for the PR.
 
 **Outcome.** A minion session gets one more tool on its `kermanych` MCP server:
-`report_outcome { outcome: "ready" | "needs_decision", summary }`. It is listed only for minion
-sessions. The api validates the call and answers at once. When the turn ends, Kermanych acts on
-the last outcome:
+`report_outcome { outcome: "ready" | "needs_decision" | "not_needed", summary }`. It is listed
+only for minion sessions. The api validates the call and answers at once. When the turn ends,
+Kermanych acts on the last outcome:
 
 - `ready` → decision 10. Until the docs or PR turn starts, the session rests at `queued`, not
   `done`: the card never flashes to the closed lane, and it stays active for every machine, so no
@@ -307,19 +311,21 @@ the last outcome:
 - A PR the operator opens on a minion session («Створити ПР» on the finish sheet) becomes the
   card's result `pr`. Counted as a success during the run's own work, neither way once the run
   already waited on a person.
+- `not_needed` → decision 14: nothing to change, so the card closes at `done` with «не потрібно».
 
 **Failures.** These count as failures:
 
 - a launch that fails;
 - a session that ends in `error`;
 - a turn that ends without an outcome;
-- a `ready` that ends without a PR;
+- a `ready` with no changes on the branch, or one that ends without a PR;
+- a `not_needed` that left changes on the branch (decision 14);
 - the time cap.
 
 Two failures in a row pause the minion on this machine until the operator resumes it. A run that
-ends in a PR, or in the agent's own `needs_decision`, resets the count. If the operator stops,
-deletes or restarts a minion session, that changes nothing in the count, and the minion does not
-take that card again: it is no longer in `backlog`.
+ends in a PR, in the agent's own `needs_decision`, or in `not_needed`, resets the count. If the
+operator stops, deletes or restarts a minion session, that changes nothing in the count, and the
+minion does not take that card again: it is no longer in `backlog`.
 
 **Signed out.** Before each claim the minion runs the existing runtime preflight, cached for 5
 minutes. A signed-out provider pauses it at once with «потрібен вхід в AI», and no card is taken. So
@@ -352,13 +358,16 @@ Rejected:
 
 **On `ready`:**
 
-1. If the project requires documentation and the gate fails, Kermanych sends one «Доповнити
+1. If the branch has no changes against the base (the project's carry files aside), the card goes
+   to `needs_decision` («немає змін») without a docs or PR turn, and it counts as a failure
+   (decision 14).
+2. If the project requires documentation and the gate fails, Kermanych sends one «Доповнити
    документацію» turn (`completeDocs`). If the gate still fails, the card goes to `needs_decision`
    with the gate's failures.
-2. Kermanych runs «Створити ПР» (`createPullRequest`) unchanged: the PR instruction, the base sync,
+3. Kermanych runs «Створити ПР» (`createPullRequest`) unchanged: the PR instruction, the base sync,
    the QA checklist, and `GIT_TOKEN` from the project's `.env` on this machine. The PR is
    therefore opened in the name of that token's owner.
-3. A detected PR URL settles the card at `in_review`, as today. A PR turn without a PR URL settles
+4. A detected PR URL settles the card at `in_review`, as today. A PR turn without a PR URL settles
    at `in_review` with «потрібне рішення» («PR не відкрито») and counts as a failure. A machine
    without `GIT_TOKEN` therefore pauses after two cards instead of failing the whole queue.
 
@@ -384,8 +393,8 @@ operator cannot approve a minion PR opened with their own token.
 
   The other agents keep the stub.
 - The minion is excluded from the trigger agent picker and from `runTriggerAgent`.
-- No default skills are assigned in this change; the operator will settle the minion's own skills
-  later. On `claude-code`, a library skill reaches the minion only if it is assigned, as for every
+- The minion's own rules for findings and old backlog cards: decision 14. On `claude-code`, a
+  library skill reaches the minion only if it is assigned or Kermanych pastes it in, as for every
   session (README «Skills»).
 
 Rejected:
@@ -402,12 +411,13 @@ Rejected:
 - on minion sessions in «Агенти» and on «Карта агентів» («виконує Посіпака»).
 
 A «потрібне рішення» mark, with the reason as its tooltip, shows on an `in_review` card whose
-session report says so, and on the session.
+session report says so, and on the session. A «не потрібно» mark, with the evidence as its
+tooltip, shows on a `done` card whose session report says so, and on the session (decision 14).
 
-**The card.** `session_report` gains `minion: { outcome: "pr" | "needs_decision" | "failed" |
-"stopped", reason? }`. The report outbox writes it with the rest of the report, so every machine
-sees the outcome and the counts can be built later. It is a field inside the existing jsonb, so it
-needs no migration.
+**The card.** `session_report` gains `minion: { outcome: "pr" | "needs_decision" | "not_needed" |
+"failed" | "stopped", code?, reason? }`. The report outbox writes it with the rest of the report,
+so every machine sees the outcome and the counts can be built later. It is a field inside the
+existing jsonb, so it needs no migration.
 
 **«Карта агентів».** Minion sessions are ordinary agent sessions, so the map already shows them,
 and they get the mark. A click opens the session's chat, as today: the operator can write to it
@@ -442,11 +452,129 @@ notification. A pause the minion already had when the app started is shown by th
 - Closing the window still quits Kermanych. Runs stop and their cards go to `stopped`, as today,
   and the minion does not take them again.
 
+### 14. Rules for findings and old backlog cards
+
+Asked after the first delivery: most of what the minion will run is findings, leftovers and old
+backlog cards («хлам»). Such cards go stale: the problem was fixed meanwhile, the card repeats
+another, or the code it names moved. A finding may be a misdiagnosis, or it may describe code on a
+branch that never merged (findings spec, decision 1). A cleanup card also invites a bigger change
+than an unattended PR should carry. Until now the minion did not know that a card came from a
+finding: the kind lives only in `tasks.finding_kind`, and the description does not name it
+(`renderFindingDescription`).
+
+**14.1 Two layers.**
+
+- General rules for every minion card, in the default «Посіпака» instruction:
+  1. Check that the card still applies before changing code: find what the card and its evidence
+     point to on this branch, which starts from the base. If the problem is already fixed, the
+     card repeats another one, or the code it names is gone, report `not_needed` with the
+     evidence. If the problem does not reproduce, or the code exists only on another branch,
+     report `needs_decision`.
+  2. Make the smallest change that meets the acceptance criteria: no drive-by refactors,
+     reformatting, renames or dependency updates.
+  3. Stop with `needs_decision` and a short plan instead of changing a public API or a database
+     schema, adding a migration or a dependency, or spreading the fix over many files.
+  4. A check that already fails on the base before the change is not the card's to fix: note it
+     in the PR's `## Testing`, report it with `report_finding` when it is new, and judge the
+     acceptance criteria on what the change touches.
+  5. The PR description says what was wrong, how the agent confirmed it, what changed, and the
+     decisions it took.
+- Rules per finding kind, only for cards with a `finding_kind`:
+  - **bug:** reproduce it first, with a test or the command from the evidence, and keep a test
+    that fails without the fix and passes with it.
+  - **security:** 14.3.
+  - **tech-debt:** behaviour stays the same, and the project's checks pass before and after. A
+    refactor that would grow large is `needs_decision` with a plan in stages.
+  - **docs:** change documentation only, with the code as the source of truth. If the code is
+    what is wrong, `needs_decision`, and the code stays untouched.
+
+Rejected:
+
+- Findings only. Old backlog cards go stale too, and rules 1-5 are what any unattended run needs.
+- One set of rules without kinds. The agent would not know what a security or a docs finding
+  demands.
+
+**14.2 A third verdict: «не потрібно» (`not_needed`).**
+
+- The agent changes nothing, removes anything it created to check the card, and reports
+  `not_needed`. The summary carries the evidence: `path:line` on the base, a command's output, or
+  the card it repeats.
+- Kermanych checks the branch first. If it has changes against the base (the project's carry
+  files aside), the run goes to `needs_decision` («позначено як непотрібне, але є зміни»), and it
+  counts as a failure.
+- Otherwise the card settles at `done`, in «Завершені», with a «не потрібно» mark whose tooltip is
+  the evidence. The session carries the same mark. For the pause it counts as a success.
+  `session_report.minion.outcome = "not_needed"` keeps it for the metrics: how many findings were
+  stale.
+- «Could not reproduce» and «the code exists only on an unmerged branch» stay `needs_decision`:
+  they need a person.
+- The session stays in «Агенти» like any other, with its worktree until «Завершити».
+- A `ready` with no changes against the base is caught before the docs and PR turns: it goes to
+  `needs_decision` («немає змін»), and it counts as a failure. Until now it went through a PR turn
+  that had nothing to open and ended in `no_pr`.
+
+Rejected:
+
+- No new verdict: the agent says `needs_decision`, and the operator closes the card. Every stale
+  card would wait for a click, which is the work the minion is meant to take off the operator.
+- A new verdict that still lands on «На ревʼю» for the operator to close: the same click.
+
+**14.3 Security findings run unattended, under stricter rules.** On top of 14.1, the `security`
+section says:
+
+- Reproduce only locally: a test or a local run of the code. Never against a deployed
+  environment, a real account or an external service.
+- No secrets in the output, the commits or the pull request.
+- The pull request states the impact and the fix, not the steps to exploit it.
+- Rotating keys, or changing infrastructure or access policies, is `needs_decision`.
+- `not_needed` only when the vulnerable code is gone from the base. «Not exploitable in my view»
+  is `needs_decision`.
+
+Rejected:
+
+- Opening a security PR as a draft. Every minion PR waits for the operator's review anyway.
+- Never running security findings unattended. The most valuable findings would stay manual, and
+  automatic execution is already chosen card by card, off by default in the findings dialog.
+
+**14.4 The size limit is an instruction.** Rule 3 is the agent's to apply. Kermanych does not
+measure the diff before the PR.
+
+Rejected: a hard limit before the PR (for example 25 files or 800 changed lines, fixed or set on
+the «Посіпака» card). The threshold is arbitrary, a docs card or a rename legitimately touches many
+files, and a file count cannot see an API, schema or dependency change. It can be added once real
+minion PRs show that it is needed.
+
+**14.5 Where the rules live.**
+
+- The general rules are part of the default «Посіпака» instruction (`agents.ts`). A workspace can
+  rewrite it, as before.
+- The per-kind rules are a new default skill, `minion-findings`, with one section per kind.
+  - Kermanych appends it to the minion's assigned skills, once, for a finding card only. It is
+    pasted into the prompt, so both runtimes get it.
+  - Before it, a line of Kermanych's own names the card's kind.
+  - A skill of that name in the repository, or a library row at user, project or workspace scope,
+    replaces it. Switching the default off drops it. This is the `deep-analysis` precedent.
+  - Every default is listed in every session's skill library, so its description says it is meant
+    for minion runs of finding cards only.
+- What the three verdicts mean stays Kermanych's own, in the outcome contract and the
+  `report_outcome` description. No rewrite of the instruction or the skill can change how a run
+  ends.
+- The card's kind is stamped on the session when the minion run is created (`Session.findingKind`,
+  SQLite `sessions.finding_kind`), so a relaunched run still gets the right rules.
+- The «Посіпака» card on «ШІ-команда» → Проєкт adds a line: finding cards also get
+  `minion-findings`, which «Бібліотека» can override or switch off.
+
+Rejected:
+
+- Everything in the instruction. Every card would carry all four kinds' rules, and only a
+  workspace could change them: no project or repository could set its own security policy.
+- Everything Kermanych-owned. No team could adapt the rules.
+
 ### Out of scope
 
 - Metrics and their screens. The data is stored: `auto_run`, `finding_kind`,
   `session_report.minion`.
-- The minion's own default skills (settled later, decision 11).
+- A hard limit on a minion PR's size (decision 14.4).
 - An automatic review round, watching the PR on GitHub, and finishing the session after the merge.
   Worktrees stay until «Завершити», as for any session.
 - Retrying a card the minion failed. The operator relaunches it with ▶ (a manual run) or creates
@@ -519,6 +647,35 @@ notification. A pause the minion already had when the app started is shown by th
   - i18n uk/en.
 - **Electron:** `electron-main.ts` passes the keep-awake hook (`powerSaveBlocker`).
 - **Docs:** README (see Documentation impact).
+- **Decision 14 (rules for findings and old backlog cards):**
+  - Core: the general rules in the default `MINION` instruction (its holes unchanged); the default
+    skill `minion-findings` (`MINION_FINDINGS_SKILL`); the verdict and the outcome `not_needed`
+    (`MINION_VERDICTS`, `MINION_OUTCOMES`) and the reason codes `no_changes` and `has_changes`;
+    the outcome contract and a Kermanych line naming the finding kind (`minionFindingLine`);
+    `Session.findingKind`.
+  - API:
+    - `sessions.finding_kind`, stamped from the card when the minion run is created (`launchTask`);
+    - for a finding card, the opening prompt adds the kind line and `minion-findings` to the
+      minion's assigned skills (`SkillsService.assignedFor` takes extra names, so the block and its
+      de-duplication stay one; the extras resolve offline too, like any default);
+    - the `report_outcome` description and schema;
+    - at a minion turn's end, `not_needed` → rests `queued` → the branch check → `done` with
+      `not_needed` (a success, a failure after the time cap) or `in_review` with `has_changes` (a
+      failure);
+    - on `ready`, the branch check runs before the docs gate → `in_review` with `no_changes` (a
+      failure) when the branch is empty;
+    - the branch check is `changedFiles` against the base `finishInfo` uses, without the project's
+      carry files (normalised, so `./.env` is `.env`);
+    - `settleMinionRest` settles a resting run at `in_review` or `done` and frees its agent slot;
+    - the operator taking a run over (a message, a restart, a stop, delete or finish) clears
+      `advancing`, and the branch check and the docs gate stop after their awaits instead of
+      sending the next turn. The window left inside `completeDocs` / `createPullRequest` is filed
+      as a finding.
+  - UI: `KNotNeededMark` (a new `notNeeded` icon) on `KKanbanCard`, `KSessionCard`, the session
+    header and the map node, with kit samples; `cardNotNeeded` / `sessionNotNeeded` and their
+    wording in `lib/minion.ts`; the `minion-findings` line on `MinionPanel`; i18n uk/en. The
+    kanban card's mark row wraps: two marks no longer push the card out of its column.
+  - Docs: README «Посіпака» and «Карта агентів».
 
 ## Verification
 
@@ -587,6 +744,51 @@ notification. A pause the minion already had when the app started is shown by th
   `powerSaveBlocker`; the browser-tab build keeps the default refresh), the claude-code runtime
   with `disallowedTools` against the real CLI, a real GitHub PR, and pushing the migration to the
   team's project.
+- **Decision 14:**
+  - Suites: `packages/core` 23 files, 227 passed (the validator takes `not_needed`, a stored
+    `not_needed` and a `has_changes` result read back, the default skill the supervisor asks for
+    exists). `apps/api` 114 files, 1058 passed, 4 skipped; `minion.spec.ts` 34 (+6):
+    - `not_needed` on an unchanged branch rests `queued`, then `done` with the evidence, the
+      failures reset, no docs gate and no further prompt, and the card's report carries it;
+    - `not_needed` with changes → `in_review` with `has_changes`, a failure;
+    - `ready` on an unchanged branch → `in_review` with `no_changes`, a failure, before the docs
+      gate and with no PR turn;
+    - carry files `./.env` and `config/local.json` listed by git do not count;
+    - a stop while the branch is checked sends nothing more (without the guard the run went on
+      to its PR turn and the session ended `done`);
+    - a finding card's prompt, resolved by the real `SkillsService` over an empty library,
+      carries the kind line and the `minion-findings` body between the card and the outcome
+      contract, and the session `findingKind`; an ordinary card's carries neither.
+    `skills.assignments.spec.ts`: Kermanych's extra names follow the assigned sequence once and
+    still arrive with the cloud unreachable. `apps/ui` 63 files, 717 passed: the «не потрібно»
+    predicates (only at `done` for a card, never with «потрібне рішення»), the evidence tooltip
+    and its fallback, the two new reasons worded in the real uk/en catalogues.
+  - Typecheck and build: `apps/api` `tsc --noEmit` clean, `nest build` clean, `packages/cloud`
+    `tsc --noEmit` clean; `apps/ui` `vue-tsc --noEmit` only the pre-existing TS2352.
+  - Smoke: the built api and real omp (`claude-opus-5-5`) against the local stack, as above. The
+    throwaway repo had `clamp()` already fixed and `average([])` still returning `NaN`. The project's
+    carry files were `.env` (ignored) and `local.config.json` (untracked, not ignored, so git
+    lists it in every worktree). Three auto-run cards were taken oldest first:
+    - a `bug` finding about `clamp()` (stale): the model's opening prompt had the kind line and
+      the `minion-findings` body between the card and the outcome contract. The agent ran the
+      evidence command (it printed 10, not 15), cited `src/math.js:5` and `test/math.test.js:6`,
+      changed nothing, and reported `not_needed`. The card went `done` with
+      `session_report.minion = { outcome: "not_needed", reason: <the evidence> }`, failures 0.
+      `local.config.json` did not count as a change;
+    - a `bug` finding about `average([])` (live): reproduced first (`NaN`, and the new test
+      failed), fixed with a guard and a test, `ready` → «Створити ПР» → `gh pr create` →
+      `in_review` with `pr`. The PR body said what was wrong, how it was confirmed, what changed,
+      the decisions and the testing;
+    - an ordinary card («Add a sum() helper») ran to a PR. Its prompt had the general rules but
+      neither the kind line nor the skill;
+    - the UI against that api: «не потрібно» on the «Завершені» card (tooltip = the evidence), on
+      the session in «Агенти» and its header, and on its «Карта агентів» node. The
+      `minion-findings` line on the «Посіпака» card. `minion-findings` listed as «системний» in
+      «Бібліотека». The smoke showed the board card's mark row overflowing its column with two
+      marks (the same with «потрібне рішення»); the row now wraps, re-checked on the board and
+      the kit samples.
+  - Not exercised: `has_changes` and `no_changes` with a real agent (unit tests only), and a team
+    override or a switched-off `minion-findings` (the same resolution as any default skill).
 
 ## Documentation impact
 
@@ -596,6 +798,8 @@ notification. A pause the minion already had when the app started is shown by th
   - what the minion takes, and why only the author's cards;
   - activation and the cap;
   - how it runs without a person, its outcomes and marks, and the pause;
+  - the rules it works by (decision 14): the general rules, `minion-findings` per finding kind and
+    how a team overrides it, and the «не потрібно» outcome;
   - keep-awake;
   - the always-on machine (signed in as the author, window open);
   - the migration to push.

@@ -842,10 +842,10 @@ spawned → their nested subagents.
 - **Clicks.** A session card opens its chat (the map closes); so does any card in the list. A
   subagent card opens its transcript and figures in a drawer over the map. Esc closes the
   drawer, then the map.
-- **«Посіпака».** Its sessions carry the minion mark, and «потрібне рішення» when they wait for
-  you. A strip above the map shows the minion on this machine — working N of its cap, the cards
-  waiting, the activated projects — or why it is paused, with ⏸ / ▶. It is hidden while no
-  project is activated here.
+- **«Посіпака».** Its sessions carry the minion mark, «потрібне рішення» when they wait for
+  you, and «не потрібно» when the run found nothing to change. A strip above the map shows the
+  minion on this machine — working N of its cap, the cards waiting, the activated projects — or
+  why it is paused, with ⏸ / ▶. It is hidden while no project is activated here.
 - **Limit.** Subagent trees live in the api's memory while the session is live: they survive
   a UI reload (the socket snapshot carries them) but not an api or app restart, «Завершити»
   or deleting the session. A subagent's transcript opens only while its session is live.
@@ -1151,19 +1151,39 @@ request with nobody watching.
   `report_outcome` tool of its `kermanych` MCP server:
   - `ready`: Kermanych completes the documentation once if the project requires it and it is
     missing, then runs «Створити ПР» as usual — the PR is opened with the project's
-    `GIT_TOKEN` from this machine — and the card lands on «На ревʼю»;
+    `GIT_TOKEN` from this machine — and the card lands on «На ревʼю». A `ready` with nothing
+    changed on the branch lands there with «потрібне рішення: немає змін» instead, before any
+    PR turn;
+  - `not_needed`: the problem is already fixed, the card repeats another one, or the code it
+    names is gone. The agent changes nothing and gives the evidence; when the branch has no
+    changes, the card closes in «Завершені» with «не потрібно» and the evidence in its tooltip.
+    Changes left on the branch put it on «На ревʼю» with «потрібне рішення» instead. The
+    project's carry files (`.env`) do not count as changes;
   - `needs_decision`: the card lands on «На ревʼю» with «потрібне рішення» and the reason.
     Answer the session in «Агенти» like any other; the minion goes on and opens the PR when it
     is done.
+- **Old cards and findings.** Most of what it runs is findings and old backlog cards, so its
+  default instruction has it check first that the card still applies (`not_needed` when it does
+  not, `needs_decision` when the problem does not reproduce or the code exists only on another
+  branch), make the smallest change that meets the acceptance criteria, stop with a plan instead
+  of changing a public API or a schema, adding a migration or a dependency, or spreading over
+  many files, and leave a check that already fails on the base to the PR's `## Testing` and a
+  finding. A card filed from a «Знахідка» also gets a line naming its kind and the default skill
+  `minion-findings`, with rules per kind: reproduce a bug and keep a test that fails without the
+  fix; reproduce a security problem only locally, keep secrets and exploit steps out of the PR,
+  and leave key rotation and access policy to a person; keep behaviour for tech debt; change only
+  documentation for a docs finding. «Бібліотека» or a skill of that name in the repository
+  overrides it, and switching it off drops it.
 - **When it pauses.** Two failed runs in a row pause it on this machine: a launch that fails,
-  a crash, a turn that ends without a verdict, a `ready` that ends without a PR, or a card that
-  runs past 2 hours. A signed-out AI provider pauses it at once, before it takes a card.
-  «Продовжити» on the «Посіпака» card or ▶ on «Карта агентів» resumes it. Stopping a minion
-  session yourself is not a failure, and the minion does not take that card again.
+  a crash, a turn that ends without a verdict, a `ready` with no changes or without a PR, a
+  `not_needed` that left changes, or a card that runs past 2 hours. A signed-out AI provider
+  pauses it at once, before it takes a card. «Продовжити» on the «Посіпака» card or ▶ on «Карта
+  агентів» resumes it. Stopping a minion session yourself is not a failure, and the minion does
+  not take that card again.
 - **Where you see it.** The «Посіпака» mark on its cards and sessions, «потрібне рішення» on
-  the cards that wait for you, the outcome in the card's session report
-  (`session_report.minion`, readable from every machine), and the strip above «Карта агентів».
-  Routes: `GET /api/minion`, `PUT /api/minion` (`{ cap?, paused? }`),
+  the cards that wait for you and «не потрібно» on the ones it closed, the outcome in the card's
+  session report (`session_report.minion`, readable from every machine), and the strip above
+  «Карта агентів». Routes: `GET /api/minion`, `PUT /api/minion` (`{ cap?, paused? }`),
   `PUT /api/minion/projects/:id` (`{ active }`); the socket event `minion_update`.
 - **An always-on machine.** Install Kermanych there, sign in with **your own** account (a
   separate account would find no cards of its own), bind the projects, put `GIT_TOKEN` into

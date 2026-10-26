@@ -6,6 +6,7 @@ import type { NoticeCode, NoticeParams } from "./i18n-codes";
 import type { NativeHarness } from "./runtime";
 import type { MachineAlert } from "./machine-profile";
 import type { MinionResult, MinionState } from "./minion";
+import type { FindingKind } from "./findings";
 
 // `in_review` is the PR hand-off state: the operator asked for a pull request, the agent
 // pushed it, and the work now waits on a HUMAN reviewer. It is settled (nothing moves on
@@ -71,6 +72,10 @@ export type Session = {
   // Stamped when the session is created and never changed. Absent means a session a person
   // started, even when its card allows auto-run.
   minion?: boolean;
+  // A minion run of a card filed from a «Знахідка»: the finding's kind, stamped from the card
+  // when the run is created, so its opening prompt — a relaunch's too — carries the per-kind rules
+  // (docs/specs/2026-10-23-minion-auto-run.md, decision 14). Absent for every other session.
+  findingKind?: FindingKind;
   // How the minion's run ended so far: `needs_decision` keeps the «потрібне рішення» mark until
   // a later turn ends differently. Persisted; absent until the first turn of a minion run ends.
   minionResult?: MinionResult;
