@@ -10,6 +10,8 @@ import type {
   Session,
   ReleaseNotesAsk,
   ReleaseNotesReply,
+  ReleaseNotesAuthorsAsk,
+  ReleaseNotesAuthorsReply,
   SubscriptionUsage,
   ProjectSkillsPayload,
   SkillImportRead,
@@ -579,6 +581,11 @@ export const api = {
   // and stores/release-notes.ts saves it to the cloud under the user's own JWT.
   generateReleaseNotes: (ask: ReleaseNotesAsk): Promise<ReleaseNotesReply> =>
     post<ReleaseNotesReply>('/management/release-notes', ask),
+
+  // The commit authors of those projects, branches and period — the people the per-person
+  // form lets the operator pick. Git only, no model turn.
+  releaseNotesAuthors: (ask: ReleaseNotesAuthorsAsk): Promise<ReleaseNotesAuthorsReply> =>
+    post<ReleaseNotesAuthorsReply>('/management/release-notes/authors', ask),
 
   // The chat is promoted onto a card the UI has already minted: `taskId` is that card, and
   // the guard reads who may run it from its own token, never from this body.

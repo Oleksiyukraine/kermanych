@@ -82,6 +82,8 @@ export type ApiErrorCode =
   | "period_format_invalid" // management.controller.ts:130 — range is not a YYYY-MM-DD pair (params: none)
   | "period_start_after_end" // management.controller.ts:132 — range start is after its end (params: none)
   | "group_by_invalid" // management.controller.ts — release-notes groupBy is not a known layout (params: { allowed })
+  | "authors_invalid" // management.controller.ts — release-notes authors is not a non-empty list of names (params: none)
+  | "authors_need_person" // management.controller.ts — release-notes authors sent without groupBy "person" (params: none)
   | "attachments_too_many" // management.controller.ts — more attachments than one turn accepts (params: { count, max })
   | "attachment_too_large" // management.controller.ts — one attachment over the 20 MiB cap (params: { name })
   // management-chat.service.ts — a management turn that fails is thrown to the controller:
@@ -93,6 +95,7 @@ export type ApiErrorCode =
   | "project_not_bound" // release-notes.service.ts — project not bound on this machine (params: { project })
   | "branch_not_in_repo" // release-notes.service.ts — branch absent from the project's local repo (params: { project, branch })
   | "no_commits_in_range" // release-notes.service.ts — a project has no commits in the requested range (params: { project, branch, from, to })
+  | "no_commits_by_authors" // release-notes.service.ts — none of the picked authors committed to any picked project in the range (params: { from, to })
   | "too_many_commits" // release-notes.service.ts — the period's commit subjects overflow the prompt ceiling (params: { count, from, to })
   | "omp_exited_during_generation" // release-notes.service.ts:110 — the omp child died mid-generation (params: { reason })
   | "generation_timeout" // release-notes.service.ts:122 — generation did not finish in time (params: { seconds })
@@ -168,6 +171,8 @@ export const API_ERROR_CODES = [
   "period_format_invalid",
   "period_start_after_end",
   "group_by_invalid",
+  "authors_invalid",
+  "authors_need_person",
   "attachments_too_many",
   "attachment_too_large",
   "omp_launch_timeout",
@@ -177,6 +182,7 @@ export const API_ERROR_CODES = [
   "project_not_bound",
   "branch_not_in_repo",
   "no_commits_in_range",
+  "no_commits_by_authors",
   "too_many_commits",
   "omp_exited_during_generation",
   "generation_timeout",

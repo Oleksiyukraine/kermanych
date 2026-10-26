@@ -109,6 +109,10 @@ export function buildReleaseNotesPrompt(input: {
   rangeTo: string;
   // `topic` (default) groups changes by meaning; `person` writes one section per author.
   groupBy?: ReleaseGrouping;
+  // `person` only: the people the operator picked when the report is about some of the team.
+  // The sources' commits are already only theirs (release-notes.service.ts filters them);
+  // this tells the model the document is not the whole team's, so it is not titled as such.
+  authors?: readonly string[];
 }): string {
   const multi = input.sources.length > 1;
   const cap = Math.floor(MAX_COMMITS_CHARS / Math.max(1, input.sources.length));
@@ -164,6 +168,14 @@ export function buildReleaseNotesPrompt(input: {
         `- У кожній групі спершу найпомітніші зміни, далі дрібніші.`,
         `- «Maintenance» — робота, якої користувач не помітить (рефакторинг, залежності, CI, тести): короткими пунктами простою мовою, кожен називає, що саме зроблено (наприклад, «Updated the libraries behind charts and date pickers»). Її не пропускай.`,
       ];
+  // Said only for a report about some of the team: without it a model reading «release notes
+  // for the product» titles a two-person report as the product's whole release.
+  const scope =
+    byPerson && input.authors
+      ? [
+          `- Це звіт не про всю команду, а лише про роботу обраних людей: ${input.authors.join(", ")}. Нижче — лише їхні коміти. У заголовку першого рівня назви цих людей (або «selected contributors», якщо їх більше трьох) і не подавай документ як повний підсумок змін продукту.`,
+        ]
+      : [];
 
   const header = multi
     ? [
@@ -203,6 +215,7 @@ export function buildReleaseNotesPrompt(input: {
     `- Жодних хешів комітів, назв файлів, назв гілок, імен функцій і технічного жаргону в тексті.`,
     ...projects,
     ...layout,
+    ...scope,
     ...completeness,
     multi
       ? `- Якщо з коміта незрозуміло, що саме він змінює для користувача — відкрий код репозиторію саме цього проєкту (його тека — у списку «Проєкти»; read/grep/glob) і розберися, перш ніж писати. Код відкривай лише заради помітних змін: дрібницю пиши з заголовка коміта.`
