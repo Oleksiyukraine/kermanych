@@ -336,6 +336,47 @@ export const DEFAULT_SKILLS: readonly SkillDef[] = [
       "4. Implement only after approval; if a decision changes, update the document too.",
     ].join("\n"),
   },
+  // «Посіпака» (docs/specs/2026-10-23-minion-auto-run.md, decision 14): the per-kind rules for a
+  // card filed from a «Знахідка». The supervisor pastes it into such a minion run's opening
+  // prompt only, after a line of its own naming the kind (minionFindingLine), so a repository,
+  // project, workspace or user may rewrite it by name or switch it off. Every default is listed in
+  // every session's library, hence a description that keeps other sessions away from it.
+  {
+    name: "minion-findings",
+    description:
+      "Use only in a «Посіпака» (minion) run of a card filed from a «Знахідка» (an agent's finding): how to work a bug, security, tech-debt or docs finding unattended. Kermanych adds it to such runs itself; other sessions do not need it.",
+    body: [
+      "# Working a finding unattended",
+      "",
+      "Kermanych names the card's kind above. Follow that kind's section, on top of your instruction.",
+      "",
+      "## bug",
+      "",
+      "- Reproduce it first: a test, or the command from the evidence. A bug you cannot reproduce,",
+      "  and cannot show fixed, is `needs_decision`, not a guess.",
+      "- Keep a test that fails without your fix and passes with it.",
+      "",
+      "## security",
+      "",
+      "- Reproduce only locally: a test or a local run of the code. Never against a deployed",
+      "  environment, a real account or an external service.",
+      "- No secrets in your output, your commits or the pull request.",
+      "- The pull request states the impact and the fix, not the steps to exploit it.",
+      "- Rotating keys, or changing infrastructure or access policies, is `needs_decision`.",
+      "- `not_needed` only when the vulnerable code is gone from this branch. «Not exploitable in my",
+      "  view» is `needs_decision`.",
+      "",
+      "## tech-debt",
+      "",
+      "- Behaviour stays the same: the project's checks pass before and after your change.",
+      "- A refactor that would grow large is `needs_decision`, with a plan in stages.",
+      "",
+      "## docs",
+      "",
+      "- Change documentation only: the code is the source of truth.",
+      "- If the code is what is wrong, that is `needs_decision`; leave the code alone.",
+    ].join("\n"),
+  },
 ];
 
 // Which skills a session actually pulled in, in order of first use. Derived from the

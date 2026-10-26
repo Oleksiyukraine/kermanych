@@ -386,19 +386,24 @@ export class SkillsService {
   // the view the UI labels the rows with, and the names that resolved to nothing. The
   // sequence is taken WHOLE from the most specific scope that defines one (user, else project,
   // else workspace) — not concatenated across scopes, so a skill is never glued in twice.
-  // Never throws for a library reason — an agent that cannot read its assignments still runs
-  // with its own instruction.
+  // `extra` are names Kermanych adds for this launch (a minion run of a finding card gets
+  // `minion-findings`): they follow the sequence in the same block, once even when the sequence
+  // already names them. Never throws for a library reason — an agent that cannot read its
+  // assignments still runs with its own instruction, and with the extras, which a default
+  // resolves without the cloud.
   async assignedFor(
     scope: AiScopeSet,
     agentId: string,
     cwd: string,
+    extra: readonly string[] = [],
   ): Promise<{ block: string; view: SkillView[]; missing: string[] }> {
     assertProjectId(scope.projectId);
     let rows: AiAgentSkill[];
     try {
       rows = (await this.readAssignments(scope)).filter((r) => r.agentId === agentId);
     } catch {
-      return { block: "", view: [], missing: [] }; // offline or signed out
+      // offline or signed out
+      return extra.length ? this.assignedForNames(scope, extra, cwd) : { block: "", view: [], missing: [] };
     }
     // The winning scope is the most specific one with any row for this agent. Its rows, in
     // the operator's own order with the name as the tiebreak, are the sequence.
@@ -411,7 +416,7 @@ export class SkillsService {
       .sort((a, b) => a.position - b.position || a.skillName.localeCompare(b.skillName));
     return this.assignedForNames(
       scope,
-      chosen.map((r) => r.skillName),
+      [...chosen.map((r) => r.skillName), ...extra],
       cwd,
     );
   }

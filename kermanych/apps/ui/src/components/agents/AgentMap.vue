@@ -72,6 +72,7 @@
               <KAnalysisMark v-if="data.node.session.deepAnalysis" />
               <KMinionMark v-if="data.node.session.minion" kind="running" />
               <KDecisionMark v-if="sessionDecisionReason(t, data.node.session)" :reason="sessionDecisionReason(t, data.node.session)!" />
+              <KNotNeededMark v-else-if="sessionNotNeededReason(t, data.node.session)" :reason="sessionNotNeededReason(t, data.node.session)!" />
               <span v-if="data.node.session.model" class="agent-map__model">{{ data.node.session.model }}</span>
               <span v-if="spendOf(data.node.session)" class="agent-map__spend">{{ spendOf(data.node.session) }}</span>
             </span>
@@ -188,7 +189,7 @@ import { bucketOf } from '../../lib/buckets';
 import { EXPAND_ALL_NONE } from '../../lib/expand-all';
 import { tokens, usageTokens, usd } from '../../lib/format';
 import { sessionLaunchMode } from '../../lib/native-session';
-import { minionStripText, sessionDecisionReason } from '../../lib/minion';
+import { minionStripText, sessionDecisionReason, sessionNotNeededReason } from '../../lib/minion';
 import { useAsyncAction } from '../../composables/useAsyncAction';
 import {
   MAP_BUCKETS,
@@ -208,6 +209,7 @@ import KHarnessMark from 'components/kit/KHarnessMark.vue';
 import KAnalysisMark from 'components/kit/KAnalysisMark.vue';
 import KMinionMark from 'components/kit/KMinionMark.vue';
 import KDecisionMark from 'components/kit/KDecisionMark.vue';
+import KNotNeededMark from 'components/kit/KNotNeededMark.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import KLogBlock from 'components/kit/KLogBlock.vue';

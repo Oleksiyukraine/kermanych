@@ -157,6 +157,7 @@
           :deep-analysis="task.deepAnalysis"
           :auto-run="task.autoRun"
           :needs-decision="cardDecisionReason(t, task)"
+          :not-needed="cardNotNeededReason(t, task)"
           @click="openEdit(task)"
         />
 
@@ -407,7 +408,7 @@ import { installReconcile } from '../lib/reconcile';
 import { UNASSIGNED, filterTasks, scopedProjectIds } from '../lib/scope';
 import { ASSIGNMENT_REFUSALS } from '../lib/cloud-errors';
 import { autoRunSwitchLocked, boardTasks, canAssignTask, canRunTask, cardModesFromCard } from '../lib/tasks-view';
-import { cardDecisionReason } from '../lib/minion';
+import { cardDecisionReason, cardNotNeededReason } from '../lib/minion';
 import JiraBoardView from 'components/jira/JiraBoardView.vue';
 import LinearBoardView from 'components/linear/LinearBoardView.vue';
 import { useJira } from 'stores/jira';

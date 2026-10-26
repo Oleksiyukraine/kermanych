@@ -1,5 +1,6 @@
-// «Посіпака» as the UI words it (docs/specs/2026-10-23-minion-auto-run.md, decision 12): when a
-// card or a session wears «потрібне рішення», what its reason says, and the map strip's line.
+// «Посіпака» as the UI words it (docs/specs/2026-10-23-minion-auto-run.md, decisions 12 and 14):
+// when a card or a session wears «потрібне рішення» or «не потрібно», what its mark says, and the
+// map strip's line.
 // Pure, so the wording is tested without mounting a component; every code reaches the operator
 // through i18n, never raw.
 import type { MinionPause, MinionResult, MinionState, Session } from '@kermanych/core';
@@ -36,6 +37,27 @@ export function cardDecisionReason(t: Tr, task: Pick<Task, 'status' | 'sessionRe
 export function sessionDecisionReason(t: Tr, session: Pick<Session, 'minionResult'>): string | undefined {
   const result = session.minionResult;
   return result && sessionNeedsDecision(session) ? minionReasonText(t, result) : undefined;
+}
+
+// «Не потрібно» (decision 14): the run found nothing to change and closed the card at `done`.
+// The card wears it only while it sits «Завершені» with that verdict on it — a relaunch replaces
+// the report, a move off the lane makes it history — and the session while its last result says so.
+export function cardNotNeeded(task: Pick<Task, 'status' | 'sessionReport'>): boolean {
+  return task.status === 'done' && task.sessionReport?.minion?.outcome === 'not_needed';
+}
+
+export function sessionNotNeeded(session: Pick<Session, 'minionResult'>): boolean {
+  return session.minionResult?.outcome === 'not_needed';
+}
+
+// What a card's / a session's «не потрібно» mark says — the agent's evidence (`path:line`, the
+// card it repeats), or the state's own name when it left none — or undefined when it wears none.
+export function cardNotNeededReason(t: Tr, task: Pick<Task, 'status' | 'sessionReport'>): string | undefined {
+  return cardNotNeeded(task) ? task.sessionReport?.minion?.reason?.trim() || t('minion.notNeeded') : undefined;
+}
+
+export function sessionNotNeededReason(t: Tr, session: Pick<Session, 'minionResult'>): string | undefined {
+  return sessionNotNeeded(session) ? session.minionResult?.reason?.trim() || t('minion.notNeeded') : undefined;
 }
 
 // Why the minion is paused, worded, with the api's detail (the provider's sign-in error, the
