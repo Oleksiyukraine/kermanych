@@ -665,6 +665,13 @@ pnpm dev:ui           # Quasar UI on  http://localhost:5317
 Run the two dev commands in separate terminals, then open
 <http://localhost:5317> in your browser. The UI talks to the API on `:4317`.
 
+Only the app's own UI can hand the API a signed-in session (`POST /api/auth/session`, the one
+route without a bearer). The API accepts the handoff when it carries the current bearer (a
+token refresh), the desktop app's per-launch key, or — for a standalone `pnpm dev:api` — an
+`Origin` of `http://localhost:5317` / `http://127.0.0.1:5317`. Any other page in your
+browser gets `403`, even with a valid Supabase token. If you serve the dev UI from another
+origin, list it in `KERMANYCH_UI_ORIGINS` (comma-separated) for the API.
+
 > **Note:** `better-sqlite3` v13 and `node-pty` 1.1 ship N-API prebuilt binaries, so
 > switching Node versions (≥22.12) needs no rebuild.
 

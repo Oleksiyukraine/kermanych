@@ -113,6 +113,9 @@ declare global {
   interface Window {
     kermanych?: {
       apiBase: string;
+      // Electron only: the per-launch secret the local api requires on POST /auth/session
+      // (apps/api/src/auth/ui-proof.ts). Absent in the web build, whose dev origin is trusted.
+      uiKey?: string;
       focus: () => void;
       // Electron only (optional like the rest: a stale preload must not break the web path).
       // Resolves once main's local api listens; rejects when it failed to start.

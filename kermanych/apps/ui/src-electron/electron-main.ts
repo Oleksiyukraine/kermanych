@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, nativeImage, powerSaveBlocker, shell } from 'electron';
+import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -18,6 +19,10 @@ let nest: INestApplication | undefined;
 // The session browser: its IPC is registered now, its views live in the window once attached,
 // and the api reaches it as the BrowserHost behind the agents' browser_* MCP tools.
 const browsers = new SessionBrowsers();
+// The per-launch secret that lets this window's renderer — and nothing else — hand the local api
+// a session (apps/api/src/auth/ui-proof.ts). The api learns it through bootstrap(), the
+// renderer through the preload; a web page in the operator's browser never sees it.
+const uiKey = randomBytes(32).toString('hex');
 
 // Prefer 4317; fall back to an OS-assigned free port if it is taken.
 function freePort(preferred: number): Promise<number> {
@@ -73,7 +78,7 @@ function keepAwake(hold: boolean): void {
 
 async function startBackend(port: number): Promise<void> {
   try {
-    const res = await bootstrap({ port, browser: browsers, keepAwake });
+    const res = await bootstrap({ port, browser: browsers, keepAwake, uiKey });
     nest = res.app;
     backend.resolve();
     setBootStatus('ready');
@@ -123,13 +128,13 @@ async function createWindow(apiBase: string) {
     backgroundColor: windowBackground,
     webPreferences: {
       contextIsolation: true,
-      sandbox: false, // preload needs process.argv to read --api-base
+      sandbox: false, // preload needs process.argv to read --api-base and --ui-key
       // More info: https://v2.quasar.dev/quasar-cli-vite/developing-electron-apps/electron-preload-script
       preload: path.resolve(
         currentDir,
         path.join(process.env.QUASAR_ELECTRON_PRELOAD_FOLDER, 'electron-preload' + process.env.QUASAR_ELECTRON_PRELOAD_EXTENSION)
       ),
-      additionalArguments: [`--api-base=${apiBase}`],
+      additionalArguments: [`--api-base=${apiBase}`, `--ui-key=${uiKey}`],
     },
   });
   mainWindow.once('ready-to-show', () => mainWindow?.show());

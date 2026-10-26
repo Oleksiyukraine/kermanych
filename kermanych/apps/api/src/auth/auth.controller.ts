@@ -1,16 +1,28 @@
-import { BadRequestException, Body, Controller, Delete, Get, Post } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Headers, Post } from "@nestjs/common";
 import { AuthService } from "./auth.service";
+import { bearerToken } from "./auth.guard";
 import { Public } from "./public.decorator";
+import { provesAppUi } from "./ui-proof";
 
 @Controller("auth")
 export class AuthController {
   constructor(private auth: AuthService) {}
 
   // The ONE public route: the UI cannot present a bearer token before it has
-  // handed one over. Everything after this is guarded.
+  // handed one over. Everything after this is guarded — so the handoff itself must
+  // come from the app's own ui (ui-proof.ts): the current bearer (a token refresh), the
+  // desktop app's per-launch key, or a trusted dev-ui Origin. A valid Supabase JWT alone
+  // is not enough: any page in the operator's browser could otherwise push its own
+  // account's token and take over the api. 403, not 401: the ui reads 401 as «signed out».
   @Public()
   @Post("session")
-  async setSession(@Body() body: { accessToken: string }) {
+  async setSession(
+    @Body() body: { accessToken: string },
+    @Headers() headers: Record<string, string | string[] | undefined>,
+  ) {
+    if (!this.auth.userForToken(bearerToken(headers)) && !provesAppUi(headers)) {
+      throw new ForbiddenException("the session handoff must come from the Kermanych ui");
+    }
     try {
       if (!body?.accessToken) throw new Error("accessToken is required");
       return await this.auth.setToken(body.accessToken);
