@@ -92,6 +92,7 @@
                   indent
                   :active="p.id === store.selectedProjectId"
                   :attention="attentionOf(p.id)"
+                  :minion="minionProjects.has(p.id)"
                   :draggable="hasCloudList && !moving.busyFor(p.id)"
                   @click="selectProject(p.id)"
                   @dragstart="draggingProjectId = $event"
@@ -111,6 +112,7 @@
                   indent
                   :active="p.id === store.selectedProjectId"
                   :attention="attentionOf(p.id)"
+                  :minion="minionProjects.has(p.id)"
                   @click="selectProject(p.id)"
                 />
               </li>
@@ -559,8 +561,10 @@ const projectDocs = useProjectDocs();
 const onb = useOnboarding();
 // Created with the shell, before the socket connects: it listens for the first `snapshot` to
 // read «Посіпака»'s state, and for every `minion_update` after it (a pause is announced from any
-// screen, so the store cannot wait for the map or «ШІ-команда» to be opened).
-useMinion();
+// screen, so the store cannot wait for the map or «ШІ-команда» to be opened). The sidebar marks
+// the projects it is activated for on this machine.
+const minion = useMinion();
+const minionProjects = computed(() => new Set(minion.state?.projects ?? []));
 const route = useRoute();
 const router = useRouter();
 const { t, te } = useI18n();
@@ -1721,6 +1725,7 @@ const pullHint = computed(() => {
   padding: var(--k-sp-1);
 }
 .shell--min :deep(.k-rail__name),
+.shell--min :deep(.k-rail__minion),
 .shell--min :deep(.k-rail__agents) {
   display: none;
 }
@@ -1766,6 +1771,7 @@ const pullHint = computed(() => {
   :deep(.k-nav-item__text),
   :deep(.k-count),
   :deep(.k-rail__name),
+  :deep(.k-rail__minion),
   :deep(.k-rail__agents),
   :deep(.k-ws__name),
   :deep(.k-ws__end),

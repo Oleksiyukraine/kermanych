@@ -1162,7 +1162,8 @@ request with nobody watching.
   session yourself is not a failure, and the minion does not take that card again.
 - **Where you see it.** The «Посіпака» mark on its cards and sessions, «потрібне рішення» on
   the cards that wait for you, the outcome in the card's session report
-  (`session_report.minion`, readable from every machine), and the strip above «Карта агентів».
+  (`session_report.minion`, readable from every machine), the strip above «Карта агентів», and
+  its bot icon beside each project in the left sidebar it is activated for on this machine.
   Routes: `GET /api/minion`, `PUT /api/minion` (`{ cap?, paused? }`),
   `PUT /api/minion/projects/:id` (`{ active }`); the socket event `minion_update`.
 - **An always-on machine.** Install Kermanych there, sign in with **your own** account (a
