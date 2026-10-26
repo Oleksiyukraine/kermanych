@@ -65,6 +65,12 @@ const BASE =
 let authToken: string | undefined;
 let onUnauthorized: (() => void) | undefined;
 
+// POST /auth/session itself is accepted only from this ui (apps/api/src/auth/ui-proof.ts):
+// with the current bearer, the desktop app's per-launch key (`UI_KEY` below), or — the web
+// build — from the dev ui's own origin, which the browser sets.
+const UI_KEY: Record<string, string> =
+  typeof window !== 'undefined' && window.kermanych?.uiKey ? { 'x-kermanych-ui-key': window.kermanych.uiKey } : {};
+
 export function setAuthToken(token: string | undefined): void {
   authToken = token;
 }
@@ -91,11 +97,16 @@ function authHeaders(json: boolean, token: string | undefined): Record<string, s
 // a sign-out followed by a new sign-in — says nothing about the CURRENT session and must
 // not end it. Only the guard answers 401 (integration-token refusals are 403), so the
 // handler never ran and re-sending once with the current token is safe for any method.
-async function send(method: string, path: string, body?: { json: unknown }): Promise<Response> {
+async function send(
+  method: string,
+  path: string,
+  body?: { json: unknown },
+  extraHeaders?: Record<string, string>,
+): Promise<Response> {
   const attempt = (token: string | undefined) =>
     fetch(BASE + path, {
       method,
-      headers: authHeaders(body !== undefined, token),
+      headers: { ...authHeaders(body !== undefined, token), ...extraHeaders },
       ...(body !== undefined ? { body: JSON.stringify(body.json) } : {}),
     });
   let used = authToken;
@@ -794,9 +805,13 @@ export const api = {
     post<{ merged: boolean }>(`/sessions/${id}/merge`, { summary }),
 
   // Token handoff to the local api. POST is @Public() on the server (the UI has
-  // no bearer to present yet); DELETE and GET are guarded like everything else.
-  authSession: (accessToken: string): Promise<{ userId: string; githubUsername?: string }> =>
-    post<{ userId: string; githubUsername?: string }>('/auth/session', { accessToken }),
+  // no bearer to present yet) but carries the ui's proof (`UI_KEY` above); DELETE and
+  // GET are guarded like everything else.
+  authSession: async (accessToken: string): Promise<{ userId: string; githubUsername?: string }> =>
+    (await (await send('POST', '/auth/session', { json: { accessToken } }, UI_KEY)).json()) as {
+      userId: string;
+      githubUsername?: string;
+    },
 
   clearAuthSession: (): Promise<void> => del('/auth/session'),
 

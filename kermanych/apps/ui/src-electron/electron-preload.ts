@@ -1,8 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-// main passes --api-base=<url> via webPreferences.additionalArguments.
+// main passes --api-base=<url> and --ui-key=<secret> via webPreferences.additionalArguments.
 const arg = process.argv.find((a) => a.startsWith('--api-base='));
 const apiBase = arg ? arg.slice('--api-base='.length) : 'http://localhost:4317/api';
+const keyArg = process.argv.find((a) => a.startsWith('--ui-key='));
+const uiKey = keyArg ? keyArg.slice('--ui-key='.length) : undefined;
 
 // Subscribe to one of main's `kermanych:browser:*` events; returns the unsubscribe.
 function subscribe<A extends unknown[]>(channel: string, cb: (...args: A) => void): () => void {
@@ -23,6 +25,7 @@ ipcRenderer.on('kermanych:boot-status', (_event, status: KermanychBootStatus) =>
 
 contextBridge.exposeInMainWorld('kermanych', {
   apiBase,
+  uiKey,
   focus: () => ipcRenderer.send('kermanych:focus'),
   // Main starts the local api in parallel with the window; resolves once it listens, rejects
   // when it failed to start (main then shows the error and quits).
