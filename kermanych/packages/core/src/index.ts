@@ -100,6 +100,7 @@ export {
   type SkillImportRead,
   type SkillImportRoot,
   type SkillImportScan,
+  type SkillScope,
   type SkillView,
 } from "./skills";
 export { isDocPath, isDocImagePath, isMarkupPath, docsRead } from "./docs";

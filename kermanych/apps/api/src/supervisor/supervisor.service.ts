@@ -95,6 +95,8 @@ import {
   type MinionVerdictReport,
   type PrCheck,
   type PrCheckState,
+  DEFAULT_SKILLS,
+  type SkillView,
 } from "@kermanych/core";
 import { claimTaskForLaunch, createTask, getTask, listProjects, patchTask, releaseLaunchClaim, type CloudProject, type AiTrigger, type Task, type TaskPatch } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
@@ -248,6 +250,23 @@ export type MinionRunResult = {
   signedOut?: boolean;
 };
 
+// The transcript badge for a library skill: where the text the agent read comes from. A
+// library row names its owner scope, and one that replaces a Kermanych default says so too —
+// that is the row to delete to get the default back, and without the scope the operator has
+// to go looking for it in the cloud tables.
+const SKILL_SOURCE_STAT: Record<SkillView["source"], string> = {
+  default: "бібліотека",
+  user: "користувач",
+  project: "проєкт",
+  workspace: "воркспейс",
+};
+
+function skillStat(v: Pick<SkillView, "name" | "source">): string {
+  const stat = SKILL_SOURCE_STAT[v.source];
+  if (v.source === "default" || !DEFAULT_SKILLS.some((d) => d.name === v.name)) return stat;
+  return `${stat} · замість дефолту`;
+}
+
 @Injectable()
 export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private map = new Map<string, Live>();
@@ -374,7 +393,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         // says so and points at it.
         if (v.shadowedByRepo) labels.set(v.name, { stat: "репо", intent: v.shadowedByRepo });
         else {
-          const stat = v.source === "default" ? "бібліотека" : "проєкт";
+          const stat = skillStat(v);
           // A degraded materialise may not have written this name's SKILL.md, and a link to a
           // file that is not there is worse than no link. The shadowed rows above keep theirs:
           // a repository path came from a scan that found the file.

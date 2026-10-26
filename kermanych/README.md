@@ -1256,6 +1256,12 @@ managed runtimes. A repository skill with the same name always wins over a libra
 - **From the repository.** At project scope the pane shows a read-only «З репозиторію» block for
   the bound checkout's skills. «Агенти» and «Тригери» offer those names for assignment. That is
   how a `claude-code` session gets, say, an `.agents/skills` skill it would not find by itself.
+- **Where a library skill comes from.** A user, project or workspace row with a default's name
+  replaces that default for every session it reaches. In a session's transcript a skill read is
+  badged `бібліотека` for a default and `користувач`, `проєкт` or `воркспейс` for a library row.
+  A row that replaces a default adds `· замість дефолту`, so you know which scope's row to delete
+  to get the default back. The `SKILL.md` Kermanych writes for a library row opens with a comment
+  that names the same scope, so the agent reading `skill://<name>` sees it too.
 - **Routes.** `GET /api/skills/import/roots`, `GET /api/skills/import/scan?path=`,
   `GET /api/skills/import/read?dir=` (reads only `SKILL.md`), and `GET /api/fs/list?hidden=1`.
   Spec: `docs/specs/2026-10-22-skill-import.md`.

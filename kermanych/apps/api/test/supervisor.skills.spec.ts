@@ -152,12 +152,22 @@ describe("the materialised view labels the session's skill rows", () => {
             source: "default",
             shadowedByRepo: "/tmp/proj/.claude/skills/probe-beta/SKILL.md",
           },
+          // A workspace row under a default's name replaces that default in every session.
+          { name: "kermanych-pull-request", description: "d", source: "workspace" },
+          { name: "my-notes", description: "d", source: "user" },
         ],
       })),
     );
     const chat = await sup.createChat(project.id);
 
-    for (const [id, name] of [["c1", "kermanych-session"], ["c2", "house-style"], ["c3", "probe-beta"]]) {
+    const reads = [
+      ["c1", "kermanych-session"],
+      ["c2", "house-style"],
+      ["c3", "probe-beta"],
+      ["c4", "kermanych-pull-request"],
+      ["c5", "my-notes"],
+    ];
+    for (const [id, name] of reads) {
       emit({ type: "tool_execution_start", toolName: "read", toolCallId: id, args: { path: `skill://${name}` } });
       emit({
         type: "tool_execution_end", toolName: "read", toolCallId: id, isError: false,
@@ -174,6 +184,13 @@ describe("the materialised view labels the session's skill rows", () => {
       // The agent read the REPOSITORY's file, so the badge says so and the expanded row
       // points at that file — never at a Kermanych path.
       ["c3", "skill", "ok", "репо", "/tmp/proj/.claude/skills/probe-beta/SKILL.md"],
+      // The owner scope, not a flattened «проєкт»: that is the scope to edit to get the
+      // default back.
+      [
+        "c4", "skill", "ok", "воркспейс · замість дефолту",
+        "/tmp/kmq-skills-home/skills/p1/kermanych-pull-request/SKILL.md",
+      ],
+      ["c5", "skill", "ok", "користувач", "/tmp/kmq-skills-home/skills/p1/my-notes/SKILL.md"],
     ]);
   });
 

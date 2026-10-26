@@ -1059,7 +1059,9 @@ export const en: MessageSchema = {
       broken: 'no skill',
       repo: 'overridden by repo',
       default: 'default',
+      user: 'user',
       project: 'project',
+      workspace: 'workspace',
     },
     logChannel: {
       operator: 'operator words',
@@ -1557,8 +1559,6 @@ export const en: MessageSchema = {
       disable: 'Disable',
       badgeOff: 'off',
       badgeRepo: 'overridden by repo',
-      badgeDefault: 'default',
-      badgeProject: 'project',
       errName: 'Name: lowercase latin letters, digits and hyphen only (up to 64 characters).',
       errNoDesc: 'Without a description omp ignores the skill.',
       importBtn: 'Import from disk…',
