@@ -31,14 +31,16 @@ const opening = computed(() => !!project.value && !!terminal.opening[project.val
 const phase = useLoadPhase(() => !terminal.loaded && !terminal.listFailed);
 const activePending = computed(() => !!activeId.value && pending.isPending(`terminal:${activeId.value}`));
 
-// The page above keeps at least this much; the header and footer take 90px (MainLayout).
+// The page above keeps at least this much; the header and footer take 90px (MainLayout), and
+// the panel's own bottom inset (var(--k-sp-3)) another 12px.
 const MIN_PAGE = 160;
+const INSET = 12;
 const { size: height, resizing, startResize, onKeydown } = useResizablePanel({
   storageKey: 'kermanych.terminal.height',
   defaultSize: 280,
   min: 120,
   edge: 'top',
-  max: () => window.innerHeight - 90 - MIN_PAGE,
+  max: () => window.innerHeight - 90 - INSET - MIN_PAGE,
 });
 
 // The store refuses a second spawn for the same project while one is in flight.
@@ -147,40 +149,57 @@ function killActive(): void {
 </template>
 
 <style scoped lang="scss">
+// A card like the sidebar and the file-manager dock: inset from the canvas on the sides and the
+// bottom. The top gap is the page's own 12px bottom padding, so it isn't doubled here.
 .k-term {
   position: relative;
   display: flex;
   flex-direction: column;
   flex: none;
+  box-sizing: border-box;
   min-height: 0;
+  margin: 0 var(--k-sp-3) var(--k-sp-3);
   background: var(--k-bg);
-  border-top: 1px solid var(--k-line-strong);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-r-lg);
 }
 
-// A 7px grab strip straddling the top rule, like the page's column seams.
+// The grab strip fills the gap between the page and the card; a thin accent rule in its middle
+// lights up on hover, focus and while dragging.
 .k-term__seam {
   position: absolute;
-  top: -4px;
+  top: calc(-1 * var(--k-sp-3) - 1px);
   left: 0;
   right: 0;
   z-index: 2;
-  height: 7px;
+  height: var(--k-sp-3);
   cursor: row-resize;
   touch-action: none;
 
-  &:hover,
-  &:focus-visible {
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 2px;
+    transform: translateY(-50%);
+    background: transparent;
+    transition: background 0.12s;
+  }
+  &:hover::before,
+  &:focus-visible::before {
     background: var(--k-accent);
-    opacity: 0.5;
+  }
+  &:focus-visible {
     outline: none;
   }
 }
 .k-term--resizing {
   user-select: none;
 }
-.k-term--resizing .k-term__seam {
+.k-term--resizing .k-term__seam::before {
   background: var(--k-accent);
-  opacity: 0.5;
 }
 
 .k-term__head {
@@ -267,10 +286,13 @@ function killActive(): void {
   }
 }
 
+// Clips the shells to the card's rounded bottom corners (the frame sits 1px outside).
 .k-term__body {
   position: relative;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+  border-radius: 0 0 calc(var(--k-r-lg) - 1px) calc(var(--k-r-lg) - 1px);
 }
 
 .k-term__view {

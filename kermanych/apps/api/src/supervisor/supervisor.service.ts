@@ -86,6 +86,7 @@ import {
   MINION_AGENT_ID,
   MINION_OUTCOME_CONTRACT,
   MINION_TIME_CAP_PROMPT,
+  MINION_PR_TITLE_RULE,
   MINION_FINDINGS_SKILL,
   minionFindingLine,
   MINION_TIME_CAP_MS,
@@ -2478,6 +2479,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // after the instruction, whatever its source, so an overridden PR agent still brings the base in.
     const base = this.syncBase(s, g);
     const sync = base ? `\n\n${baseSyncBlock(base)}` : "";
+    // A «Посіпака» session's PR is told apart by its title (docs/specs/2026-10-23-minion-auto-run.md,
+    // decision 10); appended like the sync, so neither an override nor the repo's conventions drop it.
+    const title = s.minion ? `\n\n${MINION_PR_TITLE_RULE}` : "";
     const prompt =
       renderInstruction(
         agentById("pull-request")!,
@@ -2487,7 +2491,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           baseLine,
         },
         template,
-      ) + sync + block + artifacts;
+      ) + sync + title + block + artifacts;
 
     // A send parked for an agent slot replays this whole call later, so the flags below are armed
     // for the turn that call starts, not now on a child that is not running it.

@@ -1161,9 +1161,10 @@ request with nobody watching.
   `report_outcome` tool of its `kermanych` MCP server:
   - `ready`: Kermanych completes the documentation once if the project requires it and it is
     missing, then runs «Створити ПР» as usual — the PR is opened with the project's
-    `GIT_TOKEN` from this machine — and the card lands on «На ревʼю». A `ready` with nothing
-    changed on the branch lands there with «потрібне рішення: немає змін» instead, before any
-    PR turn;
+    `GIT_TOKEN` from this machine, and its title starts with `[Minion]` (e.g.
+    `[Minion] fix(api): handle an empty list`) — and the card lands on «На ревʼю». A `ready`
+    with nothing changed on the branch lands there with «потрібне рішення: немає змін» instead,
+    before any PR turn;
   - `not_needed`: the problem is already fixed, the card repeats another one, or the code it
     names is gone. The agent changes nothing and gives the evidence; when the branch has no
     changes, the card closes in «Завершені» with «не потрібно» and the evidence in its tooltip.
@@ -1190,7 +1191,9 @@ request with nobody watching.
   pauses it at once, before it takes a card. «Продовжити» on the «Посіпака» card or ▶ on «Карта
   агентів» resumes it. Stopping a minion session yourself is not a failure, and the minion does
   not take that card again.
-- **Where you see it.** The «Посіпака» mark on its cards and sessions, «потрібне рішення» on
+- **Where you see it.** The «Посіпака» mark on its cards and sessions, the `[Minion]` prefix of
+  its PR titles (any PR opened from its session, «Створити ПР» by hand too; on GitHub,
+  `is:pr Minion in:title` finds them), «потрібне рішення» on
   the cards that wait for you and «не потрібно» on the ones it closed, the outcome in the card's
   session report (`session_report.minion`, readable from every machine), the strip above «Карта
   агентів», and its bot icon beside each project in the left sidebar it is activated for on this
