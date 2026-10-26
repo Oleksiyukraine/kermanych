@@ -1016,8 +1016,16 @@ developer's machine. The direction is always task → session.
    `~/.kermanych/worktrees/<sessionId>`, copies the project's `carryFiles` (`.env` by
    default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
    ordinary local session: it appears on the Агенти board and you drive it there. The branch
-   starts from the session's base — the card's base branch, else the project's default
-   branch, else the branch the project checkout is on, recorded on the session either way.
+   is named `<prefix>/<slug>`: the prefix is the card's (`feature` by default), and the slug is
+   a short English summary of the card's title and description written by the fast model of
+   your runtime (omp's `pi/smol` role, claude's `haiku`) in one tool-less call bounded at 15 s
+   to start and 15 s to answer. When that call fails or times out, the slug is the title
+   transliterated to Latin, cut at a whole word within 40 characters; a slug already taken in
+   the project gets `-2`, `-3`, … (Spec: `docs/specs/2026-10-26-branch-name-from-task.md`.) The
+   same naming applies to a chat promoted to an agent and to a reopened session whose branch is
+   gone. The branch starts from the session's base — the card's base branch, else the
+   project's default branch, else the branch the project checkout is on, recorded on the
+   session either way.
    Before the fork the API fetches `origin/<base>` with this machine's own git credentials
    (15 s timeout). When origin's copy contains the local `<base>` (the local branch is only
    behind), the branch starts from `origin/<base>`, without tracking it; when the local

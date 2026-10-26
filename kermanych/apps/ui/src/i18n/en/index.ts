@@ -393,7 +393,7 @@ export const en: MessageSchema = {
       dragHint: 'or drag here',
       nameLabel: 'Task name',
       namePlaceholder: 'derived from the task',
-      nameHintPending: 'appears once you write the task',
+      branchNameGenerated: 'the branch name is generated from the task at launch',
       typeLabel: 'Type',
       platformLabel: 'Platform',
       optional: 'optional',

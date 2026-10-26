@@ -9,6 +9,18 @@ test("slugify transliterates Ukrainian Cyrillic", () => {
 test("slugify falls back to session for symbol-only names", () => {
   expect(slugify("!!!")).toBe("session");
 });
+test("slugify drops the partial last word at the 40-character cap", () => {
+  expect(slugify("Зробити автоматичне генерування назви гілки з контексту задачі")).toBe(
+    "zrobyty-avtomatychne-heneruvannia-nazvy",
+  );
+});
+test("slugify keeps a whole word that ends exactly at the cap", () => {
+  // 40 characters, then a dash: nothing of the last word is cut.
+  expect(slugify("aaaaaaaaa bbbbbbbbb ccccccccc dddddddddd eee")).toBe("aaaaaaaaa-bbbbbbbbb-ccccccccc-dddddddddd");
+});
+test("slugify slices a single word longer than the cap", () => {
+  expect(slugify("x".repeat(50))).toBe("x".repeat(40));
+});
 test("branchName defaults to the feature prefix", () => {
   expect(branchName("fix-login")).toBe("feature/fix-login");
 });

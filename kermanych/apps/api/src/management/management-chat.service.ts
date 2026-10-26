@@ -31,6 +31,7 @@ import {
 import { createRuntime, type AgentRuntime } from "../runtime/agent-runtime";
 import { resolveRuntime } from "../runtime/resolve-runtime";
 import { languageAppendFor } from "../runtime/resolve-language";
+import { limit } from "../runtime/limit";
 import { CodedError } from "./coded-error";
 import { RegistryService } from "../registry/registry.service";
 import { reduceRpcEvents, sumTurnUsage } from "../supervisor/transcript-reducer";
@@ -125,25 +126,6 @@ type StoredFile = ManagementTurnFile & { stored: string; mimeType: string };
 type ToolBinding = { token: string; scope: JiraToolScope; sink?: Notice[] };
 
 type Live = { rpc: AgentRuntime; greeted: boolean; lastAt: number; turn?: Turn; tools?: ToolBinding };
-
-// RpcSession bounds its command round trips (`commandTimeoutMs`) but neither `start()` nor
-// a turn, and neither does omp bound a provider request that never answers. Without this
-// the http request would stay open until the browser gave up, with nothing the operator
-// could read or act on. Exported for the release-notes generator, which bounds the same
-// two waits over the same kind of child.
-export async function limit<T>(p: Promise<T>, ms: number, onTimeout: Error): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      p,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(onTimeout), ms);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 @Injectable()
 export class ManagementChatService implements OnModuleDestroy {

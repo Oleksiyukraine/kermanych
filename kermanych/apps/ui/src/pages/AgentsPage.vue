@@ -787,9 +787,7 @@
               :placeholder="t('agents.launcher.namePlaceholder')"
               @input="nameEdited = true"
             />
-            <div class="agents-launcher__hint mono">
-              {{ draftName.trim() ? branchPreview : t('agents.launcher.nameHintPending') }}
-            </div>
+            <div class="agents-launcher__hint mono">{{ t('agents.launcher.branchNameGenerated') }}</div>
           </div>
 
           <!-- «Модель» and «Рівень роздумів» — how the agent runs, not where it lands, so
@@ -1156,7 +1154,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
-  slugify,
   buildChatBlocks,
   branchName,
   taskNameFromText,
@@ -2453,11 +2450,9 @@ const editingTask = computed<Task | undefined>(() =>
 const draftAutoRunLocked = computed(() => autoRunSwitchLocked(draftAutoRun.value, editingTask.value, auth.user?.id ?? ''));
 // The switch as the launcher opened, so a save sends `autoRun` only when this form changed it.
 let openedAutoRun = false;
-const branchPreview = computed(() =>
-  draftName.value.trim()
-    ? branchName(slugify(draftName.value), draftPrefix.value)
-    : `${draftPrefix.value}/…`,
-);
+// The slug is generated from the task by a model at launch (docs/specs/2026-10-26-branch-name-from-task.md),
+// so the launcher can only show the prefix it lands under.
+const branchPreview = computed(() => branchName('…', draftPrefix.value));
 // Right-column summary line under the branch box.
 const branchHint = computed(() =>
   draftWorktree.value
