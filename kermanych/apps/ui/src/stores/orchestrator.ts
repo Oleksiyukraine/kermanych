@@ -149,6 +149,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         ...sessions.value.filter((x) => x.id !== e.session.id),
         e.session,
       ];
+      // A completed session («Завершити», a merged discussion/review) closes its chat pane:
+      // there is nothing left to do in it. Only on the transition, so opening an already
+      // merged card from «Завершені» (to read it or ↻ restore it) still shows the chat.
+      // Covers every source — this window's finish, another window, the api — because the
+      // api echoes each status change here.
+      if (prev !== undefined && prev !== 'merged' && e.session.status === 'merged' && selectedSessionId.value === e.session.id) {
+        selectedSessionId.value = undefined;
+      }
       // Native notification on an attention-worthy transition, only while the desktop
       // window is unfocused. Guarded so the browser build (no Notification) never throws.
       if (
